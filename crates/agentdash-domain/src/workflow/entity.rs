@@ -390,27 +390,8 @@ impl LifecycleRun {
             return Err("activity lifecycle run 至少需要一个 attempt".to_string());
         }
         let now = Utc::now();
-        let active_node_keys = activity_state
-            .attempts
-            .iter()
-            .filter(|attempt| {
-                matches!(
-                    attempt.status,
-                    super::value_objects::ActivityAttemptStatus::Ready
-                        | super::value_objects::ActivityAttemptStatus::Claiming
-                        | super::value_objects::ActivityAttemptStatus::Running
-                )
-            })
-            .map(|attempt| attempt.activity_key.clone())
-            .collect::<Vec<_>>();
-        let status = match activity_state.status {
-            ActivityRunStatus::Ready => LifecycleRunStatus::Ready,
-            ActivityRunStatus::Running => LifecycleRunStatus::Running,
-            ActivityRunStatus::Blocked => LifecycleRunStatus::Blocked,
-            ActivityRunStatus::Completed => LifecycleRunStatus::Completed,
-            ActivityRunStatus::Failed => LifecycleRunStatus::Failed,
-            ActivityRunStatus::Cancelled => LifecycleRunStatus::Cancelled,
-        };
+        let active_node_keys = active_activity_keys(&activity_state);
+        let status = lifecycle_status_from_activity_status(activity_state.status);
         Ok(Self {
             id: Uuid::new_v4(),
             project_id,
@@ -425,6 +406,15 @@ impl LifecycleRun {
             updated_at: now,
             last_activity_at: now,
         })
+    }
+
+    pub fn replace_activity_state(&mut self, activity_state: ActivityLifecycleRunState) {
+        self.status = lifecycle_status_from_activity_status(activity_state.status);
+        self.active_node_keys = active_activity_keys(&activity_state);
+        self.activity_state = Some(activity_state);
+        let now = Utc::now();
+        self.updated_at = now;
+        self.last_activity_at = now;
     }
 
     pub fn activate_step(&mut self, step_key: &str) -> Result<(), String> {
@@ -704,6 +694,33 @@ impl LifecycleRun {
         self.execution_log.extend(entries);
         self.updated_at = Utc::now();
         self.last_activity_at = self.updated_at;
+    }
+}
+
+fn active_activity_keys(activity_state: &ActivityLifecycleRunState) -> Vec<String> {
+    activity_state
+        .attempts
+        .iter()
+        .filter(|attempt| {
+            matches!(
+                attempt.status,
+                super::value_objects::ActivityAttemptStatus::Ready
+                    | super::value_objects::ActivityAttemptStatus::Claiming
+                    | super::value_objects::ActivityAttemptStatus::Running
+            )
+        })
+        .map(|attempt| attempt.activity_key.clone())
+        .collect()
+}
+
+fn lifecycle_status_from_activity_status(status: ActivityRunStatus) -> LifecycleRunStatus {
+    match status {
+        ActivityRunStatus::Ready => LifecycleRunStatus::Ready,
+        ActivityRunStatus::Running => LifecycleRunStatus::Running,
+        ActivityRunStatus::Blocked => LifecycleRunStatus::Blocked,
+        ActivityRunStatus::Completed => LifecycleRunStatus::Completed,
+        ActivityRunStatus::Failed => LifecycleRunStatus::Failed,
+        ActivityRunStatus::Cancelled => LifecycleRunStatus::Cancelled,
     }
 }
 

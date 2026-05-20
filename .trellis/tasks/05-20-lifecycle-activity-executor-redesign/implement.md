@@ -195,6 +195,7 @@
 - [x] 实现 claiming 超时恢复策略。
 - [x] Scheduler 启动成功后提交 `ExecutorStarted` event。
 - [x] Scheduler 启动失败时按可重试 / 不可重试更新 attempt。
+- [x] 新增 `ActivityLifecycleRunService`，将 engine / scheduler 结果写回 `LifecycleRun.activity_state`。
 
 验证：
 
@@ -202,11 +203,12 @@
 - [x] prompt 未 accepted 不会留下 running attempt。
 - [x] claiming 超时后可恢复。
 - [x] `cargo test -p agentdash-application workflow::scheduler`
+- [x] `cargo test -p agentdash-application workflow::activity_run`
 - [x] `cargo test -p agentdash-infrastructure workflow_claim`
 
 出口标准：
 
-- [ ] Scheduler claim 能替代 orchestrator 里“先创建 session 再补状态”的路径。
+- [x] Scheduler claim 能替代 orchestrator 里“先创建 session 再补状态”的路径。
 
 ## Phase 5.5：Freeform LifecycleRun 归属收敛
 

@@ -1,3 +1,4 @@
+mod activity_run;
 pub mod agent_executor;
 mod catalog;
 mod completion;
@@ -15,6 +16,7 @@ mod session_association;
 pub mod step_activation;
 pub mod tools;
 
+pub use activity_run::ActivityLifecycleRunService;
 pub use agent_executor::{
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
     AgentActivitySessionPort,

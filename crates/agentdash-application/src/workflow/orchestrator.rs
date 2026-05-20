@@ -602,6 +602,11 @@ impl LifecycleOrchestrator {
                 self.session_core.clone(),
                 self.session_launch.clone(),
                 self.repos.clone(),
+            )
+            .with_runtime_context(
+                self.session_hooks.clone(),
+                self.session_capability.clone(),
+                self.platform_config.clone(),
             ),
         );
         let (_run, outcomes) = service

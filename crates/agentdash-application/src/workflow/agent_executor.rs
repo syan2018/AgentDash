@@ -1,15 +1,26 @@
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
-    ActivityExecutionClaim, ActivityExecutorSpec, ActivityLifecycleDefinition, AgentSessionPolicy,
-    ExecutorRunRef,
+    ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
+    ActivityLifecycleDefinition, AgentSessionPolicy, ExecutorRunRef, LifecycleNodeType,
+    LifecycleStepDefinition,
 };
 use agentdash_spi::AgentConfig;
 
 use super::ActivityLifecycleRunState;
 use super::scheduler::{ActivityExecutorLauncher, ActivityExecutorStartError};
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
+use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::session::{LaunchCommand, SessionCoreService, SessionLaunchService, UserPromptInput};
+use crate::session::hub::PendingRuntimeContextTransitionInput;
+use crate::session::{
+    LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
+    SessionLaunchService, UserPromptInput,
+};
+use crate::workflow::step_activation::apply_to_running_session;
+use crate::workflow::{
+    activate_step_with_platform, agent_mcp_entries_from_servers,
+    build_capability_state_for_activation, load_port_output_map,
+};
 
 #[derive(Debug, Clone)]
 pub struct AgentActivityLaunchContext {
@@ -46,13 +57,26 @@ pub trait AgentActivitySessionPort: Send + Sync {
         session_id: &str,
         executor_config: Option<AgentConfig>,
     ) -> Result<(), String>;
+    async fn apply_continue_root_activity(
+        &self,
+        _definition: &ActivityLifecycleDefinition,
+        _activity: &ActivityDefinition,
+        _claim: &ActivityExecutionClaim,
+        _workflow_key: &str,
+        _root_session_id: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
 pub struct AgentActivityRuntimePort {
     session_core: SessionCoreService,
     session_launch: SessionLaunchService,
+    session_hooks: Option<SessionHookService>,
+    session_capability: Option<SessionCapabilityService>,
     repos: RepositorySet,
+    platform_config: Option<SharedPlatformConfig>,
 }
 
 impl AgentActivityRuntimePort {
@@ -64,8 +88,23 @@ impl AgentActivityRuntimePort {
         Self {
             session_core,
             session_launch,
+            session_hooks: None,
+            session_capability: None,
             repos,
+            platform_config: None,
         }
+    }
+
+    pub fn with_runtime_context(
+        mut self,
+        session_hooks: SessionHookService,
+        session_capability: SessionCapabilityService,
+        platform_config: SharedPlatformConfig,
+    ) -> Self {
+        self.session_hooks = Some(session_hooks);
+        self.session_capability = Some(session_capability);
+        self.platform_config = Some(platform_config);
+        self
     }
 }
 
@@ -138,6 +177,137 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map(|_| ())
             .map_err(|error| format!("启动 activity child session prompt 失败: {error}"))
     }
+
+    async fn apply_continue_root_activity(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        activity: &ActivityDefinition,
+        claim: &ActivityExecutionClaim,
+        workflow_key: &str,
+        root_session_id: &str,
+    ) -> Result<(), String> {
+        let session_hooks = self
+            .session_hooks
+            .as_ref()
+            .ok_or_else(|| "ContinueRoot 缺少 session hook service".to_string())?;
+        let session_capability = self
+            .session_capability
+            .as_ref()
+            .ok_or_else(|| "ContinueRoot 缺少 session capability service".to_string())?;
+        let platform_config = self
+            .platform_config
+            .as_ref()
+            .ok_or_else(|| "ContinueRoot 缺少 platform config".to_string())?;
+        let workflow = self
+            .repos
+            .workflow_definition_repo
+            .get_by_project_and_key(definition.project_id, workflow_key)
+            .await
+            .map_err(|error| format!("加载 ContinueRoot workflow 失败: {error}"))?
+            .ok_or_else(|| format!("ContinueRoot workflow 不存在: {workflow_key}"))?;
+
+        let active_step = activity_as_step(activity, workflow_key);
+        let available_presets =
+            crate::session::load_available_presets(&self.repos, definition.project_id).await;
+        let ready_port_keys =
+            load_port_output_map(self.repos.inline_file_repo.as_ref(), claim.run_id)
+                .await
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+
+        if let Some(hook_session) = session_hooks
+            .ensure_hook_session_runtime(root_session_id, None)
+            .await
+            .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
+        {
+            let snapshot = hook_session.snapshot();
+            let owner_ctx =
+                owner_ctx_from_bindings_or_project(&snapshot.owners, definition.project_id);
+            let runtime_mcp_servers = session_capability
+                .get_runtime_mcp_servers(root_session_id)
+                .await;
+            let activation = activate_step_with_platform(
+                &crate::workflow::StepActivationInput {
+                    owner_ctx,
+                    active_step: &active_step,
+                    workflow: Some(&workflow),
+                    run_id: claim.run_id,
+                    lifecycle_key: &definition.key,
+                    edges: &[],
+                    agent_mcp_servers: agent_mcp_entries_from_servers(&runtime_mcp_servers),
+                    available_presets,
+                    companion_slice_mode: None,
+                    baseline_override: None,
+                    tool_directives: &[],
+                    ready_port_keys,
+                    available_companions: Vec::new(),
+                },
+                platform_config,
+            );
+            apply_to_running_session(
+                &activation,
+                &hook_session,
+                session_capability,
+                None,
+                &activity.key,
+                Some(claim.run_id),
+                Some(&definition.key),
+            )
+            .await
+            .map(|_| ())
+        } else {
+            let owner_ctx = SessionOwnerCtx::Project {
+                project_id: definition.project_id,
+            };
+            let base_surface = session_capability
+                .get_latest_capability_state(root_session_id)
+                .await;
+            let agent_mcp_servers = base_surface
+                .as_ref()
+                .map(|surface| agent_mcp_entries_from_servers(&surface.tool.mcp_servers))
+                .unwrap_or_default();
+            let activation = activate_step_with_platform(
+                &crate::workflow::StepActivationInput {
+                    owner_ctx,
+                    active_step: &active_step,
+                    workflow: Some(&workflow),
+                    run_id: claim.run_id,
+                    lifecycle_key: &definition.key,
+                    edges: &[],
+                    agent_mcp_servers,
+                    available_presets,
+                    companion_slice_mode: None,
+                    baseline_override: None,
+                    tool_directives: &[],
+                    ready_port_keys,
+                    available_companions: Vec::new(),
+                },
+                platform_config,
+            );
+            let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
+            session_capability
+                .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
+                    session_id: root_session_id.to_string(),
+                    turn_id: None,
+                    transition_id: format!(
+                        "activity-{}-{}-{}",
+                        activity.key,
+                        claim.attempt,
+                        uuid::Uuid::new_v4()
+                    ),
+                    phase_node: activity.key.clone(),
+                    run_id: claim.run_id,
+                    lifecycle_key: definition.key.clone(),
+                    before_state: base_surface,
+                    after_state: surface,
+                    capability_keys: activation.capability_keys,
+                    source_turn_id: None,
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                })
+                .await
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -148,7 +318,7 @@ where
     async fn start(
         &self,
         definition: &ActivityLifecycleDefinition,
-        _state: &ActivityLifecycleRunState,
+        state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
     ) -> Result<ExecutorRunRef, ActivityExecutorStartError> {
         let Some(activity) = definition
@@ -169,7 +339,17 @@ where
         };
         match spec.session_policy {
             AgentSessionPolicy::SpawnChild => self.start_spawn_child(definition, claim).await,
-            AgentSessionPolicy::ContinueRoot | AgentSessionPolicy::AttachExisting => {
+            AgentSessionPolicy::ContinueRoot => {
+                self.start_continue_root(
+                    definition,
+                    &activity,
+                    spec.workflow_key.as_str(),
+                    state,
+                    claim,
+                )
+                .await
+            }
+            AgentSessionPolicy::AttachExisting => {
                 Err(ActivityExecutorStartError::terminal(format!(
                     "Agent session policy `{}` 尚未接入 Activity executor",
                     serde_json::to_string(&spec.session_policy)
@@ -253,6 +433,103 @@ where
 
         Ok(ExecutorRunRef::AgentSession { session_id })
     }
+
+    async fn start_continue_root(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        activity: &ActivityDefinition,
+        workflow_key: &str,
+        state: &ActivityLifecycleRunState,
+        claim: &ActivityExecutionClaim,
+    ) -> Result<ExecutorRunRef, ActivityExecutorStartError> {
+        let has_running_continue_root = state.attempts.iter().any(|attempt| {
+            attempt.status == ActivityAttemptStatus::Running
+                && attempt.activity_key != claim.activity_key
+                && definition
+                    .activities
+                    .iter()
+                    .find(|activity| activity.key == attempt.activity_key)
+                    .and_then(|activity| match &activity.executor {
+                        ActivityExecutorSpec::Agent(spec) => Some(spec.session_policy),
+                        _ => None,
+                    })
+                    == Some(AgentSessionPolicy::ContinueRoot)
+        });
+        if has_running_continue_root {
+            return Err(ActivityExecutorStartError::terminal(
+                "root session 已存在 running ContinueRoot activity",
+            ));
+        }
+
+        self.port
+            .apply_continue_root_activity(
+                definition,
+                activity,
+                claim,
+                workflow_key,
+                &self.context.root_session_id,
+            )
+            .await
+            .map_err(ActivityExecutorStartError::retryable)?;
+        Ok(ExecutorRunRef::AgentSession {
+            session_id: self.context.root_session_id.clone(),
+        })
+    }
+}
+
+fn activity_as_step(activity: &ActivityDefinition, workflow_key: &str) -> LifecycleStepDefinition {
+    LifecycleStepDefinition {
+        key: activity.key.clone(),
+        description: activity.description.clone(),
+        workflow_key: Some(workflow_key.to_string()),
+        node_type: LifecycleNodeType::PhaseNode,
+        output_ports: activity.output_ports.clone(),
+        input_ports: activity.input_ports.clone(),
+        capability_config: Default::default(),
+    }
+}
+
+fn owner_ctx_from_bindings_or_project(
+    owners: &[agentdash_spi::hooks::HookOwnerSummary],
+    fallback_project_id: uuid::Uuid,
+) -> SessionOwnerCtx {
+    let Some(owner) = owners.first() else {
+        return SessionOwnerCtx::Project {
+            project_id: fallback_project_id,
+        };
+    };
+    let project_id = owner
+        .project_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        .unwrap_or(fallback_project_id);
+    let story_id = owner
+        .story_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok());
+    let task_id = owner
+        .task_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok());
+
+    match owner.owner_type {
+        SessionOwnerType::Task => match (story_id, task_id) {
+            (Some(story_id), Some(task_id)) => SessionOwnerCtx::Task {
+                project_id,
+                story_id,
+                task_id,
+            },
+            _ => SessionOwnerCtx::Project { project_id },
+        },
+        SessionOwnerType::Story => match story_id {
+            Some(story_id) => SessionOwnerCtx::Story {
+                project_id,
+                story_id,
+            },
+            None => SessionOwnerCtx::Project { project_id },
+        },
+        SessionOwnerType::Project => SessionOwnerCtx::Project { project_id },
+    }
 }
 
 #[cfg(test)]
@@ -263,8 +540,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentSessionPolicy, OutputPortDefinition, WorkflowBindingKind,
-        WorkflowDefinitionSource,
+        ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
+        OutputPortDefinition, TransitionCondition, WorkflowBindingKind, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -276,6 +553,7 @@ mod tests {
         bindings: Mutex<Vec<SessionBinding>>,
         launch_error: Mutex<Option<String>>,
         launches: Mutex<Vec<String>>,
+        continue_root_applies: Mutex<Vec<String>>,
     }
 
     #[async_trait::async_trait]
@@ -328,6 +606,21 @@ mod tests {
             self.launches.lock().unwrap().push(session_id.to_string());
             Ok(())
         }
+
+        async fn apply_continue_root_activity(
+            &self,
+            _definition: &ActivityLifecycleDefinition,
+            _activity: &ActivityDefinition,
+            claim: &ActivityExecutionClaim,
+            _workflow_key: &str,
+            _root_session_id: &str,
+        ) -> Result<(), String> {
+            self.continue_root_applies
+                .lock()
+                .unwrap()
+                .push(format!("{}#{}", claim.activity_key, claim.attempt));
+            Ok(())
+        }
     }
 
     fn output_port(key: &str) -> OutputPortDefinition {
@@ -364,6 +657,54 @@ mod tests {
                 join_policy: Default::default(),
             }],
             vec![],
+        )
+        .expect("definition")
+    }
+
+    fn continue_root_definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
+        continue_root_definition_with_activities(project_id, &["plan"])
+    }
+
+    fn continue_root_definition_with_activities(
+        project_id: uuid::Uuid,
+        activity_keys: &[&str],
+    ) -> ActivityLifecycleDefinition {
+        ActivityLifecycleDefinition::new(
+            project_id,
+            "agent_flow",
+            "Agent flow",
+            "",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::UserAuthored,
+            "plan",
+            activity_keys
+                .iter()
+                .map(|key| ActivityDefinition {
+                    key: (*key).to_string(),
+                    description: (*key).to_string(),
+                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                        workflow_key: format!("wf_{key}"),
+                        session_policy: AgentSessionPolicy::ContinueRoot,
+                    }),
+                    input_ports: vec![],
+                    output_ports: vec![],
+                    completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
+                    iteration_policy: Default::default(),
+                    join_policy: Default::default(),
+                })
+                .collect(),
+            if activity_keys.len() > 1 {
+                vec![ActivityTransition {
+                    from: "plan".to_string(),
+                    to: "review".to_string(),
+                    kind: ActivityTransitionKind::Flow,
+                    condition: TransitionCondition::Always,
+                    artifact_bindings: vec![],
+                    max_traversals: None,
+                }]
+            } else {
+                vec![]
+            },
         )
         .expect("definition")
     }
@@ -472,5 +813,86 @@ mod tests {
 
         assert!(error.retryable);
         assert_eq!(error.message, "prompt rejected");
+    }
+
+    #[tokio::test]
+    async fn continue_root_applies_runtime_transition_and_uses_root_session() {
+        let project_id = uuid::Uuid::new_v4();
+        let port = FakePort::default();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "agent_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            port,
+        );
+        let definition = continue_root_definition(project_id);
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
+
+        let executor_ref = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        assert_eq!(
+            executor_ref,
+            ExecutorRunRef::AgentSession {
+                session_id: "root-session".to_string()
+            }
+        );
+        assert_eq!(
+            launcher
+                .port
+                .continue_root_applies
+                .lock()
+                .unwrap()
+                .as_slice(),
+            &["plan#1".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn continue_root_rejects_parallel_running_attempt() {
+        let project_id = uuid::Uuid::new_v4();
+        let port = FakePort::default();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "agent_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            port,
+        );
+        let definition = continue_root_definition_with_activities(project_id, &["plan", "review"]);
+        let mut state = state();
+        state.attempts.push(ActivityAttemptState {
+            activity_key: "review".to_string(),
+            attempt: 1,
+            status: ActivityAttemptStatus::Running,
+            executor_run: Some(ExecutorRunRef::AgentSession {
+                session_id: "root-session".to_string(),
+            }),
+            started_at: Some(chrono::Utc::now()),
+            completed_at: None,
+            summary: None,
+        });
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
+
+        let error = launcher
+            .start(&definition, &state, &claim)
+            .await
+            .expect_err("parallel ContinueRoot should be rejected");
+
+        assert!(!error.retryable);
+        assert_eq!(
+            launcher
+                .port
+                .continue_root_applies
+                .lock()
+                .unwrap()
+                .as_slice(),
+            &[] as &[String]
+        );
     }
 }

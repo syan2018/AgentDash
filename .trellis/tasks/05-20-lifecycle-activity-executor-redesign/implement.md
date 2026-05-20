@@ -259,10 +259,10 @@
   - [x] launch prompt accepted 后提交 `ExecutorStarted`。
   - [x] session terminal 转为 ActivityEvent。
   - [x] Activity 子 session 内 `complete_lifecycle_node` 转为 ActivityEvent。
-- [ ] `Agent + ContinueRoot` 映射现有 PhaseNode：
-  - [ ] 限制同一 root session 仅一个 running ContinueRoot attempt。
-  - [ ] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
-  - [ ] 完成事件仍走 ActivityEvent。
+- [x] `Agent + ContinueRoot` 映射现有 PhaseNode：
+  - [x] 限制同一 root session 仅一个 running ContinueRoot attempt。
+  - [x] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
+  - [x] 完成事件仍走 ActivityEvent。
 - [ ] 旧 `complete_lifecycle_node` 工具在 Activity 子 session 内提交 ActivityEvent；旧 step session 暂保留 `complete_step` 路径，待旧模型清理阶段移除。
 - [ ] 保留现有 hook gate 能力，但结果转换为 completion policy / ActivityEvent。
 
@@ -270,8 +270,8 @@
 
 - [ ] 单 step SpawnChild lifecycle 能启动并完成。
 - [ ] 多 step SpawnChild lifecycle 能激活后继。
-- [ ] ContinueRoot capability transition 生效。
-- [ ] 并行 ContinueRoot 被拒绝。
+- [x] ContinueRoot capability transition 生效。
+- [x] 并行 ContinueRoot 被拒绝。
 - [ ] session terminal failed 转为 attempt failed。
 - [x] activity 子 session label 可稳定反查 run / activity / attempt。
 - [x] Activity 子 session 调用 `complete_lifecycle_node` 会提交 ActivityEvent 并调度后继 ready attempt。

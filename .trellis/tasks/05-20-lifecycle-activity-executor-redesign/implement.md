@@ -325,22 +325,22 @@
 
 范围：
 
-- [ ] TS 类型改为 Activity / Executor / Attempt / Transition。
-- [ ] DAG canvas 节点展示 Activity。
-- [ ] Inspector 一级选择 executor kind。
-- [ ] Agent panel 支持 workflow_key + session_policy。
-- [ ] Human Approval panel 支持 form / decision schema。
-- [ ] Transition panel 支持 Always / HumanDecisionEquals。
-- [ ] Run view 展示 activity attempts timeline。
-- [ ] Artifact panel 支持 latest 与 history。
+- [x] TS 类型改为 Activity / Executor / Attempt / Transition。
+- [x] DAG canvas 节点展示 Activity。
+- [x] Inspector 一级选择 executor kind。
+- [x] Agent panel 支持 workflow_key + session_policy。
+- [x] Human Approval panel 支持 form / decision schema。
+- [x] Transition panel 支持 Always / HumanDecisionEquals。
+- [x] Run view 展示 activity attempts timeline。
+- [x] Artifact panel 支持 latest 与 history。
 
 验证：
 
-- [ ] 前端单测覆盖 store draft rename / add / remove。
-- [ ] UI 能创建 Plan -> Approval -> Implement。
-- [ ] rejected -> replan -> approved 的 run view 可读。
-- [ ] `pnpm --filter app-web test workflow`
-- [ ] `pnpm --filter app-web typecheck`
+- [x] 前端单测覆盖 store draft rename / add / remove。
+- [x] UI 能创建 Plan -> Approval -> Implement。
+- [x] rejected -> replan -> approved 的 run view 可读。
+- [x] `pnpm --filter app-web test workflow`
+- [x] `pnpm --filter app-web typecheck`
 - [ ] 浏览器手动验证主要流程。
 
 出口标准：

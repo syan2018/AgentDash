@@ -15,21 +15,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { LifecycleStepDefinition } from "../../../types";
+import type { ActivityDefinition } from "../../../types";
 import { createStepWorkflowDraft } from "../../../stores/workflowStore";
 import { StepInspector } from "./step-inspector";
 
 function makeStep(
-  overrides: Partial<LifecycleStepDefinition> = {},
-): LifecycleStepDefinition {
+  overrides: Partial<ActivityDefinition> = {},
+): ActivityDefinition {
   return {
     key: "implement",
     description: "实现该需求",
-    workflow_key: "demo.implement",
-    node_type: "agent_node",
+    executor: { kind: "agent", workflow_key: "demo.implement", session_policy: "spawn_child" },
     output_ports: [],
     input_ports: [],
-    capability_config: { tool_directives: [], mount_directives: [] },
+    completion_policy: { kind: "executor_terminal" },
+    iteration_policy: { max_attempts: 1, artifact_alias: "latest" },
+    join_policy: "all",
     ...overrides,
   };
 }
@@ -53,8 +54,8 @@ describe("StepInspector tabs", () => {
     );
     expect(markup).toContain("Overview");
     expect(markup).toContain("Detail");
-    // Overview 内容：节点类型 select、node key 输入、port 摘要标题
-    expect(markup).toContain("节点类型");
+    // Overview 内容：executor select、node key 输入、port 摘要标题
+    expect(markup).toContain("Executor");
     expect(markup).toContain("Output Ports");
     // Detail-only 内容（如 Session 指引）不应出现在默认 Overview 视图
     expect(markup).not.toContain("Session 指引");
@@ -87,8 +88,10 @@ describe("StepInspector tabs", () => {
     expect(markup).not.toContain('flex shrink-0 gap-1 border-b border-border bg-secondary/35 p-1');
   });
 
-  it("phase_node 也能渲染完整 contract（hideTabs 模拟 Detail tab）", () => {
-    const step = makeStep({ node_type: "phase_node" });
+  it("continue_root agent activity 也能渲染完整 contract（hideTabs 模拟 Detail tab）", () => {
+    const step = makeStep({
+      executor: { kind: "agent", workflow_key: "demo.review", session_policy: "continue_root" },
+    });
     const draft = createStepWorkflowDraft("p1", "demo", "review", ["story"]);
     // 注入一条 hook rule，验证 phase_node 也能展示 contract 内容
     draft.contract.hook_rules = [
@@ -117,13 +120,15 @@ describe("StepInspector tabs", () => {
       />,
     );
     expect(markup).toContain("过程行为");
-    // phase_node 的 hook rule 仍应可见，而不是 "Phase Node 仅作为 lifecycle 阶段标记" 之类的拒绝文案
+    // ContinueRoot 的 hook rule 仍应可见，而不是被当作纯阶段标记。
     expect(markup).toContain("记录工具调用");
-    expect(markup).not.toContain("Phase Node 仅作为 lifecycle 阶段标记");
+    expect(markup).not.toContain("仅作为 lifecycle 阶段标记");
   });
 
-  it("phase_node 非 entry 时 node_type select 允许切换", () => {
-    const step = makeStep({ node_type: "phase_node" });
+  it("非 entry 时 executor select 允许切到 Function", () => {
+    const step = makeStep({
+      executor: { kind: "agent", workflow_key: "demo.review", session_policy: "continue_root" },
+    });
     const draft = createStepWorkflowDraft("p1", "demo", "review", ["story"]);
     const markup = renderToStaticMarkup(
       <StepInspector
@@ -138,11 +143,9 @@ describe("StepInspector tabs", () => {
         onWorkflowChange={() => undefined}
       />,
     );
-    // Overview tab 的 node_type select 包含 agent_node / phase_node 两个选项，
-    // phase_node 当前 selected
-    expect(markup).toContain("Agent Node");
-    expect(markup).toContain("Phase Node");
-    // 非 entry 时 Phase Node 选项不应禁用
-    expect(markup).not.toContain("Phase Node（入口不可用）");
+    expect(markup).toContain("Agent");
+    expect(markup).toContain("Human Approval");
+    expect(markup).toContain("Function");
+    expect(markup).not.toContain("Function（入口暂不用）");
   });
 });

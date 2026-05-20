@@ -6,9 +6,9 @@ describe("workflow lifecycle draft defaults", () => {
   it("creates the initial lifecycle node as an AgentNode", () => {
     const draft = createEmptyLifecycleDraft("project-1", { initial_step_key: "start" });
 
-    expect(draft.entry_step_key).toBe("start");
-    expect(draft.steps).toHaveLength(1);
-    expect(draft.steps[0].node_type).toBe("agent_node");
+    expect(draft.entry_activity_key).toBe("start");
+    expect(draft.activities).toHaveLength(1);
+    expect(draft.activities[0].executor.kind).toBe("agent");
   });
 });
 
@@ -28,10 +28,14 @@ describe("unified lifecycle editor", () => {
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.draft).not.toBeNull();
     expect(editor.draft?.key).toBe("my_wf");
-    expect(editor.draft?.steps).toHaveLength(1);
-    expect(editor.draft?.steps[0].key).toBe("start");
+    expect(editor.draft?.activities).toHaveLength(1);
+    expect(editor.draft?.activities[0].key).toBe("start");
     // 自动派生 workflow_key
-    expect(editor.draft?.steps[0].workflow_key).toBe("my_wf.start");
+    expect(editor.draft?.activities[0].executor).toEqual({
+      kind: "agent",
+      workflow_key: "my_wf.start",
+      session_policy: "spawn_child",
+    });
     expect(editor.workflowDraftsByStepKey["start"]).toBeDefined();
     expect(editor.workflowDraftsByStepKey["start"].key).toBe("my_wf.start");
     expect(editor.selectedStepKey).toBe("start");
@@ -44,7 +48,7 @@ describe("unified lifecycle editor", () => {
 
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(newKey).toBeTruthy();
-    expect(editor.draft?.steps).toHaveLength(2);
+    expect(editor.draft?.activities).toHaveLength(2);
     expect(editor.selectedStepKey).toBe(newKey);
     expect(editor.workflowDraftsByStepKey[newKey!]?.key).toBe(`lc1.${newKey}`);
   });
@@ -54,15 +58,15 @@ describe("unified lifecycle editor", () => {
     store.openLifecycleForm("project-1", { key: "lc2", initial_step_key: "start" });
     const second = store.addLifecycleEditorStep()!;
     store.updateLifecycleEditorDraft({
-      edges: [
-        { kind: "flow", from_node: "start", to_node: second },
+      transitions: [
+        { kind: "flow", from: "start", to: second, condition: { kind: "always" }, artifact_bindings: [] },
       ],
     });
     store.removeLifecycleEditorStep(second);
 
     const editor = useWorkflowStore.getState().lifecycleEditor;
-    expect(editor.draft?.steps).toHaveLength(1);
-    expect(editor.draft?.edges).toHaveLength(0);
+    expect(editor.draft?.activities).toHaveLength(1);
+    expect(editor.draft?.transitions).toHaveLength(0);
     expect(editor.workflowDraftsByStepKey[second]).toBeUndefined();
   });
 
@@ -84,13 +88,13 @@ describe("unified lifecycle editor", () => {
     store.openLifecycleForm("project-1", { key: "lc4", initial_step_key: "start" });
     const second = store.addLifecycleEditorStep()!;
     store.updateLifecycleEditorDraft({
-      edges: [{ kind: "flow", from_node: "start", to_node: second }],
+      transitions: [{ kind: "flow", from: "start", to: second, condition: { kind: "always" }, artifact_bindings: [] }],
     });
     store.updateLifecycleEditorStep("start", { key: "kickoff" });
 
     const editor = useWorkflowStore.getState().lifecycleEditor;
-    expect(editor.draft?.entry_step_key).toBe("kickoff");
-    expect(editor.draft?.edges[0].from_node).toBe("kickoff");
+    expect(editor.draft?.entry_activity_key).toBe("kickoff");
+    expect(editor.draft?.transitions[0].from).toBe("kickoff");
     expect(editor.workflowDraftsByStepKey.kickoff).toBeDefined();
     expect(editor.workflowDraftsByStepKey.start).toBeUndefined();
   });

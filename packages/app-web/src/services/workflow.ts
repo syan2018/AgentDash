@@ -7,10 +7,14 @@ import type {
   ActivityExecutorSpec,
   ActivityJoinPolicy,
   ActivityLifecycleDefinition,
+  ActivityLifecycleRunState,
+  ActivityAttemptStatus,
+  ActivityRunStatus,
   ActivityTransition,
   ArtifactAliasPolicy,
   ArtifactBinding,
   CapabilityDirective,
+  ExecutorRunRef,
   HookRulePreset,
   ContextStrategy,
   GateStrategy,
@@ -60,6 +64,12 @@ const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", 
 const AGENT_SESSION_POLICIES = new Set<string>(["spawn_child", "continue_root", "attach_existing"]);
 const ARTIFACT_ALIAS_POLICIES = new Set<string>(["latest", "per_attempt", "latest_and_history"]);
 const ACTIVITY_TRANSITION_KINDS = new Set<string>(["flow", "artifact"]);
+const ACTIVITY_ATTEMPT_STATUSES = new Set<string>([
+  "pending", "ready", "claiming", "running", "completed", "failed", "cancelled",
+]);
+const ACTIVITY_RUN_STATUSES = new Set<string>([
+  "ready", "running", "blocked", "completed", "failed", "cancelled",
+]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "step_activated", "step_completed", "artifact_appended", "context_injected",
 ]);
@@ -454,6 +464,56 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
   };
 }
 
+function mapExecutorRunRef(raw: unknown): ExecutorRunRef | null {
+  const value = asRecord(raw);
+  if (!value) return null;
+  const kind = requireStringField(value, "kind");
+  if (kind === "agent_session") {
+    return { kind: "agent_session", session_id: requireStringField(value, "session_id") };
+  }
+  if (kind === "function_run") {
+    return { kind: "function_run", run_id: requireStringField(value, "run_id") };
+  }
+  if (kind === "human_decision") {
+    return { kind: "human_decision", decision_id: requireStringField(value, "decision_id") };
+  }
+  throw new Error(`未知的 executor run ref: ${kind}`);
+}
+
+function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState | null {
+  const value = asRecord(raw);
+  if (!value) return null;
+  return {
+    status: normalizeEnum<ActivityRunStatus>(value.status, ACTIVITY_RUN_STATUSES, "activity run status"),
+    attempts: asRecordArray(value.attempts).map((attempt) => ({
+      activity_key: requireStringField(attempt, "activity_key"),
+      attempt: Number(attempt.attempt),
+      status: normalizeEnum<ActivityAttemptStatus>(attempt.status, ACTIVITY_ATTEMPT_STATUSES, "activity attempt status"),
+      executor_run: mapExecutorRunRef(attempt.executor_run),
+      started_at: optString(attempt.started_at),
+      completed_at: optString(attempt.completed_at),
+      summary: optString(attempt.summary),
+    })),
+    outputs: asRecordArray(value.outputs).map((artifact) => ({
+      activity_key: requireStringField(artifact, "activity_key"),
+      attempt: Number(artifact.attempt),
+      port_key: requireStringField(artifact, "port_key"),
+      value: artifact.value,
+      created_at: requireStringField(artifact, "created_at"),
+    })),
+    inputs: asRecordArray(value.inputs).map((artifact) => ({
+      activity_key: requireStringField(artifact, "activity_key"),
+      attempt: Number(artifact.attempt),
+      port_key: requireStringField(artifact, "port_key"),
+      source_activity_key: requireStringField(artifact, "source_activity_key"),
+      source_attempt: Number(artifact.source_attempt),
+      source_port_key: requireStringField(artifact, "source_port_key"),
+      value: artifact.value,
+      created_at: requireStringField(artifact, "created_at"),
+    })),
+  };
+}
+
 // ─── Entity mapper ─────────────────────────────────────
 
 export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
@@ -521,6 +581,7 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     active_node_keys: asStringArray(raw.active_node_keys),
     step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
+    activity_state: mapActivityLifecycleRunState(raw.activity_state),
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
     last_activity_at: requireStringField(raw, "last_activity_at"),
@@ -780,6 +841,25 @@ export async function completeWorkflowStep(input: {
   const raw = await api.post<Record<string, unknown>>(
     `/lifecycle-runs/${input.run_id}/steps/${encodeURIComponent(input.step_key)}/complete`,
     {
+      summary: input.summary,
+    },
+  );
+  return mapWorkflowRun(raw);
+}
+
+export async function submitHumanDecision(input: {
+  run_id: string;
+  activity_key: string;
+  attempt: number;
+  decision_port: string;
+  decision: string;
+  summary?: string;
+}): Promise<WorkflowRun> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/lifecycle-runs/${input.run_id}/activities/${encodeURIComponent(input.activity_key)}/attempts/${input.attempt}/human-decision`,
+    {
+      decision_port: input.decision_port,
+      decision: input.decision,
       summary: input.summary,
     },
   );

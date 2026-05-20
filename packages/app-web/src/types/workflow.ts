@@ -458,6 +458,64 @@ export interface ActivityLifecycleDefinition {
   updated_at: string;
 }
 
+export type ActivityAttemptStatus =
+  | "pending"
+  | "ready"
+  | "claiming"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ActivityRunStatus =
+  | "ready"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ExecutorRunRef =
+  | { kind: "agent_session"; session_id: string }
+  | { kind: "function_run"; run_id: string }
+  | { kind: "human_decision"; decision_id: string };
+
+export interface ActivityAttemptState {
+  activity_key: string;
+  attempt: number;
+  status: ActivityAttemptStatus;
+  executor_run?: ExecutorRunRef | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  summary?: string | null;
+}
+
+export interface ActivityOutputArtifact {
+  activity_key: string;
+  attempt: number;
+  port_key: string;
+  value: unknown;
+  created_at: string;
+}
+
+export interface ActivityInputArtifact {
+  activity_key: string;
+  attempt: number;
+  port_key: string;
+  source_activity_key: string;
+  source_attempt: number;
+  source_port_key: string;
+  value: unknown;
+  created_at: string;
+}
+
+export interface ActivityLifecycleRunState {
+  status: ActivityRunStatus;
+  attempts: ActivityAttemptState[];
+  outputs: ActivityOutputArtifact[];
+  inputs: ActivityInputArtifact[];
+}
+
 export interface WorkflowStepState {
   step_key: string;
   status: WorkflowStepExecutionStatus;
@@ -494,6 +552,7 @@ export interface WorkflowRun {
   active_node_keys?: string[];
   step_states: WorkflowStepState[];
   execution_log: LifecycleExecutionEntry[];
+  activity_state?: ActivityLifecycleRunState | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;

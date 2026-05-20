@@ -1,5 +1,5 @@
 /**
- * StepInspector —— 单个 Lifecycle Step 的 inline inspector。
+ * StepInspector —— 单个 Lifecycle Activity 的 inline inspector。
  *
  * DAG 模式下选中节点后在右侧栏直接渲染（替代原 `DagSidePanel` + `DetailPanel` 的抽屉嵌套）。
  * Form 模式下则平铺作为唯一 step 的完整表单。
@@ -9,29 +9,30 @@
  * ## 顶部 Tab
  *
  * DAG 模式（默认）下顶部有两个 tab：
- *   - **Overview**：节点外部接口视图（key/name/description/node_type/ports），
+ *   - **Overview**：Activity 外部接口视图（key/name/description/executor/ports），
  *     对应 DAG 画布上一眼看到的标注信息，是编排者视角。
  *   - **Detail**：完整 5 panel workflow contract 编辑（Injection / Capability /
  *     Hooks / Ports），是 step 行为约束的细节视角。
  *
  * Form 模式下传 `hideTabs`，只渲染 Detail 内容 + 顶部 step 基础信息。
  *
- * ## node_type 约束
+ * ## executor 约束
  *
- * 领域层 `LifecycleStepDefinition.workflow_key` 不限定 node_type，phase_node
- * 与 agent_node 一样可以绑定 workflow contract。唯一硬约束是 entry step 必须是
- * agent_node（`validate_lifecycle_definition`）。因此本组件对 phase_node 一视同仁
- * 展示 5 panel 编辑器。
+ * Agent Activity 绑定 workflow contract；Human / Function Activity 则直接由 executor
+ * spec 描述执行方式。入口 Activity 默认使用 Agent executor，确保 run 创建后可以
+ * 由 scheduler 立即承接。
  */
 
 import { useCallback, useMemo, useState } from "react";
 
 import type {
+  ActivityCompletionPolicy,
+  ActivityDefinition,
+  ActivityExecutorSpec,
+  AgentSessionPolicy,
   CapabilityDirective,
   HookRulePreset,
   InputPortDefinition,
-  LifecycleNodeType,
-  LifecycleStepDefinition,
   OutputPortDefinition,
   WorkflowContextBinding,
   WorkflowDefinition,
@@ -52,7 +53,7 @@ import {
 type InspectorTab = "overview" | "detail";
 
 export interface StepInspectorProps {
-  step: LifecycleStepDefinition;
+  step: ActivityDefinition;
   /** 当前 step 对应的 workflow draft —— 每个 step 都有（包含 phase_node）。 */
   workflowDraft: WorkflowEditorDraft;
   /** 是否是入口节点 —— 入口不允许 phase_node。 */
@@ -69,8 +70,8 @@ export interface StepInspectorProps {
   targetKinds: WorkflowTargetKind[];
   /** Project id（CapabilityPanel 需要）。 */
   projectId: string;
-  /** 回调：更新 step 顶层字段（key / description / node_type / ports / capability_config）。 */
-  onStepChange: (patch: Partial<LifecycleStepDefinition>) => void;
+  /** 回调：更新 activity 顶层字段（key / description / executor / ports / policy）。 */
+  onStepChange: (patch: Partial<ActivityDefinition>) => void;
   /** 回调:更新 step 对应的 workflow draft。 */
   onWorkflowChange: (patch: Partial<WorkflowEditorDraft>) => void;
   /** 入口切换。 */
@@ -103,8 +104,6 @@ export function StepInspector(props: StepInspectorProps) {
   } = props;
 
   const [activeTab, setActiveTab] = useState<InspectorTab>("overview");
-  const nodeType = step.node_type ?? "agent_node";
-
   // ─── Workflow contract onChange 适配器 ───
   const updateInjection = useCallback(
     (patch: Partial<WorkflowInjectionSpec>) => {
@@ -321,7 +320,6 @@ export function StepInspector(props: StepInspectorProps) {
           {showOverview && (
             <OverviewTab
               step={step}
-              nodeType={nodeType}
               isEntry={isEntry}
               workflowDraft={workflowDraft}
               availableWorkflows={availableWorkflows}
@@ -353,6 +351,15 @@ export function StepInspector(props: StepInspectorProps) {
                       rows={2}
                       className="agentdash-form-textarea"
                       placeholder="当前节点的职责与边界"
+                    />
+                  </div>
+                  <div>
+                    <label className="agentdash-form-label">Executor</label>
+                    <ExecutorEditor
+                      activity={step}
+                      workflowDraft={workflowDraft}
+                      isEntry={isEntry}
+                      onStepChange={onStepChange}
                     />
                   </div>
                   {onCloneFromWorkflow && availableWorkflows.length > 0 && (
@@ -424,19 +431,17 @@ export function StepInspector(props: StepInspectorProps) {
 
 function OverviewTab({
   step,
-  nodeType,
   isEntry,
   workflowDraft,
   availableWorkflows,
   onStepChange,
   onCloneFromWorkflow,
 }: {
-  step: LifecycleStepDefinition;
-  nodeType: LifecycleNodeType;
+  step: ActivityDefinition;
   isEntry: boolean;
   workflowDraft: WorkflowEditorDraft;
   availableWorkflows: WorkflowDefinition[];
-  onStepChange: (patch: Partial<LifecycleStepDefinition>) => void;
+  onStepChange: (patch: Partial<ActivityDefinition>) => void;
   onCloneFromWorkflow?: (wf: WorkflowDefinition) => void;
 }) {
   // contract 源 port 的 key 集合 —— Overview 上标记为"标准"只读，不可编辑不可删；
@@ -474,17 +479,13 @@ function OverviewTab({
       </div>
 
       <div>
-        <label className="agentdash-form-label">节点类型</label>
-        <select
-          value={nodeType}
-          onChange={(e) => onStepChange({ node_type: e.target.value as LifecycleNodeType })}
-          className="agentdash-form-select"
-        >
-          <option value="agent_node">Agent Node</option>
-          <option value="phase_node" disabled={isEntry}>
-            Phase Node{isEntry ? "（入口不可用）" : ""}
-          </option>
-        </select>
+        <label className="agentdash-form-label">Executor</label>
+        <ExecutorEditor
+          activity={step}
+          workflowDraft={workflowDraft}
+          isEntry={isEntry}
+          onStepChange={onStepChange}
+        />
       </div>
 
       <OverviewOutputPortsSection
@@ -507,6 +508,140 @@ function OverviewTab({
       )}
     </section>
   );
+}
+
+function ExecutorEditor({
+  activity,
+  workflowDraft,
+  isEntry,
+  onStepChange,
+}: {
+  activity: ActivityDefinition;
+  workflowDraft: WorkflowEditorDraft;
+  isEntry: boolean;
+  onStepChange: (patch: Partial<ActivityDefinition>) => void;
+}) {
+  const setAgentExecutor = (patch: Partial<Extract<ActivityExecutorSpec, { kind: "agent" }>>) => {
+    const current = activity.executor.kind === "agent"
+      ? activity.executor
+      : { kind: "agent" as const, workflow_key: workflowDraft.key, session_policy: "spawn_child" as const };
+    onStepChange({ executor: { ...current, ...patch } });
+  };
+
+  const setHumanExecutor = (patch: Partial<Extract<ActivityExecutorSpec, { kind: "human" }>>) => {
+    const current = activity.executor.kind === "human"
+      ? activity.executor
+      : { kind: "human" as const, type: "approval" as const, form_schema_key: "approval", title: null };
+    onStepChange({
+      executor: { ...current, ...patch },
+      completion_policy: ensureHumanDecisionPolicy(activity.completion_policy),
+    });
+  };
+
+  const setFunctionExecutor = (patch: Partial<Extract<ActivityExecutorSpec, { kind: "function"; type: "bash_exec" }>>) => {
+    const current = activity.executor.kind === "function" && activity.executor.type === "bash_exec"
+      ? activity.executor
+      : { kind: "function" as const, type: "bash_exec" as const, command: "", args: [], working_directory: null };
+    onStepChange({ executor: { ...current, ...patch } });
+  };
+
+  return (
+    <div className="space-y-2">
+      <select
+        value={activity.executor.kind}
+        onChange={(event) => {
+          const kind = event.target.value as ActivityExecutorSpec["kind"];
+          if (kind === "agent") setAgentExecutor({});
+          if (kind === "human") setHumanExecutor({});
+          if (kind === "function") setFunctionExecutor({});
+        }}
+        className="agentdash-form-select"
+      >
+        <option value="agent">Agent</option>
+        <option value="human">Human Approval</option>
+        <option value="function" disabled={isEntry}>
+          Function{isEntry ? "（入口暂不用）" : ""}
+        </option>
+      </select>
+
+      {activity.executor.kind === "agent" && (
+        <div className="grid gap-2">
+          <label className="agentdash-form-label">Workflow Key</label>
+          <input
+            value={activity.executor.workflow_key}
+            onChange={(event) => setAgentExecutor({ workflow_key: event.target.value })}
+            className="agentdash-form-input"
+            placeholder={workflowDraft.key}
+          />
+          <label className="agentdash-form-label">Session Policy</label>
+          <select
+            value={activity.executor.session_policy}
+            onChange={(event) => setAgentExecutor({ session_policy: event.target.value as AgentSessionPolicy })}
+            className="agentdash-form-select"
+          >
+            <option value="spawn_child">Spawn Child</option>
+            <option value="continue_root">Continue Root</option>
+            <option value="attach_existing">Attach Existing</option>
+          </select>
+        </div>
+      )}
+
+      {activity.executor.kind === "human" && (
+        <div className="grid gap-2">
+          <label className="agentdash-form-label">标题</label>
+          <input
+            value={activity.executor.title ?? ""}
+            onChange={(event) => setHumanExecutor({ title: event.target.value || null })}
+            className="agentdash-form-input"
+            placeholder="等待人工审批"
+          />
+          <label className="agentdash-form-label">Form Schema Key</label>
+          <input
+            value={activity.executor.form_schema_key}
+            onChange={(event) => setHumanExecutor({ form_schema_key: event.target.value })}
+            className="agentdash-form-input"
+            placeholder="approval"
+          />
+          <label className="agentdash-form-label">Decision Port</label>
+          <input
+            value={activity.completion_policy.kind === "human_decision" ? activity.completion_policy.decision_port : "decision"}
+            onChange={(event) =>
+              onStepChange({
+                completion_policy: { kind: "human_decision", decision_port: event.target.value },
+              })
+            }
+            className="agentdash-form-input"
+            placeholder="decision"
+          />
+        </div>
+      )}
+
+      {activity.executor.kind === "function" && activity.executor.type === "bash_exec" && (
+        <div className="grid gap-2">
+          <label className="agentdash-form-label">Command</label>
+          <input
+            value={activity.executor.command}
+            onChange={(event) => setFunctionExecutor({ command: event.target.value })}
+            className="agentdash-form-input"
+            placeholder="pnpm"
+          />
+          <label className="agentdash-form-label">Args</label>
+          <input
+            value={activity.executor.args.join(" ")}
+            onChange={(event) => setFunctionExecutor({ args: event.target.value.split(" ").filter(Boolean) })}
+            className="agentdash-form-input"
+            placeholder="test workflow"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ensureHumanDecisionPolicy(policy: ActivityCompletionPolicy): ActivityCompletionPolicy {
+  return policy.kind === "human_decision"
+    ? policy
+    : { kind: "human_decision", decision_port: "decision" };
 }
 
 // ─── Overview 端口区（按来源区分 contract / step-extra）─────

@@ -63,17 +63,17 @@ export function generateLinearEdges(
 
 /**
  * 检测添加一条 source→target 边是否会产生环。
- * 接受任意含 { source, target } 或 { from_node, to_node } 的边数组。
+ * 接受 ReactFlow edge、旧 step edge、Activity transition 三种边形态。
  */
 export function wouldCreateCycle(
-  existingEdges: ReadonlyArray<{ source?: string; target?: string; from_node?: string; to_node?: string }>,
+  existingEdges: ReadonlyArray<{ source?: string; target?: string; from_node?: string; to_node?: string; from?: string; to?: string }>,
   newSource: string,
   newTarget: string,
 ): boolean {
   const adj = new Map<string, string[]>();
   for (const edge of existingEdges) {
-    const s = edge.source ?? edge.from_node ?? "";
-    const t = edge.target ?? edge.to_node ?? "";
+    const s = edge.source ?? edge.from_node ?? edge.from ?? "";
+    const t = edge.target ?? edge.to_node ?? edge.to ?? "";
     const list = adj.get(s) ?? [];
     list.push(t);
     adj.set(s, list);
@@ -81,7 +81,8 @@ export function wouldCreateCycle(
   const visited = new Set<string>();
   const stack = [newTarget];
   while (stack.length > 0) {
-    const cur = stack.pop()!;
+    const cur = stack.pop();
+    if (cur == null) continue;
     if (cur === newSource) return true;
     if (visited.has(cur)) continue;
     visited.add(cur);

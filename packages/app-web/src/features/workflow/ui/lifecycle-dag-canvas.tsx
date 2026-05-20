@@ -2,7 +2,7 @@
  * LifecycleDagCanvas —— 纯 DAG 画布（ReactFlow）的可复用封装。
  *
  * 受控组件：
- * - 输入：steps / edges / entry_step_key + 可选 workflowDefs（供节点 label 渲染）
+ * - 输入：activities / transitions / entry_activity_key + 可选 workflowDefs（供节点 label 渲染）
  * - 输出：onStepsChange / onEdgesChange（整体替换），以及 onSelectStep
  * - 不读写 store；所有副作用（位置持久化、布局计算）仍由画布自身管理
  */
@@ -29,8 +29,8 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import type {
-  LifecycleEdge,
-  LifecycleStepDefinition,
+  ActivityDefinition,
+  ActivityTransition,
   WorkflowDefinition,
 } from "../../../types";
 import { DagNode, type DagNodeData } from "./dag-node";
@@ -64,19 +64,21 @@ function savePositions(lifecycleKey: string, positions: Record<string, { x: numb
 // ─── 数据转换：domain ↔ ReactFlow ───
 
 function stepsToNodes(
-  steps: LifecycleStepDefinition[],
+  steps: ActivityDefinition[],
   entryStepKey: string,
   workflowDefs: WorkflowDefinition[],
   positions: Record<string, { x: number; y: number }>,
 ): Node<DagNodeData>[] {
   const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
   return steps.map((step, idx) => {
-    const wf = step.workflow_key ? wfMap.get(step.workflow_key) : null;
+    const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key : null;
+    const wf = workflowKey ? wfMap.get(workflowKey) : null;
     const data: DagNodeData = {
       stepKey: step.key,
       description: step.description,
-      nodeType: step.node_type ?? "agent_node",
-      workflowKey: step.workflow_key ?? null,
+      executorKind: step.executor.kind,
+      sessionPolicy: step.executor.kind === "agent" ? step.executor.session_policy : null,
+      workflowKey,
       workflowName: wf?.name ?? null,
       inputPorts: step.input_ports,
       outputPorts: step.output_ports,
@@ -91,23 +93,25 @@ function stepsToNodes(
   });
 }
 
-function lifecycleEdgeId(e: LifecycleEdge): string {
+function lifecycleEdgeId(e: ActivityTransition): string {
+  const binding = e.artifact_bindings[0];
   return e.kind === "flow"
-    ? `flow:${e.from_node}->${e.to_node}`
-    : `${e.from_node}:${e.from_port ?? ""}--${e.to_node}:${e.to_port ?? ""}`;
+    ? `flow:${e.from}->${e.to}:${e.condition.kind}`
+    : `${e.from}:${binding?.from_port ?? ""}--${e.to}:${binding?.to_port ?? ""}:${e.condition.kind}`;
 }
 
-function lifecycleEdgesToRfEdges(edges: LifecycleEdge[]): Edge[] {
+function lifecycleEdgesToRfEdges(edges: ActivityTransition[]): Edge[] {
   return edges.map((e) => {
     const isFlow = e.kind === "flow";
+    const binding = e.artifact_bindings[0];
     return {
       id: lifecycleEdgeId(e),
-      source: e.from_node,
-      sourceHandle: isFlow ? undefined : e.from_port ?? undefined,
-      target: e.to_node,
-      targetHandle: isFlow ? undefined : e.to_port ?? undefined,
+      source: e.from,
+      sourceHandle: isFlow ? undefined : binding?.from_port ?? undefined,
+      target: e.to,
+      targetHandle: isFlow ? undefined : binding?.to_port ?? undefined,
       markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-      label: isFlow ? undefined : `${e.from_port ?? ""} → ${e.to_port ?? ""}`,
+      label: isFlow ? conditionLabel(e.condition) : `${binding?.from_port ?? ""} → ${binding?.to_port ?? ""}`,
       labelStyle: { fontSize: 10, fill: "hsl(var(--muted-foreground))" },
       style: isFlow
         ? { stroke: "hsl(var(--primary))", strokeWidth: 2 }
@@ -116,19 +120,41 @@ function lifecycleEdgesToRfEdges(edges: LifecycleEdge[]): Edge[] {
   });
 }
 
-function rfEdgesToLifecycleEdges(rfEdges: Edge[]): LifecycleEdge[] {
+function rfEdgesToLifecycleEdges(rfEdges: Edge[]): ActivityTransition[] {
   return rfEdges.map((e) => {
     if (e.sourceHandle && e.targetHandle) {
       return {
         kind: "artifact" as const,
-        from_node: e.source,
-        from_port: e.sourceHandle,
-        to_node: e.target,
-        to_port: e.targetHandle,
+        from: e.source,
+        to: e.target,
+        condition: { kind: "always" as const },
+        artifact_bindings: [{
+          from_activity: e.source,
+          from_port: e.sourceHandle,
+          to_port: e.targetHandle,
+          alias: "latest" as const,
+        }],
       };
     }
-    return { kind: "flow" as const, from_node: e.source, to_node: e.target };
+    return {
+      kind: "flow" as const,
+      from: e.source,
+      to: e.target,
+      condition: { kind: "always" as const },
+      artifact_bindings: [],
+    };
   });
+}
+
+function conditionLabel(condition: ActivityTransition["condition"]): string | undefined {
+  if (condition.kind === "always") return undefined;
+  if (condition.kind === "human_decision_equals") {
+    return `${condition.decision_port} = ${condition.value}`;
+  }
+  if (condition.kind === "artifact_field_equals") {
+    return `${condition.port}.${condition.path} = ${String(condition.value)}`;
+  }
+  return `${condition.signal_key} = ${String(condition.value)}`;
 }
 
 // ─── Props ───
@@ -136,14 +162,14 @@ function rfEdgesToLifecycleEdges(rfEdges: Edge[]): LifecycleEdge[] {
 export interface LifecycleDagCanvasProps {
   /** 用作 position localStorage 桶的 key；建议用 lifecycle_key，新建用 "__new__"。 */
   storageKey: string;
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
-  entryStepKey: string;
+  activities: ActivityDefinition[];
+  transitions: ActivityTransition[];
+  entryActivityKey: string;
   workflowDefs: WorkflowDefinition[];
   selectedStepKey: string | null;
   onSelectStep: (stepKey: string | null) => void;
-  onStepsChange: (next: LifecycleStepDefinition[]) => void;
-  onEdgesChange: (next: LifecycleEdge[]) => void;
+  onStepsChange: (next: ActivityDefinition[]) => void;
+  onEdgesChange: (next: ActivityTransition[]) => void;
   /** 顶部工具栏插槽（校验/保存按钮等）。 */
   toolbarExtras?: React.ReactNode;
   /** 右上状态插槽。 */
@@ -158,9 +184,9 @@ export interface LifecycleDagCanvasProps {
 
 function LifecycleDagCanvasInner({
   storageKey,
-  steps,
-  edges,
-  entryStepKey,
+  activities,
+  transitions,
+  entryActivityKey,
   workflowDefs,
   selectedStepKey,
   onSelectStep,
@@ -178,45 +204,48 @@ function LifecycleDagCanvasInner({
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
   // ── 从 props 同步到 RF state ──
-  const lastStepsRef = useRef<LifecycleStepDefinition[] | undefined>(undefined);
-  const lastEdgesRef = useRef<LifecycleEdge[] | undefined>(undefined);
+  const lastStepsRef = useRef<ActivityDefinition[] | undefined>(undefined);
+  const lastEdgesRef = useRef<ActivityTransition[] | undefined>(undefined);
   useEffect(() => {
-    const stepsChanged = lastStepsRef.current !== steps;
-    const edgesChanged = lastEdgesRef.current !== edges;
-    lastStepsRef.current = steps;
-    lastEdgesRef.current = edges;
+    const stepsChanged = lastStepsRef.current !== activities;
+    const edgesChanged = lastEdgesRef.current !== transitions;
+    lastStepsRef.current = activities;
+    lastEdgesRef.current = transitions;
 
     if (stepsChanged || edgesChanged) {
-      setNodes(stepsToNodes(steps, entryStepKey, workflowDefs, positions.current));
-      setRfEdges(lifecycleEdgesToRfEdges(edges));
+      setNodes(stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current));
+      setRfEdges(lifecycleEdgesToRfEdges(transitions));
     } else {
-      // 仅 workflowDefs / entry_step_key 变化 → 就地 patch
+      // 仅 workflowDefs / entry_activity_key 变化 → 就地 patch
       const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
-      const stepKeys = new Set(steps.map((s) => s.key));
+      const stepKeys = new Set(activities.map((s) => s.key));
       setNodes((nds: Node<DagNodeData>[]) =>
         nds
           .filter((node) => stepKeys.has(node.id))
           .map((node) => {
-            const step = steps.find((s) => s.key === node.id)!;
-            const wf = step.workflow_key ? wfMap.get(step.workflow_key) ?? null : null;
+            const step = activities.find((s) => s.key === node.id);
+            if (!step) return node;
+            const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key : null;
+            const wf = workflowKey ? wfMap.get(workflowKey) ?? null : null;
             return {
               ...node,
               data: {
                 ...node.data,
                 stepKey: step.key,
                 description: step.description,
-                nodeType: step.node_type ?? "agent_node",
-                workflowKey: step.workflow_key ?? null,
+                executorKind: step.executor.kind,
+                sessionPolicy: step.executor.kind === "agent" ? step.executor.session_policy : null,
+                workflowKey,
                 workflowName: wf?.name ?? null,
                 outputPorts: step.output_ports,
                 inputPorts: step.input_ports,
-                isEntryNode: step.key === entryStepKey,
+                isEntryNode: step.key === entryActivityKey,
               },
             };
           }),
       );
     }
-  }, [steps, edges, entryStepKey, workflowDefs, setNodes, setRfEdges]);
+  }, [activities, transitions, entryActivityKey, workflowDefs, setNodes, setRfEdges]);
 
   const handleNodesChangeWrapped = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
@@ -246,13 +275,13 @@ function LifecycleDagCanvasInner({
   const handleDelete = useCallback(
     ({ nodes: deletedNodes, edges: deletedEdges }: { nodes: Node[]; edges: Edge[] }) => {
       const deletedNodeKeys = new Set(deletedNodes.map((n) => n.id));
-      let newSteps = steps;
-      let newEdges = edges;
+      let newSteps = activities;
+      let newEdges = transitions;
 
       if (deletedNodeKeys.size > 0) {
-        newSteps = steps.filter((s) => !deletedNodeKeys.has(s.key));
+        newSteps = activities.filter((s) => !deletedNodeKeys.has(s.key));
         newEdges = newEdges.filter(
-          (e) => !deletedNodeKeys.has(e.from_node) && !deletedNodeKeys.has(e.to_node),
+          (e) => !deletedNodeKeys.has(e.from) && !deletedNodeKeys.has(e.to),
         );
         if (selectedStepKey != null && deletedNodeKeys.has(selectedStepKey)) {
           onSelectStep(null);
@@ -264,10 +293,10 @@ function LifecycleDagCanvasInner({
         newEdges = newEdges.filter((e) => !deletedEdgeIds.has(lifecycleEdgeId(e)));
       }
 
-      if (newSteps !== steps) onStepsChange(newSteps);
-      if (newEdges !== edges) onEdgesChange(newEdges);
+      if (newSteps !== activities) onStepsChange(newSteps);
+      if (newEdges !== transitions) onEdgesChange(newEdges);
     },
-    [steps, edges, selectedStepKey, onSelectStep, onStepsChange, onEdgesChange],
+    [activities, transitions, selectedStepKey, onSelectStep, onStepsChange, onEdgesChange],
   );
 
   // ── Connect：新边 ──
@@ -275,7 +304,7 @@ function LifecycleDagCanvasInner({
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
       if (connection.source === connection.target) return;
-      if (wouldCreateCycle(edges, connection.source, connection.target)) return;
+      if (wouldCreateCycle(transitions, connection.source, connection.target)) return;
 
       const hasSourcePort = !!connection.sourceHandle && connection.sourceHandle !== "__default_out";
       const hasTargetPort = !!connection.targetHandle && connection.targetHandle !== "__default_in";
@@ -284,11 +313,11 @@ function LifecycleDagCanvasInner({
       if (isArtifactConnect) {
         if (
           connection.targetHandle &&
-          edges.some(
+          transitions.some(
             (e) =>
               e.kind === "artifact" &&
-              e.to_node === connection.target &&
-              e.to_port === connection.targetHandle,
+              e.to === connection.target &&
+              e.artifact_bindings.some((binding) => binding.to_port === connection.targetHandle),
           )
         ) {
           return;
@@ -296,14 +325,14 @@ function LifecycleDagCanvasInner({
         const fromPort = connection.sourceHandle ?? "__default_out";
         let toPort = connection.targetHandle ?? "__default_in";
 
-        let newSteps = steps;
+        let newSteps = activities;
         if (toPort === "__default_in" && fromPort !== "__default_out") {
-          const targetIdx = steps.findIndex((s) => s.key === connection.target);
+          const targetIdx = activities.findIndex((s) => s.key === connection.target);
           if (targetIdx >= 0) {
-            const targetStep = steps[targetIdx];
+            const targetStep = activities[targetIdx];
             const has = targetStep.input_ports.some((p) => p.key === fromPort);
             if (!has) {
-              newSteps = steps.map((s, i) =>
+              newSteps = activities.map((s, i) =>
                 i === targetIdx
                   ? {
                       ...s,
@@ -319,38 +348,45 @@ function LifecycleDagCanvasInner({
           }
         }
 
-        const newEdge: LifecycleEdge = {
+        const newEdge: ActivityTransition = {
           kind: "artifact",
-          from_node: connection.source,
-          from_port: fromPort,
-          to_node: connection.target,
-          to_port: toPort,
+          from: connection.source,
+          to: connection.target,
+          condition: { kind: "always" },
+          artifact_bindings: [{
+            from_activity: connection.source,
+            from_port: fromPort,
+            to_port: toPort,
+            alias: "latest",
+          }],
         };
-        const nextEdges = [...edges, newEdge];
+        const nextEdges = [...transitions, newEdge];
         const synced = syncLifecycleStepPortsForArtifactEdges({
           steps: newSteps,
           edges: nextEdges,
           workflows: workflowDefs,
         });
-        if (synced.changed || newSteps !== steps) onStepsChange(synced.steps);
+        if (synced.changed || newSteps !== activities) onStepsChange(synced.steps);
         onEdgesChange(nextEdges);
       } else {
-        const existsFlow = edges.some(
+        const existsFlow = transitions.some(
           (e) =>
             e.kind === "flow" &&
-            e.from_node === connection.source &&
-            e.to_node === connection.target,
+            e.from === connection.source &&
+            e.to === connection.target,
         );
         if (existsFlow) return;
-        const newEdge: LifecycleEdge = {
+        const newEdge: ActivityTransition = {
           kind: "flow",
-          from_node: connection.source,
-          to_node: connection.target,
+          from: connection.source,
+          to: connection.target,
+          condition: { kind: "always" },
+          artifact_bindings: [],
         };
-        onEdgesChange([...edges, newEdge]);
+        onEdgesChange([...transitions, newEdge]);
       }
     },
-    [edges, steps, workflowDefs, onStepsChange, onEdgesChange],
+    [transitions, activities, workflowDefs, onStepsChange, onEdgesChange],
   );
 
   const handleNodeClick: NodeMouseHandler = useCallback(
@@ -365,8 +401,8 @@ function LifecycleDagCanvasInner({
   }, [onSelectStep]);
 
   const handleAutoLayout = useCallback(() => {
-    const freshNodes = stepsToNodes(steps, entryStepKey, workflowDefs, positions.current);
-    const freshEdges = lifecycleEdgesToRfEdges(edges);
+    const freshNodes = stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current);
+    const freshEdges = lifecycleEdgesToRfEdges(transitions);
     const laid = applyDagreLayout(freshNodes, freshEdges);
     setNodes(laid);
     const pos: Record<string, { x: number; y: number }> = {};
@@ -374,25 +410,25 @@ function LifecycleDagCanvasInner({
     positions.current = pos;
     savePositions(storageKey, pos);
     requestAnimationFrame(() => reactFlowInstance.fitView({ padding: 0.2 }));
-  }, [steps, edges, entryStepKey, workflowDefs, setNodes, reactFlowInstance, storageKey]);
+  }, [activities, transitions, entryActivityKey, workflowDefs, setNodes, reactFlowInstance, storageKey]);
 
   const handleAutoWire = useCallback(() => {
-    const nodeIds = steps.map((s) => s.key);
+    const nodeIds = activities.map((s) => s.key);
     const getFirstOutputPort = (nodeId: string): string | null => {
-      const step = steps.find((s) => s.key === nodeId);
+      const step = activities.find((s) => s.key === nodeId);
       if (!step) return null;
       if (step.output_ports.length > 0 && step.output_ports[0].key) return step.output_ports[0].key;
       return "__default_out";
     };
     const getFirstInputPort = (nodeId: string): string | null => {
-      const step = steps.find((s) => s.key === nodeId);
+      const step = activities.find((s) => s.key === nodeId);
       if (!step) return null;
       if (step.input_ports.length > 0 && step.input_ports[0].key) return step.input_ports[0].key;
       return "__default_in";
     };
     const linearEdges = generateLinearEdges(nodeIds, getFirstOutputPort, getFirstInputPort);
     onEdgesChange(rfEdgesToLifecycleEdges(linearEdges));
-  }, [steps, onEdgesChange]);
+  }, [activities, onEdgesChange]);
 
   // ── 首次挂载自动 layout（所有节点 ≈ (0,0)）──
   const hasAutoLayouted = useRef(false);

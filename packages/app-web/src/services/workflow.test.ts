@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mapLifecycleDefinition, mapWorkflowDefinition } from "./workflow";
+import { mapActivityLifecycleDefinition, mapWorkflowDefinition } from "./workflow";
 
 describe("workflow service mappers", () => {
   it("preserves backend capability_config tool directives", () => {
@@ -39,8 +39,8 @@ describe("workflow service mappers", () => {
     ]);
   });
 
-  it("preserves lifecycle step capability_config during mapping", () => {
-    const definition = mapLifecycleDefinition({
+  it("preserves activity lifecycle agent executor and ports during mapping", () => {
+    const definition = mapActivityLifecycleDefinition({
       id: "lc-1",
       project_id: "project-1",
       key: "builtin_workflow_admin",
@@ -49,13 +49,16 @@ describe("workflow service mappers", () => {
       binding_kinds: ["project"],
       source: "builtin_seed",
       version: 3,
-      entry_step_key: "plan",
-      steps: [
+      entry_activity_key: "plan",
+      activities: [
         {
           key: "plan",
           description: "Plan",
-          workflow_key: "builtin_workflow_admin_plan",
-          node_type: "agent_node",
+          executor: {
+            kind: "agent",
+            workflow_key: "builtin_workflow_admin_plan",
+            session_policy: "spawn_child",
+          },
           output_ports: [],
           input_ports: [
             {
@@ -67,28 +70,22 @@ describe("workflow service mappers", () => {
               },
             },
           ],
-          capability_config: {
-            tool_directives: [
-              { add: "workflow_management" },
-              { remove: "workflow_management::upsert_workflow_tool" },
-            ],
-            mount_directives: [{ op: "remove_mount", mount_id: "scratch" }],
-          },
+          completion_policy: { kind: "executor_terminal" },
+          iteration_policy: { max_attempts: 1, artifact_alias: "latest" },
+          join_policy: "all",
         },
       ],
-      edges: [],
+      transitions: [],
       created_at: "2026-05-07T00:00:00.000Z",
       updated_at: "2026-05-07T00:00:00.000Z",
     });
 
-    expect(definition.steps[0].capability_config).toEqual({
-      tool_directives: [
-        { add: "workflow_management" },
-        { remove: "workflow_management::upsert_workflow_tool" },
-      ],
-      mount_directives: [{ op: "remove_mount", mount_id: "scratch" }],
+    expect(definition.activities[0].executor).toEqual({
+      kind: "agent",
+      workflow_key: "builtin_workflow_admin_plan",
+      session_policy: "spawn_child",
     });
-    expect(definition.steps[0].input_ports[0].standalone_fulfillment).toEqual({
+    expect(definition.activities[0].input_ports[0].standalone_fulfillment).toEqual({
       optional: { default_value: "复用当前方案" },
     });
   });

@@ -1,23 +1,23 @@
 /**
  * LifecycleEditorShell —— 统一的 Workflow 资产编辑器入口。
  *
- * 按 step 规模自适应布局：
- *   - Form 模式：steps.length === 1 && edges.length === 0 && !sticky_dag
- *     - 头部 Lifecycle 基础信息 + 单 step 的所有 contract panel 平铺
+ * 按 activity 规模自适应布局：
+ *   - Form 模式：activities.length === 1 && transitions.length === 0 && !sticky_dag
+ *     - 头部 Lifecycle 基础信息 + 单 activity 的所有 contract panel 平铺
  *   - DAG 模式：进入后永不回退（sticky_dag = true）
  *     - 左侧 DAG 画布；右侧选中 step 的 inline inspector（不再开抽屉）
  *
  * sticky_dag 粘性：使用 localStorage 记忆；首次从 Form 升 DAG 后置 true，
  * 之后即便删回 1 step 也保持 DAG。
  *
- * 保存语义：单 save → 内部先 upsert 每 step 的 workflow，再 upsert lifecycle。
+ * 保存语义：单 save → 内部先 upsert 每个 Agent activity 的 workflow，再 upsert lifecycle。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
-  LifecycleEdge,
-  LifecycleStepDefinition,
+  ActivityDefinition,
+  ActivityTransition,
   WorkflowDefinition,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -142,8 +142,8 @@ export function LifecycleEditorShell({
   // ── 模式判定 ──
   const mode: "form" | "dag" = useMemo(() => {
     if (!draft) return "form";
-    const stepCount = draft.steps.length;
-    const edgeCount = draft.edges.length;
+    const stepCount = draft.activities.length;
+    const edgeCount = draft.transitions.length;
     if (stickyDag) return "dag";
     if (stepCount <= 1 && edgeCount === 0) return "form";
     return "dag";
@@ -270,21 +270,21 @@ export function LifecycleEditorShell({
           isNew={isNew}
           availableWorkflows={availableWorkflows}
           workflowDraft={
-            draft.steps[0] ? workflowDraftsByStepKey[draft.steps[0].key] ?? null : null
+            draft.activities[0] ? workflowDraftsByStepKey[draft.activities[0].key] ?? null : null
           }
           hookPresets={hookPresets}
           validation={validation}
           onLifecycleChange={updateLifecycleEditorDraft}
           onStepChange={(patch) => {
-            const firstKey = draft.steps[0]?.key;
+            const firstKey = draft.activities[0]?.key;
             if (firstKey) updateLifecycleEditorStep(firstKey, patch);
           }}
           onWorkflowChange={(patch) => {
-            const firstKey = draft.steps[0]?.key;
+            const firstKey = draft.activities[0]?.key;
             if (firstKey) updateStepWorkflowDraft(firstKey, patch);
           }}
           onCloneFromWorkflow={(wf) => {
-            const firstKey = draft.steps[0]?.key;
+            const firstKey = draft.activities[0]?.key;
             if (firstKey) cloneWorkflowIntoStep(firstKey, wf);
           }}
           onAddStep={() => {
@@ -325,7 +325,7 @@ function FormLayout(props: {
   hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
   validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
   onLifecycleChange: (patch: Partial<typeof props.draft>) => void;
-  onStepChange: (patch: Partial<LifecycleStepDefinition>) => void;
+  onStepChange: (patch: Partial<ActivityDefinition>) => void;
   onWorkflowChange: (patch: Partial<NonNullable<typeof props.workflowDraft>>) => void;
   onCloneFromWorkflow: (wf: WorkflowDefinition) => void;
   onAddStep: () => void;
@@ -344,7 +344,7 @@ function FormLayout(props: {
     onAddStep,
   } = props;
 
-  const step = draft.steps[0];
+  const step = draft.activities[0];
   if (!step || !workflowDraft) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -422,7 +422,7 @@ function DagLayout(props: {
   validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
   onLifecycleChange: (patch: Partial<typeof props.draft>) => void;
   onSelectStep: (stepKey: string | null) => void;
-  onStepChange: (stepKey: string, patch: Partial<LifecycleStepDefinition>) => void;
+  onStepChange: (stepKey: string, patch: Partial<ActivityDefinition>) => void;
   onWorkflowChange: (
     stepKey: string,
     patch: Partial<
@@ -452,20 +452,20 @@ function DagLayout(props: {
   } = props;
 
   const selectedStep =
-    selectedStepKey ? draft.steps.find((s) => s.key === selectedStepKey) ?? null : null;
+    selectedStepKey ? draft.activities.find((s) => s.key === selectedStepKey) ?? null : null;
   const selectedWorkflowDraft =
     selectedStepKey ? workflowDraftsByStepKey[selectedStepKey] ?? null : null;
 
   const handleStepsChange = useCallback(
-    (nextSteps: LifecycleStepDefinition[]) => {
-      onLifecycleChange({ steps: nextSteps });
+    (nextSteps: ActivityDefinition[]) => {
+      onLifecycleChange({ activities: nextSteps });
     },
     [onLifecycleChange],
   );
 
   const handleEdgesChange = useCallback(
-    (nextEdges: LifecycleEdge[]) => {
-      onLifecycleChange({ edges: nextEdges });
+    (nextEdges: ActivityTransition[]) => {
+      onLifecycleChange({ transitions: nextEdges });
     },
     [onLifecycleChange],
   );
@@ -476,9 +476,9 @@ function DagLayout(props: {
       <div className="relative flex-1">
         <LifecycleDagCanvas
           storageKey={draft.key || "__new__"}
-          steps={draft.steps}
-          edges={draft.edges}
-          entryStepKey={draft.entry_step_key}
+          activities={draft.activities}
+          transitions={draft.transitions}
+          entryActivityKey={draft.entry_activity_key}
           workflowDefs={availableWorkflows}
           selectedStepKey={selectedStepKey}
           onSelectStep={onSelectStep}
@@ -498,21 +498,39 @@ function DagLayout(props: {
       {/* 右：Inspector / Lifecycle 配置 */}
       <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
         {selectedStep && selectedWorkflowDraft ? (
-          <StepInspector
-            step={selectedStep}
-            workflowDraft={selectedWorkflowDraft}
-            isEntry={selectedStep.key === draft.entry_step_key}
-            availableWorkflows={availableWorkflows}
-            hookPresets={hookPresets}
-            targetKinds={draft.target_kinds}
-            projectId={draft.project_id}
-            onStepChange={(patch) => onStepChange(selectedStep.key, patch)}
-            onWorkflowChange={(patch) => onWorkflowChange(selectedStep.key, patch)}
-            onSetEntry={() => onLifecycleChange({ entry_step_key: selectedStep.key })}
-            onRemove={() => onRemoveStep(selectedStep.key)}
-            onClose={() => onSelectStep(null)}
-            onCloneFromWorkflow={(wf) => onCloneFromWorkflow(selectedStep.key, wf)}
-          />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1">
+              <StepInspector
+                step={selectedStep}
+                workflowDraft={selectedWorkflowDraft}
+                isEntry={selectedStep.key === draft.entry_activity_key}
+                availableWorkflows={availableWorkflows}
+                hookPresets={hookPresets}
+                targetKinds={draft.target_kinds}
+                projectId={draft.project_id}
+                onStepChange={(patch) => onStepChange(selectedStep.key, patch)}
+                onWorkflowChange={(patch) => onWorkflowChange(selectedStep.key, patch)}
+                onSetEntry={() => onLifecycleChange({ entry_activity_key: selectedStep.key })}
+                onRemove={() => onRemoveStep(selectedStep.key)}
+                onClose={() => onSelectStep(null)}
+                onCloneFromWorkflow={(wf) => onCloneFromWorkflow(selectedStep.key, wf)}
+              />
+            </div>
+            <TransitionPanel
+              activityKey={selectedStep.key}
+              activityKeys={draft.activities.map((activity) => activity.key)}
+              transitions={draft.transitions.filter((transition) => transition.from === selectedStep.key)}
+              onChange={(updated) => {
+                onLifecycleChange({
+                  transitions: draft.transitions.map((transition) =>
+                    transition.from === selectedStep.key && transition.to === updated.to
+                      ? updated
+                      : transition,
+                  ),
+                });
+              }}
+            />
+          </div>
         ) : (
           <LifecycleHeader
             draft={draft}
@@ -522,6 +540,144 @@ function DagLayout(props: {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function TransitionPanel({
+  activityKey,
+  activityKeys,
+  transitions,
+  onChange,
+}: {
+  activityKey: string;
+  activityKeys: string[];
+  transitions: ActivityTransition[];
+  onChange: (transition: ActivityTransition) => void;
+}) {
+  return (
+    <section className="shrink-0 border-t border-border bg-secondary/20 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Transitions
+        </p>
+        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {transitions.length}
+        </span>
+      </div>
+      <div className="max-h-52 space-y-2 overflow-y-auto">
+        {transitions.length === 0 && (
+          <p className="rounded-[8px] border border-dashed border-border bg-background px-3 py-3 text-center text-xs text-muted-foreground">
+            选中连线后可在这里编辑条件
+          </p>
+        )}
+        {transitions.map((transition) => (
+          <TransitionEditor
+            key={`${transition.from}->${transition.to}`}
+            activityKey={activityKey}
+            activityKeys={activityKeys}
+            transition={transition}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function TransitionEditor({
+  activityKey,
+  activityKeys,
+  transition,
+  onChange,
+}: {
+  activityKey: string;
+  activityKeys: string[];
+  transition: ActivityTransition;
+  onChange: (transition: ActivityTransition) => void;
+}) {
+  const conditionKind = transition.condition.kind;
+  const humanCondition =
+    transition.condition.kind === "human_decision_equals"
+      ? transition.condition
+      : null;
+  const setConditionKind = (kind: "always" | "human_decision_equals") => {
+    if (kind === "always") {
+      onChange({ ...transition, condition: { kind } });
+      return;
+    }
+    onChange({
+      ...transition,
+      condition: {
+        kind,
+        activity: activityKey,
+        decision_port: "decision",
+        value: "approved",
+      },
+    });
+  };
+
+  return (
+    <div className="rounded-[8px] border border-border bg-background p-2.5">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-[11px] text-foreground">
+          {transition.from} → {transition.to}
+        </span>
+        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {transition.kind}
+        </span>
+      </div>
+      <label className="agentdash-form-label">Condition</label>
+      <select
+        value={conditionKind === "human_decision_equals" ? "human_decision_equals" : "always"}
+        onChange={(event) => setConditionKind(event.target.value as "always" | "human_decision_equals")}
+        className="agentdash-form-select"
+      >
+        <option value="always">Always</option>
+        <option value="human_decision_equals">Human Decision Equals</option>
+      </select>
+      {humanCondition && (
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          <select
+            value={humanCondition.activity}
+            onChange={(event) =>
+              onChange({
+                ...transition,
+                condition: { ...humanCondition, activity: event.target.value },
+              })
+            }
+            className="agentdash-form-select"
+          >
+            {activityKeys.map((key) => (
+              <option key={key} value={key}>{key}</option>
+            ))}
+          </select>
+          <input
+            value={humanCondition.decision_port}
+            onChange={(event) =>
+              onChange({
+                ...transition,
+                condition: { ...humanCondition, decision_port: event.target.value },
+              })
+            }
+            className="agentdash-form-input"
+            placeholder="decision"
+          />
+          <select
+            value={humanCondition.value}
+            onChange={(event) =>
+              onChange({
+                ...transition,
+                condition: { ...humanCondition, value: event.target.value },
+              })
+            }
+            className="agentdash-form-select"
+          >
+            <option value="approved">approved</option>
+            <option value="rejected">rejected</option>
+          </select>
+        </div>
+      )}
     </div>
   );
 }
@@ -614,14 +770,14 @@ function LifecycleHeader({
         <div>
           <label className="agentdash-form-label">入口节点</label>
           <input
-            value={draft.entry_step_key}
-            onChange={(e) => onChange({ entry_step_key: e.target.value })}
+            value={draft.entry_activity_key}
+            onChange={(e) => onChange({ entry_activity_key: e.target.value })}
             list="lifecycle-entry-step-opts-shell"
             className="agentdash-form-input"
             placeholder="start"
           />
           <datalist id="lifecycle-entry-step-opts-shell">
-            {draft.steps.filter((s) => s.key).map((s) => (
+            {draft.activities.filter((s) => s.key).map((s) => (
               <option key={s.key} value={s.key} />
             ))}
           </datalist>

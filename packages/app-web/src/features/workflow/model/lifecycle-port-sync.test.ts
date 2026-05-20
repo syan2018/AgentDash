@@ -4,7 +4,7 @@ import {
   mergeWorkflowPortsIntoLifecycleStep,
   syncLifecycleStepPortsForArtifactEdges,
 } from "./lifecycle-port-sync";
-import type { LifecycleStepDefinition, WorkflowDefinition } from "../../../types";
+import type { ActivityDefinition, ActivityTransition, WorkflowDefinition } from "../../../types";
 
 function workflow(key: string, ports: {
   output?: string[];
@@ -39,14 +39,31 @@ function workflow(key: string, ports: {
   };
 }
 
-function step(key: string, workflow_key: string): LifecycleStepDefinition {
+function step(key: string, workflow_key: string): ActivityDefinition {
   return {
     key,
     description: "",
-    workflow_key,
-    node_type: "agent_node",
+    executor: { kind: "agent", workflow_key, session_policy: "spawn_child" },
     output_ports: [],
     input_ports: [],
+    completion_policy: { kind: "executor_terminal" },
+    iteration_policy: { max_attempts: 1, artifact_alias: "latest" },
+    join_policy: "all",
+  };
+}
+
+function artifactTransition(from: string, fromPort: string, to: string, toPort: string): ActivityTransition {
+  return {
+    kind: "artifact",
+    from,
+    to,
+    condition: { kind: "always" },
+    artifact_bindings: [{
+      from_activity: from,
+      from_port: fromPort,
+      to_port: toPort,
+      alias: "latest",
+    }],
   };
 }
 
@@ -59,13 +76,7 @@ describe("lifecycle port sync", () => {
         workflow("implement_wf", { input: ["research_input"] }),
       ],
       edges: [
-        {
-          kind: "artifact",
-          from_node: "research",
-          from_port: "research_report",
-          to_node: "implement",
-          to_port: "research_input",
-        },
+        artifactTransition("research", "research_report", "implement", "research_input"),
       ],
     });
 
@@ -83,13 +94,7 @@ describe("lifecycle port sync", () => {
       steps: [step("research", ""), step("implement", "")],
       workflows: [],
       edges: [
-        {
-          kind: "artifact",
-          from_node: "research",
-          from_port: "research_report",
-          to_node: "implement",
-          to_port: "research_input",
-        },
+        artifactTransition("research", "research_report", "implement", "research_input"),
       ],
     });
 

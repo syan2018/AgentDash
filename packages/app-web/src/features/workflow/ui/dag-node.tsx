@@ -1,12 +1,13 @@
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 
-import type { InputPortDefinition, OutputPortDefinition, LifecycleNodeType } from "../../../types";
+import type { AgentSessionPolicy, InputPortDefinition, OutputPortDefinition } from "../../../types";
 
 export interface DagNodeData {
   stepKey: string;
   description: string;
-  nodeType: LifecycleNodeType;
+  executorKind: "agent" | "function" | "human";
+  sessionPolicy: AgentSessionPolicy | null;
   workflowKey: string | null;
   workflowName: string | null;
   inputPorts: InputPortDefinition[];
@@ -17,14 +18,16 @@ export interface DagNodeData {
   [key: string]: unknown;
 }
 
-const NODE_TYPE_LABEL: Record<LifecycleNodeType, string> = {
-  agent_node: "Agent",
-  phase_node: "Phase",
+const NODE_TYPE_LABEL: Record<DagNodeData["executorKind"], string> = {
+  agent: "Agent",
+  function: "Function",
+  human: "Human",
 };
 
-const NODE_TYPE_COLOR: Record<LifecycleNodeType, string> = {
-  agent_node: "bg-primary/10 text-primary border-primary/30",
-  phase_node: "bg-warning/10 text-warning border-warning/40",
+const NODE_TYPE_COLOR: Record<DagNodeData["executorKind"], string> = {
+  agent: "bg-primary/10 text-primary border-primary/30",
+  function: "bg-info/10 text-info border-info/30",
+  human: "bg-warning/10 text-warning border-warning/40",
 };
 
 const RUNTIME_STATUS_RING: Record<string, string> = {
@@ -43,7 +46,7 @@ const HANDLE_SIZE = 10;
  */
 export function DagNode({ data, selected }: NodeProps) {
   const d = data as DagNodeData;
-  const nodeType = d.nodeType ?? "agent_node";
+  const nodeType = d.executorKind ?? "agent";
   const runtimeRing = d.runtimeStatus ? RUNTIME_STATUS_RING[d.runtimeStatus] ?? "" : "";
 
   return (
@@ -114,6 +117,10 @@ export function DagNode({ data, selected }: NodeProps) {
           <p className="truncate text-xs text-muted-foreground">
             <span className="text-foreground/70">{d.workflowName}</span>
           </p>
+        ) : d.executorKind === "human" ? (
+          <p className="text-xs text-muted-foreground/70">Human approval</p>
+        ) : d.executorKind === "function" ? (
+          <p className="text-xs text-muted-foreground/70">Function executor</p>
         ) : (
           <p className="text-xs italic text-muted-foreground/60">未绑定 workflow</p>
         )}

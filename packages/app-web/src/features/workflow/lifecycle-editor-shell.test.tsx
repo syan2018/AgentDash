@@ -51,10 +51,11 @@ describe("LifecycleEditorShell store integration", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    expect(draft?.steps).toHaveLength(1);
-    expect(draft?.edges).toHaveLength(0);
+    if (!draft) throw new Error("draft should be initialized");
+    expect(draft.activities).toHaveLength(1);
+    expect(draft.transitions).toHaveLength(0);
     expect(
-      judgeMode({ stepCount: draft!.steps.length, edgeCount: draft!.edges.length, stickyDag: false }),
+      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: false }),
     ).toBe("form");
   });
 
@@ -63,22 +64,25 @@ describe("LifecycleEditorShell store integration", () => {
     store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
     store.addLifecycleEditorStep();
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    expect(draft?.steps).toHaveLength(2);
+    if (!draft) throw new Error("draft should be initialized");
+    expect(draft.activities).toHaveLength(2);
     expect(
-      judgeMode({ stepCount: draft!.steps.length, edgeCount: draft!.edges.length, stickyDag: false }),
+      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: false }),
     ).toBe("dag");
   });
 
   it("2 steps 删回 1 step + stickyDag=true → 画布保留（DAG）", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
-    const second = store.addLifecycleEditorStep()!;
+    const second = store.addLifecycleEditorStep();
+    if (!second) throw new Error("second activity should be created");
     // 假设 sticky 已被 shell 设为 true
     store.removeLifecycleEditorStep(second);
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    expect(draft?.steps).toHaveLength(1);
+    if (!draft) throw new Error("draft should be initialized");
+    expect(draft.activities).toHaveLength(1);
     expect(
-      judgeMode({ stepCount: draft!.steps.length, edgeCount: draft!.edges.length, stickyDag: true }),
+      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: true }),
     ).toBe("dag");
   });
 });

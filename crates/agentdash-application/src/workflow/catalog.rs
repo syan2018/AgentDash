@@ -723,10 +723,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl ActivityLifecycleDefinitionRepository for TestActivityLifecycleDefinitionRepo {
-        async fn create(
-            &self,
-            lifecycle: &ActivityLifecycleDefinition,
-        ) -> Result<(), DomainError> {
+        async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
             self.items
                 .lock()
                 .expect("activity lifecycle repo lock")
@@ -775,10 +772,7 @@ mod tests {
                 .collect())
         }
 
-        async fn update(
-            &self,
-            lifecycle: &ActivityLifecycleDefinition,
-        ) -> Result<(), DomainError> {
+        async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
             self.items
                 .lock()
                 .expect("activity lifecycle repo lock")
@@ -1146,7 +1140,10 @@ mod tests {
         let project_id = Uuid::new_v4();
         let workflow_repo = TestWorkflowDefinitionRepo::default();
         workflow_repo.seed(workflow_with_ports_in_project(
-            project_id, "wf_plan", &[], &[],
+            project_id,
+            "wf_plan",
+            &[],
+            &[],
         ));
         let activity_lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
         let service =

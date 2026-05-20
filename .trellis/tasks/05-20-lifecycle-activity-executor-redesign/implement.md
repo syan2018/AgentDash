@@ -140,37 +140,37 @@
 
 范围：
 
-- [ ] 新增 `ActivityEvent`。
-- [ ] 新增 `LifecycleEngine::apply_event(definition, run, event, artifacts)`。
+- [x] 新增 `ActivityEvent`。
+- [x] 新增 `LifecycleEngine::apply_event(definition, run, event, artifacts)`。
 - [ ] 实现 attempt 状态转移：
-  - [ ] `pending -> ready`
-  - [ ] `ready -> claiming`
-  - [ ] `claiming -> running`
-  - [ ] `running -> completed`
-  - [ ] `running -> failed`
-  - [ ] `completed -> new attempt ready`
+  - [x] `pending -> ready`
+  - [x] `ready -> claiming`
+  - [x] `claiming -> running`
+  - [x] `running -> completed`
+  - [x] `running -> failed`
+  - [x] `completed -> new attempt ready`
 - [ ] 实现 transition condition：
-  - [ ] `Always`
-  - [ ] `HumanDecisionEquals`
-  - [ ] `ArtifactFieldEquals`
-- [ ] 实现 All join。
-- [ ] 实现 latest/history artifact alias 计算，不直接写 inline file。
-- [ ] 实现 run status 派生。
+  - [x] `Always`
+  - [x] `HumanDecisionEquals`
+  - [x] `ArtifactFieldEquals`
+- [x] 实现 All join。
+- [x] 实现 latest/history artifact alias 计算，不直接写 inline file。
+- [x] 实现 run status 派生。
 
 验证：
 
-- [ ] Plan -> Approval rejected -> Plan #2。
-- [ ] Approval approved -> Implement ready。
-- [ ] output port 缺失不完成 attempt。
-- [ ] failed attempt 不隐式激活后继。
-- [ ] All join 等待全部依赖。
-- [ ] completed attempt 不会回到 ready。
-- [ ] `cargo test -p agentdash-application workflow::engine`
+- [x] Plan -> Approval rejected -> Plan #2。
+- [x] Approval approved -> Implement ready。
+- [x] output port 缺失不完成 attempt。
+- [x] failed attempt 不隐式激活后继。
+- [x] All join 等待全部依赖。
+- [x] completed attempt 不会回到 ready。
+- [x] `cargo test -p agentdash-application workflow::engine`
 
 出口标准：
 
-- [ ] Engine 不依赖 session service / repository / HTTP / local executor。
-- [ ] Engine 单测覆盖核心 case。
+- [x] Engine 不依赖 session service / repository / HTTP / local executor。
+- [x] Engine 单测覆盖核心 case。
 
 ## Phase 5：Durable ExecutorScheduler
 

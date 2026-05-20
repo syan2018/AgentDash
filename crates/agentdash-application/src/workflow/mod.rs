@@ -1,6 +1,7 @@
 mod catalog;
 mod completion;
 mod definition;
+pub mod engine;
 mod error;
 pub mod execution_log;
 pub mod lifecycle;
@@ -18,6 +19,10 @@ pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,
     BuiltinWorkflowTemplateBundle, TRELLIS_DAG_TASK_TEMPLATE_KEY, build_builtin_workflow_bundle,
     get_builtin_workflow_template, list_builtin_workflow_templates,
+};
+pub use engine::{
+    ActivityEvent, ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact,
+    ActivityPortValue, ActivityRunStatus, LifecycleEngine, LifecycleEngineError,
 };
 pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, materialize_step_summary};

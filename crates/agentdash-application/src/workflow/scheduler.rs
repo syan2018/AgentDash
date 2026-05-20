@@ -13,6 +13,45 @@ pub struct ActivityExecutorScheduler<'a, R: ?Sized> {
     claim_repo: &'a R,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityExecutorStartError {
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl ActivityExecutorStartError {
+    pub fn retryable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: true,
+        }
+    }
+
+    pub fn terminal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityExecutorLaunchOutcome {
+    pub claim: ActivityExecutionClaim,
+    pub started: bool,
+    pub error: Option<String>,
+}
+
+#[async_trait::async_trait]
+pub trait ActivityExecutorLauncher: Send + Sync {
+    async fn start(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        state: &ActivityLifecycleRunState,
+        claim: &ActivityExecutionClaim,
+    ) -> Result<ExecutorRunRef, ActivityExecutorStartError>;
+}
+
 impl<'a, R: ?Sized> ActivityExecutorScheduler<'a, R>
 where
     R: ActivityExecutionClaimRepository,
@@ -68,6 +107,59 @@ where
         Ok(claims)
     }
 
+    pub async fn launch_ready_attempts<L>(
+        &self,
+        run_id: Uuid,
+        definition: &ActivityLifecycleDefinition,
+        state: &mut ActivityLifecycleRunState,
+        launcher: &L,
+    ) -> Result<Vec<ActivityExecutorLaunchOutcome>, WorkflowApplicationError>
+    where
+        L: ActivityExecutorLauncher,
+    {
+        let claims = self.claim_ready_attempts(run_id, definition, state).await?;
+        let mut outcomes = Vec::new();
+        for claim in claims {
+            if claim.status != ActivityExecutionClaimStatus::Claiming {
+                outcomes.push(ActivityExecutorLaunchOutcome {
+                    claim,
+                    started: false,
+                    error: None,
+                });
+                continue;
+            }
+            match launcher.start(definition, state, &claim).await {
+                Ok(executor_run_ref) => {
+                    let updated = self
+                        .record_executor_started(definition, state, &claim, executor_run_ref)
+                        .await?;
+                    outcomes.push(ActivityExecutorLaunchOutcome {
+                        claim: updated,
+                        started: true,
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    let updated = self
+                        .record_executor_start_failed(
+                            definition,
+                            state,
+                            &claim,
+                            error.message.clone(),
+                            error.retryable,
+                        )
+                        .await?;
+                    outcomes.push(ActivityExecutorLaunchOutcome {
+                        claim: updated,
+                        started: false,
+                        error: Some(error.message),
+                    });
+                }
+            }
+        }
+        Ok(outcomes)
+    }
+
     pub async fn record_executor_started(
         &self,
         definition: &ActivityLifecycleDefinition,
@@ -119,6 +211,16 @@ where
         .map_err(map_engine_error)?;
         Ok(updated)
     }
+
+    pub async fn abandon_claiming_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<ActivityExecutionClaim>, WorkflowApplicationError> {
+        self.claim_repo
+            .abandon_claiming_before(cutoff)
+            .await
+            .map_err(Into::into)
+    }
 }
 
 fn map_engine_error(error: LifecycleEngineError) -> WorkflowApplicationError {
@@ -161,6 +263,50 @@ mod tests {
     #[derive(Default)]
     struct InMemoryClaimRepo {
         claims: Mutex<Vec<ActivityExecutionClaim>>,
+    }
+
+    struct FakeLauncher {
+        result:
+            Mutex<Result<agentdash_domain::workflow::ExecutorRunRef, ActivityExecutorStartError>>,
+        starts: Mutex<u32>,
+    }
+
+    impl FakeLauncher {
+        fn started(session_id: &str) -> Self {
+            Self {
+                result: Mutex::new(Ok(
+                    agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                        session_id: session_id.to_string(),
+                    },
+                )),
+                starts: Mutex::new(0),
+            }
+        }
+
+        fn failed(error: ActivityExecutorStartError) -> Self {
+            Self {
+                result: Mutex::new(Err(error)),
+                starts: Mutex::new(0),
+            }
+        }
+
+        fn start_count(&self) -> u32 {
+            *self.starts.lock().expect("start count lock")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ActivityExecutorLauncher for FakeLauncher {
+        async fn start(
+            &self,
+            _definition: &ActivityLifecycleDefinition,
+            _state: &ActivityLifecycleRunState,
+            _claim: &ActivityExecutionClaim,
+        ) -> Result<agentdash_domain::workflow::ExecutorRunRef, ActivityExecutorStartError>
+        {
+            *self.starts.lock().expect("start count lock") += 1;
+            self.result.lock().expect("launcher result lock").clone()
+        }
     }
 
     #[async_trait::async_trait]
@@ -483,5 +629,87 @@ mod tests {
                 && attempt.attempt == 1
                 && attempt.status == ActivityAttemptStatus::Failed
         }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_launches_claimed_attempt_once() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let launcher = FakeLauncher::started("plan-child");
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+
+        let outcomes = scheduler
+            .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
+            .await
+            .expect("launch");
+        let second = scheduler
+            .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
+            .await
+            .expect("launch again");
+
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].started);
+        assert!(second.is_empty());
+        assert_eq!(launcher.start_count(), 1);
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Running
+        }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_launch_failure_does_not_leave_running_attempt() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let launcher =
+            FakeLauncher::failed(ActivityExecutorStartError::retryable("prompt not accepted"));
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+
+        let outcomes = scheduler
+            .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
+            .await
+            .expect("launch");
+
+        assert_eq!(outcomes.len(), 1);
+        assert!(!outcomes[0].started);
+        assert_eq!(outcomes[0].error.as_deref(), Some("prompt not accepted"));
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Ready
+        }));
+        assert!(
+            !state
+                .attempts
+                .iter()
+                .any(|attempt| attempt.status == ActivityAttemptStatus::Running)
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduler_abandons_stale_claiming_claims() {
+        let definition = definition();
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+
+        scheduler
+            .claim_ready_attempts(run_id, &definition, &mut state)
+            .await
+            .expect("claim");
+
+        let abandoned = scheduler
+            .abandon_claiming_before(chrono::Utc::now() + chrono::Duration::seconds(1))
+            .await
+            .expect("abandon");
+
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].status, ActivityExecutionClaimStatus::Abandoned);
     }
 }

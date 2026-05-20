@@ -45,7 +45,10 @@ pub use run::{
     LifecycleRunService, LifecycleStepProjector, RecordGateCollisionCommand,
     StartLifecycleRunCommand, build_step_projector_from_repos, select_active_run,
 };
-pub use scheduler::ActivityExecutorScheduler;
+pub use scheduler::{
+    ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
+    ActivityExecutorStartError,
+};
 pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label};
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,

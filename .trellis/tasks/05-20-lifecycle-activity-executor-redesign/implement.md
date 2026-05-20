@@ -183,7 +183,7 @@
 - [x] 新增 `ActivityExecutionClaimRepository`。
 - [x] 同一 `run_id + activity_key + attempt` 只允许一个 active claim。
 - [x] Scheduler 扫描 ready attempts，先写 claim。
-- [ ] Scheduler claim 后启动 executor。
+- [x] Scheduler claim 后启动 executor。
 - [ ] claim 状态：
   - [x] `claiming`
   - [x] `running`
@@ -197,9 +197,9 @@
 
 验证：
 
-- [ ] 并发 schedule 同一 ready attempt 只产生一个 executor start。
+- [x] 并发 schedule 同一 ready attempt 只产生一个 executor start。
 - [x] prompt 未 accepted 不会留下 running attempt。
-- [ ] claiming 超时后可恢复。
+- [x] claiming 超时后可恢复。
 - [x] `cargo test -p agentdash-application workflow::scheduler`
 - [x] `cargo test -p agentdash-infrastructure workflow_claim`
 

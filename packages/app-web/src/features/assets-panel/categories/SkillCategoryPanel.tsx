@@ -507,9 +507,9 @@ function SkillEditorDialog({
 
   if (mode === "edit" && skillRootPath) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-6" onClick={onClose}>
         <div
-          className="flex h-[88vh] w-[1120px] max-w-full flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
+          className="flex h-[90vh] w-[min(94vw,1680px)] flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
           <header className="flex items-center justify-between border-b border-border px-5 py-4">
@@ -540,9 +540,9 @@ function SkillEditorDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3 sm:p-6" onClick={onClose}>
       <div
-        className="flex max-h-[88vh] w-[920px] max-w-full flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
+        className="flex max-h-[90vh] w-[min(94vw,1200px)] flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-border px-5 py-4">

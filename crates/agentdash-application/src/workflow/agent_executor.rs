@@ -1,13 +1,18 @@
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
-    ActivityLifecycleDefinition, AgentSessionPolicy, ExecutorRunRef, HumanActivityExecutorSpec,
-    LifecycleNodeType, LifecycleStepDefinition,
+    ActivityLifecycleDefinition, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
+    FunctionActivityExecutorSpec, HumanActivityExecutorSpec, LifecycleNodeType,
+    LifecycleStepDefinition,
 };
 use agentdash_spi::AgentConfig;
+use serde_json::{Value, json};
+use tokio::process::Command;
 
 use super::ActivityLifecycleRunState;
-use super::scheduler::{ActivityExecutorLauncher, ActivityExecutorStartError};
+use super::scheduler::{
+    ActivityExecutorLauncher, ActivityExecutorStartError, ActivityExecutorStartResult,
+};
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
@@ -67,6 +72,22 @@ pub trait AgentActivitySessionPort: Send + Sync {
     ) -> Result<(), String> {
         Ok(())
     }
+    async fn execute_function_activity(
+        &self,
+        _definition: &ActivityLifecycleDefinition,
+        _activity: &ActivityDefinition,
+        _claim: &ActivityExecutionClaim,
+        _spec: &FunctionActivityExecutorSpec,
+        _state: &ActivityLifecycleRunState,
+    ) -> Result<FunctionExecutionResult, String> {
+        Err("Function executor port 未接入".to_string())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionExecutionResult {
+    pub executor_run: ExecutorRunRef,
+    pub completion_event: super::ActivityEvent,
 }
 
 #[derive(Clone)]
@@ -308,6 +329,17 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .await
         }
     }
+
+    async fn execute_function_activity(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        activity: &ActivityDefinition,
+        claim: &ActivityExecutionClaim,
+        spec: &FunctionActivityExecutorSpec,
+        state: &ActivityLifecycleRunState,
+    ) -> Result<FunctionExecutionResult, String> {
+        execute_function_activity(definition, activity, claim, spec, state).await
+    }
 }
 
 #[async_trait::async_trait]
@@ -320,7 +352,7 @@ where
         definition: &ActivityLifecycleDefinition,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
-    ) -> Result<ExecutorRunRef, ActivityExecutorStartError> {
+    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
         let Some(activity) = definition
             .activities
             .iter()
@@ -352,16 +384,14 @@ where
                     )))
                 }
             },
-            ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(_spec)) => {
-                Ok(ExecutorRunRef::HumanDecision {
+            ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(_spec)) => Ok(
+                ActivityExecutorStartResult::started(ExecutorRunRef::HumanDecision {
                     decision_id: human_decision_id(claim),
-                })
-            }
-            ActivityExecutorSpec::Function(_) => {
-                Err(ActivityExecutorStartError::terminal(format!(
-                    "activity `{}` 的 Function executor 尚未接入 Activity executor",
-                    activity.key
-                )))
+                }),
+            ),
+            ActivityExecutorSpec::Function(spec) => {
+                self.start_function(definition, activity, claim, spec, state)
+                    .await
             }
         }
     }
@@ -375,7 +405,7 @@ where
         &self,
         definition: &ActivityLifecycleDefinition,
         claim: &ActivityExecutionClaim,
-    ) -> Result<ExecutorRunRef, ActivityExecutorStartError> {
+    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
         let title = format!(
             "[{}] {}#{}",
             definition.key, claim.activity_key, claim.attempt
@@ -438,7 +468,9 @@ where
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
 
-        Ok(ExecutorRunRef::AgentSession { session_id })
+        Ok(ActivityExecutorStartResult::started(
+            ExecutorRunRef::AgentSession { session_id },
+        ))
     }
 
     async fn start_continue_root(
@@ -448,7 +480,7 @@ where
         workflow_key: &str,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
-    ) -> Result<ExecutorRunRef, ActivityExecutorStartError> {
+    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
         let has_running_continue_root = state.attempts.iter().any(|attempt| {
             attempt.status == ActivityAttemptStatus::Running
                 && attempt.activity_key != claim.activity_key
@@ -478,9 +510,30 @@ where
             )
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
-        Ok(ExecutorRunRef::AgentSession {
-            session_id: self.context.root_session_id.clone(),
-        })
+        Ok(ActivityExecutorStartResult::started(
+            ExecutorRunRef::AgentSession {
+                session_id: self.context.root_session_id.clone(),
+            },
+        ))
+    }
+
+    async fn start_function(
+        &self,
+        definition: &ActivityLifecycleDefinition,
+        activity: &ActivityDefinition,
+        claim: &ActivityExecutionClaim,
+        spec: &FunctionActivityExecutorSpec,
+        state: &ActivityLifecycleRunState,
+    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
+        let result = self
+            .port
+            .execute_function_activity(definition, activity, claim, spec, state)
+            .await
+            .map_err(ActivityExecutorStartError::terminal)?;
+        Ok(ActivityExecutorStartResult::with_events(
+            result.executor_run,
+            vec![result.completion_event],
+        ))
     }
 }
 
@@ -494,6 +547,252 @@ fn activity_as_step(activity: &ActivityDefinition, workflow_key: &str) -> Lifecy
         input_ports: activity.input_ports.clone(),
         capability_config: Default::default(),
     }
+}
+
+async fn execute_function_activity(
+    definition: &ActivityLifecycleDefinition,
+    activity: &ActivityDefinition,
+    claim: &ActivityExecutionClaim,
+    spec: &FunctionActivityExecutorSpec,
+    state: &ActivityLifecycleRunState,
+) -> Result<FunctionExecutionResult, String> {
+    let function_run_id = uuid::Uuid::new_v4().to_string();
+    let executor_run = ExecutorRunRef::FunctionRun {
+        run_id: function_run_id,
+    };
+    let context = function_template_context(definition, activity, claim, state);
+    let completion_event = match spec {
+        FunctionActivityExecutorSpec::ApiRequest(spec) => {
+            execute_api_request(activity, claim, spec, &context).await
+        }
+        FunctionActivityExecutorSpec::BashExec(spec) => {
+            execute_bash(activity, claim, spec, &context).await
+        }
+    };
+    Ok(FunctionExecutionResult {
+        executor_run,
+        completion_event,
+    })
+}
+
+async fn execute_api_request(
+    activity: &ActivityDefinition,
+    claim: &ActivityExecutionClaim,
+    spec: &agentdash_domain::workflow::ApiRequestExecutorSpec,
+    context: &Value,
+) -> super::ActivityEvent {
+    let method_text = match render_template(&spec.method, context) {
+        Ok(value) => value,
+        Err(error) => return function_failed(claim, error),
+    };
+    let method = match reqwest::Method::from_bytes(method_text.as_bytes()) {
+        Ok(method) => method,
+        Err(error) => return function_failed(claim, format!("API method 非法: {error}")),
+    };
+    let url = match render_template(&spec.url_template, context) {
+        Ok(value) => value,
+        Err(error) => return function_failed(claim, error),
+    };
+    let client = reqwest::Client::new();
+    let mut request = client.request(method, url);
+    if let Some(body_template) = &spec.body_template {
+        let body = match render_json_templates(body_template, context) {
+            Ok(value) => value,
+            Err(error) => return function_failed(claim, error),
+        };
+        request = request
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body.to_string());
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => return function_failed(claim, format!("API request 失败: {error}")),
+    };
+    let status = response.status();
+    let body_text = match response.text().await {
+        Ok(text) => text,
+        Err(error) => return function_failed(claim, format!("读取 API response 失败: {error}")),
+    };
+    let body_json = serde_json::from_str::<Value>(&body_text).ok();
+    let result = json!({
+        "status": status.as_u16(),
+        "body_text": body_text,
+        "body_json": body_json,
+    });
+    if status.is_success() {
+        function_completed(
+            activity,
+            claim,
+            result,
+            Some(format!("API request {}", status.as_u16())),
+        )
+    } else {
+        function_failed(
+            claim,
+            format!("API request 返回非成功状态: {}", status.as_u16()),
+        )
+    }
+}
+
+async fn execute_bash(
+    activity: &ActivityDefinition,
+    claim: &ActivityExecutionClaim,
+    spec: &agentdash_domain::workflow::BashExecExecutorSpec,
+    context: &Value,
+) -> super::ActivityEvent {
+    let command = match render_template(&spec.command, context) {
+        Ok(value) => value,
+        Err(error) => return function_failed(claim, error),
+    };
+    let args = match spec
+        .args
+        .iter()
+        .map(|arg| render_template(arg, context))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(value) => value,
+        Err(error) => return function_failed(claim, error),
+    };
+    let mut command_builder = Command::new(command);
+    command_builder.args(args);
+    if let Some(working_directory) = &spec.working_directory {
+        match render_template(working_directory, context) {
+            Ok(rendered) if !rendered.trim().is_empty() => {
+                command_builder.current_dir(rendered);
+            }
+            Ok(_) => {}
+            Err(error) => return function_failed(claim, error),
+        }
+    }
+    let output = match command_builder.output().await {
+        Ok(output) => output,
+        Err(error) => return function_failed(claim, format!("Bash exec 启动失败: {error}")),
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code();
+    let result = json!({
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+    });
+    if output.status.success() {
+        function_completed(
+            activity,
+            claim,
+            result,
+            Some("Bash exec completed".to_string()),
+        )
+    } else {
+        function_failed(
+            claim,
+            format!(
+                "Bash exec failed with exit_code={}",
+                exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            ),
+        )
+    }
+}
+
+fn function_template_context(
+    definition: &ActivityLifecycleDefinition,
+    activity: &ActivityDefinition,
+    claim: &ActivityExecutionClaim,
+    state: &ActivityLifecycleRunState,
+) -> Value {
+    let inputs = state
+        .inputs
+        .iter()
+        .filter(|input| input.activity_key == activity.key && input.attempt == claim.attempt)
+        .map(|input| (input.port_key.clone(), input.value.clone()))
+        .collect::<serde_json::Map<_, _>>();
+    let outputs = state
+        .outputs
+        .iter()
+        .map(|output| {
+            (
+                format!("{}.{}", output.activity_key, output.port_key),
+                output.value.clone(),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    json!({
+        "lifecycle": {
+            "id": definition.id,
+            "key": definition.key,
+        },
+        "activity": {
+            "key": activity.key,
+            "attempt": claim.attempt,
+        },
+        "run": {
+            "id": claim.run_id,
+        },
+        "inputs": inputs,
+        "outputs": outputs,
+    })
+}
+
+fn render_template(template: &str, context: &Value) -> Result<String, String> {
+    let context = tera::Context::from_serialize(context)
+        .map_err(|error| format!("Function template context 非法: {error}"))?;
+    tera::Tera::one_off(template, &context, false)
+        .map_err(|error| format!("Function template 渲染失败: {error}"))
+}
+
+fn render_json_templates(value: &Value, context: &Value) -> Result<Value, String> {
+    match value {
+        Value::String(template) => render_template(template, context).map(Value::String),
+        Value::Array(values) => values
+            .iter()
+            .map(|value| render_json_templates(value, context))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array),
+        Value::Object(map) => map
+            .iter()
+            .map(|(key, value)| Ok((key.clone(), render_json_templates(value, context)?)))
+            .collect::<Result<serde_json::Map<_, _>, String>>()
+            .map(Value::Object),
+        other => Ok(other.clone()),
+    }
+}
+
+fn function_completed(
+    activity: &ActivityDefinition,
+    claim: &ActivityExecutionClaim,
+    result: Value,
+    summary: Option<String>,
+) -> super::ActivityEvent {
+    super::ActivityEvent::ActivityCompleted {
+        activity_key: claim.activity_key.clone(),
+        attempt: claim.attempt,
+        outputs: function_outputs(activity, result),
+        summary,
+    }
+}
+
+fn function_failed(
+    claim: &ActivityExecutionClaim,
+    error: impl Into<String>,
+) -> super::ActivityEvent {
+    super::ActivityEvent::ActivityFailed {
+        activity_key: claim.activity_key.clone(),
+        attempt: claim.attempt,
+        error: error.into(),
+    }
+}
+
+fn function_outputs(activity: &ActivityDefinition, value: Value) -> Vec<ActivityPortValue> {
+    activity
+        .output_ports
+        .iter()
+        .map(|port| ActivityPortValue {
+            port_key: port.key.clone(),
+            value: value.clone(),
+        })
+        .collect()
 }
 
 fn human_decision_id(claim: &ActivityExecutionClaim) -> String {
@@ -552,12 +851,13 @@ mod tests {
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
         ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
+        ApiRequestExecutorSpec, BashExecExecutorSpec, FunctionActivityExecutorSpec,
         HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
         TransitionCondition, WorkflowBindingKind, WorkflowDefinitionSource,
     };
 
     use super::*;
-    use crate::workflow::{ActivityLifecycleRunState, ActivityRunStatus};
+    use crate::workflow::{ActivityEvent, ActivityLifecycleRunState, ActivityRunStatus};
 
     #[derive(Default)]
     struct FakePort {
@@ -633,6 +933,17 @@ mod tests {
                 .push(format!("{}#{}", claim.activity_key, claim.attempt));
             Ok(())
         }
+
+        async fn execute_function_activity(
+            &self,
+            definition: &ActivityLifecycleDefinition,
+            activity: &ActivityDefinition,
+            claim: &ActivityExecutionClaim,
+            spec: &FunctionActivityExecutorSpec,
+            state: &ActivityLifecycleRunState,
+        ) -> Result<FunctionExecutionResult, String> {
+            super::execute_function_activity(definition, activity, claim, spec, state).await
+        }
     }
 
     fn output_port(key: &str) -> OutputPortDefinition {
@@ -706,6 +1017,79 @@ mod tests {
             vec![],
         )
         .expect("definition")
+    }
+
+    fn function_definition(
+        project_id: uuid::Uuid,
+        spec: FunctionActivityExecutorSpec,
+    ) -> ActivityLifecycleDefinition {
+        ActivityLifecycleDefinition::new(
+            project_id,
+            "function_flow",
+            "Function flow",
+            "",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::UserAuthored,
+            "collect",
+            vec![ActivityDefinition {
+                key: "collect".to_string(),
+                description: "collect".to_string(),
+                executor: ActivityExecutorSpec::Function(spec),
+                input_ports: vec![],
+                output_ports: vec![output_port("result")],
+                completion_policy: ActivityCompletionPolicy::OutputPorts {
+                    required_ports: vec!["result".to_string()],
+                },
+                iteration_policy: Default::default(),
+                join_policy: Default::default(),
+            }],
+            vec![],
+        )
+        .expect("definition")
+    }
+
+    #[cfg(windows)]
+    fn bash_spec(script: &str) -> FunctionActivityExecutorSpec {
+        FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
+            command: "cmd".to_string(),
+            args: vec!["/C".to_string(), script.to_string()],
+            working_directory: None,
+        })
+    }
+
+    fn api_spec(url: String) -> FunctionActivityExecutorSpec {
+        FunctionActivityExecutorSpec::ApiRequest(ApiRequestExecutorSpec {
+            method: "GET".to_string(),
+            url_template: url,
+            body_template: None,
+        })
+    }
+
+    async fn serve_once(response: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer).await;
+            let _ = stream.write_all(response.as_bytes()).await;
+        });
+        format!("http://{addr}/function-test")
+    }
+
+    #[cfg(not(windows))]
+    fn bash_spec(script: &str) -> FunctionActivityExecutorSpec {
+        FunctionActivityExecutorSpec::BashExec(BashExecExecutorSpec {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), script.to_string()],
+            working_directory: None,
+        })
     }
 
     fn continue_root_definition_with_activities(
@@ -807,17 +1191,18 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
 
-        let executor_ref = launcher
+        let start_result = launcher
             .start(&definition, &state(), &claim)
             .await
             .expect("start");
 
         assert_eq!(
-            executor_ref,
+            start_result.executor_run,
             ExecutorRunRef::AgentSession {
                 session_id: "child-1".to_string()
             }
         );
+        assert!(start_result.immediate_events.is_empty());
         let bindings = launcher.port.bindings.lock().unwrap();
         let activity_binding = bindings
             .iter()
@@ -873,13 +1258,13 @@ mod tests {
         let definition = continue_root_definition(project_id);
         let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
 
-        let executor_ref = launcher
+        let start_result = launcher
             .start(&definition, &state(), &claim)
             .await
             .expect("start");
 
         assert_eq!(
-            executor_ref,
+            start_result.executor_run,
             ExecutorRunRef::AgentSession {
                 session_id: "root-session".to_string()
             }
@@ -953,16 +1338,156 @@ mod tests {
         let definition = human_approval_definition(project_id);
         let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "approval", 1, "human");
 
-        let executor_ref = launcher
+        let start_result = launcher
             .start(&definition, &state(), &claim)
             .await
             .expect("start");
 
         assert_eq!(
-            executor_ref,
+            start_result.executor_run,
             ExecutorRunRef::HumanDecision {
                 decision_id: format!("{}:approval#1", claim.run_id)
             }
         );
+        assert!(start_result.immediate_events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn function_bash_success_returns_completed_event() {
+        let project_id = uuid::Uuid::new_v4();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "function_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            FakePort::default(),
+        );
+        let definition = function_definition(project_id, bash_spec("echo hello"));
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+
+        let start_result = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        assert!(matches!(
+            start_result.executor_run,
+            ExecutorRunRef::FunctionRun { .. }
+        ));
+        assert_eq!(start_result.immediate_events.len(), 1);
+        let ActivityEvent::ActivityCompleted {
+            activity_key,
+            attempt,
+            outputs,
+            ..
+        } = &start_result.immediate_events[0]
+        else {
+            panic!("expected completed event");
+        };
+        assert_eq!(activity_key, "collect");
+        assert_eq!(*attempt, 1);
+        assert_eq!(outputs[0].port_key, "result");
+        assert!(
+            outputs[0].value["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("hello")
+        );
+    }
+
+    #[tokio::test]
+    async fn function_bash_failure_returns_failed_event() {
+        let project_id = uuid::Uuid::new_v4();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "function_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            FakePort::default(),
+        );
+        let definition = function_definition(project_id, bash_spec("exit 7"));
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+
+        let start_result = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        assert!(matches!(
+            start_result.executor_run,
+            ExecutorRunRef::FunctionRun { .. }
+        ));
+        let ActivityEvent::ActivityFailed {
+            activity_key,
+            attempt,
+            error,
+        } = &start_result.immediate_events[0]
+        else {
+            panic!("expected failed event");
+        };
+        assert_eq!(activity_key, "collect");
+        assert_eq!(*attempt, 1);
+        assert!(error.contains("exit_code=7"));
+    }
+
+    #[tokio::test]
+    async fn function_api_request_success_returns_completed_event() {
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}",
+        )
+        .await;
+        let project_id = uuid::Uuid::new_v4();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "function_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            FakePort::default(),
+        );
+        let definition = function_definition(project_id, api_spec(url));
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+
+        let start_result = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        let ActivityEvent::ActivityCompleted { outputs, .. } = &start_result.immediate_events[0]
+        else {
+            panic!("expected completed event");
+        };
+        assert_eq!(outputs[0].value["status"], 200);
+        assert_eq!(outputs[0].value["body_json"]["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn function_api_request_failure_returns_failed_event() {
+        let url =
+            serve_once("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 5\r\n\r\nerror")
+                .await;
+        let project_id = uuid::Uuid::new_v4();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "function_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            FakePort::default(),
+        );
+        let definition = function_definition(project_id, api_spec(url));
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+
+        let start_result = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        let ActivityEvent::ActivityFailed { error, .. } = &start_result.immediate_events[0] else {
+            panic!("expected failed event");
+        };
+        assert!(error.contains("500"));
     }
 }

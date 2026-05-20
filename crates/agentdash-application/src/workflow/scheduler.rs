@@ -42,6 +42,28 @@ pub struct ActivityExecutorLaunchOutcome {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActivityExecutorStartResult {
+    pub executor_run: ExecutorRunRef,
+    pub immediate_events: Vec<ActivityEvent>,
+}
+
+impl ActivityExecutorStartResult {
+    pub fn started(executor_run: ExecutorRunRef) -> Self {
+        Self {
+            executor_run,
+            immediate_events: Vec::new(),
+        }
+    }
+
+    pub fn with_events(executor_run: ExecutorRunRef, immediate_events: Vec<ActivityEvent>) -> Self {
+        Self {
+            executor_run,
+            immediate_events,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait ActivityExecutorLauncher: Send + Sync {
     async fn start(
@@ -49,7 +71,7 @@ pub trait ActivityExecutorLauncher: Send + Sync {
         definition: &ActivityLifecycleDefinition,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
-    ) -> Result<ExecutorRunRef, ActivityExecutorStartError>;
+    ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError>;
 }
 
 impl<'a, R: ?Sized> ActivityExecutorScheduler<'a, R>
@@ -129,10 +151,19 @@ where
                 continue;
             }
             match launcher.start(definition, state, &claim).await {
-                Ok(executor_run_ref) => {
+                Ok(start_result) => {
                     let updated = self
-                        .record_executor_started(definition, state, &claim, executor_run_ref)
+                        .record_executor_started(
+                            definition,
+                            state,
+                            &claim,
+                            start_result.executor_run,
+                        )
                         .await?;
+                    for event in start_result.immediate_events {
+                        LifecycleEngine::apply_event(definition, state, event)
+                            .map_err(map_engine_error)?;
+                    }
                     outcomes.push(ActivityExecutorLaunchOutcome {
                         claim: updated,
                         started: true,
@@ -266,19 +297,18 @@ mod tests {
     }
 
     struct FakeLauncher {
-        result:
-            Mutex<Result<agentdash_domain::workflow::ExecutorRunRef, ActivityExecutorStartError>>,
+        result: Mutex<Result<ActivityExecutorStartResult, ActivityExecutorStartError>>,
         starts: Mutex<u32>,
     }
 
     impl FakeLauncher {
         fn started(session_id: &str) -> Self {
             Self {
-                result: Mutex::new(Ok(
+                result: Mutex::new(Ok(ActivityExecutorStartResult::started(
                     agentdash_domain::workflow::ExecutorRunRef::AgentSession {
                         session_id: session_id.to_string(),
                     },
-                )),
+                ))),
                 starts: Mutex::new(0),
             }
         }
@@ -286,6 +316,26 @@ mod tests {
         fn failed(error: ActivityExecutorStartError) -> Self {
             Self {
                 result: Mutex::new(Err(error)),
+                starts: Mutex::new(0),
+            }
+        }
+
+        fn completed(output_port: &str) -> Self {
+            Self {
+                result: Mutex::new(Ok(ActivityExecutorStartResult::with_events(
+                    agentdash_domain::workflow::ExecutorRunRef::FunctionRun {
+                        run_id: "function-run-1".to_string(),
+                    },
+                    vec![ActivityEvent::ActivityCompleted {
+                        activity_key: "plan".to_string(),
+                        attempt: 1,
+                        outputs: vec![ActivityPortValue {
+                            port_key: output_port.to_string(),
+                            value: json!({ "ok": true }),
+                        }],
+                        summary: Some("done".to_string()),
+                    }],
+                ))),
                 starts: Mutex::new(0),
             }
         }
@@ -302,8 +352,7 @@ mod tests {
             _definition: &ActivityLifecycleDefinition,
             _state: &ActivityLifecycleRunState,
             _claim: &ActivityExecutionClaim,
-        ) -> Result<agentdash_domain::workflow::ExecutorRunRef, ActivityExecutorStartError>
-        {
+        ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
             *self.starts.lock().expect("start count lock") += 1;
             self.result.lock().expect("launcher result lock").clone()
         }
@@ -658,6 +707,28 @@ mod tests {
                 && attempt.attempt == 1
                 && attempt.status == ActivityAttemptStatus::Running
         }));
+    }
+
+    #[tokio::test]
+    async fn scheduler_applies_immediate_completion_event() {
+        let repo = InMemoryClaimRepo::default();
+        let scheduler = ActivityExecutorScheduler::new(&repo);
+        let definition = definition();
+        let run_id = Uuid::new_v4();
+        let mut state = LifecycleEngine::initialize(&definition).expect("state");
+        let launcher = FakeLauncher::completed("proposal");
+
+        scheduler
+            .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
+            .await
+            .expect("launch");
+
+        assert!(state.attempts.iter().any(|attempt| {
+            attempt.activity_key == "plan"
+                && attempt.attempt == 1
+                && attempt.status == ActivityAttemptStatus::Completed
+        }));
+        assert_eq!(state.outputs[0].port_key, "proposal");
     }
 
     #[tokio::test]

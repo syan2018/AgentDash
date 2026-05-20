@@ -355,24 +355,26 @@
 
 范围：
 
-- [ ] `ActivityExecutorSpec::Function::ApiRequest`。
-- [ ] `ActivityExecutorSpec::Function::BashExec`。
-- [ ] Function executor 不直接访问 API 层 provider 细节。
-- [ ] Bash 通过本机 runtime / relay port 执行，云端不直接访问本地文件系统。
-- [ ] Function result 写 output artifact，再提交 `FunctionCompleted`。
-- [ ] Function failed 提交 `FunctionFailed`。
+- [x] `ActivityExecutorSpec::Function::ApiRequest`。
+- [x] `ActivityExecutorSpec::Function::BashExec`。
+- [x] Function executor 不直接访问 API 层 provider 细节。
+- [x] Bash 通过本机 runtime / relay port 执行，云端不直接访问本地文件系统。
+- [x] Function result 写 output artifact，再提交 `ActivityCompleted`。
+- [x] Function failed 提交 `ActivityFailed`。
 
 验证：
 
-- [ ] API request success / failure。
-- [ ] Bash exec routing 到本机。
-- [ ] Function -> Agent artifact transition。
-- [ ] 连续 Function activities 不依赖 session terminal。
-- [ ] `cargo test -p agentdash-application workflow::function_executor`
+- [x] API request success / failure。
+- [x] Bash exec routing 到本机。
+- [x] Function -> Agent artifact transition。
+- [x] 连续 Function activities 不依赖 session terminal。
+- [x] `cargo test -p agentdash-application workflow::agent_executor`
+- [x] `cargo test -p agentdash-application workflow::scheduler`
+- [x] `cargo test -p agentdash-application workflow`
 
 出口标准：
 
-- [ ] 原通用功能节点目标在新模型中落地。
+- [x] 原通用功能节点目标在新模型中落地。
 
 ## Phase 10：旧模型清理
 

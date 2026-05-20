@@ -136,11 +136,10 @@ POST /api/vfs-surfaces/upload-file-blob
 | Upload MIME is not `image/*` | HTTP 400 |
 | Invalid mount-relative path | HTTP 400 via path normalization |
 
-### 5. Good/Base/Bad Cases
+### 5. Representative Cases
 
-- Good: Upload `assets/logo.png` as `image/png`; list returns `content_kind=binary`, `mime_type=image/png`, `size=<bytes>`; VFS Browser renders image preview.
-- Base: Existing `note.md` remains `content_kind=text`; `fs.read` and CodeMirror editing still work.
-- Bad: Store image as base64 in `text_content`; this pollutes search/apply_patch/editor behavior and must not be used as the storage model.
+- Image asset: Upload `assets/logo.png` as `image/png`; list returns `content_kind=binary`, `mime_type=image/png`, `size=<bytes>`; VFS Browser renders image preview.
+- Text file: Existing `note.md` remains `content_kind=text`; `fs.read` and CodeMirror editing still work.
 
 ### 6. Tests Required
 
@@ -149,15 +148,7 @@ POST /api/vfs-surfaces/upload-file-blob
 - API test: multipart image upload writes binary row and blob read returns bytes with `Content-Type`.
 - Frontend test: VFS Browser routes image entries to blob preview, not `VfsCodeEditor`.
 
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-let file = InlineFile::new(owner_kind, owner_id, "brief", "logo.png", base64_image);
-```
-
-#### Correct
+### 7. Canonical Construction
 
 ```rust
 let file = InlineFile::new_binary(
@@ -214,7 +205,7 @@ pub struct SkillAssetFileDto {
 }
 ```
 
-`SkillAssetFile` 是 Skill 领域视图，不是独立内容存储实体。它可以携带 `kind`、metadata validation 结果和 Skill 业务约束，但不得重新引入一套与 `InlineFile` 平行的 binary/text 内容列。
+`SkillAssetFile` 是 Skill 领域视图。文件内容生命周期由 `InlineFile` 承担；Skill 视图携带 `kind`、metadata validation 结果和主文档规则等业务语义。
 
 ### 3. Contracts
 
@@ -237,11 +228,10 @@ pub struct SkillAssetFileDto {
 | `skill_asset_fs.read_text` 读取 binary | `MountError::NotSupported` |
 | `skill_asset_fs.search_text` 遇到 binary | Skip |
 
-### 5. Good/Base/Bad Cases
+### 5. Representative Cases
 
-- Good: 上传包含 `SKILL.md` 和 `assets/logo.png` 的 Skill；`SKILL.md` 解析 metadata，logo 存入 `inline_fs_files(owner_kind='skill_asset')` 且 DTO 只返回 metadata。
-- Base: 文本-only Skill 仍可创建、编辑、通过 `skill_asset_fs` 被 skill loader 发现。
-- Bad: 把图片 base64 塞进 `SkillAssetFileDto.content` 或重新创建 `skill_asset_files.binary_content` 平行表。
+- Skill with image: 上传包含 `SKILL.md` 和 `assets/logo.png` 的 Skill；`SKILL.md` 解析 metadata，logo 存入 `inline_fs_files(owner_kind='skill_asset')` 且 DTO 只返回 metadata。
+- Text Skill: 文本-only Skill 仍可创建、编辑、通过 `skill_asset_fs` 被 skill loader 发现。
 
 ### 6. Tests Required
 
@@ -250,18 +240,7 @@ pub struct SkillAssetFileDto {
 - Provider: binary file list/stat metadata 正确，`read_text` rejected，`search_text` skipped。
 - Frontend mapper: binary file DTO 不进入 text draft，但 update payload 能保留 binary metadata。
 
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-SkillAssetFileInput {
-    path: "assets/logo.png".to_string(),
-    content: StoredFileContent::text(base64_png),
-}
-```
-
-#### Correct
+### 7. Canonical Construction
 
 ```rust
 InlineFile::new_binary(
@@ -276,7 +255,7 @@ InlineFile::new_binary(
 
 ### Migration Contract
 
-旧 `skill_asset_files` 行迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')` 后，Repository 主线不再读写 `skill_asset_files`。预研期不保留 text-only 回退。
+旧 `skill_asset_files` 行迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')` 后，Repository 主线以 `InlineFile` 通用存储作为 Skill 文件内容来源。
 
 ---
 

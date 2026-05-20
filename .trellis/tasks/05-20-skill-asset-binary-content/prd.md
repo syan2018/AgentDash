@@ -19,21 +19,20 @@
 ## Requirements
 
 - Skill asset 文件内容支持 text / binary 两种内容类型。
-- `SKILL.md` 必须继续作为 UTF-8 文本解析 metadata；图片等资源文件不得被强制文本解码。
-- 旧 `skill_asset_files` 迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')`，不再保留平行内容表。
+- `SKILL.md` 继续作为 UTF-8 文本解析 metadata；图片等资源文件按 bytes 进入 typed content。
+- 旧 `skill_asset_files` 迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')`，Skill 文件内容生命周期归 `InlineFile`。
 - 抽出共享内容模型，并让 `inline_fs` 与 `skill_asset` 复用二进制内容表达、size/mime metadata、text-only search 边界。
 - Skill 上传路径支持图片文件：zip entry 和普通上传都按 bytes 进入应用层，再由路径/mime 判断保存形式。
-- Skill asset 列表/详情 JSON 响应不得内联 binary bytes；text 文件返回 `content`，binary 文件返回 metadata。
-- 如前端需要预览/下载 Skill asset 图片，使用单独 blob endpoint，而不是在资产列表 DTO 中塞 base64。
+- Skill asset 列表/详情 JSON 响应只携带 binary metadata；text 文件返回 `content`，binary 文件通过 blob endpoint 预览/下载。
 - `skill_asset_fs` list/stat 暴露 `content_kind`、`mime_type`、`size`；`read_text` 对 binary 返回明确错误；`search_text` 跳过 binary。
 - Skill asset 的业务约束保持独立：路径映射、`SKILL.md` metadata 解析、文件 kind 推断、主文档删除/重命名限制。
-- 不引入 base64/data-url 文本存储作为长期方案。
+- 长期存储模型使用 typed binary content。
 
 ## Non-Goals
 
 - 不在本任务里实现 Agent 通过 tool 读取图片 Block。
 - 不在本任务里设计 session 临时 artifact registry 或 promote 流程。
-- 不保留 text-only Skill asset 的兼容分支；项目仍处于预研期，迁移后采用正确结构。
+- 项目仍处于预研期，迁移后采用 `InlineFile` 通用存储结构。
 
 ## Acceptance Criteria
 

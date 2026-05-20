@@ -108,7 +108,7 @@ ON CONFLICT (owner_kind, owner_id, container_id, path) DO UPDATE SET ...
 DROP TABLE IF EXISTS skill_asset_files;
 ```
 
-`PostgresSkillAssetRepository::initialize()` 不再创建 `skill_asset_files`。它在读写 Skill 聚合时查询/写入 `inline_fs_files` 中 `owner_kind='skill_asset' AND container_id='files'` 的文件行。
+`PostgresSkillAssetRepository::initialize()` 以 `inline_fs_files` 作为 Skill 文件内容来源。它在读写 Skill 聚合时查询/写入 `owner_kind='skill_asset' AND container_id='files'` 的文件行。
 
 事务边界仍由 `PostgresSkillAssetRepository` 负责：创建/更新 `skill_assets` 与替换对应 inline file rows 必须在同一事务中完成。实现时可复用 `InlineFile` row mapping 逻辑，或先在 repository 内部以私有 helper 封装，后续再抽成 infra 共享 helper。
 
@@ -139,7 +139,7 @@ Digest：
 
 ## VFS Projection
 
-`skill_asset_fs` 不再使用 `BTreeMap<String, String>`，改成保存 projected file record：
+`skill_asset_fs` 使用 typed projected file record：
 
 ```rust
 struct ProjectedSkillAssetFile {

@@ -1,7 +1,8 @@
 use super::session_association::resolve_node_session_association;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
+    ActivityExecutorSpec, ActivityLifecycleDefinitionRepository, LifecycleDefinition,
+    LifecycleDefinitionRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
     LifecycleStepDefinition, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
 };
 use uuid::Uuid;
@@ -62,8 +63,28 @@ pub async fn resolve_active_workflow_projection_for_session(
     session_binding_repo: &dyn SessionBindingRepository,
     definition_repo: &dyn WorkflowDefinitionRepository,
     lifecycle_repo: &dyn LifecycleDefinitionRepository,
+    activity_lifecycle_repo: &dyn ActivityLifecycleDefinitionRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
+    if let Some(activity_assoc) = super::session_association::resolve_activity_session_association(
+        session_id,
+        session_binding_repo,
+        run_repo,
+    )
+    .await?
+    {
+        if let Some(projection) = build_activity_projection_from_run(
+            activity_assoc.run,
+            &activity_assoc.activity_key,
+            definition_repo,
+            activity_lifecycle_repo,
+        )
+        .await?
+        {
+            return Ok(Some(projection));
+        }
+    }
+
     if let Some(node_assoc) =
         resolve_node_session_association(session_id, session_binding_repo, run_repo).await?
     {
@@ -81,6 +102,82 @@ pub async fn resolve_active_workflow_projection_for_session(
     }
 
     resolve_active_workflow_projection(session_id, definition_repo, lifecycle_repo, run_repo).await
+}
+
+async fn build_activity_projection_from_run(
+    run: LifecycleRun,
+    activity_key: &str,
+    definition_repo: &dyn WorkflowDefinitionRepository,
+    activity_lifecycle_repo: &dyn ActivityLifecycleDefinitionRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
+    let Some(activity_lifecycle) = activity_lifecycle_repo
+        .get_by_id(run.lifecycle_id)
+        .await
+        .map_err(|e| format!("加载 activity lifecycle definition 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(activity) = activity_lifecycle
+        .activities
+        .iter()
+        .find(|activity| activity.key == activity_key)
+    else {
+        return Ok(None);
+    };
+    let (workflow_key, node_type) = match &activity.executor {
+        ActivityExecutorSpec::Agent(spec) => {
+            let node_type = match spec.session_policy {
+                agentdash_domain::workflow::AgentSessionPolicy::ContinueRoot => {
+                    LifecycleNodeType::PhaseNode
+                }
+                agentdash_domain::workflow::AgentSessionPolicy::SpawnChild
+                | agentdash_domain::workflow::AgentSessionPolicy::AttachExisting => {
+                    LifecycleNodeType::AgentNode
+                }
+            };
+            (Some(spec.workflow_key.clone()), node_type)
+        }
+        _ => (None, LifecycleNodeType::AgentNode),
+    };
+    let active_step = LifecycleStepDefinition {
+        key: activity.key.clone(),
+        description: activity.description.clone(),
+        workflow_key: workflow_key.clone(),
+        node_type,
+        output_ports: activity.output_ports.clone(),
+        input_ports: activity.input_ports.clone(),
+        capability_config: Default::default(),
+    };
+    let lifecycle = LifecycleDefinition {
+        id: activity_lifecycle.id,
+        project_id: activity_lifecycle.project_id,
+        key: activity_lifecycle.key.clone(),
+        name: activity_lifecycle.name.clone(),
+        description: activity_lifecycle.description.clone(),
+        binding_kinds: activity_lifecycle.binding_kinds.clone(),
+        source: activity_lifecycle.source,
+        installed_source: activity_lifecycle.installed_source.clone(),
+        version: activity_lifecycle.version,
+        entry_step_key: activity_lifecycle.entry_activity_key.clone(),
+        steps: vec![active_step.clone()],
+        edges: Vec::new(),
+        created_at: activity_lifecycle.created_at,
+        updated_at: activity_lifecycle.updated_at,
+    };
+    let primary_workflow = match workflow_key {
+        Some(workflow_key) => definition_repo
+            .get_by_project_and_key(activity_lifecycle.project_id, &workflow_key)
+            .await
+            .map_err(|e| format!("加载 workflow 失败: {e}"))?,
+        None => None,
+    };
+
+    Ok(Some(ActiveWorkflowProjection {
+        run,
+        lifecycle,
+        active_step,
+        primary_workflow,
+    }))
 }
 
 /// 解析 lifecycle run 中所有当前活跃 node 的 workflow projection 列表。

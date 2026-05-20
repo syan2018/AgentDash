@@ -4,7 +4,8 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleDefinitionRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository,
 };
 use agentdash_spi::{HookError, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -24,6 +25,7 @@ pub struct WorkflowSnapshotBuilder {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
     story_repo: Arc<dyn StoryRepository>,
@@ -35,6 +37,7 @@ impl WorkflowSnapshotBuilder {
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         story_repo: Arc<dyn StoryRepository>,
@@ -44,6 +47,7 @@ impl WorkflowSnapshotBuilder {
             session_binding_repo,
             workflow_definition_repo,
             lifecycle_definition_repo,
+            activity_lifecycle_definition_repo,
             lifecycle_run_repo,
             inline_file_repo,
             story_repo,
@@ -79,6 +83,7 @@ impl WorkflowSnapshotBuilder {
             self.session_binding_repo.as_ref(),
             self.workflow_definition_repo.as_ref(),
             self.lifecycle_definition_repo.as_ref(),
+            self.activity_lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         )
         .await

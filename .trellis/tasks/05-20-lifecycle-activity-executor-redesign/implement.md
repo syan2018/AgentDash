@@ -264,7 +264,7 @@
   - [x] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
   - [x] 完成事件仍走 ActivityEvent。
 - [x] `complete_lifecycle_node` 工具在 Activity 子 session 内提交 ActivityEvent；旧 step session 路径收敛到旧模型清理阶段。
-- [ ] 保留现有 hook gate 能力，但结果转换为 completion policy / ActivityEvent。
+- [x] 保留现有 hook gate 能力，并让 Activity 子 session 的完成结果进入 completion policy / ActivityEvent。
 
 验证：
 
@@ -275,6 +275,7 @@
 - [x] session terminal failed 转为 attempt failed。
 - [x] activity 子 session label 可稳定反查 run / activity / attempt。
 - [x] Activity 子 session 调用 `complete_lifecycle_node` 会提交 ActivityEvent 并调度后继 ready attempt。
+- [x] Activity 子 session 能解析 active workflow projection，保留 workflow 注入与 before_stop hook gate。
 - [x] `cargo test -p agentdash-application workflow::agent_executor`
 - [x] `cargo test -p agentdash-application workflow::session_association`
 - [x] `cargo test -p agentdash-application workflow`

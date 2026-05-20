@@ -1,6 +1,6 @@
 {
-  "id": "05-21-builtin-asset-version-maintenance",
-  "name": "05-21-builtin-asset-version-maintenance",
+  "id": "builtin-asset-version-maintenance",
+  "name": "builtin-asset-version-maintenance",
   "title": "Builtin 资产版本维护与升级治理",
   "description": "为 builtin / plugin_embedded 资产建立可维护版本策略：当内置资产 payload 变化并被资源市场升级消费时，资产版本号必须随之更新；安装来源、source-status 与升级提示应基于版本和 digest 一致工作，并提供测试或检查防止 payload 变更遗漏版本升级。",
   "status": "planning",

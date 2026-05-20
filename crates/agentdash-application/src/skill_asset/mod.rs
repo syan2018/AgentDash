@@ -9,5 +9,5 @@ pub use error::SkillAssetApplicationError;
 pub(crate) use service::parse_skill_metadata;
 pub use service::{
     CreateSkillAssetInput, ImportRemoteSkillAssetInput, RawSkillUploadFile, SkillAssetFileInput,
-    SkillAssetService, UpdateSkillAssetInput,
+    SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
 };

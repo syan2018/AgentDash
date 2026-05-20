@@ -8,7 +8,10 @@ export type SkillAssetSource = "builtin_seed" | "user" | "github";
 
 export interface SkillAssetFileDto {
   path: string;
-  content: string;
+  content?: string | null;
+  content_kind: "text" | "binary" | string;
+  mime_type?: string | null;
+  size_bytes: number;
   kind?: "skill" | "reference" | "script" | "asset" | string | null;
 }
 

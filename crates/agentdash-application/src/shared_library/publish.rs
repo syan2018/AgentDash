@@ -232,15 +232,21 @@ async fn publish_skill_payload(
             "SkillAsset 不属于当前 Project".to_string(),
         ));
     }
-    let files = skill
-        .files
-        .into_iter()
-        .map(|file| SkillTemplateFilePayload {
+    let mut files = Vec::with_capacity(skill.files.len());
+    for file in skill.files {
+        let Some(content) = file.text_content() else {
+            return Err(PublishLibraryAssetError::BadRequest(format!(
+                "暂不支持发布包含二进制文件的 SkillAsset: {}",
+                file.path
+            )));
+        };
+        let content = content.to_string();
+        files.push(SkillTemplateFilePayload {
             path: file.path,
-            content: file.content,
+            content,
             kind: file.kind,
-        })
-        .collect();
+        });
+    }
     let payload = SkillTemplatePayload {
         files,
         disable_model_invocation: skill.disable_model_invocation,

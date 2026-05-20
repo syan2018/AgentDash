@@ -28,12 +28,24 @@ describe("skillAsset", () => {
           path: "SKILL.md",
           content:
             '---\nname: research\ndescription: "调研资料整理"\ndisable-model-invocation: true\n---\n# Body\n',
+          content_kind: "text",
+          size_bytes: 96,
           kind: "skill",
         },
         {
           path: "references/api.md",
           content: "API",
+          content_kind: "text",
+          size_bytes: 3,
           kind: "reference",
+        },
+        {
+          path: "assets/logo.png",
+          content: null,
+          content_kind: "binary",
+          mime_type: "image/png",
+          size_bytes: 4,
+          kind: "asset",
         },
       ],
       created_at: "2026-05-12T00:00:00Z",
@@ -51,6 +63,16 @@ describe("skillAsset", () => {
       disable_model_invocation: true,
       body: "# Body\n",
       files: [{ relative_path: "references/api.md", content: "API" }],
+      binary_files: [
+        {
+          path: "assets/logo.png",
+          content: null,
+          content_kind: "binary",
+          mime_type: "image/png",
+          size_bytes: 4,
+          kind: "asset",
+        },
+      ],
     });
   });
 
@@ -62,6 +84,7 @@ describe("skillAsset", () => {
       body: "# Writer\n",
       disable_model_invocation: false,
       files: [{ relative_path: "references/style.md", content: "style" }],
+      binary_files: [],
     };
 
     expect(validateSkillAssetDraft(draft).ok).toBe(true);
@@ -85,6 +108,7 @@ describe("skillAsset", () => {
       files: [
         { relative_path: "references/../bad.md", content: "" },
       ],
+      binary_files: [],
     };
 
     expect(validateSkillAssetDraft(draft).ok).toBe(false);

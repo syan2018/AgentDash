@@ -4,15 +4,19 @@ use std::io::Read;
 use std::sync::Arc;
 
 use axum::Json;
+use axum::body::Bytes;
 use axum::extract::{Multipart, Path, Query, State};
+use axum::http::{HeaderValue, header};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::skill_asset::{
     CreateSkillAssetInput, ImportRemoteSkillAssetInput, RawSkillUploadFile,
     SkillAssetApplicationError, SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput,
+    content_from_bytes,
 };
-use agentdash_domain::skill_asset::SkillAsset;
+use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -31,6 +35,11 @@ pub struct ProjectSkillAssetsPath {
 pub struct SkillAssetItemPath {
     pub project_id: String,
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkillAssetFileBlobQuery {
+    pub path: String,
 }
 
 pub async fn list_skill_assets(
@@ -90,7 +99,7 @@ pub async fn create_skill_asset(
             display_name: req.display_name,
             description: req.description,
             disable_model_invocation: req.disable_model_invocation,
-            files: dto_files_to_input(req.files),
+            files: dto_files_to_input(req.files)?,
         })
         .await?;
     Ok(Json(asset.into()))
@@ -134,7 +143,10 @@ pub async fn update_skill_asset(
                 display_name: req.display_name,
                 description: req.description,
                 disable_model_invocation: req.disable_model_invocation,
-                files: req.files.map(dto_files_to_input),
+                files: req
+                    .files
+                    .map(|files| dto_files_to_update_input(files, &asset.files))
+                    .transpose()?,
             },
         )
         .await?;
@@ -156,6 +168,36 @@ pub async fn delete_skill_asset(
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     service.delete(asset.id).await?;
     Ok(Json(serde_json::json!({ "deleted": asset.id })))
+}
+
+pub async fn read_skill_asset_file_blob(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<SkillAssetItemPath>,
+    Query(query): Query<SkillAssetFileBlobQuery>,
+) -> Result<Response, ApiError> {
+    let (_project_id, asset) = load_asset_with_project(
+        state.as_ref(),
+        &current_user,
+        &path,
+        ProjectPermission::View,
+    )
+    .await?;
+    let normalized_path = query.path.trim().replace('\\', "/");
+    let file = asset
+        .files
+        .into_iter()
+        .find(|file| file.path == normalized_path)
+        .ok_or_else(|| ApiError::NotFound(format!("SkillAsset 文件不存在: {normalized_path}")))?;
+    let Some(bytes) = file.binary_content().map(|bytes| bytes.to_vec()) else {
+        return Err(ApiError::BadRequest(format!(
+            "SkillAsset 文件不是二进制文件: {normalized_path}"
+        )));
+    };
+    let mime_type = file.mime_type().unwrap_or("application/octet-stream");
+    let content_type = HeaderValue::from_str(mime_type)
+        .map_err(|_| ApiError::BadRequest(format!("非法 MIME 类型: {mime_type}")))?;
+    Ok(([(header::CONTENT_TYPE, content_type)], Bytes::from(bytes)).into_response())
 }
 
 pub async fn import_remote_skill_asset(
@@ -205,6 +247,7 @@ pub async fn upload_skill_assets(
         .map_err(|error| ApiError::BadRequest(format!("multipart 上传内容解析失败: {error}")))?
     {
         let filename = field.file_name().map(ToString::to_string);
+        let content_type = field.content_type().map(ToString::to_string);
         let bytes = field
             .bytes()
             .await
@@ -215,9 +258,7 @@ pub async fn upload_skill_assets(
         if filename.to_ascii_lowercase().ends_with(".zip") {
             files.extend(extract_zip_skill_files(&bytes)?);
         } else {
-            let content = String::from_utf8(bytes.to_vec()).map_err(|error| {
-                ApiError::BadRequest(format!("Skill 文件必须是 UTF-8 文本: {filename}: {error}"))
-            })?;
+            let content = content_from_bytes(&filename, bytes.to_vec(), content_type.as_deref())?;
             files.push(RawSkillUploadFile {
                 path: filename,
                 content,
@@ -253,12 +294,53 @@ async fn load_asset_with_project(
     Ok((project_id, asset))
 }
 
-fn dto_files_to_input(files: Vec<SkillAssetFileDto>) -> Vec<SkillAssetFileInput> {
+fn dto_files_to_input(files: Vec<SkillAssetFileDto>) -> Result<Vec<SkillAssetFileInput>, ApiError> {
     files
         .into_iter()
-        .map(|file| SkillAssetFileInput {
-            path: file.path,
-            content: file.content,
+        .map(|file| {
+            Ok(SkillAssetFileInput {
+                path: file.path,
+                content: file
+                    .content
+                    .map(agentdash_domain::common::StoredFileContent::text)
+                    .ok_or_else(|| {
+                        ApiError::BadRequest("创建 SkillAsset 时文件 content 不能为空".to_string())
+                    })?,
+            })
+        })
+        .collect()
+}
+
+fn dto_files_to_update_input(
+    files: Vec<SkillAssetFileDto>,
+    existing_files: &[SkillAssetFile],
+) -> Result<Vec<SkillAssetFileInput>, ApiError> {
+    files
+        .into_iter()
+        .map(|file| {
+            let content = match file.content {
+                Some(content) => agentdash_domain::common::StoredFileContent::text(content),
+                None if file.content_kind == "binary" => existing_files
+                    .iter()
+                    .find(|existing| existing.path == file.path)
+                    .map(|existing| existing.content.clone())
+                    .ok_or_else(|| {
+                        ApiError::BadRequest(format!(
+                            "无法保留不存在的二进制 Skill 文件: {}",
+                            file.path
+                        ))
+                    })?,
+                None => {
+                    return Err(ApiError::BadRequest(format!(
+                        "文本 Skill 文件 content 不能为空: {}",
+                        file.path
+                    )));
+                }
+            };
+            Ok(SkillAssetFileInput {
+                path: file.path,
+                content,
+            })
         })
         .collect()
 }
@@ -286,10 +368,11 @@ fn extract_zip_skill_files(bytes: &[u8]) -> Result<Vec<RawSkillUploadFile>, ApiE
                 entry.name()
             )));
         };
-        let mut content = String::new();
-        entry.read_to_string(&mut content).map_err(|error| {
-            ApiError::BadRequest(format!("ZIP 条目必须是 UTF-8 文本: {path}: {error}"))
-        })?;
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| ApiError::BadRequest(format!("读取 ZIP 条目失败: {path}: {error}")))?;
+        let content = content_from_bytes(&path, bytes, None)?;
         files.push(RawSkillUploadFile { path, content });
     }
     Ok(files)

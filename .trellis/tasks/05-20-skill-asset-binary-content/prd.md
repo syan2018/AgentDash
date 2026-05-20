@@ -12,6 +12,7 @@
 - `skill_asset_files.content` 是 `TEXT NOT NULL`。
 - 上传 zip 或 multipart 时，非 `SKILL.md` 文件也会被强制 UTF-8 解码。
 - `skill_asset_fs` VFS projection 使用 `BTreeMap<String, String>`，只能投影文本内容。
+- Skill asset JSON DTO 当前把每个文件都表示为 `{ path, content }`，不适合返回图片 bytes。
 
 这会导致带图片的 Skill 上传失败，也会让未来插件/Skill 资产与 `inline_fs` 的图片资产能力分叉。
 
@@ -19,9 +20,11 @@
 
 - Skill asset 文件内容支持 text / binary 两种内容类型。
 - `SKILL.md` 必须继续作为 UTF-8 文本解析 metadata；图片等资源文件不得被强制文本解码。
-- `skill_asset_files` 迁移到带 `content_kind`、`mime_type`、`text_content`、`binary_content`、`size_bytes` 的正确结构。
-- 尽量抽出共享内容模型或共享 helper，使 `inline_fs` 与 `skill_asset` 复用二进制内容表达、size/mime metadata、text-only search 边界。
+- 旧 `skill_asset_files` 迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')`，不再保留平行内容表。
+- 抽出共享内容模型，并让 `inline_fs` 与 `skill_asset` 复用二进制内容表达、size/mime metadata、text-only search 边界。
 - Skill 上传路径支持图片文件：zip entry 和普通上传都按 bytes 进入应用层，再由路径/mime 判断保存形式。
+- Skill asset 列表/详情 JSON 响应不得内联 binary bytes；text 文件返回 `content`，binary 文件返回 metadata。
+- 如前端需要预览/下载 Skill asset 图片，使用单独 blob endpoint，而不是在资产列表 DTO 中塞 base64。
 - `skill_asset_fs` list/stat 暴露 `content_kind`、`mime_type`、`size`；`read_text` 对 binary 返回明确错误；`search_text` 跳过 binary。
 - Skill asset 的业务约束保持独立：路径映射、`SKILL.md` metadata 解析、文件 kind 推断、主文档删除/重命名限制。
 - 不引入 base64/data-url 文本存储作为长期方案。
@@ -35,7 +38,8 @@
 ## Acceptance Criteria
 
 - [ ] 上传包含图片资源的 Skill 不再因非 UTF-8 内容失败。
-- [ ] Skill asset 的图片文件能被持久化、列表展示，并带有正确 `content_kind` / `mime_type` / `size_bytes`。
+- [ ] Skill asset 的图片文件能被持久化、列表展示/详情返回 metadata，并带有正确 `content_kind` / `mime_type` / `size_bytes`。
+- [ ] Skill asset 常规 JSON DTO 不返回 binary bytes，图片预览/下载通过 blob endpoint 完成。
 - [ ] `SKILL.md` metadata 校验仍然只基于文本主文档，且错误信息清晰。
 - [ ] `skill_asset_fs` 文本读写、搜索、删除、重命名仍通过现有测试。
 - [ ] binary 文件不会进入 text search，也不会被 `read_text` 当文本返回。
@@ -45,4 +49,4 @@
 ## Execution Notes
 
 - 本任务建议先做 design.md，再实现；重点是选定共享内容模型放置层级，避免 domain 间反向依赖。
-- 可优先从 `InlineFileContent` 的形状抽象，而不是让 Skill asset 直接依赖 inline_fs domain entity。
+- Skill asset 文件应作为 `InlineFile` 通用 embedded storage 的业务视图实现，而不是重新维护 `skill_asset_files` 内容表。

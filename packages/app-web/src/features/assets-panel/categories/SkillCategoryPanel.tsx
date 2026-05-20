@@ -51,7 +51,11 @@ type DetailMode =
   | { kind: "edit"; assetId: string; originalKey: string };
 
 function cloneDraft(draft: SkillAssetDraft): SkillAssetDraft {
-  return { ...draft, files: draft.files.map((f) => ({ ...f })) };
+  return {
+    ...draft,
+    files: draft.files.map((f) => ({ ...f })),
+    binary_files: draft.binary_files.map((f) => ({ ...f })),
+  };
 }
 
 // ─── Main Panel ──────────────────────────────────────────
@@ -167,6 +171,7 @@ export function SkillCategoryPanel() {
           relative_path: normalizeSkillExtraPath(f.relative_path),
           content: f.content,
         })),
+      binary_files: draft.binary_files,
     };
     const existingKeys =
       detail.kind === "edit"

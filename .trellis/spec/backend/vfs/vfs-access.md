@@ -182,9 +182,106 @@ let file = InlineFile::new_binary(
 
 Provider 可通过 broadcast channel 推送 `MountEvent`（Created/Modified/Deleted/Renamed），供 Application 层内部消费（Workflow 编排、Hook runtime），暂不在 Agent tool 层暴露。
 
+## Scenario: SkillAsset 文件复用 InlineFile 存储
+
+### 1. Scope / Trigger
+
+- Trigger: Skill asset 文件从 text-only `skill_asset_files.content` 收敛到通用 embedded file storage。
+- Scope: `SkillAssetFile` domain projection、`PostgresSkillAssetRepository` 文件读写、`skill_asset_fs` VFS projection、Skill 上传/导入路径。
+- Storage owner: `InlineFileOwnerKind::SkillAsset`。
+
+### 2. Signatures
+
+Skill asset 文件内容必须存储在 `inline_fs_files`：
+
+```text
+owner_kind   = "skill_asset"
+owner_id     = skill_assets.id
+container_id = "files"
+path         = Skill 根目录内相对路径
+```
+
+Skill asset file DTO：
+
+```rust
+pub struct SkillAssetFileDto {
+    pub path: String,
+    pub content: Option<String>,
+    pub content_kind: String, // "text" | "binary"
+    pub mime_type: Option<String>,
+    pub size_bytes: u64,
+    pub kind: Option<String>,
+}
+```
+
+`SkillAssetFile` 是 Skill 领域视图，不是独立内容存储实体。它可以携带 `kind`、metadata validation 结果和 Skill 业务约束，但不得重新引入一套与 `InlineFile` 平行的 binary/text 内容列。
+
+### 3. Contracts
+
+- `SKILL.md` 必须是 UTF-8 text；metadata 解析只读取该文本主文档。
+- 图片等二进制资源保存为 `StoredFileContent::Binary`，并保留 `mime_type` / `size_bytes`。
+- Skill asset JSON DTO 不内联 binary bytes；binary 文件只返回 `content_kind` / `mime_type` / `size_bytes` metadata。
+- `skill_asset_fs` list/stat 暴露 `content_kind`、`mime_type`、`skill_asset_file_kind`。
+- `skill_asset_fs.read_text` 对 binary 返回 `NotSupported`。
+- `skill_asset_fs.search_text` 跳过 binary。
+
+### 4. Validation & Error Matrix
+
+| Condition | Error / Behavior |
+| --- | --- |
+| 上传 `SKILL.md` 非 UTF-8 | BadRequest: `SKILL.md 必须是 UTF-8 文本文档` |
+| 上传图片资源 | Store as `StoredFileContent::Binary` |
+| DTO 返回 binary file | `content = None`，metadata 保留 |
+| JSON create 带 `content = None` | BadRequest |
+| JSON update 带 existing binary metadata | Preserve existing binary content |
+| `skill_asset_fs.read_text` 读取 binary | `MountError::NotSupported` |
+| `skill_asset_fs.search_text` 遇到 binary | Skip |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 上传包含 `SKILL.md` 和 `assets/logo.png` 的 Skill；`SKILL.md` 解析 metadata，logo 存入 `inline_fs_files(owner_kind='skill_asset')` 且 DTO 只返回 metadata。
+- Base: 文本-only Skill 仍可创建、编辑、通过 `skill_asset_fs` 被 skill loader 发现。
+- Bad: 把图片 base64 塞进 `SkillAssetFileDto.content` 或重新创建 `skill_asset_files.binary_content` 平行表。
+
+### 6. Tests Required
+
+- Service: 上传分组接受 root `SKILL.md` + binary image asset。
+- Service: binary / non-UTF8 `SKILL.md` 被拒绝。
+- Provider: binary file list/stat metadata 正确，`read_text` rejected，`search_text` skipped。
+- Frontend mapper: binary file DTO 不进入 text draft，但 update payload 能保留 binary metadata。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+SkillAssetFileInput {
+    path: "assets/logo.png".to_string(),
+    content: StoredFileContent::text(base64_png),
+}
+```
+
+#### Correct
+
+```rust
+InlineFile::new_binary(
+    InlineFileOwnerKind::SkillAsset,
+    skill_asset_id,
+    "files",
+    "assets/logo.png",
+    png_bytes,
+    "image/png",
+);
+```
+
+### Migration Contract
+
+旧 `skill_asset_files` 行迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')` 后，Repository 主线不再读写 `skill_asset_files`。预研期不保留 text-only 回退。
+
 ---
 
 *创建：2026-04-17 — 统一 VFS 跨层契约*
 *精简：2026-05-16 — 移除代码复述、测试列表、实施计划；保留核心契约和能力矩阵*
 *更新：2026-05-16 — 补充资源地址类型、root_ref 类型化与 VFS hard validation 契约*
 *更新：2026-05-20 — 补充 inline_fs text/binary 内容契约与图片资产 API 边界*
+*更新：2026-05-20 — SkillAsset 文件收敛到 InlineFile embedded storage*

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use agentdash_domain::common::StoredFileContent;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
@@ -41,7 +42,23 @@ const MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES: usize = 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct SkillAssetFileInput {
     pub path: String,
-    pub content: String,
+    pub content: StoredFileContent,
+}
+
+impl SkillAssetFileInput {
+    pub fn text(path: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: StoredFileContent::text(content),
+        }
+    }
+
+    pub fn binary(path: impl Into<String>, bytes: Vec<u8>, mime_type: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: StoredFileContent::binary(bytes, mime_type),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +83,23 @@ pub struct UpdateSkillAssetInput {
 #[derive(Debug, Clone)]
 pub struct RawSkillUploadFile {
     pub path: String,
-    pub content: String,
+    pub content: StoredFileContent,
+}
+
+impl RawSkillUploadFile {
+    pub fn text(path: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: StoredFileContent::text(content),
+        }
+    }
+
+    pub fn binary(path: impl Into<String>, bytes: Vec<u8>, mime_type: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content: StoredFileContent::binary(bytes, mime_type),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -254,7 +287,7 @@ where
                 .ok_or_else(|| {
                     SkillAssetApplicationError::BadRequest(format!("Skill `{key}` 缺少 SKILL.md"))
                 })?;
-            let meta = parse_skill_metadata(&skill_md.content)?;
+            let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
             let description = meta.description;
             let disable_model_invocation = meta.disable_model_invocation;
             if let Some(mut existing) = self.repo.get_by_project_and_key(project_id, &key).await? {
@@ -373,7 +406,7 @@ where
             .ok_or_else(|| {
                 SkillAssetApplicationError::BadRequest("远端 Skill 缺少根目录 SKILL.md".to_string())
             })?;
-        let meta = parse_skill_metadata(&skill_md.content)?;
+        let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
         self.ensure_key_available(project_id, &meta.name, None)
             .await?;
         let files = build_files(Uuid::nil(), input_files)?;
@@ -652,8 +685,8 @@ async fn fetch_github_skill_files(
                 entry.path
             ))
         })?;
-        let content = fetch_github_text_file(client, &download_url, &relative_path).await?;
-        total_size = total_size.saturating_add(content.len());
+        let content = fetch_github_file(client, &download_url, &relative_path).await?;
+        total_size = total_size.saturating_add(content.size_bytes() as usize);
         if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
             return Err(SkillAssetApplicationError::BadRequest(format!(
                 "远端 Skill 总大小不能超过 {} KB",
@@ -752,11 +785,11 @@ async fn github_get(
     })
 }
 
-async fn fetch_github_text_file(
+async fn fetch_github_file(
     client: &reqwest::Client,
     download_url: &str,
     path: &str,
-) -> Result<String, SkillAssetApplicationError> {
+) -> Result<StoredFileContent, SkillAssetApplicationError> {
     let response = client
         .get(download_url)
         .header(reqwest::header::USER_AGENT, "AgentDash")
@@ -779,11 +812,7 @@ async fn fetch_github_text_file(
             "远端 Skill 文件过大: {path}"
         )));
     }
-    String::from_utf8(bytes.to_vec()).map_err(|error| {
-        SkillAssetApplicationError::BadRequest(format!(
-            "远端 Skill 文件必须是 UTF-8 文本: {path}: {error}"
-        ))
-    })
+    content_from_bytes(path, bytes.to_vec(), None)
 }
 
 fn relative_github_path(base_dir: &str, path: &str) -> String {
@@ -953,10 +982,7 @@ async fn fetch_clawhub_skill_files(
             )));
         }
 
-        files.push(SkillAssetFileInput {
-            path: fp.clone(),
-            content,
-        });
+        files.push(SkillAssetFileInput::text(fp, content));
     }
 
     if !files.iter().any(|f| f.path == "SKILL.md") {
@@ -1039,10 +1065,7 @@ async fn fetch_skills_sh_skill_files(
         ))
     })?;
 
-    let mut files = vec![SkillAssetFileInput {
-        path: "SKILL.md".to_string(),
-        content: skill_md_content,
-    }];
+    let mut files = vec![SkillAssetFileInput::text("SKILL.md", skill_md_content)];
 
     // List supporting files via GitHub API
     let github_source = GithubSkillSource {
@@ -1063,15 +1086,16 @@ async fn fetch_skills_sh_skill_files(
     .await
     .is_ok()
     {
-        let mut total_size = files[0].content.len();
+        let mut total_size = files[0].content.size_bytes() as usize;
         for entry in entries.into_iter().filter(|e| e.entry_type == "file") {
             let relative_path = relative_github_path(&skill_dir, &entry.path);
             if relative_path.is_empty() || relative_path == "SKILL.md" {
                 continue;
             }
             if let Some(download_url) = entry.download_url {
-                if let Ok(content) = fetch_raw_text_file(client, &download_url).await {
-                    total_size = total_size.saturating_add(content.len());
+                if let Ok(content) = fetch_github_file(client, &download_url, &relative_path).await
+                {
+                    total_size = total_size.saturating_add(content.size_bytes() as usize);
                     if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
                         break;
                     }
@@ -1140,7 +1164,16 @@ fn digest_skill_files(files: &[SkillAssetFile]) -> String {
     for file in files {
         hasher.update(file.path.as_bytes());
         hasher.update([0]);
-        hasher.update(file.content.as_bytes());
+        hasher.update(file.content_kind_str().as_bytes());
+        hasher.update([0]);
+        if let Some(mime_type) = file.mime_type() {
+            hasher.update(mime_type.as_bytes());
+        }
+        hasher.update([0]);
+        match &file.content {
+            StoredFileContent::Text { content } => hasher.update(content.as_bytes()),
+            StoredFileContent::Binary { bytes, .. } => hasher.update(bytes),
+        }
         hasher.update([0]);
     }
     format!("sha256:{:x}", hasher.finalize())
@@ -1156,10 +1189,7 @@ fn files_from_embedded_bundle(
     let files = bundle
         .files
         .iter()
-        .map(|file| SkillAssetFileInput {
-            path: file.relative_path.to_string(),
-            content: file.content.to_string(),
-        })
+        .map(|file| SkillAssetFileInput::text(file.relative_path, file.content))
         .collect::<Vec<_>>();
     let files = build_files(asset_id, files)?;
     let skill_md = files
@@ -1168,7 +1198,7 @@ fn files_from_embedded_bundle(
         .ok_or_else(|| {
             SkillAssetApplicationError::Internal("内嵌 Skill 缺少 SKILL.md".to_string())
         })?;
-    let meta = parse_skill_metadata(&skill_md.content)?;
+    let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
     validate_skill_files(
         bundle.name,
         &meta.description,
@@ -1191,7 +1221,7 @@ fn build_files(
                 "Skill 文件路径重复: {path}"
             )));
         }
-        result.push(SkillAssetFile::new(
+        result.push(SkillAssetFile::new_with_content(
             asset_id,
             path.clone(),
             file.content,
@@ -1214,7 +1244,7 @@ fn validate_skill_files(
         .ok_or_else(|| {
             SkillAssetApplicationError::BadRequest("Skill 必须包含 SKILL.md".to_string())
         })?;
-    let meta = parse_skill_metadata(&skill_md.content)?;
+    let meta = parse_skill_metadata(skill_md_text(&skill_md.content)?)?;
     if meta.name != key {
         return Err(SkillAssetApplicationError::BadRequest(format!(
             "SKILL.md frontmatter name `{}` 必须等于 skill key `{key}`",
@@ -1267,6 +1297,130 @@ pub(crate) fn parse_skill_metadata(
         description,
         disable_model_invocation: frontmatter.disable_model_invocation,
     })
+}
+
+fn skill_md_text(content: &StoredFileContent) -> Result<&str, SkillAssetApplicationError> {
+    content.text_content().ok_or_else(|| {
+        SkillAssetApplicationError::BadRequest(
+            "SKILL.md 必须是 UTF-8 文本文档，不能是二进制文件".to_string(),
+        )
+    })
+}
+
+pub fn content_from_bytes(
+    path: &str,
+    bytes: Vec<u8>,
+    mime_hint: Option<&str>,
+) -> Result<StoredFileContent, SkillAssetApplicationError> {
+    let mime_type = mime_hint
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| guess_skill_file_mime_type(path));
+
+    if path == "SKILL.md" {
+        return String::from_utf8(bytes)
+            .map(StoredFileContent::text)
+            .map_err(|error| {
+                SkillAssetApplicationError::BadRequest(format!(
+                    "SKILL.md 必须是 UTF-8 文本文档: {error}"
+                ))
+            });
+    }
+
+    if is_image_mime(&mime_type) || is_image_path(path) {
+        return Ok(StoredFileContent::binary(bytes, mime_type));
+    }
+
+    if is_text_mime(&mime_type) || is_text_path(path) {
+        return String::from_utf8(bytes)
+            .map(StoredFileContent::text)
+            .map_err(|error| {
+                SkillAssetApplicationError::BadRequest(format!(
+                    "文本 Skill 文件必须是 UTF-8: {path}: {error}"
+                ))
+            });
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok(StoredFileContent::text(content)),
+        Err(error) => Ok(StoredFileContent::binary(
+            error.into_bytes(),
+            if mime_type == "text/plain; charset=utf-8" {
+                "application/octet-stream".to_string()
+            } else {
+                mime_type
+            },
+        )),
+    }
+}
+
+fn guess_skill_file_mime_type(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "image/png".to_string()
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".to_string()
+    } else if lower.ends_with(".webp") {
+        "image/webp".to_string()
+    } else if lower.ends_with(".gif") {
+        "image/gif".to_string()
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    } else if lower.ends_with(".json") {
+        "application/json".to_string()
+    } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
+        "application/x-yaml".to_string()
+    } else if lower.ends_with(".toml") {
+        "application/toml".to_string()
+    } else if is_text_path(path) {
+        "text/plain; charset=utf-8".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
+}
+
+fn is_image_mime(mime_type: &str) -> bool {
+    mime_type.starts_with("image/")
+}
+
+fn is_text_mime(mime_type: &str) -> bool {
+    mime_type.starts_with("text/")
+        || matches!(
+            mime_type,
+            "application/json" | "application/x-yaml" | "application/toml"
+        )
+}
+
+fn is_image_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    matches!(
+        lower.rsplit_once('.').map(|(_, ext)| ext),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "svg")
+    )
+}
+
+fn is_text_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    matches!(
+        lower.rsplit_once('.').map(|(_, ext)| ext),
+        Some(
+            "md" | "txt"
+                | "json"
+                | "yaml"
+                | "yml"
+                | "toml"
+                | "rs"
+                | "ts"
+                | "tsx"
+                | "js"
+                | "jsx"
+                | "css"
+                | "html"
+                | "sh"
+                | "py"
+        )
+    )
 }
 
 fn validate_skill_key(key: &str) -> Result<String, SkillAssetApplicationError> {
@@ -1369,7 +1523,7 @@ fn group_uploaded_skill_files(
             .iter()
             .find(|(path, _)| path == "SKILL.md")
             .expect("counted root skill");
-        let key = parse_skill_metadata(&skill_md.1)?.name;
+        let key = parse_skill_metadata(skill_md_text(&skill_md.1)?)?.name;
         return Ok(BTreeMap::from([(
             key,
             normalized
@@ -1492,10 +1646,10 @@ mod tests {
     }
 
     fn skill_file(key: &str, description: &str) -> SkillAssetFileInput {
-        SkillAssetFileInput {
-            path: "SKILL.md".to_string(),
-            content: format!("---\nname: {key}\ndescription: \"{description}\"\n---\n# Body\n"),
-        }
+        SkillAssetFileInput::text(
+            "SKILL.md",
+            format!("---\nname: {key}\ndescription: \"{description}\"\n---\n# Body\n"),
+        )
     }
 
     #[tokio::test]
@@ -1511,10 +1665,7 @@ mod tests {
                 display_name: "Writer".to_string(),
                 description: "写作辅助".to_string(),
                 disable_model_invocation: false,
-                files: vec![SkillAssetFileInput {
-                    path: "references/style.md".to_string(),
-                    content: "style".to_string(),
-                }],
+                files: vec![SkillAssetFileInput::text("references/style.md", "style")],
             })
             .await;
         assert!(matches!(
@@ -1581,25 +1732,54 @@ mod tests {
 
     #[test]
     fn upload_grouping_accepts_root_skill_and_multi_skill_directory() {
-        let root = group_uploaded_skill_files(vec![RawSkillUploadFile {
-            path: "SKILL.md".to_string(),
-            content: "---\nname: writer\ndescription: \"写作辅助\"\n---\n".to_string(),
-        }])
+        let root = group_uploaded_skill_files(vec![RawSkillUploadFile::text(
+            "SKILL.md",
+            "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
+        )])
         .expect("root skill");
         assert!(root.contains_key("writer"));
 
         let grouped = group_uploaded_skill_files(vec![
-            RawSkillUploadFile {
-                path: "writer/SKILL.md".to_string(),
-                content: "---\nname: writer\ndescription: \"写作辅助\"\n---\n".to_string(),
-            },
-            RawSkillUploadFile {
-                path: "research/SKILL.md".to_string(),
-                content: "---\nname: research\ndescription: \"调研\"\n---\n".to_string(),
-            },
+            RawSkillUploadFile::text(
+                "writer/SKILL.md",
+                "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
+            ),
+            RawSkillUploadFile::text(
+                "research/SKILL.md",
+                "---\nname: research\ndescription: \"调研\"\n---\n",
+            ),
         ])
         .expect("multi skill");
         assert_eq!(grouped.len(), 2);
+    }
+
+    #[test]
+    fn upload_grouping_accepts_binary_assets_and_rejects_binary_skill_md() {
+        let grouped = group_uploaded_skill_files(vec![
+            RawSkillUploadFile::text(
+                "SKILL.md",
+                "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
+            ),
+            RawSkillUploadFile::binary("assets/logo.png", vec![0, 1, 2, 3], "image/png"),
+        ])
+        .expect("root skill with binary asset");
+        let files = grouped.get("writer").expect("writer group");
+        let logo = files
+            .iter()
+            .find(|file| file.path == "assets/logo.png")
+            .expect("logo file");
+        assert_eq!(logo.content.mime_type(), Some("image/png"));
+        assert!(logo.content.binary_content().is_some());
+
+        let binary_skill = group_uploaded_skill_files(vec![RawSkillUploadFile::binary(
+            "SKILL.md",
+            vec![0, 159, 146, 150],
+            "application/octet-stream",
+        )]);
+        assert!(matches!(
+            binary_skill,
+            Err(SkillAssetApplicationError::BadRequest(_))
+        ));
     }
 
     #[test]
@@ -1646,10 +1826,7 @@ mod tests {
                 "https://github.com/acme/skills/tree/main/writer".to_string(),
                 vec![
                     skill_file("writer", "写作辅助"),
-                    SkillAssetFileInput {
-                        path: "references/style.md".to_string(),
-                        content: "保持简洁".to_string(),
-                    },
+                    SkillAssetFileInput::text("references/style.md", "保持简洁"),
                 ],
             )
             .await

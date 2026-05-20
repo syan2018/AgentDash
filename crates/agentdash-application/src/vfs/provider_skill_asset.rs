@@ -1,8 +1,9 @@
 //! `skill_asset_fs` mount：把项目级 SkillAsset 只读投影为 `skills/<key>/...`。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use agentdash_domain::common::StoredFileContent;
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -13,7 +14,6 @@ use crate::skill_asset::{
 
 use super::mount::{
     PROVIDER_SKILL_ASSET_FS, SKILL_ASSET_KEYS_METADATA_KEY, SKILL_ASSET_PROJECT_ID_METADATA_KEY,
-    list_inline_entries,
 };
 use super::path::normalize_mount_relative_path;
 use super::provider::{
@@ -21,7 +21,14 @@ use super::provider::{
     SearchQuery, SearchResult,
 };
 use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
-use crate::runtime::Mount;
+use crate::runtime::{Mount, RuntimeFileEntry};
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectedSkillAssetFile {
+    content: StoredFileContent,
+    size_bytes: u64,
+    kind: String,
+}
 
 fn map_mount_err(error: String) -> MountError {
     MountError::OperationFailed(error)
@@ -92,7 +99,7 @@ pub(crate) fn parse_skill_asset_mount_metadata(
 pub(crate) async fn load_projected_skill_files(
     repo: &dyn SkillAssetRepository,
     mount: &Mount,
-) -> Result<BTreeMap<String, String>, MountError> {
+) -> Result<BTreeMap<String, ProjectedSkillAssetFile>, MountError> {
     let (project_id, keys) = parse_skill_asset_mount_metadata(mount)?;
     let mut files = BTreeMap::new();
     for key in keys {
@@ -109,7 +116,14 @@ pub(crate) async fn load_projected_skill_files(
             continue;
         };
         for file in asset.files {
-            files.insert(format!("skills/{}/{}", asset.key, file.path), file.content);
+            files.insert(
+                format!("skills/{}/{}", asset.key, file.path),
+                ProjectedSkillAssetFile {
+                    content: file.content,
+                    size_bytes: file.size_bytes,
+                    kind: file.kind.tag().to_string(),
+                },
+            );
         }
     }
     Ok(files)
@@ -122,11 +136,14 @@ pub(crate) async fn read_projected_skill_file(
 ) -> Result<ReadResult, MountError> {
     let path = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
     let files = load_projected_skill_files(repo, mount).await?;
-    let content = files
+    let file = files
         .get(&path)
-        .cloned()
         .ok_or_else(|| MountError::NotFound(format!("SkillAsset 文件不存在: {path}")))?;
-    Ok(ReadResult::new(path, content))
+    let content = file
+        .content
+        .text_content()
+        .ok_or_else(|| MountError::NotSupported(format!("SkillAsset 文件不是文本文件: {path}")))?;
+    Ok(ReadResult::new(path, content.to_string()))
 }
 
 pub(crate) async fn list_projected_skill_files(
@@ -137,11 +154,133 @@ pub(crate) async fn list_projected_skill_files(
     let path = normalize_mount_relative_path(&options.path, true).map_err(map_mount_err)?;
     let files = load_projected_skill_files(repo, mount).await?;
     let mut entries =
-        list_inline_entries(&files, &path, options.pattern.as_deref(), options.recursive);
+        list_projected_entries(&files, &path, options.pattern.as_deref(), options.recursive);
     for entry in &mut entries {
         entry.is_virtual = true;
     }
     Ok(ListResult { entries })
+}
+
+fn list_projected_entries(
+    files: &BTreeMap<String, ProjectedSkillAssetFile>,
+    base_path: &str,
+    pattern: Option<&str>,
+    recursive: bool,
+) -> Vec<crate::vfs::RuntimeFileEntry> {
+    let normalized_base = base_path.trim_matches('/');
+    let mut dirs = BTreeSet::new();
+    let mut file_entries = BTreeMap::new();
+
+    for (path, file) in files {
+        let matches_base = if normalized_base.is_empty() {
+            true
+        } else {
+            path == normalized_base
+                || path
+                    .strip_prefix(normalized_base)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        if !matches_base {
+            continue;
+        }
+
+        let relative = if normalized_base.is_empty() {
+            path.as_str()
+        } else if path == normalized_base {
+            ""
+        } else {
+            path.strip_prefix(normalized_base)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .unwrap_or("")
+        };
+
+        if relative.is_empty() {
+            file_entries.insert(path.clone(), file.clone());
+            continue;
+        }
+
+        let parts = relative.split('/').collect::<Vec<_>>();
+        if recursive {
+            let full_parts = path.split('/').collect::<Vec<_>>();
+            for depth in 1..full_parts.len() {
+                dirs.insert(full_parts[..depth].join("/"));
+            }
+            file_entries.insert(path.clone(), file.clone());
+        } else if parts.len() == 1 {
+            file_entries.insert(path.clone(), file.clone());
+        } else {
+            let dir_path = if normalized_base.is_empty() {
+                parts[0].to_string()
+            } else {
+                format!("{}/{}", normalized_base, parts[0])
+            };
+            dirs.insert(dir_path);
+        }
+    }
+
+    let normalized_pattern = pattern.map(str::trim).filter(|value| !value.is_empty());
+    let mut entries = Vec::new();
+    for dir in dirs {
+        if projected_path_matches_pattern(&dir, normalized_pattern) {
+            entries.push(RuntimeFileEntry {
+                path: dir,
+                size: None,
+                modified_at: None,
+                is_dir: true,
+                is_virtual: false,
+                attributes: None,
+            });
+        }
+    }
+    for (path, file) in file_entries {
+        if projected_path_matches_pattern(&path, normalized_pattern) {
+            entries.push(RuntimeFileEntry {
+                path,
+                size: Some(file.size_bytes),
+                modified_at: None,
+                is_dir: false,
+                is_virtual: false,
+                attributes: Some(skill_file_attributes(&file)),
+            });
+        }
+    }
+    entries
+}
+
+fn projected_path_matches_pattern(path: &str, pattern: Option<&str>) -> bool {
+    match pattern {
+        None => true,
+        Some(pat)
+            if pat.contains('*') || pat.contains('?') || pat.contains('[') || pat.contains('{') =>
+        {
+            globset::Glob::new(pat)
+                .ok()
+                .map(|g| g.compile_matcher().is_match(path))
+                .unwrap_or(false)
+        }
+        Some(pat) => path.contains(pat),
+    }
+}
+
+fn skill_file_attributes(
+    file: &ProjectedSkillAssetFile,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut attributes = serde_json::Map::new();
+    attributes.insert(
+        "content_kind".to_string(),
+        serde_json::Value::String(file.content.kind().as_str().to_string()),
+    );
+    if let Some(mime_type) = file.content.mime_type() {
+        attributes.insert(
+            "mime_type".to_string(),
+            serde_json::Value::String(mime_type.to_string()),
+        );
+    }
+    attributes.insert(
+        "skill_asset_file_kind".to_string(),
+        serde_json::Value::String(file.kind.clone()),
+    );
+    attributes
 }
 
 pub(crate) async fn search_projected_skill_files(
@@ -162,7 +301,7 @@ pub(crate) async fn search_projected_skill_files(
         query.pattern.to_lowercase()
     };
 
-    for (file_path, content) in files {
+    for (file_path, file) in files {
         if !base_path.is_empty()
             && file_path != base_path
             && !file_path
@@ -171,6 +310,9 @@ pub(crate) async fn search_projected_skill_files(
         {
             continue;
         }
+        let Some(content) = file.content.text_content() else {
+            continue;
+        };
         for (idx, line) in content.lines().enumerate() {
             let haystack = if query.case_sensitive {
                 line.to_string()
@@ -255,11 +397,11 @@ impl MountProvider for SkillAssetFsMountProvider {
             })
             .collect::<Vec<_>>();
         if let Some(existing) = files.iter_mut().find(|file| file.path == relative_path) {
-            existing.content = content.to_string();
+            existing.content = StoredFileContent::text(content);
         } else {
             files.push(SkillAssetFileInput {
                 path: relative_path.clone(),
-                content: content.to_string(),
+                content: StoredFileContent::text(content),
             });
         }
         let metadata = if relative_path == "SKILL.md" {
@@ -529,6 +671,13 @@ mod tests {
                 "style",
                 agentdash_domain::skill_asset::SkillAssetFileKind::Reference,
             ),
+            SkillAssetFile::new_binary(
+                asset.id,
+                "assets/logo.png",
+                vec![0, 1, 2, 3],
+                "image/png",
+                agentdash_domain::skill_asset::SkillAssetFileKind::Asset,
+            ),
         ];
         repo.assets.lock().unwrap().push(asset);
         repo
@@ -583,6 +732,75 @@ mod tests {
             .entries;
 
         assert!(entries.iter().any(|entry| entry.path == "skills/writer"));
+    }
+
+    #[tokio::test]
+    async fn skill_asset_mount_exposes_binary_metadata_and_skips_text_read_search() {
+        let project_id = Uuid::new_v4();
+        let repo = repo_with_skill(project_id);
+        let provider = SkillAssetFsMountProvider::new(repo);
+        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        mount.capabilities = vec![
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
+        ];
+        let entries = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "skills/writer".to_string(),
+                    pattern: None,
+                    recursive: true,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("list")
+            .entries;
+        let logo = entries
+            .iter()
+            .find(|entry| entry.path == "skills/writer/assets/logo.png")
+            .expect("logo entry");
+        assert_eq!(logo.size, Some(4));
+        assert_eq!(
+            logo.attributes
+                .as_ref()
+                .and_then(|attrs| attrs.get("content_kind"))
+                .and_then(|value| value.as_str()),
+            Some("binary")
+        );
+        assert_eq!(
+            logo.attributes
+                .as_ref()
+                .and_then(|attrs| attrs.get("mime_type"))
+                .and_then(|value| value.as_str()),
+            Some("image/png")
+        );
+
+        let read_result = provider
+            .read_text(
+                &mount,
+                "skills/writer/assets/logo.png",
+                &MountOperationContext::default(),
+            )
+            .await;
+        assert!(matches!(read_result, Err(MountError::NotSupported(_))));
+
+        let search = provider
+            .search_text(
+                &mount,
+                &SearchQuery {
+                    path: Some("skills/writer".to_string()),
+                    pattern: "PNG".to_string(),
+                    case_sensitive: false,
+                    max_results: None,
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("search");
+        assert!(search.matches.is_empty());
     }
 
     #[tokio::test]

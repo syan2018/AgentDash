@@ -25,6 +25,7 @@ export interface SkillAssetDraft {
   body: string;
   disable_model_invocation: boolean;
   files: SkillAssetExtraFile[];
+  binary_files: SkillAssetFileDto[];
   source?: SkillAssetSource;
   builtin_key?: string | null;
 }
@@ -66,7 +67,10 @@ function mapSkillAssetFile(raw: unknown): SkillAssetFileDto {
   }
   return {
     path: String(value.path ?? ""),
-    content: String(value.content ?? ""),
+    content: value.content == null ? null : String(value.content),
+    content_kind: String(value.content_kind ?? "text"),
+    mime_type: value.mime_type == null ? null : String(value.mime_type),
+    size_bytes: Number(value.size_bytes ?? 0),
     kind: value.kind == null ? null : String(value.kind),
   };
 }
@@ -377,7 +381,7 @@ export function updateSkillMarkdownFrontmatter(
 
 export function draftFromSkillAsset(asset: SkillAssetDto): SkillAssetDraft {
   const skillFile = asset.files.find((file) => file.path === "SKILL.md");
-  const parsed = skillFile ? parseSkillMarkdown(skillFile.content) : null;
+  const parsed = skillFile?.content ? parseSkillMarkdown(skillFile.content) : null;
   return {
     id: asset.id,
     key: parsed?.name?.trim() || asset.key,
@@ -387,12 +391,15 @@ export function draftFromSkillAsset(asset: SkillAssetDto): SkillAssetDraft {
     disable_model_invocation:
       parsed?.disable_model_invocation ?? asset.disable_model_invocation,
     files: asset.files
-      .filter((file) => file.path !== "SKILL.md")
+      .filter((file) => file.path !== "SKILL.md" && file.content_kind !== "binary")
       .map((file) => ({
         relative_path: file.path,
-        content: file.content,
+        content: file.content ?? "",
       }))
       .sort((a, b) => a.relative_path.localeCompare(b.relative_path, "zh-CN")),
+    binary_files: asset.files
+      .filter((file) => file.path !== "SKILL.md" && file.content_kind === "binary")
+      .sort((a, b) => a.path.localeCompare(b.path, "zh-CN")),
     source: asset.source,
     builtin_key: asset.builtin_key,
   };
@@ -408,13 +415,18 @@ export function dtoFilesFromDraft(draft: SkillAssetDraft): SkillAssetFileDto[] {
     {
       path: "SKILL.md",
       content: buildSkillMarkdown(normalized),
+      content_kind: "text",
+      size_bytes: new TextEncoder().encode(buildSkillMarkdown(normalized)).length,
     },
     ...normalized.files
       .filter((file) => normalizeSkillExtraPath(file.relative_path))
       .map((file) => ({
         path: normalizeSkillExtraPath(file.relative_path),
         content: file.content,
+        content_kind: "text",
+        size_bytes: new TextEncoder().encode(file.content).length,
       })),
+    ...normalized.binary_files,
   ];
 }
 
@@ -497,6 +509,7 @@ export function createEmptySkillAssetDraft(key = ""): SkillAssetDraft {
     body: "# 使用说明\n",
     disable_model_invocation: false,
     files: [],
+    binary_files: [],
   };
 }
 

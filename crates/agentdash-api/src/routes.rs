@@ -206,6 +206,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .patch(skill_assets::update_skill_asset)
                 .delete(skill_assets::delete_skill_asset),
         )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}/files/blob",
+            get(skill_assets::read_skill_asset_file_blob),
+        )
         // Workspace（嵌套在 Project 下创建/列表，独立路由操作）
         .route(
             "/projects/{project_id}/workspaces",

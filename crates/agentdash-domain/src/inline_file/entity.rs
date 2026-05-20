@@ -2,6 +2,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use crate::common::{
+    StoredFileContent as InlineFileContent, StoredFileContentKind as InlineFileContentKind,
+};
+
 /// 内联文件 — inline_fs 的独立存储实体
 ///
 /// 统一存储所有「文件内容嵌套在父实体」的场景：
@@ -9,6 +13,7 @@ use uuid::Uuid;
 /// - Lifecycle VFS port outputs（owner_kind = "lifecycle_run"）
 /// - Lifecycle record artifact content（owner_kind = "lifecycle_run"）
 /// - Agent Knowledge files（owner_kind = "project_agent"）
+/// - Skill asset files（owner_kind = "skill_asset"）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineFile {
     pub id: Uuid,
@@ -46,14 +51,15 @@ impl InlineFile {
         content: impl Into<String>,
     ) -> Self {
         let content = content.into();
-        let size_bytes = content.len() as u64;
+        let content = InlineFileContent::text(content);
+        let size_bytes = content.size_bytes();
         Self {
             id: Uuid::new_v4(),
             owner_kind,
             owner_id,
             container_id: container_id.into(),
             path: path.into(),
-            content: InlineFileContent::Text { content },
+            content,
             size_bytes,
             updated_at: Utc::now(),
         }
@@ -67,17 +73,15 @@ impl InlineFile {
         bytes: Vec<u8>,
         mime_type: impl Into<String>,
     ) -> Self {
-        let size_bytes = bytes.len() as u64;
+        let content = InlineFileContent::binary(bytes, mime_type);
+        let size_bytes = content.size_bytes();
         Self {
             id: Uuid::new_v4(),
             owner_kind,
             owner_id,
             container_id: container_id.into(),
             path: path.into(),
-            content: InlineFileContent::Binary {
-                bytes,
-                mime_type: mime_type.into(),
-            },
+            content,
             size_bytes,
             updated_at: Utc::now(),
         }
@@ -120,57 +124,6 @@ impl InlineFile {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum InlineFileContent {
-    Text { content: String },
-    Binary { bytes: Vec<u8>, mime_type: String },
-}
-
-impl InlineFileContent {
-    pub fn kind(&self) -> InlineFileContentKind {
-        match self {
-            Self::Text { .. } => InlineFileContentKind::Text,
-            Self::Binary { .. } => InlineFileContentKind::Binary,
-        }
-    }
-
-    pub fn into_text(self) -> Option<String> {
-        match self {
-            Self::Text { content } => Some(content),
-            Self::Binary { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InlineFileContentKind {
-    Text,
-    Binary,
-}
-
-impl InlineFileContentKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Text => "text",
-            Self::Binary => "binary",
-        }
-    }
-}
-
-impl std::str::FromStr for InlineFileContentKind {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "text" => Ok(Self::Text),
-            "binary" => Ok(Self::Binary),
-            _ => Err(()),
-        }
-    }
-}
-
 /// 内联文件归属类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -183,6 +136,8 @@ pub enum InlineFileOwnerKind {
     LifecycleRun,
     /// ProjectAgent 级 knowledge container
     ProjectAgent,
+    /// SkillAsset 级文件容器
+    SkillAsset,
 }
 
 impl InlineFileOwnerKind {
@@ -192,6 +147,7 @@ impl InlineFileOwnerKind {
             Self::Story => "story",
             Self::LifecycleRun => "lifecycle_run",
             Self::ProjectAgent => "project_agent",
+            Self::SkillAsset => "skill_asset",
         }
     }
 }
@@ -205,6 +161,7 @@ impl std::str::FromStr for InlineFileOwnerKind {
             "story" => Ok(Self::Story),
             "lifecycle_run" => Ok(Self::LifecycleRun),
             "project_agent" => Ok(Self::ProjectAgent),
+            "skill_asset" => Ok(Self::SkillAsset),
             _ => Err(()),
         }
     }

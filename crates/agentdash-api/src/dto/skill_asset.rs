@@ -37,19 +37,36 @@ pub struct RemoteSkillAssetSourceDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillAssetFileDto {
     pub path: String,
-    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default = "default_text_content_kind")]
+    pub content_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub size_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
 }
 
 impl From<SkillAssetFile> for SkillAssetFileDto {
     fn from(file: SkillAssetFile) -> Self {
+        let content_kind = file.content_kind_str().to_string();
+        let content = file.text_content().map(ToString::to_string);
+        let mime_type = file.mime_type().map(ToString::to_string);
         Self {
             path: file.path,
-            content: file.content,
+            content,
+            content_kind,
+            mime_type,
+            size_bytes: file.size_bytes,
             kind: Some(file.kind.tag().to_string()),
         }
     }
+}
+
+fn default_text_content_kind() -> String {
+    "text".to_string()
 }
 
 impl From<SkillAsset> for SkillAssetResponse {

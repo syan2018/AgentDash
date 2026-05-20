@@ -1,6 +1,7 @@
 use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use agentdash_domain::DomainError;
+use agentdash_domain::common::{StoredFileContent, StoredFileContentKind};
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository, SkillAssetSource,
@@ -48,23 +49,6 @@ impl PostgresSkillAssetRepository {
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS skill_asset_files (
-                id TEXT PRIMARY KEY,
-                skill_asset_id TEXT NOT NULL REFERENCES skill_assets(id) ON DELETE CASCADE,
-                path TEXT NOT NULL,
-                content TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CONSTRAINT skill_asset_files_kind_check CHECK (kind IN ('skill', 'reference', 'script', 'asset'))
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
         sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_assets_project_key ON skill_assets(project_id, key)")
             .execute(&self.pool)
             .await
@@ -79,17 +63,15 @@ impl PostgresSkillAssetRepository {
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
-        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_asset_files_asset_path ON skill_asset_files(skill_asset_id, path)")
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
         add_installed_source_columns(&self.pool).await?;
         Ok(())
     }
 }
 
 const ASSET_COLS: &str = "id,project_id,key,display_name,description,source,builtin_key,remote_source_url,remote_imported_at,remote_digest,library_asset_id,source_ref,source_version,source_digest,installed_at,disable_model_invocation,created_at,updated_at";
-const FILE_COLS: &str = "id,skill_asset_id,path,content,kind,created_at,updated_at";
+const SKILL_FILE_CONTAINER_ID: &str = "files";
+const SKILL_INLINE_FILE_COLS: &str =
+    "id,owner_id,path,content_kind,mime_type,text_content,binary_content,size_bytes,updated_at";
 
 #[async_trait::async_trait]
 impl SkillAssetRepository for PostgresSkillAssetRepository {
@@ -258,8 +240,11 @@ async fn replace_files(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     asset: &SkillAsset,
 ) -> Result<(), DomainError> {
-    sqlx::query("DELETE FROM skill_asset_files WHERE skill_asset_id = $1")
+    sqlx::query(
+        "DELETE FROM inline_fs_files WHERE owner_kind = 'skill_asset' AND owner_id = $1 AND container_id = $2",
+    )
         .bind(asset.id.to_string())
+        .bind(SKILL_FILE_CONTAINER_ID)
         .execute(&mut **tx)
         .await
         .map_err(db_err)?;
@@ -267,27 +252,47 @@ async fn replace_files(
         return Ok(());
     }
     let asset_id = asset.id.to_string();
-    let mut builder: QueryBuilder<Postgres> =
-        QueryBuilder::new(format!("INSERT INTO skill_asset_files ({FILE_COLS}) "));
-    builder.push_values(&asset.files, |mut row, file| {
-        row.push_bind(file.id.to_string())
-            .push_bind(&asset_id)
-            .push_bind(&file.path)
-            .push_bind(&file.content)
-            .push_bind(file.kind.tag())
-            .push_bind(file.created_at.to_rfc3339())
-            .push_bind(file.updated_at.to_rfc3339());
-    });
+    let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
+        "INSERT INTO inline_fs_files (id, owner_kind, owner_id, container_id, path, content_kind, mime_type, text_content, binary_content, size_bytes, updated_at) ",
+    );
+    let sizes = asset
+        .files
+        .iter()
+        .map(skill_file_size_bytes_i64)
+        .collect::<Result<Vec<_>, _>>()?;
+    builder.push_values(
+        asset.files.iter().zip(sizes.iter()),
+        |mut row, (file, size_bytes)| {
+            row.push_bind(file.id.to_string())
+                .push_bind("skill_asset")
+                .push_bind(&asset_id)
+                .push_bind(SKILL_FILE_CONTAINER_ID)
+                .push_bind(&file.path)
+                .push_bind(file.content_kind_str())
+                .push_bind(file.mime_type())
+                .push_bind(file.text_content())
+                .push_bind(file.binary_content().map(|bytes| bytes.to_vec()))
+                .push_bind(*size_bytes)
+                .push_bind(file.updated_at.to_rfc3339());
+        },
+    );
     builder.build().execute(&mut **tx).await.map_err(db_err)?;
     Ok(())
+}
+
+fn skill_file_size_bytes_i64(file: &SkillAssetFile) -> Result<i64, DomainError> {
+    i64::try_from(file.size_bytes).map_err(|_| {
+        DomainError::InvalidConfig(format!("SkillAsset 文件过大: {}", file.size_bytes))
+    })
 }
 
 async fn hydrate_asset(pool: &PgPool, row: SkillAssetRow) -> Result<SkillAsset, DomainError> {
     let mut asset = row.try_into_asset()?;
     let files = sqlx::query_as::<_, SkillAssetFileRow>(&format!(
-        "SELECT {FILE_COLS} FROM skill_asset_files WHERE skill_asset_id = $1 ORDER BY path ASC"
+        "SELECT {SKILL_INLINE_FILE_COLS} FROM inline_fs_files WHERE owner_kind = 'skill_asset' AND owner_id = $1 AND container_id = $2 ORDER BY path ASC"
     ))
     .bind(asset.id.to_string())
+    .bind(SKILL_FILE_CONTAINER_ID)
     .fetch_all(pool)
     .await
     .map_err(db_err)?
@@ -308,9 +313,10 @@ async fn attach_files_to_assets(
     }
     let asset_ids: Vec<String> = assets.iter().map(|asset| asset.id.to_string()).collect();
     let file_rows = sqlx::query_as::<_, SkillAssetFileRow>(&format!(
-        "SELECT {FILE_COLS} FROM skill_asset_files WHERE skill_asset_id = ANY($1) ORDER BY path ASC"
+        "SELECT {SKILL_INLINE_FILE_COLS} FROM inline_fs_files WHERE owner_kind = 'skill_asset' AND owner_id = ANY($1) AND container_id = $2 ORDER BY path ASC"
     ))
     .bind(&asset_ids)
+    .bind(SKILL_FILE_CONTAINER_ID)
     .fetch_all(pool)
     .await
     .map_err(db_err)?;
@@ -460,11 +466,13 @@ impl SkillAssetRow {
 #[derive(sqlx::FromRow)]
 struct SkillAssetFileRow {
     id: String,
-    skill_asset_id: String,
+    owner_id: String,
     path: String,
-    content: String,
-    kind: String,
-    created_at: String,
+    content_kind: String,
+    mime_type: Option<String>,
+    text_content: Option<String>,
+    binary_content: Option<Vec<u8>>,
+    size_bytes: i64,
     updated_at: String,
 }
 
@@ -472,20 +480,49 @@ impl TryFrom<SkillAssetFileRow> for SkillAssetFile {
     type Error = DomainError;
 
     fn try_from(row: SkillAssetFileRow) -> Result<Self, Self::Error> {
+        let content_kind = row
+            .content_kind
+            .parse::<StoredFileContentKind>()
+            .map_err(|_| {
+                DomainError::InvalidConfig(format!(
+                    "inline_fs_files.content_kind 值无效: {}",
+                    row.content_kind
+                ))
+            })?;
+        let content = match content_kind {
+            StoredFileContentKind::Text => StoredFileContent::Text {
+                content: row.text_content.ok_or_else(|| {
+                    DomainError::InvalidConfig("inline_fs_files.text_content 不能为空".to_string())
+                })?,
+            },
+            StoredFileContentKind::Binary => StoredFileContent::Binary {
+                bytes: row.binary_content.ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "inline_fs_files.binary_content 不能为空".to_string(),
+                    )
+                })?,
+                mime_type: row.mime_type.ok_or_else(|| {
+                    DomainError::InvalidConfig("inline_fs_files.mime_type 不能为空".to_string())
+                })?,
+            },
+        };
+        let updated_at =
+            super::parse_pg_timestamp_checked(&row.updated_at, "inline_fs_files.updated_at")?;
+        let size_bytes = u64::try_from(row.size_bytes).map_err(|_| {
+            DomainError::InvalidConfig(format!(
+                "inline_fs_files.size_bytes 值无效: {}",
+                row.size_bytes
+            ))
+        })?;
         Ok(Self {
             id: parse_uuid(&row.id, "skill_asset_file")?,
-            skill_asset_id: parse_uuid(&row.skill_asset_id, "skill_asset_files.skill_asset_id")?,
+            skill_asset_id: parse_uuid(&row.owner_id, "inline_fs_files.owner_id")?,
+            kind: SkillAssetFileKind::from_path(&row.path),
             path: row.path,
-            content: row.content,
-            kind: parse_file_kind(&row.kind)?,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "skill_asset_files.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "skill_asset_files.updated_at",
-            )?,
+            content,
+            size_bytes,
+            created_at: updated_at,
+            updated_at,
         })
     }
 }
@@ -495,18 +532,6 @@ fn parse_uuid(raw: &str, entity: &'static str) -> Result<uuid::Uuid, DomainError
         entity,
         id: raw.to_string(),
     })
-}
-
-fn parse_file_kind(raw: &str) -> Result<SkillAssetFileKind, DomainError> {
-    match raw {
-        "skill" => Ok(SkillAssetFileKind::Skill),
-        "reference" => Ok(SkillAssetFileKind::Reference),
-        "script" => Ok(SkillAssetFileKind::Script),
-        "asset" => Ok(SkillAssetFileKind::Asset),
-        other => Err(DomainError::InvalidConfig(format!(
-            "skill_asset_files.kind 非法: {other}"
-        ))),
-    }
 }
 
 fn remote_source_url(source: &SkillAssetSource) -> Option<&str> {

@@ -45,8 +45,8 @@ pub use lifecycle::mount::{
     writable_port_keys_for_active_workflow,
 };
 pub use orchestrator::{
-    AdvanceCurrentNodeInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
-    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    AdvanceCurrentActivityInput, AdvanceCurrentNodeInput, AdvanceCurrentNodeResult,
+    AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection,

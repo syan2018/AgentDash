@@ -1,8 +1,8 @@
 use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::tools::provider::SessionToolServices;
 use crate::workflow::{
-    AdvanceCurrentNodeInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
-    LifecycleOrchestrator,
+    AdvanceCurrentActivityInput, AdvanceCurrentNodeInput, AdvanceCurrentNodeStatus,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 use agentdash_domain::workflow::LifecycleStepExecutionStatus;
 use agentdash_spi::ExecutionContext;
@@ -99,13 +99,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
 
-        let locator =
-            active_workflow_locator_from_snapshot(&hook_session.snapshot()).ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 session 没有关联 active workflow，无法推进 lifecycle node".to_string(),
-                )
-            })?;
-
         let session_services = self.session_services.clone().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
@@ -123,17 +116,30 @@ impl AgentTool for CompleteLifecycleNodeTool {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,
         };
-        let result = orchestrator
-            .advance_current_node(AdvanceCurrentNodeInput {
-                hook_session: hook_session.clone(),
-                turn_id: self.current_turn_id.clone(),
-                run_id: locator.run_id,
-                step_key: locator.step_key.clone(),
-                outcome,
-                summary: params.summary.clone(),
-            })
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+        let snapshot = hook_session.snapshot();
+        let result = if let Some(locator) = active_workflow_locator_from_snapshot(&snapshot) {
+            orchestrator
+                .advance_current_node(AdvanceCurrentNodeInput {
+                    hook_session: hook_session.clone(),
+                    turn_id: self.current_turn_id.clone(),
+                    run_id: locator.run_id,
+                    step_key: locator.step_key.clone(),
+                    outcome,
+                    summary: params.summary.clone(),
+                })
+                .await
+        } else {
+            orchestrator
+                .advance_current_activity(AdvanceCurrentActivityInput {
+                    hook_session: hook_session.clone(),
+                    turn_id: self.current_turn_id.clone(),
+                    session_id: snapshot.session_id.clone(),
+                    outcome,
+                    summary: params.summary.clone(),
+                })
+                .await
+        }
+        .map_err(AgentToolError::ExecutionFailed)?;
 
         build_tool_result(result)
     }

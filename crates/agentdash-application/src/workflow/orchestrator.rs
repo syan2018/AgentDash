@@ -1,4 +1,4 @@
-﻿//! LifecycleOrchestrator — DAG 编排引擎
+//! LifecycleOrchestrator — DAG 编排引擎
 //!
 //! 职责：当某个 lifecycle node 的 session 终止后，评估后继 node 的可达性，
 //! 为 AgentNode 类型的后继创建独立 session 并启动 prompt。
@@ -10,9 +10,9 @@
 
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
-    ExecutorRunRef, LifecycleDefinition, LifecycleEdge, LifecycleNodeType, LifecycleRun,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, WorkflowDefinition,
-    WorkflowSessionTerminalState,
+    ActivityCompletionPolicy, ActivityPortValue, ExecutorRunRef, LifecycleDefinition,
+    LifecycleEdge, LifecycleNodeType, LifecycleRun, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, WorkflowDefinition, WorkflowSessionTerminalState,
 };
 use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookSessionRuntime};
 use tracing::{info, warn};
@@ -77,6 +77,15 @@ pub struct AdvanceCurrentNodeInput {
     pub turn_id: String,
     pub run_id: Uuid,
     pub step_key: String,
+    pub outcome: LifecycleNodeAdvanceOutcome,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdvanceCurrentActivityInput {
+    pub hook_session: SharedHookSessionRuntime,
+    pub turn_id: String,
+    pub session_id: String,
     pub outcome: LifecycleNodeAdvanceOutcome,
     pub summary: Option<String>,
 }
@@ -212,37 +221,7 @@ impl LifecycleOrchestrator {
             .apply_event(association.run.id, event)
             .await
             .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
-        let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id: run.project_id,
-                lifecycle_key: String::new(),
-                root_session_id: run.session_id.clone(),
-            },
-            AgentActivityRuntimePort::new(
-                self.session_core.clone(),
-                self.session_launch.clone(),
-                self.repos.clone(),
-            ),
-        );
-        let (_run, outcomes) = service
-            .launch_ready_attempts(run.id, &launcher)
-            .await
-            .map_err(|error| format!("启动后继 activity executor 失败: {error}"))?;
-        let activated_nodes = outcomes
-            .into_iter()
-            .filter_map(|outcome| {
-                if !outcome.started {
-                    return None;
-                }
-                match outcome.claim.executor_run_ref {
-                    Some(ExecutorRunRef::AgentSession { session_id }) => Some(ActivatedNode {
-                        node_key: outcome.claim.activity_key,
-                        session_id,
-                    }),
-                    _ => None,
-                }
-            })
-            .collect::<Vec<_>>();
+        let activated_nodes = self.launch_ready_activity_attempts(&run).await?;
 
         Ok(Some(OrchestrationResult {
             run_id: run.id,
@@ -479,6 +458,171 @@ impl LifecycleOrchestrator {
             status: AdvanceCurrentNodeStatus::Completed,
             orchestration_warning,
         })
+    }
+
+    pub async fn advance_current_activity(
+        &self,
+        input: AdvanceCurrentActivityInput,
+    ) -> Result<AdvanceCurrentNodeResult, String> {
+        let Some(association) = resolve_activity_session_association(
+            &input.session_id,
+            self.repos.session_binding_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+        )
+        .await?
+        else {
+            return Err("当前 session 没有关联 lifecycle activity attempt".to_string());
+        };
+
+        let definition = self
+            .repos
+            .activity_lifecycle_definition_repo
+            .get_by_id(association.run.lifecycle_id)
+            .await
+            .map_err(|error| format!("加载 activity lifecycle definition 失败: {error}"))?
+            .ok_or_else(|| {
+                format!(
+                    "activity lifecycle definition 不存在: {}",
+                    association.run.lifecycle_id
+                )
+            })?;
+        let activity = definition
+            .activities
+            .iter()
+            .find(|activity| activity.key == association.activity_key)
+            .ok_or_else(|| format!("activity 不存在: {}", association.activity_key))?;
+
+        let event = if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
+            ActivityEvent::ActivityFailed {
+                activity_key: association.activity_key.clone(),
+                attempt: association.attempt,
+                error: input
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| "agent 主动标记 activity failed".to_string()),
+            }
+        } else {
+            let port_output_map =
+                load_port_output_map(self.repos.inline_file_repo.as_ref(), association.run.id)
+                    .await;
+            let required_output_keys = match &activity.completion_policy {
+                ActivityCompletionPolicy::OutputPorts { required_ports } => required_ports.clone(),
+                _ => Vec::new(),
+            };
+            let missing_output_keys = required_output_keys
+                .iter()
+                .filter(|key| !port_output_map.contains_key(key.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_output_keys.is_empty() {
+                return Ok(AdvanceCurrentNodeResult {
+                    run: association.run,
+                    step_key: association.activity_key,
+                    status: AdvanceCurrentNodeStatus::GateRejected {
+                        gate_collision_count: 0,
+                        missing_output_keys,
+                        terminal_failed: false,
+                    },
+                    orchestration_warning: None,
+                });
+            }
+            let declared_output_keys = activity
+                .output_ports
+                .iter()
+                .map(|port| port.key.as_str())
+                .collect::<Vec<_>>();
+            let outputs = port_output_map
+                .into_iter()
+                .filter(|(port_key, _)| declared_output_keys.contains(&port_key.as_str()))
+                .map(|(port_key, content)| ActivityPortValue {
+                    port_key,
+                    value: serde_json::from_str(&content)
+                        .unwrap_or_else(|_| serde_json::Value::String(content)),
+                })
+                .collect::<Vec<_>>();
+            ActivityEvent::ActivityCompleted {
+                activity_key: association.activity_key.clone(),
+                attempt: association.attempt,
+                outputs,
+                summary: input.summary.clone(),
+            }
+        };
+
+        let service = ActivityLifecycleRunService::new(
+            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.activity_execution_claim_repo.as_ref(),
+        );
+        let run = service
+            .apply_event(association.run.id, event)
+            .await
+            .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
+        self.refresh_hook_snapshot(&input.hook_session, &input.turn_id)
+            .await?;
+
+        let orchestration_warning = if input.outcome == LifecycleNodeAdvanceOutcome::Completed {
+            match self.launch_ready_activity_attempts(&run).await {
+                Ok(_) => None,
+                Err(error) => Some(format!(
+                    "activity 已完成，但后继 executor 启动失败：{error}"
+                )),
+            }
+        } else {
+            None
+        };
+        let final_run = self.load_run(run.id).await?;
+        Ok(AdvanceCurrentNodeResult {
+            run: final_run,
+            step_key: association.activity_key,
+            status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
+                AdvanceCurrentNodeStatus::Failed
+            } else {
+                AdvanceCurrentNodeStatus::Completed
+            },
+            orchestration_warning,
+        })
+    }
+
+    async fn launch_ready_activity_attempts(
+        &self,
+        run: &LifecycleRun,
+    ) -> Result<Vec<ActivatedNode>, String> {
+        let service = ActivityLifecycleRunService::new(
+            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.activity_execution_claim_repo.as_ref(),
+        );
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id: run.project_id,
+                lifecycle_key: String::new(),
+                root_session_id: run.session_id.clone(),
+            },
+            AgentActivityRuntimePort::new(
+                self.session_core.clone(),
+                self.session_launch.clone(),
+                self.repos.clone(),
+            ),
+        );
+        let (_run, outcomes) = service
+            .launch_ready_attempts(run.id, &launcher)
+            .await
+            .map_err(|error| format!("启动后继 activity executor 失败: {error}"))?;
+        Ok(outcomes
+            .into_iter()
+            .filter_map(|outcome| {
+                if !outcome.started {
+                    return None;
+                }
+                match outcome.claim.executor_run_ref {
+                    Some(ExecutorRunRef::AgentSession { session_id }) => Some(ActivatedNode {
+                        node_key: outcome.claim.activity_key,
+                        session_id,
+                    }),
+                    _ => None,
+                }
+            })
+            .collect())
     }
 
     /// 核心逻辑：扫描 LifecycleRun 中所有 Ready 状态的 AgentNode，为它们创建 session。

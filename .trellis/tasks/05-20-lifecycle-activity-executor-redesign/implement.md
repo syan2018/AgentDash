@@ -258,12 +258,12 @@
   - [x] 继承 executor config。
   - [x] launch prompt accepted 后提交 `ExecutorStarted`。
   - [x] session terminal 转为 ActivityEvent。
-  - [ ] `complete_lifecycle_node` 转为 ActivityEvent。
+  - [x] Activity 子 session 内 `complete_lifecycle_node` 转为 ActivityEvent。
 - [ ] `Agent + ContinueRoot` 映射现有 PhaseNode：
   - [ ] 限制同一 root session 仅一个 running ContinueRoot attempt。
   - [ ] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
   - [ ] 完成事件仍走 ActivityEvent。
-- [ ] 旧 `complete_lifecycle_node` 工具改为提交 ActivityEvent，不直接调用 `complete_step`。
+- [ ] 旧 `complete_lifecycle_node` 工具在 Activity 子 session 内提交 ActivityEvent；旧 step session 暂保留 `complete_step` 路径，待旧模型清理阶段移除。
 - [ ] 保留现有 hook gate 能力，但结果转换为 completion policy / ActivityEvent。
 
 验证：
@@ -274,8 +274,11 @@
 - [ ] 并行 ContinueRoot 被拒绝。
 - [ ] session terminal failed 转为 attempt failed。
 - [x] activity 子 session label 可稳定反查 run / activity / attempt。
+- [x] Activity 子 session 调用 `complete_lifecycle_node` 会提交 ActivityEvent 并调度后继 ready attempt。
 - [x] `cargo test -p agentdash-application workflow::agent_executor`
 - [x] `cargo test -p agentdash-application workflow::session_association`
+- [x] `cargo test -p agentdash-application workflow`
+- [x] `cargo check -p agentdash-api`
 
 出口标准：
 

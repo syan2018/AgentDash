@@ -122,7 +122,8 @@ POST /api/vfs-surfaces/upload-file-blob
   - `attributes.mime_type`
 - Surface list/stat DTO mirrors those fields as `content_kind` / `mime_type` in snake_case.
 - Text APIs (`read-file`, `write-file`, `create-file`, `apply-patch`) remain text APIs.
-- Blob APIs are limited to `inline_fs` mounts unless a future provider explicitly implements binary support.
+- Blob read API uses `MountProvider::read_binary`; `inline_fs` and `skill_asset_fs` expose image assets through the same provider contract.
+- Blob upload API is limited to `inline_fs` mounts.
 
 ### 4. Validation & Error Matrix
 
@@ -132,13 +133,15 @@ POST /api/vfs-surfaces/upload-file-blob
 | `search_text` sees binary inline file | Skip file |
 | `apply_patch` targets binary inline file | Text read fails; do not coerce binary to text |
 | Blob read on text file | HTTP 400 |
-| Blob read/upload on non-`inline_fs` mount | HTTP 400 |
+| Blob read on provider without `read_binary` support | HTTP 400 |
+| Blob upload on non-`inline_fs` mount | HTTP 400 |
 | Upload MIME is not `image/*` | HTTP 400 |
 | Invalid mount-relative path | HTTP 400 via path normalization |
 
 ### 5. Representative Cases
 
 - Image asset: Upload `assets/logo.png` as `image/png`; list returns `content_kind=binary`, `mime_type=image/png`, `size=<bytes>`; VFS Browser renders image preview.
+- Skill asset image: `skill_asset_fs` image entries use `read_binary`, so VFS Browser renders previews from the generic blob read API.
 - Text file: Existing `note.md` remains `content_kind=text`; `fs.read` and CodeMirror editing still work.
 
 ### 6. Tests Required

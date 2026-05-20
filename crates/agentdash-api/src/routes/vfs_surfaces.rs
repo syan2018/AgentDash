@@ -17,7 +17,7 @@ use agentdash_application::vfs::{
     build_project_skill_asset_management_mount, mount_container_id, mount_owner_id,
     mount_owner_kind, mount_purpose,
 };
-use agentdash_domain::inline_file::{InlineFile, InlineFileContent};
+use agentdash_domain::inline_file::InlineFile;
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -332,38 +332,30 @@ pub async fn read_surface_file_blob(
         .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
-    let mount = vfs
-        .mounts
-        .iter()
-        .find(|mount| mount.id == req.mount_id)
-        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
-    if mount.provider != PROVIDER_INLINE_FS {
-        return Err(ApiError::BadRequest(
-            "blob 读取目前仅支持 inline_fs mount".to_string(),
-        ));
-    }
+    check_mount_available(&state, &vfs, &req.mount_id).await?;
 
-    let normalized_path =
-        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
-            .map_err(ApiError::BadRequest)?;
-    let (owner_kind, owner_id, container_id) =
-        agentdash_application::vfs::parse_inline_mount_owner(mount)
-            .map_err(ApiError::BadRequest)?;
-    let file = state
-        .repos
-        .inline_file_repo
-        .get_file(owner_kind, owner_id, &container_id, &normalized_path)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("文件不存在: {normalized_path}")))?;
-    let InlineFileContent::Binary { bytes, mime_type } = file.content else {
-        return Err(ApiError::BadRequest(format!(
-            "文件不是二进制内容: {normalized_path}"
-        )));
-    };
-    let content_type = HeaderValue::from_str(&mime_type)
+    let result = state
+        .services
+        .vfs_service
+        .read_binary(
+            &vfs,
+            &ResourceRef {
+                mount_id: req.mount_id.clone(),
+                path: req.path.clone(),
+            },
+            None,
+            None,
+        )
+        .await
+        .map_err(ApiError::BadRequest)?;
+    let content_type = HeaderValue::from_str(&result.mime_type)
         .map_err(|error| ApiError::Internal(format!("MIME 类型无效: {error}")))?;
 
-    Ok(([(header::CONTENT_TYPE, content_type)], Bytes::from(bytes)).into_response())
+    Ok((
+        [(header::CONTENT_TYPE, content_type)],
+        Bytes::from(result.data),
+    )
+        .into_response())
 }
 
 pub async fn upload_surface_file_blob(

@@ -224,7 +224,7 @@
 - [x] freeform run 初始化为 `main_conversation#1`，executor 为 `Agent + ContinueRoot`。
 - [x] freeform lifecycle 使用 open-ended / manual completion policy。
 - [x] session 查询 / session binding / run association 能反查 freeform LifecycleRun。
-- [ ] 启动对账或 migration 为既有裸业务 session 补齐 freeform LifecycleRun。
+- [x] 启动对账或 migration 为既有裸业务 session 补齐 freeform LifecycleRun。
 - [ ] 内部健康检查、系统探测类非业务 session 明确不进入用户过程视图。
 
 验证：

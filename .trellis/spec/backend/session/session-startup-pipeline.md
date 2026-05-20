@@ -161,6 +161,8 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。dispat
 - `/sessions` 创建的是 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
 - 新 session 必须创建 `SessionBinding(owner_type=Project, owner_id=project_id, label=freeform)`。
 - 没有显式 lifecycle 的普通会话必须调用 `ensure_run_for_session`，生成 `LifecycleRun.session_id = session.id`。
+- 启动对账会扫描 project-bound 业务 root session；若没有任何 LifecycleRun，则补齐 freeform LifecycleRun。
+- 对账跳过 `lifecycle_node:*`、`lifecycle_activity:*`、`companion:*` 这类派生 session label。
 - freeform lifecycle 是单 Activity graph：`main_conversation` 使用 `Agent + ContinueRoot` 与 `ActivityCompletionPolicy::OpenEnded`。
 - `OpenEnded` 表示普通 prompt terminal 不会自动完成 activity；归档、显式结束或后续产品动作再提交 completion/cancel event。
 
@@ -171,17 +173,20 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。dispat
 - builtin workflow/lifecycle definition 校验失败 -> `400 BadRequest`。
 - 同一 session 已存在 activity run -> 返回既有 run，不创建重复 run。
 - session 已绑定到其他 Project -> session binding repository 拒绝跨 Project 复用。
+- 对账发现 session 已有任意 LifecycleRun -> 不补 freeform run。
 
 ### 5. Good/Base/Bad Cases
 
 - Good: 用户在当前 Project 下创建普通会话，系统创建 session、Project binding、freeform LifecycleRun，并初始化 `main_conversation#1 ready`。
 - Base: ProjectAgent 配置了显式 lifecycle 时，按显式 lifecycle 创建 run，不额外创建 freeform run。
+- Base: 旧的 project-bound session 在启动对账中补齐 freeform run。
 - Bad: 创建无 project scope 的裸 session；后续无法从项目过程视图反查其 LifecycleRun。
 
 ### 6. Tests Required
 
 - `cargo test -p agentdash-application workflow::freeform`：断言 builtin definition、open-ended policy、run 初始化和幂等复用。
 - `cargo check -p agentdash-api`：断言 API/request 接线编译通过。
+- `cargo test -p agentdash-application reconcile::boot`：断言启动对账会跳过派生 session label。
 - 前端 `pnpm --filter app-web typecheck`：断言 `createSession(title, projectId)` 调用契约一致。
 
 ### 7. Wrong vs Correct

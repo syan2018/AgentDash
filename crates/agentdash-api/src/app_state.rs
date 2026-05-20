@@ -502,6 +502,8 @@ impl AppState {
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
                 session_binding_repo: session_binding_repo.clone(),
+                workflow_definition_repo: workflow_repo.clone(),
+                activity_lifecycle_definition_repo: workflow_repo.clone(),
                 lifecycle_run_repo: workflow_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;

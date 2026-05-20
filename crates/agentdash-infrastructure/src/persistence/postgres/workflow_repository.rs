@@ -52,7 +52,8 @@ impl PostgresWorkflowRepository {
             r#"CREATE TABLE IF NOT EXISTS lifecycle_runs (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL,
             session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-            step_states TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
+            step_states TEXT NOT NULL, record_artifacts TEXT NOT NULL DEFAULT '{}',
+            execution_log TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
@@ -65,6 +66,7 @@ impl PostgresWorkflowRepository {
             .execute(&self.pool).await.map_err(db_err)?;
 
         add_installed_source_columns(&self.pool).await?;
+        add_lifecycle_run_columns(&self.pool).await?;
 
         Ok(())
     }
@@ -437,6 +439,16 @@ async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> 
     ] {
         sqlx::query(query).execute(pool).await.map_err(db_err)?;
     }
+    Ok(())
+}
+
+async fn add_lifecycle_run_columns(pool: &PgPool) -> Result<(), DomainError> {
+    sqlx::query(
+        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS record_artifacts TEXT NOT NULL DEFAULT '{}'",
+    )
+    .execute(pool)
+    .await
+    .map_err(db_err)?;
     Ok(())
 }
 

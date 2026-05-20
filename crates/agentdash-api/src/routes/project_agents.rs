@@ -778,11 +778,17 @@ async fn resolve_lifecycle_key_for_project_agent(
 ) -> Result<Option<String>, ApiError> {
     if let Some(lk) = lifecycle_key {
         let trimmed = lk.trim().to_string();
-        return Ok(if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        });
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        state
+            .repos
+            .lifecycle_definition_repo
+            .get_by_project_and_key(project_id, &trimmed)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Lifecycle `{trimmed}` 不存在")))?;
+        return Ok(Some(trimmed));
     }
 
     if let Some(wk) = workflow_key {
@@ -794,7 +800,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         let workflow = state
             .repos
             .workflow_definition_repo
-            .get_by_key(&wk)
+            .get_by_project_and_key(project_id, &wk)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .ok_or_else(|| ApiError::NotFound(format!("Workflow `{wk}` 不存在")))?;
@@ -804,7 +810,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         let existing = state
             .repos
             .lifecycle_definition_repo
-            .get_by_key(&auto_key)
+            .get_by_project_and_key(project_id, &auto_key)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
 

@@ -117,24 +117,22 @@ pub struct ValidateLifecycleDefinitionRequest {
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<WorkflowDefinition>>, ApiError> {
-    let mut definitions = if let Some(ref pid) = query.project_id {
-        let project_id = parse_uuid_required(pid, "project_id")?;
-        state
-            .repos
-            .workflow_definition_repo
-            .list_by_project(project_id)
-            .await?
-    } else if let Some(binding_kind) = query.binding_kind {
-        state
-            .repos
-            .workflow_definition_repo
-            .list_by_binding_kind(binding_kind)
-            .await?
-    } else {
-        state.repos.workflow_definition_repo.list_all().await?
-    };
+    let project_id = parse_project_id_query(query.project_id.as_deref())?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let mut definitions = state
+        .repos
+        .workflow_definition_repo
+        .list_by_project(project_id)
+        .await?;
     if let Some(binding_kind) = query.binding_kind {
         definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
@@ -143,24 +141,22 @@ pub async fn list_workflows(
 
 pub async fn list_lifecycles(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListWorkflowsQuery>,
 ) -> Result<Json<Vec<LifecycleDefinition>>, ApiError> {
-    let mut definitions = if let Some(ref pid) = query.project_id {
-        let project_id = parse_uuid_required(pid, "project_id")?;
-        state
-            .repos
-            .lifecycle_definition_repo
-            .list_by_project(project_id)
-            .await?
-    } else if let Some(binding_kind) = query.binding_kind {
-        state
-            .repos
-            .lifecycle_definition_repo
-            .list_by_binding_kind(binding_kind)
-            .await?
-    } else {
-        state.repos.lifecycle_definition_repo.list_all().await?
-    };
+    let project_id = parse_project_id_query(query.project_id.as_deref())?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    let mut definitions = state
+        .repos
+        .lifecycle_definition_repo
+        .list_by_project(project_id)
+        .await?;
     if let Some(binding_kind) = query.binding_kind {
         definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
@@ -169,9 +165,17 @@ pub async fn list_lifecycles(
 
 pub async fn create_lifecycle_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateLifecycleDefinitionRequest>,
 ) -> Result<Json<LifecycleDefinition>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let definition = LifecycleDefinition::new(
         project_id,
         req.key,
@@ -367,9 +371,17 @@ pub async fn complete_workflow_step(
 
 pub async fn create_workflow_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateWorkflowDefinitionRequest>,
 ) -> Result<Json<WorkflowDefinition>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let definition = WorkflowDefinition::new(
         project_id,
         req.key,
@@ -390,6 +402,7 @@ pub async fn create_workflow_definition(
 
 pub async fn get_workflow_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<WorkflowDefinition>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
@@ -399,11 +412,19 @@ pub async fn get_workflow_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     Ok(Json(definition))
 }
 
 pub async fn get_lifecycle_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<LifecycleDefinition>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
@@ -413,11 +434,19 @@ pub async fn get_lifecycle_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     Ok(Json(definition))
 }
 
 pub async fn update_workflow_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateWorkflowDefinitionRequest>,
 ) -> Result<Json<WorkflowDefinition>, ApiError> {
@@ -428,6 +457,13 @@ pub async fn update_workflow_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     if let Some(name) = req.name {
         definition.name = name;
     }
@@ -466,6 +502,7 @@ pub async fn update_workflow_definition(
 
 pub async fn update_lifecycle_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateLifecycleDefinitionRequest>,
 ) -> Result<Json<LifecycleDefinition>, ApiError> {
@@ -476,6 +513,13 @@ pub async fn update_lifecycle_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     if let Some(name) = req.name {
         definition.name = name;
     }
@@ -504,9 +548,18 @@ pub async fn update_lifecycle_definition(
 }
 
 pub async fn validate_workflow_definition(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<ValidateWorkflowDefinitionRequest>,
 ) -> Result<Json<WorkflowValidationResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     match WorkflowDefinition::new(
         project_id,
         req.key,
@@ -538,9 +591,17 @@ pub async fn validate_workflow_definition(
 
 pub async fn validate_lifecycle_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<ValidateLifecycleDefinitionRequest>,
 ) -> Result<Json<WorkflowValidationResponse>, ApiError> {
     let project_id = parse_uuid_required(&req.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
     match LifecycleDefinition::new(
         project_id,
         req.key,
@@ -578,6 +639,7 @@ pub async fn validate_lifecycle_definition(
 
 pub async fn delete_workflow_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
@@ -587,6 +649,13 @@ pub async fn delete_workflow_definition(
         .get_by_id(id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("workflow_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let workflow_key = definition.key.clone();
     let referencing_steps: Vec<String> = state
         .repos
@@ -616,9 +685,23 @@ pub async fn delete_workflow_definition(
 
 pub async fn delete_lifecycle_definition(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let id = parse_uuid(&id, "lifecycle_id")?;
+    let definition = state
+        .repos
+        .lifecycle_definition_repo
+        .get_by_id(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_definition 不存在: {id}")))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        definition.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let service = WorkflowCatalogService::new(
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.lifecycle_definition_repo.as_ref(),
@@ -654,6 +737,13 @@ fn parse_uuid_required(raw: &str, field: &str) -> Result<Uuid, ApiError> {
         return Err(ApiError::BadRequest(format!("{field} 不能为空")));
     }
     parse_uuid(trimmed, field)
+}
+
+fn parse_project_id_query(raw: Option<&str>) -> Result<Uuid, ApiError> {
+    let Some(raw) = raw else {
+        return Err(ApiError::BadRequest("project_id 不能为空".to_string()));
+    };
+    parse_uuid_required(raw, "project_id")
 }
 
 fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, ApiError> {

@@ -179,7 +179,7 @@ async fn build_projection_from_run(
     let primary_workflow = match active_step.effective_workflow_key() {
         Some(wk) => {
             let Some(wf) = definition_repo
-                .get_by_key(wk)
+                .get_by_project_and_key(lifecycle.project_id, wk)
                 .await
                 .map_err(|e| format!("加载 workflow 失败: {e}"))?
             else {

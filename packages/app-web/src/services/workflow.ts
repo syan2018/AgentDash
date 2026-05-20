@@ -19,12 +19,8 @@ import type {
   ContextStrategy,
   GateStrategy,
   StandaloneFulfillment,
-  LifecycleDefinition,
-  LifecycleEdge,
   LifecycleExecutionEntry,
   LifecycleExecutionEventKind,
-  LifecycleNodeType,
-  LifecycleStepDefinition,
   ToolDescriptor,
   TransitionCondition,
   WorkflowContextBinding,
@@ -58,7 +54,6 @@ const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
   "before_subagent_dispatch", "after_subagent_dispatch", "companion_result",
   "before_compact", "after_compact", "before_provider_request",
 ]);
-const LIFECYCLE_NODE_TYPES = new Set<string>(["agent_node", "phase_node"]);
 const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
 const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", "custom"]);
 const AGENT_SESSION_POLICIES = new Set<string>(["spawn_child", "continue_root", "attach_existing"]);
@@ -182,30 +177,6 @@ function mapStandaloneFulfillment(raw: unknown): StandaloneFulfillment | undefin
   throw new Error("input port standalone_fulfillment 非法");
 }
 
-function mapLifecycleEdge(raw: unknown): LifecycleEdge {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("lifecycle edge 缺失或不是对象");
-  }
-  // 历史数据无 kind 字段时按 artifact 兼容（与后端 serde default 对齐）
-  const kindRaw = optString(value.kind);
-  const kind: LifecycleEdge["kind"] = kindRaw === "flow" ? "flow" : "artifact";
-  if (kind === "flow") {
-    return {
-      kind: "flow",
-      from_node: requireStringField(value, "from_node"),
-      to_node: requireStringField(value, "to_node"),
-    };
-  }
-  return {
-    kind: "artifact",
-    from_node: requireStringField(value, "from_node"),
-    from_port: requireStringField(value, "from_port"),
-    to_node: requireStringField(value, "to_node"),
-    to_port: requireStringField(value, "to_port"),
-  };
-}
-
 function mapCapabilityDirective(raw: unknown, index: number): CapabilityDirective {
   const value = asRecord(raw);
   if (!value) {
@@ -252,25 +223,6 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
     capability_config: mapWorkflowCapabilityConfig(value.capability_config),
     output_ports: asRecordArray(value.output_ports ?? value.recommended_output_ports).map(mapOutputPortDefinition),
     input_ports: asRecordArray(value.input_ports ?? value.recommended_input_ports).map(mapInputPortDefinition),
-  };
-}
-
-function mapLifecycleStepDefinition(raw: unknown): LifecycleStepDefinition {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("lifecycle step 缺失或不是对象");
-  }
-  const workflowKeyRaw = value.workflow_key;
-  return {
-    key: requireStringField(value, "key"),
-    description: optStringField(value, "description"),
-    workflow_key: typeof workflowKeyRaw === "string" && workflowKeyRaw ? workflowKeyRaw : null,
-    node_type: value.node_type != null
-      ? normalizeEnum<LifecycleNodeType>(value.node_type, LIFECYCLE_NODE_TYPES, "lifecycle node type")
-      : undefined,
-    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
-    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
-    capability_config: mapWorkflowCapabilityConfig(value.capability_config),
   };
 }
 
@@ -533,25 +485,6 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
   };
 }
 
-export function mapLifecycleDefinition(raw: Record<string, unknown>): LifecycleDefinition {
-  return {
-    id: requireStringField(raw, "id"),
-    project_id: requireStringField(raw, "project_id"),
-    key: requireStringField(raw, "key"),
-    name: requireStringField(raw, "name"),
-    description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.binding_kinds, "lifecycle target kinds"),
-    source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "lifecycle definition source"),
-    installed_source: mapInstalledAssetSource(raw.installed_source),
-    version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
-    entry_step_key: requireStringField(raw, "entry_step_key"),
-    steps: Array.isArray(raw.steps) ? raw.steps.map(mapLifecycleStepDefinition) : [],
-    edges: Array.isArray(raw.edges) ? raw.edges.map(mapLifecycleEdge) : [],
-    created_at: requireStringField(raw, "created_at"),
-    updated_at: requireStringField(raw, "updated_at"),
-  };
-}
-
 export function mapActivityLifecycleDefinition(raw: Record<string, unknown>): ActivityLifecycleDefinition {
   return {
     id: requireStringField(raw, "id"),
@@ -600,18 +533,6 @@ export async function fetchWorkflowDefinitions(opts?: {
   return raw.map(mapWorkflowDefinition);
 }
 
-export async function fetchLifecycleDefinitions(opts?: {
-  projectId?: string;
-  targetKind?: WorkflowTargetKind;
-}): Promise<LifecycleDefinition[]> {
-  const params = new URLSearchParams();
-  if (opts?.projectId) params.set("project_id", opts.projectId);
-  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
-  const query = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(`/lifecycle-definitions${query}`);
-  return raw.map(mapLifecycleDefinition);
-}
-
 export async function fetchActivityLifecycleDefinitions(opts?: {
   projectId?: string;
   targetKind?: WorkflowTargetKind;
@@ -622,93 +543,6 @@ export async function fetchActivityLifecycleDefinitions(opts?: {
   const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/activity-lifecycle-definitions${query}`);
   return raw.map(mapActivityLifecycleDefinition);
-}
-
-export async function createLifecycleDefinition(input: {
-  project_id: string;
-  key: string;
-  name: string;
-  description?: string;
-  target_kinds: WorkflowTargetKind[];
-  entry_step_key: string;
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
-}): Promise<LifecycleDefinition> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions", {
-    project_id: input.project_id,
-    key: input.key,
-    name: input.name,
-    description: input.description,
-    binding_kinds: input.target_kinds,
-    entry_step_key: input.entry_step_key,
-    steps: input.steps,
-    edges: input.edges,
-  });
-  return mapLifecycleDefinition(raw);
-}
-
-export async function getLifecycleDefinition(id: string): Promise<LifecycleDefinition> {
-  const raw = await api.get<Record<string, unknown>>(`/lifecycle-definitions/${id}`);
-  return mapLifecycleDefinition(raw);
-}
-
-export async function updateLifecycleDefinition(
-  id: string,
-  input: {
-    name?: string;
-    description?: string;
-    binding_kinds?: WorkflowTargetKind[];
-    entry_step_key?: string;
-    steps?: LifecycleStepDefinition[];
-    edges?: LifecycleEdge[];
-  },
-): Promise<LifecycleDefinition> {
-  const raw = await api.put<Record<string, unknown>>(`/lifecycle-definitions/${id}`, {
-    name: input.name,
-    description: input.description,
-    binding_kinds: input.binding_kinds,
-    entry_step_key: input.entry_step_key,
-    steps: input.steps,
-    edges: input.edges,
-  });
-  return mapLifecycleDefinition(raw);
-}
-
-export async function validateLifecycleDefinition(input: {
-  project_id: string;
-  key: string;
-  name: string;
-  description?: string;
-  target_kinds: WorkflowTargetKind[];
-  entry_step_key: string;
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
-}): Promise<WorkflowValidationResult> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-definitions/validate", {
-    project_id: input.project_id,
-    key: input.key,
-    name: input.name,
-    description: input.description,
-    binding_kinds: input.target_kinds,
-    entry_step_key: input.entry_step_key,
-    steps: input.steps,
-    edges: input.edges,
-  });
-  return {
-    valid: Boolean(raw.valid),
-    issues: Array.isArray(raw.issues)
-      ? raw.issues.map((item, index) => {
-          if (!item || typeof item !== "object") {
-            throw new Error(`workflow validation issue[${index}] 必须是对象`);
-          }
-          return mapValidationIssue(item as Record<string, unknown>);
-        })
-      : [],
-  };
-}
-
-export async function deleteLifecycleDefinition(id: string): Promise<void> {
-  await api.delete(`/lifecycle-definitions/${id}`);
 }
 
 export async function createActivityLifecycleDefinition(input: {

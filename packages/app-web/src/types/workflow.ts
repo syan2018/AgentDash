@@ -282,21 +282,6 @@ export interface WorkflowTemplateWorkflow {
   contract: WorkflowContract;
 }
 
-export type LifecycleNodeType = "agent_node" | "phase_node";
-
-export interface LifecycleStepDefinition {
-  key: string;
-  description: string;
-  workflow_key?: string | null;
-  node_type?: LifecycleNodeType;
-  /** Step 级产出约束 */
-  output_ports: OutputPortDefinition[];
-  /** Step 级消费声明 */
-  input_ports: InputPortDefinition[];
-  /** Step 级能力配置；应用顺序在绑定 workflow 的 contract.capability_config 之后。 */
-  capability_config?: WorkflowCapabilityConfig;
-}
-
 export interface WorkflowTemplate {
   key: string;
   name: string;
@@ -307,9 +292,9 @@ export interface WorkflowTemplate {
     key: string;
     name: string;
     description: string;
-    entry_step_key: string;
-    steps: LifecycleStepDefinition[];
-    edges: LifecycleEdge[];
+    entry_activity_key: string;
+    activities: ActivityDefinition[];
+    transitions: ActivityTransition[];
   };
 }
 
@@ -324,23 +309,6 @@ export interface WorkflowDefinition {
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
   contract: WorkflowContract;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface LifecycleDefinition {
-  id: string;
-  project_id: string;
-  key: string;
-  name: string;
-  description: string;
-  target_kinds: WorkflowTargetKind[];
-  source: WorkflowDefinitionSource;
-  installed_source?: InstalledAssetSourceDto | null;
-  version: number;
-  entry_step_key: string;
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
   created_at: string;
   updated_at: string;
 }

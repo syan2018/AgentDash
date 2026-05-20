@@ -385,7 +385,10 @@
 - [ ] 删除 `LifecycleNodeType` 或只保留迁移内部类型。
 - [ ] 删除 `LifecycleStepDefinition.workflow_key` 顶层字段。
 - [ ] 删除旧 `complete_step` / `fail_step` 直推路径。
-- [ ] 删除旧 Orchestrator 对 `node_type` 的 match 调度。
+  - [x] `complete_lifecycle_node` 工具只通过 Activity session binding 提交 ActivityEvent。
+  - [x] Hook `pending_advance` 不再直推旧 step aggregate。
+  - [x] 公开 `/lifecycle-runs/{id}/steps/*` activate / complete API 已移除。
+- [x] 删除旧 Orchestrator 对 `node_type` 的 match 调度。
 - [ ] 文档更新 `.trellis/spec/backend/workflow/lifecycle-edge.md` 或新建 Activity lifecycle spec。
 - [ ] builtin / seed / tests 全部改为 Activity。
 

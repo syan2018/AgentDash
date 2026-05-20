@@ -16,7 +16,7 @@ mod session_association;
 pub mod step_activation;
 pub mod tools;
 
-pub use activity_run::ActivityLifecycleRunService;
+pub use activity_run::{ActivityLifecycleRunService, StartActivityLifecycleRunCommand};
 pub use agent_executor::{
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
     AgentActivitySessionPort,
@@ -45,8 +45,8 @@ pub use lifecycle::mount::{
     writable_port_keys_for_active_workflow,
 };
 pub use orchestrator::{
-    AdvanceCurrentActivityInput, AdvanceCurrentNodeInput, AdvanceCurrentNodeResult,
-    AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
+    AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
+    LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use projection::{
     ActiveWorkflowProjection, resolve_active_workflow_projection,

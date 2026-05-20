@@ -9,11 +9,9 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand, ActivityEvent, ActivityLifecycleCatalogService,
-    ActivityLifecycleRunService, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
-    AgentActivityRuntimePort, CompleteLifecycleStepCommand, LifecycleOrchestrator,
-    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
-    build_step_projector_from_repos,
+    ActivityEvent, ActivityLifecycleCatalogService, ActivityLifecycleRunService,
+    AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
+    StartActivityLifecycleRunCommand, WorkflowCatalogService,
 };
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityLifecycleDefinition, ActivityTransition, LifecycleDefinition,
@@ -27,7 +25,6 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::WorkflowValidationResponse;
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
-use tracing::warn;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
@@ -49,11 +46,6 @@ pub struct StartWorkflowRunRequest {
 pub struct SubmitHumanDecisionRequest {
     pub decision_port: String,
     pub decision: serde_json::Value,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct CompleteWorkflowStepRequest {
     pub summary: Option<String>,
 }
 
@@ -464,58 +456,37 @@ pub async fn start_lifecycle_run(
         ProjectPermission::Edit,
     )
     .await?;
-    let service = LifecycleRunService::new(
-        state.repos.lifecycle_definition_repo.as_ref(),
+    let service = ActivityLifecycleRunService::new(
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .with_projector(build_step_projector_from_repos(&state.repos));
+        state.repos.activity_execution_claim_repo.as_ref(),
+    );
     let run = service
-        .start_run(StartLifecycleRunCommand {
+        .start_run(StartActivityLifecycleRunCommand {
             project_id,
             lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
             lifecycle_key: req.lifecycle_key.and_then(normalize_string),
             session_id: req.session_id,
         })
         .await?;
-    let orchestrator = LifecycleOrchestrator::new(
-        state.services.session_core.clone(),
-        state.services.session_launch.clone(),
-        state.services.session_hooks.clone(),
-        state.services.session_capability.clone(),
-        state.repos.clone(),
-        state.config.platform_config.clone(),
+    let launcher = AgentActivityExecutorLauncher::new(
+        AgentActivityLaunchContext {
+            project_id: run.project_id,
+            lifecycle_key: String::new(),
+            root_session_id: run.session_id.clone(),
+        },
+        AgentActivityRuntimePort::new(
+            state.services.session_core.clone(),
+            state.services.session_launch.clone(),
+            state.repos.clone(),
+        )
+        .with_runtime_context(
+            state.services.session_hooks.clone(),
+            state.services.session_capability.clone(),
+            state.config.platform_config.clone(),
+        ),
     );
-    match orchestrator
-        .after_node_advanced(run.id, run.project_id)
-        .await
-    {
-        Ok(Some(result)) => {
-            let warnings = orchestrator
-                .apply_activated_phase_nodes_for_run_session(
-                    &run,
-                    &result.activated_phase_nodes,
-                    None,
-                )
-                .await;
-            if !warnings.is_empty() {
-                warn!(
-                    run_id = %run.id,
-                    project_id = %run.project_id,
-                    warnings = ?warnings,
-                    "start_lifecycle_run 已创建 run，但首批 PhaseNode 能力状态应用存在 warning"
-                );
-            }
-        }
-        Ok(None) => {}
-        Err(error) => {
-            warn!(
-                run_id = %run.id,
-                project_id = %run.project_id,
-                error = %error,
-                "start_lifecycle_run 已创建 run，但触发首批 node 编排失败"
-            );
-        }
-    }
+    service.launch_ready_attempts(run.id, &launcher).await?;
 
     let latest_run = state
         .repos
@@ -567,61 +538,6 @@ pub async fn list_lifecycle_runs_by_session(
         }
     }
     Ok(Json(runs))
-}
-
-pub async fn activate_workflow_step(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, step_key)): Path<(String, String)>,
-) -> Result<Json<LifecycleRun>, ApiError> {
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_lifecycle_run(&state, run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        existing_run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let service = LifecycleRunService::new(
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .with_projector(build_step_projector_from_repos(&state.repos));
-    let run = service
-        .activate_step(ActivateLifecycleStepCommand { run_id, step_key })
-        .await?;
-    Ok(Json(run))
-}
-
-pub async fn complete_workflow_step(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((run_id, step_key)): Path<(String, String)>,
-    Json(req): Json<CompleteWorkflowStepRequest>,
-) -> Result<Json<LifecycleRun>, ApiError> {
-    let run_id = parse_uuid(&run_id, "run_id")?;
-    let existing_run = load_lifecycle_run(&state, run_id).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        existing_run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let service = LifecycleRunService::new(
-        state.repos.lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .with_projector(build_step_projector_from_repos(&state.repos));
-    let run = service
-        .complete_step(CompleteLifecycleStepCommand {
-            run_id,
-            step_key,
-            summary: req.summary.and_then(normalize_string),
-        })
-        .await?;
-    Ok(Json(run))
 }
 
 pub async fn submit_human_decision(

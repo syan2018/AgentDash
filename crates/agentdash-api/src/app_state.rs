@@ -406,7 +406,6 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             inline_file_repo.clone(),
-            state_change_repo.clone(),
         ));
         let extra_skill_dirs = plugin_registration.extra_skill_dirs.clone();
         let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(

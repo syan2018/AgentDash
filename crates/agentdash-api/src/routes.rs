@@ -382,14 +382,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_lifecycle_runs_by_session),
         )
         .route(
-            "/lifecycle-runs/{id}/steps/{step_key}/activate",
-            post(workflows::activate_workflow_step),
-        )
-        .route(
-            "/lifecycle-runs/{id}/steps/{step_key}/complete",
-            post(workflows::complete_workflow_step),
-        )
-        .route(
             "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             post(workflows::submit_human_decision),
         )

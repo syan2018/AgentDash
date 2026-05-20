@@ -12,8 +12,6 @@ import type {
   WorkflowValidationResult,
 } from "../types";
 import {
-  activateWorkflowStep,
-  completeWorkflowStep,
   createActivityLifecycleDefinition,
   createWorkflowDefinition,
   deleteActivityLifecycleDefinition,
@@ -246,12 +244,6 @@ interface WorkflowState {
     session_id: string;
     project_id: string;
   }) => Promise<WorkflowRun | null>;
-  activateStep: (input: { run_id: string; step_key: string }) => Promise<WorkflowRun | null>;
-  completeStep: (input: {
-    run_id: string;
-    step_key: string;
-    summary?: string;
-  }) => Promise<WorkflowRun | null>;
 
   removeDefinition: (id: string) => Promise<boolean>;
   removeLifecycle: (id: string) => Promise<boolean>;
@@ -345,30 +337,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     set({ error: null });
     try {
       const run = await startWorkflowRun(input);
-      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
-      return run;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
-    }
-  },
-
-  activateStep: async (input) => {
-    set({ error: null });
-    try {
-      const run = await activateWorkflowStep(input);
-      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
-      return run;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
-    }
-  },
-
-  completeStep: async (input) => {
-    set({ error: null });
-    try {
-      const run = await completeWorkflowStep(input);
       set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
       return run;
     } catch (error) {

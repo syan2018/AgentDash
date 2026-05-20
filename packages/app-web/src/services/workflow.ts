@@ -822,31 +822,6 @@ export async function startWorkflowRun(input: {
   return mapWorkflowRun(raw);
 }
 
-export async function activateWorkflowStep(input: {
-  run_id: string;
-  step_key: string;
-}): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/lifecycle-runs/${input.run_id}/steps/${encodeURIComponent(input.step_key)}/activate`,
-    {},
-  );
-  return mapWorkflowRun(raw);
-}
-
-export async function completeWorkflowStep(input: {
-  run_id: string;
-  step_key: string;
-  summary?: string;
-}): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>(
-    `/lifecycle-runs/${input.run_id}/steps/${encodeURIComponent(input.step_key)}/complete`,
-    {
-      summary: input.summary,
-    },
-  );
-  return mapWorkflowRun(raw);
-}
-
 export async function submitHumanDecision(input: {
   run_id: string;
   activity_key: string;

@@ -99,3 +99,26 @@ ActivityExecutorStartResult::with_events(
 ```
 
 This preserves one state transition path through `LifecycleEngine`; Function execution does not mutate `LifecycleRun.activity_state` directly.
+
+## Scenario: Activity Run Startup And Advancement
+
+### 1. Scope / Trigger
+
+- Trigger: explicit `/lifecycle-runs` creation, ProjectAgent default lifecycle startup, Agent child session terminal, and `complete_lifecycle_node`.
+- Scope: `agentdash-api/src/routes/workflows.rs`, `agentdash-api/src/routes/project_agents.rs`, `agentdash-application/src/workflow/{activity_run.rs,orchestrator.rs,tools/advance_node.rs}`.
+- Why: Runtime progression must have one authority. LifecycleRun creation initializes `ActivityLifecycleRunState`; all later progression enters `LifecycleEngine` through ActivityEvent.
+
+### 2. Contracts
+
+- `/lifecycle-runs` resolves `ActivityLifecycleDefinition` by project-scoped id/key, initializes the run through `LifecycleEngine::initialize`, persists with `LifecycleRun::new_activity`, then invokes `ActivityLifecycleRunService::launch_ready_attempts`.
+- ProjectAgent single-workflow defaults create a one-activity lifecycle with `ActivityExecutorSpec::Agent` and `AgentSessionPolicy::ContinueRoot`.
+- `complete_lifecycle_node` locates the current work by `lifecycle_activity:{run_id}:{activity_key}#{attempt}` session binding and submits `ActivityCompleted` or `ActivityFailed`.
+- Agent session terminal callbacks only resolve Activity session bindings. Successor activation is delegated to the Activity scheduler; orchestrator code does not branch on `LifecycleNodeType`.
+- Hook evaluation can still report completion metadata, while durable state advancement remains owned by ActivityEvent application.
+
+### 3. Tests Required
+
+- `cargo test -p agentdash-application workflow`
+- `cargo check -p agentdash-api`
+- `pnpm --filter app-web test workflow`
+- `pnpm --filter app-web typecheck`

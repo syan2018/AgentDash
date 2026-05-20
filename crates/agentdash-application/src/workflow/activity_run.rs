@@ -3,6 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, ActivityLifecycleDefinition,
     ActivityLifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunStatus,
 };
 
 use super::scheduler::{ActivityExecutorLaunchOutcome, ActivityExecutorLauncher};
@@ -17,6 +18,14 @@ pub struct ActivityLifecycleRunService<'a, D: ?Sized, R: ?Sized, C: ?Sized> {
     claim_repo: &'a C,
 }
 
+#[derive(Debug, Clone)]
+pub struct StartActivityLifecycleRunCommand {
+    pub project_id: Uuid,
+    pub lifecycle_id: Option<Uuid>,
+    pub lifecycle_key: Option<String>,
+    pub session_id: String,
+}
+
 impl<'a, D: ?Sized, R: ?Sized, C: ?Sized> ActivityLifecycleRunService<'a, D, R, C>
 where
     D: ActivityLifecycleDefinitionRepository,
@@ -29,6 +38,35 @@ where
             run_repo,
             claim_repo,
         }
+    }
+
+    pub async fn start_run(
+        &self,
+        cmd: StartActivityLifecycleRunCommand,
+    ) -> Result<LifecycleRun, WorkflowApplicationError> {
+        let definition = self.resolve_definition(&cmd).await?;
+        let existing_runs = self.run_repo.list_by_session(&cmd.session_id).await?;
+        let conflicting_run = existing_runs.iter().find(|run| {
+            matches!(
+                run.status,
+                LifecycleRunStatus::Ready
+                    | LifecycleRunStatus::Running
+                    | LifecycleRunStatus::Blocked
+            )
+        });
+        if let Some(conflicting) = conflicting_run {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "session {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
+                cmd.session_id, conflicting.lifecycle_id
+            )));
+        }
+
+        let state = LifecycleEngine::initialize(&definition)
+            .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
+        let run = LifecycleRun::new_activity(cmd.project_id, definition.id, cmd.session_id, state)
+            .map_err(WorkflowApplicationError::BadRequest)?;
+        self.run_repo.create(&run).await?;
+        Ok(run)
     }
 
     pub async fn apply_event(
@@ -99,6 +137,46 @@ where
             )));
         }
         Ok((definition, run, state))
+    }
+
+    async fn resolve_definition(
+        &self,
+        cmd: &StartActivityLifecycleRunCommand,
+    ) -> Result<ActivityLifecycleDefinition, WorkflowApplicationError> {
+        match (&cmd.lifecycle_id, &cmd.lifecycle_key) {
+            (Some(_), Some(_)) => Err(WorkflowApplicationError::BadRequest(
+                "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
+            )),
+            (None, None) => Err(WorkflowApplicationError::BadRequest(
+                "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
+            )),
+            (Some(lifecycle_id), None) => {
+                let definition = self
+                    .definition_repo
+                    .get_by_id(*lifecycle_id)
+                    .await?
+                    .ok_or_else(|| {
+                        WorkflowApplicationError::NotFound(format!(
+                            "activity_lifecycle_definition 不存在: {lifecycle_id}"
+                        ))
+                    })?;
+                if definition.project_id != cmd.project_id {
+                    return Err(WorkflowApplicationError::NotFound(format!(
+                        "activity_lifecycle_definition 不存在: {lifecycle_id}"
+                    )));
+                }
+                Ok(definition)
+            }
+            (None, Some(lifecycle_key)) => self
+                .definition_repo
+                .get_by_project_and_key(cmd.project_id, lifecycle_key)
+                .await?
+                .ok_or_else(|| {
+                    WorkflowApplicationError::NotFound(format!(
+                        "activity_lifecycle_definition 不存在: {lifecycle_key}"
+                    ))
+                }),
+        }
     }
 }
 

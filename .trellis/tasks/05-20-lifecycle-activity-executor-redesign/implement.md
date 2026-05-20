@@ -294,23 +294,23 @@
 
 范围：
 
-- [ ] Human Approval executor 创建 pending decision。
+- [x] Human Approval executor 创建 pending decision。
 - [ ] 决策提交 API：
-  - [ ] `approved`
-  - [ ] `rejected`
-  - [ ] `comment / feedback`
-- [ ] decision 写入 lifecycle artifact。
-- [ ] decision 转为 `HumanDecisionSubmitted` event。
-- [ ] `HumanDecisionEquals` transition 激活 approved / rejected 分支。
-- [ ] rejected 分支创建 plan 下一 attempt。
+  - [x] `approved`
+  - [x] `rejected`
+  - [x] `comment / feedback`
+- [x] decision 写入 lifecycle artifact。
+- [x] decision 转为 `HumanDecisionSubmitted` event。
+- [x] `HumanDecisionEquals` transition 激活 approved / rejected 分支。
+- [x] rejected 分支创建 plan 下一 attempt。
 
 验证：
 
-- [ ] rejected 后生成 plan attempt #2。
-- [ ] feedback artifact 被 plan #2 消费。
-- [ ] approved 后 implement ready。
+- [x] rejected 后生成 plan attempt #2。
+- [x] feedback artifact 被 plan #2 消费。
+- [x] approved 后 implement ready。
 - [ ] decision history 可查询。
-- [ ] `cargo test -p agentdash-application workflow::human_executor`
+- [x] `cargo test -p agentdash-application workflow::engine`
 - [ ] `cargo test -p agentdash-api workflow_approval`
 
 出口标准：

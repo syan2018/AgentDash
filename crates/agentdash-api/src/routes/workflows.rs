@@ -9,8 +9,10 @@ use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
-    ActivateLifecycleStepCommand, ActivityLifecycleCatalogService, CompleteLifecycleStepCommand,
-    LifecycleOrchestrator, LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
+    ActivateLifecycleStepCommand, ActivityEvent, ActivityLifecycleCatalogService,
+    ActivityLifecycleRunService, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
+    AgentActivityRuntimePort, CompleteLifecycleStepCommand, LifecycleOrchestrator,
+    LifecycleRunService, StartLifecycleRunCommand, WorkflowCatalogService,
     build_step_projector_from_repos,
 };
 use agentdash_domain::workflow::{
@@ -41,6 +43,13 @@ pub struct StartWorkflowRunRequest {
     pub session_id: String,
     /// project_id 显式传入，因为 session 本身不直接携带 project 信息。
     pub project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitHumanDecisionRequest {
+    pub decision_port: String,
+    pub decision: serde_json::Value,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -613,6 +622,65 @@ pub async fn complete_workflow_step(
         })
         .await?;
     Ok(Json(run))
+}
+
+pub async fn submit_human_decision(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path((run_id, activity_key, attempt)): Path<(String, String, u32)>,
+    Json(req): Json<SubmitHumanDecisionRequest>,
+) -> Result<Json<LifecycleRun>, ApiError> {
+    let run_id = parse_uuid(&run_id, "run_id")?;
+    let existing_run = load_lifecycle_run(&state, run_id).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        existing_run.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let service = ActivityLifecycleRunService::new(
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.activity_execution_claim_repo.as_ref(),
+    );
+    let run = service
+        .apply_event(
+            run_id,
+            ActivityEvent::HumanDecisionSubmitted {
+                activity_key,
+                attempt,
+                decision_port: req.decision_port,
+                decision: req.decision,
+                summary: req.summary.and_then(normalize_string),
+            },
+        )
+        .await?;
+    let launcher = AgentActivityExecutorLauncher::new(
+        AgentActivityLaunchContext {
+            project_id: run.project_id,
+            lifecycle_key: String::new(),
+            root_session_id: run.session_id.clone(),
+        },
+        AgentActivityRuntimePort::new(
+            state.services.session_core.clone(),
+            state.services.session_launch.clone(),
+            state.repos.clone(),
+        )
+        .with_runtime_context(
+            state.services.session_hooks.clone(),
+            state.services.session_capability.clone(),
+            state.config.platform_config.clone(),
+        ),
+    );
+    service.launch_ready_attempts(run.id, &launcher).await?;
+    let latest_run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(run.id)
+        .await?
+        .unwrap_or(run);
+    Ok(Json(latest_run))
 }
 
 pub async fn create_workflow_definition(

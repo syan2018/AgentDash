@@ -389,6 +389,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/lifecycle-runs/{id}/steps/{step_key}/complete",
             post(workflows::complete_workflow_step),
         )
+        .route(
+            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            post(workflows::submit_human_decision),
+        )
         // Backend
         .route(
             "/backends",

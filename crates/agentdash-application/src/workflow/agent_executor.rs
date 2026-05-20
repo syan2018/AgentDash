@@ -1,8 +1,8 @@
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
-    ActivityLifecycleDefinition, AgentSessionPolicy, ExecutorRunRef, LifecycleNodeType,
-    LifecycleStepDefinition,
+    ActivityLifecycleDefinition, AgentSessionPolicy, ExecutorRunRef, HumanActivityExecutorSpec,
+    LifecycleNodeType, LifecycleStepDefinition,
 };
 use agentdash_spi::AgentConfig;
 
@@ -331,29 +331,36 @@ where
                 claim.activity_key
             )));
         };
-        let ActivityExecutorSpec::Agent(spec) = &activity.executor else {
-            return Err(ActivityExecutorStartError::terminal(format!(
-                "activity `{}` 不是 Agent executor",
-                activity.key
-            )));
-        };
-        match spec.session_policy {
-            AgentSessionPolicy::SpawnChild => self.start_spawn_child(definition, claim).await,
-            AgentSessionPolicy::ContinueRoot => {
-                self.start_continue_root(
-                    definition,
-                    &activity,
-                    spec.workflow_key.as_str(),
-                    state,
-                    claim,
-                )
-                .await
+        match &activity.executor {
+            ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
+                AgentSessionPolicy::SpawnChild => self.start_spawn_child(definition, claim).await,
+                AgentSessionPolicy::ContinueRoot => {
+                    self.start_continue_root(
+                        definition,
+                        &activity,
+                        spec.workflow_key.as_str(),
+                        state,
+                        claim,
+                    )
+                    .await
+                }
+                AgentSessionPolicy::AttachExisting => {
+                    Err(ActivityExecutorStartError::terminal(format!(
+                        "Agent session policy `{}` 尚未接入 Activity executor",
+                        serde_json::to_string(&spec.session_policy)
+                            .unwrap_or_else(|_| "unknown".to_string())
+                    )))
+                }
+            },
+            ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(_spec)) => {
+                Ok(ExecutorRunRef::HumanDecision {
+                    decision_id: human_decision_id(claim),
+                })
             }
-            AgentSessionPolicy::AttachExisting => {
+            ActivityExecutorSpec::Function(_) => {
                 Err(ActivityExecutorStartError::terminal(format!(
-                    "Agent session policy `{}` 尚未接入 Activity executor",
-                    serde_json::to_string(&spec.session_policy)
-                        .unwrap_or_else(|_| "unknown".to_string())
+                    "activity `{}` 的 Function executor 尚未接入 Activity executor",
+                    activity.key
                 )))
             }
         }
@@ -489,6 +496,10 @@ fn activity_as_step(activity: &ActivityDefinition, workflow_key: &str) -> Lifecy
     }
 }
 
+fn human_decision_id(claim: &ActivityExecutionClaim) -> String {
+    format!("{}:{}#{}", claim.run_id, claim.activity_key, claim.attempt)
+}
+
 fn owner_ctx_from_bindings_or_project(
     owners: &[agentdash_spi::hooks::HookOwnerSummary],
     fallback_project_id: uuid::Uuid,
@@ -541,7 +552,8 @@ mod tests {
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
         ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
-        OutputPortDefinition, TransitionCondition, WorkflowBindingKind, WorkflowDefinitionSource,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
+        TransitionCondition, WorkflowBindingKind, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -663,6 +675,37 @@ mod tests {
 
     fn continue_root_definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
         continue_root_definition_with_activities(project_id, &["plan"])
+    }
+
+    fn human_approval_definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
+        ActivityLifecycleDefinition::new(
+            project_id,
+            "approval_flow",
+            "Approval flow",
+            "",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::UserAuthored,
+            "approval",
+            vec![ActivityDefinition {
+                key: "approval".to_string(),
+                description: "approval".to_string(),
+                executor: ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(
+                    HumanApprovalExecutorSpec {
+                        form_schema_key: "approval.plan_review".to_string(),
+                        title: Some("Review plan".to_string()),
+                    },
+                )),
+                input_ports: vec![],
+                output_ports: vec![output_port("decision")],
+                completion_policy: ActivityCompletionPolicy::HumanDecision {
+                    decision_port: "decision".to_string(),
+                },
+                iteration_policy: Default::default(),
+                join_policy: Default::default(),
+            }],
+            vec![],
+        )
+        .expect("definition")
     }
 
     fn continue_root_definition_with_activities(
@@ -893,6 +936,33 @@ mod tests {
                 .unwrap()
                 .as_slice(),
             &[] as &[String]
+        );
+    }
+
+    #[tokio::test]
+    async fn human_approval_returns_pending_decision_ref() {
+        let project_id = uuid::Uuid::new_v4();
+        let launcher = AgentActivityExecutorLauncher::new(
+            AgentActivityLaunchContext {
+                project_id,
+                lifecycle_key: "approval_flow".to_string(),
+                root_session_id: "root-session".to_string(),
+            },
+            FakePort::default(),
+        );
+        let definition = human_approval_definition(project_id);
+        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "approval", 1, "human");
+
+        let executor_ref = launcher
+            .start(&definition, &state(), &claim)
+            .await
+            .expect("start");
+
+        assert_eq!(
+            executor_ref,
+            ExecutorRunRef::HumanDecision {
+                decision_id: format!("{}:approval#1", claim.run_id)
+            }
         );
     }
 }

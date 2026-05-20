@@ -58,6 +58,7 @@ impl PostgresWorkflowRepository {
             session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
             step_states TEXT NOT NULL, record_artifacts TEXT NOT NULL DEFAULT '{}',
             execution_log TEXT NOT NULL DEFAULT '[]',
+            activity_state TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
@@ -99,8 +100,8 @@ impl PostgresWorkflowRepository {
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const ACTIVITY_LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -564,7 +565,7 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
@@ -574,6 +575,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind(serde_json::to_string(&run.step_states)?)
         .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
+        .bind(serialize_activity_state(&run.activity_state)?)
         .bind(run.created_at.to_rfc3339())
         .bind(run.updated_at.to_rfc3339())
         .bind(run.last_activity_at.to_rfc3339())
@@ -641,11 +643,12 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,activity_state=$7,updated_at=$8,last_activity_at=$9 WHERE id=$10")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.step_states)?)
             .bind(serde_json::to_string(&run.execution_log)?)
+            .bind(serialize_activity_state(&run.activity_state)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -686,12 +689,12 @@ async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> 
 }
 
 async fn add_lifecycle_run_columns(pool: &PgPool) -> Result<(), DomainError> {
-    sqlx::query(
+    for query in [
         "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS record_artifacts TEXT NOT NULL DEFAULT '{}'",
-    )
-    .execute(pool)
-    .await
-    .map_err(db_err)?;
+        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS activity_state TEXT",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
     Ok(())
 }
 
@@ -895,6 +898,7 @@ struct LifecycleRunRow {
     status: String,
     step_states: String,
     execution_log: String,
+    activity_state: Option<String>,
     created_at: String,
     updated_at: String,
     last_activity_at: String,
@@ -905,17 +909,38 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
     fn try_from(row: LifecycleRunRow) -> Result<Self, Self::Error> {
         let step_states: Vec<agentdash_domain::workflow::LifecycleStepState> =
             serde_json::from_str(&row.step_states)?;
-        let active_node_keys: Vec<String> = step_states
-            .iter()
-            .filter(|s| {
-                matches!(
-                    s.status,
-                    agentdash_domain::workflow::LifecycleStepExecutionStatus::Ready
-                        | agentdash_domain::workflow::LifecycleStepExecutionStatus::Running
-                )
-            })
-            .map(|s| s.step_key.clone())
-            .collect();
+        let activity_state: Option<agentdash_domain::workflow::ActivityLifecycleRunState> = row
+            .activity_state
+            .as_deref()
+            .map(|raw| parse_json_column(raw, "lifecycle_runs.activity_state"))
+            .transpose()?;
+        let active_node_keys: Vec<String> = if let Some(activity_state) = &activity_state {
+            activity_state
+                .attempts
+                .iter()
+                .filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        agentdash_domain::workflow::ActivityAttemptStatus::Ready
+                            | agentdash_domain::workflow::ActivityAttemptStatus::Claiming
+                            | agentdash_domain::workflow::ActivityAttemptStatus::Running
+                    )
+                })
+                .map(|attempt| attempt.activity_key.clone())
+                .collect()
+        } else {
+            step_states
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.status,
+                        agentdash_domain::workflow::LifecycleStepExecutionStatus::Ready
+                            | agentdash_domain::workflow::LifecycleStepExecutionStatus::Running
+                    )
+                })
+                .map(|s| s.step_key.clone())
+                .collect()
+        };
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
@@ -925,6 +950,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             active_node_keys,
             step_states,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            activity_state,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
             last_activity_at: parse_time(&row.last_activity_at)?,
@@ -1006,6 +1032,16 @@ fn serialize_executor_run_ref(
     executor_run_ref: &Option<ExecutorRunRef>,
 ) -> Result<Option<String>, DomainError> {
     executor_run_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn serialize_activity_state(
+    activity_state: &Option<agentdash_domain::workflow::ActivityLifecycleRunState>,
+) -> Result<Option<String>, DomainError> {
+    activity_state
         .as_ref()
         .map(serde_json::to_string)
         .transpose()

@@ -6,10 +6,11 @@ use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
 use super::value_objects::{
-    ActivityDefinition, ActivityExecutionClaimStatus, ActivityTransition, EffectiveSessionContract,
-    ExecutorRunRef, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
-    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
-    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
+    ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
+    ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleEdge,
+    LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
+    WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
     normalize_workflow_binding_kinds, validate_activity_lifecycle_definition,
     validate_lifecycle_definition, validate_workflow_definition,
 };
@@ -293,6 +294,8 @@ pub struct LifecycleRun {
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_state: Option<ActivityLifecycleRunState>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
@@ -370,6 +373,54 @@ impl LifecycleRun {
             active_node_keys,
             step_states,
             execution_log: Vec::new(),
+            activity_state: None,
+            created_at: now,
+            updated_at: now,
+            last_activity_at: now,
+        })
+    }
+
+    pub fn new_activity(
+        project_id: Uuid,
+        lifecycle_id: Uuid,
+        session_id: impl Into<String>,
+        activity_state: ActivityLifecycleRunState,
+    ) -> Result<Self, String> {
+        if activity_state.attempts.is_empty() {
+            return Err("activity lifecycle run 至少需要一个 attempt".to_string());
+        }
+        let now = Utc::now();
+        let active_node_keys = activity_state
+            .attempts
+            .iter()
+            .filter(|attempt| {
+                matches!(
+                    attempt.status,
+                    super::value_objects::ActivityAttemptStatus::Ready
+                        | super::value_objects::ActivityAttemptStatus::Claiming
+                        | super::value_objects::ActivityAttemptStatus::Running
+                )
+            })
+            .map(|attempt| attempt.activity_key.clone())
+            .collect::<Vec<_>>();
+        let status = match activity_state.status {
+            ActivityRunStatus::Ready => LifecycleRunStatus::Ready,
+            ActivityRunStatus::Running => LifecycleRunStatus::Running,
+            ActivityRunStatus::Blocked => LifecycleRunStatus::Blocked,
+            ActivityRunStatus::Completed => LifecycleRunStatus::Completed,
+            ActivityRunStatus::Failed => LifecycleRunStatus::Failed,
+            ActivityRunStatus::Cancelled => LifecycleRunStatus::Cancelled,
+        };
+        Ok(Self {
+            id: Uuid::new_v4(),
+            project_id,
+            lifecycle_id,
+            session_id: session_id.into(),
+            status,
+            active_node_keys,
+            step_states: Vec::new(),
+            execution_log: Vec::new(),
+            activity_state: Some(activity_state),
             created_at: now,
             updated_at: now,
             last_activity_at: now,

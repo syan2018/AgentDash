@@ -274,17 +274,28 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
-    // 自动启动 Lifecycle Run（如果 ProjectAgent 配置了 default_lifecycle_key）
-    if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref()
-        && let Err(err) =
+    // 自动启动显式 Lifecycle；未配置时归属到 freeform LifecycleRun。
+    if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref() {
+        if let Err(err) =
             auto_start_lifecycle_run(&state, project.id, &meta.id, lifecycle_key).await
+        {
+            tracing::warn!(
+                project_id = %project.id,
+                agent_key = %agent_key,
+                lifecycle_key = %lifecycle_key,
+                error = %err,
+                "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+            );
+        }
+    } else if let Err(err) =
+        crate::routes::acp_sessions::ensure_freeform_lifecycle_run(&state, project.id, &meta.id)
+            .await
     {
         tracing::warn!(
             project_id = %project.id,
             agent_key = %agent_key,
-            lifecycle_key = %lifecycle_key,
             error = %err,
-            "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+            "自动启动 freeform LifecycleRun 失败（不阻塞 session 创建）"
         );
     }
 

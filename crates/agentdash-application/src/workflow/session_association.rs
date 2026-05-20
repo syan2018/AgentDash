@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 /// Lifecycle node 子 session 的 binding label 前缀。
 pub const LIFECYCLE_NODE_LABEL_PREFIX: &str = "lifecycle_node:";
+pub const LIFECYCLE_ACTIVITY_LABEL_PREFIX: &str = "lifecycle_activity:";
 
 /// 子 session 与 lifecycle node 的关联解析结果。
 #[derive(Debug, Clone)]
@@ -27,6 +28,10 @@ pub fn lifecycle_node_key_from_label(label: &str) -> Option<&str> {
 /// 构造 lifecycle node 子 session 的 binding label。
 pub fn build_lifecycle_node_label(node_key: &str) -> String {
     format!("{LIFECYCLE_NODE_LABEL_PREFIX}{node_key}")
+}
+
+pub fn build_lifecycle_activity_label(activity_key: &str, attempt: u32) -> String {
+    format!("{LIFECYCLE_ACTIVITY_LABEL_PREFIX}{activity_key}#{attempt}")
 }
 
 /// 解析 session 是否为某个 lifecycle node 子 session，并返回其 run + node 关联。

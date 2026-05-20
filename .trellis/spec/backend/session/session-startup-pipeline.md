@@ -140,6 +140,69 @@ Terminal fact 先进入 event store，业务副作用进入 durable outbox。
 Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。dispatcher
 支持进程重启后的 replay，handler 以 idempotency key 保证幂等。
 
+## Scenario: Freeform Session Lifecycle Ownership
+
+### 1. Scope / Trigger
+
+- Trigger: 普通自由会话也需要进入 LifecycleRun 过程归属模型，避免 session 与 workflow 过程形成两套事实源。
+
+### 2. Signatures
+
+- API create: `POST /sessions { title?: string, project_id: uuid } -> SessionMeta`
+- Backend service: `FreeformLifecycleService::ensure_run_for_session(project_id, session_id) -> LifecycleRun`
+- Builtin keys:
+  - workflow: `builtin.freeform_agent`
+  - lifecycle: `builtin.freeform_session`
+  - activity: `main_conversation`
+- DB: `lifecycle_runs.activity_state TEXT NULL`
+
+### 3. Contracts
+
+- `/sessions` 创建的是 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
+- 新 session 必须创建 `SessionBinding(owner_type=Project, owner_id=project_id, label=freeform)`。
+- 没有显式 lifecycle 的普通会话必须调用 `ensure_run_for_session`，生成 `LifecycleRun.session_id = session.id`。
+- freeform lifecycle 是单 Activity graph：`main_conversation` 使用 `Agent + ContinueRoot` 与 `ActivityCompletionPolicy::OpenEnded`。
+- `OpenEnded` 表示普通 prompt terminal 不会自动完成 activity；归档、显式结束或后续产品动作再提交 completion/cancel event。
+
+### 4. Validation & Error Matrix
+
+- `/sessions` 缺少 `project_id` -> request DTO 反序列化失败。
+- `project_id` 无编辑权限 -> `403`。
+- builtin workflow/lifecycle definition 校验失败 -> `400 BadRequest`。
+- 同一 session 已存在 activity run -> 返回既有 run，不创建重复 run。
+- session 已绑定到其他 Project -> session binding repository 拒绝跨 Project 复用。
+
+### 5. Good/Base/Bad Cases
+
+- Good: 用户在当前 Project 下创建普通会话，系统创建 session、Project binding、freeform LifecycleRun，并初始化 `main_conversation#1 ready`。
+- Base: ProjectAgent 配置了显式 lifecycle 时，按显式 lifecycle 创建 run，不额外创建 freeform run。
+- Bad: 创建无 project scope 的裸 session；后续无法从项目过程视图反查其 LifecycleRun。
+
+### 6. Tests Required
+
+- `cargo test -p agentdash-application workflow::freeform`：断言 builtin definition、open-ended policy、run 初始化和幂等复用。
+- `cargo check -p agentdash-api`：断言 API/request 接线编译通过。
+- 前端 `pnpm --filter app-web typecheck`：断言 `createSession(title, projectId)` 调用契约一致。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let meta = session_core.create_session(title).await?;
+return Ok(meta);
+```
+
+#### Correct
+
+```rust
+let meta = session_core.create_session(title).await?;
+session_binding_repo.create(&project_binding).await?;
+freeform_service
+    .ensure_run_for_session(project_id, &meta.id)
+    .await?;
+```
+
 ## Pending Runtime Commands
 
 Runtime context / capability transition 的事实源是 runtime command event/store。

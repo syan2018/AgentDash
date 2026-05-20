@@ -23,7 +23,7 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     LaunchCommand, SessionExecutionState, SessionMeta, TitleSource, UserPromptInput,
 };
-use agentdash_domain::session_binding::SessionOwnerType;
+use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
@@ -133,12 +133,21 @@ pub async fn list_sessions(
 pub struct CreateSessionRequest {
     #[serde(default)]
     pub title: Option<String>,
+    pub project_id: uuid::Uuid,
 }
 
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
+    let project = load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        req.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
     let meta = state
         .services
@@ -146,7 +155,39 @@ pub async fn create_session(
         .create_session(&title)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let binding = SessionBinding::new(
+        project.id,
+        meta.id.clone(),
+        SessionOwnerType::Project,
+        project.id,
+        agentdash_application::workflow::FREEFORM_SESSION_LABEL,
+    );
+    state.repos.session_binding_repo.create(&binding).await?;
+    state
+        .services
+        .session_core
+        .mark_owner_bootstrap_pending(&meta.id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    ensure_freeform_lifecycle_run(state.as_ref(), project.id, &meta.id).await?;
     Ok(Json(meta))
+}
+
+pub(crate) async fn ensure_freeform_lifecycle_run(
+    state: &AppState,
+    project_id: uuid::Uuid,
+    session_id: &str,
+) -> Result<(), ApiError> {
+    let service = agentdash_application::workflow::FreeformLifecycleService::new(
+        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.lifecycle_run_repo.as_ref(),
+    );
+    service
+        .ensure_run_for_session(project_id, session_id)
+        .await
+        .map(|_| ())
+        .map_err(ApiError::from)
 }
 
 pub async fn get_session(

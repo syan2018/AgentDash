@@ -3,55 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy,
-    ActivityLifecycleDefinition, ActivityTransition, ExecutorRunRef, TransitionCondition,
+    ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityInputArtifact,
+    ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityOutputArtifact,
+    ActivityPortValue, ActivityRunStatus, ActivityTransition, ExecutorRunRef, TransitionCondition,
 };
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ActivityPortValue {
-    pub port_key: String,
-    pub value: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ActivityOutputArtifact {
-    pub activity_key: String,
-    pub attempt: u32,
-    pub port_key: String,
-    pub value: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ActivityInputArtifact {
-    pub activity_key: String,
-    pub attempt: u32,
-    pub port_key: String,
-    pub source_activity_key: String,
-    pub source_attempt: u32,
-    pub source_port_key: String,
-    pub value: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ActivityLifecycleRunState {
-    pub status: ActivityRunStatus,
-    pub attempts: Vec<ActivityAttemptState>,
-    pub outputs: Vec<ActivityOutputArtifact>,
-    pub inputs: Vec<ActivityInputArtifact>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivityRunStatus {
-    Ready,
-    Running,
-    Blocked,
-    Completed,
-    Failed,
-    Cancelled,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -373,9 +328,9 @@ fn validate_completion_policy(
                 )))
             }
         }
-        ActivityCompletionPolicy::HookGate { .. } | ActivityCompletionPolicy::ExecutorTerminal => {
-            Ok(())
-        }
+        ActivityCompletionPolicy::HookGate { .. }
+        | ActivityCompletionPolicy::ExecutorTerminal
+        | ActivityCompletionPolicy::OpenEnded => Ok(()),
     }
 }
 

@@ -359,7 +359,8 @@ export type ActivityCompletionPolicy =
   | { kind: "output_ports"; required_ports: string[] }
   | { kind: "executor_terminal" }
   | { kind: "human_decision"; decision_port: string }
-  | { kind: "hook_gate"; hook_key: string };
+  | { kind: "hook_gate"; hook_key: string }
+  | { kind: "open_ended" };
 
 export type ActivityExecutorSpec =
   | {

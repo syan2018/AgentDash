@@ -796,6 +796,7 @@ pub enum ActivityCompletionPolicy {
     ExecutorTerminal,
     HumanDecision { decision_port: String },
     HookGate { hook_key: String },
+    OpenEnded,
 }
 
 impl Default for ActivityCompletionPolicy {
@@ -936,6 +937,52 @@ pub struct ActivityAttemptState {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityPortValue {
+    pub port_key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityOutputArtifact {
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+    pub value: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityInputArtifact {
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+    pub source_activity_key: String,
+    pub source_attempt: u32,
+    pub source_port_key: String,
+    pub value: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityLifecycleRunState {
+    pub status: ActivityRunStatus,
+    pub attempts: Vec<ActivityAttemptState>,
+    pub outputs: Vec<ActivityOutputArtifact>,
+    pub inputs: Vec<ActivityInputArtifact>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityRunStatus {
+    Ready,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -1324,7 +1371,7 @@ fn validate_activity_policies(
                 hook_key,
             )?;
         }
-        ActivityCompletionPolicy::ExecutorTerminal => {}
+        ActivityCompletionPolicy::ExecutorTerminal | ActivityCompletionPolicy::OpenEnded => {}
     }
     Ok(())
 }

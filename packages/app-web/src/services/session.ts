@@ -98,8 +98,8 @@ export async function fetchSessions(options?: FetchSessionsOptions): Promise<Ses
   return api.get<SessionMeta[]>(path);
 }
 
-export async function createSession(title?: string): Promise<SessionMeta> {
-  return api.post<SessionMeta>("/sessions", { title });
+export async function createSession(title: string | undefined, projectId: string): Promise<SessionMeta> {
+  return api.post<SessionMeta>("/sessions", { title, project_id: projectId });
 }
 
 export async function fetchSessionMeta(id: string): Promise<SessionMeta> {

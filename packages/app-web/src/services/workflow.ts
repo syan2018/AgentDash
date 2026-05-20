@@ -332,6 +332,9 @@ function mapActivityCompletionPolicy(raw: unknown): ActivityCompletionPolicy {
   if (kind === "hook_gate") {
     return { kind, hook_key: requireStringField(value, "hook_key") };
   }
+  if (kind === "open_ended") {
+    return { kind };
+  }
   throw new Error(`未知的 activity completion policy: ${kind}`);
 }
 

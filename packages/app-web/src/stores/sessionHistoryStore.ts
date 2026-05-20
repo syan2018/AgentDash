@@ -13,6 +13,7 @@ import {
   updateSessionTitle as apiUpdateSessionTitle,
   type SessionMeta,
 } from "../services/session";
+import { useProjectStore } from "./projectStore";
 
 interface SessionHistoryState {
   sessions: SessionMeta[];
@@ -54,7 +55,11 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
   },
 
   createNew: async (title?: string) => {
-    const meta = await createSession(title);
+    const projectId = useProjectStore.getState().currentProjectId;
+    if (!projectId) {
+      throw new Error("创建会话需要先选择 Project");
+    }
+    const meta = await createSession(title, projectId);
     await get().reload();
     return meta;
   },

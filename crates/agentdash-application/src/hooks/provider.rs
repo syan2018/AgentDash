@@ -5,8 +5,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleDefinitionRepository, LifecycleRunRepository,
-    WorkflowDefinitionRepository, build_effective_contract,
+    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -46,7 +46,6 @@ impl AppExecutionHookProvider {
         story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -60,7 +59,6 @@ impl AppExecutionHookProvider {
             workflow_builder: WorkflowSnapshotBuilder::new(
                 wf_binding,
                 workflow_definition_repo,
-                lifecycle_definition_repo,
                 activity_lifecycle_definition_repo,
                 lifecycle_run_repo,
             ),

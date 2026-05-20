@@ -48,10 +48,7 @@ pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
-pub use projection::{
-    ActiveWorkflowProjection, resolve_active_workflow_projection,
-    resolve_active_workflow_projection_for_session, resolve_workflow_projection_by_run,
-};
+pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 pub use run::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,

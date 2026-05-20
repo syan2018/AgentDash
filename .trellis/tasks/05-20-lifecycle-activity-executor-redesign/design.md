@@ -59,7 +59,7 @@ pub struct LifecycleDefinition {
 }
 ```
 
-持久化层可以继续使用 `steps` / `edges` 字段名作为过渡，但 domain / API / TS 类型应尽快切到 `activities` / `transitions` 的语义。
+Activity lifecycle 的跨层事实源是 `entry_activity_key` / `activities` / `transitions`。持久化层如因既有表结构仍保留历史列，写入入口也必须把旧列清空为占位值，并保证 domain / API / TS / 资源市场只消费 Activity 语义。
 
 ### 2.2 ActivityDefinition
 
@@ -536,7 +536,7 @@ implement#1 Ready(approved_plan = proposal#2)
 7. 更新 seed / builtin lifecycle JSON。
 8. 更新前端 type / store / editor / run view。
 
-如果需要降低单次实现风险，可以内部仍读写 `steps` 字段，但 API 和领域命名先改为 Activity。
+资源市场和内置资产也属于同一迁移边界：workflow template payload 进入系统时必须归一化为 Activity lifecycle，并以归一化后的 payload 计算 digest。安装或覆盖更新必须把 workflow definitions 与 lifecycle definition 放入同一个事务，版本号和 installed source 与事务结果一起提交。
 
 ## 8. MVP 建议
 

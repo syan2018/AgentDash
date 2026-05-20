@@ -190,7 +190,6 @@ async fn find_active_workflow_via_task_sessions(
             &binding.session_id,
             repos.session_binding_repo.as_ref(),
             repos.workflow_definition_repo.as_ref(),
-            repos.lifecycle_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )

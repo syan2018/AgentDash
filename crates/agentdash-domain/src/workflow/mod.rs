@@ -9,6 +9,8 @@ pub use entity::{
 pub use repository::{
     ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

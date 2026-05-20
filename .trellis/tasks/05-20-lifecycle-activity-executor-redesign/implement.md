@@ -82,10 +82,11 @@
   - [x] guarded loop 必须有 max attempts 或 max traversals。
   - [x] 无条件自环拒绝。
 
-兼容策略：
+迁移边界：
 
-- 项目处于预研期，不做旧 schema 兼容。
-- 若实现风险需要降低，可暂时保留持久化列名，但 Rust / API / TS 类型必须使用 Activity 命名。
+- 项目处于预研期，数据入口直接归一化到 Activity lifecycle schema。
+- 旧 workflow template payload 在仓储初始化时迁移为 `activities` / `transitions`，并重算 `payload_digest`，确保资源市场识别与 source-status 使用同一个事实源。
+- Workflow template 安装 / 更新以 workflow definitions + activity lifecycle definition 为一个事务单元提交；覆盖更新时同步推进版本号与 installed source，避免局部成功被前端误判为已安装。
 
 验证：
 
@@ -389,6 +390,11 @@
   - [x] Hook `pending_advance` 不再直推旧 step aggregate。
   - [x] 公开 `/lifecycle-runs/{id}/steps/*` activate / complete API 已移除。
   - [x] 公开 `/lifecycle-definitions*` 旧定义 API 与前端客户端已移除。
+- [x] Shared Library workflow template payload 归一化到 Activity schema。
+- [x] 资源市场 workflow template 覆盖安装改为单事务，并在覆盖时推进 workflow / lifecycle 版本号。
+- [x] session bootstrap 的 workflow capability 解析改读 Activity lifecycle entry activity。
+- [x] Task view 启动投影改读 `LifecycleRun.activity_state` 的 Activity attempt。
+- [x] Active workflow projection / hook snapshot 解析只接受 Activity attempt session binding，不再回落旧 `lifecycle_node:*` run。
 - [x] 删除旧 Orchestrator 对 `node_type` 的 match 调度。
 - [ ] 文档更新 `.trellis/spec/backend/workflow/lifecycle-edge.md` 或新建 Activity lifecycle spec。
 - [ ] builtin / seed / tests 全部改为 Activity。
@@ -396,9 +402,14 @@
 验证：
 
 - [ ] `rg "LifecycleNodeType|node_type|complete_step\\(|fail_step\\(" crates packages` 确认只剩迁移或测试允许位置。
-- [ ] 全量后端测试。
-- [ ] 前端 workflow 测试。
-- [ ] 手动跑 MVP case。
+- [x] `cargo test -p agentdash-domain shared_library -- --nocapture`
+- [x] `cargo test -p agentdash-application shared_library -- --nocapture`
+- [x] `cargo test -p agentdash-application session_workflow_context -- --nocapture`
+- [x] `cargo test -p agentdash-application task::view_projector -- --nocapture`
+- [x] `cargo test -p agentdash-infrastructure workflow_template_install_overwrite_is_transactional_and_bumps_versions`
+- [x] `pnpm --filter app-web test workflow`
+- [x] `pnpm --filter app-web typecheck`
+- [x] 浏览器手动验证资源市场 workflow 资产识别、详情抽屉、覆盖更新、source-status 与版本推进。
 
 出口标准：
 

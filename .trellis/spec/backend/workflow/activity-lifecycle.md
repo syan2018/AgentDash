@@ -122,3 +122,28 @@ This preserves one state transition path through `LifecycleEngine`; Function exe
 - `cargo check -p agentdash-api`
 - `pnpm --filter app-web test workflow`
 - `pnpm --filter app-web typecheck`
+
+## Scenario: Workflow Template Asset Migration And Install
+
+### 1. Scope / Trigger
+
+- Trigger: builtin/plugin/user workflow template assets entering Shared Library, and project install/update from Marketplace.
+- Scope: `agentdash-domain/src/shared_library`, `agentdash-application/src/shared_library`, `agentdash-infrastructure/src/persistence/postgres/{shared_library_repository,workflow_repository}.rs`.
+- Why: Workflow template assets are part of the Activity lifecycle contract. Marketplace status, installed source, and project definitions must compare the normalized Activity payload, not a stale pre-Activity shape.
+
+### 2. Contracts
+
+- Workflow template payloads are normalized to `template.lifecycle.entry_activity_key`, `activities`, and `transitions` before deserialization or persistence repair.
+- Shared Library startup repair rewrites builtin workflow template assets to the normalized shape and recomputes `payload_digest` from that shape.
+- Project install/update commits workflow definitions and the activity lifecycle definition in one database transaction.
+- Overwrite install preserves project resource ids and `created_at`, increments `version`, and updates installed source metadata for every workflow definition and the activity lifecycle definition together.
+- A failed workflow template update must leave project resources and installed source metadata unchanged.
+- Runtime active workflow projection resolves from `lifecycle_activity:{run_id}:{activity_key}#{attempt}` session bindings and Activity lifecycle definitions. Missing Activity binding means no active workflow projection.
+- Frontend Marketplace workflow drawers consume only the Activity lifecycle shape; unexpected old shape means the repository normalization did not run.
+
+### 3. Tests Required
+
+- Domain payload normalization test for legacy workflow template lifecycle JSON.
+- Infrastructure transaction test: conflict without overwrite leaves versions/source unchanged; overwrite bumps workflow and lifecycle versions.
+- Frontend typecheck/workflow tests after removing old payload UI parsing.
+- Browser smoke: resource market renders workflow template details, update action does not emit constraint errors, project definitions report `source_status = up_to_date`.

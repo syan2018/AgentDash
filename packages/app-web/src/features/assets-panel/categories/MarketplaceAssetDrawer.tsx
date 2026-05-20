@@ -384,7 +384,7 @@ function parseWorkflowPayload(raw: unknown): WorkflowParsed | null {
     if (!isObject(s)) continue;
     const key = asString(s.key);
     if (!key) continue;
-    activities.push({ key, name: asString(s.name) ?? key });
+    activities.push({ key, name: asString(s.name) ?? asString(s.description) ?? key });
   }
   const transitions = Array.isArray(lifecycle.transitions) ? lifecycle.transitions : [];
   const workflows = Array.isArray(template.workflows) ? template.workflows : [];

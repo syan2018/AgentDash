@@ -18,8 +18,9 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
-    ToolCapabilityDirective, WorkflowDefinition, WorkflowDefinitionRepository,
+    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
+    ActivityLifecycleDefinitionRepository, ToolCapabilityDirective, WorkflowDefinition,
+    WorkflowDefinitionRepository,
 };
 
 use crate::capability::ToolContribution;
@@ -44,8 +45,8 @@ pub enum SessionWorkflowOwner {
 /// helper 所需的 repository 依赖。调用方从 AppState 传 `Arc<dyn _>` 的 `as_ref()` 即可。
 pub struct SessionWorkflowRepos<'a> {
     pub project_agent: &'a dyn ProjectAgentRepository,
-    pub lifecycle_def: &'a dyn LifecycleDefinitionRepository,
-    /// workflow_def 在解析链末端用于拉取 entry step 对应的 WorkflowDefinition,
+    pub activity_lifecycle_def: &'a dyn ActivityLifecycleDefinitionRepository,
+    /// workflow_def 在解析链末端用于拉取 entry activity 对应的 WorkflowDefinition,
     /// 其 `contract.capability_config.tool_directives` 即 session bootstrap baseline。
     pub workflow_def: &'a dyn WorkflowDefinitionRepository,
 }
@@ -99,7 +100,7 @@ async fn resolve_for_project_agent(
     let lifecycle_key = normalize_lifecycle_key(agent.default_lifecycle_key.as_deref())?;
 
     resolve_from_lifecycle_key(
-        repos.lifecycle_def,
+        repos.activity_lifecycle_def,
         repos.workflow_def,
         project_id,
         &lifecycle_key,
@@ -128,7 +129,7 @@ async fn resolve_for_story(
     let lifecycle_key = normalize_lifecycle_key(agent.default_lifecycle_key.as_deref())?;
 
     resolve_from_lifecycle_key(
-        repos.lifecycle_def,
+        repos.activity_lifecycle_def,
         repos.workflow_def,
         project_id,
         &lifecycle_key,
@@ -137,12 +138,12 @@ async fn resolve_for_story(
 }
 
 async fn resolve_from_lifecycle_key(
-    lifecycle_def: &dyn LifecycleDefinitionRepository,
+    activity_lifecycle_def: &dyn ActivityLifecycleDefinitionRepository,
     workflow_def: &dyn WorkflowDefinitionRepository,
     project_id: Uuid,
     lifecycle_key: &str,
 ) -> Option<ToolContribution> {
-    let lifecycle = match lifecycle_def
+    let lifecycle = match activity_lifecycle_def
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
     {
@@ -166,17 +167,17 @@ async fn resolve_from_lifecycle_key(
         }
     };
 
-    let Some(entry_step) = find_entry_step(&lifecycle) else {
+    let Some(entry_activity) = find_entry_activity(&lifecycle) else {
         tracing::warn!(
             project_id = %project_id,
             lifecycle_key = %lifecycle_key,
-            entry_step_key = %lifecycle.entry_step_key,
-            "resolve_session_workflow_context: lifecycle entry step 找不到对应的 step 定义"
+            entry_activity_key = %lifecycle.entry_activity_key,
+            "resolve_session_workflow_context: lifecycle entry activity 找不到对应定义"
         );
         return None;
     };
 
-    let Some(workflow_key) = entry_step.effective_workflow_key() else {
+    let Some(workflow_key) = entry_activity_workflow_key(entry_activity) else {
         return Some(ToolContribution {
             directives: Vec::new(),
             has_active_workflow: true,
@@ -215,11 +216,18 @@ async fn resolve_from_lifecycle_key(
     })
 }
 
-fn find_entry_step(lifecycle: &LifecycleDefinition) -> Option<&LifecycleStepDefinition> {
+fn find_entry_activity(lifecycle: &ActivityLifecycleDefinition) -> Option<&ActivityDefinition> {
     lifecycle
-        .steps
+        .activities
         .iter()
-        .find(|step| step.key == lifecycle.entry_step_key)
+        .find(|activity| activity.key == lifecycle.entry_activity_key)
+}
+
+fn entry_activity_workflow_key(activity: &ActivityDefinition) -> Option<&str> {
+    match &activity.executor {
+        ActivityExecutorSpec::Agent(spec) => Some(spec.workflow_key.as_str()),
+        _ => None,
+    }
 }
 
 fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
@@ -249,7 +257,8 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleDefinitionRepository, LifecycleStepDefinition,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
+        ActivityLifecycleDefinitionRepository, AgentActivityExecutorSpec, AgentSessionPolicy,
         ToolCapabilityDirective, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
         WorkflowDefinitionRepository, WorkflowDefinitionSource,
     };
@@ -343,38 +352,32 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct MockLifecycleDefRepo {
-        defs: Arc<Mutex<Vec<LifecycleDefinition>>>,
+        defs: Arc<Mutex<Vec<ActivityLifecycleDefinition>>>,
     }
 
     impl MockLifecycleDefRepo {
-        async fn insert(&self, def: LifecycleDefinition) {
+        async fn insert(&self, def: ActivityLifecycleDefinition) {
             self.defs.lock().await.push(def);
         }
     }
 
     #[async_trait]
-    impl LifecycleDefinitionRepository for MockLifecycleDefRepo {
-        async fn create(&self, def: &LifecycleDefinition) -> Result<(), DomainError> {
+    impl ActivityLifecycleDefinitionRepository for MockLifecycleDefRepo {
+        async fn create(&self, def: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
             self.defs.lock().await.push(def.clone());
             Ok(())
         }
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError> {
+        async fn get_by_id(
+            &self,
+            id: Uuid,
+        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
-        }
-        async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .defs
-                .lock()
-                .await
-                .iter()
-                .find(|d| d.key == key)
-                .cloned())
         }
         async fn get_by_project_and_key(
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<LifecycleDefinition>, DomainError> {
+        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -383,13 +386,10 @@ mod tests {
                 .find(|d| d.project_id == project_id && d.key == key)
                 .cloned())
         }
-        async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError> {
-            Ok(self.defs.lock().await.clone())
-        }
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<LifecycleDefinition>, DomainError> {
+        ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -399,20 +399,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn list_by_binding_kind(
-            &self,
-            binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<LifecycleDefinition>, DomainError> {
-            Ok(self
-                .defs
-                .lock()
-                .await
-                .iter()
-                .filter(|d| d.binding_kinds.contains(&binding_kind))
-                .cloned()
-                .collect())
-        }
-        async fn update(&self, def: &LifecycleDefinition) -> Result<(), DomainError> {
+        async fn update(&self, def: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
             let mut lock = self.defs.lock().await;
             if let Some(existing) = lock.iter_mut().find(|d| d.id == def.id) {
                 *existing = def.clone();
@@ -530,19 +517,23 @@ mod tests {
         ]
     }
 
-    /// 构造 `builtin_workflow_admin` lifecycle 及其 entry step workflow。
+    /// 构造 `builtin_workflow_admin` lifecycle 及其 entry activity workflow。
     /// Plan 阶段必须保留 workflow_management 只读工具，同时屏蔽 upsert 写入工具。
-    fn admin_lifecycle(project_id: Uuid) -> LifecycleDefinition {
-        let plan = LifecycleStepDefinition {
+    fn admin_lifecycle(project_id: Uuid) -> ActivityLifecycleDefinition {
+        let plan = ActivityDefinition {
             key: "plan".to_string(),
             description: String::new(),
-            workflow_key: Some(ENTRY_WORKFLOW_KEY.to_string()),
-            node_type: Default::default(),
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: ENTRY_WORKFLOW_KEY.to_string(),
+                session_policy: AgentSessionPolicy::SpawnChild,
+            }),
             output_ports: vec![],
             input_ports: vec![],
-            capability_config: Default::default(),
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         };
-        LifecycleDefinition::new(
+        ActivityLifecycleDefinition::new(
             project_id,
             "builtin_workflow_admin",
             "Workflow Admin",
@@ -576,9 +567,9 @@ mod tests {
         .expect("workflow definition")
     }
 
-    fn lifecycle_without_entry_step(project_id: Uuid) -> LifecycleDefinition {
+    fn lifecycle_without_entry_step(project_id: Uuid) -> ActivityLifecycleDefinition {
         let mut def = admin_lifecycle(project_id);
-        def.entry_step_key = "missing".to_string();
+        def.entry_activity_key = "missing".to_string();
         def
     }
 
@@ -607,7 +598,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -638,7 +629,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -672,7 +663,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -697,7 +688,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -735,7 +726,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -778,7 +769,7 @@ mod tests {
         let wf_ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Project {
@@ -898,7 +889,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Story { project_id },
@@ -935,7 +926,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Story { project_id },
@@ -968,7 +959,7 @@ mod tests {
         let ctx = resolve_session_workflow_context(
             SessionWorkflowRepos {
                 project_agent: &project_agent_repo,
-                lifecycle_def: &lifecycle_repo,
+                activity_lifecycle_def: &lifecycle_repo,
                 workflow_def: &workflow_repo,
             },
             SessionWorkflowOwner::Routine {

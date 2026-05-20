@@ -48,6 +48,27 @@ pub trait ActivityLifecycleDefinitionRepository: Send + Sync {
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkflowTemplateInstallBundle {
+    pub workflows: Vec<WorkflowDefinition>,
+    pub lifecycle: ActivityLifecycleDefinition,
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowTemplateInstallResult {
+    pub workflows: Vec<WorkflowDefinition>,
+    pub lifecycle: ActivityLifecycleDefinition,
+}
+
+#[async_trait::async_trait]
+pub trait WorkflowTemplateInstallRepository: Send + Sync {
+    async fn install_workflow_template_bundle(
+        &self,
+        bundle: WorkflowTemplateInstallBundle,
+    ) -> Result<WorkflowTemplateInstallResult, DomainError>;
+}
+
 #[async_trait::async_trait]
 pub trait ActivityExecutionClaimRepository: Send + Sync {
     async fn create_or_get(

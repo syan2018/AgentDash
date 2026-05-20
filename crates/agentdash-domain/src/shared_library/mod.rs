@@ -14,5 +14,6 @@ pub use value_objects::{
     LibraryAssetPayload, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
     McpServerTemplatePayload, PluginLibraryAssetSeed, ProjectAgentConfigOverride,
     SharedLibrarySourceStatus, SkillTemplateFilePayload, SkillTemplatePayload,
-    WorkflowTemplatePayload,
+    WorkflowTemplatePayload, normalize_workflow_lifecycle_value,
+    normalize_workflow_template_payload_value, normalize_workflow_template_value,
 };

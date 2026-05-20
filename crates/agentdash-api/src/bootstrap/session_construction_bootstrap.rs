@@ -610,7 +610,6 @@ async fn build_story_owner_prompt_request(
         session_id,
         state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )
@@ -724,7 +723,6 @@ async fn build_project_owner_prompt_request(
         session_id,
         state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )
@@ -998,7 +996,6 @@ async fn build_task_owner_prompt_request(
         session_id,
         state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.lifecycle_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )

@@ -158,7 +158,6 @@ impl SessionConstructionPlanner {
             &session_id,
             repos.session_binding_repo.as_ref(),
             repos.workflow_definition_repo.as_ref(),
-            repos.lifecycle_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
@@ -194,7 +193,7 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                lifecycle_def: repos.lifecycle_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
                 workflow_def: repos.workflow_definition_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Story {
@@ -295,7 +294,6 @@ impl SessionConstructionPlanner {
             &session_id,
             repos.session_binding_repo.as_ref(),
             repos.workflow_definition_repo.as_ref(),
-            repos.lifecycle_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
@@ -351,7 +349,7 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                lifecycle_def: repos.lifecycle_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
                 workflow_def: repos.workflow_definition_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Project {

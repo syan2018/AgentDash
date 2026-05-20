@@ -10,7 +10,9 @@ use super::path::normalize_mount_relative_path;
 use super::provider::{
     MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
 };
-use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
+use super::types::{
+    BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
+};
 use crate::runtime::Mount;
 use agentdash_domain::inline_file::{
     InlineFile, InlineFileContent, InlineFileContentKind, InlineFileRepository,
@@ -76,6 +78,33 @@ impl MountProvider for InlineFsMountProvider {
             .transpose()?
             .ok_or_else(|| MountError::NotFound(format!("文件不存在: {path}")))?;
         Ok(ReadResult::new(path, content))
+    }
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        let path = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
+        let (owner_kind, owner_id, container_id) =
+            parse_inline_mount_owner(mount).map_err(map_mount_err)?;
+        let file = self
+            .inline_file_repo
+            .get_file(owner_kind, owner_id, &container_id, &path)
+            .await
+            .map_err(map_domain_err)?
+            .ok_or_else(|| MountError::NotFound(format!("文件不存在: {path}")))?;
+        let attrs = inline_file_attributes(&file);
+        let (bytes, mime_type) = match file.content {
+            InlineFileContent::Binary { bytes, mime_type } => (bytes, mime_type),
+            InlineFileContent::Text { .. } => {
+                return Err(MountError::NotSupported(format!(
+                    "文件是文本内容，不能按二进制读取: {path}"
+                )));
+            }
+        };
+        Ok(BinaryReadResult::new(path, bytes, mime_type).with_attributes(attrs))
     }
 
     async fn write_text(
@@ -472,5 +501,42 @@ mod tests {
             .expect("search");
         assert_eq!(search.matches.len(), 1);
         assert_eq!(search.matches[0].path, "note.md");
+    }
+
+    #[tokio::test]
+    async fn read_binary_returns_bytes_and_metadata() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_binary(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "assets/logo.png",
+            vec![0, 1, 2, 3],
+            "image/png",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+        let result = provider
+            .read_binary(
+                &inline_mount(owner_id),
+                "assets/logo.png",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read binary");
+
+        assert_eq!(result.path, "assets/logo.png");
+        assert_eq!(result.data, vec![0, 1, 2, 3]);
+        assert_eq!(result.mime_type, "image/png");
+        assert_eq!(
+            result
+                .attributes
+                .as_ref()
+                .and_then(|attrs| attrs.get("content_kind"))
+                .and_then(|value| value.as_str()),
+            Some("binary")
+        );
     }
 }

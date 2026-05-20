@@ -59,6 +59,6 @@ pub use surface::{
     ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource,
 };
 pub use types::{
-    ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
-    MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,
+    ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
+    ListResult, MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,
 };

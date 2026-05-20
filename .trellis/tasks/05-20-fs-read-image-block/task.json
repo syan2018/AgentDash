@@ -3,7 +3,7 @@
   "name": "fs-read-image-block",
   "title": "fs_read 图片 Block 返回能力",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

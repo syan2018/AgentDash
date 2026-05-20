@@ -765,13 +765,38 @@ fn decode_tool_result_to_content_items(
             ContentPart::Text { text } => {
                 Some(codex::DynamicToolCallOutputContentItem::InputText { text: text.clone() })
             }
-            ContentPart::Image { data, .. } => {
+            ContentPart::Image { mime_type, data } => {
                 Some(codex::DynamicToolCallOutputContentItem::InputImage {
-                    image_url: data.clone(),
+                    image_url: format!("data:{mime_type};base64,{data}"),
                 })
             }
             ContentPart::Reasoning { .. } => None,
         })
         .collect();
     if items.is_empty() { None } else { Some(items) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_result_image_content_uses_data_url_for_codex_protocol() {
+        let value = serde_json::json!({
+            "content": [
+                { "type": "image", "mime_type": "image/png", "data": "AAECAw==" }
+            ],
+            "is_error": false,
+            "details": null
+        });
+
+        let items = decode_tool_result_to_content_items(&value).expect("content items");
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                assert_eq!(image_url, "data:image/png;base64,AAECAw==");
+            }
+            other => panic!("expected image item, got {other:?}"),
+        }
+    }
 }

@@ -32,12 +32,12 @@
 
 ## Acceptance Criteria
 
-- [ ] `fs_read` 读取 `inline_fs` 图片文件时，tool result 包含 `ContentPart::Image`。
-- [ ] 图片 Block 在至少一个现有 connector bridge 中格式正确，不发生 data URL/base64 语义错配。
-- [ ] `fs_read` 读取文本文件的行为和测试不回退。
-- [ ] `fs_read` 读取非图片 binary 时返回明确的 unsupported/error 文本结果。
-- [ ] VFS provider / relay 的 binary read contract 有单元测试覆盖。
-- [ ] 工具层测试覆盖 image result、text result、unsupported binary 三类路径。
+- [x] `fs_read` 读取 `inline_fs` 图片文件时，tool result 包含 `ContentPart::Image`。
+- [x] 图片 Block 在至少一个现有 connector bridge 中格式正确，不发生 data URL/base64 语义错配。
+- [x] `fs_read` 读取文本文件的行为和测试不回退。
+- [x] `fs_read` 读取非图片 binary 时返回明确的 unsupported/error 文本结果。
+- [x] VFS provider / relay 的 binary read contract 有单元测试覆盖。
+- [x] 工具层测试覆盖 image result、text result、unsupported binary 三类路径。
 
 ## Execution Notes
 

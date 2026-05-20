@@ -89,6 +89,39 @@ impl RelayVfsService {
         Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
+    pub async fn read_binary(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<BinaryReadResult, String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)?;
+        let path = normalize_mount_relative_path(&target.path, false)?;
+
+        if let Some(ov) = overlay
+            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+        {
+            return match override_state {
+                Some(_) => Err(format!("文件是文本 overlay，不能按二进制读取: {path}")),
+                None => Err(format!("文件不存在: {}", target.path)),
+            };
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
+            return provider
+                .read_binary(mount, &path, &ctx)
+                .await
+                .map_err(|e| e.to_string());
+        }
+
+        Err(format!("unregistered mount provider: {}", mount.provider))
+    }
+
     pub async fn write_text(
         &self,
         vfs: &Vfs,
@@ -273,9 +306,30 @@ impl RelayVfsService {
             return Ok(RuntimeFileEntry::dir("."));
         }
 
-        if (mount.provider != PROVIDER_INLINE_FS || overlay.is_none())
-            && let Some(provider) = self.mount_provider_registry.get(&mount.provider)
+        if mount.provider == PROVIDER_INLINE_FS
+            && let Some(ov) = overlay
+            && let Some(override_state) = ov.read_override(&mount.id, &path).await
         {
+            return match override_state {
+                Some(content) => {
+                    let mut attrs = serde_json::Map::new();
+                    attrs.insert(
+                        "content_kind".to_string(),
+                        serde_json::Value::String("text".to_string()),
+                    );
+                    attrs.insert(
+                        "mime_type".to_string(),
+                        serde_json::Value::String("text/plain; charset=utf-8".to_string()),
+                    );
+                    Ok(RuntimeFileEntry::file(path)
+                        .with_size(content.len() as u64)
+                        .with_attributes(attrs))
+                }
+                None => Err(format!("文件不存在: {}", target.path)),
+            };
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };

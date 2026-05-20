@@ -63,6 +63,34 @@ impl ReadResult {
     }
 }
 
+/// 单文件二进制读取结果。
+///
+/// `data` 保留原始 bytes；上层根据目标通道决定是否 base64 编码。
+/// `mime_type` 必须来自 provider 存储/metadata，不由工具层按扩展名猜测。
+#[derive(Debug, Clone, Default)]
+pub struct BinaryReadResult {
+    pub path: String,
+    pub data: Vec<u8>,
+    pub mime_type: String,
+    pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl BinaryReadResult {
+    pub fn new(path: impl Into<String>, data: Vec<u8>, mime_type: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            data,
+            mime_type: mime_type.into(),
+            attributes: None,
+        }
+    }
+
+    pub fn with_attributes(mut self, attrs: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.attributes = Some(attrs);
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MountEditCapabilities {
     #[serde(default)]
@@ -315,6 +343,19 @@ pub trait MountProvider: Send + Sync {
         path: &str,
         ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError>;
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support read_binary",
+            self.provider_id()
+        )))
+    }
 
     async fn write_text(
         &self,

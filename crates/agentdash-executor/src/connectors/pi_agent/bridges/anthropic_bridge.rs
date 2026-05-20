@@ -289,15 +289,11 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                 is_error,
                 ..
             } => {
-                let text = content
-                    .iter()
-                    .filter_map(ContentPart::extract_text)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let blocks = anthropic_tool_result_content(content);
                 let result = serde_json::json!({
                     "type": "tool_result",
                     "tool_use_id": tool_call_id,
-                    "content": text,
+                    "content": blocks,
                     "is_error": is_error,
                 });
                 // Anthropic: tool_result 必须在 user 消息内
@@ -326,6 +322,30 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
     }
 
     messages
+}
+
+fn anthropic_tool_result_content(content: &[ContentPart]) -> Vec<serde_json::Value> {
+    let mut blocks = content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } if !text.is_empty() => {
+                Some(serde_json::json!({ "type": "text", "text": text }))
+            }
+            ContentPart::Image { mime_type, data } => Some(serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": data,
+                }
+            })),
+            ContentPart::Text { .. } | ContentPart::Reasoning { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if blocks.is_empty() {
+        blocks.push(serde_json::json!({ "type": "text", "text": "" }));
+    }
+    blocks
 }
 
 // ─── SSE 事件处理 ────────────────────────────────────────────
@@ -546,4 +566,27 @@ async fn process_anthropic_event(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_result_content_keeps_image_blocks_as_base64_sources() {
+        let blocks = anthropic_tool_result_content(&[
+            ContentPart::text("image metadata"),
+            ContentPart::Image {
+                mime_type: "image/png".to_string(),
+                data: "AAECAw==".to_string(),
+            },
+        ]);
+
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "text");
+        assert_eq!(blocks[1]["type"], "image");
+        assert_eq!(blocks[1]["source"]["type"], "base64");
+        assert_eq!(blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(blocks[1]["source"]["data"], "AAECAw==");
+    }
 }

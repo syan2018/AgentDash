@@ -20,7 +20,9 @@ use super::provider::{
     MountEditCapabilities, MountError, MountOperationContext, MountProvider, SearchMatch,
     SearchQuery, SearchResult,
 };
-use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult};
+use super::types::{
+    BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
+};
 use crate::runtime::{Mount, RuntimeFileEntry};
 
 #[derive(Debug, Clone)]
@@ -144,6 +146,29 @@ pub(crate) async fn read_projected_skill_file(
         .text_content()
         .ok_or_else(|| MountError::NotSupported(format!("SkillAsset 文件不是文本文件: {path}")))?;
     Ok(ReadResult::new(path, content.to_string()))
+}
+
+pub(crate) async fn read_projected_skill_file_binary(
+    repo: &dyn SkillAssetRepository,
+    mount: &Mount,
+    path: &str,
+) -> Result<BinaryReadResult, MountError> {
+    let path = normalize_mount_relative_path(path, false).map_err(map_mount_err)?;
+    let files = load_projected_skill_files(repo, mount).await?;
+    let file = files
+        .get(&path)
+        .ok_or_else(|| MountError::NotFound(format!("SkillAsset 文件不存在: {path}")))?;
+    let bytes = file
+        .content
+        .binary_content()
+        .ok_or_else(|| MountError::NotSupported(format!("SkillAsset 文件不是二进制文件: {path}")))?
+        .to_vec();
+    let mime_type = file
+        .content
+        .mime_type()
+        .ok_or_else(|| MountError::OperationFailed(format!("二进制文件缺少 MIME: {path}")))?
+        .to_string();
+    Ok(BinaryReadResult::new(path, bytes, mime_type).with_attributes(skill_file_attributes(file)))
 }
 
 pub(crate) async fn list_projected_skill_files(
@@ -370,6 +395,15 @@ impl MountProvider for SkillAssetFsMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError> {
         read_projected_skill_file(self.skill_asset_repo.as_ref(), mount, path).await
+    }
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        read_projected_skill_file_binary(self.skill_asset_repo.as_ref(), mount, path).await
     }
 
     async fn write_text(
@@ -801,6 +835,36 @@ mod tests {
             .await
             .expect("search");
         assert!(search.matches.is_empty());
+    }
+
+    #[tokio::test]
+    async fn skill_asset_mount_reads_binary_file() {
+        let project_id = Uuid::new_v4();
+        let repo = repo_with_skill(project_id);
+        let provider = SkillAssetFsMountProvider::new(repo);
+        let mut mount = build_skill_asset_mount(project_id, &["writer".to_string()]);
+        mount.capabilities = vec![MountCapability::Read, MountCapability::List];
+
+        let result = provider
+            .read_binary(
+                &mount,
+                "skills/writer/assets/logo.png",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read binary");
+
+        assert_eq!(result.path, "skills/writer/assets/logo.png");
+        assert_eq!(result.data, vec![0, 1, 2, 3]);
+        assert_eq!(result.mime_type, "image/png");
+        assert_eq!(
+            result
+                .attributes
+                .as_ref()
+                .and_then(|attrs| attrs.get("skill_asset_file_kind"))
+                .and_then(|value| value.as_str()),
+            Some("asset")
+        );
     }
 
     #[tokio::test]

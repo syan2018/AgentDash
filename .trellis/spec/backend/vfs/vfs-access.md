@@ -82,7 +82,7 @@ Provider 可在 `read` / `list` / `stat` 结果中附带结构化元数据（`at
 
 - Trigger: `inline_fs` 从 text-only 文件扩展为 text / binary typed inline file storage。
 - Scope: `inline_fs_files` DB schema、`InlineFile` domain model、Surface VFS API、前端 VFS Browser。
-- Non-goal: Agent `fs.read` / `fs.write` 不直接读写图片二进制；Agent 生成图片归档另走 session artifact promotion 设计。
+- Non-goal: Agent `fs.write` 不直接写图片二进制；Agent 生成图片归档另走 session artifact promotion 设计。
 
 ### 2. Signatures
 
@@ -257,6 +257,72 @@ InlineFile::new_binary(
 
 旧 `skill_asset_files` 行迁移到 `inline_fs_files(owner_kind='skill_asset', container_id='files')` 后，Repository 主线以 `InlineFile` 通用存储作为 Skill 文件内容来源。
 
+## Scenario: Agent fs_read 图片 Block
+
+### 1. Scope / Trigger
+
+- Trigger: Agent runtime tool 需要把已存入 typed VFS 的图片资产作为模型可消费图片输入返回。
+- Scope: `MountProvider::read_binary`、`RelayVfsService::read_binary`、`fs_read` tool result、connector image block 映射。
+- Storage scope: `read_binary` 是 `Read` capability 下的 typed content channel；不新增独立 mount capability。
+
+### 2. Signatures
+
+Provider binary read:
+
+```rust
+pub struct BinaryReadResult {
+    pub path: String,
+    pub data: Vec<u8>,
+    pub mime_type: String,
+    pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+}
+```
+
+Tool image result:
+
+```rust
+ContentPart::Image {
+    mime_type: "image/png".to_string(),
+    data: base64_bytes,
+}
+```
+
+`ContentPart::Image.data` 始终是原始 bytes 的 standard base64，不包含 `data:` URL 前缀。需要 URL 的协议边界由 connector / UI adapter 用 `mime_type + data` 组装。
+
+### 3. Contracts
+
+- `fs_read` 先通过 `stat`/metadata 判断 `attributes.content_kind == "binary"`，不按文件扩展名猜测。
+- `image/*` binary 返回 text metadata block + image block。
+- 非 image binary 返回 `is_error = true` 的文本结果，不把 bytes 写入模型上下文。
+- 文本文件继续走 `read_text`，保留行号输出与 `start_line` / `end_line` 语义。
+- `inline_fs` 与 `skill_asset_fs` 实现 `read_binary`；其它 provider 默认 `NotSupported`。
+- Anthropic image block 消费纯 base64；Codex app protocol `InputImage.image_url` 由边界 adapter 组装为 data URL。
+
+### 4. Validation & Error Matrix
+
+| Condition | Error / Behavior |
+| --- | --- |
+| `fs_read` 读取 `image/*` binary | `content=[Text, Image]`, `is_error=false` |
+| `fs_read` 读取非 image binary | `is_error=true`, text explains unsupported MIME |
+| binary entry 缺少 `mime_type` | tool execution error |
+| `read_binary` on text file | `MountError::NotSupported` |
+| provider 未实现 `read_binary` | `MountError::NotSupported` |
+
+### 5. Representative Cases
+
+- Inline image: `brief://assets/logo.png` stat exposes `content_kind=binary`, `mime_type=image/png`; `fs_read` returns `ContentPart::Image { mime_type="image/png", data="<base64>" }`。
+- Skill asset image: `skill-assets://skills/writer/assets/logo.png` follows the same provider contract through `SkillAssetFile` projection。
+- Archive file: `brief://assets/bundle.zip` returns unsupported binary text result and no image block。
+- Text file: `brief://note.md` still returns numbered text lines.
+
+### 6. Tests Required
+
+- Provider unit: `inline_fs.read_binary` returns bytes, MIME and content metadata.
+- Provider unit: `skill_asset_fs.read_binary` returns projected bytes, MIME and skill metadata.
+- Tool unit: `fs_read` covers text result, image result, unsupported binary result.
+- Connector unit: Anthropic tool result preserves image block as base64 source.
+- Protocol mapper unit: Codex app dynamic tool result maps `ContentPart::Image` to data URL.
+
 ---
 
 *创建：2026-04-17 — 统一 VFS 跨层契约*
@@ -264,3 +330,4 @@ InlineFile::new_binary(
 *更新：2026-05-16 — 补充资源地址类型、root_ref 类型化与 VFS hard validation 契约*
 *更新：2026-05-20 — 补充 inline_fs text/binary 内容契约与图片资产 API 边界*
 *更新：2026-05-20 — SkillAsset 文件收敛到 InlineFile embedded storage*
+*更新：2026-05-20 — 补充 Agent fs_read 图片 Block 与 read_binary 契约*

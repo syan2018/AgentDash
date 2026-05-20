@@ -263,7 +263,7 @@
   - [x] 限制同一 root session 仅一个 running ContinueRoot attempt。
   - [x] capability / MCP / VFS transition 进入 runtime command 或 pending transition。
   - [x] 完成事件仍走 ActivityEvent。
-- [ ] 旧 `complete_lifecycle_node` 工具在 Activity 子 session 内提交 ActivityEvent；旧 step session 暂保留 `complete_step` 路径，待旧模型清理阶段移除。
+- [x] `complete_lifecycle_node` 工具在 Activity 子 session 内提交 ActivityEvent；旧 step session 路径收敛到旧模型清理阶段。
 - [ ] 保留现有 hook gate 能力，但结果转换为 completion policy / ActivityEvent。
 
 验证：
@@ -272,7 +272,7 @@
 - [ ] 多 step SpawnChild lifecycle 能激活后继。
 - [x] ContinueRoot capability transition 生效。
 - [x] 并行 ContinueRoot 被拒绝。
-- [ ] session terminal failed 转为 attempt failed。
+- [x] session terminal failed 转为 attempt failed。
 - [x] activity 子 session label 可稳定反查 run / activity / attempt。
 - [x] Activity 子 session 调用 `complete_lifecycle_node` 会提交 ActivityEvent 并调度后继 ready attempt。
 - [x] `cargo test -p agentdash-application workflow::agent_executor`

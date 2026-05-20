@@ -1261,3 +1261,33 @@ fn resolve_owner_scope(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activity_terminal_failed_maps_to_failed_event() {
+        assert_eq!(
+            activity_terminal_event("failed", "plan", 1),
+            Some(ActivityEvent::ActivityFailed {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                error: "关联 session 以失败终态结束".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn activity_terminal_completed_maps_to_completed_event() {
+        assert_eq!(
+            activity_terminal_event("completed", "plan", 1),
+            Some(ActivityEvent::ActivityCompleted {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                outputs: Vec::new(),
+                summary: Some("关联 session 已自然结束".to_string()),
+            })
+        );
+    }
+}

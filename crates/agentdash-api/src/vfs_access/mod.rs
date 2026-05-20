@@ -155,6 +155,7 @@ mod tests {
                     && f.path == file.path
             }) {
                 existing.content = file.content.clone();
+                existing.size_bytes = file.size_bytes;
                 existing.updated_at = file.updated_at;
             } else {
                 files.push(file.clone());

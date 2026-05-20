@@ -12,10 +12,13 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   createSurfaceFile,
   deleteSurfaceFile,
+  readSurfaceFileBlob,
   readSurfaceFile,
   renameSurfaceFile,
+  uploadSurfaceFileBlob,
   writeSurfaceFile,
 } from "../../services/vfs";
+import type { SurfaceMountEntry } from "../../services/vfs";
 import type { ExecutionVfs, ResolvedVfsSurface } from "../../types";
 import { VfsFileTree } from "./vfs-file-tree";
 import { VfsCodeEditor } from "./vfs-code-editor";
@@ -66,6 +69,14 @@ export interface VfsBrowserPanelInspectorContext {
   refreshTree: () => void;
 }
 
+interface SelectedBinaryFile {
+  kind: "image" | "binary";
+  path: string;
+  objectUrl?: string;
+  mimeType?: string | null;
+  size?: number | null;
+}
+
 export function VfsBrowserPanel({
   surface,
   vfs,
@@ -79,10 +90,12 @@ export function VfsBrowserPanel({
   const [selectedMountId, setSelectedMountId] = useState<string | null>(initialMountId ?? null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
   const [fileContent, setFileContent] = useState<string | null>(null);
+  const [selectedBinaryFile, setSelectedBinaryFile] = useState<SelectedBinaryFile | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [operationBusy, setOperationBusy] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const surfaceRef = surface?.surface_ref ?? null;
   const scopedRootPath = useMemo(() => normalizeScopedRootPath(rootPath), [rootPath]);
@@ -117,18 +130,36 @@ export function VfsBrowserPanel({
   );
 
   const selectedMountBrowsable = selectedMount?.browsable ?? false;
+  const canUploadImage = Boolean(
+    selectedMount
+      && selectedMount.provider === "inline_fs"
+      && selectedMountBrowsable
+      && selectedMount.editCapabilities.create,
+  );
+
+  const replaceBinaryFile = useCallback((next: SelectedBinaryFile | null) => {
+    setSelectedBinaryFile((current) => {
+      if (current?.objectUrl) URL.revokeObjectURL(current.objectUrl);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (selectedBinaryFile?.objectUrl) URL.revokeObjectURL(selectedBinaryFile.objectUrl);
+  }, [selectedBinaryFile?.objectUrl]);
 
   // 默认选中第一个可浏览 mount，避免离线 relay_fs 在预览页自动触发 503。
   useEffect(() => {
     if (selectedMountId && mounts.some((m) => m.id === selectedMountId)) return;
     const defaultId = resolveDefaultMountId(mounts, initialMountId, surface?.default_mount_id);
-    setSelectedMountId(defaultId);
-    if (!initialFilePath) {
-      setSelectedFilePath(null);
-      setFileContent(null);
-    }
+      setSelectedMountId(defaultId);
+      if (!initialFilePath) {
+        setSelectedFilePath(null);
+        setFileContent(null);
+        replaceBinaryFile(null);
+      }
     setOperationError(null);
-  }, [mounts, selectedMountId, initialMountId, surface?.default_mount_id, initialFilePath]);
+  }, [mounts, selectedMountId, initialMountId, surface?.default_mount_id, initialFilePath, replaceBinaryFile]);
 
   // 有 initialFilePath 时自动加载文件内容
   const initialLoadDone = useRef(false);
@@ -149,13 +180,41 @@ export function VfsBrowserPanel({
   }, [initialFilePath, surfaceRef, selectedMountId, selectedMountBrowsable]);
 
   const handleSelectFile = useCallback(
-    async (path: string) => {
+    async (entry: SurfaceMountEntry) => {
       if (!surfaceRef || !selectedMountId || !selectedMountBrowsable) return;
+      const path = entry.path;
       setSelectedFilePath(path);
       setOperationError(null);
       onNavigate?.(selectedMountId, path);
       setFileLoading(true);
+      setFileContent(null);
+      replaceBinaryFile(null);
       try {
+        if (isImageEntry(entry)) {
+          const blob = await readSurfaceFileBlob({
+            surfaceRef,
+            mountId: selectedMountId,
+            path,
+          });
+          const objectUrl = URL.createObjectURL(blob);
+          replaceBinaryFile({
+            kind: "image",
+            path,
+            objectUrl,
+            mimeType: entry.mime_type ?? blob.type,
+            size: entry.size,
+          });
+          return;
+        }
+        if (entry.content_kind === "binary") {
+          replaceBinaryFile({
+            kind: "binary",
+            path,
+            mimeType: entry.mime_type,
+            size: entry.size,
+          });
+          return;
+        }
         const result = await readSurfaceFile({
           surfaceRef,
           mountId: selectedMountId,
@@ -168,7 +227,7 @@ export function VfsBrowserPanel({
         setFileLoading(false);
       }
     },
-    [surfaceRef, selectedMountId, selectedMountBrowsable, onNavigate],
+    [surfaceRef, selectedMountId, selectedMountBrowsable, onNavigate, replaceBinaryFile],
   );
 
   const handleSave = useCallback(
@@ -181,8 +240,9 @@ export function VfsBrowserPanel({
         content,
       });
       setFileContent(content);
+      replaceBinaryFile(null);
     },
-    [surfaceRef, selectedMountId, selectedFilePath, selectedMountBrowsable],
+    [surfaceRef, selectedMountId, selectedFilePath, selectedMountBrowsable, replaceBinaryFile],
   );
 
   const refreshTree = useCallback(() => {
@@ -210,13 +270,14 @@ export function VfsBrowserPanel({
       refreshTree();
       setSelectedFilePath(normalizedPath);
       setFileContent("");
+      replaceBinaryFile(null);
       onNavigate?.(selectedMountId, normalizedPath);
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : "新建文件失败");
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate, replaceBinaryFile]);
 
   const handleDeleteFile = useCallback(async () => {
     if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
@@ -233,13 +294,14 @@ export function VfsBrowserPanel({
       refreshTree();
       setSelectedFilePath(null);
       setFileContent(null);
+      replaceBinaryFile(null);
       onNavigate?.(selectedMountId, null);
     } catch (err) {
       setOperationError(err instanceof Error ? err.message : "删除文件失败");
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate, replaceBinaryFile]);
 
   const handleRenameFile = useCallback(async () => {
     if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
@@ -265,6 +327,40 @@ export function VfsBrowserPanel({
       setOperationBusy(false);
     }
   }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate]);
+
+  const handleUploadImage = useCallback(async (files: FileList | null) => {
+    if (!surfaceRef || !selectedMountId || !canUploadImage || !files?.length) return;
+    const file = files[0];
+    const suggestedPath = `assets/${file.name}`;
+    const path = window.prompt("图片保存路径", suggestedPath);
+    const normalizedPath = resolveScopedPath(scopedRootPath, path);
+    if (!normalizedPath) return;
+
+    setOperationBusy(true);
+    setOperationError(null);
+    try {
+      const result = await uploadSurfaceFileBlob({
+        surfaceRef,
+        mountId: selectedMountId,
+        path: normalizedPath,
+        file,
+      });
+      refreshTree();
+      await handleSelectFile({
+        path: result.path,
+        entry_type: "file",
+        size: result.size,
+        content_kind: result.content_kind,
+        mime_type: result.mime_type,
+        is_dir: false,
+      });
+    } catch (err) {
+      setOperationError(err instanceof Error ? err.message : "上传图片失败");
+    } finally {
+      setOperationBusy(false);
+      if (uploadInputRef.current) uploadInputRef.current.value = "";
+    }
+  }, [surfaceRef, selectedMountId, canUploadImage, scopedRootPath, refreshTree, handleSelectFile]);
 
   if (mounts.length === 0) {
     return (
@@ -318,6 +414,7 @@ export function VfsBrowserPanel({
             setSelectedMountId(newMountId);
             setSelectedFilePath(null);
             setFileContent(null);
+            replaceBinaryFile(null);
             setOperationError(null);
             onNavigate?.(newMountId, null);
           }}
@@ -337,6 +434,20 @@ export function VfsBrowserPanel({
           >
             <PlusIcon />
           </FileActionButton>
+          <FileActionButton
+            title="上传图片"
+            disabled={operationBusy || !canUploadImage}
+            onClick={() => uploadInputRef.current?.click()}
+          >
+            <UploadIcon />
+          </FileActionButton>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(event) => void handleUploadImage(event.currentTarget.files)}
+          />
           <FileActionButton
             title="重命名当前文件"
             disabled={operationBusy || !selectedMountBrowsable || selectedFileProtected || !selectedFilePath || !selectedMount?.editCapabilities.rename}
@@ -369,7 +480,7 @@ export function VfsBrowserPanel({
               <VfsFileTree
                 surfaceRef={surfaceRef}
                 mountId={selectedMountId}
-                onSelectFile={(path) => void handleSelectFile(path)}
+                onSelectFile={(entry) => void handleSelectFile(entry)}
                 selectedPath={selectedFilePath}
                 rootPath={scopedRootPath}
                 refreshKey={treeRefreshKey}
@@ -400,7 +511,13 @@ export function VfsBrowserPanel({
               onSave={(content) => void handleSave(content)}
             />
           )}
-          {!fileLoading && fileContent == null && (
+          {!fileLoading && selectedBinaryFile?.kind === "image" && selectedBinaryFile.objectUrl && (
+            <ImageFilePreview file={selectedBinaryFile} />
+          )}
+          {!fileLoading && selectedBinaryFile?.kind === "binary" && (
+            <BinaryFileNotice file={selectedBinaryFile} />
+          )}
+          {!fileLoading && fileContent == null && selectedBinaryFile == null && (
             <div className="flex h-full items-center justify-center px-6">
               <p className="text-center text-sm text-muted-foreground">
                 {selectedMountBrowsable
@@ -440,6 +557,40 @@ function OfflineMountNotice({ mount }: { mount: VfsBrowserPanelMountOption | nul
   );
 }
 
+function ImageFilePreview({ file }: { file: SelectedBinaryFile }) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <div className="truncate font-mono text-xs text-foreground">{file.path}</div>
+        <div className="mt-0.5 text-[11px] text-muted-foreground">
+          {file.mimeType ?? "image/*"} · {file.size != null ? formatBytes(file.size) : "未知大小"}
+        </div>
+      </div>
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-secondary/10 p-4">
+        <img
+          src={file.objectUrl}
+          alt={file.path}
+          className="max-h-full max-w-full rounded-[8px] border border-border bg-background object-contain"
+        />
+      </div>
+    </div>
+  );
+}
+
+function BinaryFileNotice({ file }: { file: SelectedBinaryFile }) {
+  return (
+    <div className="flex h-full items-center justify-center px-6">
+      <div className="max-w-md rounded-[8px] border border-border bg-secondary/20 px-4 py-3 text-sm">
+        <div className="font-medium text-foreground">二进制文件</div>
+        <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{file.path}</div>
+        <div className="mt-2 text-xs text-muted-foreground">
+          {file.mimeType ?? "unknown"} · {file.size != null ? formatBytes(file.size) : "未知大小"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function normalizeScopedRootPath(path?: string): string {
   return path?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") ?? "";
 }
@@ -462,6 +613,20 @@ function parentPath(path: string): string {
   const index = path.lastIndexOf("/");
   if (index < 0) return "";
   return `${path.slice(0, index)}/`;
+}
+
+function isImageEntry(entry: SurfaceMountEntry): boolean {
+  return entry.content_kind === "binary" && isImageMime(entry.mime_type);
+}
+
+function isImageMime(mimeType?: string | null): boolean {
+  return Boolean(mimeType?.startsWith("image/"));
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function FileActionButton({
@@ -521,6 +686,16 @@ function TrashIcon() {
       <path d="M19 6l-1 14H6L5 6" />
       <path d="M10 11v6" />
       <path d="M14 11v6" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="m7 8 5-5 5 5" />
+      <path d="M5 21h14" />
     </svg>
   );
 }

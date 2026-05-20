@@ -222,7 +222,10 @@ impl LifecycleJourneyProjection {
             .map_err(map_domain_err)?;
         Ok(files
             .into_iter()
-            .map(|file| (file.path, file.content))
+            .filter_map(|file| {
+                let path = file.path.clone();
+                file.into_text_content().map(|content| (path, content))
+            })
             .collect())
     }
 
@@ -236,7 +239,7 @@ impl LifecycleJourneyProjection {
             )
             .await
             .map_err(map_domain_err)?
-            .map(|file| file.content)
+            .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
                 LifecycleJourneyError::NotFound(format!("port output 不存在: {port_key}"))
             })
@@ -279,9 +282,10 @@ impl LifecycleJourneyProjection {
         Ok(files
             .into_iter()
             .filter_map(|file| {
+                let content = file.clone().into_text_content()?;
                 file.path
                     .strip_prefix(&prefix)
-                    .map(|path| (path.to_string(), file.content))
+                    .map(|path| (path.to_string(), content))
             })
             .collect())
     }
@@ -308,7 +312,7 @@ impl LifecycleJourneyProjection {
             )
             .await
             .map_err(map_domain_err)?
-            .map(|file| file.content)
+            .and_then(|file| file.into_text_content())
             .ok_or_else(|| LifecycleJourneyError::NotFound(format!("record 不存在: {name}")))
     }
 
@@ -350,7 +354,9 @@ impl LifecycleJourneyProjection {
             )
             .await
         {
-            return Ok(file.content);
+            if let Some(content) = file.into_text_content() {
+                return Ok(content);
+            }
         }
 
         step.summary.clone().ok_or_else(|| {
@@ -372,7 +378,7 @@ impl LifecycleJourneyProjection {
             )
             .await
             .map_err(map_domain_err)?
-            .map(|file| file.content)
+            .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
                 LifecycleJourneyError::NotFound(format!("node `{step_key}` 没有 conclusions"))
             })

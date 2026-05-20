@@ -1,4 +1,5 @@
-import { api } from "../api/client";
+import { api, authenticatedFetch } from "../api/client";
+import { buildApiPath } from "../api/origin";
 import type { ResolvedVfsSurface, ResolvedVfsSurfaceSource } from "../types/context";
 import { vfsRoutes } from "./vfsRoutes";
 
@@ -45,6 +46,8 @@ export interface SurfaceMountEntry {
   path: string;
   entry_type: string;
   size?: number | null;
+  content_kind?: string | null;
+  mime_type?: string | null;
   is_dir: boolean;
 }
 
@@ -60,6 +63,8 @@ export interface ReadSurfaceFileResponse {
   path: string;
   content: string;
   size: number;
+  content_kind: string;
+  mime_type?: string | null;
 }
 
 export interface WriteSurfaceFileResponse {
@@ -68,6 +73,8 @@ export interface WriteSurfaceFileResponse {
   path: string;
   size: number;
   persisted: boolean;
+  content_kind: string;
+  mime_type?: string | null;
 }
 
 export interface CreateSurfaceFileResponse {
@@ -75,6 +82,8 @@ export interface CreateSurfaceFileResponse {
   mount_id: string;
   path: string;
   size: number;
+  content_kind: string;
+  mime_type?: string | null;
 }
 
 export interface DeleteSurfaceFileResponse {
@@ -97,6 +106,8 @@ export interface StatSurfaceFileResponse {
   path: string;
   entry_type: string;
   size?: number | null;
+  content_kind?: string | null;
+  mime_type?: string | null;
   modified_at?: number | null;
   is_dir: boolean;
 }
@@ -107,6 +118,15 @@ export interface ApplySurfacePatchResponse {
   added: string[];
   modified: string[];
   deleted: string[];
+}
+
+export interface UploadSurfaceFileBlobResponse {
+  surface_ref: string;
+  mount_id: string;
+  path: string;
+  size: number;
+  content_kind: string;
+  mime_type: string;
 }
 
 export interface VfsQueryParams {
@@ -184,6 +204,29 @@ export async function readSurfaceFile(params: {
   });
 }
 
+export async function readSurfaceFileBlob(params: {
+  surfaceRef: string;
+  mountId: string;
+  path: string;
+}): Promise<Blob> {
+  const response = await authenticatedFetch(buildApiPath(vfsRoutes.surfaces.readFileBlob), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      surface_ref: params.surfaceRef,
+      mount_id: params.mountId,
+      path: params.path,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(String(body.error || `HTTP ${response.status}`));
+  }
+  return response.blob();
+}
+
 export async function writeSurfaceFile(params: {
   surfaceRef: string;
   mountId: string;
@@ -210,6 +253,29 @@ export async function createSurfaceFile(params: {
     path: params.path,
     content: params.content,
   });
+}
+
+export async function uploadSurfaceFileBlob(params: {
+  surfaceRef: string;
+  mountId: string;
+  path?: string;
+  file: File;
+}): Promise<UploadSurfaceFileBlobResponse> {
+  const form = new FormData();
+  form.append("surface_ref", params.surfaceRef);
+  form.append("mount_id", params.mountId);
+  if (params.path) form.append("path", params.path);
+  form.append("file", params.file, params.file.name);
+
+  const response = await authenticatedFetch(buildApiPath(vfsRoutes.surfaces.uploadFileBlob), {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(String(body.error || `HTTP ${response.status}`));
+  }
+  return response.json();
 }
 
 export async function deleteSurfaceFile(params: {

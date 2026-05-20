@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use axum::{
     Json,
+    body::Bytes,
+    extract::Multipart,
     extract::{Path, Query, State},
+    http::{HeaderValue, header},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +17,7 @@ use agentdash_application::vfs::{
     build_project_skill_asset_management_mount, mount_container_id, mount_owner_id,
     mount_owner_kind, mount_purpose,
 };
+use agentdash_domain::inline_file::{InlineFile, InlineFileContent};
 use agentdash_spi::Vfs;
 
 use crate::{
@@ -49,6 +54,10 @@ pub struct SurfaceMountEntry {
     pub entry_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
     pub is_dir: bool,
 }
 
@@ -73,6 +82,9 @@ pub struct SurfaceReadFileResponse {
     pub path: String,
     pub content: String,
     pub size: u64,
+    pub content_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,6 +102,9 @@ pub struct SurfaceWriteFileResponse {
     pub path: String,
     pub size: u64,
     pub persisted: bool,
+    pub content_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,6 +121,9 @@ pub struct SurfaceCreateFileResponse {
     pub mount_id: String,
     pub path: String,
     pub size: u64,
+    pub content_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,6 +171,10 @@ pub struct SurfaceStatFileResponse {
     pub path: String,
     pub entry_type: String,
     pub size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
     pub modified_at: Option<i64>,
     pub is_dir: bool,
 }
@@ -171,6 +193,23 @@ pub struct SurfaceApplyPatchResponse {
     pub added: Vec<String>,
     pub modified: Vec<String>,
     pub deleted: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SurfaceReadBinaryFileRequest {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SurfaceUploadBinaryFileResponse {
+    pub surface_ref: String,
+    pub mount_id: String,
+    pub path: String,
+    pub size: u64,
+    pub content_kind: String,
+    pub mime_type: String,
 }
 
 pub async fn resolve_surface(
@@ -231,6 +270,8 @@ pub async fn list_surface_mount_entries(
             .into_iter()
             .take(MAX_ENTRIES)
             .map(|entry| SurfaceMountEntry {
+                content_kind: entry_content_kind(&entry),
+                mime_type: entry_mime_type(&entry),
                 path: entry.path,
                 entry_type: if entry.is_dir {
                     "directory".to_string()
@@ -277,6 +318,149 @@ pub async fn read_surface_file(
         path: result.path,
         content: result.content.clone(),
         size: result.content.len() as u64,
+        content_kind: "text".to_string(),
+        mime_type: Some("text/plain; charset=utf-8".to_string()),
+    }))
+}
+
+pub async fn read_surface_file_blob(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Json(req): Json<SurfaceReadBinaryFileRequest>,
+) -> Result<Response, ApiError> {
+    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+        .map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
+    let mount = vfs
+        .mounts
+        .iter()
+        .find(|mount| mount.id == req.mount_id)
+        .ok_or_else(|| ApiError::NotFound(format!("mount 不存在: {}", req.mount_id)))?;
+    if mount.provider != PROVIDER_INLINE_FS {
+        return Err(ApiError::BadRequest(
+            "blob 读取目前仅支持 inline_fs mount".to_string(),
+        ));
+    }
+
+    let normalized_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
+            .map_err(ApiError::BadRequest)?;
+    let (owner_kind, owner_id, container_id) =
+        agentdash_application::vfs::parse_inline_mount_owner(mount)
+            .map_err(ApiError::BadRequest)?;
+    let file = state
+        .repos
+        .inline_file_repo
+        .get_file(owner_kind, owner_id, &container_id, &normalized_path)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("文件不存在: {normalized_path}")))?;
+    let InlineFileContent::Binary { bytes, mime_type } = file.content else {
+        return Err(ApiError::BadRequest(format!(
+            "文件不是二进制内容: {normalized_path}"
+        )));
+    };
+    let content_type = HeaderValue::from_str(&mime_type)
+        .map_err(|error| ApiError::Internal(format!("MIME 类型无效: {error}")))?;
+
+    Ok(([(header::CONTENT_TYPE, content_type)], Bytes::from(bytes)).into_response())
+}
+
+pub async fn upload_surface_file_blob(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    mut multipart: Multipart,
+) -> Result<Json<SurfaceUploadBinaryFileResponse>, ApiError> {
+    let mut surface_ref: Option<String> = None;
+    let mut mount_id: Option<String> = None;
+    let mut target_path: Option<String> = None;
+    let mut upload: Option<(String, Vec<u8>, String)> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("multipart 上传内容解析失败: {error}")))?
+    {
+        let name = field.name().unwrap_or_default().to_string();
+        match name.as_str() {
+            "surface_ref" => {
+                surface_ref = Some(field.text().await.map_err(|error| {
+                    ApiError::BadRequest(format!("读取 surface_ref 失败: {error}"))
+                })?);
+            }
+            "mount_id" => {
+                mount_id = Some(field.text().await.map_err(|error| {
+                    ApiError::BadRequest(format!("读取 mount_id 失败: {error}"))
+                })?);
+            }
+            "path" => {
+                target_path =
+                    Some(field.text().await.map_err(|error| {
+                        ApiError::BadRequest(format!("读取 path 失败: {error}"))
+                    })?);
+            }
+            "file" => {
+                let filename = field.file_name().map(ToString::to_string);
+                let content_type = field.content_type().map(ToString::to_string);
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|error| ApiError::BadRequest(format!("读取上传文件失败: {error}")))?
+                    .to_vec();
+                let filename = filename.unwrap_or_else(|| "image".to_string());
+                let mime_type = content_type.unwrap_or_else(|| guess_image_mime_type(&filename));
+                upload = Some((filename, bytes, mime_type));
+            }
+            _ => {}
+        }
+    }
+
+    let surface_ref =
+        surface_ref.ok_or_else(|| ApiError::BadRequest("缺少 surface_ref".to_string()))?;
+    let mount_id = mount_id.ok_or_else(|| ApiError::BadRequest("缺少 mount_id".to_string()))?;
+    let (filename, bytes, mime_type) =
+        upload.ok_or_else(|| ApiError::BadRequest("缺少上传文件".to_string()))?;
+    if !mime_type.starts_with("image/") {
+        return Err(ApiError::BadRequest(format!(
+            "inline_fs 图片上传仅支持 image/* MIME: {mime_type}"
+        )));
+    }
+
+    let source =
+        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
+    let (_surface, vfs) =
+        resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
+    let mount = ensure_mount_can_edit(&state, &vfs, &mount_id, "create")?;
+    if mount.provider != PROVIDER_INLINE_FS {
+        return Err(ApiError::BadRequest(
+            "图片上传目前仅支持 inline_fs mount".to_string(),
+        ));
+    }
+    let raw_path = target_path.unwrap_or_else(|| format!("assets/{filename}"));
+    let normalized_path =
+        agentdash_application::vfs::normalize_mount_relative_path(&raw_path, false)
+            .map_err(ApiError::BadRequest)?;
+    let (owner_kind, owner_id, container_id) =
+        agentdash_application::vfs::parse_inline_mount_owner(mount)
+            .map_err(ApiError::BadRequest)?;
+    let size = bytes.len() as u64;
+    let file = InlineFile::new_binary(
+        owner_kind,
+        owner_id,
+        &container_id,
+        &normalized_path,
+        bytes,
+        mime_type.clone(),
+    );
+    state.repos.inline_file_repo.upsert_file(&file).await?;
+
+    Ok(Json(SurfaceUploadBinaryFileResponse {
+        surface_ref,
+        mount_id,
+        path: normalized_path,
+        size,
+        content_kind: "binary".to_string(),
+        mime_type,
     }))
 }
 
@@ -326,6 +510,8 @@ pub async fn write_surface_file(
             path: normalized_path,
             size: req.content.len() as u64,
             persisted: true,
+            content_kind: "text".to_string(),
+            mime_type: Some("text/plain; charset=utf-8".to_string()),
         }));
     }
 
@@ -353,6 +539,8 @@ pub async fn write_surface_file(
         path: normalized_path,
         size: req.content.len() as u64,
         persisted: false,
+        content_kind: "text".to_string(),
+        mime_type: Some("text/plain; charset=utf-8".to_string()),
     }))
 }
 
@@ -369,7 +557,6 @@ pub async fn create_surface_file(
     let normalized_path =
         agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
             .map_err(ApiError::BadRequest)?;
-    let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
     state
@@ -382,7 +569,7 @@ pub async fn create_surface_file(
                 path: normalized_path.clone(),
             },
             &req.content,
-            overlay.as_ref(),
+            None,
             None,
         )
         .await
@@ -393,6 +580,8 @@ pub async fn create_surface_file(
         mount_id: req.mount_id,
         path: normalized_path,
         size: req.content.len() as u64,
+        content_kind: "text".to_string(),
+        mime_type: Some("text/plain; charset=utf-8".to_string()),
     }))
 }
 
@@ -405,11 +594,28 @@ pub async fn delete_surface_file(
         .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
-    ensure_mount_can_edit(&state, &vfs, &req.mount_id, "delete")?;
+    let mount = ensure_mount_can_edit(&state, &vfs, &req.mount_id, "delete")?;
     let normalized_path =
         agentdash_application::vfs::normalize_mount_relative_path(&req.path, false)
             .map_err(ApiError::BadRequest)?;
     ensure_not_skill_asset_document_path(&source, &normalized_path, "删除")?;
+    if mount.provider == PROVIDER_INLINE_FS {
+        let (owner_kind, owner_id, container_id) =
+            agentdash_application::vfs::parse_inline_mount_owner(mount)
+                .map_err(ApiError::BadRequest)?;
+        state
+            .repos
+            .inline_file_repo
+            .delete_file(owner_kind, owner_id, &container_id, &normalized_path)
+            .await?;
+        return Ok(Json(SurfaceDeleteFileResponse {
+            surface_ref: req.surface_ref,
+            mount_id: req.mount_id,
+            path: normalized_path,
+            deleted: true,
+        }));
+    }
+
     let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
@@ -445,14 +651,47 @@ pub async fn rename_surface_file(
         .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
-    ensure_mount_can_edit(&state, &vfs, &req.mount_id, "rename")?;
+    let mount = ensure_mount_can_edit(&state, &vfs, &req.mount_id, "rename")?;
     let from_path =
         agentdash_application::vfs::normalize_mount_relative_path(&req.from_path, false)
             .map_err(ApiError::BadRequest)?;
     let to_path = agentdash_application::vfs::normalize_mount_relative_path(&req.to_path, false)
         .map_err(ApiError::BadRequest)?;
+    if from_path == to_path {
+        return Ok(Json(SurfaceRenameFileResponse {
+            surface_ref: req.surface_ref,
+            mount_id: req.mount_id,
+            from_path,
+            to_path,
+        }));
+    }
     ensure_not_skill_asset_document_path(&source, &from_path, "重命名")?;
     ensure_not_skill_asset_document_path(&source, &to_path, "重命名为")?;
+    if mount.provider == PROVIDER_INLINE_FS {
+        let (owner_kind, owner_id, container_id) =
+            agentdash_application::vfs::parse_inline_mount_owner(mount)
+                .map_err(ApiError::BadRequest)?;
+        let mut file = state
+            .repos
+            .inline_file_repo
+            .get_file(owner_kind, owner_id, &container_id, &from_path)
+            .await?
+            .ok_or_else(|| ApiError::NotFound(format!("文件不存在: {from_path}")))?;
+        file.path = to_path.clone();
+        state.repos.inline_file_repo.upsert_file(&file).await?;
+        state
+            .repos
+            .inline_file_repo
+            .delete_file(owner_kind, owner_id, &container_id, &from_path)
+            .await?;
+        return Ok(Json(SurfaceRenameFileResponse {
+            surface_ref: req.surface_ref,
+            mount_id: req.mount_id,
+            from_path,
+            to_path,
+        }));
+    }
+
     let overlay = inline_overlay_for_mount(&state, &vfs, &req.mount_id);
     check_mount_available(&state, &vfs, &req.mount_id).await?;
 
@@ -875,6 +1114,8 @@ fn surface_stat_response(
     SurfaceStatFileResponse {
         surface_ref,
         mount_id,
+        content_kind: entry_content_kind(&entry),
+        mime_type: entry_mime_type(&entry),
         path: entry.path,
         entry_type: if entry.is_dir {
             "directory".to_string()
@@ -884,6 +1125,41 @@ fn surface_stat_response(
         size: entry.size,
         modified_at: entry.modified_at,
         is_dir: entry.is_dir,
+    }
+}
+
+fn entry_content_kind(entry: &RuntimeFileEntry) -> Option<String> {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get("content_kind"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn entry_mime_type(entry: &RuntimeFileEntry) -> Option<String> {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get("mime_type"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn guess_image_mime_type(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "image/png".to_string()
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".to_string()
+    } else if lower.ends_with(".webp") {
+        "image/webp".to_string()
+    } else if lower.ends_with(".gif") {
+        "image/gif".to_string()
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    } else {
+        "application/octet-stream".to_string()
     }
 }
 

@@ -177,7 +177,10 @@ pub async fn load_port_output_map(
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter(|f| !f.content.trim().is_empty())
-        .map(|f| (f.path, f.content))
+        .filter_map(|f| {
+            let path = f.path.clone();
+            let content = f.into_text_content()?;
+            (!content.trim().is_empty()).then_some((path, content))
+        })
         .collect()
 }

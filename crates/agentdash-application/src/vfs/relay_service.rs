@@ -273,7 +273,7 @@ impl RelayVfsService {
             return Ok(RuntimeFileEntry::dir("."));
         }
 
-        if mount.provider != PROVIDER_INLINE_FS
+        if (mount.provider != PROVIDER_INLINE_FS || overlay.is_none())
             && let Some(provider) = self.mount_provider_registry.get(&mount.provider)
         {
             let ctx = MountOperationContext {
@@ -696,6 +696,9 @@ impl RelayVfsService {
         let mut files = BTreeMap::new();
         for entry in full_result.entries {
             if !entry.is_dir {
+                if entry_content_kind(&entry).as_deref() == Some("binary") {
+                    continue;
+                }
                 let read_result = provider
                     .read_text(mount, &entry.path, &ctx)
                     .await
@@ -802,6 +805,15 @@ fn normalize_patch_entry_paths(entry: &mut PatchEntry, fallback: &str) -> Result
     }
 
     Ok(mount_id)
+}
+
+fn entry_content_kind(entry: &RuntimeFileEntry) -> Option<String> {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get("content_kind"))
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
 }
 
 struct ProviderPatchTarget<'a> {

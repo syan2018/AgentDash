@@ -15,6 +15,8 @@ interface TreeNode {
   name: string;
   isDir: boolean;
   size?: number | null;
+  contentKind?: string | null;
+  mimeType?: string | null;
   children?: TreeNode[];
   isLoaded: boolean;
   isLoading: boolean;
@@ -24,7 +26,7 @@ interface TreeNode {
 export interface VfsFileTreeProps {
   surfaceRef: string;
   mountId: string;
-  onSelectFile: (path: string) => void;
+  onSelectFile: (entry: SurfaceMountEntry) => void;
   selectedPath: string | null;
   rootPath?: string;
   refreshKey?: number;
@@ -160,7 +162,7 @@ function TreeNodeItem({
   depth: number;
   selectedPath: string | null;
   onToggleDir: (path: string) => void;
-  onSelectFile: (path: string) => void;
+  onSelectFile: (entry: SurfaceMountEntry) => void;
 }) {
   const isSelected = node.path === selectedPath;
   const paddingLeft = 8 + depth * 16;
@@ -173,7 +175,7 @@ function TreeNodeItem({
           if (node.isDir) {
             onToggleDir(node.path);
           } else {
-            onSelectFile(node.path);
+            onSelectFile(nodeToEntry(node));
           }
         }}
         className={`flex w-full items-center gap-1.5 py-1 pr-2 text-left transition-colors hover:bg-secondary/40 ${
@@ -247,11 +249,24 @@ function entriesToNodes(entries: SurfaceMountEntry[]): TreeNode[] {
     name: extractFileName(e.path),
     isDir: e.is_dir,
     size: e.size,
+    contentKind: e.content_kind,
+    mimeType: e.mime_type,
     children: undefined,
     isLoaded: false,
     isLoading: false,
     isExpanded: false,
   }));
+}
+
+function nodeToEntry(node: TreeNode): SurfaceMountEntry {
+  return {
+    path: node.path,
+    entry_type: node.isDir ? "directory" : "file",
+    size: node.size,
+    content_kind: node.contentKind,
+    mime_type: node.mimeType,
+    is_dir: node.isDir,
+  };
 }
 
 function extractFileName(path: string): string {

@@ -26,6 +26,8 @@ export const vfsRoutes = {
       );
     },
     readFile: "/vfs-surfaces/read-file",
+    readFileBlob: "/vfs-surfaces/read-file-blob",
+    uploadFileBlob: "/vfs-surfaces/upload-file-blob",
     writeFile: "/vfs-surfaces/write-file",
     createFile: "/vfs-surfaces/create-file",
     deleteFile: "/vfs-surfaces/delete-file",

@@ -501,6 +501,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(vfs_surfaces::read_surface_file),
         )
         .route(
+            "/vfs-surfaces/read-file-blob",
+            post(vfs_surfaces::read_surface_file_blob),
+        )
+        .route(
+            "/vfs-surfaces/upload-file-blob",
+            post(vfs_surfaces::upload_surface_file_blob),
+        )
+        .route(
             "/vfs-surfaces/write-file",
             post(vfs_surfaces::write_surface_file),
         )

@@ -21,7 +21,9 @@ pub struct InlineFile {
     /// 归一化文件路径
     pub path: String,
     /// 文件内容
-    pub content: String,
+    pub content: InlineFileContent,
+    /// 文件大小（字节）
+    pub size_bytes: u64,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -33,14 +35,138 @@ impl InlineFile {
         path: impl Into<String>,
         content: impl Into<String>,
     ) -> Self {
+        Self::new_text(owner_kind, owner_id, container_id, path, content)
+    }
+
+    pub fn new_text(
+        owner_kind: InlineFileOwnerKind,
+        owner_id: Uuid,
+        container_id: impl Into<String>,
+        path: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        let content = content.into();
+        let size_bytes = content.len() as u64;
         Self {
             id: Uuid::new_v4(),
             owner_kind,
             owner_id,
             container_id: container_id.into(),
             path: path.into(),
-            content: content.into(),
+            content: InlineFileContent::Text { content },
+            size_bytes,
             updated_at: Utc::now(),
+        }
+    }
+
+    pub fn new_binary(
+        owner_kind: InlineFileOwnerKind,
+        owner_id: Uuid,
+        container_id: impl Into<String>,
+        path: impl Into<String>,
+        bytes: Vec<u8>,
+        mime_type: impl Into<String>,
+    ) -> Self {
+        let size_bytes = bytes.len() as u64;
+        Self {
+            id: Uuid::new_v4(),
+            owner_kind,
+            owner_id,
+            container_id: container_id.into(),
+            path: path.into(),
+            content: InlineFileContent::Binary {
+                bytes,
+                mime_type: mime_type.into(),
+            },
+            size_bytes,
+            updated_at: Utc::now(),
+        }
+    }
+
+    pub fn content_kind(&self) -> InlineFileContentKind {
+        self.content.kind()
+    }
+
+    pub fn content_kind_str(&self) -> &'static str {
+        self.content.kind().as_str()
+    }
+
+    pub fn text_content(&self) -> Option<&str> {
+        match &self.content {
+            InlineFileContent::Text { content } => Some(content),
+            InlineFileContent::Binary { .. } => None,
+        }
+    }
+
+    pub fn into_text_content(self) -> Option<String> {
+        match self.content {
+            InlineFileContent::Text { content } => Some(content),
+            InlineFileContent::Binary { .. } => None,
+        }
+    }
+
+    pub fn binary_content(&self) -> Option<&[u8]> {
+        match &self.content {
+            InlineFileContent::Text { .. } => None,
+            InlineFileContent::Binary { bytes, .. } => Some(bytes),
+        }
+    }
+
+    pub fn mime_type(&self) -> Option<&str> {
+        match &self.content {
+            InlineFileContent::Text { .. } => None,
+            InlineFileContent::Binary { mime_type, .. } => Some(mime_type),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InlineFileContent {
+    Text { content: String },
+    Binary { bytes: Vec<u8>, mime_type: String },
+}
+
+impl InlineFileContent {
+    pub fn kind(&self) -> InlineFileContentKind {
+        match self {
+            Self::Text { .. } => InlineFileContentKind::Text,
+            Self::Binary { .. } => InlineFileContentKind::Binary,
+        }
+    }
+
+    pub fn into_text(self) -> Option<String> {
+        match self {
+            Self::Text { content } => Some(content),
+            Self::Binary { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineFileContentKind {
+    Text,
+    Binary,
+}
+
+impl InlineFileContentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Binary => "binary",
+        }
+    }
+}
+
+impl std::str::FromStr for InlineFileContentKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "text" => Ok(Self::Text),
+            "binary" => Ok(Self::Binary),
+            _ => Err(()),
         }
     }
 }

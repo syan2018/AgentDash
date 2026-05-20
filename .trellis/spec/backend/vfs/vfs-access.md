@@ -76,6 +76,100 @@ Application 层的最小地址类型包括：
 
 Provider 可在 `read` / `list` / `stat` 结果中附带结构化元数据（`attributes` 字段），替代在文件内容开头嵌入 YAML frontmatter 的做法。
 
+## Scenario: inline_fs 图片资产与二进制内容
+
+### 1. Scope / Trigger
+
+- Trigger: `inline_fs` 从 text-only 文件扩展为 text / binary typed inline file storage。
+- Scope: `inline_fs_files` DB schema、`InlineFile` domain model、Surface VFS API、前端 VFS Browser。
+- Non-goal: Agent `fs.read` / `fs.write` 不直接读写图片二进制；Agent 生成图片归档另走 session artifact promotion 设计。
+
+### 2. Signatures
+
+DB `inline_fs_files` 内容列：
+
+```sql
+content_kind   TEXT NOT NULL, -- 'text' | 'binary'
+mime_type      TEXT,
+text_content   TEXT,
+binary_content BYTEA,
+size_bytes     BIGINT NOT NULL
+```
+
+Domain content model:
+
+```rust
+pub enum InlineFileContent {
+    Text { content: String },
+    Binary { bytes: Vec<u8>, mime_type: String },
+}
+```
+
+Surface API additions:
+
+```text
+POST /api/vfs-surfaces/read-file-blob
+POST /api/vfs-surfaces/upload-file-blob
+```
+
+### 3. Contracts
+
+- `content_kind = "text"`: `text_content IS NOT NULL` and `binary_content IS NULL`.
+- `content_kind = "binary"`: `binary_content IS NOT NULL`, `text_content IS NULL`, and `mime_type IS NOT NULL`.
+- `list` / `stat` for inline files must expose:
+  - `size`
+  - `attributes.content_kind`
+  - `attributes.mime_type`
+- Surface list/stat DTO mirrors those fields as `content_kind` / `mime_type` in snake_case.
+- Text APIs (`read-file`, `write-file`, `create-file`, `apply-patch`) remain text APIs.
+- Blob APIs are limited to `inline_fs` mounts unless a future provider explicitly implements binary support.
+
+### 4. Validation & Error Matrix
+
+| Condition | Error |
+| --- | --- |
+| `read_text` on binary inline file | `MountError::NotSupported` |
+| `search_text` sees binary inline file | Skip file |
+| `apply_patch` targets binary inline file | Text read fails; do not coerce binary to text |
+| Blob read on text file | HTTP 400 |
+| Blob read/upload on non-`inline_fs` mount | HTTP 400 |
+| Upload MIME is not `image/*` | HTTP 400 |
+| Invalid mount-relative path | HTTP 400 via path normalization |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Upload `assets/logo.png` as `image/png`; list returns `content_kind=binary`, `mime_type=image/png`, `size=<bytes>`; VFS Browser renders image preview.
+- Base: Existing `note.md` remains `content_kind=text`; `fs.read` and CodeMirror editing still work.
+- Bad: Store image as base64 in `text_content`; this pollutes search/apply_patch/editor behavior and must not be used as the storage model.
+
+### 6. Tests Required
+
+- Provider unit test: binary inline file appears in list/stat metadata.
+- Provider unit test: `read_text` rejects binary and `search_text` skips binary.
+- API test: multipart image upload writes binary row and blob read returns bytes with `Content-Type`.
+- Frontend test: VFS Browser routes image entries to blob preview, not `VfsCodeEditor`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+let file = InlineFile::new(owner_kind, owner_id, "brief", "logo.png", base64_image);
+```
+
+#### Correct
+
+```rust
+let file = InlineFile::new_binary(
+    owner_kind,
+    owner_id,
+    "brief",
+    "assets/logo.png",
+    png_bytes,
+    "image/png",
+);
+```
+
 ### Projection（虚拟文件）
 
 `is_virtual=true` 标记条目是 provider 动态投影的内容（物理存储中不存在），如 `lifecycle_vfs` 的 `active/*`、`nodes/*`、`runs/*` 路径。
@@ -93,3 +187,4 @@ Provider 可通过 broadcast channel 推送 `MountEvent`（Created/Modified/Dele
 *创建：2026-04-17 — 统一 VFS 跨层契约*
 *精简：2026-05-16 — 移除代码复述、测试列表、实施计划；保留核心契约和能力矩阵*
 *更新：2026-05-16 — 补充资源地址类型、root_ref 类型化与 VFS hard validation 契约*
+*更新：2026-05-20 — 补充 inline_fs text/binary 内容契约与图片资产 API 边界*

@@ -23,6 +23,8 @@ import type { ExecutionVfs, ResolvedVfsSurface } from "../../types";
 import { VfsFileTree } from "./vfs-file-tree";
 import { VfsCodeEditor } from "./vfs-code-editor";
 import { isVfsMountBrowsable, resolveDefaultMountId } from "./vfs-browser-panel-policy";
+import { formatBytes } from "./vfs-format";
+import { VfsImageFilePreview } from "./vfs-image-file-preview";
 
 export interface VfsBrowserPanelProps {
   surface?: ResolvedVfsSurface | null;
@@ -91,7 +93,6 @@ export function VfsBrowserPanel({
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(initialFilePath ?? null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [selectedBinaryFile, setSelectedBinaryFile] = useState<SelectedBinaryFile | null>(null);
-  const [expandedImagePath, setExpandedImagePath] = useState<string | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [operationBusy, setOperationBusy] = useState(false);
@@ -185,7 +186,6 @@ export function VfsBrowserPanel({
       if (!surfaceRef || !selectedMountId || !selectedMountBrowsable) return;
       const path = entry.path;
       setSelectedFilePath(path);
-      setExpandedImagePath(null);
       setOperationError(null);
       onNavigate?.(selectedMountId, path);
       setFileLoading(true);
@@ -401,12 +401,6 @@ export function VfsBrowserPanel({
     refreshTree,
   };
   const inspector = renderInspector?.(inspectorContext) ?? null;
-  const expandedImageFile =
-    selectedBinaryFile?.kind === "image"
-    && selectedBinaryFile.objectUrl
-    && selectedBinaryFile.path === expandedImagePath
-      ? selectedBinaryFile
-      : null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -421,7 +415,6 @@ export function VfsBrowserPanel({
             const newMountId = e.target.value;
             setSelectedMountId(newMountId);
             setSelectedFilePath(null);
-            setExpandedImagePath(null);
             setFileContent(null);
             replaceBinaryFile(null);
             setOperationError(null);
@@ -521,9 +514,11 @@ export function VfsBrowserPanel({
             />
           )}
           {!fileLoading && selectedBinaryFile?.kind === "image" && selectedBinaryFile.objectUrl && (
-            <ImageFilePreview
-              file={selectedBinaryFile}
-              onOpen={() => setExpandedImagePath(selectedBinaryFile.path)}
+            <VfsImageFilePreview
+              path={selectedBinaryFile.path}
+              src={selectedBinaryFile.objectUrl}
+              mimeType={selectedBinaryFile.mimeType}
+              size={selectedBinaryFile.size}
             />
           )}
           {!fileLoading && selectedBinaryFile?.kind === "binary" && (
@@ -554,9 +549,6 @@ export function VfsBrowserPanel({
           </>
         )}
       </Group>
-      {expandedImageFile && (
-        <ImageLightbox file={expandedImageFile} onClose={() => setExpandedImagePath(null)} />
-      )}
     </div>
   );
 }
@@ -569,93 +561,6 @@ function OfflineMountNotice({ mount }: { mount: VfsBrowserPanelMountOption | nul
         {mount?.displayName ?? "当前 Mount"} 暂时不可浏览。预览页不会主动请求离线 backend 的文件列表。
       </p>
     </div>
-  );
-}
-
-function ImageFilePreview({ file, onOpen }: { file: SelectedBinaryFile; onOpen: () => void }) {
-  return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
-      <div className="shrink-0 border-b border-border px-3 py-2">
-        <div className="truncate font-mono text-xs text-foreground">{file.path}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">
-          {file.mimeType ?? "image/*"} · {file.size != null ? formatBytes(file.size) : "未知大小"}
-        </div>
-      </div>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label="展开图片"
-        onDoubleClick={onOpen}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onOpen();
-          }
-        }}
-        className="flex min-h-0 flex-1 cursor-zoom-in items-center justify-center overflow-auto bg-secondary/10 p-4 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-inset"
-      >
-        <img
-          src={file.objectUrl}
-          alt={file.path}
-          className="max-h-full max-w-full rounded-[8px] border border-border bg-background object-contain"
-          draggable={false}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ImageLightbox({ file, onClose }: { file: SelectedBinaryFile; onClose: () => void }) {
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <>
-      <div className="fixed inset-0 z-[92] bg-foreground/24 backdrop-blur-[2px]" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={file.path}
-        onClick={onClose}
-        className="fixed inset-0 z-[93] flex items-center justify-center p-4 sm:p-6"
-      >
-        <div
-          className="flex h-full max-h-[calc(100vh-2rem)] w-full max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-[8px] border border-border bg-background shadow-2xl sm:max-h-[calc(100vh-3rem)] sm:max-w-[calc(100vw-3rem)]"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-xs text-foreground">{file.path}</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">
-                {file.mimeType ?? "image/*"} · {file.size != null ? formatBytes(file.size) : "未知大小"}
-              </div>
-            </div>
-            <button
-              type="button"
-              aria-label="关闭"
-              title="关闭"
-              onClick={onClose}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[4px] border border-border text-base leading-none text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-secondary/10 p-3 sm:p-4">
-            <img
-              src={file.objectUrl}
-              alt={file.path}
-              className="max-h-full max-w-full object-contain"
-              draggable={false}
-            />
-          </div>
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -703,12 +608,6 @@ function isImageEntry(entry: SurfaceMountEntry): boolean {
 
 function isImageMime(mimeType?: string | null): boolean {
   return Boolean(mimeType?.startsWith("image/"));
-}
-
-function formatBytes(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function FileActionButton({

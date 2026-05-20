@@ -4,6 +4,7 @@ import {
   resolveDefaultMountId,
   type VfsMountBrowsingPolicy,
 } from "./vfs-browser-panel-policy";
+import { formatBytes } from "./vfs-format";
 
 function mount(
   id: string,
@@ -40,5 +41,11 @@ describe("VfsBrowserPanel mount browsing policy", () => {
     const mounts = [mount("workspace", "relay_fs", false)];
 
     expect(resolveDefaultMountId(mounts)).toBe("workspace");
+  });
+
+  it("统一格式化文件大小", () => {
+    expect(formatBytes(34)).toBe("34 B");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(16 * 1024 * 1024)).toBe("16.0 MB");
   });
 });

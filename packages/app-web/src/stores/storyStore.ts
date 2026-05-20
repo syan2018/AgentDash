@@ -83,6 +83,15 @@ interface StoryState {
       clear_session_composition?: boolean;
     },
   ) => Promise<Story | null>;
+  batchUpdateStories: (
+    storyIds: string[],
+    patch: {
+      status?: Story["status"];
+      priority?: Story["priority"];
+      story_type?: Story["story_type"];
+    },
+  ) => Promise<{ updated: number; failed: number }>;
+  batchDeleteStories: (storyIds: string[]) => Promise<{ deleted: number; failed: number }>;
   deleteStory: (storyId: string) => Promise<void>;
   createTask: (storyId: string, payload: CreateTaskInput) => Promise<Task | null>;
   updateTask: (
@@ -608,6 +617,64 @@ export const useStoryStore = create<StoryState>((set) => ({
       set({ error: (e as Error).message });
       return null;
     }
+  },
+
+  batchUpdateStories: async (storyIds, patch) => {
+    let updated = 0;
+    let failed = 0;
+    for (const id of storyIds) {
+      try {
+        const requestPayload: Record<string, unknown> = {};
+        if (patch.status) requestPayload.status = toBackendStoryStatus(patch.status);
+        if (patch.priority) requestPayload.priority = patch.priority;
+        if (patch.story_type) requestPayload.story_type = patch.story_type;
+        const raw = await api.put<Record<string, unknown>>(`/stories/${id}`, requestPayload);
+        const story = mapStory(raw);
+        set((s) => {
+          const withoutOld = removeStoryFromProjectMap(s.storiesByProjectId, id);
+          const storiesByProjectId = upsertStoryInProjectMap(withoutOld, story);
+          return { storiesByProjectId };
+        });
+        updated += 1;
+      } catch (e) {
+        failed += 1;
+        set({ error: (e as Error).message });
+      }
+    }
+    return { updated, failed };
+  },
+
+  batchDeleteStories: async (storyIds) => {
+    let deleted = 0;
+    let failed = 0;
+    for (const id of storyIds) {
+      try {
+        await api.delete(`/stories/${id}`);
+        set((s) => {
+          const story = findStoryById(s.storiesByProjectId, id);
+          const storiesByProjectId = removeStoryFromProjectMap(
+            s.storiesByProjectId,
+            id,
+            story?.project_id ?? null,
+          );
+          const nextTasks = { ...s.tasksByStoryId };
+          delete nextTasks[id];
+          const nextSessions = { ...s.sessionsByStoryId };
+          delete nextSessions[id];
+          return {
+            storiesByProjectId,
+            tasksByStoryId: nextTasks,
+            sessionsByStoryId: nextSessions,
+            selectedStoryId: s.selectedStoryId === id ? null : s.selectedStoryId,
+          };
+        });
+        deleted += 1;
+      } catch (e) {
+        failed += 1;
+        set({ error: (e as Error).message });
+      }
+    }
+    return { deleted, failed };
   },
 
   deleteStory: async (storyId) => {

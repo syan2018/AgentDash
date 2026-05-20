@@ -15,6 +15,7 @@ import {
   resolveDefaultWorkspaceId,
 } from "../task/agent-binding";
 import { useStoryStore } from "../../stores/storyStore";
+import { Tooltip } from "../../components/ui/tooltip";
 
 import { sourceKindMeta } from "./context-source-utils";
 
@@ -174,13 +175,52 @@ export function CreateTaskPanel({
                 </p>
               </div>
               <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-                已选 {selectedContextIndexes.length}
+                已选 {selectedContextIndexes.length} / {availableContexts.length}
               </span>
+            </div>
+
+            <div className="mb-2 flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  setSelectedContextIndexes(availableContexts.map((_, idx) => idx))
+                }
+                disabled={selectedContextIndexes.length === availableContexts.length}
+              >
+                全选
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() =>
+                  setSelectedContextIndexes((current) =>
+                    availableContexts
+                      .map((_, idx) => idx)
+                      .filter((idx) => !current.includes(idx)),
+                  )
+                }
+                disabled={availableContexts.length === 0}
+              >
+                反选
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedContextIndexes([])}
+                disabled={selectedContextIndexes.length === 0}
+              >
+                清空
+              </Button>
             </div>
 
             <div className="space-y-2">
               {availableContexts.map((context, index) => {
                 const checked = selectedContextIndexes.includes(index);
+                const meta = sourceKindMeta(context.kind);
                 return (
                   <label
                     key={`${context.label ?? "context"}-${index}`}
@@ -198,11 +238,13 @@ export function CreateTaskPanel({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        {(() => { const m = sourceKindMeta(context.kind); return (
-                          <span className={`rounded-[6px] border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${m.color}`}>
-                            {m.icon} {m.label}
+                        <Tooltip content={`${meta.icon} · ${meta.label}`} side="top">
+                          <span
+                            className={`rounded-[6px] border border-current/20 px-1.5 py-0.5 text-[10px] font-medium ${meta.color}`}
+                          >
+                            {meta.icon} {meta.label}
                           </span>
-                        ); })()}
+                        </Tooltip>
                         <span className="text-sm font-medium text-foreground">
                           {context.label?.trim() || `上下文 ${index + 1}`}
                         </span>

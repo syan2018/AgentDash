@@ -10,20 +10,20 @@ const storyStatusConfig: Record<StoryStatus, { label: string; className: string;
   cancelled: { label: "cancelled", className: "text-muted-foreground", progress: 0 },
 };
 
-const storyPriorityConfig: Record<StoryPriority, { label: string; className: string }> = {
-  p0: { label: "P0", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  p1: { label: "P1", className: "border-warning/20 bg-warning/10 text-warning" },
-  p2: { label: "P2", className: "border-primary/20 bg-primary/10 text-primary" },
-  p3: { label: "P3", className: "border-border bg-secondary text-muted-foreground" },
+const storyPriorityConfig: Record<StoryPriority, { label: string; className: string; tooltip: string }> = {
+  p0: { label: "P0", className: "border-destructive/20 bg-destructive/10 text-destructive", tooltip: "P0 · 紧急" },
+  p1: { label: "P1", className: "border-warning/20 bg-warning/10 text-warning", tooltip: "P1 · 高" },
+  p2: { label: "P2", className: "border-primary/20 bg-primary/10 text-primary", tooltip: "P2 · 中" },
+  p3: { label: "P3", className: "border-border bg-secondary text-muted-foreground", tooltip: "P3 · 低" },
 };
 
-const storyTypeConfig: Record<StoryType, { label: string; icon: string; className: string }> = {
-  feature: { label: "feature", icon: "FEAT", className: "border-primary/20 bg-primary/10 text-primary" },
-  bugfix: { label: "bugfix", icon: "BUG", className: "border-destructive/20 bg-destructive/10 text-destructive" },
-  refactor: { label: "refactor", icon: "REF", className: "border-warning/20 bg-warning/10 text-warning" },
-  docs: { label: "docs", icon: "DOC", className: "border-info/20 bg-info/10 text-info" },
-  test: { label: "test", icon: "TEST", className: "border-success/20 bg-success/10 text-success" },
-  other: { label: "other", icon: "OTHR", className: "border-border bg-secondary text-muted-foreground" },
+const storyTypeConfig: Record<StoryType, { label: string; icon: string; className: string; tooltip: string }> = {
+  feature: { label: "feature", icon: "FEAT", className: "border-primary/20 bg-primary/10 text-primary", tooltip: "FEAT · 功能" },
+  bugfix: { label: "bugfix", icon: "BUG", className: "border-destructive/20 bg-destructive/10 text-destructive", tooltip: "BUG · 缺陷修复" },
+  refactor: { label: "refactor", icon: "REF", className: "border-warning/20 bg-warning/10 text-warning", tooltip: "REF · 重构" },
+  docs: { label: "docs", icon: "DOC", className: "border-info/20 bg-info/10 text-info", tooltip: "DOC · 文档" },
+  test: { label: "test", icon: "TEST", className: "border-success/20 bg-success/10 text-success", tooltip: "TEST · 测试" },
+  other: { label: "other", icon: "OTHR", className: "border-border bg-secondary text-muted-foreground", tooltip: "OTHR · 其他" },
 };
 
 const taskStatusConfig: Record<TaskStatus, { label: string; className: string }> = {
@@ -107,7 +107,7 @@ export function TaskStatusBadge({ status, className = "" }: BadgeProps & { statu
 export function StoryPriorityBadge({ priority, showLabel = true, className = "" }: BadgeProps & { priority: StoryPriority; showLabel?: boolean }) {
   const config = storyPriorityConfig[priority];
   return (
-    <span className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
+    <span title={config.tooltip} className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
       {showLabel ? config.label : null}
     </span>
   );
@@ -120,7 +120,7 @@ export function StoryPriorityToken(props: BadgeProps & { priority: StoryPriority
 export function StoryTypeBadge({ type, showIcon = true, className = "" }: BadgeProps & { type: StoryType; showIcon?: boolean }) {
   const config = storyTypeConfig[type];
   return (
-    <span className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
+    <span title={config.tooltip} className={`inline-flex h-5 items-center rounded-[6px] border px-1.5 font-mono text-[10px] font-semibold ${config.className} ${className}`}>
       {showIcon ? config.icon : config.label}
     </span>
   );

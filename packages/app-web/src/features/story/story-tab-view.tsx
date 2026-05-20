@@ -3,7 +3,11 @@ import { useNavigate } from "react-router-dom";
 import type { Story } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
 import { useStoryStore } from "../../stores/storyStore";
+import { useStoryViewStore } from "../../stores/storyViewStore";
 import { StoryListView } from "./story-list-view";
+import { StoryBulkToolbar } from "./story-bulk-toolbar";
+import { StoryQuickJump } from "./story-quick-jump";
+import { useStoryHotkeys } from "./story-keyboard";
 
 const EMPTY_STORIES: Story[] = [];
 
@@ -16,11 +20,24 @@ export function StoryTabView() {
     if (!currentProjectId) return EMPTY_STORIES;
     return s.storiesByProjectId[currentProjectId] ?? EMPTY_STORIES;
   });
+  const clearSelection = useStoryViewStore((s) => s.clearSelection);
+
+  useStoryHotkeys({ scope: "tab" });
 
   useEffect(() => {
     if (!currentProjectId) return;
     void fetchStoriesByProject(currentProjectId);
   }, [currentProjectId, fetchStoriesByProject]);
+
+  useEffect(() => {
+    return () => {
+      clearSelection();
+    };
+  }, [clearSelection]);
+
+  useEffect(() => {
+    clearSelection();
+  }, [clearSelection, currentProjectId]);
 
   const taskCountByStoryId = useMemo(() => {
     const result: Record<string, number> = {};
@@ -55,11 +72,15 @@ export function StoryTabView() {
   }
 
   return (
-    <StoryListView
-      stories={stories}
-      taskCountByStoryId={taskCountByStoryId}
-      onOpenStory={handleOpenStory}
-      projectId={currentProjectId}
-    />
+    <>
+      <StoryListView
+        stories={stories}
+        taskCountByStoryId={taskCountByStoryId}
+        onOpenStory={handleOpenStory}
+        projectId={currentProjectId}
+      />
+      <StoryBulkToolbar />
+      <StoryQuickJump projectId={currentProjectId} />
+    </>
   );
 }

@@ -4,14 +4,11 @@ import type {
   ContextSourceKind,
   Story,
   StoryNavigationState,
-  StoryPriority,
-  StoryStatus,
-  StoryType,
   Task,
   Workspace,
 } from "../types";
 import { StorySessionPanel } from "../features/story/story-session-panel";
-import { StoryPriorityBadge, StoryStatusBadge, StoryTypeBadge, TaskStatusBadge } from "../components/ui/status-badge";
+import { TaskStatusBadge } from "../components/ui/status-badge";
 import { TaskDrawer } from "../features/task/task-drawer";
 import { useStoryStore, findStoryById } from "../stores/storyStore";
 import { useProjectStore } from "../stores/projectStore";
@@ -22,32 +19,22 @@ import {
   DangerConfirmDialog,
   DetailMenu,
   EmptyState,
-  Field,
   InspectorRow,
   SectionTitle,
-  Select,
   Textarea,
   TextInput,
 } from "@agentdash/ui";
 import { CreateTaskPanel } from "../features/story/create-task-panel";
 import { sourceKindMeta } from "../features/story/context-source-utils";
 import { ContextPanel } from "../features/story/story-detail-panels";
-
-const priorityOptions: { value: StoryPriority; label: string }[] = [
-  { value: "p0", label: "P0 - 紧急" },
-  { value: "p1", label: "P1 - 高" },
-  { value: "p2", label: "P2 - 中" },
-  { value: "p3", label: "P3 - 低" },
-];
-
-const storyTypeOptions: { value: StoryType; label: string }[] = [
-  { value: "feature", label: "功能" },
-  { value: "bugfix", label: "缺陷" },
-  { value: "refactor", label: "重构" },
-  { value: "docs", label: "文档" },
-  { value: "test", label: "测试" },
-  { value: "other", label: "其他" },
-];
+import {
+  EditablePriorityBadge,
+  EditableStatusBadge,
+  EditableTypeBadge,
+} from "../features/story/story-edit-badges";
+import { getStoryNextStep } from "../features/story/next-step";
+import { useStoryHotkeys } from "../features/story/story-keyboard";
+import { StoryQuickJump } from "../features/story/story-quick-jump";
 
 function contextSummary(sourceRefs: { kind: ContextSourceKind }[]) {
   const counts = new Map<ContextSourceKind, number>();
@@ -124,68 +111,6 @@ function isStoryNavigationState(value: unknown): value is StoryNavigationState {
   return Boolean(value && typeof value === "object" && (!("open_task_id" in value) || typeof value.open_task_id === "string"));
 }
 
-interface StoryStatusActionsProps {
-  currentStatus: StoryStatus;
-  onStatusChange: (status: StoryStatus) => void;
-}
-
-function StoryStatusActions({ currentStatus, onStatusChange }: StoryStatusActionsProps) {
-  const actions = useMemo((): Array<{ label: string; status: StoryStatus; variant: "primary" | "secondary" | "danger" }> => {
-    switch (currentStatus) {
-      case "draft":
-        return [
-          { label: "标记就绪", status: "ready", variant: "primary" },
-          { label: "取消", status: "cancelled", variant: "danger" },
-        ];
-      case "ready":
-        return [
-          { label: "开始执行", status: "running", variant: "primary" },
-          { label: "退回草稿", status: "draft", variant: "secondary" },
-          { label: "取消", status: "cancelled", variant: "danger" },
-        ];
-      case "running":
-        return [
-          { label: "提交验收", status: "review", variant: "primary" },
-          { label: "标记失败", status: "failed", variant: "danger" },
-        ];
-      case "review":
-        return [
-          { label: "验收通过", status: "completed", variant: "primary" },
-          { label: "退回执行", status: "running", variant: "secondary" },
-          { label: "验收不通过", status: "failed", variant: "danger" },
-        ];
-      case "completed":
-        return [{ label: "重新打开", status: "ready", variant: "secondary" }];
-      case "failed":
-        return [
-          { label: "重新执行", status: "running", variant: "primary" },
-          { label: "关闭", status: "cancelled", variant: "secondary" },
-        ];
-      case "cancelled":
-        return [{ label: "重新打开", status: "draft", variant: "primary" }];
-      default:
-        return [];
-    }
-  }, [currentStatus]);
-
-  if (actions.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {actions.map((action) => (
-        <Button
-          key={action.status}
-          type="button"
-          size="sm"
-          variant={action.variant}
-          onClick={() => onStatusChange(action.status)}
-        >
-          {action.label}
-        </Button>
-      ))}
-    </div>
-  );
-}
 
 function StoryTaskRows({
   tasks,
@@ -268,6 +193,8 @@ export function StoryPage() {
   const error = useStoryStore((s) => s.error);
   const workspacesByProjectId = useWorkspaceStore((s) => s.workspacesByProjectId);
 
+  useStoryHotkeys({ scope: "page" });
+
   const [isContextExpanded, setIsContextExpanded] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [deleteConfirmValue, setDeleteConfirmValue] = useState("");
@@ -314,18 +241,12 @@ export function StoryPage() {
     storyId?: string;
     title?: string;
     description?: string;
-    status?: StoryStatus;
-    priority?: StoryPriority;
-    story_type?: StoryType;
     tags?: string;
   }>({});
 
   const activeEditOverrides = editOverrides.storyId === story?.id ? editOverrides : {};
   const editTitle = activeEditOverrides.title ?? story?.title ?? "";
   const editDescription = activeEditOverrides.description ?? story?.description ?? "";
-  const editStatus: StoryStatus = activeEditOverrides.status ?? story?.status ?? "draft";
-  const editPriority: StoryPriority = activeEditOverrides.priority ?? story?.priority ?? "p2";
-  const editStoryType: StoryType = activeEditOverrides.story_type ?? story?.story_type ?? "feature";
   const editTags = activeEditOverrides.tags ?? story?.tags.join(", ") ?? "";
 
   const setEditTitle = useCallback(
@@ -334,18 +255,6 @@ export function StoryPage() {
   );
   const setEditDescription = useCallback(
     (value: string) => setEditOverrides((prev) => ({ ...prev, storyId: story?.id, description: value })),
-    [story?.id],
-  );
-  const setEditStatus = useCallback(
-    (value: StoryStatus) => setEditOverrides((prev) => ({ ...prev, storyId: story?.id, status: value })),
-    [story?.id],
-  );
-  const setEditPriority = useCallback(
-    (value: StoryPriority) => setEditOverrides((prev) => ({ ...prev, storyId: story?.id, priority: value })),
-    [story?.id],
-  );
-  const setEditStoryType = useCallback(
-    (value: StoryType) => setEditOverrides((prev) => ({ ...prev, storyId: story?.id, story_type: value })),
     [story?.id],
   );
   const setEditTags = useCallback(
@@ -388,29 +297,18 @@ export function StoryPage() {
     setEditOverrides((prev) => ({ ...prev, title: undefined, description: undefined }));
   };
 
-  const handleSaveProperties = async () => {
+  const handleSaveTags = async () => {
     const parsedTags = editTags
       .split(",")
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
 
-    const ok = await saveStory({
-      status: editStatus,
-      priority: editPriority,
-      story_type: editStoryType,
-      tags: parsedTags,
-    });
+    const ok = await saveStory({ tags: parsedTags });
     if (!ok) return;
 
     setFormMessage(null);
     setIsEditingProperties(false);
-    setEditOverrides((prev) => ({
-      ...prev,
-      status: undefined,
-      priority: undefined,
-      story_type: undefined,
-      tags: undefined,
-    }));
+    setEditOverrides((prev) => ({ ...prev, tags: undefined }));
   };
 
   const handleDeleteStory = async () => {
@@ -560,103 +458,100 @@ export function StoryPage() {
                   <section className="border-b border-border pb-4">
                     <div className="mb-3 flex items-center justify-between gap-3">
                       <p className="text-xs font-medium text-muted-foreground">Properties</p>
-                      {!isEditingProperties ? (
-                        <Button type="button" variant="secondary" size="sm" onClick={() => setIsEditingProperties(true)}>
-                          编辑
-                        </Button>
-                      ) : null}
+                      {(() => {
+                        const next = getStoryNextStep(story.status);
+                        if (!next) return null;
+                        return (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            size="sm"
+                            onClick={() => void updateStory(story.id, { status: next.to })}
+                          >
+                            {next.label}
+                          </Button>
+                        );
+                      })()}
                     </div>
 
-                    {isEditingProperties ? (
-                      <div className="grid grid-cols-2 gap-3">
-                        <Field label="状态">
-                          <Select
-                            value={editStatus}
-                            onChange={(event) => setEditStatus(event.target.value as StoryStatus)}
-                          >
-                            <option value="draft">draft</option>
-                            <option value="ready">ready</option>
-                            <option value="running">running</option>
-                            <option value="review">review</option>
-                            <option value="completed">completed</option>
-                            <option value="failed">failed</option>
-                            <option value="cancelled">cancelled</option>
-                          </Select>
-                        </Field>
-                        <Field label="优先级">
-                          <Select
-                            value={editPriority}
-                            onChange={(event) => setEditPriority(event.target.value as StoryPriority)}
-                          >
-                            {priorityOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
-                        <Field label="类型">
-                          <Select
-                            value={editStoryType}
-                            onChange={(event) => setEditStoryType(event.target.value as StoryType)}
-                          >
-                            {storyTypeOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
-                        <Field label="标签" className="col-span-2">
-                          <TextInput
-                            value={editTags}
-                            onChange={(event) => setEditTags(event.target.value)}
-                            placeholder="frontend, api"
-                          />
-                        </Field>
-                        <div className="col-span-2 flex gap-2">
-                          <Button type="button" variant="secondary" size="sm" className="flex-1" onClick={() => { setIsEditingProperties(false); setEditOverrides({}); }}>
-                            取消
-                          </Button>
-                          <Button type="button" variant="primary" size="sm" className="flex-1" onClick={() => void handleSaveProperties()}>
-                            保存
-                          </Button>
-                        </div>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+                        <CompactProperty label="状态">
+                          <EditableStatusBadge story={story} />
+                        </CompactProperty>
+                        <CompactProperty label="优先级">
+                          <EditablePriorityBadge story={story} />
+                        </CompactProperty>
+                        <CompactProperty label="类型">
+                          <EditableTypeBadge story={story} />
+                        </CompactProperty>
+                        <CompactProperty label="Context">
+                          <span className="font-medium text-foreground">{contextCount}</span>
+                        </CompactProperty>
                       </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-3">
-                          <CompactProperty label="状态">
-                            <StoryStatusBadge status={story.status} className="px-2 py-0.5 text-[11px]" />
-                          </CompactProperty>
-                          <CompactProperty label="优先级">
-                            <StoryPriorityBadge priority={story.priority} showLabel />
-                          </CompactProperty>
-                          <CompactProperty label="类型">
-                            <StoryTypeBadge type={story.story_type} />
-                          </CompactProperty>
-                          <CompactProperty label="Context">
-                            <span className="font-medium text-foreground">{contextCount}</span>
-                          </CompactProperty>
-                          <CompactProperty label="标签" className="col-span-2">
-                            {story.tags.length > 0 ? (
-                              <div className="flex flex-wrap gap-1.5">
-                                {story.tags.map((tag) => (
-                                  <span key={tag} className="rounded-[6px] bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground">暂无标签</span>
-                            )}
-                          </CompactProperty>
+
+                      <div>
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-medium text-muted-foreground">标签</p>
+                          {!isEditingProperties ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setIsEditingProperties(true)}
+                            >
+                              编辑标签
+                            </Button>
+                          ) : null}
                         </div>
-                        <div className="pt-1">
-                          <StoryStatusActions currentStatus={story.status} onStatusChange={(status) => void updateStory(story.id, { status })} />
-                        </div>
+                        {isEditingProperties ? (
+                          <div className="space-y-2">
+                            <TextInput
+                              value={editTags}
+                              onChange={(event) => setEditTags(event.target.value)}
+                              placeholder="frontend, api"
+                              autoFocus
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="flex-1"
+                                onClick={() => {
+                                  setIsEditingProperties(false);
+                                  setEditOverrides((prev) => ({ ...prev, tags: undefined }));
+                                }}
+                              >
+                                取消
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                className="flex-1"
+                                onClick={() => void handleSaveTags()}
+                              >
+                                保存
+                              </Button>
+                            </div>
+                          </div>
+                        ) : story.tags.length > 0 ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {story.tags.map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded-[6px] bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">暂无标签</span>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </section>
 
                   <section className="border-b border-border pb-4">
@@ -750,6 +645,8 @@ export function StoryPage() {
           }
         }}
       />
+
+      <StoryQuickJump projectId={story.project_id} />
 
       <DangerConfirmDialog
         open={isDeleteConfirmOpen}

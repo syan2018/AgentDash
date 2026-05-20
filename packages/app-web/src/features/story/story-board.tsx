@@ -20,6 +20,8 @@ import { StoryCard, SortableStoryCard } from "./story-card";
 import { useStoryStore } from "../../stores/storyStore";
 import { useDroppable } from "@dnd-kit/core";
 import { StoryStatusToken } from "../../components/ui/status-badge";
+import { useStoryViewStore } from "../../stores/storyViewStore";
+import { StoryQuickAdd } from "./story-quick-add";
 
 const storyStatusOrder: StoryStatus[] = [
   "draft",
@@ -35,25 +37,24 @@ interface BoardColumn {
   status: StoryStatus;
 }
 
-const boardColumns: BoardColumn[] = [
-  { status: "draft" },
-  { status: "ready" },
-  { status: "running" },
-  { status: "review" },
-  { status: "completed" },
-  { status: "failed" },
-  { status: "cancelled" },
-];
+const boardColumns: BoardColumn[] = storyStatusOrder.map((status) => ({ status }));
 
 interface StoryBoardProps {
   stories: Story[];
   taskCountByStoryId: Record<string, number>;
-  onCreateStory?: (status: StoryStatus) => void;
+  projectId: string;
   onOpenStory: (story: Story) => void;
+  onOpenFullCreate?: (status: StoryStatus) => void;
 }
 
-export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenStory }: StoryBoardProps) {
-  const { updateStory } = useStoryStore();
+export function StoryBoard({
+  stories,
+  taskCountByStoryId,
+  projectId,
+  onOpenStory,
+  onOpenFullCreate,
+}: StoryBoardProps) {
+  const updateStory = useStoryStore((s) => s.updateStory);
   const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [localStories, setLocalStories] = useState<Story[]>(stories);
 
@@ -61,21 +62,19 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
     setLocalStories(stories);
   }, [stories]);
 
+  const sort = useStoryViewStore((s) => s.sort);
+
   const storiesByColumn = useMemo(() => {
     const result = storyStatusOrder.reduce((acc, status) => {
       acc[status] = [];
       return acc;
     }, {} as Record<StoryStatus, Story[]>);
 
-    const priorityWeight: Record<Story['priority'], number> = {
+    const priorityWeight: Record<Story["priority"], number> = {
       p0: 0,
       p1: 1,
       p2: 2,
       p3: 3,
-    };
-
-    const sortByPriority = (a: Story, b: Story) => {
-      return priorityWeight[a.priority] - priorityWeight[b.priority];
     };
 
     localStories.forEach((story) => {
@@ -83,11 +82,20 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
     });
 
     storyStatusOrder.forEach((status) => {
-      result[status].sort(sortByPriority);
+      const list = result[status];
+      list.sort((a, b) => {
+        if (sort === "title") return a.title.localeCompare(b.title);
+        if (sort === "updated") {
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        }
+        const byPriority = priorityWeight[a.priority] - priorityWeight[b.priority];
+        if (byPriority !== 0) return byPriority;
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+      });
     });
 
     return result;
-  }, [localStories]);
+  }, [localStories, sort]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -97,7 +105,7 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
     }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
-    })
+    }),
   );
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -118,14 +126,16 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
 
     const overStory = localStories.find((s) => s.id === overId);
     const targetStatus = storyStatusOrder.includes(overId as StoryStatus)
-      ? overId as StoryStatus
+      ? (overId as StoryStatus)
       : overStory?.status;
     if (!targetStatus) return;
 
     const story = localStories.find((s) => s.id === storyId);
 
     if (story && story.status !== targetStatus) {
-      setLocalStories((prev) => prev.map((s) => (s.id === storyId ? { ...s, status: targetStatus } : s)));
+      setLocalStories((prev) =>
+        prev.map((s) => (s.id === storyId ? { ...s, status: targetStatus } : s)),
+      );
 
       const updated = await updateStory(storyId, { status: targetStatus });
       if (!updated) {
@@ -148,8 +158,9 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
             column={column}
             stories={storiesByColumn[column.status]}
             taskCountByStoryId={taskCountByStoryId}
-            onCreateStory={onCreateStory}
+            projectId={projectId}
             onOpenStory={onOpenStory}
+            onOpenFullCreate={onOpenFullCreate}
           />
         ))}
       </div>
@@ -162,6 +173,7 @@ export function StoryBoard({ stories, taskCountByStoryId, onCreateStory, onOpenS
               taskCount={taskCountByStoryId[activeStory.id] ?? 0}
               onClick={() => {}}
               isDragging
+              inert
             />
           </div>
         ) : null}
@@ -174,14 +186,25 @@ interface StoryColumnProps {
   column: BoardColumn;
   stories: Story[];
   taskCountByStoryId: Record<string, number>;
-  onCreateStory?: (status: StoryStatus) => void;
+  projectId: string;
   onOpenStory: (story: Story) => void;
+  onOpenFullCreate?: (status: StoryStatus) => void;
 }
 
-function StoryColumn({ column, stories, taskCountByStoryId, onCreateStory, onOpenStory }: StoryColumnProps) {
+function StoryColumn({
+  column,
+  stories,
+  taskCountByStoryId,
+  projectId,
+  onOpenStory,
+  onOpenFullCreate,
+}: StoryColumnProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: column.status,
   });
+  const quickAddColumn = useStoryViewStore((s) => s.quickAddColumn);
+  const openQuickAddColumn = useStoryViewStore((s) => s.openQuickAddColumn);
+  const isQuickAddOpen = quickAddColumn === column.status;
 
   return (
     <div
@@ -192,16 +215,26 @@ function StoryColumn({ column, stories, taskCountByStoryId, onCreateStory, onOpe
     >
       <div className="mb-2 flex items-center justify-between px-1.5 py-0.5">
         <StoryStatusToken status={column.status} count={stories.length} />
-        {onCreateStory && (
+        <div className="flex items-center gap-1">
+          {onOpenFullCreate && (
+            <button
+              type="button"
+              onClick={() => onOpenFullCreate(column.status)}
+              className="inline-flex h-6 items-center rounded-[6px] px-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+              title="完整表单创建"
+            >
+              详细
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => onCreateStory(column.status)}
+            onClick={() => openQuickAddColumn(isQuickAddOpen ? null : column.status)}
             className="inline-flex h-6 w-6 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-            aria-label={`Create ${column.status} story`}
+            aria-label={`Quick add ${column.status} story`}
           >
             +
           </button>
-        )}
+        </div>
       </div>
 
       <div
@@ -209,6 +242,13 @@ function StoryColumn({ column, stories, taskCountByStoryId, onCreateStory, onOpe
           isOver ? "bg-background/50" : ""
         }`}
       >
+        {isQuickAddOpen && (
+          <StoryQuickAdd
+            status={column.status}
+            projectId={projectId}
+            onClose={() => openQuickAddColumn(null)}
+          />
+        )}
         <SortableContext
           items={stories.map((s) => s.id)}
           strategy={verticalListSortingStrategy}
@@ -220,8 +260,19 @@ function StoryColumn({ column, stories, taskCountByStoryId, onCreateStory, onOpe
                 story={story}
                 taskCount={taskCountByStoryId[story.id] ?? 0}
                 onClick={() => onOpenStory(story)}
+                showHoverDescription
+                selectable
               />
             ))}
+            {stories.length === 0 && !isQuickAddOpen && (
+              <button
+                type="button"
+                onClick={() => openQuickAddColumn(column.status)}
+                className="rounded-[8px] border border-dashed border-border px-3 py-6 text-center text-[11px] text-muted-foreground transition-colors hover:border-primary/30 hover:bg-background hover:text-foreground"
+              >
+                + Create in this column
+              </button>
+            )}
           </div>
         </SortableContext>
       </div>

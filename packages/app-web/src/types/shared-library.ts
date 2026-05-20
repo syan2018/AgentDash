@@ -92,6 +92,6 @@ export interface ProjectAssetSourceStatusDto {
   mcp_presets: ProjectAssetSourceStatusItemDto[];
   skill_assets: ProjectAssetSourceStatusItemDto[];
   workflow_definitions: ProjectAssetSourceStatusItemDto[];
-  lifecycle_definitions: ProjectAssetSourceStatusItemDto[];
+  activity_lifecycle_definitions: ProjectAssetSourceStatusItemDto[];
   extension_installations: ProjectAssetSourceStatusItemDto[];
 }

@@ -127,7 +127,7 @@ pub struct ProjectAssetSourceStatusResponse {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
+    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItemResponse>,
 }
 

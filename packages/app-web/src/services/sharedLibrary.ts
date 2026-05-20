@@ -143,8 +143,8 @@ export async function fetchProjectAssetSourceStatus(
     workflow_definitions: Array.isArray(raw.workflow_definitions)
       ? raw.workflow_definitions.map(mapSourceStatusItem)
       : [],
-    lifecycle_definitions: Array.isArray(raw.lifecycle_definitions)
-      ? raw.lifecycle_definitions.map(mapSourceStatusItem)
+    activity_lifecycle_definitions: Array.isArray(raw.activity_lifecycle_definitions)
+      ? raw.activity_lifecycle_definitions.map(mapSourceStatusItem)
       : [],
     extension_installations: Array.isArray(raw.extension_installations)
       ? raw.extension_installations.map(mapSourceStatusItem)

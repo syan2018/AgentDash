@@ -121,6 +121,46 @@ where
         }
         Ok(issues)
     }
+
+    pub async fn upsert_bundle(
+        &self,
+        bundle: BuiltinWorkflowBundle,
+    ) -> Result<BuiltinWorkflowBundle, WorkflowApplicationError> {
+        let mut persisted_workflows = Vec::with_capacity(bundle.workflows.len());
+        for workflow in bundle.workflows {
+            persisted_workflows.push(self.upsert_workflow_definition(workflow).await?);
+        }
+
+        let lifecycle = self
+            .upsert_activity_lifecycle_definition(bundle.lifecycle)
+            .await?;
+        Ok(BuiltinWorkflowBundle {
+            workflows: persisted_workflows,
+            lifecycle,
+        })
+    }
+
+    async fn upsert_workflow_definition(
+        &self,
+        definition: WorkflowDefinition,
+    ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
+        if let Some(existing) = self
+            .definition_repo
+            .get_by_project_and_key(definition.project_id, &definition.key)
+            .await?
+        {
+            let mut updated = definition;
+            updated.id = existing.id;
+            updated.version = existing.version + 1;
+            updated.created_at = existing.created_at;
+            updated.updated_at = Utc::now();
+            self.definition_repo.update(&updated).await?;
+            return Ok(updated);
+        }
+
+        self.definition_repo.create(&definition).await?;
+        Ok(definition)
+    }
 }
 
 impl<'a, D: ?Sized, L: ?Sized> WorkflowCatalogService<'a, D, L>
@@ -432,22 +472,6 @@ where
         }
 
         Ok(issues)
-    }
-
-    pub async fn upsert_bundle(
-        &self,
-        bundle: BuiltinWorkflowBundle,
-    ) -> Result<BuiltinWorkflowBundle, WorkflowApplicationError> {
-        let mut persisted_workflows = Vec::with_capacity(bundle.workflows.len());
-        for workflow in bundle.workflows {
-            persisted_workflows.push(self.upsert_workflow_definition(workflow).await?);
-        }
-
-        let lifecycle = self.upsert_lifecycle_definition(bundle.lifecycle).await?;
-        Ok(BuiltinWorkflowBundle {
-            workflows: persisted_workflows,
-            lifecycle,
-        })
     }
 }
 
@@ -1362,8 +1386,8 @@ mod tests {
             .expect("build builtin_workflow_admin bundle");
 
         let workflow_repo = TestWorkflowDefinitionRepo::default();
-        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
-        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+        let lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service
             .upsert_bundle(bundle)
@@ -1372,7 +1396,7 @@ mod tests {
 
         assert_eq!(saved.workflows.len(), 2);
         assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
-        assert_eq!(saved.lifecycle.steps.len(), 2);
+        assert_eq!(saved.lifecycle.activities.len(), 2);
         for workflow in &saved.workflows {
             assert!(
                 workflow.contract.injection.guidance.is_some(),
@@ -1403,16 +1427,16 @@ mod tests {
             .expect("build trellis_dag_task bundle");
 
         let workflow_repo = TestWorkflowDefinitionRepo::default();
-        let lifecycle_repo = TestLifecycleDefinitionRepo::default();
-        let service = WorkflowCatalogService::new(&workflow_repo, &lifecycle_repo);
+        let lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service
             .upsert_bundle(bundle)
             .await
-            .expect("bootstrap Trellis DAG Task 应通过 step 级 port 校验");
+            .expect("bootstrap Trellis DAG Task 应通过 Activity port 校验");
 
         assert_eq!(saved.workflows.len(), 2);
         assert_eq!(saved.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        assert_eq!(saved.lifecycle.steps.len(), 2);
+        assert_eq!(saved.lifecycle.activities.len(), 2);
     }
 }

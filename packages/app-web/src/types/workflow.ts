@@ -89,24 +89,6 @@ export interface InputPortDefinition {
   standalone_fulfillment?: StandaloneFulfillment;
 }
 
-export type LifecycleEdgeKind = "flow" | "artifact";
-
-export type LifecycleEdge =
-  | {
-      kind: "flow";
-      from_node: string;
-      to_node: string;
-      from_port?: null;
-      to_port?: null;
-    }
-  | {
-      kind: "artifact";
-      from_node: string;
-      to_node: string;
-      from_port: string;
-      to_port: string;
-    };
-
 /**
  * Capability 路径 —— 统一表达「能力级」和「工具级」两种寻址。
  *

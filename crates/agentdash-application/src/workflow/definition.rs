@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleEdge, LifecycleStepDefinition, WorkflowBindingKind,
+    ActivityDefinition, ActivityLifecycleDefinition, ActivityTransition, WorkflowBindingKind,
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
 };
 
@@ -34,17 +34,17 @@ pub struct BuiltinLifecycleTemplate {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub entry_step_key: String,
+    pub entry_activity_key: String,
     #[serde(default)]
-    pub steps: Vec<LifecycleStepDefinition>,
+    pub activities: Vec<ActivityDefinition>,
     #[serde(default)]
-    pub edges: Vec<LifecycleEdge>,
+    pub transitions: Vec<ActivityTransition>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BuiltinWorkflowBundle {
     pub workflows: Vec<WorkflowDefinition>,
-    pub lifecycle: LifecycleDefinition,
+    pub lifecycle: ActivityLifecycleDefinition,
 }
 
 impl BuiltinWorkflowTemplateBundle {
@@ -65,16 +65,16 @@ impl BuiltinWorkflowTemplateBundle {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle = ActivityLifecycleDefinition::new(
             project_id,
             self.lifecycle.key.clone(),
             self.lifecycle.name.clone(),
             self.lifecycle.description.clone(),
             self.binding_kinds.clone(),
             WorkflowDefinitionSource::BuiltinSeed,
-            self.lifecycle.entry_step_key.clone(),
-            self.lifecycle.steps.clone(),
-            self.lifecycle.edges.clone(),
+            self.lifecycle.entry_activity_key.clone(),
+            self.lifecycle.activities.clone(),
+            self.lifecycle.transitions.clone(),
         )?;
 
         Ok(BuiltinWorkflowBundle {
@@ -164,23 +164,23 @@ mod tests {
             "workflow_management 仅在 Project 级 session 可见，lifecycle 必须绑定到 Project"
         );
         assert_eq!(bundle.workflows.len(), 2);
-        assert_eq!(bundle.lifecycle.steps.len(), 2);
-        assert_eq!(bundle.lifecycle.entry_step_key, "plan");
+        assert_eq!(bundle.lifecycle.activities.len(), 2);
+        assert_eq!(bundle.lifecycle.entry_activity_key, "plan");
 
-        let step_keys = bundle
+        let activity_keys = bundle
             .lifecycle
-            .steps
+            .activities
             .iter()
-            .map(|step| step.key.as_str())
+            .map(|activity| activity.key.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(step_keys, vec!["plan", "apply"]);
+        assert_eq!(activity_keys, vec!["plan", "apply"]);
 
-        // 必须显式声明 plan → apply 的 flow edge（移除 fallback 后无 edges 的 lifecycle 无法启动）
-        assert_eq!(bundle.lifecycle.edges.len(), 1);
-        let edge = &bundle.lifecycle.edges[0];
-        assert!(edge.is_flow(), "plan → apply 应为 flow edge");
-        assert_eq!(edge.from_node, "plan");
-        assert_eq!(edge.to_node, "apply");
+        // 必须显式声明 plan → apply 的 flow transition，确保调度器可确定下一 Activity。
+        assert_eq!(bundle.lifecycle.transitions.len(), 1);
+        let transition = &bundle.lifecycle.transitions[0];
+        assert_eq!(transition.from, "plan");
+        assert_eq!(transition.to, "apply");
+        assert!(transition.artifact_bindings.is_empty());
 
         // 工具能力声明统一进入 workflow.contract.capability_config.tool_directives。
         // 每个 workflow 都必须显式声明 workflow_management，让绑定此 lifecycle 的 Project

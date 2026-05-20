@@ -48,7 +48,7 @@ pub struct ProjectAssetSourceStatus {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
-    pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
+    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
 }
 
@@ -194,17 +194,17 @@ pub async fn list_project_asset_source_status(
         }
     }
 
-    let mut lifecycle_definitions = Vec::new();
+    let mut activity_lifecycle_definitions = Vec::new();
     for lifecycle in repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .list_by_project(project_id)
         .await?
     {
         if let Some(installed_source) = lifecycle.installed_source {
-            lifecycle_definitions.push(
+            activity_lifecycle_definitions.push(
                 source_status_item(
                     repos,
-                    "lifecycle_definition",
+                    "activity_lifecycle_definition",
                     lifecycle.id,
                     lifecycle.key,
                     installed_source,
@@ -237,7 +237,7 @@ pub async fn list_project_asset_source_status(
         mcp_presets,
         skill_assets,
         workflow_definitions,
-        lifecycle_definitions,
+        activity_lifecycle_definitions,
         extension_installations,
     })
 }
@@ -353,7 +353,7 @@ async fn install_workflow_template(
     lifecycle.source = WorkflowDefinitionSource::UserAuthored;
     lifecycle.installed_source = Some(installed_source);
     if let Some(existing) = repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .get_by_project_and_key(input.project_id, &lifecycle.key)
         .await?
     {
@@ -365,9 +365,15 @@ async fn install_workflow_template(
         }
         lifecycle.id = existing.id;
         lifecycle.created_at = existing.created_at;
-        repos.lifecycle_definition_repo.update(&lifecycle).await?;
+        repos
+            .activity_lifecycle_definition_repo
+            .update(&lifecycle)
+            .await?;
     } else {
-        repos.lifecycle_definition_repo.create(&lifecycle).await?;
+        repos
+            .activity_lifecycle_definition_repo
+            .create(&lifecycle)
+            .await?;
     }
 
     Ok(InstallLibraryAssetOutput::WorkflowTemplate {

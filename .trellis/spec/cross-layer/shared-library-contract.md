@@ -127,9 +127,9 @@ DTO 层 [crates/agentdash-api/src/dto/shared_library.rs](../../../crates/agentda
       "key": "string",
       "name": "string",
       "description": "string",
-      "entry_step_key": "string",
-      "steps": ["LifecycleStepDefinition"],
-      "edges": ["LifecycleEdge"]
+      "entry_activity_key": "string",
+      "activities": ["ActivityDefinition"],
+      "transitions": ["ActivityTransition"]
     }
   }
 }
@@ -166,7 +166,7 @@ DTO 层 [crates/agentdash-api/src/dto/shared_library.rs](../../../crates/agentda
 
 前端 Marketplace 卡片展示同一 `LibraryAsset` 在项目内的安装状态时，必须把
 `source-status` 返回的 5 个数组（`project_agents` / `mcp_presets` / `skill_assets` /
-`workflow_definitions` / `lifecycle_definitions` / `extension_installations`）按 `installed_source.library_asset_id`
+`workflow_definitions` / `activity_lifecycle_definitions` / `extension_installations`）按 `installed_source.library_asset_id`
 flatten + group：
 
 - 同一资产可能被装到多个 kind：每个 kind+key 都记一个 `installation` 子项。
@@ -231,7 +231,7 @@ Project Assets 发布行为：
 - `GET /api/projects/{project_id}/agents`
 - `POST /api/projects/{project_id}/agents`
 - `PUT /api/projects/{project_id}/agents/{project_agent_id}`
-- `DELETE /api/lifecycle-definitions/{id}`
+- `DELETE /api/activity-lifecycle-definitions/{id}`
 - DB: `project_agents.installed_library_asset_id/source_ref/source_version/source_digest/installed_at`
 
 ### 3. Contracts
@@ -249,7 +249,7 @@ Project Assets 发布行为：
   - `mcp_presets`
   - `skill_assets`
   - `workflow_definitions`
-  - `lifecycle_definitions`
+  - `activity_lifecycle_definitions`
 - 每个 status item 必须包含 `installed_source` 与 `source_status`。
 - 前端项目资源卡片展示来源时，若资源存在 `installed_source`，必须优先显示 Marketplace/Shared Library 来源，而不是只显示 `user`。
 - `extension_template` 安装后必须返回 `asset_kind = extension_installation`，并在 `source-status.extension_installations` 中出现。
@@ -259,7 +259,7 @@ Project Assets 发布行为：
 - 创建 Project Agent 时 `name` 为空 -> `400 BadRequest`
 - 创建 Project Agent 时 `agent_type` 为空 -> `400 BadRequest`
 - 同项目 Project Agent key 重复 -> `409 Conflict`
-- 删除 Marketplace 安装的 Lifecycle 时，同安装包 workflow 仍被其它 Lifecycle step 引用 -> `400 BadRequest`
+- 删除 Marketplace 安装的 Lifecycle 时，同安装包 workflow 仍被其它 Activity Lifecycle 引用 -> `400 BadRequest`
 - 来源 `LibraryAsset` 缺失、不可见或 deprecated -> `source_status = source_missing`
 - 来源版本或 digest 不一致 -> `source_status = update_available`
 

@@ -313,14 +313,14 @@ function parseSkillPayload(raw: unknown): { files: SkillFileLite[]; disable_mode
 function WorkflowTemplateBody({ payload }: { payload: unknown }) {
   const parsed = useMemo(() => parseWorkflowPayload(payload), [payload]);
   if (!parsed) return <RawPayloadFallback payload={payload} />;
-  const visibleSteps = parsed.steps.slice(0, 8);
-  const remaining = parsed.steps.length - visibleSteps.length;
+  const visibleActivities = parsed.activities.slice(0, 8);
+  const remaining = parsed.activities.length - visibleActivities.length;
   return (
     <section className="space-y-3">
       <SectionLabel>Workflow 模板</SectionLabel>
       <div className="flex flex-wrap gap-1.5">
-        <MetaChip>{parsed.steps.length} step</MetaChip>
-        <MetaChip>{parsed.edges.length} edge</MetaChip>
+        <MetaChip>{parsed.activities.length} activity</MetaChip>
+        <MetaChip>{parsed.transitions.length} transition</MetaChip>
         {parsed.workflowCount > 0 && <MetaChip>{parsed.workflowCount} sub-workflow</MetaChip>}
         {parsed.bindingKinds.length > 0 && (
           <MetaChip>target: {parsed.bindingKinds.join(", ")}</MetaChip>
@@ -330,20 +330,20 @@ function WorkflowTemplateBody({ payload }: { payload: unknown }) {
         <p className="text-xs text-foreground/85">
           <span className="text-muted-foreground">Lifecycle：</span>
           <span className="font-medium">{parsed.lifecycleName}</span>
-          {parsed.entryStepKey && (
+          {parsed.entryActivityKey && (
             <span className="ml-1 font-mono text-[11px] text-muted-foreground">
-              ({parsed.entryStepKey})
+              ({parsed.entryActivityKey})
             </span>
           )}
         </p>
       )}
-      {visibleSteps.length > 0 && (
+      {visibleActivities.length > 0 && (
         <div className="rounded-[8px] border border-border">
           <div className="border-b border-border bg-secondary/20 px-3 py-1.5">
-            <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">步骤</p>
+            <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Activities</p>
           </div>
           <ul className="divide-y divide-border">
-            {visibleSteps.map((s) => (
+            {visibleActivities.map((s) => (
               <li key={s.key} className="flex items-center justify-between gap-2 px-3 py-2">
                 <span className="truncate text-xs text-foreground/85">{s.name || s.key}</span>
                 <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
@@ -354,7 +354,7 @@ function WorkflowTemplateBody({ payload }: { payload: unknown }) {
           </ul>
           {remaining > 0 && (
             <p className="px-3 py-1.5 text-[11px] text-muted-foreground">
-              还有 {remaining} 个步骤未显示…
+              还有 {remaining} 个 Activity 未显示…
             </p>
           )}
         </div>
@@ -364,12 +364,12 @@ function WorkflowTemplateBody({ payload }: { payload: unknown }) {
 }
 
 interface WorkflowParsed {
-  steps: Array<{ key: string; name: string }>;
-  edges: unknown[];
+  activities: Array<{ key: string; name: string }>;
+  transitions: unknown[];
   workflowCount: number;
   bindingKinds: string[];
   lifecycleName: string | null;
-  entryStepKey: string | null;
+  entryActivityKey: string | null;
 }
 
 function parseWorkflowPayload(raw: unknown): WorkflowParsed | null {
@@ -378,26 +378,26 @@ function parseWorkflowPayload(raw: unknown): WorkflowParsed | null {
   if (!isObject(template)) return null;
   const lifecycle = isObject(template.lifecycle) ? template.lifecycle : null;
   if (!lifecycle) return null;
-  const stepsRaw = Array.isArray(lifecycle.steps) ? lifecycle.steps : [];
-  const steps: Array<{ key: string; name: string }> = [];
-  for (const s of stepsRaw) {
+  const activitiesRaw = Array.isArray(lifecycle.activities) ? lifecycle.activities : [];
+  const activities: Array<{ key: string; name: string }> = [];
+  for (const s of activitiesRaw) {
     if (!isObject(s)) continue;
     const key = asString(s.key);
     if (!key) continue;
-    steps.push({ key, name: asString(s.name) ?? key });
+    activities.push({ key, name: asString(s.name) ?? key });
   }
-  const edges = Array.isArray(lifecycle.edges) ? lifecycle.edges : [];
+  const transitions = Array.isArray(lifecycle.transitions) ? lifecycle.transitions : [];
   const workflows = Array.isArray(template.workflows) ? template.workflows : [];
   const bindingKinds = Array.isArray(template.binding_kinds)
     ? template.binding_kinds.filter((v): v is string => typeof v === "string")
     : [];
   return {
-    steps,
-    edges,
+    activities,
+    transitions,
     workflowCount: workflows.length,
     bindingKinds,
     lifecycleName: asString(lifecycle.name),
-    entryStepKey: asString(lifecycle.entry_step_key),
+    entryActivityKey: asString(lifecycle.entry_activity_key),
   };
 }
 

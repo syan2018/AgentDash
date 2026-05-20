@@ -31,7 +31,9 @@ use std::sync::Arc;
 
 use agentdash_mcp::{services::McpServices, transport::McpRouterBuilder};
 use axum::{
-    Router, middleware,
+    Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{delete, get, patch, post, put},
 };
 use tower_http::cors::CorsLayer;
@@ -41,6 +43,9 @@ use crate::relay;
 
 use crate::app_state::AppState;
 use crate::stream;
+
+const SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+const VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let mcp_services = Arc::new(McpServices {
@@ -194,7 +199,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/projects/{project_id}/skill-assets/upload",
-            post(skill_assets::upload_skill_assets),
+            post(skill_assets::upload_skill_assets)
+                .layer(DefaultBodyLimit::max(SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES)),
         )
         .route(
             "/projects/{project_id}/skill-assets/import",
@@ -510,7 +516,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/vfs-surfaces/upload-file-blob",
-            post(vfs_surfaces::upload_surface_file_blob),
+            post(vfs_surfaces::upload_surface_file_blob)
+                .layer(DefaultBodyLimit::max(VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES)),
         )
         .route(
             "/vfs-surfaces/write-file",

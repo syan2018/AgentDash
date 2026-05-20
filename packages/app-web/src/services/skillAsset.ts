@@ -49,6 +49,8 @@ export interface SkillMarkdownFrontmatterPatch {
   disable_model_invocation?: boolean;
 }
 
+export const SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
 interface FrontmatterEntry {
   key: string | null;
   lines: string[];
@@ -573,6 +575,7 @@ export async function uploadSkillAssets(
   projectId: string,
   files: File[],
 ): Promise<SkillAssetDto[]> {
+  validateSkillAssetUploadFiles(files);
   const form = new FormData();
   for (const file of files) {
     const relativePath = typeof file.webkitRelativePath === "string" && file.webkitRelativePath
@@ -593,4 +596,23 @@ export async function uploadSkillAssets(
   }
   const raw = await response.json() as Record<string, unknown>[];
   return raw.map(mapSkillAsset);
+}
+
+export function validateSkillAssetUploadFiles(files: File[]): void {
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES) {
+    throw new Error(
+      `Skill 上传总大小不能超过 ${formatUploadBytes(SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES)}，当前约 ${formatUploadBytes(totalBytes)}。请移除过大的图片资产或压缩后再上传。`,
+    );
+  }
+}
+
+function formatUploadBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, "")} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+  }
+  return `${bytes} B`;
 }

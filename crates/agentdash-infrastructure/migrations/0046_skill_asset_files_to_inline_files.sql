@@ -24,7 +24,7 @@ BEGIN
             NULL,
             content,
             NULL,
-            octet_length(content::bytea),
+            octet_length(content),
             updated_at
         FROM skill_asset_files
         ON CONFLICT (owner_kind, owner_id, container_id, path) DO UPDATE SET

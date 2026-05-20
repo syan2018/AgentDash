@@ -7,8 +7,10 @@ import {
   dtoFilesFromDraft,
   mapSkillAsset,
   parseSkillMarkdown,
+  SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES,
   updateSkillMarkdownFrontmatter,
   validateSkillAssetDraft,
+  validateSkillAssetUploadFiles,
   type SkillAssetDraft,
 } from "./skillAsset";
 
@@ -180,5 +182,14 @@ describe("skillAsset", () => {
     expect(parseSkillMarkdown(updated)).toMatchObject({
       description: "新描述第一行\n新描述第二行",
     });
+  });
+
+  it("rejects local skill uploads before the browser sends oversized multipart bodies", () => {
+    const oversized = [
+      { size: SKILL_ASSET_UPLOAD_MAX_TOTAL_BYTES + 1 },
+    ] as File[];
+
+    expect(() => validateSkillAssetUploadFiles(oversized)).toThrow("Skill 上传总大小不能超过");
+    expect(() => validateSkillAssetUploadFiles([{ size: 1024 }] as File[])).not.toThrow();
   });
 });

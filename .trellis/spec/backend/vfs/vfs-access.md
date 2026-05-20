@@ -212,6 +212,7 @@ pub struct SkillAssetFileDto {
 - `SKILL.md` 必须是 UTF-8 text；metadata 解析只读取该文本主文档。
 - 图片等二进制资源保存为 `StoredFileContent::Binary`，并保留 `mime_type` / `size_bytes`。
 - Skill asset JSON DTO 不内联 binary bytes；binary 文件只返回 `content_kind` / `mime_type` / `size_bytes` metadata。
+- 本地目录/ZIP 上传可携带图片资产；前端在发送前限制总大小，后端 upload route 必须显式设置 multipart body limit，避免默认小 body limit 在请求体阶段断连。
 - `skill_asset_fs` list/stat 暴露 `content_kind`、`mime_type`、`skill_asset_file_kind`。
 - `skill_asset_fs.read_text` 对 binary 返回 `NotSupported`。
 - `skill_asset_fs.search_text` 跳过 binary。
@@ -225,6 +226,8 @@ pub struct SkillAssetFileDto {
 | DTO 返回 binary file | `content = None`，metadata 保留 |
 | JSON create 带 `content = None` | BadRequest |
 | JSON update 带 existing binary metadata | Preserve existing binary content |
+| 本地上传超过前端总大小限制 | 前端阻止请求并显示明确错误 |
+| 本地上传超过后端 multipart body limit | HTTP 413 |
 | `skill_asset_fs.read_text` 读取 binary | `MountError::NotSupported` |
 | `skill_asset_fs.search_text` 遇到 binary | Skip |
 
@@ -239,6 +242,7 @@ pub struct SkillAssetFileDto {
 - Service: binary / non-UTF8 `SKILL.md` 被拒绝。
 - Provider: binary file list/stat metadata 正确，`read_text` rejected，`search_text` skipped。
 - Frontend mapper: binary file DTO 不进入 text draft，但 update payload 能保留 binary metadata。
+- Frontend upload guard: oversized local directory upload is rejected before `fetch`.
 
 ### 7. Canonical Construction
 

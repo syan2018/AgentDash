@@ -38,6 +38,7 @@
 - **状态可解释**：每个 Activity 有 attempt 历史，审批退回、自动重试、人工修订都能被审计，而不是修改或覆盖旧状态。
 - **推进统一**：所有执行结果都转成 ActivityEvent，由 LifecycleEngine 统一写 artifact、评估 completion、计算 transition、调度后继。
 - **主 session 边界清晰**：root session 是宿主和交互入口，也可以在 ContinueRoot policy 下参与执行，但不再等同于 lifecycle 本身。
+- **过程事实统一**：业务 session 不再作为孤立过程存在；显式 workflow 与普通自由会话都应归属某个 LifecycleRun。
 - **UI 更好理解**：用户看到的是 Activity 图、executor 配置和 attempt timeline，而不是混杂的 Agent/Phase/Function 节点规则。
 - **MVP 能证明价值**：Plan -> Approval -> Replan -> Implement 作为首个闭环 case，直接验证 Human Approval、Conditional Transition、ActivityAttempt、artifact latest/history 的组合价值。
 
@@ -74,6 +75,8 @@
 - 将现有 `phase_node` 重新定义为 `AgentExecutor + ContinueRoot`，而不是独立 node type。
 - 将 planned `function_node` 重新定义为 `FunctionExecutor` 的 kind，而不是顶层 node type。
 - 明确 root session 与 LifecycleRun 的关系：`LifecycleRun.session_id` 是 root session / host session。
+- 明确 session 归属不变量：业务 session 必须依附某个 LifecycleRun；用户未显式选择 lifecycle 时，系统自动创建无外围约束的内置 freeform LifecycleRun。
+- 定义 freeform lifecycle：单个 `main_conversation` Activity，使用 `Agent + ContinueRoot` 承载普通对话，不要求固定产物、审批或后继 transition。
 - 引入 Activity execution instance / attempt 概念，支持同一个 ActivityDefinition 在同一个 run 内多次尝试。
 - 支持审批退回 case：
   - Plan activity 产出固定格式 proposal artifact。
@@ -138,6 +141,7 @@ implement#1 ready
 - [ ] `design.md` 明确 conditional transition、loop/attempt、join policy 的 MVP 与预留范围。
 - [ ] `design.md` 将最小 Human Approval executor 纳入 MVP，并说明审批退回闭环。
 - [ ] `design.md` 说明主 session、child session、function run、human decision 与 LifecycleRun 的关系。
+- [ ] `design.md` 明确普通 session 通过内置 freeform lifecycle 归属 LifecycleRun，不保留裸业务 session 心智。
 - [ ] `design.md` 说明前端编辑器与运行视图的目标心智。
 - [ ] `implement.md` 给出分阶段落地计划，先 schema / domain，再 engine，再 executor，再 UI，再迁移。
 - [ ] `implement.md` 将重构拆成可独立 PR 的阶段，并为每阶段给出范围、验证命令和出口标准。
@@ -158,3 +162,4 @@ implement#1 ready
 - 首版是否允许多个 `ContinueRoot` Activity 并行 Ready？推荐不允许，同一 root session 同时只能执行一个 ContinueRoot Activity。
 - Transition condition 首版使用结构化字段匹配，还是引入表达式语言？推荐先使用 typed condition，不引入通用 DSL。
 - Attempt 的 artifact alias 默认策略是什么？推荐 `latest_and_history`：后继默认消费 latest，审计保留全部历史。
+- freeform lifecycle 的完成语义如何触发？推荐首版作为 open-ended / manual completion：普通会话保持可继续，用户归档、显式结束或业务 owner 完结时再完成该 Activity。

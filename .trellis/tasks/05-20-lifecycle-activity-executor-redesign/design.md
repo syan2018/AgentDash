@@ -255,6 +255,34 @@ root session 的职责：
 - 接收 LifecycleEngine 的系统消息或摘要。
 - 在 `AgentSessionPolicy::ContinueRoot` 时作为执行载体。
 
+### 3.1 普通会话的 freeform LifecycleRun
+
+后续系统不应继续保留“裸业务 session”心智。凡是面向用户或业务 owner 的 session，都应能归属到某个 LifecycleRun：
+
+- 用户显式选择 lifecycle 时，创建对应 Activity graph 的 LifecycleRun。
+- 用户只是开启普通自由会话时，系统创建内置 freeform LifecycleRun。
+- root session 是该 run 的宿主和交互面，不再独立代表一个过程。
+- child session、function run、human decision 始终挂在具体 ActivityAttempt / ExecutorRunRef 上。
+
+内置 freeform lifecycle 的定义建议：
+
+```text
+builtin.freeform_session
+  entry_activity_key = main_conversation
+
+  activity main_conversation
+    executor = Agent + ContinueRoot
+    workflow_key = builtin.freeform_agent
+    input_ports = []
+    output_ports = []
+    completion_policy = OpenEnded / Manual
+    transitions = []
+```
+
+`builtin.freeform_agent` 表示普通会话默认 contract：不施加阶段、审批、固定 artifact 或后继约束，仍通过标准 session construction / launch 主链路解析 owner、workspace、VFS、MCP、capability、context bundle 和 executor config。
+
+freeform run 的完成语义不应绑定每轮 prompt terminal。普通对话可以长期 idle，首版建议在用户归档、显式结束、owner 完结或后续产品动作触发时将 `main_conversation` attempt 标为 completed / cancelled。这样能统一过程归属，同时不把普通会话误判为一次性任务。
+
 约束建议：
 
 - 同一个 root session 同一时刻只能有一个 running `ContinueRoot` Activity。
@@ -675,7 +703,17 @@ inline_files
 
 按 id 读取 definition / run 后必须校验其 `project_id` 与调用上下文一致。前端只传 key 时，后端必须以当前 project scope 解析。
 
-### 10.8 最小可交付路径
+### 10.8 Session 归属不变量
+
+业务 session 的过程归属必须通过 LifecycleRun 表达：
+
+- 新建显式流程会话时，先创建对应 LifecycleRun，再把 root session 作为 `LifecycleRun.session_id`。
+- 新建普通自由会话时，自动创建 `builtin.freeform_session` 的 LifecycleRun。
+- 查询 session 历史、运行状态、执行实例时，应能反查其 LifecycleRun；UI 可统一展示“这个 session 属于哪个过程 / 哪个 ActivityAttempt”。
+- 旧的裸 session 需要通过迁移或启动对账补齐 freeform LifecycleRun，避免长期存在两套事实源。
+- 非业务的内部健康检查、一次性系统探测等可以不进入该模型，但必须明确不出现在用户过程视图中。
+
+### 10.9 最小可交付路径
 
 可执行落地不以“大重构一次完成”为目标，而以以下检查点推进：
 

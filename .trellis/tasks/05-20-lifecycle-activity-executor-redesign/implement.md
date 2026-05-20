@@ -8,7 +8,8 @@
 2. 再落 Activity domain schema。
 3. 再落纯状态机 LifecycleEngine。
 4. 再落 durable scheduler claim。
-5. 最后接 Agent / Human / Function executor 与 UI。
+5. 再收敛普通 session 到 freeform LifecycleRun。
+6. 最后接 Agent / Human / Function executor 与 UI。
 
 任何阶段如果无法用自动化测试证明关键状态转移，就不进入下一阶段。
 
@@ -206,6 +207,40 @@
 出口标准：
 
 - [ ] Scheduler claim 能替代 orchestrator 里“先创建 session 再补状态”的路径。
+
+## Phase 5.5：Freeform LifecycleRun 归属收敛
+
+目标：消除裸业务 session 心智，让普通自由会话也依附于无外围约束的 LifecycleRun。
+
+建议拆成独立 PR：`feat(workflow): 为普通会话创建 freeform lifecycle`
+
+范围：
+
+- [ ] 新增内置 `builtin.freeform_session` Activity lifecycle definition。
+- [ ] 新增或复用 `builtin.freeform_agent` workflow contract，表达普通会话默认能力与上下文，不施加固定产物约束。
+- [ ] 新增 open-ended / manual completion policy，表达普通会话不随每轮 prompt terminal 自动完成。
+- [ ] 普通 session 创建入口在未指定 lifecycle 时自动创建 freeform LifecycleRun。
+- [ ] `LifecycleRun.session_id` 指向普通会话自身，作为 root session / host session。
+- [ ] freeform run 初始化为 `main_conversation#1`，executor 为 `Agent + ContinueRoot`。
+- [ ] freeform lifecycle 使用 open-ended / manual completion policy。
+- [ ] session 查询 / session binding / run association 能反查 freeform LifecycleRun。
+- [ ] 启动对账或 migration 为既有裸业务 session 补齐 freeform LifecycleRun。
+- [ ] 内部健康检查、系统探测类非业务 session 明确不进入用户过程视图。
+
+验证：
+
+- [ ] 创建普通 session 时自动生成 freeform LifecycleRun。
+- [ ] 指定显式 lifecycle 时不创建额外 freeform run。
+- [ ] session 历史能展示其归属 LifecycleRun。
+- [ ] 既有裸业务 session 对账后拥有 freeform LifecycleRun。
+- [ ] freeform 普通 prompt terminal 不会自动完成 `main_conversation` attempt。
+- [ ] `cargo test -p agentdash-application workflow::freeform`
+- [ ] `cargo test -p agentdash-api sessions`
+
+出口标准：
+
+- [ ] 面向用户的业务 session 均能归属某个 LifecycleRun。
+- [ ] 后续 Agent / Human / Function executor 不再需要处理裸 session 分支。
 
 ## Phase 6：Agent Executor 迁移
 

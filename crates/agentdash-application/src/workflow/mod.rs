@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
+pub mod scheduler;
 mod session_association;
 pub mod step_activation;
 pub mod tools;
@@ -44,6 +45,7 @@ pub use run::{
     LifecycleRunService, LifecycleStepProjector, RecordGateCollisionCommand,
     StartLifecycleRunCommand, build_step_projector_from_repos, select_active_run,
 };
+pub use scheduler::ActivityExecutorScheduler;
 pub use session_association::{LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_node_label};
 pub use step_activation::{
     KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,

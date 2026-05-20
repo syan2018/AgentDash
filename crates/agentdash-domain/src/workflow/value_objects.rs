@@ -946,6 +946,47 @@ pub enum ExecutorRunRef {
     HumanDecision { decision_id: String },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityExecutionClaimStatus {
+    Claiming,
+    Running,
+    Succeeded,
+    Failed,
+    Abandoned,
+}
+
+impl ActivityExecutionClaimStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claiming => "claiming",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Abandoned => "abandoned",
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Claiming | Self::Running)
+    }
+}
+
+impl std::str::FromStr for ActivityExecutionClaimStatus {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "claiming" => Ok(Self::Claiming),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "abandoned" => Ok(Self::Abandoned),
+            _ => Err(format!("activity execution claim status 无效: {raw}")),
+        }
+    }
+}
+
 impl CapabilityConfig {
     pub fn is_empty(&self) -> bool {
         self.tool_directives.is_empty() && self.mount_directives.is_empty()

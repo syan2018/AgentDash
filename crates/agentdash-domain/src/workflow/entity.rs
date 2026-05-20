@@ -6,10 +6,10 @@ use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
 use super::value_objects::{
-    ActivityDefinition, ActivityTransition, EffectiveSessionContract, LifecycleEdge,
-    LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
-    LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
+    ActivityDefinition, ActivityExecutionClaimStatus, ActivityTransition, EffectiveSessionContract,
+    ExecutorRunRef, LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus,
+    LifecycleStepDefinition, LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue,
+    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
     normalize_workflow_binding_kinds, validate_activity_lifecycle_definition,
     validate_lifecycle_definition, validate_workflow_definition,
 };
@@ -93,6 +93,45 @@ pub struct ActivityLifecycleDefinition {
     pub transitions: Vec<ActivityTransition>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityExecutionClaim {
+    pub run_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub claim_id: Uuid,
+    pub executor_kind: String,
+    pub status: ActivityExecutionClaimStatus,
+    pub idempotency_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_run_ref: Option<ExecutorRunRef>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl ActivityExecutionClaim {
+    pub fn new(
+        run_id: Uuid,
+        activity_key: impl Into<String>,
+        attempt: u32,
+        executor_kind: impl Into<String>,
+    ) -> Self {
+        let activity_key = activity_key.into();
+        let now = Utc::now();
+        Self {
+            run_id,
+            activity_key: activity_key.clone(),
+            attempt,
+            claim_id: Uuid::new_v4(),
+            executor_kind: executor_kind.into(),
+            status: ActivityExecutionClaimStatus::Claiming,
+            idempotency_key: format!("{run_id}:{activity_key}:{attempt}"),
+            executor_run_ref: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 impl ActivityLifecycleDefinition {
@@ -923,5 +962,20 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(run.step_states[0].gate_collision_count, 1);
+    }
+
+    #[test]
+    fn activity_execution_claim_uses_attempt_idempotency_key() {
+        let run_id = Uuid::new_v4();
+        let claim = ActivityExecutionClaim::new(run_id, "plan", 2, "agent");
+
+        assert_eq!(claim.run_id, run_id);
+        assert_eq!(claim.activity_key, "plan");
+        assert_eq!(claim.attempt, 2);
+        assert_eq!(claim.executor_kind, "agent");
+        assert_eq!(claim.status, ActivityExecutionClaimStatus::Claiming);
+        assert_eq!(claim.idempotency_key, format!("{run_id}:plan:2"));
+        assert!(claim.status.is_active());
+        assert!(!ActivityExecutionClaimStatus::Succeeded.is_active());
     }
 }

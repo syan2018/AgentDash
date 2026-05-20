@@ -180,17 +180,18 @@
 
 范围：
 
-- [ ] 新增 `ActivityExecutionClaimRepository`。
-- [ ] 同一 `run_id + activity_key + attempt` 只允许一个 active claim。
-- [ ] Scheduler 扫描 ready attempts，先写 claim，再启动 executor。
+- [x] 新增 `ActivityExecutionClaimRepository`。
+- [x] 同一 `run_id + activity_key + attempt` 只允许一个 active claim。
+- [x] Scheduler 扫描 ready attempts，先写 claim。
+- [ ] Scheduler claim 后启动 executor。
 - [ ] claim 状态：
-  - [ ] `claiming`
-  - [ ] `running`
-  - [ ] `succeeded`
-  - [ ] `failed`
-  - [ ] `abandoned`
-- [ ] 实现 idempotency key。
-- [ ] 实现 claiming 超时恢复策略。
+  - [x] `claiming`
+  - [x] `running`
+  - [x] `succeeded`
+  - [x] `failed`
+  - [x] `abandoned`
+- [x] 实现 idempotency key。
+- [x] 实现 claiming 超时恢复策略。
 - [ ] Scheduler 启动成功后提交 `ExecutorStarted` event。
 - [ ] Scheduler 启动失败时按可重试 / 不可重试更新 attempt。
 
@@ -199,8 +200,8 @@
 - [ ] 并发 schedule 同一 ready attempt 只产生一个 executor start。
 - [ ] prompt 未 accepted 不会留下 running attempt。
 - [ ] claiming 超时后可恢复。
-- [ ] `cargo test -p agentdash-application workflow::scheduler`
-- [ ] `cargo test -p agentdash-infrastructure workflow_claim`
+- [x] `cargo test -p agentdash-application workflow::scheduler`
+- [x] `cargo test -p agentdash-infrastructure workflow_claim`
 
 出口标准：
 

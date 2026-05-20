@@ -1,7 +1,8 @@
 use uuid::Uuid;
 
 use super::entity::{
-    ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun, WorkflowDefinition,
+    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun,
+    WorkflowDefinition,
 };
 use super::value_objects::WorkflowBindingKind;
 use crate::common::error::DomainError;
@@ -45,6 +46,27 @@ pub trait ActivityLifecycleDefinitionRepository: Send + Sync {
     ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError>;
     async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait ActivityExecutionClaimRepository: Send + Sync {
+    async fn create_or_get(
+        &self,
+        claim: &ActivityExecutionClaim,
+    ) -> Result<ActivityExecutionClaim, DomainError>;
+    async fn get_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<ActivityExecutionClaim>, DomainError>;
+    async fn list_active_by_run(
+        &self,
+        run_id: Uuid,
+    ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
+    async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError>;
+    async fn abandon_claiming_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
 }
 
 #[async_trait::async_trait]

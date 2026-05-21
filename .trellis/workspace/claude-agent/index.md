@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 42
-- **Last Active**: 2026-05-20
+- **Total Sessions**: 43
+- **Last Active**: 2026-05-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~552 | Active |
+| `journal-2.md` | ~586 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 43 | 2026-05-21 | Lifecycle Step Fallback 全量清理 | `8553c0b4`, `c60a73fd` | `codex/lifecycle-activity-executor-redesign` |
 | 42 | 2026-05-20 | Story 工作台对齐 Multica：交互一轮整改 | `e7742817` | `main` |
 | 41 | 2026-05-19 | Project Agent 数据模型迁移 | `d7fdc441`, `773a3fe3` | `codex/project-agent-data-model-migration` |
 | 40 | 2026-05-19 | 前端设计语言收敛 + 共用 UI primitive | `8e5d4729`, `18133347`, `940dc2e9`, `b608dbaa` | `main` |

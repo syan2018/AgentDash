@@ -4,6 +4,7 @@ pub mod inline_persistence;
 pub mod lifecycle_catalog;
 pub mod materialization;
 pub mod mount;
+pub mod mutation_dispatcher;
 pub(crate) mod mutation_queue;
 pub mod path;
 pub mod provider;
@@ -35,10 +36,13 @@ pub use mount::{
     build_canvas_mount, build_canvas_mount_id, build_context_container_mount, build_derived_vfs,
     build_lifecycle_mount, build_lifecycle_mount_with_ports, build_project_agent_knowledge_vfs,
     build_project_skill_asset_management_mount, build_project_vfs_mount_mount,
-    build_skill_asset_mount, build_workspace_vfs,
-    effective_context_containers, list_inline_entries, mount_container_id, mount_owner_id,
-    mount_owner_kind, mount_purpose, normalize_inline_files, parse_inline_mount_owner,
+    build_skill_asset_mount, build_workspace_vfs, effective_context_containers,
+    list_inline_entries, mount_purpose, normalize_inline_files, parse_inline_mount_owner,
     selected_workspace_binding, workspace_mount,
+};
+pub use mutation_dispatcher::{
+    BinaryMutationResult, InlineStorageKey, TextMutationResult, VfsMutationDispatcher,
+    VfsMutationError, inline_storage_key_from_mount,
 };
 pub use path::{
     MountId, MountRelativePath, PathPolicy, RootRef, VfsUri, capability_name, format_mount_uri,
@@ -56,8 +60,8 @@ pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
 pub use relay_service::{RelayVfsService, TextSearchParams};
 pub use surface::{
-    ResolvedMountEditCapabilities, ResolvedMountOwnerKind, ResolvedMountPurpose,
-    ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource,
+    ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
+    ResolvedVfsSurfaceSource,
 };
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,

@@ -31,11 +31,11 @@ use agentdash_application::session::{
 use agentdash_application::shared_library::SharedLibraryService;
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
-use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SessionToolServices, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -46,12 +46,12 @@ use agentdash_infrastructure::{
     PostgresAuthSessionRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresInlineFileRepository, PostgresLlmProviderRepository, PostgresMcpPresetRepository,
     PostgresProjectAgentRepository, PostgresProjectBackendAccessRepository,
-    PostgresProjectExtensionInstallationRepository, PostgresProjectVfsMountRepository,
-    PostgresProjectRepository, PostgresRoutineExecutionRepository, PostgresRoutineRepository,
-    PostgresRuntimeHealthRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
-    PostgresSettingsRepository, PostgresSharedLibraryRepository, PostgresSkillAssetRepository,
-    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
-    PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
+    PostgresProjectVfsMountRepository, PostgresRoutineExecutionRepository,
+    PostgresRoutineRepository, PostgresRuntimeHealthRepository, PostgresSessionBindingRepository,
+    PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
+    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -73,6 +73,8 @@ pub struct ServiceSet {
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
     pub vfs_service: Arc<RelayVfsService>,
+    /// VFS 写入分发器 — 统一 surface/tool mutation 与 inline_fs storage 坐标解析。
+    pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     /// 插件额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
     pub extra_skill_dirs: Vec<std::path::PathBuf>,
     /// WebSocket 中继后端注册表 — 跟踪在线的本机后端
@@ -206,8 +208,7 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("project_agents 表初始化失败: {e}"))?;
 
-        let project_vfs_mount_repo =
-            Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
+        let project_vfs_mount_repo = Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
         project_vfs_mount_repo
             .initialize()
             .await
@@ -332,6 +333,11 @@ impl AppState {
         let mount_provider_registry = Arc::new(mount_registry_builder.build());
 
         let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
+        let vfs_mutation_dispatcher = Arc::new(VfsMutationDispatcher::new(
+            vfs_service.clone(),
+            inline_file_repo.clone(),
+            mount_provider_registry.clone(),
+        ));
         let session_services_handle = SharedSessionToolServicesHandle::default();
 
         let inline_persister: Arc<
@@ -581,6 +587,7 @@ impl AppState {
                 session_title,
                 connector,
                 vfs_service,
+                vfs_mutation_dispatcher,
                 extra_skill_dirs,
                 backend_registry,
                 backend_runtime_events,

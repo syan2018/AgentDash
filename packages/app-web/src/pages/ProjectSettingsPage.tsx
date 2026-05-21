@@ -287,7 +287,7 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
                 </div>
 
                 <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                  {mount.root_ref}
+                  {mount.id}
                 </p>
               </div>
 

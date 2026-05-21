@@ -63,16 +63,6 @@ export type ResolvedMountPurpose =
   | "canvas"
   | "external_service";
 
-export type ResolvedMountOwnerKind =
-  | "project"
-  | "story"
-  | "task"
-  | "session"
-  | "project_agent"
-  | "canvas"
-  | "workspace"
-  | "external";
-
 export interface ResolvedMountEditCapabilities {
   create: boolean;
   delete: boolean;
@@ -93,13 +83,9 @@ export interface ResolvedMountSummary {
   display_name: string;
   provider: string;
   backend_id: string;
-  root_ref: string;
   capabilities: ExecutionMountCapability[];
   default_write: boolean;
   purpose: ResolvedMountPurpose;
-  owner_kind: ResolvedMountOwnerKind;
-  owner_id: string;
-  container_id?: string | null;
   backend_online?: boolean | null;
   file_count?: number | null;
   edit_capabilities: ResolvedMountEditCapabilities;

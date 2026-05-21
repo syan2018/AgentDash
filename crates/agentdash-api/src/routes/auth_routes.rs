@@ -113,10 +113,7 @@ pub async fn oidc_callback(
         );
     }
 
-    let redirect_to = std::env::var("AGENTDASH_OIDC_POST_LOGIN_REDIRECT")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "/".to_string());
+    let redirect_to = oidc_post_login_redirect();
     let cookie = format!(
         "agentdash_access_token={}; Path=/; Max-Age={}; SameSite=Lax",
         urlencoding_percent_encode(&response.access_token),
@@ -133,6 +130,21 @@ pub async fn oidc_callback(
         )
         .body(axum::body::Body::empty())
         .map_err(|e| ApiError::ServiceUnavailable(format!("生成登录跳转响应失败: {e}")))
+}
+
+fn oidc_post_login_redirect() -> String {
+    oidc_post_login_redirect_from_env(
+        std::env::var("AGENTDASH_OIDC_POST_LOGIN_REDIRECT").ok(),
+        std::env::var("AGENTDASH_WEB_BASE_URL").ok(),
+    )
+}
+
+fn oidc_post_login_redirect_from_env(primary: Option<String>, web_base: Option<String>) -> String {
+    primary
+        .or(web_base)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:5380/".to_string())
 }
 
 /// GET /api/auth/metadata — 返回登录方式描述（不需要认证）
@@ -197,4 +209,28 @@ fn extract_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) -> Op
 
 fn urlencoding_percent_encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oidc_post_login_redirect_defaults_to_frontend_dev_server() {
+        assert_eq!(
+            oidc_post_login_redirect_from_env(None, None),
+            "http://127.0.0.1:5380/"
+        );
+    }
+
+    #[test]
+    fn oidc_post_login_redirect_prefers_explicit_callback_target() {
+        assert_eq!(
+            oidc_post_login_redirect_from_env(
+                Some(" https://app.example.test/ ".to_string()),
+                Some("https://fallback.example.test/".to_string()),
+            ),
+            "https://app.example.test/"
+        );
+    }
 }

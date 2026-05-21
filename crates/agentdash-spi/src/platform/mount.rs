@@ -295,7 +295,8 @@ pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
 pub struct MountOperationContext {
     /// The authenticated identity of the user who initiated this operation.
     /// Injected by the framework from the HTTP session; providers consume
-    /// it on demand (e.g. KM plugin maps `user_id` to a Wave `owner_id`).
+    /// it on demand (e.g. external docs provider maps `user_id` to an
+    /// upstream owner identity).
     pub identity: Option<crate::platform::auth::AuthIdentity>,
 }
 

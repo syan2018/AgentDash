@@ -73,6 +73,8 @@ pub struct AuthIdentity {
     pub display_name: Option<String>,
     /// 用户邮箱
     pub email: Option<String>,
+    /// 用户头像 URL
+    pub avatar_url: Option<String>,
     /// claim 投影得到的用户组列表
     #[serde(default)]
     pub groups: Vec<AuthGroup>,
@@ -106,6 +108,7 @@ impl AuthIdentity {
             subject: user_id,
             display_name: Some("System Routine".to_string()),
             email: None,
+            avatar_url: None,
             groups: Vec::new(),
             is_admin: false,
             provider: Some("system.routine".to_string()),

@@ -11,6 +11,7 @@ import { useSidebarSessionsStore } from "../../stores/sidebarSessionsStore";
 import { useTheme } from "../../hooks/use-theme";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project, ProjectSessionEntry } from "../../types";
+import { UserAvatar } from "../ui/user-avatar";
 import {
   buildSessionShortcutRows,
   type SessionShortcutRow,
@@ -914,15 +915,12 @@ function UserCard() {
 
   const title = currentUser.display_name?.trim() || currentUser.email?.trim() || currentUser.user_id;
   const subtitle = currentUser.email?.trim() || currentUser.user_id;
-  const initial = (title?.[0] || "?").toUpperCase();
   const modeLabel = currentUser.auth_mode === "enterprise" ? "企业" : "个人";
+  const avatarUrl = currentUser.avatar_url?.trim();
 
   return (
     <div className="flex items-center gap-2 px-3 py-2">
-      {/* eslint-disable-next-line no-restricted-syntax -- 用户头像 */}
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-foreground">
-        {initial}
-      </span>
+      <UserAvatar avatarUrl={avatarUrl} fallback={title} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium text-foreground">{title}</p>
         {subtitle !== title && (

@@ -124,7 +124,19 @@ export interface LoginMetadata {
   display_name: string;
   description?: string | null;
   fields: LoginFieldDescriptor[];
+  login_mode?: "form" | "redirect";
+  start_url?: string | null;
   requires_login: boolean;
+}
+
+export interface AuthStartRequest {
+  return_to?: string | null;
+}
+
+export interface AuthStartResponse {
+  auth_url: string;
+  state: string;
+  expires_at_epoch_seconds: number;
 }
 
 export interface LoginCredentials {
@@ -151,6 +163,7 @@ export interface CurrentUser {
   subject: string;
   display_name?: string | null;
   email?: string | null;
+  avatar_url?: string | null;
   groups: AuthGroup[];
   is_admin: boolean;
   provider?: string | null;
@@ -163,6 +176,7 @@ export interface DirectoryUser {
   auth_mode: string;
   display_name?: string | null;
   email?: string | null;
+  avatar_url?: string | null;
   is_admin: boolean;
   provider?: string | null;
   created_at: string;

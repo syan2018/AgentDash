@@ -575,6 +575,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health::health_check))
         .route("/auth/login", post(auth_routes::login))
+        .route("/auth/oidc/start", post(auth_routes::start_oidc_login))
+        .route("/auth/oidc/callback", get(auth_routes::oidc_callback))
         .route("/auth/metadata", get(auth_routes::metadata))
         // Routine Webhook 触发端点（不走 session auth，中间件外单独 Bearer 校验）
         .route(

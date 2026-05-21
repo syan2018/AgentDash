@@ -23,6 +23,7 @@ export function mapCurrentUser(raw: Record<string, unknown>): CurrentUser {
     subject: String(raw.subject ?? raw.user_id ?? ""),
     display_name: raw.display_name != null ? String(raw.display_name) : null,
     email: raw.email != null ? String(raw.email) : null,
+    avatar_url: raw.avatar_url != null ? String(raw.avatar_url) : null,
     groups: Array.isArray(raw.groups)
       ? raw.groups
           .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")

@@ -9,6 +9,7 @@ pub struct User {
     pub auth_mode: String,
     pub display_name: Option<String>,
     pub email: Option<String>,
+    pub avatar_url: Option<String>,
     pub is_admin: bool,
     pub provider: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -22,6 +23,7 @@ impl User {
         auth_mode: String,
         display_name: Option<String>,
         email: Option<String>,
+        avatar_url: Option<String>,
         is_admin: bool,
         provider: Option<String>,
     ) -> Self {
@@ -32,6 +34,7 @@ impl User {
             auth_mode,
             display_name,
             email,
+            avatar_url,
             is_admin,
             provider,
             created_at: now,

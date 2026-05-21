@@ -37,9 +37,20 @@ function LoginField({
 }
 
 export function LoginPage() {
-  const { metadata, isMetadataLoading, fetchMetadata, login, isLoginLoading, loginError } =
+  const {
+    metadata,
+    isMetadataLoading,
+    fetchMetadata,
+    login,
+    startRedirectLogin,
+    isLoginLoading,
+    loginError,
+  } =
     useAuthStore();
   const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const redirectLoginLabel = metadata?.display_name?.trim()
+    ? `使用 ${metadata.display_name.trim()} 登录`
+    : '使用统一身份登录';
 
   useEffect(() => {
     if (!metadata) {
@@ -94,31 +105,50 @@ export function LoginPage() {
             )}
           </div>
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {(metadata?.fields ?? []).map((field) => (
-              <LoginField
-                key={field.name}
-                field={field}
-                value={formValues[field.name] ?? ''}
-                onChange={handleFieldChange}
+          {metadata?.login_mode === 'redirect' ? (
+            <div className="flex flex-col gap-4">
+              {loginError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {loginError}
+                </div>
+              )}
+
+              <button
+                type="button"
                 disabled={isLoginLoading}
-              />
-            ))}
+                onClick={() => void startRedirectLogin()}
+                className="h-10 rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isLoginLoading ? '跳转中...' : redirectLoginLabel}
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              {(metadata?.fields ?? []).map((field) => (
+                <LoginField
+                  key={field.name}
+                  field={field}
+                  value={formValues[field.name] ?? ''}
+                  onChange={handleFieldChange}
+                  disabled={isLoginLoading}
+                />
+              ))}
 
-            {loginError && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                {loginError}
-              </div>
-            )}
+              {loginError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {loginError}
+                </div>
+              )}
 
-            <button
-              type="submit"
-              disabled={isLoginLoading}
-              className="mt-2 h-10 rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoginLoading ? '登录中...' : '登录'}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={isLoginLoading}
+                className="mt-2 h-10 rounded-lg bg-primary text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isLoginLoading ? '登录中...' : '登录'}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

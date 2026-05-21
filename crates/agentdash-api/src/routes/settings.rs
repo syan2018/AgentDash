@@ -234,6 +234,7 @@ mod tests {
             subject: "alice".to_string(),
             display_name: Some("Alice".to_string()),
             email: Some("alice@example.com".to_string()),
+            avatar_url: None,
             groups: vec![AuthGroup {
                 group_id: "eng".to_string(),
                 display_name: Some("Engineering".to_string()),

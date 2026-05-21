@@ -12,6 +12,7 @@ pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
+pub mod project_filespaces;
 pub mod project_sessions;
 pub mod projects;
 pub mod routines;
@@ -83,6 +84,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route("/projects/{id}/clone", post(projects::clone_project))
         .route("/projects/{id}/grants", get(projects::list_project_grants))
+        .route(
+            "/projects/{project_id}/filespaces",
+            get(project_filespaces::list_filespaces).post(project_filespaces::create_filespace),
+        )
+        .route(
+            "/projects/{project_id}/filespaces/{filespace_id}",
+            put(project_filespaces::update_filespace).delete(project_filespaces::delete_filespace),
+        )
+        .route(
+            "/projects/{project_id}/vfs-mount-bindings",
+            get(project_filespaces::list_mount_bindings),
+        )
+        .route(
+            "/projects/{project_id}/vfs-mount-bindings/{binding_id}",
+            put(project_filespaces::update_mount_binding),
+        )
         .route(
             "/projects/{id}/grants/users/{user_id}",
             put(projects::grant_project_user).delete(projects::revoke_project_user),
@@ -478,17 +495,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(acp_sessions::respond_companion_request),
         )
         .route(
-            "/acp/sessions/{id}/stream",
-            get(acp_sessions::acp_session_stream_sse),
-        )
-        .route(
             "/acp/sessions/{id}/stream/ndjson",
             get(acp_sessions::acp_session_stream_ndjson),
         )
         // Events
-        .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
-        .route("/events/since/{since_id}", get(stream::get_events_since))
         // Mount Provider 发现（返回可由用户配置的外部服务 provider 列表）
         .route(
             "/mount-providers",

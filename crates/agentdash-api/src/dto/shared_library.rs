@@ -116,6 +116,9 @@ pub enum InstallLibraryAssetResponse {
     SkillAsset {
         id: Uuid,
     },
+    Filespace {
+        id: Uuid,
+    },
     ExtensionInstallation {
         id: Uuid,
     },
@@ -126,6 +129,7 @@ pub struct ProjectAssetSourceStatusResponse {
     pub project_agents: Vec<ProjectAssetSourceStatusItemResponse>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
+    pub filespaces: Vec<ProjectAssetSourceStatusItemResponse>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItemResponse>,

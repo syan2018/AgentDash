@@ -24,7 +24,7 @@ packages/app-web/src/
 ├── api/                            # API 调用层
 │   ├── client.ts                   # 统一 HTTP 客户端
 │   ├── mappers.ts                  # API 响应映射
-│   ├── eventStream.ts              # SSE 事件流
+│   ├── eventStream.ts              # Project NDJSON 事件流
 │   ├── origin.ts                   # API_ORIGIN / buildApiPath
 │   ├── streamRegistry.ts           # 流连接追踪（HMR 安全）
 │   ├── auth.ts                     # 认证 API
@@ -78,7 +78,7 @@ packages/app-web/src/
 │   ├── workspaceStore.ts           # Workspace CRUD + 状态
 │   ├── storyStore.ts               # Story/Task 数据
 │   ├── coordinatorStore.ts         # 后端连接管理
-│   ├── eventStore.ts               # SSE 事件流状态
+│   ├── eventStore.ts               # Project NDJSON 事件流状态
 │   ├── workflowStore.ts            # Workflow 管理
 │   ├── sessionHistoryStore.ts      # 会话历史
 │   ├── settingsStore.ts            # 全局设置

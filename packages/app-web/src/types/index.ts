@@ -219,8 +219,41 @@ export interface AgentPresetConfig extends Record<string, unknown> {
   description?: string;
   capability_directives?: CapabilityDirective[];
   mcp_preset_keys?: string[];
+  vfs_access_grants?: AgentVfsAccessGrant[];
   skill_asset_keys?: string[];
   allowed_companions?: string[];
+}
+
+export interface AgentVfsAccessGrant {
+  mount_id: string;
+  capabilities: Array<"read" | "write" | "list" | "search">;
+}
+
+export type ProjectVfsMountSource =
+  | { kind: "filespace"; filespace_id: string }
+  | { kind: "external_service"; service_id: string; root_ref: string };
+
+export interface ProjectVfsMountBinding {
+  id: string;
+  project_id: string;
+  mount_id: string;
+  display_name: string;
+  source: ProjectVfsMountSource;
+  capabilities: Array<"read" | "write" | "list" | "search">;
+  default_write: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectFilespace {
+  id: string;
+  project_id: string;
+  key: string;
+  display_name: string;
+  description?: string | null;
+  surface_ref: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── Project Agent 项目实例 ───
@@ -235,7 +268,6 @@ export interface ProjectAgent {
   is_default_for_story: boolean;
   is_default_for_task: boolean;
   knowledge_enabled: boolean;
-  project_container_ids: string[];
   created_at: string;
   updated_at: string;
 }

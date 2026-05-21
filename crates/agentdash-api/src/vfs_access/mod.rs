@@ -26,6 +26,7 @@ mod tests {
     use agentdash_domain::context_container::{
         ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
+    use agentdash_domain::project_filespace::ProjectVfsMountBinding;
     use agentdash_domain::workspace::Workspace;
 
     use crate::relay::registry::ConnectedBackend;
@@ -68,6 +69,15 @@ mod tests {
             ],
             default_write: false,
         }
+    }
+
+    fn filespace_binding(project_id: uuid::Uuid, mount_id: &str) -> ProjectVfsMountBinding {
+        ProjectVfsMountBinding::new_filespace(
+            project_id,
+            mount_id.to_string(),
+            mount_id.to_string(),
+            uuid::Uuid::new_v4(),
+        )
     }
 
     #[test]
@@ -304,9 +314,8 @@ mod tests {
     #[test]
     fn build_task_vfs_merges_project_story_and_workspace_policy() {
         let service = RelayVfsService::new(empty_mount_registry());
-        let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
-        project.config.context_containers =
-            vec![inline_container("spec", "backend/spec.md", "# spec")];
+        let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
+        let bindings = vec![filespace_binding(project.id, "spec")];
 
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
@@ -319,6 +328,7 @@ mod tests {
         let vfs = service
             .build_vfs(
                 &project,
+                &bindings,
                 Some(&story),
                 Some(&ws),
                 SessionMountTarget::Task,
@@ -342,10 +352,10 @@ mod tests {
     #[test]
     fn story_containers_can_disable_and_override_project_defaults() {
         let service = RelayVfsService::new(empty_mount_registry());
-        let mut project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
-        project.config.context_containers = vec![
-            inline_container("shared", "spec.md", "project spec"),
-            inline_container("km", "index.md", "project km"),
+        let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
+        let bindings = vec![
+            filespace_binding(project.id, "shared"),
+            filespace_binding(project.id, "km"),
         ];
 
         let mut story =
@@ -357,6 +367,7 @@ mod tests {
         let vfs = service
             .build_vfs(
                 &project,
+                &bindings,
                 Some(&story),
                 None,
                 SessionMountTarget::Task,

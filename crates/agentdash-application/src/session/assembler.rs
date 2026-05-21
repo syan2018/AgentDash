@@ -29,7 +29,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use agentdash_domain::canvas::CanvasRepository;
-use agentdash_domain::common::AgentConfig;
+use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
 use agentdash_domain::project::Project;
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
@@ -69,7 +69,8 @@ use crate::story::context_builder::{StoryContextBuildInput, contribute_story_con
 use crate::task::execution::TaskExecutionError;
 use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
 use crate::vfs::{
-    RelayVfsService, SessionMountTarget, build_lifecycle_mount_with_ports, resolve_context_bindings,
+    RelayVfsService, SessionMountTarget, apply_agent_vfs_access_grants,
+    build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::workflow::{
     ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
@@ -607,6 +608,8 @@ pub struct OwnerBootstrapSpec<'a> {
     pub agent_tool_directives: Vec<ToolCapabilityDirective>,
     /// Agent preset 中选择装载的项目 SkillAsset key。
     pub agent_skill_asset_keys: Vec<String>,
+    /// Agent preset 中声明的 Project VFS mount 访问授权。
+    pub agent_vfs_access_grants: Vec<AgentVfsAccessGrant>,
     /// 前端/request 已携带的 MCP server(透传)。
     pub request_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
     /// 前端已携带的 VFS(None 时 assembler 自行构建)。
@@ -844,9 +847,15 @@ impl<'a> SessionRequestAssembler<'a> {
         let project_id = spec.owner.project_id();
         let owner_ctx = spec.owner.owner_ctx();
         let active_workflow = spec.active_workflow.clone();
+        let project_mount_bindings = self
+            .repos
+            .project_vfs_mount_binding_repo
+            .list_by_project(project_id)
+            .await
+            .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))?;
 
         // ── 1. VFS 构建 + canvas 挂载 ──
-        let vfs = match spec.existing_vfs {
+        let mut vfs = match spec.existing_vfs {
             Some(vfs) => Some(vfs),
             None => {
                 let target = spec.owner.mount_target();
@@ -857,6 +866,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         workspace,
                     } => self.vfs_service.build_vfs(
                         project,
+                        &project_mount_bindings,
                         Some(*story),
                         *workspace,
                         target,
@@ -866,6 +876,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         project, workspace, ..
                     } => self.vfs_service.build_vfs(
                         project,
+                        &project_mount_bindings,
                         None,
                         *workspace,
                         target,
@@ -875,6 +886,11 @@ impl<'a> SessionRequestAssembler<'a> {
                 Some(built)
             }
         };
+        if let Some(space) = vfs.as_mut()
+            && matches!(spec.owner, OwnerScope::Project { .. })
+        {
+            apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
+        }
         let mut vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
         if let Some(space) = vfs.as_mut() {
             append_visible_canvas_mounts(
@@ -1117,6 +1133,16 @@ impl<'a> SessionRequestAssembler<'a> {
                 self.vfs_service
                     .build_vfs(
                         spec.project,
+                        &self
+                            .repos
+                            .project_vfs_mount_binding_repo
+                            .list_by_project(spec.project.id)
+                            .await
+                            .map_err(|error| {
+                                TaskExecutionError::Internal(format!(
+                                    "读取 Project VFS Mount 失败: {error}"
+                                ))
+                            })?,
                         Some(spec.story),
                         spec.workspace,
                         SessionMountTarget::Task,

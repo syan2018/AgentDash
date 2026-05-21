@@ -20,6 +20,7 @@
 - 复杂值对象以 JSON 文本存入 `TEXT`
 - 时间字段存 `TEXT`，读取时做健壮解析
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
+- Repository 初始化语句按单条 SQL 逐次执行；`sqlx::query` 会以 prepared statement 发送，PostgreSQL 不接受同一个 prepared statement 中包含多条命令，表、索引、约束补齐应拆开执行。
 
 ---
 

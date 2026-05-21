@@ -10,9 +10,11 @@ import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../../services/mcpPreset";
 import { fetchProjectSkillAssets } from "../../../services/skillAsset";
+import { listProjectFilespaces } from "../../../services/projectFilespaces";
 import type {
   ActivityLifecycleDefinition,
   McpPresetDto,
+  ProjectFilespace,
   ProjectAgent,
   PublishLibraryAssetKind,
   SkillAssetDto,
@@ -41,6 +43,7 @@ const KIND_OPTIONS: Array<{ value: PublishLibraryAssetKind; label: string; hint:
   { value: "mcp_preset", label: "MCP Server", hint: "Project MCP Preset → mcp_server_template" },
   { value: "workflow_bundle", label: "Workflow", hint: "Project Lifecycle bundle → workflow_template" },
   { value: "skill_asset", label: "Skill", hint: "Project Skill 资产 → skill_template" },
+  { value: "filespace", label: "Filespace", hint: "Project Filespace → filespace_template" },
 ];
 
 export function AssetPickerDrawer({
@@ -158,6 +161,9 @@ function AssetStep({
       {kind === "workflow_bundle" && <WorkflowList onPick={onPick} />}
       {kind === "skill_asset" && (
         <SkillList projectId={projectId} onPick={onPick} />
+      )}
+      {kind === "filespace" && (
+        <FilespaceList projectId={projectId} onPick={onPick} />
       )}
     </section>
   );
@@ -361,6 +367,58 @@ function SkillList({
             key: skill.key,
             display_name: skill.display_name,
             description: skill.description,
+          },
+        })
+      }
+    />
+  );
+}
+
+function FilespaceList({
+  projectId,
+  onPick,
+}: {
+  projectId: string;
+  onPick: (s: AssetPickerSelection) => void;
+}) {
+  const [items, setItems] = useState<ProjectFilespace[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    listProjectFilespaces(projectId)
+      .then((list) => {
+        if (cancelled) return;
+        setItems(list);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "加载失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  if (error) return <Hint message={error} tone="danger" />;
+  if (items === null) return <Hint message="正在加载 Filespace…" />;
+  if (items.length === 0) {
+    return <Hint message="项目内暂无可发布的 Filespace。" />;
+  }
+  return (
+    <PickList
+      items={items}
+      keyOf={(item) => item.id}
+      titleOf={(item) => item.display_name}
+      hintOf={(item) => `mount: ${item.key}`}
+      onPick={(item) =>
+        onPick({
+          assetKind: "filespace",
+          projectAssetId: item.id,
+          defaults: {
+            key: item.key,
+            display_name: item.display_name,
+            description: item.description ?? null,
           },
         })
       }

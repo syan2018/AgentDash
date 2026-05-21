@@ -37,7 +37,7 @@
 | `agentdash-domain` | ✅ 在用 | 23 | 实体、值对象、Repository traits（已支撑 Project/Workspace/Story/Task/Backend） |
 | `agentdash-infrastructure` | ✅ 在用 | 8 | SQLite Repository 实现（Project/Workspace/Story/Task/Backend） |
 | `agentdash-executor` | ✅ 大部分 | 8 | 本地执行器链路可用，Remote ACP 仍为骨架 |
-| `agentdash-api` | ✅ 在用 | 13 | 路由、NDJSON/SSE 流、错误处理 |
+| `agentdash-api` | ✅ 在用 | 13 | 路由、NDJSON 流、错误处理 |
 | `agentdash-acp-meta` | ✅ 在用 | 2 | ACP `_meta.agentdash` 语义层支持 |
 | `agentdash-acp-warp` | ⚠️ 空目录 | 0 | 目录存在但未纳入工作区构建 |
 | `agentdash-coordinator` | ⚠️ 遗留 | 4 | 不在 workspace，待清理 |

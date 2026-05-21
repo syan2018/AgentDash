@@ -183,7 +183,7 @@ PiAgentLoop {
 }
 ```
 
-> PiAgent 的 SessionNotification 由云端直接产生并推送到前端 SSE 流，**不经过** WebSocket 中继。
+> PiAgent 的 SessionNotification 由云端直接产生并推送到前端 NDJSON 流，**不经过** WebSocket 中继。
 
 ## 数据归属模型
 
@@ -254,12 +254,12 @@ sequenceDiagram
             Agent-->>Local: SessionNotification
             Local-->>WS: event.session_notification
             WS-->>Cloud: 缓存 + 转发
-            Cloud-->>FE: SSE/NDJSON 推送
+            Cloud-->>FE: NDJSON 推送
         end
         
         Local-->>WS: event.session_state_changed { completed }
         WS-->>Cloud: 更新 Task 状态
-        Cloud-->>FE: SSE: turn_completed
+        Cloud-->>FE: NDJSON: turn_completed
     else 本机不在线
         Registry-->>Cloud: backend offline
         Cloud-->>FE: 503 Backend Offline

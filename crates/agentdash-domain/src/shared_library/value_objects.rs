@@ -16,6 +16,7 @@ pub enum LibraryAssetType {
     McpServerTemplate,
     WorkflowTemplate,
     SkillTemplate,
+    FilespaceTemplate,
     ExtensionTemplate,
 }
 
@@ -26,6 +27,7 @@ impl LibraryAssetType {
             Self::McpServerTemplate => "mcp_server_template",
             Self::WorkflowTemplate => "workflow_template",
             Self::SkillTemplate => "skill_template",
+            Self::FilespaceTemplate => "filespace_template",
             Self::ExtensionTemplate => "extension_template",
         }
     }
@@ -36,6 +38,7 @@ impl LibraryAssetType {
             "mcp_server_template" => Ok(Self::McpServerTemplate),
             "workflow_template" => Ok(Self::WorkflowTemplate),
             "skill_template" => Ok(Self::SkillTemplate),
+            "filespace_template" => Ok(Self::FilespaceTemplate),
             "extension_template" => Ok(Self::ExtensionTemplate),
             other => Err(DomainError::InvalidConfig(format!(
                 "library_assets.asset_type 非法: {other}"
@@ -177,6 +180,7 @@ pub enum LibraryAssetPayload {
     McpServerTemplate(McpServerTemplatePayload),
     WorkflowTemplate(WorkflowTemplatePayload),
     SkillTemplate(SkillTemplatePayload),
+    FilespaceTemplate(FilespaceTemplatePayload),
     ExtensionTemplate(ExtensionTemplatePayload),
 }
 
@@ -198,6 +202,12 @@ impl LibraryAssetPayload {
             LibraryAssetType::SkillTemplate => serde_json::from_value(value)
                 .map(Self::SkillTemplate)
                 .map_err(|error| payload_error("skill_template", error)),
+            LibraryAssetType::FilespaceTemplate => {
+                let payload = serde_json::from_value::<FilespaceTemplatePayload>(value)
+                    .map_err(|error| payload_error("filespace_template", error))?;
+                payload.validate()?;
+                Ok(Self::FilespaceTemplate(payload))
+            }
             LibraryAssetType::ExtensionTemplate => {
                 let payload = serde_json::from_value::<ExtensionTemplatePayload>(value)
                     .map_err(|error| payload_error("extension_template", error))?;
@@ -504,6 +514,73 @@ pub struct SkillTemplateFilePayload {
     pub path: String,
     pub content: String,
     pub kind: SkillAssetFileKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FilespaceTemplatePayload {
+    pub files: Vec<FilespaceTemplateFilePayload>,
+}
+
+impl FilespaceTemplatePayload {
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.files.is_empty() {
+            return Err(DomainError::InvalidConfig(
+                "filespace_template.files 不能为空".to_string(),
+            ));
+        }
+        for (index, file) in self.files.iter().enumerate() {
+            file.validate(index)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FilespaceTemplateFilePayload {
+    pub path: String,
+    pub content_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    pub size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_base64: Option<String>,
+}
+
+impl FilespaceTemplateFilePayload {
+    fn validate(&self, index: usize) -> Result<(), DomainError> {
+        require_non_empty(
+            &format!("filespace_template.files[{index}].path"),
+            &self.path,
+        )?;
+        match self.content_kind.as_str() {
+            "text" => {
+                if self.content.is_none() {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "filespace_template.files[{index}].content 不能为空"
+                    )));
+                }
+            }
+            "binary" => {
+                if self.data_base64.is_none() {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "filespace_template.files[{index}].data_base64 不能为空"
+                    )));
+                }
+                require_non_empty(
+                    &format!("filespace_template.files[{index}].mime_type"),
+                    self.mime_type.as_deref().unwrap_or_default(),
+                )?;
+            }
+            other => {
+                return Err(DomainError::InvalidConfig(format!(
+                    "filespace_template.files[{index}].content_kind 非法: {other}"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

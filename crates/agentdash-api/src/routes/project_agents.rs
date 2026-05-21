@@ -500,7 +500,6 @@ pub struct ProjectAgentResponse {
     pub is_default_for_story: bool,
     pub is_default_for_task: bool,
     pub knowledge_enabled: bool,
-    pub project_container_ids: Vec<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -518,7 +517,6 @@ fn build_project_agent_response(agent: &ProjectAgent) -> Result<ProjectAgentResp
         is_default_for_story: agent.is_default_for_story,
         is_default_for_task: agent.is_default_for_task,
         knowledge_enabled: agent.knowledge_enabled,
-        project_container_ids: agent.project_container_ids.clone(),
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     })
@@ -650,8 +648,6 @@ pub struct UpdateProjectAgentRequest {
     pub is_default_for_task: Option<bool>,
     #[serde(default)]
     pub knowledge_enabled: Option<bool>,
-    #[serde(default)]
-    pub project_container_ids: Option<Vec<String>>,
 }
 
 /// PUT /projects/{id}/agents/{project_agent_id} — 更新 Project Agent
@@ -713,9 +709,6 @@ pub async fn update_project_agent(
     }
     if let Some(v) = req.knowledge_enabled {
         agent.knowledge_enabled = v;
-    }
-    if let Some(ids) = req.project_container_ids {
-        agent.project_container_ids = ids;
     }
     agent.updated_at = chrono::Utc::now();
 

@@ -29,7 +29,7 @@ use crate::{
     },
     vfs::{
         RelayVfsService, SessionMountTarget, append_agent_knowledge_mounts,
-        filter_project_containers_by_whitelist,
+        apply_agent_vfs_access_grants,
     },
     workflow::{
         ensure_active_workflow_lifecycle_mount, resolve_active_workflow_projection_for_session,
@@ -141,6 +141,7 @@ impl SessionConstructionPlanner {
             .map_err(|error| format!("读取 story 所属 project 失败: {error}"))?
             .ok_or_else(|| format!("Story 所属 Project {} 不存在", story.project_id))?;
         let workspace = resolve_project_workspace(repos, &project).await?;
+        let project_mount_bindings = load_project_vfs_mount_bindings(repos, project.id).await?;
 
         let connector_config = session_meta.executor_config.clone();
         let resolved_config = connector_config.clone();
@@ -168,6 +169,7 @@ impl SessionConstructionPlanner {
                 vfs_service
                     .build_vfs(
                         &project,
+                        &project_mount_bindings,
                         Some(story),
                         workspace.as_ref(),
                         SessionMountTarget::Story,
@@ -281,6 +283,7 @@ impl SessionConstructionPlanner {
             .await?
             .ok_or_else(|| format!("Project Agent `{agent_key}` 不存在"))?;
         let workspace = resolve_project_workspace(repos, project).await?;
+        let project_mount_bindings = load_project_vfs_mount_bindings(repos, project.id).await?;
 
         let connector_config = session_meta
             .executor_config
@@ -304,6 +307,7 @@ impl SessionConstructionPlanner {
                 vfs_service
                     .build_vfs(
                         project,
+                        &project_mount_bindings,
                         None,
                         workspace.as_ref(),
                         SessionMountTarget::Project,
@@ -316,7 +320,10 @@ impl SessionConstructionPlanner {
         };
 
         if let Some(vfs) = vfs.as_mut() {
-            filter_project_containers_by_whitelist(vfs, &project_agent.project_agent);
+            apply_agent_vfs_access_grants(
+                vfs,
+                project_agent.preset_config.vfs_access_grants.as_deref(),
+            );
             append_agent_knowledge_mounts(vfs, &project_agent.project_agent)?;
         }
 
@@ -461,6 +468,17 @@ async fn load_project_presets(
             Default::default()
         }
     }
+}
+
+async fn load_project_vfs_mount_bindings(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<Vec<agentdash_domain::project_filespace::ProjectVfsMountBinding>, String> {
+    repos
+        .project_vfs_mount_binding_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))
 }
 
 async fn resolve_project_agent_context(

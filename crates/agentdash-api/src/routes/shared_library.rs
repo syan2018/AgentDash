@@ -191,6 +191,7 @@ fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiErr
         "mcp_preset" => Ok(ProjectAssetPublishKind::McpPreset),
         "workflow_bundle" => Ok(ProjectAssetPublishKind::WorkflowBundle),
         "skill_asset" => Ok(ProjectAssetPublishKind::SkillAsset),
+        "filespace" | "project_filespace" => Ok(ProjectAssetPublishKind::Filespace),
         other => Err(ApiError::BadRequest(format!(
             "未知 publish asset_kind: {other}"
         ))),
@@ -215,6 +216,9 @@ fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryA
         InstallLibraryAssetOutput::SkillAsset { id } => {
             InstallLibraryAssetResponse::SkillAsset { id }
         }
+        InstallLibraryAssetOutput::Filespace { id } => {
+            InstallLibraryAssetResponse::Filespace { id }
+        }
         InstallLibraryAssetOutput::ExtensionInstallation { id } => {
             InstallLibraryAssetResponse::ExtensionInstallation { id }
         }
@@ -237,6 +241,11 @@ fn project_source_status_response(
             .collect(),
         skill_assets: status
             .skill_assets
+            .into_iter()
+            .map(source_status_item_response)
+            .collect(),
+        filespaces: status
+            .filespaces
             .into_iter()
             .map(source_status_item_response)
             .collect(),

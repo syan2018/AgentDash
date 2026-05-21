@@ -56,6 +56,7 @@ export interface ExecutionVfs {
 export type ResolvedMountPurpose =
   | "workspace"
   | "project_container"
+  | "filespace"
   | "story_container"
   | "agent_knowledge"
   | "lifecycle"
@@ -84,6 +85,7 @@ export type ResolvedVfsSurfaceSource =
   | { source_type: "task_preview"; project_id: string; task_id: string }
   | { source_type: "session_runtime"; session_id: string }
   | { source_type: "project_skill_assets"; project_id: string }
+  | { source_type: "project_filespace"; project_id: string; filespace_id: string }
   | { source_type: "project_agent_knowledge"; project_id: string; project_agent_id: string };
 
 export interface ResolvedMountSummary {

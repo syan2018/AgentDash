@@ -135,7 +135,7 @@ export interface ViewConfig {
   sort_by: string | null;
 }
 
-// ─── SSE 事件 ──────────────────────────────────────────
+// ─── 项目事件流 ────────────────────────────────────────
 
 export interface StateChange {
   id: number;

@@ -54,7 +54,7 @@ Workflow 推进的运行态，1:1 挂在 Story session 上。`steps: Vec<Lifecyc
 │                    云端后端（Cloud）                       │
 │  ┌────────────────────────────────────────────────────┐  │
 │  │  编排层 · 状态层 · 连接层                           │  │
-│  │  REST API · MCP · SSE/NDJSON · WebSocket 服务端    │  │
+│  │  REST API · MCP · NDJSON · WebSocket 服务端        │  │
 │  │  PiAgent AgentLoop（云端原生 Agent）               │  │
 │  │  BackendRegistry（在线本机管理）                    │  │
 │  │  Relay（命令路由 + 执行输出 + tool call 转发）      │  │
@@ -86,7 +86,7 @@ Workflow 推进的运行态，1:1 挂在 Story session 上。`steps: Vec<Lifecyc
 |----|------|
 | 编排层（Orchestration） | 任务拆解策略、执行流程编排、人机协作 |
 | 状态层（State Management） | 状态容器管理、状态迁移控制、验证规则 |
-| 连接层（Connectivity + Relay） | 前端连接（REST + SSE/NDJSON）、本机管理（WebSocket）、中继路由、MCP 暴露 |
+| 连接层（Connectivity + Relay） | 前端连接（REST + NDJSON）、本机管理（WebSocket）、中继路由、MCP 暴露 |
 
 代码按整洁架构分层到多个 crate，详见 [目录结构](./backend/directory-structure.md)。
 
@@ -96,7 +96,7 @@ Workflow 推进的运行态，1:1 挂在 Story session 上。`steps: Vec<Lifecyc
 
 - **后端**：Rust + Axum + Tokio + SQLx + PostgreSQL（embedded）/ SQLite（本机会话）
 - **前端**：React 19 + TypeScript 5.9 + Vite 7 + Tailwind v4 + Zustand 5
-- **协议**：Backbone Protocol（内部事件流）+ MCP（对外能力暴露）+ REST + SSE/NDJSON + WebSocket
+- **协议**：Backbone Protocol（内部事件流）+ MCP（对外能力暴露）+ REST + NDJSON + WebSocket
 - **Agent**：PiAgent（云端原生）+ 第三方（Claude Code、Codex、AMP 等，通过 AgentConnector 可扩展）
 
 详见 [tech-stack.md](./tech-stack.md)。

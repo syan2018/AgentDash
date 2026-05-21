@@ -1,5 +1,5 @@
 import { resolveApiUrl } from "../../../api/origin";
-import { getStoredToken, authenticatedFetch } from "../../../api/client";
+import { authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
 import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "./types";
@@ -22,20 +22,16 @@ export interface SessionStreamTransport {
   close: () => void;
 }
 
-interface FetchNdjsonTransportOptions extends SessionStreamTransportOptions {
-  onInitialFailure: (error: Error) => void;
-}
-
-function buildSseEndpoint(sessionId: string, endpoint?: string): string {
+function buildStreamEndpoint(sessionId: string, endpoint?: string): string {
   if (endpoint && endpoint.trim().length > 0) {
     return endpoint;
   }
-  return `/api/acp/sessions/${encodeURIComponent(sessionId)}/stream`;
+  return `/api/acp/sessions/${encodeURIComponent(sessionId)}/stream/ndjson`;
 }
 
 function buildNdjsonEndpoint(sessionId: string, endpoint?: string): string {
-  const sseEndpoint = buildSseEndpoint(sessionId, endpoint);
-  const [path, query = ""] = sseEndpoint.split("?");
+  const streamEndpoint = buildStreamEndpoint(sessionId, endpoint);
+  const [path, query = ""] = streamEndpoint.split("?");
   const ndjsonPath = path.endsWith("/stream/ndjson")
     ? path
     : path.endsWith("/stream")
@@ -113,81 +109,6 @@ export function parseSessionEventEnvelopePayload(
   };
 }
 
-class EventSourceTransport implements SessionStreamTransport {
-  private source: EventSource | null = null;
-  private closed = false;
-  private hadConnected = false;
-  private sinceId: number;
-  private unregister: (() => void) | null = null;
-  private readonly options: SessionStreamTransportOptions;
-
-  constructor(options: SessionStreamTransportOptions) {
-    this.options = options;
-    this.sinceId = options.sinceId ?? 0;
-    this.unregister = registerStreamConnection({
-      close: () => this.close(),
-    });
-    this.connect();
-  }
-
-  private connect(): void {
-    if (this.closed) return;
-    let url = resolveApiUrl(buildSseEndpoint(this.options.sessionId, this.options.endpoint));
-    if (this.sinceId > 0) {
-      const sep = url.includes("?") ? "&" : "?";
-      url = `${url}${sep}since_id=${encodeURIComponent(String(this.sinceId))}`;
-    }
-    const token = getStoredToken();
-    if (token) {
-      const sep = url.includes("?") ? "&" : "?";
-      url = `${url}${sep}token=${encodeURIComponent(token)}`;
-    }
-    this.options.onLifecycleChange("connecting");
-
-    const source = new EventSource(url);
-    this.source = source;
-
-    source.onopen = () => {
-      if (this.closed) return;
-      this.hadConnected = true;
-      this.options.onLifecycleChange("connected");
-    };
-
-    source.onmessage = (event) => {
-      if (this.closed) return;
-      try {
-        const payload: unknown = JSON.parse(event.data);
-        const fallbackEventSeq = readOptionalNumber(event.lastEventId) ?? 0;
-        const normalizedEvent = parseSessionEventEnvelopePayload(payload, fallbackEventSeq);
-        if (!normalizedEvent) return;
-        if (normalizedEvent.event_seq > this.sinceId) {
-          this.sinceId = normalizedEvent.event_seq;
-        }
-        this.options.onEvent(normalizedEvent);
-      } catch (error) {
-        this.options.onError(normalizeError(error, "解析 SSE 消息失败"));
-      }
-    };
-
-    source.onerror = () => {
-      if (this.closed) return;
-      this.options.onLifecycleChange(this.hadConnected ? "reconnecting" : "connecting");
-    };
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    if (this.source) {
-      this.source.close();
-      this.source = null;
-    }
-    this.unregister?.();
-    this.unregister = null;
-    this.options.onLifecycleChange("closed");
-  }
-}
-
 class FetchNdjsonTransport implements SessionStreamTransport {
   private closed = false;
   private controller: AbortController | null = null;
@@ -196,9 +117,9 @@ class FetchNdjsonTransport implements SessionStreamTransport {
   private sinceId: number;
   private hadConnected = false;
   private unregister: (() => void) | null = null;
-  private readonly options: FetchNdjsonTransportOptions;
+  private readonly options: SessionStreamTransportOptions;
 
-  constructor(options: FetchNdjsonTransportOptions) {
+  constructor(options: SessionStreamTransportOptions) {
     this.options = options;
     this.sinceId = options.sinceId ?? 0;
     this.unregister = registerStreamConnection({
@@ -232,11 +153,6 @@ class FetchNdjsonTransport implements SessionStreamTransport {
 
       if (!response.ok || !response.body) {
         const error = new Error(`NDJSON 连接失败: HTTP ${response.status}`);
-        if (!this.hadConnected) {
-          this.options.onInitialFailure(error);
-          this.scheduleReconnect();
-          return;
-        }
         this.options.onError(error);
         this.scheduleReconnect();
         return;
@@ -249,11 +165,6 @@ class FetchNdjsonTransport implements SessionStreamTransport {
     } catch (error) {
       if (this.closed || isAbortError(error)) return;
       const normalized = normalizeError(error, "NDJSON 连接异常");
-      if (!this.hadConnected) {
-        this.options.onInitialFailure(normalized);
-        this.scheduleReconnect();
-        return;
-      }
       this.options.onError(normalized);
     }
 
@@ -361,19 +272,6 @@ class FetchNdjsonTransport implements SessionStreamTransport {
   }
 }
 
-function preferSseOnly(): boolean {
-  const mode = String(import.meta.env.VITE_ACP_STREAM_TRANSPORT ?? "").toLowerCase();
-  return mode === "sse";
-}
-
 export function createSessionStreamTransport(options: SessionStreamTransportOptions): SessionStreamTransport {
-  if (preferSseOnly()) {
-    return new EventSourceTransport(options);
-  }
-  return new FetchNdjsonTransport({
-    ...options,
-    onInitialFailure: (error) => {
-      options.onError(new Error(`NDJSON 不可用：${error.message}`));
-    },
-  });
+  return new FetchNdjsonTransport(options);
 }

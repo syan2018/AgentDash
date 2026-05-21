@@ -1,12 +1,17 @@
+use base64::Engine;
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::common::AgentPresetConfig;
+use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
+use agentdash_domain::project_filespace::{
+    PROJECT_FILESPACE_CONTAINER_ID, ProjectFilespace, ProjectVfsMountBinding,
+};
 use agentdash_domain::shared_library::{
-    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, ProjectExtensionInstallation,
-    SharedLibrarySourceStatus, normalize_workflow_template_value,
+    FilespaceTemplatePayload, InstalledAssetSource, LibraryAsset, LibraryAssetPayload,
+    ProjectExtensionInstallation, SharedLibrarySourceStatus, normalize_workflow_template_value,
 };
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 use agentdash_domain::workflow::{WorkflowDefinitionSource, WorkflowTemplateInstallBundle};
@@ -37,6 +42,9 @@ pub enum InstallLibraryAssetOutput {
     SkillAsset {
         id: Uuid,
     },
+    Filespace {
+        id: Uuid,
+    },
     ExtensionInstallation {
         id: Uuid,
     },
@@ -47,6 +55,7 @@ pub struct ProjectAssetSourceStatus {
     pub project_agents: Vec<ProjectAssetSourceStatusItem>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
+    pub filespaces: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
@@ -119,6 +128,9 @@ pub async fn install_library_asset_to_project(
                 .collect();
             upsert_skill_asset(repos, skill, input.overwrite).await
         }
+        LibraryAssetPayload::FilespaceTemplate(payload) => {
+            install_filespace_template(repos, input, asset, payload).await
+        }
         LibraryAssetPayload::ExtensionTemplate(payload) => {
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let installed_source = installed_source_from_asset(&asset);
@@ -170,6 +182,26 @@ pub async fn list_project_asset_source_status(
             skill_assets.push(
                 source_status_item(repos, "skill_asset", skill.id, skill.key, installed_source)
                     .await?,
+            );
+        }
+    }
+
+    let mut filespaces = Vec::new();
+    for filespace in repos
+        .project_filespace_repo
+        .list_by_project(project_id)
+        .await?
+    {
+        if let Some(installed_source) = filespace.installed_source {
+            filespaces.push(
+                source_status_item(
+                    repos,
+                    "project_filespace",
+                    filespace.id,
+                    filespace.key,
+                    installed_source,
+                )
+                .await?,
             );
         }
     }
@@ -236,6 +268,7 @@ pub async fn list_project_asset_source_status(
         project_agents,
         mcp_presets,
         skill_assets,
+        filespaces,
         workflow_definitions,
         activity_lifecycle_definitions,
         extension_installations,
@@ -272,6 +305,7 @@ async fn install_agent_template(
         capability_directives: (!config.capability_directives.is_empty())
             .then_some(config.capability_directives),
         mcp_preset_keys: None,
+        vfs_access_grants: None,
         skill_asset_keys: None,
         allowed_companions: None,
     };
@@ -281,6 +315,105 @@ async fn install_agent_template(
     Ok(InstallLibraryAssetOutput::ProjectAgent {
         project_agent_id: agent.id,
     })
+}
+
+async fn install_filespace_template(
+    repos: &RepositorySet,
+    input: InstallLibraryAssetInput,
+    asset: LibraryAsset,
+    payload: FilespaceTemplatePayload,
+) -> Result<InstallLibraryAssetOutput, DomainError> {
+    let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
+    let installed_source = installed_source_from_asset(&asset);
+    let mut filespace =
+        ProjectFilespace::new(input.project_id, key.clone(), asset.display_name.clone());
+    filespace.description = asset.description.clone();
+    filespace.installed_source = Some(installed_source);
+
+    if let Some(existing) = repos
+        .project_filespace_repo
+        .get_by_project_and_key(input.project_id, &key)
+        .await?
+    {
+        if !input.overwrite {
+            return Err(DomainError::InvalidConfig(format!(
+                "Project Filespace key 已存在: {key}"
+            )));
+        }
+        filespace.id = existing.id;
+        filespace.created_at = existing.created_at;
+        filespace.updated_at = chrono::Utc::now();
+        repos.project_filespace_repo.update(&filespace).await?;
+        repos
+            .inline_file_repo
+            .delete_by_owner(InlineFileOwnerKind::ProjectFilespace, filespace.id)
+            .await?;
+    } else {
+        repos.project_filespace_repo.create(&filespace).await?;
+        let binding = ProjectVfsMountBinding::new_filespace(
+            input.project_id,
+            key.clone(),
+            asset.display_name,
+            filespace.id,
+        );
+        repos
+            .project_vfs_mount_binding_repo
+            .create(&binding)
+            .await?;
+    }
+
+    let files = payload
+        .files
+        .into_iter()
+        .map(|file| {
+            let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
+                .map_err(DomainError::InvalidConfig)?;
+            match file.content_kind.as_str() {
+                "text" => Ok(InlineFile::new_text(
+                    InlineFileOwnerKind::ProjectFilespace,
+                    filespace.id,
+                    PROJECT_FILESPACE_CONTAINER_ID,
+                    path,
+                    file.content.unwrap_or_default(),
+                )),
+                "binary" => {
+                    let encoded = file.data_base64.ok_or_else(|| {
+                        DomainError::InvalidConfig(
+                            "filespace_template binary 文件缺少 data_base64".to_string(),
+                        )
+                    })?;
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(encoded)
+                        .map_err(|error| {
+                            DomainError::InvalidConfig(format!(
+                                "filespace_template binary base64 非法: {error}"
+                            ))
+                        })?;
+                    if bytes.len() as u64 != file.size_bytes {
+                        return Err(DomainError::InvalidConfig(format!(
+                            "filespace_template 文件 `{}` 的 size_bytes 与 data_base64 不一致",
+                            file.path
+                        )));
+                    }
+                    Ok(InlineFile::new_binary(
+                        InlineFileOwnerKind::ProjectFilespace,
+                        filespace.id,
+                        PROJECT_FILESPACE_CONTAINER_ID,
+                        path,
+                        bytes,
+                        file.mime_type
+                            .unwrap_or_else(|| "application/octet-stream".to_string()),
+                    ))
+                }
+                other => Err(DomainError::InvalidConfig(format!(
+                    "filespace_template content_kind 非法: {other}"
+                ))),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    repos.inline_file_repo.upsert_files(&files).await?;
+
+    Ok(InstallLibraryAssetOutput::Filespace { id: filespace.id })
 }
 
 async fn upsert_mcp_preset(

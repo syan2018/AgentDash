@@ -35,10 +35,6 @@ pub struct ProjectAgent {
     /// 默认 false — 大多数 Agent 是无状态的
     #[serde(default)]
     pub knowledge_enabled: bool,
-    /// 白名单：允许此 Agent 访问的项目级容器 ID
-    /// 空 = 不继承任何项目级容器
-    #[serde(default)]
-    pub project_container_ids: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -57,7 +53,6 @@ impl ProjectAgent {
             is_default_for_story: false,
             is_default_for_task: false,
             knowledge_enabled: false,
-            project_container_ids: vec![],
             created_at: now,
             updated_at: now,
         }

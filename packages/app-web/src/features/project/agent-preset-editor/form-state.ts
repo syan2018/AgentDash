@@ -1,5 +1,6 @@
 import type {
   AgentPreset,
+  AgentVfsAccessGrant,
   CapabilityDirective,
   CapabilityKey,
   SystemPromptMode,
@@ -20,6 +21,7 @@ export interface PresetFormState {
   system_prompt: string;
   system_prompt_mode: SystemPromptMode | "";
   mcp_preset_keys: string[];
+  vfs_access_grants: AgentVfsAccessGrant[];
   skill_asset_keys: string[];
   capability_directives: CapabilityKey[];
   allowed_companions: string[];
@@ -32,6 +34,9 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     : [];
   const rawSkillAssetKeys = Array.isArray(cfg.skill_asset_keys)
     ? (cfg.skill_asset_keys as string[])
+    : [];
+  const rawVfsAccessGrants = Array.isArray(cfg.vfs_access_grants)
+    ? (cfg.vfs_access_grants as AgentVfsAccessGrant[])
     : [];
   const rawDirectives = Array.isArray(cfg.capability_directives) ? cfg.capability_directives as CapabilityDirective[] : [];
   const capKeys: CapabilityKey[] = rawDirectives
@@ -51,6 +56,7 @@ export function presetToForm(preset?: AgentPreset): PresetFormState {
     system_prompt: String(cfg.system_prompt ?? ""),
     system_prompt_mode: (cfg.system_prompt_mode === "override" || cfg.system_prompt_mode === "append") ? cfg.system_prompt_mode : "",
     mcp_preset_keys: rawMcpPresetKeys,
+    vfs_access_grants: rawVfsAccessGrants,
     skill_asset_keys: rawSkillAssetKeys,
     capability_directives: capKeys,
     allowed_companions: rawCompanions,
@@ -69,6 +75,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   if (form.system_prompt.trim()) config.system_prompt = form.system_prompt.trim();
   if (form.system_prompt.trim() && form.system_prompt_mode) config.system_prompt_mode = form.system_prompt_mode;
   if (form.mcp_preset_keys.length > 0) config.mcp_preset_keys = form.mcp_preset_keys;
+  if (form.vfs_access_grants.length > 0) config.vfs_access_grants = form.vfs_access_grants;
   if (form.skill_asset_keys.length > 0) config.skill_asset_keys = form.skill_asset_keys;
   if (form.capability_directives.length > 0) {
     config.capability_directives = form.capability_directives.map((key) => ({ add: key }));
@@ -104,5 +111,7 @@ export function formatPresetSummary(preset: AgentPreset): string {
   if (presetKeys.length > 0) parts.push(`${presetKeys.length} MCP Preset`);
   const skillKeys = Array.isArray(cfg.skill_asset_keys) ? (cfg.skill_asset_keys as string[]) : [];
   if (skillKeys.length > 0) parts.push(`${skillKeys.length} Skill`);
+  const vfsGrants = Array.isArray(cfg.vfs_access_grants) ? (cfg.vfs_access_grants as AgentVfsAccessGrant[]) : [];
+  if (vfsGrants.length > 0) parts.push(`${vfsGrants.length} VFS`);
   return parts.join(" · ");
 }

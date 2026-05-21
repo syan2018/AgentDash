@@ -114,11 +114,17 @@ pub async fn build_task_session_context(
     let effective_agent_type = resolved_config
         .as_ref()
         .map(|config| config.executor.as_str());
+    let project_mount_bindings = repos
+        .project_vfs_mount_binding_repo
+        .list_by_project(project.id)
+        .await
+        .ok()?;
     let mut runtime_vfs: Option<RuntimeVfs> = if use_vfs {
         Some(
             vfs_service
                 .build_vfs(
                     &project,
+                    &project_mount_bindings,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Task,

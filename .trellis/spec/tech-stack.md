@@ -16,7 +16,7 @@
 | 状态管理 | Zustand 5 | 轻量 |
 | 路由 | React Router 7 | SPA 路由 |
 | 测试 | Vitest 4 | 前端测试 |
-| 协议 | REST + SSE/NDJSON + WebSocket | 前端↔云端 / 云端↔本机 |
+| 协议 | REST + NDJSON + WebSocket | 前端↔云端 / 云端↔本机 |
 | 内部事件流 | Backbone Protocol | `BackboneEnvelope` / `BackboneEvent` |
 | 对外能力 | MCP | Agent 工具暴露 |
 
@@ -45,8 +45,8 @@
 
 ## 前后端通信
 
-- **前端↔云端**：REST（业务 CRUD）+ NDJSON/SSE（实时推送），会话流用 `fetch + ReadableStream`
-- **增量恢复**：全局流 `Last-Event-ID`，会话流 `x-stream-since-id`
+- **前端↔云端**：REST（业务 CRUD）+ NDJSON（实时推送），会话流用 `fetch + ReadableStream`
+- **增量恢复**：Project 流和会话流统一使用 `x-stream-since-id`
 - **云端↔本机**：WebSocket（本机主动连接），JSON over WebSocket
 - **内部事件流**：Backbone Protocol，所有 connector 输出统一映射
 - **对外能力**：MCP

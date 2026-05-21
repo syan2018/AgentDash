@@ -35,6 +35,10 @@ pub enum ResolvedVfsSurfaceSource {
     ProjectSkillAssets {
         project_id: Uuid,
     },
+    ProjectFilespace {
+        project_id: Uuid,
+        filespace_id: Uuid,
+    },
     ProjectAgentKnowledge {
         project_id: Uuid,
         project_agent_id: Uuid,
@@ -60,6 +64,10 @@ impl ResolvedVfsSurfaceSource {
             Self::ProjectSkillAssets { project_id } => {
                 format!("project-skill-assets:{project_id}")
             }
+            Self::ProjectFilespace {
+                project_id,
+                filespace_id,
+            } => format!("project-filespace:{project_id}:{filespace_id}"),
             Self::ProjectAgentKnowledge {
                 project_id,
                 project_agent_id,
@@ -124,6 +132,25 @@ impl ResolvedVfsSurfaceSource {
                 .map_err(|_| format!("无效的 project skill assets surface_ref: {trimmed}"))?;
             return Ok(Self::ProjectSkillAssets { project_id });
         }
+        if let Some(rest) = trimmed.strip_prefix("project-filespace:") {
+            let mut parts = rest.split(':');
+            let project_id = parts
+                .next()
+                .ok_or_else(|| format!("无效的 project filespace surface_ref: {trimmed}"))?;
+            let filespace_id = parts
+                .next()
+                .ok_or_else(|| format!("无效的 project filespace surface_ref: {trimmed}"))?;
+            if parts.next().is_some() {
+                return Err(format!("无效的 project filespace surface_ref: {trimmed}"));
+            }
+            return Ok(Self::ProjectFilespace {
+                project_id: Uuid::parse_str(project_id)
+                    .map_err(|_| format!("无效的 project filespace project_id: {project_id}"))?,
+                filespace_id: Uuid::parse_str(filespace_id).map_err(|_| {
+                    format!("无效的 project filespace filespace_id: {filespace_id}")
+                })?,
+            });
+        }
         if let Some(rest) = trimmed.strip_prefix("project-agent-knowledge:") {
             let mut parts = rest.split(':');
             let project_id = parts
@@ -181,6 +208,7 @@ pub struct ResolvedMountEditCapabilities {
 pub enum ResolvedMountPurpose {
     Workspace,
     ProjectContainer,
+    Filespace,
     StoryContainer,
     AgentKnowledge,
     Lifecycle,

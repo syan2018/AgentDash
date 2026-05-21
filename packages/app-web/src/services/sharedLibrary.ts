@@ -140,6 +140,7 @@ export async function fetchProjectAssetSourceStatus(
       : [],
     mcp_presets: Array.isArray(raw.mcp_presets) ? raw.mcp_presets.map(mapSourceStatusItem) : [],
     skill_assets: Array.isArray(raw.skill_assets) ? raw.skill_assets.map(mapSourceStatusItem) : [],
+    filespaces: Array.isArray(raw.filespaces) ? raw.filespaces.map(mapSourceStatusItem) : [],
     workflow_definitions: Array.isArray(raw.workflow_definitions)
       ? raw.workflow_definitions.map(mapSourceStatusItem)
       : [],

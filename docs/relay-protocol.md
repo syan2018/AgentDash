@@ -640,7 +640,7 @@ interface RelayError {
 **设计要点：**
 - `notification` 字段即完整的 ACP `SessionNotification`，不做任何转换
 - `_meta.agentdash` 元信息由本机的 ExecutorHub 注入，云端直接透传到前端
-- 云端收到后：①缓存到 session 历史 ②转发到前端 SSE/NDJSON 流
+- 云端收到后：①缓存到 session 历史 ②转发到前端 NDJSON 流
 - `session_id` 在顶层冗余一份，方便云端快速路由到正确的前端订阅者
 
 ### 5.3 `event.session_state_changed` — 会话执行状态变更
@@ -841,15 +841,15 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │    { turn_id: "t123" }          │──► 200 { turn_id: "t123" } ────►│
   │                                 │                                 │
   │──► event.session_notification ──►│                                │
-  │    (agent_message_chunk)         │──► SSE: session_notification ──►│
+  │    (agent_message_chunk)         │──► NDJSON: session_notification ►│
   │                                 │                                 │
   │──► event.session_notification ──►│                                │
-  │    (tool_call)                   │──► SSE: session_notification ──►│
+  │    (tool_call)                   │──► NDJSON: session_notification ►│
   │                                 │                                 │
   │   ... 持续流式输出 ...            │                                │
   │                                 │                                 │
   │──► event.session_state_changed ──►│                               │
-  │    { state: "completed" }        │──► SSE: turn_completed ───────►│
+  │    { state: "completed" }        │──► NDJSON: turn_completed ────►│
 ```
 
 ### 10.2 取消执行流
@@ -864,7 +864,7 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │◄── 200 OK ─────────────────────│                                 │
   │                                 │                                 │
   │                                 │◄── event.session_state_changed ─│
-  │◄── SSE: turn_cancelled ────────│    { state: "cancelled" }       │
+  │◄── NDJSON: turn_cancelled ────│    { state: "cancelled" }       │
 ```
 
 ### 10.3 PiAgent 云端执行流（tool call 路由到本机）
@@ -877,7 +877,7 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │                                 │  AgentLoop 启动                  │
   │                                 │  调用 LLM API（云端直连）         │
   │                                 │                                 │
-  │◄── SSE: agent_message_chunk ───│  LLM 返回 tool_call: file_read   │
+  │◄── NDJSON: agent_message_chunk │  LLM 返回 tool_call: file_read   │
   │                                 │                                 │
   │                                 │──► command.tool.file_read ──────►│
   │                                 │                                 │
@@ -887,17 +887,17 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │                                 │  将 tool result 送回 LLM         │
   │                                 │  LLM 返回 tool_call: file_write  │
   │                                 │                                 │
-  │◄── SSE: tool_call ─────────────│                                  │
+  │◄── NDJSON: tool_call ─────────│                                  │
   │                                 │──► command.tool.file_write ─────►│
   │                                 │                                 │
   │                                 │◄── response.tool.file_write ────│
   │                                 │                                 │
-  │◄── SSE: agent_message_chunk ───│  LLM 返回最终文本                 │
+  │◄── NDJSON: agent_message_chunk │  LLM 返回最终文本                 │
   │                                 │                                 │
-  │◄── SSE: turn_completed ────────│  AgentLoop 结束                   │
+  │◄── NDJSON: turn_completed ────│  AgentLoop 结束                   │
 ```
 
-> **注意**：PiAgent 的 `SessionNotification` 由云端 AgentLoop 直接生成并推送到前端 SSE 流，**不经过** WebSocket 中继（区别于本地第三方 Agent 的流式回传）。只有 tool call 的执行通过 WebSocket 路由到本机。
+> **注意**：PiAgent 的 `SessionNotification` 由云端 AgentLoop 直接生成并推送到前端 NDJSON 流，**不经过** WebSocket 中继（区别于本地第三方 Agent 的流式回传）。只有 tool call 的执行通过 WebSocket 路由到本机。
 
 ### 10.4 本机断线与重连
 
@@ -908,7 +908,7 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │                                 │── 检测到 pong 超时 ──►          │
   │                                 │   标记 backend offline          │
   │                                 │   运行中 Task → interrupted     │
-  │                                 │──► SSE: backend_offline ───────►│
+  │                                 │──► NDJSON: backend_offline ────►│
   │                                 │                                 │
   │ (指数退避等待)                    │                                │
   │                                 │                                 │
@@ -916,7 +916,7 @@ PiAgent 的优势在于其 tool call 可以携带不同的 `backend_id`，实现
   │──── register ──────────────────►│                                │
   │                                 │   恢复 backend online           │
   │◄──── register_ack ─────────────│                                 │
-  │                                 │──► SSE: backend_online ────────►│
+  │                                 │──► NDJSON: backend_online ─────►│
 ```
 
 ---

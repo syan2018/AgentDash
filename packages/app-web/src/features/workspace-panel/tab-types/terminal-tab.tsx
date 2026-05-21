@@ -131,7 +131,7 @@ function TerminalView({ terminalId: initialTerminalId, sessionId, tabId }: Termi
   useEffect(() => {
     const term = xtermRef.current;
     if (!term) return;
-    // output 为空意味着还没有数据（新终端刚 spawn、或尚未收到 SSE）
+    // output 为空意味着还没有数据（新终端刚 spawn、或尚未收到会话事件）
     if (!output) return;
     const pending = output.slice(lastWrittenLenRef.current);
     if (pending.length > 0) {

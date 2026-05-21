@@ -31,7 +31,6 @@ impl PostgresProjectAgentRepository {
                 is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
                 is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
                 knowledge_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-                project_container_ids TEXT NOT NULL DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(project_id, name)
@@ -68,7 +67,6 @@ struct ProjectAgentRow {
     is_default_for_story: bool,
     is_default_for_task: bool,
     knowledge_enabled: bool,
-    project_container_ids: String,
     created_at: String,
     updated_at: String,
 }
@@ -97,10 +95,6 @@ impl TryFrom<ProjectAgentRow> for ProjectAgent {
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
             knowledge_enabled: row.knowledge_enabled,
-            project_container_ids: parse_json_column(
-                &row.project_container_ids,
-                "project_agents.project_container_ids",
-            )?,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
                 "project_agents.created_at",
@@ -113,19 +107,15 @@ impl TryFrom<ProjectAgentRow> for ProjectAgent {
     }
 }
 
-const PROJECT_AGENT_COLUMNS: &str = "id, project_id, name, agent_type, config, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at";
+const PROJECT_AGENT_COLUMNS: &str = "id, project_id, name, agent_type, config, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, created_at, updated_at";
 
 #[async_trait::async_trait]
 impl ProjectAgentRepository for PostgresProjectAgentRepository {
     async fn create(&self, agent: &ProjectAgent) -> Result<(), DomainError> {
         let config_json = serialize_json_column(&agent.config, "project_agents.config")?;
-        let project_container_ids_json = serialize_json_column(
-            &agent.project_container_ids,
-            "project_agents.project_container_ids",
-        )?;
         sqlx::query(
-            "INSERT INTO project_agents (id, project_id, name, agent_type, config, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, project_container_ids, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+            "INSERT INTO project_agents (id, project_id, name, agent_type, config, installed_library_asset_id, installed_source_ref, installed_source_version, installed_source_digest, installed_at, default_lifecycle_key, is_default_for_story, is_default_for_task, knowledge_enabled, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(agent.id.to_string())
         .bind(agent.project_id.to_string())
@@ -141,7 +131,6 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.is_default_for_story)
         .bind(agent.is_default_for_task)
         .bind(agent.knowledge_enabled)
-        .bind(project_container_ids_json)
         .bind(agent.created_at.to_rfc3339())
         .bind(agent.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -208,12 +197,8 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
 
     async fn update(&self, agent: &ProjectAgent) -> Result<(), DomainError> {
         let config_json = serialize_json_column(&agent.config, "project_agents.config")?;
-        let project_container_ids_json = serialize_json_column(
-            &agent.project_container_ids,
-            "project_agents.project_container_ids",
-        )?;
         sqlx::query(
-            "UPDATE project_agents SET name = $1, agent_type = $2, config = $3, installed_library_asset_id = $4, installed_source_ref = $5, installed_source_version = $6, installed_source_digest = $7, installed_at = $8, default_lifecycle_key = $9, is_default_for_story = $10, is_default_for_task = $11, knowledge_enabled = $12, project_container_ids = $13, updated_at = $14 WHERE id = $15 AND project_id = $16",
+            "UPDATE project_agents SET name = $1, agent_type = $2, config = $3, installed_library_asset_id = $4, installed_source_ref = $5, installed_source_version = $6, installed_source_digest = $7, installed_at = $8, default_lifecycle_key = $9, is_default_for_story = $10, is_default_for_task = $11, knowledge_enabled = $12, updated_at = $13 WHERE id = $14 AND project_id = $15",
         )
         .bind(&agent.name)
         .bind(&agent.agent_type)
@@ -227,7 +212,6 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.is_default_for_story)
         .bind(agent.is_default_for_task)
         .bind(agent.knowledge_enabled)
-        .bind(project_container_ids_json)
         .bind(agent.updated_at.to_rfc3339())
         .bind(agent.id.to_string())
         .bind(agent.project_id.to_string())

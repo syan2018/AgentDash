@@ -584,3 +584,70 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 44: 实时流通路收敛
+
+**Date**: 2026-05-21
+**Task**: 实时流通路收敛
+**Branch**: `main`
+
+### Summary
+
+将浏览器侧 Project 与 Session 实时流统一收敛为 NDJSON fetch transport，移除前后端 SSE 主路径与 fallback，并同步流式协议 spec、README 与 relay 文档。验证通过 app-web typecheck/lint/test、cargo fmt --check、cargo check、cargo test -p agentdash-api。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ca68536d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 45: Project Filespace 资产化与 Agent VFS 能力迁移
+
+**Date**: 2026-05-21
+**Task**: Project Filespace 资产化与 Agent VFS 能力迁移
+**Branch**: `main`
+
+### Summary
+
+完成 Project 内 Filespace 资产化迁移、Agent VFS 细粒度访问能力管理、project_container_ids 字段移除，并单独修复 session effect outbox 时间字段溢出问题。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b362100c` | (see git log) |
+| `e212a3a3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -27,7 +27,7 @@ interface SessionHistoryState {
   removeSession: (id: string) => Promise<void>;
   /** 用户手动修改标题 */
   updateTitle: (id: string, title: string) => Promise<void>;
-  /** SSE 事件驱动的本地标题补丁（不触发 API 调用） */
+  /** 会话事件驱动的本地标题补丁（不触发 API 调用） */
   patchSessionLocally: (id: string, patch: Partial<SessionMeta>) => void;
 }
 

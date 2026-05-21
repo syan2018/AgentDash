@@ -44,7 +44,6 @@ interface ProjectState {
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
     knowledge_enabled?: boolean;
-    project_container_ids?: string[];
   }) => Promise<ProjectAgent | null>;
   deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;
 

@@ -632,6 +632,7 @@ async fn build_story_owner_prompt_request(
                 agent_mcp: AgentLevelMcp::default(),
                 agent_tool_directives: Vec::new(),
                 agent_skill_asset_keys: Vec::new(),
+                agent_vfs_access_grants: Vec::new(),
                 request_mcp_servers: source_mcp_declarations,
                 existing_vfs,
                 visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
@@ -715,6 +716,11 @@ async fn build_project_owner_prompt_request(
         .skill_asset_keys
         .clone()
         .unwrap_or_default();
+    let agent_vfs_access_grants = project_agent
+        .preset_config
+        .vfs_access_grants
+        .clone()
+        .unwrap_or_default();
 
     let lifecycle = map_owner_prompt_lifecycle(lifecycle_kind, None);
     let (lifecycle, continuation_context_frame) =
@@ -747,6 +753,7 @@ async fn build_project_owner_prompt_request(
                 agent_mcp: AgentLevelMcp { preset_mcp_servers },
                 agent_tool_directives,
                 agent_skill_asset_keys,
+                agent_vfs_access_grants,
                 request_mcp_servers: source_mcp_declarations,
                 existing_vfs,
                 visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),

@@ -1,7 +1,9 @@
 mod anthropic_bridge;
 mod openai_codex_responses_bridge;
 mod openai_completions_bridge;
+mod openai_content;
 mod openai_responses_bridge;
+mod openai_responses_common;
 pub mod provider_registry;
 mod sse;
 

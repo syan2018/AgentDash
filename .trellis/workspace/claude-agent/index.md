@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 45
+- **Total Sessions**: 46
 - **Last Active**: 2026-05-21
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~653 | Active |
+| `journal-2.md` | ~686 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 46 | 2026-05-21 | VFS Mount 与 Filespace 扁平化 | `4c56eedd` | `main` |
 | 45 | 2026-05-21 | Project Filespace 资产化与 Agent VFS 能力迁移 | `b362100c`, `e212a3a3` | `main` |
 | 44 | 2026-05-21 | 实时流通路收敛 | `ca68536d` | `main` |
 | 43 | 2026-05-21 | Lifecycle Step Fallback 全量清理 | `8553c0b4`, `c60a73fd` | `codex/lifecycle-activity-executor-redesign` |

@@ -651,3 +651,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 46: VFS Mount 与 Filespace 扁平化
+
+**Date**: 2026-05-21
+**Task**: VFS Mount 与 Filespace 扁平化
+**Branch**: `main`
+
+### Summary
+
+把 b362100c 引入的 ProjectFilespace 资产层与 ProjectVfsMountBinding 挂载层合并为单层 ProjectVfsMount，content 异构承载 Inline / ExternalService。Marketplace 资产 filespace_template 收敛为 vfs_mount_template，安装语义改为一步即用，权限闸门由 Agent VFS access policy 单点控制。同时移除 ProjectVfsMount.default_write — Project 级 mount 永远不是 fs.write 的隐式默认目标，避免多 mount 同时 default_write=true 时的歧义。包含 migration 0054（合并旧表 + DROP）+ 0055（drop default_write 列）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c56eedd` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

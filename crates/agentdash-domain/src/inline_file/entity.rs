@@ -14,7 +14,7 @@ pub use crate::common::{
 /// - Lifecycle record artifact content（owner_kind = "lifecycle_run"）
 /// - Agent Knowledge files（owner_kind = "project_agent"）
 /// - Skill asset files（owner_kind = "skill_asset"）
-/// - Project Filespace files（owner_kind = "project_filespace"）
+/// - Project VFS Mount files（owner_kind = "project_vfs_mount"）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineFile {
     pub id: Uuid,
@@ -139,8 +139,8 @@ pub enum InlineFileOwnerKind {
     ProjectAgent,
     /// SkillAsset 级文件容器
     SkillAsset,
-    /// Project Filespace 级文件容器
-    ProjectFilespace,
+    /// Project VFS Mount 级文件容器
+    ProjectVfsMount,
 }
 
 impl InlineFileOwnerKind {
@@ -151,7 +151,7 @@ impl InlineFileOwnerKind {
             Self::LifecycleRun => "lifecycle_run",
             Self::ProjectAgent => "project_agent",
             Self::SkillAsset => "skill_asset",
-            Self::ProjectFilespace => "project_filespace",
+            Self::ProjectVfsMount => "project_vfs_mount",
         }
     }
 }
@@ -166,7 +166,7 @@ impl std::str::FromStr for InlineFileOwnerKind {
             "lifecycle_run" => Ok(Self::LifecycleRun),
             "project_agent" => Ok(Self::ProjectAgent),
             "skill_asset" => Ok(Self::SkillAsset),
-            "project_filespace" => Ok(Self::ProjectFilespace),
+            "project_vfs_mount" => Ok(Self::ProjectVfsMount),
             _ => Err(()),
         }
     }

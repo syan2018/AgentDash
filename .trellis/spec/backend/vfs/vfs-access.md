@@ -341,24 +341,32 @@ ContentPart::Image {
 
 ---
 
-## Project VFS Mount Binding Routes
+## Project VFS Mount Routes
 
-Project 级 mount binding 的 CRUD 通过以下路由暴露：
+Project 级 VFS Mount 是单层一等公民实体，CRUD 通过以下路由暴露：
 
-- `GET    /api/projects/{project_id}/vfs-mount-bindings` 列表
-- `POST   /api/projects/{project_id}/vfs-mount-bindings` 新建（支持 `kind=filespace` 或 `kind=external_service`）
-- `PUT    /api/projects/{project_id}/vfs-mount-bindings/{binding_id}` 全字段覆盖
-- `DELETE /api/projects/{project_id}/vfs-mount-bindings/{binding_id}` 单独解绑（不级联底层 Filespace）
+- `GET    /api/projects/{project_id}/vfs-mounts` 列表
+- `POST   /api/projects/{project_id}/vfs-mounts` 新建（请求体 `content` 二选一：`{kind:"inline"}` 或 `{kind:"external_service",service_id,root_ref}`）
+- `GET    /api/projects/{project_id}/vfs-mounts/{mount_id}` 详情
+- `PUT    /api/projects/{project_id}/vfs-mounts/{mount_id}` 全字段覆盖；body 中的 `mount_id` 是新值，path 是旧值（同时承载改名）
+- `DELETE /api/projects/{project_id}/vfs-mounts/{mount_id}` 删除（级联删除 inline 文件）
+
+数据模型：
+
+- `ProjectVfsMount` 单一实体；`content` 异构：`Inline`（文件存储于 `inline_fs_files(owner_kind="project_vfs_mount", owner_id=mount.id, container_id="files")`）或 `ExternalService { service_id, root_ref }`。
+- 不再有 `ProjectFilespace` 资产层与 `ProjectVfsMountBinding` 挂载层；旧两层合并为单层 mount。
+- `surface_ref` 形态 `project-vfs-mount:{project_id}:{mount_id}`。
 
 约束：
 
 - `mount_id` 通过 `normalize_identifier` 归一：去空白、禁用 `/` `\` `:`，禁止保留字 `main`。
-- `mount_id` 在同一 Project 内唯一（含 Filespace 创建时自动生成的同名 binding）；冲突返回 `409 Conflict`。
-- `kind=filespace` 引用的 `filespace_id` 必须存在且 `project_id` 与 URL 一致；否则分别 `404 NotFound` / `409 Conflict`。
+- `(project_id, mount_id)` 唯一；冲突返回 `409 Conflict`（含 PUT 改名时与已有 mount 冲突）。
+- PUT 不允许在 inline / external_service 之间切换 content kind（返回 `400 BadRequest`）。
+- `external_service` 的 `service_id` / `root_ref` 必填非空。
 - `capabilities` 走 `normalize_capabilities`：剔除 `Exec`、去重；为空时回退 `read+list+search`。
-- `default_write` 仅当 capabilities 含 `Write` 时方为 true。
-- 删除 Filespace 仍级联其所有 binding；新增 DELETE binding 是更细粒度入口，与 Filespace 级联互不冲突。
+- ProjectVfsMount 不暴露 `default_write` —— Project 级 mount 永远不是 `fs.write` 的隐式默认目标，workspace `main` 才是；这避免了多个 mount 同时声明 default_write 时的歧义解析。
+- DELETE 时同步清理 `inline_fs_files(owner_kind=project_vfs_mount, owner_id=mount.id)`。
 
-Frontend 上对应 `services/projectFilespaces.ts` 的 `createProjectVfsMountBinding` / `deleteProjectVfsMountBinding`；任何变更需要同步 `useProjectStore.bumpVfsMountBindingsRevision(projectId)`，让 `VfsAccessPicker` 等订阅方触发 refetch。
+Frontend 对应 `services/projectVfsMounts.ts` 的 `listProjectVfsMounts` / `createProjectVfsMount` / `updateProjectVfsMount` / `deleteProjectVfsMount`；任何变更需要同步 `useProjectStore.bumpVfsMountsRevision(projectId)`，让 `VfsAccessPicker` 等订阅方触发 refetch。Mount CRUD 完全收敛到 Assets / VFS Mount 类目；ProjectSettings ContextTab 仅保留跳转入口与运行时 preview。
 
-*更新：2026-05-21 — 补充 Project VFS Mount Binding 路由与 mount_id 唯一性约束*
+*更新：2026-05-21 — Filespace + Mount Binding 双层模型扁平化为单层 ProjectVfsMount；路由改为 `/vfs-mounts/{mount_id}`，路径标识符使用 mount_id；ProjectVfsMount 不再持有 default_write 字段*

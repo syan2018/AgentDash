@@ -21,6 +21,7 @@ function normalizeAssetType(value: unknown): LibraryAssetType {
     || value === "mcp_server_template"
     || value === "workflow_template"
     || value === "skill_template"
+    || value === "vfs_mount_template"
     || value === "extension_template"
   ) {
     return value;
@@ -140,7 +141,7 @@ export async function fetchProjectAssetSourceStatus(
       : [],
     mcp_presets: Array.isArray(raw.mcp_presets) ? raw.mcp_presets.map(mapSourceStatusItem) : [],
     skill_assets: Array.isArray(raw.skill_assets) ? raw.skill_assets.map(mapSourceStatusItem) : [],
-    filespaces: Array.isArray(raw.filespaces) ? raw.filespaces.map(mapSourceStatusItem) : [],
+    vfs_mounts: Array.isArray(raw.vfs_mounts) ? raw.vfs_mounts.map(mapSourceStatusItem) : [],
     workflow_definitions: Array.isArray(raw.workflow_definitions)
       ? raw.workflow_definitions.map(mapSourceStatusItem)
       : [],

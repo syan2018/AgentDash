@@ -230,30 +230,19 @@ export interface AgentVfsAccessGrant {
   capabilities: Array<"read" | "write" | "list" | "search">;
 }
 
-export type ProjectVfsMountSource =
-  | { kind: "filespace"; filespace_id: string }
+export type ProjectVfsMountContent =
+  | { kind: "inline" }
   | { kind: "external_service"; service_id: string; root_ref: string };
 
-export interface ProjectVfsMountBinding {
-  id: string;
+export interface ProjectVfsMount {
   project_id: string;
   mount_id: string;
   display_name: string;
-  source: ProjectVfsMountSource;
-  capabilities: Array<"read" | "write" | "list" | "search">;
-  default_write: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProjectFilespace {
-  id: string;
-  project_id: string;
-  key: string;
-  display_name: string;
   description?: string | null;
-  surface_ref: string;
+  capabilities: Array<"read" | "write" | "list" | "search">;
   installed_source?: InstalledAssetSourceDto | null;
+  content: ProjectVfsMountContent;
+  surface_ref: string;
   created_at: string;
   updated_at: string;
 }

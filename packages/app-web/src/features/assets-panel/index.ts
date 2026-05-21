@@ -10,7 +10,7 @@ export { WorkflowCategoryPanel } from "./categories/WorkflowCategoryPanel";
 export { CanvasCategoryPanel } from "./categories/CanvasCategoryPanel";
 export { McpPresetCategoryPanel } from "./categories/McpPresetCategoryPanel";
 export { SkillCategoryPanel } from "./categories/SkillCategoryPanel";
-export { FilespaceCategoryPanel } from "./categories/FilespaceCategoryPanel";
+export { VfsMountCategoryPanel } from "./categories/VfsMountCategoryPanel";
 export { MarketplaceCategoryPanel } from "./categories/MarketplaceCategoryPanel";
 export { Notice } from "./_shared/Notice";
 export type { NoticeData, NoticeTone, NoticeProps } from "./_shared/Notice";

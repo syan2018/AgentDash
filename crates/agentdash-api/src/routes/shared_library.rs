@@ -125,10 +125,13 @@ pub async fn publish_library_asset(
     )
     .await?;
 
+    let asset_kind = parse_publish_asset_kind(&req.asset_kind)?;
+    let project_asset_id =
+        resolve_project_asset_id(&state, project_id, asset_kind, &req.project_asset_id).await?;
     let input = PublishLibraryAssetInput {
         project_id,
-        project_asset_id: req.project_asset_id,
-        asset_kind: parse_publish_asset_kind(&req.asset_kind)?,
+        project_asset_id,
+        asset_kind,
         owner_id: current_user.user_id.clone(),
         scope: parse_asset_scope(&req.scope).map_err(ApiError::BadRequest)?,
         key: req.key,
@@ -185,13 +188,39 @@ fn parse_optional_scope(raw: Option<String>) -> Result<Option<LibraryAssetScope>
         .map_err(ApiError::BadRequest)
 }
 
+async fn resolve_project_asset_id(
+    state: &Arc<AppState>,
+    project_id: Uuid,
+    asset_kind: ProjectAssetPublishKind,
+    raw: &str,
+) -> Result<Uuid, ApiError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::BadRequest("project_asset_id 不能为空".into()));
+    }
+    if matches!(asset_kind, ProjectAssetPublishKind::VfsMount) {
+        if let Ok(uuid) = Uuid::parse_str(trimmed) {
+            return Ok(uuid);
+        }
+        let mount = state
+            .repos
+            .project_vfs_mount_repo
+            .get_by_project_and_mount_id(project_id, trimmed)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
+        return Ok(mount.id);
+    }
+    Uuid::parse_str(trimmed).map_err(|_| ApiError::BadRequest("project_asset_id 非法".into()))
+}
+
 fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiError> {
     match raw.trim() {
         "project_agent" => Ok(ProjectAssetPublishKind::ProjectAgent),
         "mcp_preset" => Ok(ProjectAssetPublishKind::McpPreset),
         "workflow_bundle" => Ok(ProjectAssetPublishKind::WorkflowBundle),
         "skill_asset" => Ok(ProjectAssetPublishKind::SkillAsset),
-        "filespace" | "project_filespace" => Ok(ProjectAssetPublishKind::Filespace),
+        "vfs_mount" | "project_vfs_mount" => Ok(ProjectAssetPublishKind::VfsMount),
         other => Err(ApiError::BadRequest(format!(
             "未知 publish asset_kind: {other}"
         ))),
@@ -216,8 +245,8 @@ fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryA
         InstallLibraryAssetOutput::SkillAsset { id } => {
             InstallLibraryAssetResponse::SkillAsset { id }
         }
-        InstallLibraryAssetOutput::Filespace { id } => {
-            InstallLibraryAssetResponse::Filespace { id }
+        InstallLibraryAssetOutput::VfsMount { id, mount_id } => {
+            InstallLibraryAssetResponse::VfsMount { id, mount_id }
         }
         InstallLibraryAssetOutput::ExtensionInstallation { id } => {
             InstallLibraryAssetResponse::ExtensionInstallation { id }
@@ -244,8 +273,8 @@ fn project_source_status_response(
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        filespaces: status
-            .filespaces
+        vfs_mounts: status
+            .vfs_mounts
             .into_iter()
             .map(source_status_item_response)
             .collect(),

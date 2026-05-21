@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use crate::DomainError;
-use crate::common::{SystemPromptMode, ThinkingLevel};
+use crate::common::{MountCapability, SystemPromptMode, ThinkingLevel};
 use crate::mcp_preset::{McpRoutePolicy, McpTransportConfig};
 use crate::skill_asset::SkillAssetFileKind;
 use crate::workflow::ToolCapabilityDirective;
@@ -16,7 +16,7 @@ pub enum LibraryAssetType {
     McpServerTemplate,
     WorkflowTemplate,
     SkillTemplate,
-    FilespaceTemplate,
+    VfsMountTemplate,
     ExtensionTemplate,
 }
 
@@ -27,7 +27,7 @@ impl LibraryAssetType {
             Self::McpServerTemplate => "mcp_server_template",
             Self::WorkflowTemplate => "workflow_template",
             Self::SkillTemplate => "skill_template",
-            Self::FilespaceTemplate => "filespace_template",
+            Self::VfsMountTemplate => "vfs_mount_template",
             Self::ExtensionTemplate => "extension_template",
         }
     }
@@ -38,7 +38,7 @@ impl LibraryAssetType {
             "mcp_server_template" => Ok(Self::McpServerTemplate),
             "workflow_template" => Ok(Self::WorkflowTemplate),
             "skill_template" => Ok(Self::SkillTemplate),
-            "filespace_template" => Ok(Self::FilespaceTemplate),
+            "vfs_mount_template" => Ok(Self::VfsMountTemplate),
             "extension_template" => Ok(Self::ExtensionTemplate),
             other => Err(DomainError::InvalidConfig(format!(
                 "library_assets.asset_type 非法: {other}"
@@ -180,7 +180,7 @@ pub enum LibraryAssetPayload {
     McpServerTemplate(McpServerTemplatePayload),
     WorkflowTemplate(WorkflowTemplatePayload),
     SkillTemplate(SkillTemplatePayload),
-    FilespaceTemplate(FilespaceTemplatePayload),
+    VfsMountTemplate(VfsMountTemplatePayload),
     ExtensionTemplate(ExtensionTemplatePayload),
 }
 
@@ -202,11 +202,11 @@ impl LibraryAssetPayload {
             LibraryAssetType::SkillTemplate => serde_json::from_value(value)
                 .map(Self::SkillTemplate)
                 .map_err(|error| payload_error("skill_template", error)),
-            LibraryAssetType::FilespaceTemplate => {
-                let payload = serde_json::from_value::<FilespaceTemplatePayload>(value)
-                    .map_err(|error| payload_error("filespace_template", error))?;
+            LibraryAssetType::VfsMountTemplate => {
+                let payload = serde_json::from_value::<VfsMountTemplatePayload>(value)
+                    .map_err(|error| payload_error("vfs_mount_template", error))?;
                 payload.validate()?;
-                Ok(Self::FilespaceTemplate(payload))
+                Ok(Self::VfsMountTemplate(payload))
             }
             LibraryAssetType::ExtensionTemplate => {
                 let payload = serde_json::from_value::<ExtensionTemplatePayload>(value)
@@ -517,26 +517,91 @@ pub struct SkillTemplateFilePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FilespaceTemplatePayload {
-    pub files: Vec<FilespaceTemplateFilePayload>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VfsMountTemplatePayload {
+    Inline {
+        mount_id: String,
+        display_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(default)]
+        capabilities: Vec<MountCapability>,
+        files: Vec<InlineMountFilePayload>,
+    },
+    ExternalService {
+        mount_id: String,
+        display_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(default)]
+        capabilities: Vec<MountCapability>,
+        service_id: String,
+        root_ref: String,
+    },
 }
 
-impl FilespaceTemplatePayload {
-    pub fn validate(&self) -> Result<(), DomainError> {
-        if self.files.is_empty() {
-            return Err(DomainError::InvalidConfig(
-                "filespace_template.files 不能为空".to_string(),
-            ));
+impl VfsMountTemplatePayload {
+    pub fn mount_id(&self) -> &str {
+        match self {
+            Self::Inline { mount_id, .. } | Self::ExternalService { mount_id, .. } => {
+                mount_id.as_str()
+            }
         }
-        for (index, file) in self.files.iter().enumerate() {
-            file.validate(index)?;
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Inline { display_name, .. } | Self::ExternalService { display_name, .. } => {
+                display_name.as_str()
+            }
+        }
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        match self {
+            Self::Inline { description, .. } | Self::ExternalService { description, .. } => {
+                description.as_deref()
+            }
+        }
+    }
+
+    pub fn capabilities(&self) -> &[MountCapability] {
+        match self {
+            Self::Inline { capabilities, .. } | Self::ExternalService { capabilities, .. } => {
+                capabilities
+            }
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty("vfs_mount_template.mount_id", self.mount_id())?;
+        require_non_empty("vfs_mount_template.display_name", self.display_name())?;
+        match self {
+            Self::Inline { files, .. } => {
+                if files.is_empty() {
+                    return Err(DomainError::InvalidConfig(
+                        "vfs_mount_template.files 不能为空".to_string(),
+                    ));
+                }
+                for (index, file) in files.iter().enumerate() {
+                    file.validate(index)?;
+                }
+            }
+            Self::ExternalService {
+                service_id,
+                root_ref,
+                ..
+            } => {
+                require_non_empty("vfs_mount_template.service_id", service_id)?;
+                require_non_empty("vfs_mount_template.root_ref", root_ref)?;
+            }
         }
         Ok(())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct FilespaceTemplateFilePayload {
+pub struct InlineMountFilePayload {
     pub path: String,
     pub content_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -548,34 +613,34 @@ pub struct FilespaceTemplateFilePayload {
     pub data_base64: Option<String>,
 }
 
-impl FilespaceTemplateFilePayload {
+impl InlineMountFilePayload {
     fn validate(&self, index: usize) -> Result<(), DomainError> {
         require_non_empty(
-            &format!("filespace_template.files[{index}].path"),
+            &format!("vfs_mount_template.files[{index}].path"),
             &self.path,
         )?;
         match self.content_kind.as_str() {
             "text" => {
                 if self.content.is_none() {
                     return Err(DomainError::InvalidConfig(format!(
-                        "filespace_template.files[{index}].content 不能为空"
+                        "vfs_mount_template.files[{index}].content 不能为空"
                     )));
                 }
             }
             "binary" => {
                 if self.data_base64.is_none() {
                     return Err(DomainError::InvalidConfig(format!(
-                        "filespace_template.files[{index}].data_base64 不能为空"
+                        "vfs_mount_template.files[{index}].data_base64 不能为空"
                     )));
                 }
                 require_non_empty(
-                    &format!("filespace_template.files[{index}].mime_type"),
+                    &format!("vfs_mount_template.files[{index}].mime_type"),
                     self.mime_type.as_deref().unwrap_or_default(),
                 )?;
             }
             other => {
                 return Err(DomainError::InvalidConfig(format!(
-                    "filespace_template.files[{index}].content_kind 非法: {other}"
+                    "vfs_mount_template.files[{index}].content_kind 非法: {other}"
                 )));
             }
         }

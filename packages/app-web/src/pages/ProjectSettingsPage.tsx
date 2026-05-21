@@ -16,7 +16,6 @@ import { useProjectStore } from "../stores/projectStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
-import { MountBindingsPanel } from "../features/project/vfs-mount-bindings/MountBindingsPanel";
 import { VfsBrowser } from "../features/vfs";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
@@ -325,19 +324,12 @@ function ContextTabContent({
   return (
     <>
       <SectionCard
-        title="Project Filespace"
-        description="Project 级 VFS 已归入 Assets，Filespace 的内容与可挂载权限在资产流程中统一管理。"
-      >
-        <Link to="/dashboard/assets/filespace" className="agentdash-button-secondary inline-flex">
-          打开 Filespace 资产
-        </Link>
-      </SectionCard>
-
-      <SectionCard
         title="Project VFS Mount"
-        description="Project 级 mount binding 决定哪些 Filespace / 外部服务以哪个 mount id 进入 Project VFS；Agent VFS 能力分配从这份列表派生。"
+        description="Project 级 VFS 挂载点（Inline 文件 / 外部服务）已归入 Assets，CRUD 在资产流程中统一管理。"
       >
-        <MountBindingsPanel projectId={project.id} />
+        <Link to="/dashboard/assets/vfs-mount" className="agentdash-button-secondary inline-flex">
+          打开 VFS Mount 资产
+        </Link>
       </SectionCard>
 
       <SectionCard

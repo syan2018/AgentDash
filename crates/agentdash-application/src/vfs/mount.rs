@@ -7,9 +7,9 @@ use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
 use agentdash_domain::common::AgentVfsAccessGrant;
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
-use agentdash_domain::project_filespace::{
-    PROJECT_FILESPACE_CONTAINER_ID, ProjectVfsMountBinding, ProjectVfsMountSource,
-};
+use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
+
+pub const PROJECT_VFS_MOUNT_CONTAINER_ID: &str = "files";
 use agentdash_domain::{
     agent::ProjectAgent,
     canvas::Canvas,
@@ -57,7 +57,7 @@ impl From<agentdash_domain::session_binding::SessionOwnerType> for SessionMountT
 /// 从 Project / Story / Workspace 策略构建最终 VFS
 pub fn build_derived_vfs(
     project: &Project,
-    project_mount_bindings: &[ProjectVfsMountBinding],
+    project_vfs_mounts: &[ProjectVfsMount],
     story: Option<&Story>,
     workspace: Option<&Workspace>,
     _agent_type: Option<&str>,
@@ -69,9 +69,9 @@ pub fn build_derived_vfs(
         mounts.push(workspace_mount(workspace)?);
     }
 
-    let mut project_mounts = project_mount_bindings
+    let mut project_mounts = project_vfs_mounts
         .iter()
-        .map(build_project_vfs_mount_binding_mount)
+        .map(build_project_vfs_mount_mount)
         .collect::<Result<Vec<_>, _>>()?;
 
     if let Some(story) = story {
@@ -117,16 +117,6 @@ pub fn build_derived_vfs(
     };
     validate_vfs(&vfs)?;
     Ok(vfs)
-}
-
-pub fn build_legacy_derived_vfs(
-    project: &Project,
-    story: Option<&Story>,
-    workspace: Option<&Workspace>,
-    agent_type: Option<&str>,
-    target: SessionMountTarget,
-) -> Result<Vfs, String> {
-    build_derived_vfs(project, &[], story, workspace, agent_type, target)
 }
 
 /// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
@@ -284,46 +274,44 @@ pub fn effective_context_containers(
         .collect()
 }
 
-pub fn build_project_vfs_mount_binding_mount(
-    binding: &ProjectVfsMountBinding,
-) -> Result<Mount, String> {
-    let id = non_empty_trimmed(&binding.mount_id, "mount_id")?.to_string();
-    let display_name = if binding.display_name.trim().is_empty() {
+pub fn build_project_vfs_mount_mount(mount: &ProjectVfsMount) -> Result<Mount, String> {
+    let id = non_empty_trimmed(&mount.mount_id, "mount_id")?.to_string();
+    let display_name = if mount.display_name.trim().is_empty() {
         id.clone()
     } else {
-        binding.display_name.trim().to_string()
+        mount.display_name.trim().to_string()
     };
-    let capabilities = if binding.capabilities.is_empty() {
+    let capabilities = if mount.capabilities.is_empty() {
         vec![
             MountCapability::Read,
             MountCapability::List,
             MountCapability::Search,
         ]
     } else {
-        binding.capabilities.to_vec()
+        mount.capabilities.to_vec()
     };
 
-    let (provider, root_ref, owner_kind, owner_id, mut metadata) = match &binding.source {
-        ProjectVfsMountSource::Filespace { filespace_id } => (
+    let (provider, root_ref, owner_kind, owner_id, metadata) = match &mount.content {
+        ProjectVfsMountContent::Inline => (
             PROVIDER_INLINE_FS.to_string(),
-            format!("project-filespace://{filespace_id}"),
-            InlineFileOwnerKind::ProjectFilespace.as_str(),
-            *filespace_id,
+            format!("project-vfs-mount://{}", mount.id),
+            InlineFileOwnerKind::ProjectVfsMount.as_str(),
+            mount.id,
             serde_json::json!({
-                "container_id": PROJECT_FILESPACE_CONTAINER_ID,
+                "container_id": PROJECT_VFS_MOUNT_CONTAINER_ID,
                 CONTEXT_CONTAINER_ID_METADATA_KEY: id,
-                "project_filespace_id": filespace_id.to_string(),
+                "project_vfs_mount_id": mount.id.to_string(),
                 PROJECT_VFS_MOUNT_METADATA_KEY: true,
             }),
         ),
-        ProjectVfsMountSource::ExternalService {
+        ProjectVfsMountContent::ExternalService {
             service_id,
             root_ref,
         } => (
             non_empty_trimmed(service_id, "external_service.service_id")?.to_string(),
             non_empty_trimmed(root_ref, "external_service.root_ref")?.to_string(),
             "project",
-            binding.project_id,
+            mount.project_id,
             serde_json::json!({
                 "service_id": service_id.trim(),
                 "root_ref": root_ref.trim(),
@@ -332,18 +320,18 @@ pub fn build_project_vfs_mount_binding_mount(
             }),
         ),
     };
-    let mut mount = Mount {
+    let mut runtime_mount = Mount {
         id,
         provider,
         backend_id: String::new(),
         root_ref,
         capabilities,
-        default_write: binding.default_write,
+        default_write: false,
         display_name,
-        metadata: std::mem::take(&mut metadata),
+        metadata,
     };
-    annotate_context_mount_owner(&mut mount, owner_kind, owner_id);
-    Ok(mount)
+    annotate_context_mount_owner(&mut runtime_mount, owner_kind, owner_id);
+    Ok(runtime_mount)
 }
 
 fn effective_context_containers_with_origin(
@@ -518,7 +506,7 @@ pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
         Some(value) if value == InlineFileOwnerKind::ProjectAgent.as_str() => {
             ResolvedMountOwnerKind::ProjectAgent
         }
-        Some(value) if value == InlineFileOwnerKind::ProjectFilespace.as_str() => {
+        Some(value) if value == InlineFileOwnerKind::ProjectVfsMount.as_str() => {
             ResolvedMountOwnerKind::Project
         }
         Some("canvas") => ResolvedMountOwnerKind::Canvas,
@@ -548,7 +536,7 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
         PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
             ResolvedMountOwnerKind::Project => {
                 if is_project_vfs_mount(mount) {
-                    ResolvedMountPurpose::Filespace
+                    ResolvedMountPurpose::VfsMount
                 } else {
                     ResolvedMountPurpose::ProjectContainer
                 }
@@ -613,26 +601,21 @@ mod tests {
         }
     }
 
-    fn filespace_binding(project_id: Uuid, mount_id: &str) -> ProjectVfsMountBinding {
-        ProjectVfsMountBinding::new_filespace(
-            project_id,
-            mount_id.to_string(),
-            mount_id.to_string(),
-            Uuid::new_v4(),
-        )
+    fn inline_mount(project_id: Uuid, mount_id: &str) -> ProjectVfsMount {
+        ProjectVfsMount::new_inline(project_id, mount_id.to_string(), mount_id.to_string())
     }
 
     #[test]
     fn story_override_container_is_marked_as_story_owned() {
         let project = Project::new("proj".to_string(), "desc".to_string());
-        let bindings = vec![filespace_binding(project.id, "brief")];
+        let mounts = vec![inline_mount(project.id, "brief")];
 
         let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
         story.context.context_containers = vec![inline_container("brief", "story.md")];
 
         let vfs = build_derived_vfs(
             &project,
-            &bindings,
+            &mounts,
             Some(&story),
             None,
             None,
@@ -645,7 +628,6 @@ mod tests {
             .iter()
             .find(|mount| mount.id == "brief")
             .expect("brief mount should exist");
-        // 验证新的 owner_kind / owner_id metadata
         assert_eq!(
             mount.metadata.get(CONTEXT_OWNER_KIND_METADATA_KEY),
             Some(&serde_json::Value::String("story".to_string()))
@@ -657,7 +639,6 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some(story.id.to_string()).as_deref()
         );
-        // 验证 container_id metadata
         assert_eq!(
             mount.metadata.get("container_id").and_then(|v| v.as_str()),
             Some("brief")
@@ -667,13 +648,13 @@ mod tests {
     #[test]
     fn inherited_project_container_is_marked_as_project_owned() {
         let project = Project::new("proj".to_string(), "desc".to_string());
-        let bindings = vec![filespace_binding(project.id, "spec")];
+        let mounts = vec![inline_mount(project.id, "spec")];
 
         let story = Story::new(project.id, "story".to_string(), "desc".to_string());
 
         let vfs = build_derived_vfs(
             &project,
-            &bindings,
+            &mounts,
             Some(&story),
             None,
             None,
@@ -686,11 +667,10 @@ mod tests {
             .iter()
             .find(|mount| mount.id == "spec")
             .expect("spec mount should exist");
-        // 验证新的 owner_kind / owner_id metadata
         assert_eq!(
             mount.metadata.get(CONTEXT_OWNER_KIND_METADATA_KEY),
             Some(&serde_json::Value::String(
-                InlineFileOwnerKind::ProjectFilespace.as_str().to_string()
+                InlineFileOwnerKind::ProjectVfsMount.as_str().to_string()
             ))
         );
         assert_eq!(mount_owner_kind(mount), ResolvedMountOwnerKind::Project);

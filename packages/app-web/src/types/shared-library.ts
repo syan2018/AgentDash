@@ -3,7 +3,7 @@ export type LibraryAssetType =
   | "mcp_server_template"
   | "workflow_template"
   | "skill_template"
-  | "filespace_template"
+  | "vfs_mount_template"
   | "extension_template";
 
 export type LibraryAssetScope = "builtin" | "system" | "org" | "user";
@@ -59,7 +59,7 @@ export type PublishLibraryAssetKind =
   | "mcp_preset"
   | "workflow_bundle"
   | "skill_asset"
-  | "filespace";
+  | "vfs_mount";
 
 export interface PublishLibraryAssetRequest {
   asset_kind: PublishLibraryAssetKind;
@@ -77,7 +77,7 @@ export type InstallLibraryAssetResponse =
   | { asset_kind: "mcp_preset"; id: string }
   | { asset_kind: "workflow_template"; workflow_ids: string[]; lifecycle_id: string }
   | { asset_kind: "skill_asset"; id: string }
-  | { asset_kind: "filespace"; id: string }
+  | { asset_kind: "vfs_mount"; id: string; mount_id: string }
   | { asset_kind: "extension_installation"; id: string };
 
 export interface ProjectAssetSourceStatusItemDto {
@@ -94,7 +94,7 @@ export interface ProjectAssetSourceStatusDto {
   project_agents: ProjectAssetSourceStatusItemDto[];
   mcp_presets: ProjectAssetSourceStatusItemDto[];
   skill_assets: ProjectAssetSourceStatusItemDto[];
-  filespaces: ProjectAssetSourceStatusItemDto[];
+  vfs_mounts: ProjectAssetSourceStatusItemDto[];
   workflow_definitions: ProjectAssetSourceStatusItemDto[];
   activity_lifecycle_definitions: ProjectAssetSourceStatusItemDto[];
   extension_installations: ProjectAssetSourceStatusItemDto[];

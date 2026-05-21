@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use base64::Engine;
+
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
 use agentdash_agent_types::{
@@ -873,11 +875,30 @@ fn codex_content_items_to_parts(
                     Some(ContentPart::text(text))
                 }
             }
-            codex::DynamicToolCallOutputContentItem::InputImage { .. } => {
-                Some(ContentPart::text("[image output]"))
+            codex::DynamicToolCallOutputContentItem::InputImage { image_url } => {
+                parse_data_image_url(image_url)
+                    .or_else(|| Some(ContentPart::text("[image output: unsupported image_url]")))
             }
         })
         .collect()
+}
+
+fn parse_data_image_url(image_url: &str) -> Option<ContentPart> {
+    let value = image_url.trim();
+    let rest = value.strip_prefix("data:")?;
+    let (mime_type, data) = rest.split_once(";base64,")?;
+    let mime_type = mime_type.trim();
+    let data = data.trim();
+    if !mime_type.starts_with("image/") || data.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    Some(ContentPart::Image {
+        mime_type: mime_type.to_string(),
+        data: data.to_string(),
+    })
 }
 
 fn json_preview(value: &serde_json::Value) -> String {
@@ -888,5 +909,46 @@ fn json_preview(value: &serde_json::Value) -> String {
     } else {
         let shortened: String = rendered.chars().take(MAX_LEN).collect();
         format!("{shortened}...")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_content_items_restore_input_image_data_url() {
+        let parts = codex_content_items_to_parts(&[
+            codex::DynamicToolCallOutputContentItem::InputText {
+                text: "metadata".to_string(),
+            },
+            codex::DynamicToolCallOutputContentItem::InputImage {
+                image_url: "data:image/png;base64,AAECAw==".to_string(),
+            },
+        ]);
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].extract_text(), Some("metadata"));
+        match &parts[1] {
+            ContentPart::Image { mime_type, data } => {
+                assert_eq!(mime_type, "image/png");
+                assert_eq!(data, "AAECAw==");
+            }
+            other => panic!("expected image part, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_content_items_reject_external_image_url() {
+        let parts =
+            codex_content_items_to_parts(&[codex::DynamicToolCallOutputContentItem::InputImage {
+                image_url: "https://example.invalid/image.png".to_string(),
+            }]);
+
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0].extract_text(),
+            Some("[image output: unsupported image_url]")
+        );
     }
 }

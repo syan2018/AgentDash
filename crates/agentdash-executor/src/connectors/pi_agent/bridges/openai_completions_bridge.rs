@@ -12,6 +12,9 @@ use agentdash_agent::bridge::{
 };
 use agentdash_agent::types::{AgentMessage, ContentPart, TokenUsage, ToolCallInfo, now_millis};
 
+use super::openai_content::{
+    chat_tool_result_image_followup, chat_user_content, tool_result_output_text,
+};
 use super::sse::SseParser;
 
 pub struct OpenAiCompletionsBridge {
@@ -181,13 +184,8 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
     for msg in &request.messages {
         match msg {
             AgentMessage::User { content, .. } => {
-                let text = content
-                    .iter()
-                    .filter_map(ContentPart::extract_text)
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !text.is_empty() {
-                    messages.push(serde_json::json!({ "role": "user", "content": text }));
+                if let Some(content) = chat_user_content(content) {
+                    messages.push(serde_json::json!({ "role": "user", "content": content }));
                 }
             }
             AgentMessage::Assistant {
@@ -239,19 +237,21 @@ fn convert_messages(request: &BridgeRequest) -> Vec<serde_json::Value> {
                 tool_call_id,
                 call_id,
                 content,
+                tool_name,
                 ..
             } => {
-                let text = content
-                    .iter()
-                    .filter_map(ContentPart::extract_text)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let text = tool_result_output_text(content);
                 let id = call_id.as_deref().unwrap_or(tool_call_id);
                 messages.push(serde_json::json!({
                     "role": "tool",
                     "tool_call_id": id,
                     "content": text,
                 }));
+                if let Some(followup) =
+                    chat_tool_result_image_followup(tool_name.as_deref(), content)
+                {
+                    messages.push(followup);
+                }
             }
             AgentMessage::CompactionSummary { summary, .. } => {
                 if !summary.is_empty() {
@@ -446,4 +446,79 @@ async fn process_chunk_event(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_completions_input_keeps_user_images() {
+        let body = build_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::User {
+                    content: vec![
+                        ContentPart::text("看图"),
+                        ContentPart::Image {
+                            mime_type: "image/png".to_string(),
+                            data: "AAECAw==".to_string(),
+                        },
+                    ],
+                    timestamp: None,
+                }],
+                tools: vec![],
+            },
+        );
+
+        let content = body["messages"][0]["content"]
+            .as_array()
+            .expect("multimodal content");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/png;base64,AAECAw=="
+        );
+    }
+
+    #[test]
+    fn chat_completions_tool_result_image_adds_followup_user_message() {
+        let body = build_request_body(
+            "gpt-5.5",
+            &BridgeRequest {
+                system_prompt: None,
+                messages: vec![AgentMessage::tool_result_full(
+                    "tool-1",
+                    Some("call-1".to_string()),
+                    Some("fs_read".to_string()),
+                    vec![
+                        ContentPart::text("file: image.png"),
+                        ContentPart::Image {
+                            mime_type: "image/png".to_string(),
+                            data: "AAECAw==".to_string(),
+                        },
+                    ],
+                    None,
+                    false,
+                )],
+                tools: vec![],
+            },
+        );
+
+        let messages = body["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[0]["content"], "file: image.png");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(
+            messages[1]["content"][0]["text"],
+            "Image output from tool result: fs_read"
+        );
+        assert_eq!(
+            messages[1]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAECAw=="
+        );
+    }
 }

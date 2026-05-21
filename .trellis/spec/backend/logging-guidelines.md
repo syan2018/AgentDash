@@ -24,7 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 | `warn` | 可恢复的异常情况 | broadcast `Lagged`、配置降级 |
 | `info` | 重要生命周期事件 | 会话启动/完成、连接建立、服务启动 |
 | `debug` | 开发调试信息 | 消息内容、状态变化细节、SQL 查询 |
-| `trace` | 极细粒度追踪 | 每个 SSE/NDJSON 事件、每个 tool call |
+| `trace` | 极细粒度追踪 | 每个 NDJSON 事件、每个 tool call |
 
 ---
 
@@ -93,4 +93,3 @@ tracing::error!(
 // ❌ 错误：信息不足
 tracing::error!("error: {}", e);
 ```
-

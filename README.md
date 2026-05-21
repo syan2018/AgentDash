@@ -41,7 +41,7 @@ Pi Agent 是 AgentDash 的云端原生执行器，也是整套 Agent Runtime 的
 
 ### 3. 双后端中继架构
 
-云端后端（agentdash-server）持有全局状态和编排逻辑，通过 REST + SSE 服务前端。本机后端（agentdash-local）是部署在开发者机器上的轻量进程，通过 WebSocket 主动连接云端，注册自身能力（可用执行器、MCP Server、可访问目录）。这种设计确保：
+云端后端（agentdash-server）持有全局状态和编排逻辑，通过 REST + NDJSON 长连接服务前端。本机后端（agentdash-local）是部署在开发者机器上的轻量进程，通过 WebSocket 主动连接云端，注册自身能力（可用执行器、MCP Server、可访问目录）。这种设计确保：
 
 - 本机后端不需要公网 IP 或端口映射
 - 多台开发机可同时注册，按能力路由任务
@@ -51,7 +51,7 @@ Pi Agent 是 AgentDash 的云端原生执行器，也是整套 Agent Runtime 的
 
 Session 是 Agent 一次完整对话的运行时抽象。通过 `SessionBinding` 将 Session 与业务实体（Project / Story / Task）解耦关联。Session 支持：
 
-- 流式 SSE 推送（ACP SessionNotification）
+- NDJSON 流式推送（BackboneEnvelope / Project 事件）
 - 冷启动恢复（从仓储重建消息历史）
 - Companion Agent 协作（Session 内 spawn 子 Session）
 - Hook 注入（上下文注入 / 约束注入 / Workflow Step 绑定）
@@ -67,7 +67,7 @@ Session 是 Agent 一次完整对话的运行时抽象。通过 `SessionBinding`
 │              Frontend (React + Vite)             │
 │  Dashboard · Story · Session · Canvas · Editor  │
 └───────────────────────┬─────────────────────────┘
-                        │ REST + SSE
+                        │ REST + NDJSON
 ┌───────────────────────┴─────────────────────────┐
 │              Cloud Backend (Rust/Axum)           │
 │ API · Relay Hub · SessionHub · Hook Runtime     │
@@ -132,7 +132,7 @@ AgentDash/
 │   ├── agentdash-agent/                 #   Pi Agent 引擎（Agent Loop + LlmBridge trait + ToolRegistry）
 │   ├── agentdash-application/           #   应用服务（VFS / SessionHub / Hook Runtime / Context 构建 / 编排）
 │   ├── agentdash-executor/              #   执行器 Hub（CompositeConnector 路由 + Pi/VibeKanban 连接器）
-│   ├── agentdash-api/                   #   HTTP API 层（Axum 路由 / SSE / 认证 / 插件加载 / Bootstrap）
+│   ├── agentdash-api/                   #   HTTP API 层（Axum 路由 / NDJSON / 认证 / 插件加载 / Bootstrap）
 │   ├── agentdash-relay/                 #   WebSocket 中继协议（消息类型定义 + 序列化）
 │   ├── agentdash-local/                 #   本机后端（WS 客户端 / 工具执行 / MCP 管理 / 可选 SessionHub）
 │   ├── agentdash-infrastructure/        #   基础设施（PostgreSQL + SQLite 仓储实现 / 迁移）

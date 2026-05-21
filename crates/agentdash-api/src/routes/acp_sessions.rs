@@ -9,9 +9,7 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
     response::IntoResponse,
-    response::sse::{Event, KeepAlive, Sse},
 };
-use futures::stream::Stream;
 use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
@@ -975,90 +973,6 @@ pub async fn respond_companion_request(
         "session_id": session_id,
         "request_id": request_id,
     })))
-}
-
-/// ACP 会话流（Streaming HTTP / SSE）
-pub async fn acp_session_stream_sse(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    headers: HeaderMap,
-    Query(query): Query<NdjsonStreamQuery>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    let last_event_id = parse_resume_from_header(&headers, "last-event-id")?
-        .or(query.since_id)
-        .unwrap_or(0);
-
-    tracing::info!(
-        session_id = %session_id,
-        last_event_id = last_event_id,
-        "ACP 会话流连接建立（SSE）"
-    );
-
-    let subscription = state
-        .services
-        .session_eventing
-        .subscribe_after(&session_id, last_event_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let replayed = subscription.backlog.len();
-    tracing::info!(
-        session_id = %session_id,
-        replayed_count = replayed,
-        snapshot_seq = subscription.snapshot_seq,
-        "ACP 会话流历史补发完成（SSE）"
-    );
-
-    let stream = async_stream::stream! {
-        for event in subscription.backlog {
-            let id = event.event_seq;
-            if let Ok(json) = serde_json::to_string(&stream_event_payload(event)) {
-                yield Ok(Event::default().id(id.to_string()).data(json));
-            }
-        }
-
-        let mut seq = subscription.snapshot_seq;
-        let mut rx = subscription.rx;
-        loop {
-            match rx.recv().await {
-                Ok(event) => {
-                    if event.event_seq <= seq {
-                        continue;
-                    }
-                    let id = event.event_seq;
-                    seq = id;
-                    if let Ok(json) = serde_json::to_string(&stream_event_payload(event)) {
-                        yield Ok(Event::default().id(id.to_string()).data(json));
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        lagged = n,
-                        "ACP 会话流订阅落后，部分消息被跳过（SSE）"
-                    );
-                    continue;
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    tracing::info!(
-                        session_id = %session_id,
-                        last_seq = seq,
-                        "ACP 会话流连接关闭：广播通道关闭（SSE）"
-                    );
-                    break;
-                }
-            }
-        }
-    };
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// ACP 会话流（Fetch Streaming / NDJSON）

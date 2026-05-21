@@ -70,7 +70,7 @@ export const api = {
 /**
  * 带认证的 fetch 包装 — 自动注入 Bearer token。
  *
- * 用于不经 `api.*` 而直接调用 `fetch()` 的场景（如 services 层、EventSource 等）。
+ * 用于不经 `api.*` 而直接调用 `fetch()` 的场景（如 services 层、NDJSON 长连接等）。
  * 与原生 fetch 签名兼容，仅在 headers 中缺少 Authorization 时自动补充。
  */
 export function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

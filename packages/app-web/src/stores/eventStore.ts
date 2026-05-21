@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { StreamEvent } from '../types';
-import { connectEventStream } from '../api/eventStream';
+import {
+  connectProjectEventStream,
+  type ProjectEventStreamConnection,
+} from '../api/eventStream';
 import { registerStreamConnection } from '../api/streamRegistry';
 import { useCoordinatorStore } from './coordinatorStore';
 import { useStoryStore } from './storyStore';
@@ -16,7 +19,7 @@ interface EventState {
   lastEventId: number;
   connected: boolean;
   connectionState: EventConnectionState;
-  eventSource: EventSource | null;
+  streamConnection: ProjectEventStreamConnection | null;
   unregisterStream: (() => void) | null;
 
   connect: (projectId: string) => void;
@@ -38,14 +41,14 @@ export const useEventStore = create<EventState>((set, get) => ({
   lastEventId: 0,
   connected: false,
   connectionState: 'disconnected',
-  eventSource: null,
+  streamConnection: null,
   unregisterStream: null,
 
   connect: (projectId) => {
     const current = get();
-    if (current.eventSource && current.activeProjectId === projectId) return;
-    if (current.eventSource) {
-      current.eventSource.close();
+    if (current.streamConnection && current.activeProjectId === projectId) return;
+    if (current.streamConnection) {
+      current.streamConnection.close();
       current.unregisterStream?.();
     }
     set({
@@ -53,14 +56,15 @@ export const useEventStore = create<EventState>((set, get) => ({
       lastEventId: 0,
       connectionState: 'connecting',
       connected: false,
-      eventSource: null,
+      streamConnection: null,
       unregisterStream: null,
     });
 
-    const source = connectEventStream(
+    let streamConnection: ProjectEventStreamConnection | null = null;
+    streamConnection = connectProjectEventStream({
       projectId,
-      (event: StreamEvent) => {
-        if (get().eventSource !== source) return;
+      onEvent: (event: StreamEvent) => {
+        if (get().streamConnection !== streamConnection) return;
         switch (event.type) {
           case 'Connected':
             set({
@@ -82,30 +86,35 @@ export const useEventStore = create<EventState>((set, get) => ({
             break;
         }
       },
-      () => {
-        if (get().eventSource !== source) return;
-        set({ connected: true, connectionState: 'connected' });
+      onLifecycleChange: (lifecycle) => {
+        if (get().streamConnection !== streamConnection) return;
+        if (lifecycle === 'connected') {
+          set({ connected: true, connectionState: 'connected' });
+          return;
+        }
+        if (lifecycle === 'connecting' || lifecycle === 'reconnecting') {
+          set({
+            connected: false,
+            connectionState: lifecycle,
+          });
+        }
       },
-      () => {
-        if (get().eventSource !== source) return;
-        set((state) => ({
-          connected: false,
-          connectionState: state.lastEventId > 0 ? 'reconnecting' : 'connecting',
-        }));
+      onError: (error) => {
+        console.warn('项目事件流连接异常:', error.message);
       },
-    );
-
-    const unregister = registerStreamConnection({
-      close: () => source.close(),
     });
 
-    set({ eventSource: source, unregisterStream: unregister });
+    const unregister = registerStreamConnection({
+      close: () => streamConnection?.close(),
+    });
+
+    set({ streamConnection, unregisterStream: unregister });
   },
 
   disconnect: () => {
-    const { eventSource, unregisterStream } = get();
-    if (eventSource) {
-      eventSource.close();
+    const { streamConnection, unregisterStream } = get();
+    if (streamConnection) {
+      streamConnection.close();
     }
     unregisterStream?.();
     if (backendRefreshTimer) {
@@ -115,7 +124,7 @@ export const useEventStore = create<EventState>((set, get) => ({
     set({
       activeProjectId: null,
       lastEventId: 0,
-      eventSource: null,
+      streamConnection: null,
       unregisterStream: null,
       connected: false,
       connectionState: 'disconnected',
@@ -124,7 +133,7 @@ export const useEventStore = create<EventState>((set, get) => ({
 }));
 
 // Vite Fast Refresh 下模块可能会被替换而不触发页面完全刷新。
-// 这里确保旧的 SSE 连接会在 HMR dispose 时被关闭，避免累积连接导致 proxy ECONNRESET 噪音。
+// 这里确保旧的项目事件流连接会在 HMR dispose 时被关闭，避免累积连接。
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     useEventStore.getState().disconnect();

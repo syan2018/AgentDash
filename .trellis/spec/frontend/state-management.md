@@ -25,7 +25,7 @@
 | `workspaceStore` | Workspace CRUD + 状态管理 |
 | `storyStore` | Story/Task 数据 |
 | `coordinatorStore` | 后端连接管理 |
-| `eventStore` | SSE 事件流 |
+| `eventStore` | 项目级 NDJSON 事件流 |
 | `workflowStore` | Workflow 管理 |
 | `sessionHistoryStore` | 会话历史 |
 | `settingsStore` | 全局设置 |

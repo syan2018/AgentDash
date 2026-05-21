@@ -24,7 +24,7 @@ interface ActiveSessionsState {
   /** 切换项目时立即清空旧数据，避免短暂展示错误内容 */
   clearForProject: (projectId: string) => void;
 
-  /** SSE 实时更新单条会话状态 */
+  /** 会话事件实时更新单条会话状态 */
   updateSessionStatus: (
     sessionId: string,
     status: ProjectSessionEntry["execution_status"],

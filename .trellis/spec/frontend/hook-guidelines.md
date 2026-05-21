@@ -14,17 +14,15 @@
 
 ---
 
-## 流式 Hook 规范（SSE + Fetch NDJSON）
+## 流式 Hook 规范（Fetch NDJSON）
 
 参考 `useSessionStream` + `streamTransport` 实现。
 
 ### 必备功能
 
 - 连接状态追踪（`isConnected`）
-- transport 抽象：业务层不直接依赖 `EventSource`
+- transport 抽象：业务层不直接处理 `ReadableStream`
 - NDJSON transport 支持 `x-stream-since-id` 续传
-- SSE transport 支持 `Last-Event-ID` 续传
-- NDJSON 首次失败自动降级到 SSE
 - 消息缓冲与批量刷新
 - 清理函数 + HMR dispose 时统一关闭（防连接累积）
 
@@ -48,7 +46,7 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 - `event`：`session_id`, `event_seq`, `occurred_at_ms`, `committed_at_ms`, `session_update_type`, `turn_id?`, `entry_index?`, `tool_call_id?`, `notification`（`BackboneEnvelope`）
 - `heartbeat`：`timestamp: number`
 
-前端必须对未知 `type` 安全忽略；SSE 与 NDJSON 共享同一套 envelope 字段。
+前端必须对未知 `type` 安全忽略；业务层只消费解析后的 envelope。
 
 ---
 
@@ -86,5 +84,5 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 
 - `features/session/model/useSessionStream.ts` — 流管理
 - `features/session/model/useSessionFeed.ts` — 事件聚合
-- `features/session/model/streamTransport.ts` — NDJSON/SSE 双通道
+- `features/session/model/streamTransport.ts` — NDJSON 会话流
 - `features/session/model/platformEvent.ts` — PlatformEvent 解析

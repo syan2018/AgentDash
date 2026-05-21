@@ -58,7 +58,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [流式协议](./session/streaming-protocol.md) | SSE/NDJSON 流式推送 |
+| [流式协议](./session/streaming-protocol.md) | NDJSON 流式推送 |
 | [Pi Agent 流式合并](./session/pi-agent-streaming.md) | Pi Agent chunk 合并协议 |
 | [Session 运行态](./session/runtime-execution-state.md) | runtime registry、turn supervisor |
 | [Session Startup Pipeline](./session/session-startup-pipeline.md) | LaunchCommand → ExecutionContext |

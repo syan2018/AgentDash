@@ -111,12 +111,6 @@ Codex 原生协议没有覆盖的平台能力，通过 `PlatformEvent` 扩展。
 连接确认：`{"type":"connected","last_event_id":42}`
 心跳：`{"type":"heartbeat","timestamp":...}`
 
-### 3.3 SSE 流
-
-`GET /api/acp/sessions/{id}/stream`
-
-`Event.id` = `event_seq`，`data` 为上述 event JSON。
-
 ---
 
 ## 4. Connector 产出契约
@@ -154,4 +148,3 @@ BackboneEnvelope (NDJSON)
 ```
 
 前端直接消费 `BackboneEnvelope` / `BackboneEvent` 类型（来自 `generated/backbone-protocol.ts`），不经过 ACP SDK 解析。
-

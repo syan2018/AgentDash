@@ -145,7 +145,7 @@ AgentDashboard 采用**云端 + 本机**的双后端部署模型：
 |------|-------------|-------------|
 | 定位 | 数据中枢 + 用户入口 + 调度中继 + 云端原生 Agent | 第三方 Agent 执行 + 工具执行环境 |
 | 数据 | 持有全部业务实体（Project/Story/Task 等） | 仅持有执行缓存和工作空间物理文件 |
-| API | 面向前端 REST + SSE/NDJSON + MCP | 无外部 API，通过 WS 接受云端命令 |
+| API | 面向前端 REST + NDJSON + MCP | 无外部 API，通过 WS 接受云端命令 |
 | 部署 | 云服务器（可公网访问） | 开发者本机（NAT/防火墙内） |
 | 通信 | WebSocket 服务端 | WebSocket 客户端（主动连接云端） |
 
@@ -187,7 +187,7 @@ AgentDashboard 采用**云端 + 本机**的双后端部署模型：
                    │
 ┌──────────────────▼──────────────────────────┐
 │  连接层（Connectivity + Relay）              │
-│  - 前端连接（REST + SSE/NDJSON）             │
+│  - 前端连接（REST + NDJSON）                 │
 │  - 本机管理（WebSocket + BackendRegistry）   │
 │  - 中继路由（命令下发 + 执行输出转发）         │
 │  - MCP 对外暴露                              │

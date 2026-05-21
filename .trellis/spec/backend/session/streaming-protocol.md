@@ -1,18 +1,17 @@
-# SSE/NDJSON 流式协议
+# NDJSON 流式协议
 
-> AgentDash 服务端流式推送协议的跨层契约。
-> 从 `error-handling.md` 拆分，独立维护。
+> AgentDash 浏览器前端使用 NDJSON over HTTP 作为统一实时推送协议。
 
 ---
 
-## Scenario: SSE/NDJSON 流式契约
+## Scenario: NDJSON 流式契约
 
 ### 1. Scope / Trigger
 
 - 触发条件：
-  - 新增 API 签名：`/api/events/stream/ndjson`、`/api/acp/sessions/{id}/stream/ndjson`
-  - 变更跨层契约：服务端流式 envelope + 前端 transport（fetch ndjson -> sse fallback）
-  - 变更 resume 行为：全局流 `Last-Event-ID`，会话流 `x-stream-since-id`
+  - 新增或变更 `/api/events/stream/ndjson`
+  - 新增或变更 `/api/acp/sessions/{id}/stream/ndjson`
+  - 变更服务端流式 envelope、前端 transport、resume 行为或 HMR 连接生命周期
 - 影响层：
   - Backend route/stream implementation
   - Frontend stream hook/transport
@@ -20,33 +19,24 @@
 
 ### 2. Signatures
 
-- 全局 SSE：
-  - `GET /api/events/stream`
-  - Header: `Last-Event-ID: <i64>`（可选）
-- 全局 NDJSON：
+- Project 级事件流：
   - `GET /api/events/stream/ndjson`
-  - Header: `Last-Event-ID: <i64>`（可选）
-- 会话 SSE：
-  - `GET /api/acp/sessions/{id}/stream`
-  - Header: `Last-Event-ID: <u64>`（可选）
-  - `data`: `PersistedSessionEvent` JSON（`notification` 字段为 `BackboneEnvelope`）
-- 会话 NDJSON：
+  - Query: `project_id=<uuid>`
+  - Header: `x-stream-since-id: <i64>`（可选）
+- 会话事件流：
   - `GET /api/acp/sessions/{id}/stream/ndjson`
   - Header: `x-stream-since-id: <u64>`（主方案）
-  - Query: `?since_id=<u64>`（兼容）
+  - Query: `?since_id=<u64>`（用于直接调试）
 
 ### 3. Contracts
 
-- `GET /api/events/stream`（SSE）：
-  - 每条 `StateChanged` 事件都必须包含 `Event.id(...)`（值来源 `state_changes.id`）
-  - 首次连接与重连后，都发送 `Connected { last_event_id }`
-  - 心跳：`Heartbeat { timestamp }`
 - `GET /api/events/stream/ndjson`：
   - `Content-Type: application/x-ndjson; charset=utf-8`
   - 行内容为 `StreamEvent` JSON，每行一个对象
-- `GET /api/acp/sessions/{id}/stream`（SSE）：
-  - `Event.id = event_seq`
-  - `data` 必须输出 `PersistedSessionEvent` JSON
+  - `Connected { last_event_id }` 表示连接建立及当前 project-scoped `state_changes.id` 游标
+  - `StateChanged(StateChange)` 使用 `state_changes.id` 推进游标
+  - `BackendRuntimeChanged { backend_id }` 只触发后端 runtime 状态刷新，不推进 `state_changes` 游标
+  - `Heartbeat { timestamp }` 只用于保活
 - `GET /api/acp/sessions/{id}/stream/ndjson`：
   - 连接确认行：`{"type":"connected","last_event_id":<u64>}`
   - 消息行：`{"type":"event","session_id":<string>,"event_seq":<u64>,"occurred_at_ms":<i64>,"committed_at_ms":<i64>,"session_update_type":<string>,"turn_id":<string|null>,"entry_index":<u32|null>,"tool_call_id":<string|null>,"notification":<BackboneEnvelope>}`
@@ -64,8 +54,8 @@
 
 | 条件 | 服务端行为 | 客户端行为 |
 |------|------------|------------|
-| `Last-Event-ID` 非法或缺失 | 按 `0` 处理，不返回 4xx | 正常建立连接 |
-| `x-stream-since-id` 非法 | 按 `0` 处理 | 使用全量历史 + 实时 |
+| `x-stream-since-id` 缺失 | 从当前最新游标建立连接 | 正常建立连接 |
+| `x-stream-since-id` 非法 | 返回 400，暴露调用方错误 | 标记重连中并重试，开发期查看错误日志 |
 | `get_changes_since` 失败 | 记录 `tracing::error!`，连接保持 | 标记重连中并重试 |
 | broadcast `Lagged(n)` | 记录 `tracing::warn!` | 不致命，等待后续消息 |
 | broadcast `Closed` | 记录关闭日志并结束流 | 触发重连策略 |
@@ -73,8 +63,39 @@
 
 ### 5. 关键要求
 
-- 全局 SSE 必须用 `state_changes.id` 作为 `Event.id`，支持 `Last-Event-ID` 重连补发
-- 前端通过 transport 抽象（`FetchNdjsonTransport` + `EventSourceTransport` fallback）接入全局 stream registry
-- NDJSON 首次连接失败自动降级到 SSE
-- HMR dispose 时注册表中的流连接必须全部 close
-- `x-stream-since-id` 与 `since_id` 同时存在时 header 优先
+- 浏览器前端实时流统一通过 `fetch + ReadableStream` 消费 NDJSON。
+- 长连接必须接入前端 stream registry，保证 HMR dispose 和页面切换时关闭连接。
+- Project 流和 Session 流都通过 `x-stream-since-id` 恢复缺失事件。
+- 鉴权走 `authenticatedFetch` 的 Bearer header 注入，保持与普通 API 一致。
+
+### 6. Good / Base / Bad Cases
+
+- Good：前端用 `authenticatedFetch()` 请求 `/api/events/stream/ndjson`，携带 `Accept: application/x-ndjson` 与 `x-stream-since-id`，逐行解析 `StreamEvent` 后只把业务事件交给 store。
+- Base：刷新页面后以 `x-stream-since-id: 0` 建立会话流，后端先回放历史，再发送 `connected` 行和后续实时事件。
+- Bad：浏览器前端用 query token 建立长连接，或在项目流、会话流之间保留多套 fallback transport，导致鉴权、关闭和重连语义分叉。
+
+### 7. Tests Required
+
+- Frontend typecheck：确认 project/session transport 类型不依赖浏览器 SSE API。
+- Frontend tests：确认 session UI 聚合逻辑仍能消费 NDJSON 事件。
+- Backend check/test：确认删除 SSE handler 后 router、imports、NDJSON handlers 仍编译并通过 API 单元测试。
+- Reference scan：确认浏览器主代码中没有 `new EventSource`、`EventSourceTransport`、`VITE_ACP_STREAM_TRANSPORT`、`/events/since`。
+
+### 8. Wrong vs Correct
+
+#### Wrong
+
+```typescript
+const source = new EventSource(`/api/events/stream?project_id=${projectId}&token=${token}`);
+```
+
+#### Correct
+
+```typescript
+const response = await authenticatedFetch(`/api/events/stream/ndjson?project_id=${projectId}`, {
+  headers: {
+    Accept: "application/x-ndjson",
+    "x-stream-since-id": String(lastEventId),
+  },
+});
+```

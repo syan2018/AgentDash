@@ -478,17 +478,11 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(acp_sessions::respond_companion_request),
         )
         .route(
-            "/acp/sessions/{id}/stream",
-            get(acp_sessions::acp_session_stream_sse),
-        )
-        .route(
             "/acp/sessions/{id}/stream/ndjson",
             get(acp_sessions::acp_session_stream_ndjson),
         )
         // Events
-        .route("/events/stream", get(stream::event_stream))
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
-        .route("/events/since/{since_id}", get(stream::get_events_since))
         // Mount Provider 发现（返回可由用户配置的外部服务 provider 列表）
         .route(
             "/mount-providers",

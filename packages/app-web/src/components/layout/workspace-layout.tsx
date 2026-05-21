@@ -1061,11 +1061,10 @@ function BackendPanel({
         </div>
       )}
 
-      {/* 事件流状态：作为 backend 面板里的元信息行（无独立 card） */}
+      {/* 项目同步状态：作为 backend 面板里的元信息行（无独立 card） */}
       <div className="mt-2 flex items-center gap-2 border-t border-border/60 px-2 pt-2">
         <span className={`inline-block h-1.5 w-1.5 rounded-full ${streamDotClass}`} />
-        <span className="text-[11px] text-muted-foreground">事件流 · {streamLabel}</span>
-        <span className="ml-auto text-[10px] text-muted-foreground/70">SSE</span>
+        <span className="text-[11px] text-muted-foreground">项目同步 · {streamLabel}</span>
       </div>
     </div>
   );

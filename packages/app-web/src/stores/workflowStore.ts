@@ -54,24 +54,25 @@ export interface LifecycleEditorDraft {
 export interface LifecycleDraftSeed {
   key?: string;
   name?: string;
-  initial_step_key?: string;
   initial_activity_key?: string;
 }
 
 // ─── Unified Lifecycle Editor ────────────────────────────
 //
 // 单 editor state：前端向用户呈现"一个 editor 编辑一个 workflow 资产"，内部
-// 按后端双实体 schema 保存（先 upsert 每 step 对应的 workflow，再 upsert lifecycle）。
+// 按后端双实体 schema 保存（先 upsert 每个 Agent activity 对应的 workflow，再
+// upsert activity lifecycle）。
 //
-// 每个 step 关联的 workflow contract 放在 `workflowDraftsByStepKey[stepKey]`，
-// key 为 step.key（不是 workflow_key，避免新建 step 时 key 还未定型的情况）。
+// 每个 activity 关联的 workflow contract 放在
+// `workflowDraftsByActivityKey[activity.key]`，索引以 activity.key 为准
+// （不是 workflow_key，避免新建 activity 时 workflow_key 还未定型的情况）。
 
 export interface LifecycleEditorState {
   draft: LifecycleEditorDraft | null;
-  /** 每个 step 对应的 workflow contract draft，按 step.key 索引 */
-  workflowDraftsByStepKey: Record<string, WorkflowEditorDraft>;
-  /** 当前选中 step key（inspector 面板渲染用） */
-  selectedStepKey: string | null;
+  /** 每个 activity 对应的 workflow contract draft，按 activity.key 索引 */
+  workflowDraftsByActivityKey: Record<string, WorkflowEditorDraft>;
+  /** 当前选中 activity key（inspector 面板渲染用） */
+  selectedActivityKey: string | null;
   /** 原 lifecycle definition id；null 表示新建态 */
   originalId: string | null;
   validation: WorkflowValidationResult | null;
@@ -85,8 +86,8 @@ export interface LifecycleEditorState {
 function emptyLifecycleEditor(): LifecycleEditorState {
   return {
     draft: null,
-    workflowDraftsByStepKey: {},
-    selectedStepKey: null,
+    workflowDraftsByActivityKey: {},
+    selectedActivityKey: null,
     originalId: null,
     validation: null,
     isSaving: false,
@@ -110,7 +111,7 @@ function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft 
 }
 
 export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSeed = {}): LifecycleEditorDraft {
-  const initialActivityKey = seed.initial_activity_key ?? seed.initial_step_key ?? "";
+  const initialActivityKey = seed.initial_activity_key ?? "";
   return {
     id: null,
     project_id: projectId,
@@ -152,21 +153,21 @@ function lifecycleToDraft(definition: ActivityLifecycleDefinition): LifecycleEdi
 }
 
 /**
- * 为 step 创建一个对应的空 workflow contract draft。
- * 约定：step 新建时自动派生 workflow_key = <lifecycle_key>.<step_key>。
+ * 为 activity 创建一个对应的空 workflow contract draft。
+ * 约定：activity 新建时自动派生 workflow_key = <lifecycle_key>.<activity_key>。
  */
-export function createStepWorkflowDraft(
+export function createActivityWorkflowDraft(
   projectId: string,
   lifecycleKey: string,
-  stepKey: string,
+  activityKey: string,
   targetKinds: WorkflowTargetKind[] = ["story"],
 ): WorkflowEditorDraft {
-  const workflowKey = lifecycleKey && stepKey ? `${lifecycleKey}.${stepKey}` : stepKey || "";
+  const workflowKey = lifecycleKey && activityKey ? `${lifecycleKey}.${activityKey}` : activityKey || "";
   return {
     id: null,
     project_id: projectId,
     key: workflowKey,
-    name: stepKey || "Untitled",
+    name: activityKey || "Untitled",
     description: "",
     target_kinds: [...targetKinds],
     contract: {
@@ -251,13 +252,13 @@ interface WorkflowState {
   // ── Unified Lifecycle Editor actions ──
   openLifecycleForm: (projectId: string, seed?: LifecycleDraftSeed) => void;
   openLifecycleById: (id: string) => Promise<void>;
-  selectLifecycleStep: (stepKey: string | null) => void;
+  selectLifecycleActivity: (activityKey: string | null) => void;
   updateLifecycleEditorDraft: (patch: Partial<LifecycleEditorDraft>) => void;
-  updateLifecycleEditorStep: (stepKey: string, patch: Partial<ActivityDefinition>) => void;
-  updateStepWorkflowDraft: (stepKey: string, patch: Partial<WorkflowEditorDraft>) => void;
-  addLifecycleEditorStep: (opts?: { stepKey?: string; initialFromWorkflow?: WorkflowDefinition }) => string | null;
-  removeLifecycleEditorStep: (stepKey: string) => void;
-  cloneWorkflowIntoStep: (stepKey: string, source: WorkflowDefinition) => void;
+  updateLifecycleEditorActivity: (activityKey: string, patch: Partial<ActivityDefinition>) => void;
+  updateActivityWorkflowDraft: (activityKey: string, patch: Partial<WorkflowEditorDraft>) => void;
+  addLifecycleEditorActivity: (opts?: { activityKey?: string; initialFromWorkflow?: WorkflowDefinition }) => string | null;
+  removeLifecycleEditorActivity: (activityKey: string) => void;
+  cloneWorkflowIntoActivity: (activityKey: string, source: WorkflowDefinition) => void;
   validateLifecycleBundle: () => Promise<WorkflowValidationResult | null>;
   saveLifecycleBundle: () => Promise<ActivityLifecycleDefinition | null>;
   closeLifecycleEditor: () => void;
@@ -373,15 +374,15 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   openLifecycleForm: (projectId, seed = {}) => {
     const draft = createEmptyLifecycleDraft(projectId, seed);
-    const stepKey = draft.activities[0]?.key ?? "";
+    const activityKey = draft.activities[0]?.key ?? "";
     const lifecycleKey = draft.key || "__new__";
     const drafts: Record<string, WorkflowEditorDraft> = {};
-    if (stepKey) {
-      drafts[stepKey] = createStepWorkflowDraft(projectId, lifecycleKey, stepKey, draft.target_kinds);
+    if (activityKey) {
+      drafts[activityKey] = createActivityWorkflowDraft(projectId, lifecycleKey, activityKey, draft.target_kinds);
       // 同时把 agent activity 的 workflow_key 派生出来
       draft.activities[0].executor = {
         kind: "agent",
-        workflow_key: drafts[stepKey].key,
+        workflow_key: drafts[activityKey].key,
         session_policy: "spawn_child",
       };
     }
@@ -389,8 +390,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       lifecycleEditor: {
         ...emptyLifecycleEditor(),
         draft,
-        workflowDraftsByStepKey: drafts,
-        selectedStepKey: stepKey || null,
+        workflowDraftsByActivityKey: drafts,
+        selectedActivityKey: activityKey || null,
       },
     });
   },
@@ -407,7 +408,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       for (const activity of draft.activities) {
         const wfKey = activity.executor.kind === "agent" ? activity.executor.workflow_key.trim() : "";
         if (!wfKey) {
-          drafts[activity.key] = createStepWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
+          drafts[activity.key] = createActivityWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
           continue;
         }
         const wf = wfByKey.get(wfKey);
@@ -415,7 +416,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           drafts[activity.key] = definitionToDraft(wf);
         } else {
           // workflow_key 引用了未加载到的 workflow，落回空 draft（保留 key）
-          const fallback = createStepWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
+          const fallback = createActivityWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
           fallback.key = wfKey;
           drafts[activity.key] = fallback;
         }
@@ -427,8 +428,8 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditor: {
           ...emptyLifecycleEditor(),
           draft,
-          workflowDraftsByStepKey: drafts,
-          selectedStepKey: draft.activities[0]?.key ?? null,
+          workflowDraftsByActivityKey: drafts,
+          selectedActivityKey: draft.activities[0]?.key ?? null,
           originalId: definition.id,
         },
       }));
@@ -437,16 +438,16 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     }
   },
 
-  selectLifecycleStep: (stepKey) => {
-    set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, selectedStepKey: stepKey } }));
+  selectLifecycleActivity: (activityKey) => {
+    set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, selectedActivityKey: activityKey } }));
   },
 
   updateLifecycleEditorDraft: (patch) => {
     set((s) => {
       if (!s.lifecycleEditor.draft) return s;
       const nextDraft = { ...s.lifecycleEditor.draft, ...patch };
-      // target_kinds 改变时同步到所有 step workflow drafts，保证 contract/lifecycle 一致
-      let nextDrafts = s.lifecycleEditor.workflowDraftsByStepKey;
+      // target_kinds 改变时同步到所有 activity workflow drafts，保证 contract/lifecycle 一致
+      let nextDrafts = s.lifecycleEditor.workflowDraftsByActivityKey;
       if (patch.target_kinds) {
         nextDrafts = { ...nextDrafts };
         for (const k of Object.keys(nextDrafts)) {
@@ -457,53 +458,53 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditor: {
           ...s.lifecycleEditor,
           draft: nextDraft,
-          workflowDraftsByStepKey: nextDrafts,
+          workflowDraftsByActivityKey: nextDrafts,
           dirty: true,
         },
       };
     });
   },
 
-  updateLifecycleEditorStep: (stepKey, patch) => {
+  updateLifecycleEditorActivity: (activityKey, patch) => {
     set((s) => {
       const draft = s.lifecycleEditor.draft;
       if (!draft) return s;
 
-      // 重命名 activity：连带 transitions 引用、entry_activity_key、selectedStepKey、workflowDraftsByStepKey 索引
+      // 重命名 activity：连带 transitions 引用、entry_activity_key、selectedActivityKey、workflowDraftsByActivityKey 索引
       const nextActivities = draft.activities.map((activity) =>
-        activity.key === stepKey ? { ...activity, ...patch } : activity,
+        activity.key === activityKey ? { ...activity, ...patch } : activity,
       );
       let nextTransitions = draft.transitions;
       let nextEntry = draft.entry_activity_key;
-      let nextSelected = s.lifecycleEditor.selectedStepKey;
-      let nextDrafts = s.lifecycleEditor.workflowDraftsByStepKey;
+      let nextSelected = s.lifecycleEditor.selectedActivityKey;
+      let nextDrafts = s.lifecycleEditor.workflowDraftsByActivityKey;
 
-      if (patch.key && patch.key !== stepKey) {
+      if (patch.key && patch.key !== activityKey) {
         const newKey = patch.key;
         nextTransitions = draft.transitions.map((transition) => ({
           ...transition,
-          from: transition.from === stepKey ? newKey : transition.from,
-          to: transition.to === stepKey ? newKey : transition.to,
-          condition: rewriteTransitionConditionActivity(transition.condition, stepKey, newKey),
+          from: transition.from === activityKey ? newKey : transition.from,
+          to: transition.to === activityKey ? newKey : transition.to,
+          condition: rewriteTransitionConditionActivity(transition.condition, activityKey, newKey),
           artifact_bindings: transition.artifact_bindings.map((binding) => ({
             ...binding,
-            from_activity: binding.from_activity === stepKey ? newKey : binding.from_activity,
+            from_activity: binding.from_activity === activityKey ? newKey : binding.from_activity,
           })),
         }));
-        if (nextEntry === stepKey) nextEntry = newKey;
-        if (nextSelected === stepKey) nextSelected = newKey;
-        if (nextDrafts[stepKey]) {
+        if (nextEntry === activityKey) nextEntry = newKey;
+        if (nextSelected === activityKey) nextSelected = newKey;
+        if (nextDrafts[activityKey]) {
           const moved = { ...nextDrafts };
-          moved[newKey] = moved[stepKey];
-          delete moved[stepKey];
+          moved[newKey] = moved[activityKey];
+          delete moved[activityKey];
           nextDrafts = moved;
         }
       }
 
       // 同步 workflow draft 的 ports（port 以 activity 为真相）
-      const activityAfter = nextActivities.find((activity) => activity.key === (patch.key ?? stepKey));
+      const activityAfter = nextActivities.find((activity) => activity.key === (patch.key ?? activityKey));
       if (activityAfter) {
-        const wfDraftKey = patch.key ?? stepKey;
+        const wfDraftKey = patch.key ?? activityKey;
         const wfDraft = nextDrafts[wfDraftKey];
         if (wfDraft && (patch.output_ports || patch.input_ports)) {
           nextDrafts = {
@@ -529,17 +530,17 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             transitions: nextTransitions,
             entry_activity_key: nextEntry,
           },
-          workflowDraftsByStepKey: nextDrafts,
-          selectedStepKey: nextSelected,
+          workflowDraftsByActivityKey: nextDrafts,
+          selectedActivityKey: nextSelected,
           dirty: true,
         },
       };
     });
   },
 
-  updateStepWorkflowDraft: (stepKey, patch) => {
+  updateActivityWorkflowDraft: (activityKey, patch) => {
     set((s) => {
-      const current = s.lifecycleEditor.workflowDraftsByStepKey[stepKey];
+      const current = s.lifecycleEditor.workflowDraftsByActivityKey[activityKey];
       if (!current) return s;
       const next = { ...current, ...patch };
       // 若 contract.output_ports / input_ports 变化，同步到 activity
@@ -551,7 +552,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           nextDraft = {
             ...nextDraft,
             activities: nextDraft.activities.map((activity) =>
-              activity.key === stepKey
+              activity.key === activityKey
                 ? {
                     ...activity,
                     output_ports: newOut ?? activity.output_ports,
@@ -566,9 +567,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditor: {
           ...s.lifecycleEditor,
           draft: nextDraft,
-          workflowDraftsByStepKey: {
-            ...s.lifecycleEditor.workflowDraftsByStepKey,
-            [stepKey]: next,
+          workflowDraftsByActivityKey: {
+            ...s.lifecycleEditor.workflowDraftsByActivityKey,
+            [activityKey]: next,
           },
           dirty: true,
         },
@@ -577,31 +578,31 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     return;
   },
 
-  addLifecycleEditorStep: (opts = {}) => {
+  addLifecycleEditorActivity: (opts = {}) => {
     const state = get();
     const draft = state.lifecycleEditor.draft;
     if (!draft) return null;
     const usedKeys = new Set(draft.activities.map((activity) => activity.key));
-    const baseKey = opts.stepKey?.trim() || `activity_${draft.activities.length + 1}`;
+    const baseKey = opts.activityKey?.trim() || `activity_${draft.activities.length + 1}`;
     let candidate = baseKey;
     let i = 2;
     while (usedKeys.has(candidate)) {
       candidate = `${baseKey}_${i}`;
       i += 1;
     }
-    const stepKey = candidate;
+    const activityKey = candidate;
     const lifecycleKey = draft.key || "__new__";
     const wfDraft = opts.initialFromWorkflow
       ? {
           ...definitionToDraft(opts.initialFromWorkflow),
           id: null,
-          key: `${lifecycleKey}.${stepKey}`,
+          key: `${lifecycleKey}.${activityKey}`,
           name: opts.initialFromWorkflow.name,
           project_id: draft.project_id,
         }
-      : createStepWorkflowDraft(draft.project_id, lifecycleKey, stepKey, draft.target_kinds);
-    const newStep: ActivityDefinition = {
-      key: stepKey,
+      : createActivityWorkflowDraft(draft.project_id, lifecycleKey, activityKey, draft.target_kinds);
+    const newActivity: ActivityDefinition = {
+      key: activityKey,
       description: "",
       executor: {
         kind: "agent",
@@ -619,56 +620,56 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         ...s.lifecycleEditor,
         draft: {
           ...draft,
-          activities: [...draft.activities, newStep],
-          entry_activity_key: draft.entry_activity_key || stepKey,
+          activities: [...draft.activities, newActivity],
+          entry_activity_key: draft.entry_activity_key || activityKey,
         },
-        workflowDraftsByStepKey: {
-          ...s.lifecycleEditor.workflowDraftsByStepKey,
-          [stepKey]: wfDraft,
+        workflowDraftsByActivityKey: {
+          ...s.lifecycleEditor.workflowDraftsByActivityKey,
+          [activityKey]: wfDraft,
         },
-        selectedStepKey: stepKey,
+        selectedActivityKey: activityKey,
         dirty: true,
       },
     }));
-    return stepKey;
+    return activityKey;
   },
 
-  removeLifecycleEditorStep: (stepKey) => {
+  removeLifecycleEditorActivity: (activityKey) => {
     set((s) => {
       const draft = s.lifecycleEditor.draft;
       if (!draft) return s;
-      const nextSteps = draft.activities.filter((activity) => activity.key !== stepKey);
+      const nextActivities = draft.activities.filter((activity) => activity.key !== activityKey);
       const nextEdges = draft.transitions.filter(
-        (transition) => transition.from !== stepKey && transition.to !== stepKey,
+        (transition) => transition.from !== activityKey && transition.to !== activityKey,
       );
-      const nextDrafts = { ...s.lifecycleEditor.workflowDraftsByStepKey };
-      delete nextDrafts[stepKey];
+      const nextDrafts = { ...s.lifecycleEditor.workflowDraftsByActivityKey };
+      delete nextDrafts[activityKey];
       const nextEntry =
-        draft.entry_activity_key === stepKey ? nextSteps[0]?.key ?? "" : draft.entry_activity_key;
+        draft.entry_activity_key === activityKey ? nextActivities[0]?.key ?? "" : draft.entry_activity_key;
       const nextSelected =
-        s.lifecycleEditor.selectedStepKey === stepKey
-          ? nextSteps[0]?.key ?? null
-          : s.lifecycleEditor.selectedStepKey;
+        s.lifecycleEditor.selectedActivityKey === activityKey
+          ? nextActivities[0]?.key ?? null
+          : s.lifecycleEditor.selectedActivityKey;
       return {
         lifecycleEditor: {
           ...s.lifecycleEditor,
           draft: {
             ...draft,
-            activities: nextSteps,
+            activities: nextActivities,
             transitions: nextEdges,
             entry_activity_key: nextEntry,
           },
-          workflowDraftsByStepKey: nextDrafts,
-          selectedStepKey: nextSelected,
+          workflowDraftsByActivityKey: nextDrafts,
+          selectedActivityKey: nextSelected,
           dirty: true,
         },
       };
     });
   },
 
-  cloneWorkflowIntoStep: (stepKey, source) => {
+  cloneWorkflowIntoActivity: (activityKey, source) => {
     set((s) => {
-      const current = s.lifecycleEditor.workflowDraftsByStepKey[stepKey];
+      const current = s.lifecycleEditor.workflowDraftsByActivityKey[activityKey];
       if (!current || !s.lifecycleEditor.draft) return s;
       // Clone：保留新 activity 自己的 key/name/project_id，复制 contract
       const next: WorkflowEditorDraft = {
@@ -680,7 +681,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const nextDraft = {
         ...s.lifecycleEditor.draft,
         activities: s.lifecycleEditor.draft.activities.map((activity) =>
-          activity.key === stepKey
+          activity.key === activityKey
             ? {
                 ...activity,
                 output_ports: [...next.contract.output_ports],
@@ -697,9 +698,9 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditor: {
           ...s.lifecycleEditor,
           draft: nextDraft,
-          workflowDraftsByStepKey: {
-            ...s.lifecycleEditor.workflowDraftsByStepKey,
-            [stepKey]: next,
+          workflowDraftsByActivityKey: {
+            ...s.lifecycleEditor.workflowDraftsByActivityKey,
+            [activityKey]: next,
           },
           dirty: true,
         },
@@ -733,12 +734,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   saveLifecycleBundle: async () => {
     const state = get();
-    const { draft, workflowDraftsByStepKey, originalId } = state.lifecycleEditor;
+    const { draft, workflowDraftsByActivityKey, originalId } = state.lifecycleEditor;
     if (!draft) return null;
     set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, isSaving: true, error: null } }));
     try {
       // 1) 先 upsert 每个 Agent activity 关联的 workflow contract。
-      const updatedDrafts: Record<string, WorkflowEditorDraft> = { ...workflowDraftsByStepKey };
+      const updatedDrafts: Record<string, WorkflowEditorDraft> = { ...workflowDraftsByActivityKey };
       const activitiesAfterSave: ActivityDefinition[] = [];
       for (const activity of draft.activities) {
         if (activity.executor.kind !== "agent") {
@@ -799,7 +800,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         lifecycleEditor: {
           ...s.lifecycleEditor,
           draft: lifecycleToDraft(nextLifecycle),
-          workflowDraftsByStepKey: updatedDrafts,
+          workflowDraftsByActivityKey: updatedDrafts,
           originalId: nextLifecycle.id,
           validation: null,
           isSaving: false,

@@ -49,7 +49,7 @@ describe("LifecycleEditorShell store integration", () => {
 
   it("openLifecycleForm 后默认 1 step → 应当 Form 模式", () => {
     const store = useWorkflowStore.getState();
-    store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
+    store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
     if (!draft) throw new Error("draft should be initialized");
     expect(draft.activities).toHaveLength(1);
@@ -59,10 +59,10 @@ describe("LifecycleEditorShell store integration", () => {
     ).toBe("form");
   });
 
-  it("addLifecycleEditorStep 后 steps=2 → 应当 DAG 模式（即使没 sticky）", () => {
+  it("addLifecycleEditorActivity 后 steps=2 → 应当 DAG 模式（即使没 sticky）", () => {
     const store = useWorkflowStore.getState();
-    store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
-    store.addLifecycleEditorStep();
+    store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
+    store.addLifecycleEditorActivity();
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
     if (!draft) throw new Error("draft should be initialized");
     expect(draft.activities).toHaveLength(2);
@@ -73,11 +73,11 @@ describe("LifecycleEditorShell store integration", () => {
 
   it("2 steps 删回 1 step + stickyDag=true → 画布保留（DAG）", () => {
     const store = useWorkflowStore.getState();
-    store.openLifecycleForm("p1", { key: "k", initial_step_key: "start" });
-    const second = store.addLifecycleEditorStep();
+    store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
+    const second = store.addLifecycleEditorActivity();
     if (!second) throw new Error("second activity should be created");
     // 假设 sticky 已被 shell 设为 true
-    store.removeLifecycleEditorStep(second);
+    store.removeLifecycleEditorActivity(second);
     const { draft } = useWorkflowStore.getState().lifecycleEditor;
     if (!draft) throw new Error("draft should be initialized");
     expect(draft.activities).toHaveLength(1);

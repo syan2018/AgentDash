@@ -80,8 +80,8 @@ export function LifecycleEditorShell({
   onSaved,
 }: LifecycleEditorShellProps) {
   const draft = useWorkflowStore((s) => s.lifecycleEditor.draft);
-  const workflowDraftsByStepKey = useWorkflowStore((s) => s.lifecycleEditor.workflowDraftsByStepKey);
-  const selectedStepKey = useWorkflowStore((s) => s.lifecycleEditor.selectedStepKey);
+  const workflowDraftsByActivityKey = useWorkflowStore((s) => s.lifecycleEditor.workflowDraftsByActivityKey);
+  const selectedActivityKey = useWorkflowStore((s) => s.lifecycleEditor.selectedActivityKey);
   const originalId = useWorkflowStore((s) => s.lifecycleEditor.originalId);
   const validation = useWorkflowStore((s) => s.lifecycleEditor.validation);
   const isSaving = useWorkflowStore((s) => s.lifecycleEditor.isSaving);
@@ -97,13 +97,13 @@ export function LifecycleEditorShell({
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
   const openLifecycleForm = useWorkflowStore((s) => s.openLifecycleForm);
   const openLifecycleById = useWorkflowStore((s) => s.openLifecycleById);
-  const selectLifecycleStep = useWorkflowStore((s) => s.selectLifecycleStep);
+  const selectLifecycleActivity = useWorkflowStore((s) => s.selectLifecycleActivity);
   const updateLifecycleEditorDraft = useWorkflowStore((s) => s.updateLifecycleEditorDraft);
-  const updateLifecycleEditorStep = useWorkflowStore((s) => s.updateLifecycleEditorStep);
-  const updateStepWorkflowDraft = useWorkflowStore((s) => s.updateStepWorkflowDraft);
-  const addLifecycleEditorStep = useWorkflowStore((s) => s.addLifecycleEditorStep);
-  const removeLifecycleEditorStep = useWorkflowStore((s) => s.removeLifecycleEditorStep);
-  const cloneWorkflowIntoStep = useWorkflowStore((s) => s.cloneWorkflowIntoStep);
+  const updateLifecycleEditorActivity = useWorkflowStore((s) => s.updateLifecycleEditorActivity);
+  const updateActivityWorkflowDraft = useWorkflowStore((s) => s.updateActivityWorkflowDraft);
+  const addLifecycleEditorActivity = useWorkflowStore((s) => s.addLifecycleEditorActivity);
+  const removeLifecycleEditorActivity = useWorkflowStore((s) => s.removeLifecycleEditorActivity);
+  const cloneWorkflowIntoActivity = useWorkflowStore((s) => s.cloneWorkflowIntoActivity);
   const validateLifecycleBundle = useWorkflowStore((s) => s.validateLifecycleBundle);
   const saveLifecycleBundle = useWorkflowStore((s) => s.saveLifecycleBundle);
   const closeLifecycleEditor = useWorkflowStore((s) => s.closeLifecycleEditor);
@@ -270,43 +270,43 @@ export function LifecycleEditorShell({
           isNew={isNew}
           availableWorkflows={availableWorkflows}
           workflowDraft={
-            draft.activities[0] ? workflowDraftsByStepKey[draft.activities[0].key] ?? null : null
+            draft.activities[0] ? workflowDraftsByActivityKey[draft.activities[0].key] ?? null : null
           }
           hookPresets={hookPresets}
           validation={validation}
           onLifecycleChange={updateLifecycleEditorDraft}
           onStepChange={(patch) => {
             const firstKey = draft.activities[0]?.key;
-            if (firstKey) updateLifecycleEditorStep(firstKey, patch);
+            if (firstKey) updateLifecycleEditorActivity(firstKey, patch);
           }}
           onWorkflowChange={(patch) => {
             const firstKey = draft.activities[0]?.key;
-            if (firstKey) updateStepWorkflowDraft(firstKey, patch);
+            if (firstKey) updateActivityWorkflowDraft(firstKey, patch);
           }}
           onCloneFromWorkflow={(wf) => {
             const firstKey = draft.activities[0]?.key;
-            if (firstKey) cloneWorkflowIntoStep(firstKey, wf);
+            if (firstKey) cloneWorkflowIntoActivity(firstKey, wf);
           }}
           onAddStep={() => {
             upgradeToDag();
-            addLifecycleEditorStep();
+            addLifecycleEditorActivity();
           }}
         />
       ) : (
         <DagLayout
           draft={draft}
           availableWorkflows={availableWorkflows}
-          workflowDraftsByStepKey={workflowDraftsByStepKey}
-          selectedStepKey={selectedStepKey}
+          workflowDraftsByActivityKey={workflowDraftsByActivityKey}
+          selectedActivityKey={selectedActivityKey}
           hookPresets={hookPresets}
           validation={validation}
           onLifecycleChange={updateLifecycleEditorDraft}
-          onSelectStep={selectLifecycleStep}
-          onStepChange={(stepKey, patch) => updateLifecycleEditorStep(stepKey, patch)}
-          onWorkflowChange={(stepKey, patch) => updateStepWorkflowDraft(stepKey, patch)}
-          onCloneFromWorkflow={(stepKey, wf) => cloneWorkflowIntoStep(stepKey, wf)}
-          onAddStep={() => addLifecycleEditorStep()}
-          onRemoveStep={(stepKey) => removeLifecycleEditorStep(stepKey)}
+          onSelectActivity={selectLifecycleActivity}
+          onActivityChange={(activityKey, patch) => updateLifecycleEditorActivity(activityKey, patch)}
+          onWorkflowChange={(activityKey, patch) => updateActivityWorkflowDraft(activityKey, patch)}
+          onCloneFromWorkflow={(activityKey, wf) => cloneWorkflowIntoActivity(activityKey, wf)}
+          onAddActivity={() => addLifecycleEditorActivity()}
+          onRemoveActivity={(activityKey) => removeLifecycleEditorActivity(activityKey)}
         />
       )}
     </div>
@@ -320,7 +320,7 @@ function FormLayout(props: {
   isNew: boolean;
   availableWorkflows: WorkflowDefinition[];
   workflowDraft:
-    | ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByStepKey"][string]
+    | ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByActivityKey"][string]
     | null;
   hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
   validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
@@ -414,47 +414,47 @@ function FormLayout(props: {
 function DagLayout(props: {
   draft: NonNullable<ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["draft"]>;
   availableWorkflows: WorkflowDefinition[];
-  workflowDraftsByStepKey: ReturnType<
+  workflowDraftsByActivityKey: ReturnType<
     typeof useWorkflowStore.getState
-  >["lifecycleEditor"]["workflowDraftsByStepKey"];
-  selectedStepKey: string | null;
+  >["lifecycleEditor"]["workflowDraftsByActivityKey"];
+  selectedActivityKey: string | null;
   hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
   validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
   onLifecycleChange: (patch: Partial<typeof props.draft>) => void;
-  onSelectStep: (stepKey: string | null) => void;
-  onStepChange: (stepKey: string, patch: Partial<ActivityDefinition>) => void;
+  onSelectActivity: (activityKey: string | null) => void;
+  onActivityChange: (activityKey: string, patch: Partial<ActivityDefinition>) => void;
   onWorkflowChange: (
-    stepKey: string,
+    activityKey: string,
     patch: Partial<
       NonNullable<
-        ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByStepKey"][string]
+        ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByActivityKey"][string]
       >
     >,
   ) => void;
-  onCloneFromWorkflow: (stepKey: string, wf: WorkflowDefinition) => void;
-  onAddStep: () => void;
-  onRemoveStep: (stepKey: string) => void;
+  onCloneFromWorkflow: (activityKey: string, wf: WorkflowDefinition) => void;
+  onAddActivity: () => void;
+  onRemoveActivity: (activityKey: string) => void;
 }) {
   const {
     draft,
     availableWorkflows,
-    workflowDraftsByStepKey,
-    selectedStepKey,
+    workflowDraftsByActivityKey,
+    selectedActivityKey,
     hookPresets,
     validation,
     onLifecycleChange,
-    onSelectStep,
-    onStepChange,
+    onSelectActivity,
+    onActivityChange,
     onWorkflowChange,
     onCloneFromWorkflow,
-    onAddStep,
-    onRemoveStep,
+    onAddActivity,
+    onRemoveActivity,
   } = props;
 
-  const selectedStep =
-    selectedStepKey ? draft.activities.find((s) => s.key === selectedStepKey) ?? null : null;
+  const selectedActivity =
+    selectedActivityKey ? draft.activities.find((s) => s.key === selectedActivityKey) ?? null : null;
   const selectedWorkflowDraft =
-    selectedStepKey ? workflowDraftsByStepKey[selectedStepKey] ?? null : null;
+    selectedActivityKey ? workflowDraftsByActivityKey[selectedActivityKey] ?? null : null;
 
   const handleStepsChange = useCallback(
     (nextSteps: ActivityDefinition[]) => {
@@ -480,11 +480,11 @@ function DagLayout(props: {
           transitions={draft.transitions}
           entryActivityKey={draft.entry_activity_key}
           workflowDefs={availableWorkflows}
-          selectedStepKey={selectedStepKey}
-          onSelectStep={onSelectStep}
-          onStepsChange={handleStepsChange}
+          selectedActivityKey={selectedActivityKey}
+          onSelectActivity={onSelectActivity}
+          onActivitiesChange={handleStepsChange}
           onEdgesChange={handleEdgesChange}
-          onAddStep={onAddStep}
+          onAddActivity={onAddActivity}
           bottomLeftOverlay={
             validation && validation.issues.length > 0 ? (
               <div className="max-h-40 w-96 overflow-y-auto rounded-[8px] border border-border bg-background/95 shadow-sm backdrop-blur-sm">
@@ -497,33 +497,33 @@ function DagLayout(props: {
 
       {/* 右：Inspector / Lifecycle 配置 */}
       <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
-        {selectedStep && selectedWorkflowDraft ? (
+        {selectedActivity && selectedWorkflowDraft ? (
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1">
               <StepInspector
-                step={selectedStep}
+                step={selectedActivity}
                 workflowDraft={selectedWorkflowDraft}
-                isEntry={selectedStep.key === draft.entry_activity_key}
+                isEntry={selectedActivity.key === draft.entry_activity_key}
                 availableWorkflows={availableWorkflows}
                 hookPresets={hookPresets}
                 targetKinds={draft.target_kinds}
                 projectId={draft.project_id}
-                onStepChange={(patch) => onStepChange(selectedStep.key, patch)}
-                onWorkflowChange={(patch) => onWorkflowChange(selectedStep.key, patch)}
-                onSetEntry={() => onLifecycleChange({ entry_activity_key: selectedStep.key })}
-                onRemove={() => onRemoveStep(selectedStep.key)}
-                onClose={() => onSelectStep(null)}
-                onCloneFromWorkflow={(wf) => onCloneFromWorkflow(selectedStep.key, wf)}
+                onStepChange={(patch) => onActivityChange(selectedActivity.key, patch)}
+                onWorkflowChange={(patch) => onWorkflowChange(selectedActivity.key, patch)}
+                onSetEntry={() => onLifecycleChange({ entry_activity_key: selectedActivity.key })}
+                onRemove={() => onRemoveActivity(selectedActivity.key)}
+                onClose={() => onSelectActivity(null)}
+                onCloneFromWorkflow={(wf) => onCloneFromWorkflow(selectedActivity.key, wf)}
               />
             </div>
             <TransitionPanel
-              activityKey={selectedStep.key}
+              activityKey={selectedActivity.key}
               activityKeys={draft.activities.map((activity) => activity.key)}
-              transitions={draft.transitions.filter((transition) => transition.from === selectedStep.key)}
+              transitions={draft.transitions.filter((transition) => transition.from === selectedActivity.key)}
               onChange={(updated) => {
                 onLifecycleChange({
                   transitions: draft.transitions.map((transition) =>
-                    transition.from === selectedStep.key && transition.to === updated.to
+                    transition.from === selectedActivity.key && transition.to === updated.to
                       ? updated
                       : transition,
                   ),

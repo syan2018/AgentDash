@@ -290,7 +290,10 @@ pub struct LifecycleRun {
     /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_node_keys: Vec<String>,
-    #[serde(default)]
+    /// 旧 step 模型的运行态 — 仍由后端内部 step_activation/vfs/hooks 流程读写，
+    /// 但**不再上线**：API 序列化 `LifecycleRun` 时跳过该字段，让 Activity
+    /// 模型成为唯一对外契约。后续 domain-level cleanup 再彻底移除。
+    #[serde(default, skip_serializing)]
     pub step_states: Vec<LifecycleStepState>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
@@ -1030,6 +1033,35 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(run.step_states[0].gate_collision_count, 1);
+    }
+
+    #[test]
+    fn lifecycle_run_does_not_serialize_step_states_to_wire() {
+        let steps = [step("start", "wf_start")];
+        let mut run = LifecycleRun::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            "sess-skip-step-states",
+            &steps,
+            "start",
+            &[],
+        )
+        .expect("run");
+
+        run.activate_step("start").expect("activate step");
+        run.bind_step_session("start", "sess-step-running")
+            .expect("bind session");
+
+        assert!(
+            !run.step_states.is_empty(),
+            "internal step_states must remain populated for backend consumers"
+        );
+
+        let value = serde_json::to_value(&run).expect("serialize lifecycle run");
+        assert!(
+            value.get("step_states").is_none(),
+            "step_states must be skipped on the wire to avoid leaking the legacy fallback model: {value}"
+        );
     }
 
     #[test]

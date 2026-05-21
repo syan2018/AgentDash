@@ -12,14 +12,6 @@ export type WorkflowRunStatus =
   | "failed"
   | "cancelled";
 
-export type WorkflowStepExecutionStatus =
-  | "pending"
-  | "ready"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped";
-
 export interface WorkflowContextBinding {
   locator: string;
   reason: string;
@@ -466,17 +458,6 @@ export interface ActivityLifecycleRunState {
   inputs: ActivityInputArtifact[];
 }
 
-export interface WorkflowStepState {
-  step_key: string;
-  status: WorkflowStepExecutionStatus;
-  session_id?: string | null;
-  started_at?: string | null;
-  completed_at?: string | null;
-  summary?: string | null;
-  context_snapshot?: Record<string, unknown> | null;
-  gate_collision_count?: number;
-}
-
 export type LifecycleExecutionEventKind =
   | "step_activated"
   | "step_completed"
@@ -500,7 +481,6 @@ export interface WorkflowRun {
   status: WorkflowRunStatus;
   /** 当前所有可执行（Ready/Running）的 node key 集合 */
   active_node_keys?: string[];
-  step_states: WorkflowStepState[];
   execution_log: LifecycleExecutionEntry[];
   activity_state?: ActivityLifecycleRunState | null;
   created_at: string;

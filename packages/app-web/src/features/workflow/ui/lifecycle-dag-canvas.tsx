@@ -3,7 +3,7 @@
  *
  * 受控组件：
  * - 输入：activities / transitions / entry_activity_key + 可选 workflowDefs（供节点 label 渲染）
- * - 输出：onStepsChange / onEdgesChange（整体替换），以及 onSelectStep
+ * - 输出：onActivitiesChange / onEdgesChange（整体替换），以及 onSelectActivity
  * - 不读写 store；所有副作用（位置持久化、布局计算）仍由画布自身管理
  */
 
@@ -166,9 +166,9 @@ export interface LifecycleDagCanvasProps {
   transitions: ActivityTransition[];
   entryActivityKey: string;
   workflowDefs: WorkflowDefinition[];
-  selectedStepKey: string | null;
-  onSelectStep: (stepKey: string | null) => void;
-  onStepsChange: (next: ActivityDefinition[]) => void;
+  selectedActivityKey: string | null;
+  onSelectActivity: (activityKey: string | null) => void;
+  onActivitiesChange: (next: ActivityDefinition[]) => void;
   onEdgesChange: (next: ActivityTransition[]) => void;
   /** 顶部工具栏插槽（校验/保存按钮等）。 */
   toolbarExtras?: React.ReactNode;
@@ -176,8 +176,8 @@ export interface LifecycleDagCanvasProps {
   statusExtras?: React.ReactNode;
   /** 底部叠加面板（例如 ValidationPanel）。 */
   bottomLeftOverlay?: React.ReactNode;
-  /** 新增 step 触发：由外层完成 key 生成和 Form→DAG 升级语义。 */
-  onAddStep?: () => void;
+  /** 新增 activity 触发：由外层完成 key 生成和 layout 升级语义。 */
+  onAddActivity?: () => void;
 }
 
 // ─── 内部 inner（需要在 ReactFlowProvider 内） ───
@@ -188,14 +188,14 @@ function LifecycleDagCanvasInner({
   transitions,
   entryActivityKey,
   workflowDefs,
-  selectedStepKey,
-  onSelectStep,
-  onStepsChange,
+  selectedActivityKey,
+  onSelectActivity,
+  onActivitiesChange,
   onEdgesChange,
   toolbarExtras,
   statusExtras,
   bottomLeftOverlay,
-  onAddStep,
+  onAddActivity,
 }: LifecycleDagCanvasProps) {
   const reactFlowInstance = useReactFlow();
   const positions = useRef(loadPositions(storageKey));
@@ -283,8 +283,8 @@ function LifecycleDagCanvasInner({
         newEdges = newEdges.filter(
           (e) => !deletedNodeKeys.has(e.from) && !deletedNodeKeys.has(e.to),
         );
-        if (selectedStepKey != null && deletedNodeKeys.has(selectedStepKey)) {
-          onSelectStep(null);
+        if (selectedActivityKey != null && deletedNodeKeys.has(selectedActivityKey)) {
+          onSelectActivity(null);
         }
       }
 
@@ -293,10 +293,10 @@ function LifecycleDagCanvasInner({
         newEdges = newEdges.filter((e) => !deletedEdgeIds.has(lifecycleEdgeId(e)));
       }
 
-      if (newSteps !== activities) onStepsChange(newSteps);
+      if (newSteps !== activities) onActivitiesChange(newSteps);
       if (newEdges !== transitions) onEdgesChange(newEdges);
     },
-    [activities, transitions, selectedStepKey, onSelectStep, onStepsChange, onEdgesChange],
+    [activities, transitions, selectedActivityKey, onSelectActivity, onActivitiesChange, onEdgesChange],
   );
 
   // ── Connect：新边 ──
@@ -366,7 +366,7 @@ function LifecycleDagCanvasInner({
           edges: nextEdges,
           workflows: workflowDefs,
         });
-        if (synced.changed || newSteps !== activities) onStepsChange(synced.steps);
+        if (synced.changed || newSteps !== activities) onActivitiesChange(synced.steps);
         onEdgesChange(nextEdges);
       } else {
         const existsFlow = transitions.some(
@@ -386,19 +386,19 @@ function LifecycleDagCanvasInner({
         onEdgesChange([...transitions, newEdge]);
       }
     },
-    [transitions, activities, workflowDefs, onStepsChange, onEdgesChange],
+    [transitions, activities, workflowDefs, onActivitiesChange, onEdgesChange],
   );
 
   const handleNodeClick: NodeMouseHandler = useCallback(
     (_e, node) => {
-      onSelectStep(node.id);
+      onSelectActivity(node.id);
     },
-    [onSelectStep],
+    [onSelectActivity],
   );
 
   const handlePaneClick = useCallback(() => {
-    onSelectStep(null);
-  }, [onSelectStep]);
+    onSelectActivity(null);
+  }, [onSelectActivity]);
 
   const handleAutoLayout = useCallback(() => {
     const freshNodes = stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current);
@@ -444,8 +444,8 @@ function LifecycleDagCanvasInner({
   }, [nodes, handleAutoLayout]);
 
   const selectedIds = useMemo(
-    () => (selectedStepKey ? new Set([selectedStepKey]) : new Set<string>()),
-    [selectedStepKey],
+    () => (selectedActivityKey ? new Set([selectedActivityKey]) : new Set<string>()),
+    [selectedActivityKey],
   );
   const nodesForRender = useMemo(
     () =>
@@ -483,10 +483,10 @@ function LifecycleDagCanvasInner({
 
       <Panel position="top-left">
         <div className="flex items-center gap-2 rounded-[8px] border border-border bg-background/95 px-3 py-2 shadow-sm backdrop-blur-sm">
-          {onAddStep && (
+          {onAddActivity && (
             <button
               type="button"
-              onClick={onAddStep}
+              onClick={onAddActivity}
               className="agentdash-button-secondary px-2 py-1 text-xs"
             >
               + 添加节点

@@ -1,8 +1,8 @@
 import type {
+  ActivityAttemptStatus,
   LifecycleExecutionEventKind,
   WorkflowDefinitionSource,
   WorkflowRunStatus,
-  WorkflowStepExecutionStatus,
   WorkflowTargetKind,
 } from "../../types";
 
@@ -27,13 +27,14 @@ export const RUN_STATUS_LABEL: Record<WorkflowRunStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export const STEP_STATUS_LABEL: Record<WorkflowStepExecutionStatus, string> = {
+export const ATTEMPT_STATUS_LABEL: Record<ActivityAttemptStatus, string> = {
   pending: "Pending",
   ready: "Ready",
+  claiming: "Claiming",
   running: "Running",
   completed: "Completed",
   failed: "Failed",
-  skipped: "Skipped",
+  cancelled: "Cancelled",
 };
 
 export const DEFINITION_SOURCE_LABEL: Record<WorkflowDefinitionSource, string> = {

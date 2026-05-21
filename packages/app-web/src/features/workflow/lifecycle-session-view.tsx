@@ -4,28 +4,31 @@ import type {
   ActivityDefinition,
   ActivityLifecycleDefinition,
   WorkflowRun,
-  WorkflowStepState,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { SessionList } from "../session";
-import { STEP_STATUS_LABEL } from "./shared-labels";
+import { ATTEMPT_STATUS_LABEL } from "./shared-labels";
 import { submitHumanDecision } from "../../services/workflow";
 
 const EMPTY_RUNS: WorkflowRun[] = [];
 const POLL_INTERVAL = 5000;
 
-// ─── LifecycleNodeCard ───────────────────────────────────
+// ─── 状态映射 ───────────────────────────────────────────
 
-function nodeStatusBadgeClass(status: WorkflowStepState["status"]) {
+function attemptStatusBadgeClass(status: ActivityAttemptState["status"]) {
   switch (status) {
     case "completed":
       return "border-success/40 bg-success/10 text-success";
     case "running":
       return "border-primary/30 bg-primary/10 text-primary animate-pulse";
+    case "claiming":
+      return "border-primary/20 bg-primary/5 text-primary";
     case "ready":
       return "border-warning/40 bg-warning/10 text-warning";
     case "failed":
       return "border-destructive/30 bg-destructive/10 text-destructive";
+    case "cancelled":
+      return "border-border bg-secondary/30 text-muted-foreground";
     default:
       return "border-border bg-secondary/30 text-muted-foreground";
   }
@@ -36,86 +39,6 @@ function nodeTypeLabel(def: ActivityDefinition | null): string {
   if (def.executor.kind === "agent") return `Agent · ${def.executor.session_policy}`;
   if (def.executor.kind === "human") return "Human Approval";
   return `Function · ${def.executor.type}`;
-}
-
-interface LifecycleNodeCardProps {
-  stepState: WorkflowStepState;
-  stepDef: ActivityDefinition | null;
-  isActive: boolean;
-}
-
-function LifecycleNodeCard({ stepState, stepDef, isActive }: LifecycleNodeCardProps) {
-  const [expanded, setExpanded] = useState(isActive);
-
-  // isActive 变为 true 时自动展开；用户之后仍可手动收起。合法的 prop→state 同步。
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (isActive) setExpanded(true);
-  }, [isActive]);
-
-  const hasSession = Boolean(stepState.session_id);
-  const heading = stepDef?.description?.trim()
-    ? `${stepState.step_key} · ${stepDef.description}`
-    : stepState.step_key;
-
-  return (
-    <div
-      className={`rounded-[12px] border transition-colors ${
-        isActive
-          ? "border-primary/30 bg-primary/[0.02]"
-          : "border-border bg-background"
-      }`}
-    >
-      {/* Header */}
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-foreground">{heading}</span>
-            <span className={`rounded-[8px] border px-2 py-0.5 text-[11px] ${nodeStatusBadgeClass(stepState.status)}`}>
-              {STEP_STATUS_LABEL[stepState.status] ?? stepState.status}
-            </span>
-            {stepDef && (
-              <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
-                {nodeTypeLabel(stepDef)}
-              </span>
-            )}
-          </div>
-          {stepState.summary && (
-            <p className="mt-1 truncate text-xs text-muted-foreground">{stepState.summary}</p>
-          )}
-        </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {expanded ? "▲" : "▼"}
-        </span>
-      </button>
-
-      {/* Expanded: session stream */}
-      {expanded && (
-        <div className="border-t border-border">
-          {hasSession ? (
-            <div className="h-[28rem] overflow-y-auto">
-              <SessionList
-                sessionId={stepState.session_id!}
-                autoScroll={isActive}
-              />
-            </div>
-          ) : (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-              {stepState.status === "pending"
-                ? "等待前驱 node 完成..."
-                : stepState.status === "ready"
-                  ? "准备创建 Agent Session..."
-                  : "暂无 Session"}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function ActivityAttemptCard({
@@ -166,8 +89,8 @@ function ActivityAttemptCard({
             <span className="text-sm font-medium text-foreground">
               {attempt.activity_key} #{attempt.attempt}
             </span>
-            <span className={`rounded-[8px] border px-2 py-0.5 text-[11px] ${nodeStatusBadgeClass(activityAttemptToStepStatus(attempt.status))}`}>
-              {attempt.status}
+            <span className={`rounded-[8px] border px-2 py-0.5 text-[11px] ${attemptStatusBadgeClass(attempt.status)}`}>
+              {ATTEMPT_STATUS_LABEL[attempt.status] ?? attempt.status}
             </span>
             {activityDef && (
               <span className="rounded-[8px] border border-border bg-secondary/40 px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -332,24 +255,18 @@ function formatArtifactValue(value: unknown): string {
   }
 }
 
-function activityAttemptToStepStatus(status: ActivityAttemptState["status"]): WorkflowStepState["status"] {
-  if (status === "claiming") return "running";
-  if (status === "cancelled") return "skipped";
-  return status;
-}
-
 // ─── LifecycleProgressBar ────────────────────────────────
 
-function LifecycleProgressBar({ stepStates }: { stepStates: WorkflowStepState[] }) {
-  const total = stepStates.length;
-  const completed = stepStates.filter((s) => s.status === "completed").length;
-  const running = stepStates.filter((s) => s.status === "running").length;
+function LifecycleProgressBar({ attempts }: { attempts: ActivityAttemptState[] }) {
+  const total = attempts.length;
+  const completed = attempts.filter((a) => a.status === "completed").length;
+  const running = attempts.filter((a) => a.status === "running" || a.status === "claiming").length;
   const pct = total > 0 ? Math.round(((completed + running * 0.5) / total) * 100) : 0;
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{completed}/{total} nodes completed</span>
+        <span>{completed}/{total} attempts completed</span>
         <span>{pct}%</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-[8px] bg-secondary/40">
@@ -427,18 +344,24 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
     );
   }
 
+  const activityState = activeRun.activity_state;
+
+  if (!activityState) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
+        <div className="text-center">
+          <p className="text-sm font-medium text-foreground">Lifecycle Run 初始化中</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            正在等待 Activity 状态机就绪…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      {activeRun.activity_state ? (
-        <LifecycleProgressBar
-          stepStates={activeRun.activity_state.attempts.map((attempt) => ({
-            step_key: `${attempt.activity_key}#${attempt.attempt}`,
-            status: activityAttemptToStepStatus(attempt.status),
-          }))}
-        />
-      ) : (
-        <LifecycleProgressBar stepStates={activeRun.step_states} />
-      )}
+      <LifecycleProgressBar attempts={activityState.attempts} />
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-[8px] border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs text-primary">
@@ -452,28 +375,19 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
       </div>
 
       <div className="space-y-3">
-        {activeRun.activity_state
-          ? activeRun.activity_state.attempts.map((attempt) => (
-              <ActivityAttemptCard
-                key={`${attempt.activity_key}#${attempt.attempt}`}
-                run={activeRun}
-                attempt={attempt}
-                activityDef={findActivityDef(attempt.activity_key)}
-                isActive={activeNodeKeys.has(attempt.activity_key)}
-                onDecisionSubmitted={() => void fetchRunsBySession(sessionId)}
-              />
-            ))
-          : activeRun.step_states.map((stepState) => (
-              <LifecycleNodeCard
-                key={stepState.step_key}
-                stepState={stepState}
-                stepDef={findActivityDef(stepState.step_key)}
-                isActive={activeNodeKeys.has(stepState.step_key)}
-              />
-            ))}
+        {activityState.attempts.map((attempt) => (
+          <ActivityAttemptCard
+            key={`${attempt.activity_key}#${attempt.attempt}`}
+            run={activeRun}
+            attempt={attempt}
+            activityDef={findActivityDef(attempt.activity_key)}
+            isActive={activeNodeKeys.has(attempt.activity_key)}
+            onDecisionSubmitted={() => void fetchRunsBySession(sessionId)}
+          />
+        ))}
       </div>
 
-      {activeRun.activity_state && <ActivityArtifactPanel run={activeRun} />}
+      <ActivityArtifactPanel run={activeRun} />
     </div>
   );
 }

@@ -16,7 +16,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { ActivityDefinition } from "../../../types";
-import { createStepWorkflowDraft } from "../../../stores/workflowStore";
+import { createActivityWorkflowDraft } from "../../../stores/workflowStore";
 import { StepInspector } from "./step-inspector";
 
 function makeStep(
@@ -38,7 +38,7 @@ function makeStep(
 describe("StepInspector tabs", () => {
   it("默认渲染 Overview tab（非 Form 模式）", () => {
     const step = makeStep();
-    const draft = createStepWorkflowDraft("p1", "demo", "implement", ["story"]);
+    const draft = createActivityWorkflowDraft("p1", "demo", "implement", ["story"]);
     const markup = renderToStaticMarkup(
       <StepInspector
         step={step}
@@ -63,7 +63,7 @@ describe("StepInspector tabs", () => {
 
   it("hideTabs 模式（Form 模式）渲染完整 contract 而非 Overview", () => {
     const step = makeStep();
-    const draft = createStepWorkflowDraft("p1", "demo", "implement", ["story"]);
+    const draft = createActivityWorkflowDraft("p1", "demo", "implement", ["story"]);
     const markup = renderToStaticMarkup(
       <StepInspector
         step={step}
@@ -92,7 +92,7 @@ describe("StepInspector tabs", () => {
     const step = makeStep({
       executor: { kind: "agent", workflow_key: "demo.review", session_policy: "continue_root" },
     });
-    const draft = createStepWorkflowDraft("p1", "demo", "review", ["story"]);
+    const draft = createActivityWorkflowDraft("p1", "demo", "review", ["story"]);
     // 注入一条 hook rule，验证 phase_node 也能展示 contract 内容
     draft.contract.hook_rules = [
       {
@@ -129,7 +129,7 @@ describe("StepInspector tabs", () => {
     const step = makeStep({
       executor: { kind: "agent", workflow_key: "demo.review", session_policy: "continue_root" },
     });
-    const draft = createStepWorkflowDraft("p1", "demo", "review", ["story"]);
+    const draft = createActivityWorkflowDraft("p1", "demo", "review", ["story"]);
     const markup = renderToStaticMarkup(
       <StepInspector
         step={step}

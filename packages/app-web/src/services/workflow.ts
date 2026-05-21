@@ -32,8 +32,6 @@ import type {
   WorkflowInjectionSpec,
   WorkflowRun,
   WorkflowRunStatus,
-  WorkflowStepExecutionStatus,
-  WorkflowStepState,
   WorkflowTargetKind,
   WorkflowValidationResult,
 } from "../types";
@@ -43,9 +41,6 @@ import type {
 const WORKFLOW_TARGET_KINDS = new Set<string>(["project", "story"]);
 const WORKFLOW_RUN_STATUSES = new Set<string>([
   "draft", "ready", "running", "blocked", "completed", "failed", "cancelled",
-]);
-const WORKFLOW_STEP_STATUSES = new Set<string>([
-  "pending", "ready", "running", "completed", "failed", "skipped",
 ]);
 const WORKFLOW_DEF_SOURCES = new Set<string>(["builtin_seed", "user_authored", "cloned"]);
 const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
@@ -390,22 +385,6 @@ function mapActivityTransition(raw: unknown): ActivityTransition {
   };
 }
 
-function mapWorkflowStepState(raw: Record<string, unknown>): WorkflowStepState {
-  return {
-    step_key: requireStringField(raw, "step_key"),
-    status: normalizeEnum<WorkflowStepExecutionStatus>(raw.status, WORKFLOW_STEP_STATUSES, "workflow step status"),
-    session_id: optString(raw.session_id),
-    started_at: optString(raw.started_at),
-    completed_at: optString(raw.completed_at),
-    summary: optString(raw.summary),
-    context_snapshot: asRecord(raw.context_snapshot),
-    gate_collision_count:
-      typeof raw.gate_collision_count === "number" && Number.isFinite(raw.gate_collision_count)
-        ? raw.gate_collision_count
-        : undefined,
-  };
-}
-
 function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExecutionEntry {
   return {
     timestamp: requireStringField(raw, "timestamp"),
@@ -512,7 +491,6 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     session_id: requireStringField(raw, "session_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     active_node_keys: asStringArray(raw.active_node_keys),
-    step_states: asRecordArray(raw.step_states).map(mapWorkflowStepState),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     activity_state: mapActivityLifecycleRunState(raw.activity_state),
     created_at: requireStringField(raw, "created_at"),

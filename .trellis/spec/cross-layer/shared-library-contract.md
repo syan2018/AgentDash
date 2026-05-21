@@ -250,9 +250,11 @@ Project Assets 发布行为：
   - `skill_assets`
   - `workflow_definitions`
   - `activity_lifecycle_definitions`
+  - `filespaces`
 - 每个 status item 必须包含 `installed_source` 与 `source_status`。
 - 前端项目资源卡片展示来源时，若资源存在 `installed_source`，必须优先显示 Marketplace/Shared Library 来源，而不是只显示 `user`。
 - `extension_template` 安装后必须返回 `asset_kind = extension_installation`，并在 `source-status.extension_installations` 中出现。
+- Project Filespace 列表 / 详情 DTO 必须透出 `installed_source: Option<InstalledAssetSource>`，与 Skill / MCP / Workflow 同款序列化形态；前端 `AssetPickerDrawer` 必须按 `installed_source` 过滤掉 Marketplace 安装来的 Filespace，避免被重复发布。
 
 ### 4. Validation & Error Matrix
 

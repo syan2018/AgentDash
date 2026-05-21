@@ -69,7 +69,7 @@ export function AssetsTabView() {
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-foreground">项目资产</h2>
             <p className="text-xs text-muted-foreground">
-              {currentProject.name} · 统一管理 Workflow / MCP / Skill / Canvas 等项目级可复用资产
+              {currentProject.name} · 统一管理 Workflow / MCP / Skill / Filespace / Canvas 等项目级可复用资产
             </p>
           </div>
         </div>

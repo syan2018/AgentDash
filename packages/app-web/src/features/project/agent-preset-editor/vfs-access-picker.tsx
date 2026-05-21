@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentVfsAccessGrant, ProjectVfsMountBinding } from "../../../types";
 import { listProjectVfsMountBindings } from "../../../services/projectFilespaces";
+import { useProjectStore } from "../../../stores/projectStore";
 
 const VFS_CAPS = [
   { key: "read", label: "Read" },
@@ -23,29 +24,26 @@ export function VfsAccessPicker({
   const [items, setItems] = useState<ProjectVfsMountBinding[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const bindingsRevision = useProjectStore(
+    (s) => (projectId ? s.vfsMountBindingsRevision[projectId] ?? 0 : 0),
+  );
+
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      setItems(await listProjectVfsMountBindings(projectId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId]);
 
   useEffect(() => {
-    if (!projectId) {
-      return;
-    }
-    let cancelled = false;
-    listProjectVfsMountBindings(projectId)
-      .then((next) => {
-        if (!cancelled) {
-          setItems(next);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+    void load();
+  }, [load, bindingsRevision]);
 
   const grantByMountId = useMemo(() => {
     const map = new Map<string, AgentVfsAccessGrant>();

@@ -338,3 +338,27 @@ ContentPart::Image {
 *更新：2026-05-20 — 补充 inline_fs text/binary 内容契约与图片资产 API 边界*
 *更新：2026-05-20 — SkillAsset 文件收敛到 InlineFile embedded storage*
 *更新：2026-05-20 — 补充 Agent fs_read 图片 Block 与 read_binary 契约*
+
+---
+
+## Project VFS Mount Binding Routes
+
+Project 级 mount binding 的 CRUD 通过以下路由暴露：
+
+- `GET    /api/projects/{project_id}/vfs-mount-bindings` 列表
+- `POST   /api/projects/{project_id}/vfs-mount-bindings` 新建（支持 `kind=filespace` 或 `kind=external_service`）
+- `PUT    /api/projects/{project_id}/vfs-mount-bindings/{binding_id}` 全字段覆盖
+- `DELETE /api/projects/{project_id}/vfs-mount-bindings/{binding_id}` 单独解绑（不级联底层 Filespace）
+
+约束：
+
+- `mount_id` 通过 `normalize_identifier` 归一：去空白、禁用 `/` `\` `:`，禁止保留字 `main`。
+- `mount_id` 在同一 Project 内唯一（含 Filespace 创建时自动生成的同名 binding）；冲突返回 `409 Conflict`。
+- `kind=filespace` 引用的 `filespace_id` 必须存在且 `project_id` 与 URL 一致；否则分别 `404 NotFound` / `409 Conflict`。
+- `capabilities` 走 `normalize_capabilities`：剔除 `Exec`、去重；为空时回退 `read+list+search`。
+- `default_write` 仅当 capabilities 含 `Write` 时方为 true。
+- 删除 Filespace 仍级联其所有 binding；新增 DELETE binding 是更细粒度入口，与 Filespace 级联互不冲突。
+
+Frontend 上对应 `services/projectFilespaces.ts` 的 `createProjectVfsMountBinding` / `deleteProjectVfsMountBinding`；任何变更需要同步 `useProjectStore.bumpVfsMountBindingsRevision(projectId)`，让 `VfsAccessPicker` 等订阅方触发 refetch。
+
+*更新：2026-05-21 — 补充 Project VFS Mount Binding 路由与 mount_id 唯一性约束*

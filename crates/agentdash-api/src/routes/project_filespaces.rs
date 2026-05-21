@@ -11,6 +11,7 @@ use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::project_filespace::{
     ProjectFilespace, ProjectVfsMountBinding, ProjectVfsMountSource,
 };
+use agentdash_domain::shared_library::InstalledAssetSource;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -60,6 +61,17 @@ pub struct UpdateProjectVfsMountBindingRequest {
     pub default_write: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectVfsMountBindingRequest {
+    pub mount_id: String,
+    pub display_name: String,
+    pub source: ProjectVfsMountSource,
+    #[serde(default)]
+    pub capabilities: Vec<MountCapability>,
+    #[serde(default)]
+    pub default_write: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ProjectFilespaceResponse {
     pub id: Uuid,
@@ -68,6 +80,8 @@ pub struct ProjectFilespaceResponse {
     pub display_name: String,
     pub description: Option<String>,
     pub surface_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_source: Option<InstalledAssetSource>,
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
 }
@@ -264,6 +278,110 @@ pub async fn list_mount_bindings(
     Ok(Json(bindings.into_iter().map(Into::into).collect()))
 }
 
+pub async fn create_mount_binding(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<ProjectPath>,
+    Json(req): Json<CreateProjectVfsMountBindingRequest>,
+) -> Result<Json<ProjectVfsMountBindingResponse>, ApiError> {
+    let project_id = parse_uuid(&path.project_id, "project_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let mount_id = normalize_identifier(&req.mount_id, "mount_id")?;
+    let display_name = normalize_display_name(&req.display_name, &mount_id);
+
+    if let Some(existing) = state
+        .repos
+        .project_vfs_mount_binding_repo
+        .get_by_project_and_mount_id(project_id, &mount_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+    {
+        let _ = existing;
+        return Err(ApiError::Conflict(format!(
+            "mount_id `{mount_id}` 已被占用"
+        )));
+    }
+
+    if let ProjectVfsMountSource::Filespace { filespace_id } = &req.source {
+        let filespace = state
+            .repos
+            .project_filespace_repo
+            .get_by_id(*filespace_id)
+            .await
+            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .ok_or_else(|| ApiError::NotFound("Project Filespace 不存在".into()))?;
+        if filespace.project_id != project_id {
+            return Err(ApiError::Conflict(
+                "filespace_id 与 project_id 不属于同一 Project".into(),
+            ));
+        }
+    }
+
+    let capabilities = normalize_capabilities(req.capabilities);
+    let default_write = req.default_write && capabilities.contains(&MountCapability::Write);
+    let now = Utc::now();
+    let binding = ProjectVfsMountBinding {
+        id: Uuid::new_v4(),
+        project_id,
+        mount_id,
+        display_name,
+        source: req.source,
+        capabilities,
+        default_write,
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .repos
+        .project_vfs_mount_binding_repo
+        .create(&binding)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(Json(binding.into()))
+}
+
+pub async fn delete_mount_binding(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<MountBindingPath>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let project_id = parse_uuid(&path.project_id, "project_id")?;
+    let binding_id = parse_uuid(&path.binding_id, "binding_id")?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let binding = state
+        .repos
+        .project_vfs_mount_binding_repo
+        .get_by_id(binding_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
+    if binding.project_id != project_id {
+        return Err(ApiError::Conflict(
+            "binding_id 与 project_id 不属于同一 Project".into(),
+        ));
+    }
+    state
+        .repos
+        .project_vfs_mount_binding_repo
+        .delete(project_id, binding_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 pub async fn update_mount_binding(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -319,6 +437,7 @@ impl From<ProjectFilespace> for ProjectFilespaceResponse {
             key: filespace.key,
             display_name: filespace.display_name,
             description: filespace.description,
+            installed_source: filespace.installed_source,
             created_at: filespace.created_at,
             updated_at: filespace.updated_at,
         }

@@ -94,11 +94,13 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         )
         .route(
             "/projects/{project_id}/vfs-mount-bindings",
-            get(project_filespaces::list_mount_bindings),
+            get(project_filespaces::list_mount_bindings)
+                .post(project_filespaces::create_mount_binding),
         )
         .route(
             "/projects/{project_id}/vfs-mount-bindings/{binding_id}",
-            put(project_filespaces::update_mount_binding),
+            put(project_filespaces::update_mount_binding)
+                .delete(project_filespaces::delete_mount_binding),
         )
         .route(
             "/projects/{id}/grants/users/{user_id}",

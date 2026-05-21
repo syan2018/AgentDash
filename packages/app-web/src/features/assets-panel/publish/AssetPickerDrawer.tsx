@@ -400,14 +400,19 @@ function FilespaceList({
     };
   }, [projectId]);
 
+  const visible = useMemo(
+    () => (items ?? []).filter((item) => !item.installed_source),
+    [items],
+  );
+
   if (error) return <Hint message={error} tone="danger" />;
   if (items === null) return <Hint message="正在加载 Filespace…" />;
-  if (items.length === 0) {
-    return <Hint message="项目内暂无可发布的 Filespace。" />;
+  if (visible.length === 0) {
+    return <Hint message="项目内暂无可发布的 user Filespace。Marketplace 安装的 Filespace 不能再次发布。" />;
   }
   return (
     <PickList
-      items={items}
+      items={visible}
       keyOf={(item) => item.id}
       titleOf={(item) => item.display_name}
       hintOf={(item) => `mount: ${item.key}`}

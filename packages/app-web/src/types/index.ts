@@ -4,6 +4,7 @@ import type {
   ContextContainerDefinition,
   SessionComposition,
 } from "./context";
+import type { InstalledAssetSourceDto } from "./shared-library";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 
@@ -252,6 +253,7 @@ export interface ProjectFilespace {
   display_name: string;
   description?: string | null;
   surface_ref: string;
+  installed_source?: InstalledAssetSourceDto | null;
   created_at: string;
   updated_at: string;
 }

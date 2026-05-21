@@ -21,6 +21,14 @@ export interface UpdateProjectVfsMountBindingPayload {
   default_write: boolean;
 }
 
+export interface CreateProjectVfsMountBindingPayload {
+  mount_id: string;
+  display_name: string;
+  source: ProjectVfsMountBinding["source"];
+  capabilities: ProjectVfsMountBinding["capabilities"];
+  default_write: boolean;
+}
+
 export async function listProjectFilespaces(projectId: string): Promise<ProjectFilespace[]> {
   return api.get<ProjectFilespace[]>(`/projects/${projectId}/filespaces`);
 }
@@ -59,5 +67,24 @@ export async function updateProjectVfsMountBinding(
   return api.put<ProjectVfsMountBinding>(
     `/projects/${projectId}/vfs-mount-bindings/${bindingId}`,
     payload,
+  );
+}
+
+export async function createProjectVfsMountBinding(
+  projectId: string,
+  payload: CreateProjectVfsMountBindingPayload,
+): Promise<ProjectVfsMountBinding> {
+  return api.post<ProjectVfsMountBinding>(
+    `/projects/${projectId}/vfs-mount-bindings`,
+    payload,
+  );
+}
+
+export async function deleteProjectVfsMountBinding(
+  projectId: string,
+  bindingId: string,
+): Promise<{ ok: boolean }> {
+  return api.delete<{ ok: boolean }>(
+    `/projects/${projectId}/vfs-mount-bindings/${bindingId}`,
   );
 }

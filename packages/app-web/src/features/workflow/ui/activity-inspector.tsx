@@ -958,6 +958,15 @@ function PortsAndPolicySection({
   );
 }
 
+const POLICY_KIND_BY_EXECUTOR: Record<
+  ActivityExecutorSpec["kind"],
+  ReadonlyArray<ActivityCompletionPolicy["kind"]>
+> = {
+  agent: ["output_ports", "executor_terminal", "hook_gate", "open_ended"],
+  function: ["output_ports", "executor_terminal"],
+  human: ["human_decision"],
+};
+
 function CompletionPolicyEditor({
   activity,
   onChange,
@@ -966,6 +975,7 @@ function CompletionPolicyEditor({
   onChange: (next: ActivityCompletionPolicy) => void;
 }) {
   const policy = activity.completion_policy;
+  const allowedKinds = POLICY_KIND_BY_EXECUTOR[activity.executor.kind] ?? [];
   const handleKindChange = (kind: ActivityCompletionPolicy["kind"]) => {
     if (kind === policy.kind) return;
     switch (kind) {
@@ -990,17 +1000,23 @@ function CompletionPolicyEditor({
   return (
     <div>
       <label className="agentdash-form-label">Completion Policy</label>
-      <select
-        value={policy.kind}
-        onChange={(e) => handleKindChange(e.target.value as ActivityCompletionPolicy["kind"])}
-        className="agentdash-form-select"
-      >
-        <option value="output_ports">output_ports</option>
-        <option value="executor_terminal">executor_terminal</option>
-        <option value="human_decision">human_decision</option>
-        <option value="hook_gate">hook_gate</option>
-        <option value="open_ended">open_ended</option>
-      </select>
+      {allowedKinds.length > 1 ? (
+        <select
+          value={policy.kind}
+          onChange={(e) => handleKindChange(e.target.value as ActivityCompletionPolicy["kind"])}
+          className="agentdash-form-select"
+        >
+          {allowedKinds.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="rounded-[8px] border border-dashed border-border bg-secondary/15 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+          {policy.kind}
+        </p>
+      )}
 
       {policy.kind === "output_ports" && (
         <div className="mt-2 space-y-1.5 rounded-[8px] border border-border bg-secondary/20 p-2">

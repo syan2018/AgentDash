@@ -30,6 +30,8 @@ import {
   updateWorkflowDefinition,
   validateActivityLifecycleDefinition,
 } from "../services/workflow";
+import { findUnboundedCycles } from "../features/workflow/model/dag-layout";
+import type { ValidationIssue } from "../types";
 
 // ─── Draft types ─────────────────────────────────────────
 
@@ -90,6 +92,28 @@ function findTransitionIndex(transitions: ActivityTransition[], id: string): num
   return transitions.findIndex((t, idx) => transitionId(t, idx) === id);
 }
 
+// ─── 客户端级 validation 增强：未设阈值的环 ────────────
+
+function buildUnboundedCycleIssues(
+  activities: ActivityDefinition[],
+  transitions: ActivityTransition[],
+): ValidationIssue[] {
+  const cycles = findUnboundedCycles({ activities, transitions });
+  const issues: ValidationIssue[] = [];
+  for (const cycle of cycles) {
+    const message = `环 [${cycle.activityKeys.join(" → ")}] 未设置 max_traversals 或 iteration_policy.max_attempts，运行时无收敛阈值`;
+    for (const key of cycle.activityKeys) {
+      issues.push({
+        code: "cycle_unbounded",
+        message,
+        field_path: `activities[${key}]`,
+        severity: "warning",
+      });
+    }
+  }
+  return issues;
+}
+
 // ─── Executor × CompletionPolicy 联动 ─────────────────
 
 function isCompletionPolicyCompatible(
@@ -121,6 +145,40 @@ export function ensurePolicyForExecutor(
     return { policy: { kind: "human_decision", decision_port: "decision" }, reset: true };
   }
   return { policy: { kind: "executor_terminal" }, reset: true };
+}
+
+/**
+ * human_decision policy 的 decision_port 必须在 activity.output_ports 中存在，
+ * 否则节点上看不到对应 handle、下游 condition 也无 port 可绑。
+ * - 旧 policy 已是 human_decision 且 decision_port 改名 → 把 output_ports 中同 key 的项改名
+ * - 否则 → 不存在则 append 一个，存在则保留
+ */
+function reconcileDecisionPort(
+  activity: ActivityDefinition,
+  oldPolicy: ActivityCompletionPolicy,
+  newPolicy: ActivityCompletionPolicy,
+): ActivityDefinition {
+  if (newPolicy.kind !== "human_decision") return activity;
+  const newKey = newPolicy.decision_port;
+  if (!newKey) return activity;
+  const oldKey = oldPolicy.kind === "human_decision" ? oldPolicy.decision_port : null;
+  let ports = activity.output_ports;
+
+  if (oldKey && oldKey !== newKey && ports.some((p) => p.key === oldKey)) {
+    if (ports.some((p) => p.key === newKey)) {
+      // 已经有同名端口，直接删掉旧的占位条目
+      ports = ports.filter((p) => p.key !== oldKey);
+    } else {
+      ports = ports.map((p) => (p.key === oldKey ? { ...p, key: newKey } : p));
+    }
+  }
+  if (!ports.some((p) => p.key === newKey)) {
+    ports = [
+      ...ports,
+      { key: newKey, description: "Human decision result", gate_strategy: "existence" },
+    ];
+  }
+  return ports === activity.output_ports ? activity : { ...activity, output_ports: ports };
 }
 
 // ─── Unified Lifecycle Editor ────────────────────────────
@@ -625,26 +683,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         }
       }
 
-      // 同步 workflow draft 的 ports（port 以 activity 为真相）
-      const activityAfter = nextActivities.find((activity) => activity.key === (patch.key ?? activityKey));
-      if (activityAfter) {
-        const wfDraftKey = patch.key ?? activityKey;
-        const wfDraft = nextDrafts[wfDraftKey];
-        if (wfDraft && (patch.output_ports || patch.input_ports)) {
-          nextDrafts = {
-            ...nextDrafts,
-            [wfDraftKey]: {
-              ...wfDraft,
-              contract: {
-                ...wfDraft.contract,
-                output_ports: patch.output_ports ?? wfDraft.contract.output_ports,
-                input_ports: patch.input_ports ?? wfDraft.contract.input_ports,
-              },
-            },
-          };
-        }
-      }
-
       return {
         lifecycleEditor: {
           ...s.lifecycleEditor,
@@ -864,9 +902,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...s.lifecycleEditor,
           draft: {
             ...s.lifecycleEditor.draft,
-            activities: s.lifecycleEditor.draft.activities.map((a) =>
-              a.key === activityKey ? { ...a, executor, completion_policy: nextPolicy } : a,
-            ),
+            activities: s.lifecycleEditor.draft.activities.map((a) => {
+              if (a.key !== activityKey) return a;
+              const next = { ...a, executor, completion_policy: nextPolicy };
+              return reconcileDecisionPort(next, a.completion_policy, nextPolicy);
+            }),
           },
           dirty: true,
         },
@@ -884,9 +924,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ...s.lifecycleEditor,
           draft: {
             ...draft,
-            activities: draft.activities.map((a) =>
-              a.key === activityKey ? { ...a, completion_policy: policy } : a,
-            ),
+            activities: draft.activities.map((a) => {
+              if (a.key !== activityKey) return a;
+              const next = { ...a, completion_policy: policy };
+              return reconcileDecisionPort(next, a.completion_policy, policy);
+            }),
           },
           dirty: true,
         },
@@ -1045,7 +1087,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (!draft) return null;
     set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, isValidating: true, error: null } }));
     try {
-      const result = await validateActivityLifecycleDefinition({
+      const serverResult = await validateActivityLifecycleDefinition({
         project_id: draft.project_id,
         key: draft.key,
         name: draft.name,
@@ -1055,6 +1097,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         activities: draft.activities,
         transitions: draft.transitions,
       });
+      const cycleIssues = buildUnboundedCycleIssues(draft.activities, draft.transitions);
+      const result: WorkflowValidationResult = cycleIssues.length === 0
+        ? serverResult
+        : { ...serverResult, issues: [...serverResult.issues, ...cycleIssues] };
       set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, validation: result, isValidating: false } }));
       return result;
     } catch (error) {

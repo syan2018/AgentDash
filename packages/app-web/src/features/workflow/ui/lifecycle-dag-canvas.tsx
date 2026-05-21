@@ -35,8 +35,8 @@ import type {
   ValidationIssue,
   WorkflowDefinition,
 } from "../../../types";
-import { DagNode, type DagNodeData } from "./dag-node";
-import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "../model/dag-layout";
+import { ADD_NEW_INPUT_HANDLE, DagNode, type DagNodeData } from "./dag-node";
+import { applyDagreLayout, generateLinearEdges } from "../model/dag-layout";
 import { syncLifecycleStepPortsForArtifactEdges } from "../model/lifecycle-port-sync";
 import { transitionId as deriveTransitionId } from "../../../stores/workflowStore";
 
@@ -360,48 +360,70 @@ function LifecycleDagCanvasInner({
   const handleConnect: OnConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      if (connection.source === connection.target) return;
-      if (wouldCreateCycle(transitions, connection.source, connection.target)) return;
+      // 允许自连与回环：lifecycle 支持 human_decision/重试/回评等需要环的语义，
+      // 由运行时 transition.max_traversals + iteration_policy.max_attempts 兜底；
+      // validator 会对未设阈值的环发软警告（参见 dag-layout.findUnboundedCycles）。
 
+      const isAddNewInputDrop = connection.targetHandle === ADD_NEW_INPUT_HANDLE;
       const hasSourcePort = !!connection.sourceHandle && connection.sourceHandle !== "__default_out";
-      const hasTargetPort = !!connection.targetHandle && connection.targetHandle !== "__default_in";
-      const isArtifactConnect = hasSourcePort || hasTargetPort;
+      const hasTargetPort =
+        !!connection.targetHandle &&
+        connection.targetHandle !== "__default_in" &&
+        !isAddNewInputDrop;
+      const isArtifactConnect = hasSourcePort || hasTargetPort || isAddNewInputDrop;
 
       if (isArtifactConnect) {
+        const fromPort = connection.sourceHandle ?? "__default_out";
+        let toPort = isAddNewInputDrop ? "__default_in" : (connection.targetHandle ?? "__default_in");
+
+        let newSteps = activities;
+        // 命中现有 input handle 时检查重复 binding（ghost 和 default 走下面的自动建端口分支）
         if (
-          connection.targetHandle &&
+          !isAddNewInputDrop &&
+          toPort !== "__default_in" &&
           transitions.some(
             (e) =>
               e.kind === "artifact" &&
               e.to === connection.target &&
-              e.artifact_bindings.some((binding) => binding.to_port === connection.targetHandle),
+              e.artifact_bindings.some((binding) => binding.to_port === toPort),
           )
         ) {
           return;
         }
-        const fromPort = connection.sourceHandle ?? "__default_out";
-        let toPort = connection.targetHandle ?? "__default_in";
-
-        let newSteps = activities;
-        if (toPort === "__default_in" && fromPort !== "__default_out") {
+        if (toPort === "__default_in") {
           const targetIdx = activities.findIndex((s) => s.key === connection.target);
           if (targetIdx >= 0) {
             const targetStep = activities[targetIdx];
-            const has = targetStep.input_ports.some((p) => p.key === fromPort);
-            if (!has) {
+            // 决定新 input port 的 key：
+            // - source 是真实端口 → 复用同名 key（默认 handle 自动建端口的旧逻辑保留）
+            // - source 是 __default_out 或 ghost 落点 → 取一个不冲突的 in_N
+            let newKey: string;
+            if (fromPort !== "__default_out" && !targetStep.input_ports.some((p) => p.key === fromPort)) {
+              newKey = fromPort;
+            } else if (fromPort !== "__default_out" && !isAddNewInputDrop) {
+              // 真实 source + 默认 handle，端口已存在 → 复用
+              newKey = fromPort;
+            } else {
+              const existing = new Set(targetStep.input_ports.map((p) => p.key));
+              let n = targetStep.input_ports.length + 1;
+              while (existing.has(`in_${n}`)) n += 1;
+              newKey = `in_${n}`;
+            }
+            const hasPort = targetStep.input_ports.some((p) => p.key === newKey);
+            if (!hasPort) {
               newSteps = activities.map((s, i) =>
                 i === targetIdx
                   ? {
                       ...s,
                       input_ports: [
                         ...s.input_ports,
-                        { key: fromPort, description: "", context_strategy: "full" as const },
+                        { key: newKey, description: "", context_strategy: "full" as const },
                       ],
                     }
                   : s,
               );
             }
-            toPort = fromPort;
+            toPort = newKey;
           }
         }
 

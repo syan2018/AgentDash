@@ -6,8 +6,11 @@
  * description / executor 详情 / iteration / join / validation 详情走 native title tooltip。
  */
 
-import { Handle, Position } from "@xyflow/react";
+import { Handle, Position, useConnection } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
+
+/** Ghost handle id；handleConnect 据此识别"拖到节点 body"语义并新建 input port */
+export const ADD_NEW_INPUT_HANDLE = "__add_new_input__";
 
 import type {
   ActivityCompletionPolicy,
@@ -59,10 +62,18 @@ const POLICY_BADGE: Record<ActivityCompletionPolicy["kind"], string> = {
 
 const HANDLE_SIZE = 10;
 
-export function DagNode({ data, selected }: NodeProps) {
+export function DagNode({ id, data, selected }: NodeProps) {
   const d = data as DagNodeData;
   const exec = EXECUTOR_BADGE[d.executorKind] ?? EXECUTOR_BADGE.agent;
   const policyLabel = POLICY_BADGE[d.completionPolicyKind] ?? "?";
+
+  // 拖拽中且 source 在别的节点 → 整个节点变成 drop target，松手时新建 input port
+  const isIncomingDrag = useConnection(
+    (c) =>
+      c.inProgress &&
+      c.fromHandle?.type === "source" &&
+      c.fromNode?.id !== id,
+  );
 
   const ringClass = selected
     ? "border-primary ring-2 ring-primary/40"
@@ -72,9 +83,31 @@ export function DagNode({ data, selected }: NodeProps) {
 
   return (
     <div
-      className={`relative min-w-[200px] rounded-[10px] border bg-card text-card-foreground shadow-sm transition-all duration-150 ${ringClass}`}
+      className={`relative min-w-[200px] rounded-[10px] border bg-card text-card-foreground shadow-sm transition-all duration-150 ${ringClass} ${isIncomingDrag ? "ring-2 ring-primary/30" : ""}`}
       title={d.tooltip ?? undefined}
     >
+      {/* Ghost target handle：拖拽进入时铺满整个节点，命中即新建 input port */}
+      {isIncomingDrag && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          id={ADD_NEW_INPUT_HANDLE}
+          isConnectableStart={false}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            width: "100%",
+            height: "100%",
+            transform: "none",
+            background: "transparent",
+            border: "none",
+            borderRadius: 10,
+            zIndex: 0,
+          }}
+          title="松手以新建一个输入端口"
+        />
+      )}
       {/* Validation 角标（右上） */}
       {d.validationCount > 0 && (
         <span

@@ -14,8 +14,8 @@ use agentdash_application::vfs::{
     ListOptions, PROVIDER_INLINE_FS, ReadResult, ResolvedMountEditCapabilities,
     ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource, ResourceRef,
     RuntimeFileEntry, SessionMountTarget, build_project_agent_knowledge_vfs,
-    build_project_skill_asset_management_mount, mount_container_id, mount_owner_id,
-    mount_owner_kind, mount_purpose,
+    build_project_skill_asset_management_mount, build_project_vfs_mount_binding_mount,
+    mount_container_id, mount_owner_id, mount_owner_kind, mount_purpose,
 };
 use agentdash_domain::inline_file::InlineFile;
 use agentdash_spi::Vfs;
@@ -813,11 +813,13 @@ pub(crate) async fn resolve_surface_bundle(
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
             let workspace = resolve_project_workspace(state, &project).await?;
+            let project_mount_bindings = load_project_vfs_mount_bindings(state, project.id).await?;
             state
                 .services
                 .vfs_service
                 .build_vfs(
                     &project,
+                    &project_mount_bindings,
                     None,
                     workspace.as_ref(),
                     SessionMountTarget::Project,
@@ -842,11 +844,13 @@ pub(crate) async fn resolve_surface_bundle(
                 ));
             }
             let workspace = resolve_project_workspace(state, &project).await?;
+            let project_mount_bindings = load_project_vfs_mount_bindings(state, project.id).await?;
             state
                 .services
                 .vfs_service
                 .build_vfs(
                     &project,
+                    &project_mount_bindings,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Story,
@@ -880,11 +884,13 @@ pub(crate) async fn resolve_surface_bundle(
             } else {
                 resolve_project_workspace(state, &project).await?
             };
+            let project_mount_bindings = load_project_vfs_mount_bindings(state, project.id).await?;
             state
                 .services
                 .vfs_service
                 .build_vfs(
                     &project,
+                    &project_mount_bindings,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Task,
@@ -932,6 +938,43 @@ pub(crate) async fn resolve_surface_bundle(
                 links: Vec::new(),
             }
         }
+        ResolvedVfsSurfaceSource::ProjectFilespace {
+            project_id,
+            filespace_id,
+        } => {
+            load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
+                .await?;
+            let filespace = state
+                .repos
+                .project_filespace_repo
+                .get_by_id(*filespace_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .ok_or_else(|| ApiError::NotFound("Project Filespace 不存在".into()))?;
+            if filespace.project_id != *project_id {
+                return Err(ApiError::Conflict(
+                    "filespace_id 与 project_id 不属于同一 Project".into(),
+                ));
+            }
+            let binding =
+                agentdash_domain::project_filespace::ProjectVfsMountBinding::new_filespace(
+                    *project_id,
+                    filespace.key.clone(),
+                    filespace.display_name.clone(),
+                    filespace.id,
+                );
+            Vfs {
+                mounts: vec![
+                    build_project_vfs_mount_binding_mount(&binding).map_err(|error| {
+                        ApiError::Internal(format!("构建 Filespace VFS 失败: {error}"))
+                    })?,
+                ],
+                default_mount_id: Some(binding.mount_id),
+                source_project_id: Some(project_id.to_string()),
+                source_story_id: None,
+                links: Vec::new(),
+            }
+        }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             let bindings =
                 ensure_session_permission(state.as_ref(), current_user, session_id, permission)
@@ -945,6 +988,18 @@ pub(crate) async fn resolve_surface_bundle(
 
     let surface = build_surface_summary(state, source, &vfs).await?;
     Ok((surface, vfs))
+}
+
+async fn load_project_vfs_mount_bindings(
+    state: &Arc<AppState>,
+    project_id: uuid::Uuid,
+) -> Result<Vec<agentdash_domain::project_filespace::ProjectVfsMountBinding>, ApiError> {
+    state
+        .repos
+        .project_vfs_mount_binding_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))
 }
 
 pub(crate) async fn build_surface_summary(

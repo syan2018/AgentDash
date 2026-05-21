@@ -44,12 +44,20 @@ impl RelayVfsService {
     pub fn build_vfs(
         &self,
         project: &agentdash_domain::project::Project,
+        project_mount_bindings: &[agentdash_domain::project_filespace::ProjectVfsMountBinding],
         story: Option<&agentdash_domain::story::Story>,
         workspace: Option<&agentdash_domain::workspace::Workspace>,
         target: SessionMountTarget,
         agent_type: Option<&str>,
     ) -> Result<Vfs, String> {
-        build_derived_vfs(project, story, workspace, agent_type, target)
+        build_derived_vfs(
+            project,
+            project_mount_bindings,
+            story,
+            workspace,
+            agent_type,
+            target,
+        )
     }
 
     pub fn list_mounts(&self, vfs: &Vfs) -> Vec<agentdash_spi::Mount> {

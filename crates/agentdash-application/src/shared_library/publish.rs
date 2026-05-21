@@ -1,14 +1,17 @@
 use std::collections::BTreeSet;
 
+use base64::Engine;
 use serde_json::json;
 use thiserror::Error;
 use uuid::Uuid;
 
 use agentdash_domain::DomainError;
+use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 use agentdash_domain::shared_library::{
-    AgentTemplateConfig, LibraryAsset, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
-    McpServerTemplatePayload, SkillTemplateFilePayload, SkillTemplatePayload,
+    AgentTemplateConfig, FilespaceTemplateFilePayload, FilespaceTemplatePayload, LibraryAsset,
+    LibraryAssetScope, LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload,
+    SkillTemplateFilePayload, SkillTemplatePayload,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, ActivityLifecycleDefinition, WorkflowDefinition,
@@ -26,6 +29,7 @@ pub enum ProjectAssetPublishKind {
     McpPreset,
     WorkflowBundle,
     SkillAsset,
+    Filespace,
 }
 
 impl ProjectAssetPublishKind {
@@ -35,6 +39,7 @@ impl ProjectAssetPublishKind {
             Self::McpPreset => LibraryAssetType::McpServerTemplate,
             Self::WorkflowBundle => LibraryAssetType::WorkflowTemplate,
             Self::SkillAsset => LibraryAssetType::SkillTemplate,
+            Self::Filespace => LibraryAssetType::FilespaceTemplate,
         }
     }
 }
@@ -74,6 +79,7 @@ pub async fn publish_project_asset_to_library(
         ProjectAssetPublishKind::McpPreset => publish_mcp_payload(repos, &input).await?,
         ProjectAssetPublishKind::WorkflowBundle => publish_workflow_payload(repos, &input).await?,
         ProjectAssetPublishKind::SkillAsset => publish_skill_payload(repos, &input).await?,
+        ProjectAssetPublishKind::Filespace => publish_filespace_payload(repos, &input).await?,
     };
     let payload_digest = seed_digest(&payload)?;
     let source_ref = Some(format!(
@@ -125,6 +131,55 @@ pub async fn publish_project_asset_to_library(
             Ok(asset)
         }
     }
+}
+
+async fn publish_filespace_payload(
+    repos: &RepositorySet,
+    input: &PublishLibraryAssetInput,
+) -> Result<serde_json::Value, PublishLibraryAssetError> {
+    let filespace = repos
+        .project_filespace_repo
+        .get_by_id(input.project_asset_id)
+        .await?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "project_filespace",
+            id: input.project_asset_id.to_string(),
+        })?;
+    if filespace.project_id != input.project_id {
+        return Err(PublishLibraryAssetError::BadRequest(
+            "Project Filespace 不属于当前 Project".to_string(),
+        ));
+    }
+    let files = repos
+        .inline_file_repo
+        .list_files_by_owner(InlineFileOwnerKind::ProjectFilespace, filespace.id)
+        .await?
+        .into_iter()
+        .map(|file| {
+            let (content_kind, content, mime_type, data_base64) = match file.content {
+                agentdash_domain::common::StoredFileContent::Text { content } => {
+                    ("text".to_string(), Some(content), None, None)
+                }
+                agentdash_domain::common::StoredFileContent::Binary { bytes, mime_type } => (
+                    "binary".to_string(),
+                    None,
+                    Some(mime_type),
+                    Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                ),
+            };
+            FilespaceTemplateFilePayload {
+                path: file.path,
+                content_kind,
+                content,
+                mime_type,
+                size_bytes: file.size_bytes,
+                data_base64,
+            }
+        })
+        .collect::<Vec<_>>();
+    let payload = FilespaceTemplatePayload { files };
+    serde_json::to_value(payload)
+        .map_err(|error| PublishLibraryAssetError::Domain(DomainError::Serialization(error)))
 }
 
 fn validate_publish_input(

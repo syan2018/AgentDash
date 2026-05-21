@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::common::MountCapability;
 use crate::common::error::DomainError;
 use crate::workflow::ToolCapabilityDirective;
 
@@ -68,6 +69,9 @@ pub struct AgentPresetConfig {
     /// MCP Preset key 引用列表（如 `["github", "jira"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp_preset_keys: Option<Vec<String>>,
+    /// Agent 可访问的 Project VFS mount 及其权限。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vfs_access_grants: Option<Vec<AgentVfsAccessGrant>>,
     /// Project SkillAsset key 引用列表（如 `["research", "writer"]`）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_asset_keys: Option<Vec<String>>,
@@ -103,6 +107,7 @@ impl AgentPresetConfig {
             description,
             capability_directives,
             mcp_preset_keys,
+            vfs_access_grants,
             skill_asset_keys,
             allowed_companions,
         )
@@ -131,6 +136,13 @@ impl AgentPresetConfig {
     pub fn from_json(value: &serde_json::Value) -> Result<Self, DomainError> {
         serde_json::from_value(value.clone()).map_err(DomainError::Serialization)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentVfsAccessGrant {
+    pub mount_id: String,
+    #[serde(default)]
+    pub capabilities: Vec<MountCapability>,
 }
 
 // ── AgentConfig（运行态执行器配置）──────────────────────────────────────
@@ -198,6 +210,7 @@ mod tests {
             "display_name": "Reviewer",
             "description": "检查代码结构",
             "skill_asset_keys": ["research", "review"],
+            "vfs_access_grants": [{ "mount_id": "brief", "capabilities": ["read", "list"] }],
             "capability_directives": [{ "add": "workflow_management" }]
         }))
         .expect("valid preset config");
@@ -209,6 +222,7 @@ mod tests {
             Some(["research".to_string(), "review".to_string()].as_slice())
         );
         assert_eq!(config.capability_directives.as_ref().map(Vec::len), Some(1));
+        assert_eq!(config.vfs_access_grants.as_ref().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -216,10 +230,18 @@ mod tests {
         let base = AgentPresetConfig {
             skill_asset_keys: Some(vec!["base".to_string()]),
             mcp_preset_keys: Some(vec!["mcp-base".to_string()]),
+            vfs_access_grants: Some(vec![AgentVfsAccessGrant {
+                mount_id: "base".to_string(),
+                capabilities: vec![MountCapability::Read],
+            }]),
             ..Default::default()
         };
         let over = AgentPresetConfig {
             skill_asset_keys: Some(vec!["override".to_string()]),
+            vfs_access_grants: Some(vec![AgentVfsAccessGrant {
+                mount_id: "override".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+            }]),
             ..Default::default()
         };
 
@@ -227,6 +249,13 @@ mod tests {
 
         assert_eq!(merged.skill_asset_keys, Some(vec!["override".to_string()]));
         assert_eq!(merged.mcp_preset_keys, Some(vec!["mcp-base".to_string()]));
+        assert_eq!(
+            merged
+                .vfs_access_grants
+                .as_ref()
+                .map(|items| items[0].mount_id.as_str()),
+            Some("override")
+        );
     }
 
     #[test]

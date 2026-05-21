@@ -15,6 +15,7 @@ const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   mcp_server_template: "MCP Server",
   workflow_template: "Workflow",
   skill_template: "Skill",
+  filespace_template: "Filespace",
   extension_template: "Extension",
 };
 
@@ -218,6 +219,8 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
   switch (asset.asset_type) {
     case "skill_template":
       return <SkillTemplateBody payload={asset.payload} />;
+    case "filespace_template":
+      return <FilespaceTemplateBody payload={asset.payload} />;
     case "workflow_template":
       return <WorkflowTemplateBody payload={asset.payload} />;
     case "mcp_server_template":
@@ -229,6 +232,40 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
     default:
       return <RawPayloadFallback payload={asset.payload} />;
   }
+}
+
+function FilespaceTemplateBody({ payload }: { payload: unknown }) {
+  const parsed = useMemo(() => parseFilespacePayload(payload), [payload]);
+  if (!parsed) return <RawPayloadFallback payload={payload} />;
+  return (
+    <section className="space-y-3">
+      <SectionLabel>Filespace 模板</SectionLabel>
+      <div className="rounded-[8px] border border-border bg-secondary/20 p-3">
+        <p className="text-xs text-muted-foreground">文件数量</p>
+        <p className="mt-1 text-sm font-medium text-foreground">{parsed.files.length}</p>
+      </div>
+      <ul className="space-y-1">
+        {parsed.files.slice(0, 12).map((file) => (
+          <li key={file.path} className="truncate text-xs text-muted-foreground">
+            {file.content_kind} · {file.path}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function parseFilespacePayload(payload: unknown): null | { files: Array<{ path: string; content_kind: string }> } {
+  if (!isObject(payload) || !Array.isArray(payload.files)) return null;
+  return {
+    files: payload.files
+      .filter(isObject)
+      .map((file) => ({
+        path: asString(file.path) ?? "",
+        content_kind: asString(file.content_kind) ?? "text",
+      }))
+      .filter((file) => file.path.length > 0),
+  };
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

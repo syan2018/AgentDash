@@ -39,11 +39,15 @@ impl PostgresInlineFileRepository {
                         OR
                         (content_kind = 'binary' AND binary_content IS NOT NULL AND text_content IS NULL AND mime_type IS NOT NULL)
                     )
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_inline_fs_files_owner
-                ON inline_fs_files(owner_kind, owner_id, container_id);
+            )
             "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_inline_fs_files_owner ON inline_fs_files(owner_kind, owner_id, container_id)",
         )
         .execute(&self.pool)
         .await

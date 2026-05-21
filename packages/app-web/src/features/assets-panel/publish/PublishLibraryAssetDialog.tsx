@@ -247,6 +247,8 @@ function publishTitle(kind: PublishLibraryAssetKind, isUpdate: boolean): string 
       return `${prefix} Workflow 模板`;
     case "skill_asset":
       return `${prefix} Skill 模板`;
+    case "filespace":
+      return `${prefix} Filespace 模板`;
   }
 }
 
@@ -260,5 +262,7 @@ function kindToAssetType(kind: PublishLibraryAssetKind): LibraryAssetType {
       return "workflow_template";
     case "skill_asset":
       return "skill_template";
+    case "filespace":
+      return "filespace_template";
   }
 }

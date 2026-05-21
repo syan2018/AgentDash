@@ -9,6 +9,7 @@ import { McpPresetPicker } from "./mcp-preset-picker";
 import { SkillAssetPicker } from "./skill-asset-picker";
 import { ToolCapabilitiesField } from "./tool-capabilities-field";
 import type { PresetFormState } from "./form-state";
+import { VfsAccessPicker } from "./vfs-access-picker";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAgentTypeOptions() {
@@ -44,7 +45,7 @@ export function PresetFormFields({
   knowledgeAgentId?: string;
 }) {
   const [activeTab, setActiveTab] = useState<'basic' | 'capability' | 'memory'>('basic');
-  const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'skill' | 'companion'>('tool');
+  const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'vfs' | 'skill' | 'companion'>('tool');
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
   const modelSelector = discovered.options?.model_selector ?? null;
   const isModelLoading = !discovered.isInitialized || (discovered.options?.loading_models ?? false);
@@ -386,6 +387,7 @@ export function PresetFormFields({
   const capabilityCount =
     (form.capability_directives.length > 0 ? form.capability_directives.length : 0) +
     form.mcp_preset_keys.length +
+    form.vfs_access_grants.length +
     form.skill_asset_keys.length +
     form.allowed_companions.length;
 
@@ -401,7 +403,7 @@ export function PresetFormFields({
   ];
 
   const capabilityItems: Array<{
-    key: 'tool' | 'mcp' | 'skill' | 'companion';
+    key: 'tool' | 'mcp' | 'vfs' | 'skill' | 'companion';
     label: string;
     badge?: string;
     disabled?: boolean;
@@ -417,6 +419,11 @@ export function PresetFormFields({
       key: 'mcp',
       label: 'MCP',
       badge: form.mcp_preset_keys.length > 0 ? String(form.mcp_preset_keys.length) : undefined,
+    },
+    {
+      key: 'vfs',
+      label: 'VFS',
+      badge: form.vfs_access_grants.length > 0 ? String(form.vfs_access_grants.length) : undefined,
     },
     {
       key: 'skill',
@@ -552,6 +559,13 @@ export function PresetFormFields({
                 projectId={projectId}
                 selectedKeys={form.mcp_preset_keys}
                 onChange={(mcp_preset_keys) => patchForm({ mcp_preset_keys })}
+              />
+            )}
+            {activeCapability === 'vfs' && (
+              <VfsAccessPicker
+                projectId={projectId}
+                grants={form.vfs_access_grants}
+                onChange={(vfs_access_grants) => patchForm({ vfs_access_grants })}
               />
             )}
             {activeCapability === 'skill' && (

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import type { ReactNode } from "react";
 import type {
-  ContextContainerDefinition,
   DirectoryGroup,
   DirectoryUser,
   BackendWorkspaceInventory,
@@ -18,9 +17,6 @@ import { useWorkspaceStore } from "../stores/workspaceStore";
 import { useCoordinatorStore } from "../stores/coordinatorStore";
 import { WorkspaceList } from "../features/workspace/workspace-list";
 import { VfsBrowser } from "../features/vfs";
-import {
-  ContextContainersEditor,
-} from "../components/vfs-config-editor";
 import { resolveVfsSurface } from "../services/vfs";
 import type { ResolvedMountSummary } from "../types";
 import {
@@ -322,43 +318,25 @@ function MountOverviewList({ projectId, refreshKey }: { projectId: string; refre
 
 function ContextTabContent({
   project,
-  contextContainers,
-  canEdit,
-  onSave,
 }: {
   project: Project;
-  contextContainers: ContextContainerDefinition[];
-  canEdit: boolean;
-  onSave: (next: ContextContainerDefinition[]) => Promise<unknown>;
 }) {
-  const [mountRefreshKey, setMountRefreshKey] = useState(0);
-
-  const handleContainerSave = async (next: ContextContainerDefinition[]) => {
-    await onSave(next);
-    setMountRefreshKey((k) => k + 1);
-  };
-
   return (
     <>
       <SectionCard
-        title="VFS Mount 配置"
-        description="项目级 VFS Mount 可以来自内联文件或外部服务，Agent 会话运行时会直接挂载这些地址空间。"
+        title="Project Filespace"
+        description="Project 级 VFS 已归入 Assets，Filespace 的内容与可挂载权限在资产流程中统一管理。"
       >
-        <ContextContainersEditor
-          value={contextContainers}
-          domain="project"
-          emptyText="暂无项目级 VFS Mount"
-          isSaving={false}
-          readOnly={!canEdit}
-          onSave={handleContainerSave}
-        />
+        <Link to="/dashboard/assets/filespace" className="agentdash-button-secondary inline-flex">
+          打开 Filespace 资产
+        </Link>
       </SectionCard>
 
       <SectionCard
         title="解析后的 VFS Mount"
         description="基于当前 Workspace 与项目级 VFS 配置派生出的运行时挂载点概览。"
       >
-        <MountOverviewList projectId={project.id} refreshKey={mountRefreshKey} />
+        <MountOverviewList projectId={project.id} refreshKey={0} />
       </SectionCard>
 
       <SectionCard
@@ -859,19 +837,6 @@ export function ProjectSettingsPage() {
     setError(null);
   };
 
-  const saveContext = async (payload: Parameters<typeof updateProject>[1]) => {
-    if (!canEditProject) {
-      setError("当前权限不允许修改 VFS 资源");
-      return;
-    }
-    const result = await updateProject(project.id, payload);
-    if (!result) {
-      setError("VFS 资源保存失败");
-      return;
-    }
-    setError(null);
-  };
-
   const saveTemplateSettings = async () => {
     if (!canManageSharing) {
       setError("当前权限不允许修改模板与可见性策略");
@@ -1108,11 +1073,6 @@ export function ProjectSettingsPage() {
               {activeTab === "context" && (
                 <ContextTabContent
                   project={project}
-                  contextContainers={contextContainers}
-                  canEdit={canEditProject}
-                  onSave={async (next) => {
-                    await saveContext({ context_containers: next });
-                  }}
                 />
               )}
 

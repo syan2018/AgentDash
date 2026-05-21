@@ -27,6 +27,7 @@ const SHAREABLE_CATEGORIES: CategoryItem[] = [
   { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
   { segment: "mcp-preset", label: "MCP", hint: "MCP Server 模板" },
   { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
+  { segment: "filespace", label: "Filespace", hint: "Project VFS 文件空间" },
 ];
 
 const LOCAL_CATEGORIES: CategoryItem[] = [

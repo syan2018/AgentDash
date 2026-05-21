@@ -46,12 +46,12 @@ use agentdash_infrastructure::{
     PostgresAuthSessionRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresInlineFileRepository, PostgresLlmProviderRepository, PostgresMcpPresetRepository,
     PostgresProjectAgentRepository, PostgresProjectBackendAccessRepository,
-    PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
-    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
-    PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
-    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
-    PostgresWorkspaceRepository,
+    PostgresProjectExtensionInstallationRepository, PostgresProjectFilespaceRepository,
+    PostgresProjectRepository, PostgresRoutineExecutionRepository, PostgresRoutineRepository,
+    PostgresRuntimeHealthRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
+    PostgresSettingsRepository, PostgresSharedLibraryRepository, PostgresSkillAssetRepository,
+    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
+    PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
@@ -206,6 +206,13 @@ impl AppState {
             .await
             .map_err(|e| anyhow::anyhow!("project_agents 表初始化失败: {e}"))?;
 
+        let project_filespace_repo =
+            Arc::new(PostgresProjectFilespaceRepository::new(pool.clone()));
+        project_filespace_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("project_filespaces 表初始化失败: {e}"))?;
+
         let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
         routine_repo
             .initialize()
@@ -242,6 +249,10 @@ impl AppState {
             .map_err(|e| anyhow::anyhow!("skill_assets 表初始化失败: {e}"))?;
 
         let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
+        inline_file_repo
+            .initialize()
+            .await
+            .map_err(|e| anyhow::anyhow!("inline_fs_files 表初始化失败: {e}"))?;
 
         // RepositorySet —— 提前构造,供 build_pi_agent_connector / RoutineExecutor / AppState 共用
         let repos = RepositorySet {
@@ -264,6 +275,8 @@ impl AppState {
             mcp_preset_repo: mcp_preset_repo.clone(),
             skill_asset_repo: skill_asset_repo.clone(),
             project_agent_repo: project_agent_repo.clone(),
+            project_filespace_repo: project_filespace_repo.clone(),
+            project_vfs_mount_binding_repo: project_filespace_repo.clone(),
             workflow_definition_repo: workflow_repo.clone(),
             workflow_template_install_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),

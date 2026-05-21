@@ -4,8 +4,12 @@ use super::lifecycle_catalog::lifecycle_directory_hint;
 use super::path::{normalize_mount_relative_path, validate_vfs};
 use crate::runtime::{Mount, MountCapability, RuntimeFileEntry, Vfs};
 use crate::vfs::surface::{ResolvedMountOwnerKind, ResolvedMountPurpose};
+use agentdash_domain::common::AgentVfsAccessGrant;
 use agentdash_domain::context_container::{ContextContainerDefinition, ContextContainerProvider};
 use agentdash_domain::inline_file::InlineFileOwnerKind;
+use agentdash_domain::project_filespace::{
+    PROJECT_FILESPACE_CONTAINER_ID, ProjectVfsMountBinding, ProjectVfsMountSource,
+};
 use agentdash_domain::{
     agent::ProjectAgent,
     canvas::Canvas,
@@ -23,6 +27,7 @@ pub const PROVIDER_SKILL_ASSET_FS: &str = "skill_asset_fs";
 pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
 pub(crate) const CONTEXT_OWNER_ID_METADATA_KEY: &str = "agentdash_context_owner_id";
 pub(crate) const CONTEXT_CONTAINER_ID_METADATA_KEY: &str = "agentdash_context_container_id";
+pub(crate) const PROJECT_VFS_MOUNT_METADATA_KEY: &str = "agentdash_project_vfs_mount";
 pub(crate) const SKILL_ASSET_PROJECT_ID_METADATA_KEY: &str = "skill_asset_project_id";
 pub(crate) const SKILL_ASSET_KEYS_METADATA_KEY: &str = "skill_asset_keys";
 
@@ -52,6 +57,7 @@ impl From<agentdash_domain::session_binding::SessionOwnerType> for SessionMountT
 /// 从 Project / Story / Workspace 策略构建最终 VFS
 pub fn build_derived_vfs(
     project: &Project,
+    project_mount_bindings: &[ProjectVfsMountBinding],
     story: Option<&Story>,
     workspace: Option<&Workspace>,
     _agent_type: Option<&str>,
@@ -63,16 +69,37 @@ pub fn build_derived_vfs(
         mounts.push(workspace_mount(workspace)?);
     }
 
-    for (container, owner_scope) in effective_context_containers_with_origin(project, story) {
-        let mut mount = build_context_container_mount(&container)?;
-        let (owner_kind_str, owner_id) = match owner_scope {
-            ContextContainerOwnerScope::Project => ("project", project.id),
-            ContextContainerOwnerScope::Story => {
-                ("story", story.expect("story scope 但 story 为 None").id)
-            }
-        };
-        annotate_context_mount_owner(&mut mount, owner_kind_str, owner_id);
-        mounts.push(mount);
+    let mut project_mounts = project_mount_bindings
+        .iter()
+        .map(build_project_vfs_mount_binding_mount)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if let Some(story) = story {
+        let disabled = story
+            .context
+            .disabled_container_ids
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(|item| item.to_string())
+            .collect::<BTreeSet<_>>();
+        if !disabled.is_empty() {
+            project_mounts.retain(|mount| !disabled.contains(mount.id.trim()));
+        }
+
+        for container in &story.context.context_containers {
+            project_mounts.retain(|mount| mount.id.trim() != container.mount_id.trim());
+        }
+    }
+
+    mounts.extend(project_mounts);
+
+    if let Some(story) = story {
+        for container in &story.context.context_containers {
+            let mut mount = build_context_container_mount(container)?;
+            annotate_context_mount_owner(&mut mount, "story", story.id);
+            mounts.push(mount);
+        }
     }
 
     let default_mount_id = if mounts.iter().any(|mount| mount.id == "main") {
@@ -90,6 +117,16 @@ pub fn build_derived_vfs(
     };
     validate_vfs(&vfs)?;
     Ok(vfs)
+}
+
+pub fn build_legacy_derived_vfs(
+    project: &Project,
+    story: Option<&Story>,
+    workspace: Option<&Workspace>,
+    agent_type: Option<&str>,
+    target: SessionMountTarget,
+) -> Result<Vfs, String> {
+    build_derived_vfs(project, &[], story, workspace, agent_type, target)
 }
 
 /// 为 Agent 知识容器构建单个 mount（knowledge_enabled=true 时调用）
@@ -147,41 +184,34 @@ pub fn build_project_agent_knowledge_vfs(agent: &ProjectAgent) -> Result<Vfs, St
     Ok(vfs)
 }
 
-/// 按白名单过滤 VFS 中的项目级容器
-///
-/// 仅保留 `agent.project_container_ids` 中列出的项目容器 mount。
-/// 非项目级容器（workspace / canvas / lifecycle 等）不受影响。
-pub fn filter_project_containers_by_whitelist(vfs: &mut Vfs, agent: &ProjectAgent) {
-    if agent.project_container_ids.is_empty() {
-        // 空白名单 = 移除所有项目级容器
-        vfs.mounts.retain(|mount| {
-            mount
-                .metadata
-                .get("agentdash_context_owner_kind")
-                .is_none_or(|kind| kind != "project")
-        });
-    } else {
-        let allowed: BTreeSet<&str> = agent
-            .project_container_ids
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        vfs.mounts.retain(|mount| {
-            let is_project_container = mount
-                .metadata
-                .get("agentdash_context_owner_kind")
-                .is_some_and(|kind| kind == "project");
-            if !is_project_container {
-                return true;
-            }
-            // 检查 container_id metadata 是否在白名单中
-            mount
-                .metadata
-                .get(CONTEXT_CONTAINER_ID_METADATA_KEY)
-                .and_then(|v| v.as_str())
-                .is_some_and(|cid| allowed.contains(cid))
-        });
+pub fn apply_agent_vfs_access_grants(vfs: &mut Vfs, grants: Option<&[AgentVfsAccessGrant]>) {
+    let grants_by_mount = grants
+        .unwrap_or_default()
+        .iter()
+        .map(|grant| (grant.mount_id.trim(), grant))
+        .filter(|(mount_id, _)| !mount_id.is_empty())
+        .collect::<BTreeMap<_, _>>();
+
+    for mount in &mut vfs.mounts {
+        if !is_project_vfs_mount(mount) {
+            continue;
+        }
+        let Some(grant) = grants_by_mount.get(mount.id.as_str()) else {
+            mount.capabilities.clear();
+            continue;
+        };
+        let allowed = grant.capabilities.as_slice();
+        mount
+            .capabilities
+            .retain(|capability| allowed.contains(capability));
+        if !mount.capabilities.contains(&MountCapability::Write) {
+            mount.default_write = false;
+        }
     }
+
+    vfs.mounts
+        .retain(|mount| !is_project_vfs_mount(mount) || !mount.capabilities.is_empty());
+    reset_default_mount(vfs);
 }
 
 /// 为 Workspace 创建简易单 mount VFS
@@ -252,6 +282,68 @@ pub fn effective_context_containers(
         .into_iter()
         .map(|(container, _)| container)
         .collect()
+}
+
+pub fn build_project_vfs_mount_binding_mount(
+    binding: &ProjectVfsMountBinding,
+) -> Result<Mount, String> {
+    let id = non_empty_trimmed(&binding.mount_id, "mount_id")?.to_string();
+    let display_name = if binding.display_name.trim().is_empty() {
+        id.clone()
+    } else {
+        binding.display_name.trim().to_string()
+    };
+    let capabilities = if binding.capabilities.is_empty() {
+        vec![
+            MountCapability::Read,
+            MountCapability::List,
+            MountCapability::Search,
+        ]
+    } else {
+        binding.capabilities.to_vec()
+    };
+
+    let (provider, root_ref, owner_kind, owner_id, mut metadata) = match &binding.source {
+        ProjectVfsMountSource::Filespace { filespace_id } => (
+            PROVIDER_INLINE_FS.to_string(),
+            format!("project-filespace://{filespace_id}"),
+            InlineFileOwnerKind::ProjectFilespace.as_str(),
+            *filespace_id,
+            serde_json::json!({
+                "container_id": PROJECT_FILESPACE_CONTAINER_ID,
+                CONTEXT_CONTAINER_ID_METADATA_KEY: id,
+                "project_filespace_id": filespace_id.to_string(),
+                PROJECT_VFS_MOUNT_METADATA_KEY: true,
+            }),
+        ),
+        ProjectVfsMountSource::ExternalService {
+            service_id,
+            root_ref,
+        } => (
+            non_empty_trimmed(service_id, "external_service.service_id")?.to_string(),
+            non_empty_trimmed(root_ref, "external_service.root_ref")?.to_string(),
+            "project",
+            binding.project_id,
+            serde_json::json!({
+                "service_id": service_id.trim(),
+                "root_ref": root_ref.trim(),
+                CONTEXT_CONTAINER_ID_METADATA_KEY: id,
+                PROJECT_VFS_MOUNT_METADATA_KEY: true,
+            }),
+        ),
+    };
+    let mut mount = Mount {
+        id,
+        provider,
+        backend_id: String::new(),
+        root_ref,
+        capabilities,
+        default_write: binding.default_write,
+        display_name,
+        metadata: std::mem::take(&mut metadata),
+    };
+    annotate_context_mount_owner(&mut mount, owner_kind, owner_id);
+    Ok(mount)
 }
 
 fn effective_context_containers_with_origin(
@@ -426,6 +518,9 @@ pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
         Some(value) if value == InlineFileOwnerKind::ProjectAgent.as_str() => {
             ResolvedMountOwnerKind::ProjectAgent
         }
+        Some(value) if value == InlineFileOwnerKind::ProjectFilespace.as_str() => {
+            ResolvedMountOwnerKind::Project
+        }
         Some("canvas") => ResolvedMountOwnerKind::Canvas,
         Some("workspace") => ResolvedMountOwnerKind::Workspace,
         _ => ResolvedMountOwnerKind::External,
@@ -451,13 +546,40 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
         PROVIDER_CANVAS_FS => ResolvedMountPurpose::Canvas,
         PROVIDER_SKILL_ASSET_FS => ResolvedMountPurpose::ProjectContainer,
         PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
-            ResolvedMountOwnerKind::Project => ResolvedMountPurpose::ProjectContainer,
+            ResolvedMountOwnerKind::Project => {
+                if is_project_vfs_mount(mount) {
+                    ResolvedMountPurpose::Filespace
+                } else {
+                    ResolvedMountPurpose::ProjectContainer
+                }
+            }
             ResolvedMountOwnerKind::Story => ResolvedMountPurpose::StoryContainer,
             ResolvedMountOwnerKind::ProjectAgent => ResolvedMountPurpose::AgentKnowledge,
             _ => ResolvedMountPurpose::ExternalService,
         },
         _ => ResolvedMountPurpose::ExternalService,
     }
+}
+
+fn is_project_vfs_mount(mount: &Mount) -> bool {
+    mount
+        .metadata
+        .get(PROJECT_VFS_MOUNT_METADATA_KEY)
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn reset_default_mount(vfs: &mut Vfs) {
+    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
+        && vfs.mounts.iter().any(|mount| mount.id == default_mount_id)
+    {
+        return;
+    }
+    vfs.default_mount_id = if vfs.mounts.iter().any(|mount| mount.id == "main") {
+        Some("main".to_string())
+    } else {
+        vfs.mounts.first().map(|mount| mount.id.clone())
+    };
 }
 
 fn non_empty_trimmed<'a>(value: &'a str, field_name: &str) -> Result<&'a str, String> {
@@ -491,16 +613,26 @@ mod tests {
         }
     }
 
+    fn filespace_binding(project_id: Uuid, mount_id: &str) -> ProjectVfsMountBinding {
+        ProjectVfsMountBinding::new_filespace(
+            project_id,
+            mount_id.to_string(),
+            mount_id.to_string(),
+            Uuid::new_v4(),
+        )
+    }
+
     #[test]
     fn story_override_container_is_marked_as_story_owned() {
-        let mut project = Project::new("proj".to_string(), "desc".to_string());
-        project.config.context_containers = vec![inline_container("brief", "project.md")];
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let bindings = vec![filespace_binding(project.id, "brief")];
 
         let mut story = Story::new(project.id, "story".to_string(), "desc".to_string());
         story.context.context_containers = vec![inline_container("brief", "story.md")];
 
         let vfs = build_derived_vfs(
             &project,
+            &bindings,
             Some(&story),
             None,
             None,
@@ -534,13 +666,14 @@ mod tests {
 
     #[test]
     fn inherited_project_container_is_marked_as_project_owned() {
-        let mut project = Project::new("proj".to_string(), "desc".to_string());
-        project.config.context_containers = vec![inline_container("spec", "project.md")];
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let bindings = vec![filespace_binding(project.id, "spec")];
 
         let story = Story::new(project.id, "story".to_string(), "desc".to_string());
 
         let vfs = build_derived_vfs(
             &project,
+            &bindings,
             Some(&story),
             None,
             None,
@@ -556,15 +689,11 @@ mod tests {
         // 验证新的 owner_kind / owner_id metadata
         assert_eq!(
             mount.metadata.get(CONTEXT_OWNER_KIND_METADATA_KEY),
-            Some(&serde_json::Value::String("project".to_string()))
+            Some(&serde_json::Value::String(
+                InlineFileOwnerKind::ProjectFilespace.as_str().to_string()
+            ))
         );
-        assert_eq!(
-            mount
-                .metadata
-                .get(CONTEXT_OWNER_ID_METADATA_KEY)
-                .and_then(|v| v.as_str()),
-            Some(project.id.to_string()).as_deref()
-        );
+        assert_eq!(mount_owner_kind(mount), ResolvedMountOwnerKind::Project);
     }
 }
 

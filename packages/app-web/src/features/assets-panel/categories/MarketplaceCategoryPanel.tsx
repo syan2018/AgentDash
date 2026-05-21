@@ -45,6 +45,7 @@ const ASSET_TYPE_OPTIONS: Array<{ value: LibraryAssetType | "all"; label: string
   { value: "mcp_server_template", label: "MCP" },
   { value: "workflow_template", label: "Workflow" },
   { value: "skill_template", label: "Skill" },
+  { value: "filespace_template", label: "Filespace" },
   { value: "extension_template", label: "Extension" },
 ];
 
@@ -53,6 +54,7 @@ const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   mcp_server_template: "MCP",
   workflow_template: "Workflow",
   skill_template: "Skill",
+  filespace_template: "Filespace",
   extension_template: "Extension",
 };
 
@@ -109,6 +111,7 @@ export function MarketplaceCategoryPanel() {
       ...sourceStatus.project_agents,
       ...sourceStatus.mcp_presets,
       ...sourceStatus.skill_assets,
+      ...sourceStatus.filespaces,
       ...sourceStatus.workflow_definitions,
       ...sourceStatus.activity_lifecycle_definitions,
       ...sourceStatus.extension_installations,

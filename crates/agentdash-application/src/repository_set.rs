@@ -12,6 +12,9 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::project::ProjectRepository;
+use agentdash_domain::project_filespace::{
+    ProjectFilespaceRepository, ProjectVfsMountBindingRepository,
+};
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
@@ -55,6 +58,8 @@ pub struct RepositorySet {
     pub mcp_preset_repo: Arc<dyn McpPresetRepository>,
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
+    pub project_filespace_repo: Arc<dyn ProjectFilespaceRepository>,
+    pub project_vfs_mount_binding_repo: Arc<dyn ProjectVfsMountBindingRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub workflow_template_install_repo: Arc<dyn WorkflowTemplateInstallRepository>,
     pub lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,

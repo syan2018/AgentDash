@@ -11,6 +11,7 @@ pub mod inline_file;
 pub mod llm_provider;
 pub mod mcp_preset;
 pub mod project;
+pub mod project_filespace;
 pub mod routine;
 pub mod session_binding;
 pub mod session_composition;

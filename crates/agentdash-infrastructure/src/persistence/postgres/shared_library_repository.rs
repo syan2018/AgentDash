@@ -36,7 +36,7 @@ impl PostgresSharedLibraryRepository {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 CONSTRAINT library_assets_type_check CHECK (
-                    asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template', 'extension_template')
+                    asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template', 'filespace_template', 'extension_template')
                 ),
                 CONSTRAINT library_assets_scope_check CHECK (
                     scope IN ('builtin', 'system', 'org', 'user')

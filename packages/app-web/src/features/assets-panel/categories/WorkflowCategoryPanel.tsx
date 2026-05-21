@@ -18,8 +18,8 @@ import { useWorkflowStore } from "../../../stores/workflowStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import type {
+  ActivityLifecycleDefinition,
   LibraryAssetDto,
-  LifecycleDefinition,
   WorkflowDefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
@@ -47,7 +47,7 @@ export function WorkflowCategoryPanel() {
   const [notice, setNotice] = useState<NoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
-  const [publishTarget, setPublishTarget] = useState<LifecycleDefinition | null>(null);
+  const [publishTarget, setPublishTarget] = useState<ActivityLifecycleDefinition | null>(null);
   // 当前用户已发布的 workflow 模板列表，用于在卡片上展示"已发布"徽章
   const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
   const [publishedReloadTick, setPublishedReloadTick] = useState(0);
@@ -194,11 +194,11 @@ function LifecycleAssetGrid({
   onDelete,
   busyKey,
 }: {
-  items: LifecycleDefinition[];
+  items: ActivityLifecycleDefinition[];
   publishedByKey: Map<string, LibraryAssetDto>;
-  onEdit: (lc: LifecycleDefinition) => void;
-  onPublish: (lc: LifecycleDefinition) => void;
-  onDelete: (lc: LifecycleDefinition) => void;
+  onEdit: (lc: ActivityLifecycleDefinition) => void;
+  onPublish: (lc: ActivityLifecycleDefinition) => void;
+  onDelete: (lc: ActivityLifecycleDefinition) => void;
   busyKey: string | null;
 }) {
   if (items.length === 0) {
@@ -239,15 +239,15 @@ function LifecycleAssetCard({
   onDelete,
   isDeleting,
 }: {
-  item: LifecycleDefinition;
+  item: ActivityLifecycleDefinition;
   published: LibraryAssetDto | null;
-  onEdit: (lc: LifecycleDefinition) => void;
-  onPublish: (lc: LifecycleDefinition) => void;
-  onDelete: (lc: LifecycleDefinition) => void;
+  onEdit: (lc: ActivityLifecycleDefinition) => void;
+  onPublish: (lc: ActivityLifecycleDefinition) => void;
+  onDelete: (lc: ActivityLifecycleDefinition) => void;
   isDeleting: boolean;
 }) {
-  const stepCount = item.steps.length;
-  const edgeCount = (item.edges ?? []).length;
+  const stepCount = item.activities.length;
+  const edgeCount = (item.transitions ?? []).length;
   const isInstalled = Boolean(item.installed_source);
   const isBuiltin = item.source === "builtin_seed";
   // 已经从市场安装回来的资产或 builtin 不允许走"发布"路径，避免循环发布
@@ -312,10 +312,10 @@ function LifecycleAssetCard({
 
       <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          {stepCount} step
+          {stepCount} activity
         </span>
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          {edgeCount} edge
+          {edgeCount} transition
         </span>
         <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
           target: {formatTargetKinds(item.target_kinds)}

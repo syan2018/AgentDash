@@ -110,7 +110,7 @@ export function MarketplaceCategoryPanel() {
       ...sourceStatus.mcp_presets,
       ...sourceStatus.skill_assets,
       ...sourceStatus.workflow_definitions,
-      ...sourceStatus.lifecycle_definitions,
+      ...sourceStatus.activity_lifecycle_definitions,
       ...sourceStatus.extension_installations,
     ];
     for (const item of allItems) {

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::{StateChangeRepository, StoryRepository};
+use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
@@ -16,7 +16,7 @@ use agentdash_spi::{
 };
 use async_trait::async_trait;
 
-use agentdash_spi::{ExecutionHookProvider, HookStepAdvanceRequest};
+use agentdash_spi::ExecutionHookProvider;
 
 use super::owner_resolver::SessionOwnerResolver;
 use super::presets::builtin_preset_scripts;
@@ -46,16 +46,12 @@ impl AppExecutionHookProvider {
         story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
-        state_change_repo: Arc<dyn StateChangeRepository>,
     ) -> Self {
         let preset_scripts = builtin_preset_scripts();
         let wf_binding = session_binding_repo.clone();
-        let wf_inline = inline_file_repo.clone();
-        let wf_story = story_repo.clone();
-        let wf_state = state_change_repo.clone();
         Self {
             session_binding_repo,
             inline_file_repo,
@@ -63,11 +59,8 @@ impl AppExecutionHookProvider {
             workflow_builder: WorkflowSnapshotBuilder::new(
                 wf_binding,
                 workflow_definition_repo,
-                lifecycle_definition_repo,
+                activity_lifecycle_definition_repo,
                 lifecycle_run_repo,
-                wf_inline,
-                wf_story,
-                wf_state,
             ),
             script_engine: HookScriptEngine::new(&preset_scripts),
         }
@@ -404,13 +397,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         }
 
         Ok(resolution)
-    }
-
-    async fn advance_workflow_step(
-        &self,
-        request: HookStepAdvanceRequest,
-    ) -> Result<(), HookError> {
-        self.workflow_builder.advance_workflow_step(request).await
     }
 
     async fn append_execution_log(

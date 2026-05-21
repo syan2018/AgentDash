@@ -1,19 +1,14 @@
 use std::sync::Arc;
 
-use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
-use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
-use agentdash_spi::{HookError, HookStepAdvanceRequest, hooks::PendingExecutionLogEntry};
+use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
 
 use crate::workflow::execution_log as workflow_recording;
-use crate::workflow::{
-    ActiveWorkflowProjection, CompleteLifecycleStepCommand, LifecycleRunService,
-    LifecycleStepProjector, resolve_active_workflow_projection_for_session,
-};
+use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
@@ -23,39 +18,22 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 pub struct WorkflowSnapshotBuilder {
     session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+    activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-    inline_file_repo: Arc<dyn InlineFileRepository>,
-    story_repo: Arc<dyn StoryRepository>,
-    state_change_repo: Arc<dyn StateChangeRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
         session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        lifecycle_definition_repo: Arc<dyn LifecycleDefinitionRepository>,
+        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        inline_file_repo: Arc<dyn InlineFileRepository>,
-        story_repo: Arc<dyn StoryRepository>,
-        state_change_repo: Arc<dyn StateChangeRepository>,
     ) -> Self {
         Self {
             session_binding_repo,
             workflow_definition_repo,
-            lifecycle_definition_repo,
+            activity_lifecycle_definition_repo,
             lifecycle_run_repo,
-            inline_file_repo,
-            story_repo,
-            state_change_repo,
-        }
-    }
-
-    fn build_projector(&self) -> LifecycleStepProjector {
-        LifecycleStepProjector {
-            story_repo: self.story_repo.clone(),
-            state_change_repo: self.state_change_repo.clone(),
-            session_binding_repo: self.session_binding_repo.clone(),
         }
     }
 
@@ -78,48 +56,11 @@ impl WorkflowSnapshotBuilder {
             session_id,
             self.session_binding_repo.as_ref(),
             self.workflow_definition_repo.as_ref(),
-            self.lifecycle_definition_repo.as_ref(),
+            self.activity_lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         )
         .await
         .map_err(HookError::Runtime)
-    }
-
-    pub async fn advance_workflow_step(
-        &self,
-        request: HookStepAdvanceRequest,
-    ) -> Result<(), HookError> {
-        let run_id = Uuid::parse_str(&request.run_id)
-            .map_err(|e| HookError::Runtime(format!("advance: invalid run_id: {e}")))?;
-
-        let step_key = request.step_key.clone();
-        let summary = request.summary.clone();
-
-        let service = LifecycleRunService::new(
-            self.lifecycle_definition_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
-        )
-        .with_projector(self.build_projector());
-        service
-            .complete_step(CompleteLifecycleStepCommand {
-                run_id,
-                step_key: request.step_key,
-                summary: request.summary,
-            })
-            .await
-            .map_err(|e| HookError::Runtime(format!("advance_workflow_step: {e}")))?;
-
-        if let Some(summary_text) = &summary {
-            crate::workflow::materialize_step_summary(
-                self.inline_file_repo.as_ref(),
-                run_id,
-                &step_key,
-                summary_text,
-            )
-            .await;
-        }
-
-        Ok(())
     }
 
     pub async fn append_execution_log(

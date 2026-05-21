@@ -12,14 +12,6 @@ export type WorkflowRunStatus =
   | "failed"
   | "cancelled";
 
-export type WorkflowStepExecutionStatus =
-  | "pending"
-  | "ready"
-  | "running"
-  | "completed"
-  | "failed"
-  | "skipped";
-
 export interface WorkflowContextBinding {
   locator: string;
   reason: string;
@@ -88,24 +80,6 @@ export interface InputPortDefinition {
   context_template?: string | null;
   standalone_fulfillment?: StandaloneFulfillment;
 }
-
-export type LifecycleEdgeKind = "flow" | "artifact";
-
-export type LifecycleEdge =
-  | {
-      kind: "flow";
-      from_node: string;
-      to_node: string;
-      from_port?: null;
-      to_port?: null;
-    }
-  | {
-      kind: "artifact";
-      from_node: string;
-      to_node: string;
-      from_port: string;
-      to_port: string;
-    };
 
 /**
  * Capability 路径 —— 统一表达「能力级」和「工具级」两种寻址。
@@ -282,21 +256,6 @@ export interface WorkflowTemplateWorkflow {
   contract: WorkflowContract;
 }
 
-export type LifecycleNodeType = "agent_node" | "phase_node";
-
-export interface LifecycleStepDefinition {
-  key: string;
-  description: string;
-  workflow_key?: string | null;
-  node_type?: LifecycleNodeType;
-  /** Step 级产出约束 */
-  output_ports: OutputPortDefinition[];
-  /** Step 级消费声明 */
-  input_ports: InputPortDefinition[];
-  /** Step 级能力配置；应用顺序在绑定 workflow 的 contract.capability_config 之后。 */
-  capability_config?: WorkflowCapabilityConfig;
-}
-
 export interface WorkflowTemplate {
   key: string;
   name: string;
@@ -307,9 +266,9 @@ export interface WorkflowTemplate {
     key: string;
     name: string;
     description: string;
-    entry_step_key: string;
-    steps: LifecycleStepDefinition[];
-    edges: LifecycleEdge[];
+    entry_activity_key: string;
+    activities: ActivityDefinition[];
+    transitions: ActivityTransition[];
   };
 }
 
@@ -328,7 +287,103 @@ export interface WorkflowDefinition {
   updated_at: string;
 }
 
-export interface LifecycleDefinition {
+export type AgentSessionPolicy = "spawn_child" | "continue_root" | "attach_existing";
+
+export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history";
+
+export type ActivityJoinPolicy =
+  | "all"
+  | "any"
+  | "first"
+  | { n_of_m: { n: number } };
+
+export type ActivityCompletionPolicy =
+  | { kind: "output_ports"; required_ports: string[] }
+  | { kind: "executor_terminal" }
+  | { kind: "human_decision"; decision_port: string }
+  | { kind: "hook_gate"; hook_key: string }
+  | { kind: "open_ended" };
+
+export type ActivityExecutorSpec =
+  | {
+      kind: "agent";
+      workflow_key: string;
+      session_policy: AgentSessionPolicy;
+    }
+  | {
+      kind: "function";
+      type: "api_request";
+      method: string;
+      url_template: string;
+      body_template?: Record<string, unknown> | null;
+    }
+  | {
+      kind: "function";
+      type: "bash_exec";
+      command: string;
+      args: string[];
+      working_directory?: string | null;
+    }
+  | {
+      kind: "human";
+      type: "approval";
+      form_schema_key: string;
+      title?: string | null;
+    };
+
+export interface ActivityDefinition {
+  key: string;
+  description: string;
+  executor: ActivityExecutorSpec;
+  input_ports: InputPortDefinition[];
+  output_ports: OutputPortDefinition[];
+  completion_policy: ActivityCompletionPolicy;
+  iteration_policy: {
+    max_attempts?: number | null;
+    artifact_alias: ArtifactAliasPolicy;
+  };
+  join_policy: ActivityJoinPolicy;
+}
+
+export type TransitionCondition =
+  | { kind: "always" }
+  | {
+      kind: "artifact_field_equals";
+      activity: string;
+      port: string;
+      path: string;
+      value: unknown;
+    }
+  | {
+      kind: "human_decision_equals";
+      activity: string;
+      decision_port: string;
+      value: string;
+    }
+  | {
+      kind: "agent_signal_equals";
+      activity: string;
+      signal_key: string;
+      value: unknown;
+    };
+
+export interface ArtifactBinding {
+  from_activity?: string | null;
+  from_port: string;
+  to_port: string;
+  alias: ArtifactAliasPolicy;
+}
+
+export interface ActivityTransition {
+  from: string;
+  to: string;
+  kind: "flow" | "artifact";
+  condition: TransitionCondition;
+  artifact_bindings: ArtifactBinding[];
+  max_traversals?: number | null;
+}
+
+export interface ActivityLifecycleDefinition {
   id: string;
   project_id: string;
   key: string;
@@ -338,22 +393,69 @@ export interface LifecycleDefinition {
   source: WorkflowDefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
-  entry_step_key: string;
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
+  entry_activity_key: string;
+  activities: ActivityDefinition[];
+  transitions: ActivityTransition[];
   created_at: string;
   updated_at: string;
 }
 
-export interface WorkflowStepState {
-  step_key: string;
-  status: WorkflowStepExecutionStatus;
-  session_id?: string | null;
+export type ActivityAttemptStatus =
+  | "pending"
+  | "ready"
+  | "claiming"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ActivityRunStatus =
+  | "ready"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type ExecutorRunRef =
+  | { kind: "agent_session"; session_id: string }
+  | { kind: "function_run"; run_id: string }
+  | { kind: "human_decision"; decision_id: string };
+
+export interface ActivityAttemptState {
+  activity_key: string;
+  attempt: number;
+  status: ActivityAttemptStatus;
+  executor_run?: ExecutorRunRef | null;
   started_at?: string | null;
   completed_at?: string | null;
   summary?: string | null;
-  context_snapshot?: Record<string, unknown> | null;
-  gate_collision_count?: number;
+}
+
+export interface ActivityOutputArtifact {
+  activity_key: string;
+  attempt: number;
+  port_key: string;
+  value: unknown;
+  created_at: string;
+}
+
+export interface ActivityInputArtifact {
+  activity_key: string;
+  attempt: number;
+  port_key: string;
+  source_activity_key: string;
+  source_attempt: number;
+  source_port_key: string;
+  value: unknown;
+  created_at: string;
+}
+
+export interface ActivityLifecycleRunState {
+  status: ActivityRunStatus;
+  attempts: ActivityAttemptState[];
+  outputs: ActivityOutputArtifact[];
+  inputs: ActivityInputArtifact[];
 }
 
 export type LifecycleExecutionEventKind =
@@ -379,8 +481,8 @@ export interface WorkflowRun {
   status: WorkflowRunStatus;
   /** 当前所有可执行（Ready/Running）的 node key 集合 */
   active_node_keys?: string[];
-  step_states: WorkflowStepState[];
   execution_log: LifecycleExecutionEntry[];
+  activity_state?: ActivityLifecycleRunState | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;

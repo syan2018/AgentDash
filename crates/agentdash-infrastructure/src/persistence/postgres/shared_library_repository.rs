@@ -4,7 +4,7 @@ use sqlx::types::Json;
 use agentdash_domain::DomainError;
 use agentdash_domain::shared_library::{
     LibraryAsset, LibraryAssetListFilter, LibraryAssetRepository, LibraryAssetScope,
-    LibraryAssetSource, LibraryAssetType,
+    LibraryAssetSource, LibraryAssetType, normalize_workflow_template_payload_value,
 };
 
 pub struct PostgresSharedLibraryRepository {
@@ -78,6 +78,8 @@ impl PostgresSharedLibraryRepository {
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
+
+        normalize_workflow_template_assets(&self.pool).await?;
 
         Ok(())
     }
@@ -229,6 +231,38 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(format!("library_assets: {error}"))
+}
+
+async fn normalize_workflow_template_assets(pool: &PgPool) -> Result<(), DomainError> {
+    let rows = sqlx::query_as::<_, WorkflowTemplatePayloadRow>(
+        "SELECT id,payload FROM library_assets WHERE asset_type = 'workflow_template' AND payload #> '{template,lifecycle,steps}' IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+
+    for row in rows {
+        let payload = normalize_workflow_template_payload_value(row.payload.0)?;
+        let payload_digest = agentdash_application::shared_library::seed_digest(&payload)?;
+        sqlx::query(
+            "UPDATE library_assets SET payload=$1,payload_digest=$2,updated_at=$3 WHERE id=$4",
+        )
+        .bind(Json(payload))
+        .bind(payload_digest)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(row.id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct WorkflowTemplatePayloadRow {
+    id: String,
+    payload: Json<serde_json::Value>,
 }
 
 #[derive(sqlx::FromRow)]

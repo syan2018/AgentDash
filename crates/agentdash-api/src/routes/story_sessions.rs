@@ -327,6 +327,12 @@ pub async fn create_story_session(
             .mark_owner_bootstrap_pending(&session_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
+        crate::routes::acp_sessions::ensure_freeform_lifecycle_run(
+            state.as_ref(),
+            story.project_id,
+            &session_id,
+        )
+        .await?;
     }
 
     let mut resp = SessionBindingResponse::from_binding(&binding);

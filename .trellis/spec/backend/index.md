@@ -76,6 +76,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [Activity Lifecycle](./workflow/activity-lifecycle.md) | Activity / Executor / Attempt / Scheduler 运行契约 |
 | [Lifecycle Edge 设计](./workflow/lifecycle-edge.md) | DAG edge 语义与校验 |
 
 #### `vfs/` — 虚拟文件系统

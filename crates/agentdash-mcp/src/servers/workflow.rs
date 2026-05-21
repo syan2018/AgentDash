@@ -15,10 +15,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    CapabilityConfig, InputPortDefinition, LifecycleDefinition, LifecycleEdge, LifecycleEdgeKind,
-    LifecycleNodeType, LifecycleStepDefinition, OutputPortDefinition, ValidationSeverity,
-    WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
-    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
+    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityTransition,
+    ActivityTransitionKind, ArtifactBinding, CapabilityConfig, InputPortDefinition,
+    OutputPortDefinition, TransitionCondition, ValidationSeverity, WorkflowBindingKind,
+    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
+    WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
 };
 
 use crate::error::McpError;
@@ -102,30 +103,34 @@ pub struct UpsertLifecycleParams {
         description = "可挂载类型列表: project / story，如 [\"story\"] 或 [\"project\", \"story\"]"
     )]
     pub binding_kinds: Vec<String>,
-    #[schemars(description = "入口步骤 key")]
-    pub entry_step_key: String,
-    #[schemars(description = "步骤定义列表")]
-    pub steps: Vec<StepInput>,
-    #[schemars(description = "边定义列表（定义步骤间数据流）")]
-    pub edges: Option<Vec<EdgeInput>>,
+    #[schemars(description = "入口 Activity key")]
+    pub entry_activity_key: String,
+    #[schemars(description = "Activity 定义列表")]
+    pub activities: Vec<ActivityInput>,
+    #[schemars(description = "Activity 转换列表（控制流与 artifact binding）")]
+    pub transitions: Option<Vec<TransitionInput>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct StepInput {
-    #[schemars(description = "步骤唯一 key")]
+pub struct ActivityInput {
+    #[schemars(description = "Activity 唯一 key")]
     pub key: String,
-    #[schemars(description = "步骤描述")]
+    #[schemars(description = "Activity 描述")]
     pub description: Option<String>,
-    #[schemars(description = "关联的 workflow key（必须已存在）")]
-    pub workflow_key: Option<String>,
-    #[schemars(description = "节点类型: agent_node（默认）/ phase_node")]
-    pub node_type: Option<String>,
+    #[schemars(
+        description = "Activity executor；agent executor 必须引用当前 Project 内已存在的 workflow_key"
+    )]
+    pub executor: ActivityExecutorSpec,
     #[schemars(description = "输入端口列表")]
     pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(description = "输出端口列表")]
     pub output_ports: Option<Vec<OutputPortInput>>,
-    #[schemars(description = "Step 级顶层能力配置，会在 workflow contract 配置之后应用。")]
-    pub capability_config: Option<CapabilityConfig>,
+    #[schemars(description = "完成策略，默认 executor_terminal")]
+    pub completion_policy: Option<agentdash_domain::workflow::ActivityCompletionPolicy>,
+    #[schemars(description = "重试/产物别名策略，默认单次最新产物")]
+    pub iteration_policy: Option<agentdash_domain::workflow::ActivityIterationPolicy>,
+    #[schemars(description = "Join 策略，默认 all")]
+    pub join_policy: Option<agentdash_domain::workflow::ActivityJoinPolicy>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -147,34 +152,17 @@ pub struct OutputPortInput {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EdgeKindInput {
-    Flow,
-    Artifact,
-}
-
-fn default_edge_kind_input() -> EdgeKindInput {
-    // 历史调用不带 kind 时按 artifact 兼容
-    EdgeKindInput::Artifact
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct EdgeInput {
-    #[schemars(
-        description = "边类别：flow（控制流，无 port）/ artifact（数据流，需声明 port）；默认 artifact 以兼容历史调用"
-    )]
-    #[serde(default = "default_edge_kind_input")]
-    pub kind: EdgeKindInput,
-    #[schemars(description = "源节点 key")]
-    pub from_node: String,
-    #[schemars(description = "源输出端口 key（仅 artifact edge 需要）")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from_port: Option<String>,
-    #[schemars(description = "目标节点 key")]
-    pub to_node: String,
-    #[schemars(description = "目标输入端口 key（仅 artifact edge 需要）")]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to_port: Option<String>,
+pub struct TransitionInput {
+    #[schemars(description = "源 Activity key")]
+    pub from: String,
+    #[schemars(description = "目标 Activity key")]
+    pub to: String,
+    #[schemars(description = "转换条件，默认 always")]
+    pub condition: Option<TransitionCondition>,
+    #[schemars(description = "artifact 端口绑定")]
+    pub artifact_bindings: Option<Vec<ArtifactBinding>>,
+    #[schemars(description = "最大遍历次数")]
+    pub max_traversals: Option<u32>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -229,20 +217,26 @@ impl WorkflowMcpServer {
     ) -> Result<(), McpError> {
         let lifecycles = self
             .services
-            .lifecycle_definition_repo
+            .activity_lifecycle_definition_repo
             .list_by_project(self.project_id)
             .await
             .map_err(McpError::from)?;
         let conflicts = lifecycles
             .into_iter()
             .filter_map(|lifecycle| {
-                let referencing_steps = lifecycle
-                    .steps
+                let referencing_activities = lifecycle
+                    .activities
                     .iter()
-                    .filter(|step| step.effective_workflow_key() == Some(definition.key.as_str()))
-                    .map(|step| step.key.as_str())
+                    .filter_map(|activity| match &activity.executor {
+                        ActivityExecutorSpec::Agent(agent)
+                            if agent.workflow_key == definition.key.as_str() =>
+                        {
+                            Some(activity.key.as_str())
+                        }
+                        _ => None,
+                    })
                     .collect::<Vec<_>>();
-                if referencing_steps.is_empty()
+                if referencing_activities.is_empty()
                     || workflow_binding_kinds_cover(
                         &lifecycle.binding_kinds,
                         &definition.binding_kinds,
@@ -253,7 +247,7 @@ impl WorkflowMcpServer {
                     Some(format!(
                         "{}({}) 需要 {:?}",
                         lifecycle.key,
-                        referencing_steps.join(","),
+                        referencing_activities.join(","),
                         lifecycle.binding_kinds
                     ))
                 }
@@ -266,7 +260,7 @@ impl WorkflowMcpServer {
             Err(McpError::invalid_param(
                 "binding_kinds",
                 format!(
-                    "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 lifecycle：{}",
+                    "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 activity lifecycle：{}",
                     definition.key,
                     definition.binding_kinds,
                     conflicts.join("; ")
@@ -275,30 +269,33 @@ impl WorkflowMcpServer {
         }
     }
 
-    /// Upsert lifecycle：先做完整校验（域层 + workflow 引用），再持久化。
+    /// Upsert activity lifecycle：先做完整校验（域层 + workflow 引用），再持久化。
     async fn upsert_lifecycle_definition(
         &self,
-        lifecycle: LifecycleDefinition,
-    ) -> Result<LifecycleDefinition, McpError> {
+        lifecycle: ActivityLifecycleDefinition,
+    ) -> Result<ActivityLifecycleDefinition, McpError> {
         // 域层结构校验
         let mut issues = lifecycle.validate_full();
 
         // workflow 引用校验
         let repo = self.services.workflow_definition_repo.as_ref();
-        for (idx, step) in lifecycle.steps.iter().enumerate() {
-            let Some(wk) = step.effective_workflow_key() else {
+        for (idx, activity) in lifecycle.activities.iter().enumerate() {
+            let ActivityExecutorSpec::Agent(agent) = &activity.executor else {
                 continue;
             };
-            match repo.get_by_key(wk).await {
+            match repo
+                .get_by_project_and_key(lifecycle.project_id, &agent.workflow_key)
+                .await
+            {
                 Ok(Some(wf)) => {
                     if !workflow_binding_kinds_cover(&lifecycle.binding_kinds, &wf.binding_kinds) {
                         issues.push(agentdash_domain::workflow::ValidationIssue::error(
                             "binding_kind_mismatch",
                             format!(
-                                "step `{}` 引用的 workflow `{wk}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
-                                step.key, wf.binding_kinds, lifecycle.binding_kinds
+                                "activity `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
+                                activity.key, agent.workflow_key, wf.binding_kinds, lifecycle.binding_kinds
                             ),
-                            format!("steps[{idx}].workflow_key"),
+                            format!("activities[{idx}].executor.workflow_key"),
                         ));
                     }
                 }
@@ -306,10 +303,10 @@ impl WorkflowMcpServer {
                     issues.push(agentdash_domain::workflow::ValidationIssue::error(
                         "workflow_not_found",
                         format!(
-                            "step `{}` 引用的 workflow `{wk}` 不存在，请先通过 upsert_workflow 创建",
-                            step.key
+                            "activity `{}` 引用的 workflow `{}` 不存在，请先通过 upsert_workflow 创建",
+                            activity.key, agent.workflow_key
                         ),
-                        format!("steps[{idx}].workflow_key"),
+                        format!("activities[{idx}].executor.workflow_key"),
                     ));
                 }
                 Err(e) => {
@@ -333,9 +330,9 @@ impl WorkflowMcpServer {
             ));
         }
 
-        let lc_repo = self.services.lifecycle_definition_repo.as_ref();
+        let lc_repo = self.services.activity_lifecycle_definition_repo.as_ref();
         if let Some(existing) = lc_repo
-            .get_by_key(&lifecycle.key)
+            .get_by_project_and_key(lifecycle.project_id, &lifecycle.key)
             .await
             .map_err(McpError::from)?
         {
@@ -406,17 +403,6 @@ fn parse_hook_trigger(raw: &str) -> Result<WorkflowHookTrigger, McpError> {
     }
 }
 
-fn parse_node_type(raw: Option<&str>) -> Result<LifecycleNodeType, McpError> {
-    match raw.unwrap_or("agent_node") {
-        "agent_node" => Ok(LifecycleNodeType::AgentNode),
-        "phase_node" => Ok(LifecycleNodeType::PhaseNode),
-        other => Err(McpError::invalid_param(
-            "node_type",
-            format!("不支持的节点类型: {other}，可选值: agent_node / phase_node"),
-        )),
-    }
-}
-
 fn build_hook_rules(rules: &[HookRuleInput]) -> Result<Vec<WorkflowHookRuleSpec>, McpError> {
     rules
         .iter()
@@ -472,35 +458,39 @@ fn build_output_ports(inputs: &[OutputPortInput]) -> Vec<OutputPortDefinition> {
         .collect()
 }
 
-fn build_steps(inputs: &[StepInput]) -> Result<Vec<LifecycleStepDefinition>, McpError> {
+fn build_activities(inputs: &[ActivityInput]) -> Vec<ActivityDefinition> {
     inputs
         .iter()
-        .map(|step| {
-            Ok(LifecycleStepDefinition {
-                key: step.key.clone(),
-                description: step.description.clone().unwrap_or_default(),
-                workflow_key: step.workflow_key.clone(),
-                node_type: parse_node_type(step.node_type.as_deref())?,
-                input_ports: build_input_ports(step.input_ports.as_deref().unwrap_or_default()),
-                output_ports: build_output_ports(step.output_ports.as_deref().unwrap_or_default()),
-                capability_config: step.capability_config.clone().unwrap_or_default(),
-            })
+        .map(|activity| ActivityDefinition {
+            key: activity.key.clone(),
+            description: activity.description.clone().unwrap_or_default(),
+            executor: activity.executor.clone(),
+            input_ports: build_input_ports(activity.input_ports.as_deref().unwrap_or_default()),
+            output_ports: build_output_ports(activity.output_ports.as_deref().unwrap_or_default()),
+            completion_policy: activity.completion_policy.clone().unwrap_or_default(),
+            iteration_policy: activity.iteration_policy.clone().unwrap_or_default(),
+            join_policy: activity.join_policy.unwrap_or_default(),
         })
         .collect()
 }
 
-fn build_edges(inputs: &[EdgeInput]) -> Vec<LifecycleEdge> {
+fn build_transitions(inputs: &[TransitionInput]) -> Vec<ActivityTransition> {
     inputs
         .iter()
-        .map(|e| match e.kind {
-            EdgeKindInput::Flow => LifecycleEdge::flow(e.from_node.clone(), e.to_node.clone()),
-            EdgeKindInput::Artifact => LifecycleEdge {
-                kind: LifecycleEdgeKind::Artifact,
-                from_node: e.from_node.clone(),
-                to_node: e.to_node.clone(),
-                from_port: e.from_port.clone(),
-                to_port: e.to_port.clone(),
-            },
+        .map(|transition| {
+            let artifact_bindings = transition.artifact_bindings.clone().unwrap_or_default();
+            ActivityTransition {
+                from: transition.from.clone(),
+                to: transition.to.clone(),
+                kind: if artifact_bindings.is_empty() {
+                    ActivityTransitionKind::Flow
+                } else {
+                    ActivityTransitionKind::Artifact
+                },
+                condition: transition.condition.clone().unwrap_or_default(),
+                artifact_bindings,
+                max_traversals: transition.max_traversals,
+            }
         })
         .collect()
 }
@@ -520,7 +510,7 @@ impl WorkflowMcpServer {
 
         let lifecycles = self
             .services
-            .lifecycle_definition_repo
+            .activity_lifecycle_definition_repo
             .list_by_project(self.project_id)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 列表失败: {e}")))?;
@@ -540,9 +530,9 @@ impl WorkflowMcpServer {
                 "description": l.description,
                 "binding_kinds": l.binding_kinds,
                 "source": l.source,
-                "entry_step_key": l.entry_step_key,
-                "step_count": l.steps.len(),
-                "edge_count": l.edges.len(),
+                "entry_activity_key": l.entry_activity_key,
+                "activity_count": l.activities.len(),
+                "transition_count": l.transitions.len(),
             })).collect::<Vec<_>>(),
         });
 
@@ -572,18 +562,22 @@ impl WorkflowMcpServer {
         )]))
     }
 
-    #[tool(description = "获取单个 Lifecycle 定义的完整详情（含 steps、edges）")]
+    #[tool(
+        description = "获取单个 Activity Lifecycle 定义的完整详情（含 activities、transitions）"
+    )]
     async fn get_lifecycle(
         &self,
         Parameters(params): Parameters<GetLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let lifecycle = self
             .services
-            .lifecycle_definition_repo
-            .get_by_key(&params.lifecycle_key)
+            .activity_lifecycle_definition_repo
+            .get_by_project_and_key(self.project_id, &params.lifecycle_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 失败: {e}")))?
-            .ok_or_else(|| McpError::not_found("LifecycleDefinition", &params.lifecycle_key))?;
+            .ok_or_else(|| {
+                McpError::not_found("ActivityLifecycleDefinition", &params.lifecycle_key)
+            })?;
 
         let result = serde_json::to_value(&lifecycle)
             .map_err(|e| McpError::Internal(format!("序列化失败: {e}")))?;
@@ -623,39 +617,39 @@ impl WorkflowMcpServer {
     }
 
     #[tool(
-        description = "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。"
+        description = "创建或更新 Activity Lifecycle 定义（多 Activity DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。agent executor 引用的 workflow_key 必须已存在。"
     )]
     async fn upsert_lifecycle_tool(
         &self,
         Parameters(params): Parameters<UpsertLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
-        let steps = build_steps(&params.steps)?;
-        let edges = build_edges(params.edges.as_deref().unwrap_or_default());
+        let activities = build_activities(&params.activities);
+        let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default());
 
-        let definition = LifecycleDefinition::new(
+        let definition = ActivityLifecycleDefinition::new(
             self.project_id,
             params.key,
             params.name,
             params.description,
             binding_kinds,
             WorkflowDefinitionSource::UserAuthored,
-            params.entry_step_key,
-            steps,
-            edges,
+            params.entry_activity_key,
+            activities,
+            transitions,
         )
         .map_err(|e| McpError::invalid_param("lifecycle", e))?;
 
         let saved = self.upsert_lifecycle_definition(definition).await?;
 
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Lifecycle `{}` 已保存（project={}, id={}, version={}, steps={}, edges={}）",
+            "Activity Lifecycle `{}` 已保存（project={}, id={}, version={}, activities={}, transitions={}）",
             saved.key,
             self.project_id,
             saved.id,
             saved.version,
-            saved.steps.len(),
-            saved.edges.len(),
+            saved.activities.len(),
+            saved.transitions.len(),
         ))]))
     }
 }
@@ -672,18 +666,18 @@ impl ServerHandler for WorkflowMcpServer {
 ## 领域模型
 
 - **WorkflowDefinition**：单步行为契约，定义一个 Agent session 的注入规则、I/O ports 和 hook 脚本。output ports 同时作为完成门禁。
-- **LifecycleDefinition**：多步 DAG 编排，由多个 step 组成，每个 step 可绑定一个 Workflow，step 之间通过 port + edge 声明数据依赖。
+- **ActivityLifecycleDefinition**：多 Activity DAG 编排，每个 Activity 通过 executor 描述执行主体；agent executor 引用 Workflow，function/human executor 可直接作为编排节点。
 
 ## 推荐流程
 
 1. `list_workflows` — 查看现有定义
-2. `upsert_workflow_tool` — 先创建各步骤的 Workflow 定义
-3. `upsert_lifecycle_tool` — 再创建 Lifecycle，引用已有的 workflow_key
+2. `upsert_workflow_tool` — 先创建 agent activity 需要引用的 Workflow 定义
+3. `upsert_lifecycle_tool` — 再创建 Activity Lifecycle，声明 activities 与 transitions
 4. 所有定义自动归属当前 Project
 
 ## 注意事项
 
-- workflow_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
+- agent executor 的 workflow_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
 - binding_kinds 可设置为一个或多个挂载类型（project / story），后续可编辑
 - hook_rules 支持 preset（预设名引用）和 script（Rhai 脚本）两种模式
 - 所有写操作都会即时校验，失败会返回详细错误信息供修正"#,

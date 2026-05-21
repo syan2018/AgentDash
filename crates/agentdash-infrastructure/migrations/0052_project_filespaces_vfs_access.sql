@@ -36,12 +36,12 @@ DECLARE
     project_row RECORD;
     container JSONB;
     provider JSONB;
-    source JSONB;
+    v_source JSONB;
     file JSONB;
-    fs_id TEXT;
-    mount_id TEXT;
-    display_name TEXT;
-    now_text TEXT;
+    v_fs_id TEXT;
+    v_mount_id TEXT;
+    v_display_name TEXT;
+    v_now_text TEXT;
 BEGIN
     FOR project_row IN SELECT id, config FROM projects LOOP
         IF COALESCE((project_row.config::jsonb ? 'context_containers'), FALSE) THEN
@@ -50,39 +50,39 @@ BEGIN
                     COALESCE(project_row.config::jsonb -> 'context_containers', '[]'::jsonb)
                 )
             LOOP
-                mount_id := NULLIF(BTRIM(container ->> 'mount_id'), '');
-                IF mount_id IS NULL THEN
+                v_mount_id := NULLIF(BTRIM(container ->> 'mount_id'), '');
+                IF v_mount_id IS NULL THEN
                     CONTINUE;
                 END IF;
 
-                display_name := COALESCE(NULLIF(BTRIM(container ->> 'display_name'), ''), mount_id);
+                v_display_name := COALESCE(NULLIF(BTRIM(container ->> 'display_name'), ''), v_mount_id);
                 provider := COALESCE(container -> 'provider', '{}'::jsonb);
-                now_text := now()::text;
+                v_now_text := now()::text;
 
                 IF provider ->> 'kind' = 'inline_files' THEN
-                    fs_id := gen_random_uuid()::text;
+                    v_fs_id := gen_random_uuid()::text;
 
                     INSERT INTO project_filespaces (
                         id, project_id, key, display_name, description, installed_source, created_at, updated_at
                     )
                     VALUES (
-                        fs_id, project_row.id, mount_id, display_name, NULL, NULL, now_text, now_text
+                        v_fs_id, project_row.id, v_mount_id, v_display_name, NULL, NULL, v_now_text, v_now_text
                     )
                     ON CONFLICT (project_id, key) DO NOTHING;
 
-                    SELECT id INTO fs_id
-                    FROM project_filespaces
-                    WHERE project_id = project_row.id AND key = mount_id;
+                    SELECT pf.id INTO v_fs_id
+                    FROM project_filespaces pf
+                    WHERE pf.project_id = project_row.id AND pf.key = v_mount_id;
 
-                    source := jsonb_build_object('kind', 'filespace', 'filespace_id', fs_id);
+                    v_source := jsonb_build_object('kind', 'filespace', 'filespace_id', v_fs_id);
 
                     UPDATE inline_fs_files
                     SET owner_kind = 'project_filespace',
-                        owner_id = fs_id,
+                        owner_id = v_fs_id,
                         container_id = 'files'
                     WHERE owner_kind = 'project'
                       AND owner_id = project_row.id
-                      AND container_id = mount_id;
+                      AND container_id = v_mount_id;
 
                     FOR file IN
                         SELECT value FROM jsonb_array_elements(COALESCE(provider -> 'files', '[]'::jsonb))
@@ -97,7 +97,7 @@ BEGIN
                         VALUES (
                             gen_random_uuid()::text,
                             'project_filespace',
-                            fs_id,
+                            v_fs_id,
                             'files',
                             BTRIM(file ->> 'path'),
                             'text',
@@ -105,12 +105,12 @@ BEGIN
                             COALESCE(file ->> 'content', ''),
                             NULL,
                             OCTET_LENGTH(COALESCE(file ->> 'content', '')::text),
-                            now_text
+                            v_now_text
                         )
                         ON CONFLICT (owner_kind, owner_id, container_id, path) DO NOTHING;
                     END LOOP;
                 ELSIF provider ->> 'kind' = 'external_service' THEN
-                    source := jsonb_build_object(
+                    v_source := jsonb_build_object(
                         'kind', 'external_service',
                         'service_id', COALESCE(provider ->> 'service_id', ''),
                         'root_ref', COALESCE(provider ->> 'root_ref', '')
@@ -126,13 +126,13 @@ BEGIN
                 VALUES (
                     gen_random_uuid()::text,
                     project_row.id,
-                    mount_id,
-                    display_name,
-                    source::text,
+                    v_mount_id,
+                    v_display_name,
+                    v_source::text,
                     COALESCE(container -> 'capabilities', '[]'::jsonb)::text,
                     COALESCE((container ->> 'default_write')::boolean, FALSE),
-                    now_text,
-                    now_text
+                    v_now_text,
+                    v_now_text
                 )
                 ON CONFLICT (project_id, mount_id) DO NOTHING;
             END LOOP;

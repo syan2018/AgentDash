@@ -6,10 +6,10 @@ use agentdash_domain::common::AgentPresetConfig;
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
 use agentdash_domain::shared_library::{
     InstalledAssetSource, LibraryAsset, LibraryAssetPayload, ProjectExtensionInstallation,
-    SharedLibrarySourceStatus,
+    SharedLibrarySourceStatus, normalize_workflow_template_value,
 };
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
-use agentdash_domain::workflow::WorkflowDefinitionSource;
+use agentdash_domain::workflow::{WorkflowDefinitionSource, WorkflowTemplateInstallBundle};
 
 use crate::repository_set::RepositorySet;
 use crate::workflow::BuiltinWorkflowTemplateBundle;
@@ -48,7 +48,7 @@ pub struct ProjectAssetSourceStatus {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
-    pub lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
+    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
 }
 
@@ -194,17 +194,17 @@ pub async fn list_project_asset_source_status(
         }
     }
 
-    let mut lifecycle_definitions = Vec::new();
+    let mut activity_lifecycle_definitions = Vec::new();
     for lifecycle in repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .list_by_project(project_id)
         .await?
     {
         if let Some(installed_source) = lifecycle.installed_source {
-            lifecycle_definitions.push(
+            activity_lifecycle_definitions.push(
                 source_status_item(
                     repos,
-                    "lifecycle_definition",
+                    "activity_lifecycle_definition",
                     lifecycle.id,
                     lifecycle.key,
                     installed_source,
@@ -237,7 +237,7 @@ pub async fn list_project_asset_source_status(
         mcp_presets,
         skill_assets,
         workflow_definitions,
-        lifecycle_definitions,
+        activity_lifecycle_definitions,
         extension_installations,
     })
 }
@@ -317,62 +317,39 @@ async fn install_workflow_template(
     repos: &RepositorySet,
     input: InstallLibraryAssetInput,
     asset: LibraryAsset,
-    template: serde_json::Value,
+    mut template: serde_json::Value,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
+    normalize_workflow_template_value(&mut template)?;
     let template: BuiltinWorkflowTemplateBundle =
         serde_json::from_value(template).map_err(DomainError::Serialization)?;
     let mut bundle = template
         .build_bundle(input.project_id)
         .map_err(DomainError::InvalidConfig)?;
     let installed_source = installed_source_from_asset(&asset);
-    let mut workflow_ids = Vec::new();
-    for mut workflow in bundle.workflows.drain(..) {
+    for workflow in &mut bundle.workflows {
         workflow.source = WorkflowDefinitionSource::UserAuthored;
         workflow.installed_source = Some(installed_source.clone());
-        if let Some(existing) = repos
-            .workflow_definition_repo
-            .get_by_project_and_key(input.project_id, &workflow.key)
-            .await?
-        {
-            if !input.overwrite {
-                return Err(DomainError::InvalidConfig(format!(
-                    "Project Workflow key 已存在: {}",
-                    workflow.key
-                )));
-            }
-            workflow.id = existing.id;
-            workflow.created_at = existing.created_at;
-            repos.workflow_definition_repo.update(&workflow).await?;
-        } else {
-            repos.workflow_definition_repo.create(&workflow).await?;
-        }
-        workflow_ids.push(workflow.id);
     }
 
     let mut lifecycle = bundle.lifecycle;
     lifecycle.source = WorkflowDefinitionSource::UserAuthored;
     lifecycle.installed_source = Some(installed_source);
-    if let Some(existing) = repos
-        .lifecycle_definition_repo
-        .get_by_project_and_key(input.project_id, &lifecycle.key)
-        .await?
-    {
-        if !input.overwrite {
-            return Err(DomainError::InvalidConfig(format!(
-                "Project Lifecycle key 已存在: {}",
-                lifecycle.key
-            )));
-        }
-        lifecycle.id = existing.id;
-        lifecycle.created_at = existing.created_at;
-        repos.lifecycle_definition_repo.update(&lifecycle).await?;
-    } else {
-        repos.lifecycle_definition_repo.create(&lifecycle).await?;
-    }
+    let result = repos
+        .workflow_template_install_repo
+        .install_workflow_template_bundle(WorkflowTemplateInstallBundle {
+            workflows: bundle.workflows,
+            lifecycle,
+            overwrite: input.overwrite,
+        })
+        .await?;
 
     Ok(InstallLibraryAssetOutput::WorkflowTemplate {
-        workflow_ids,
-        lifecycle_id: lifecycle.id,
+        workflow_ids: result
+            .workflows
+            .iter()
+            .map(|workflow| workflow.id)
+            .collect(),
+        lifecycle_id: result.lifecycle.id,
     })
 }
 

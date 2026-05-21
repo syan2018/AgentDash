@@ -7,9 +7,10 @@
 import { useState } from "react";
 import { VfsBrowser } from "../vfs";
 import { SurfaceCard } from "../session-context";
-import { RUN_STATUS_LABEL, STEP_STATUS_LABEL } from "../workflow/shared-labels";
+import { ATTEMPT_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
 import type {
   ActiveWorkflowHookMetadata,
+  ActivityAttemptState,
   ExecutionVfs,
   HookInjection,
   HookSessionRuntimeInfo,
@@ -20,7 +21,6 @@ import type {
   Story,
   TaskSessionExecutorSummary,
   WorkflowRun,
-  WorkflowStepState,
 } from "../../types";
 
 // ─── Props ──────────────────────────────────────────────
@@ -78,23 +78,37 @@ function resolveActiveRun(
   );
 }
 
-function resolveActiveStepState(
+function resolveActiveAttempt(
   run: WorkflowRun | null,
   activeWorkflow: ActiveWorkflowHookMetadata | null,
-): WorkflowStepState | null {
-  if (!run) return null;
+): ActivityAttemptState | null {
+  const attempts = run?.activity_state?.attempts;
+  if (!attempts || attempts.length === 0) return null;
+
+  const latestByActivity = (key: string): ActivityAttemptState | null => {
+    let best: ActivityAttemptState | null = null;
+    for (const attempt of attempts) {
+      if (attempt.activity_key !== key) continue;
+      if (!best || attempt.attempt >= best.attempt) best = attempt;
+    }
+    return best;
+  };
+
   if (activeWorkflow) {
-    const matched = run.step_states.find((step) => step.step_key === activeWorkflow.step_key);
+    const matched = latestByActivity(activeWorkflow.step_key);
     if (matched) return matched;
   }
-  const activeKey = run.active_node_keys?.[0] ?? null;
+  const activeKey = run?.active_node_keys?.[0] ?? null;
   if (activeKey) {
-    const matched = run.step_states.find((step) => step.step_key === activeKey);
+    const matched = latestByActivity(activeKey);
     if (matched) return matched;
   }
-  return run.step_states.find((step) => step.status === "running")
-    ?? run.step_states.find((step) => step.status === "ready")
-    ?? null;
+  return (
+    attempts.find((a) => a.status === "running" || a.status === "claiming")
+    ?? attempts.find((a) => a.status === "ready")
+    ?? attempts[attempts.length - 1]
+    ?? null
+  );
 }
 
 function isWorkflowContextInjection(injection: HookInjection): boolean {
@@ -195,7 +209,7 @@ function WorkflowContextCard({
 }) {
   const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
   const activeRun = resolveActiveRun(workflowRuns, activeWorkflow);
-  const activeStep = resolveActiveStepState(activeRun, activeWorkflow);
+  const activeAttempt = resolveActiveAttempt(activeRun, activeWorkflow);
   const lifecycleMounts = vfs?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
   const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
   const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
@@ -210,8 +224,9 @@ function WorkflowContextCard({
     );
   }
 
-  const completedCount = activeRun?.step_states.filter((step) => step.status === "completed").length ?? 0;
-  const totalCount = activeRun?.step_states.length ?? 0;
+  const attempts = activeRun?.activity_state?.attempts ?? [];
+  const completedCount = attempts.filter((a) => a.status === "completed").length;
+  const totalCount = attempts.length;
 
   return (
     <SurfaceCard
@@ -229,9 +244,9 @@ function WorkflowContextCard({
             Workflow · {activeWorkflow.workflow_key}
           </span>
         )}
-        {activeStep && (
+        {activeAttempt && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            Step · {STEP_STATUS_LABEL[activeStep.status] ?? activeStep.status}
+            Attempt · {ATTEMPT_STATUS_LABEL[activeAttempt.status] ?? activeAttempt.status}
           </span>
         )}
         {totalCount > 0 && (
@@ -246,7 +261,7 @@ function WorkflowContextCard({
         )}
       </div>
 
-      {(activeWorkflow || activeStep) && (
+      {(activeWorkflow || activeAttempt) && (
         <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
           {activeWorkflow && (
             <>
@@ -256,8 +271,8 @@ function WorkflowContextCard({
               </p>
             </>
           )}
-          {activeStep?.summary && (
-            <p className="text-[11px] leading-5 text-muted-foreground">{activeStep.summary}</p>
+          {activeAttempt?.summary && (
+            <p className="text-[11px] leading-5 text-muted-foreground">{activeAttempt.summary}</p>
           )}
           {activeRun?.active_node_keys && activeRun.active_node_keys.length > 0 && (
             <p className="text-[11px] text-muted-foreground">

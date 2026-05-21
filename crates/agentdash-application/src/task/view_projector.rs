@@ -4,13 +4,13 @@
 //! 对应运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 //!
-//! M2-c（Model C）：真相源 = LifecycleRun 的 step state；Task view 仅为只读投影。
-//! 启动流程在此处按 Scheme A（见 research/m2-decision-points.md D-M2-5）实现：
+//! Model C：真相源 = LifecycleRun.activity_state；Task view 仅为只读投影。
+//! 启动流程在此处按 Activity attempt 状态实现：
 //!
 //! 1. 遍历所有 project 的 active LifecycleRun（`Ready | Running | Blocked`）
 //! 2. 通过 Story session binding 找到 Story，对每个能匹配
-//!    `Task.lifecycle_step_key` 的 step，调
-//!    `Story::apply_task_projection` 将 step state 反投影到 task view
+//!    `Task.lifecycle_step_key` 的 activity，调
+//!    `Story::apply_task_projection` 将 activity attempt 状态反投影到 task view
 //! 3. 同步 append 一条 `state_changes` 全局投影索引（`kind = TaskStatusChanged`）
 //! 4. 对于仍处于 `Running` 但没有任何活跃 run 覆盖的孤儿 task，作为 fallback
 //!    置为 `Failed`
@@ -27,7 +27,10 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::TaskStatus;
-use agentdash_domain::workflow::{LifecycleRunRepository, LifecycleRunStatus};
+use agentdash_domain::workflow::{
+    ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
+    LifecycleRunStatus, LifecycleStepExecutionStatus, LifecycleStepState,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskViewProjectionError {
@@ -58,7 +61,7 @@ pub async fn project_task_views_on_boot(
     let mut covered_tasks: HashSet<uuid::Uuid> = HashSet::new();
 
     for project in projects {
-        // Phase 1 — Scheme A：按 project 拉取所有 run，过滤活跃者并投影 step states。
+        // Phase 1 — 按 project 拉取所有 run，过滤活跃者并投影 Activity attempts。
         let runs = lifecycle_run_repo.list_by_project(project.id).await?;
         for run in runs {
             if !is_run_active(run.status) {
@@ -73,10 +76,10 @@ pub async fn project_task_views_on_boot(
             {
                 Some(binding) => binding,
                 None => {
-                    tracing::warn!(
+                    tracing::debug!(
                         run_id = %run.id,
                         session_id = %run.session_id,
-                        "Task view 投影：run 未绑定 Story session owner，跳过 run"
+                        "Task view 投影：非 Story run 不参与 task 投影"
                     );
                     continue;
                 }
@@ -90,7 +93,7 @@ pub async fn project_task_views_on_boot(
                 continue;
             };
 
-            for state in &run.step_states {
+            for state in lifecycle_task_projection_states(&run) {
                 let Some(task_id) = story
                     .tasks
                     .iter()
@@ -103,7 +106,9 @@ pub async fn project_task_views_on_boot(
                 };
 
                 let previous_status = story.find_task(task_id).map(|t| t.status().clone());
-                let changed = story.apply_task_projection(task_id, state).unwrap_or(false);
+                let changed = story
+                    .apply_task_projection(task_id, &state)
+                    .unwrap_or(false);
                 covered_tasks.insert(task_id);
 
                 if !changed {
@@ -240,6 +245,41 @@ fn is_run_active(status: LifecycleRunStatus) -> bool {
     )
 }
 
+fn lifecycle_task_projection_states(run: &LifecycleRun) -> Vec<LifecycleStepState> {
+    let Some(activity_state) = &run.activity_state else {
+        return Vec::new();
+    };
+    activity_state
+        .attempts
+        .iter()
+        .map(|attempt| LifecycleStepState {
+            step_key: attempt.activity_key.clone(),
+            status: match attempt.status {
+                ActivityAttemptStatus::Pending => LifecycleStepExecutionStatus::Pending,
+                ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
+                    LifecycleStepExecutionStatus::Ready
+                }
+                ActivityAttemptStatus::Running => LifecycleStepExecutionStatus::Running,
+                ActivityAttemptStatus::Completed => LifecycleStepExecutionStatus::Completed,
+                ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
+                    LifecycleStepExecutionStatus::Failed
+                }
+            },
+            session_id: match &attempt.executor_run {
+                Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
+                Some(ExecutorRunRef::FunctionRun { .. })
+                | Some(ExecutorRunRef::HumanDecision { .. })
+                | None => None,
+            },
+            started_at: attempt.started_at,
+            completed_at: attempt.completed_at,
+            summary: attempt.summary.clone(),
+            context_snapshot: None,
+            gate_collision_count: 0,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,8 +297,8 @@ mod tests {
     use agentdash_domain::story::{StateChange, Story};
     use agentdash_domain::task::Task;
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, LifecycleStepExecutionStatus,
-        WorkflowBindingKind, WorkflowDefinitionSource,
+        ActivityAttemptState, ActivityAttemptStatus, ActivityLifecycleRunState, ActivityRunStatus,
+        LifecycleRun,
     };
 
     // ── In-memory test doubles ──────────────────────────────────
@@ -590,18 +630,6 @@ mod tests {
 
     // ── Fixtures ─────────────────────────────────────────────────
 
-    fn make_step(key: &str) -> LifecycleStepDefinition {
-        LifecycleStepDefinition {
-            key: key.to_string(),
-            description: String::new(),
-            workflow_key: None,
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
-        }
-    }
-
     fn session_bindings_for_story(
         project_id: Uuid,
         story_id: Uuid,
@@ -618,26 +646,29 @@ mod tests {
         })
     }
 
-    /// 构造一个 run 并把 step_states 手动覆盖为测试目标状态。
-    fn make_run_with_step_status(
+    fn make_run_with_activity_status(
         project_id: Uuid,
-        lifecycle: &LifecycleDefinition,
+        lifecycle_id: Uuid,
         session_id: &str,
-        step_key: &str,
-        target: LifecycleStepExecutionStatus,
+        activity_key: &str,
+        target: ActivityAttemptStatus,
     ) -> LifecycleRun {
-        let mut run = LifecycleRun::new(
-            project_id,
-            lifecycle.id,
-            session_id,
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
-        )
-        .expect("run");
-        if let Some(state) = run.step_states.iter_mut().find(|s| s.step_key == step_key) {
-            state.status = target;
-        }
+        let state = ActivityLifecycleRunState {
+            status: ActivityRunStatus::Running,
+            attempts: vec![ActivityAttemptState {
+                activity_key: activity_key.to_string(),
+                attempt: 1,
+                status: target,
+                executor_run: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+            }],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        };
+        let mut run =
+            LifecycleRun::new_activity(project_id, lifecycle_id, session_id, state).expect("run");
         run.status = LifecycleRunStatus::Running;
         run
     }
@@ -656,26 +687,13 @@ mod tests {
         let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only")];
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle_id = Uuid::new_v4();
+        let run = make_run_with_activity_status(
             project_id,
-            "lc",
-            "Lifecycle",
-            "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "only",
-            steps,
-            vec![],
-        )
-        .expect("lifecycle");
-
-        let run = make_run_with_step_status(
-            project_id,
-            &lifecycle,
+            lifecycle_id,
             "sess-boot-running",
             "only",
-            LifecycleStepExecutionStatus::Running,
+            ActivityAttemptStatus::Running,
         );
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
@@ -726,26 +744,13 @@ mod tests {
         // 模拟旧状态为 Running，实际 step 已 Completed，投影应把 task 推进到 AwaitingVerification
         story.force_set_task_status(task_id, TaskStatus::Running);
 
-        let steps = vec![make_step("only")];
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle_id = Uuid::new_v4();
+        let run = make_run_with_activity_status(
             project_id,
-            "lc",
-            "Lifecycle",
-            "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "only",
-            steps,
-            vec![],
-        )
-        .expect("lifecycle");
-
-        let run = make_run_with_step_status(
-            project_id,
-            &lifecycle,
+            lifecycle_id,
             "sess-boot-completed",
             "only",
-            LifecycleStepExecutionStatus::Completed,
+            ActivityAttemptStatus::Completed,
         );
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
@@ -841,26 +846,13 @@ mod tests {
         let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only")];
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle_id = Uuid::new_v4();
+        let mut run = make_run_with_activity_status(
             project_id,
-            "lc",
-            "Lifecycle",
-            "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "only",
-            steps,
-            vec![],
-        )
-        .expect("lifecycle");
-
-        let mut run = make_run_with_step_status(
-            project_id,
-            &lifecycle,
+            lifecycle_id,
             "sess-boot-inactive",
             "only",
-            LifecycleStepExecutionStatus::Running,
+            ActivityAttemptStatus::Running,
         );
         run.status = LifecycleRunStatus::Completed; // 非活跃
 
@@ -910,26 +902,13 @@ mod tests {
         let story_id = story.id;
         story.add_task(task);
 
-        let steps = vec![make_step("only")];
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle_id = Uuid::new_v4();
+        let run = make_run_with_activity_status(
             project_id,
-            "lc",
-            "Lifecycle",
-            "",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "only",
-            steps,
-            vec![],
-        )
-        .expect("lifecycle");
-
-        let run = make_run_with_step_status(
-            project_id,
-            &lifecycle,
+            lifecycle_id,
             "sess-boot-nobinding",
             "only",
-            LifecycleStepExecutionStatus::Running,
+            ActivityAttemptStatus::Running,
         );
 
         let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {

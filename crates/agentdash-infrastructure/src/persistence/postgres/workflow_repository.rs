@@ -3,8 +3,12 @@ use sqlx::PgPool;
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
+    ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
+    ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository, ExecutorRunRef,
     LifecycleDefinition, LifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
     WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
+    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
 
 pub struct PostgresWorkflowRepository {
@@ -39,6 +43,8 @@ impl PostgresWorkflowRepository {
             binding_kinds TEXT NOT NULL DEFAULT '["story"]',
             source TEXT NOT NULL, version INTEGER NOT NULL,
             entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
+            entry_activity_key TEXT NOT NULL DEFAULT '', activities TEXT NOT NULL DEFAULT '[]',
+            transitions TEXT NOT NULL DEFAULT '[]',
             library_asset_id TEXT, source_ref TEXT, source_version TEXT, source_digest TEXT, installed_at TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             UNIQUE(project_id, key)
@@ -52,7 +58,9 @@ impl PostgresWorkflowRepository {
             r#"CREATE TABLE IF NOT EXISTS lifecycle_runs (
             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL,
             session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-            step_states TEXT NOT NULL, execution_log TEXT NOT NULL DEFAULT '[]',
+            step_states TEXT NOT NULL, record_artifacts TEXT NOT NULL DEFAULT '{}',
+            execution_log TEXT NOT NULL DEFAULT '[]',
+            activity_state TEXT,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
             last_activity_at TEXT NOT NULL
         )"#,
@@ -64,7 +72,29 @@ impl PostgresWorkflowRepository {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_lifecycle_runs_project_id ON lifecycle_runs(project_id)")
             .execute(&self.pool).await.map_err(db_err)?;
 
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS activity_execution_claims (
+            claim_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            activity_key TEXT NOT NULL,
+            attempt INTEGER NOT NULL,
+            executor_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            executor_run_ref TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        initialize_activity_execution_claims(&self.pool).await?;
+
         add_installed_source_columns(&self.pool).await?;
+        add_lifecycle_run_columns(&self.pool).await?;
+        add_activity_lifecycle_columns(&self.pool).await?;
+        migrate_legacy_lifecycle_definitions_to_activity(&self.pool).await?;
 
         Ok(())
     }
@@ -72,8 +102,10 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
+const ACTIVITY_LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
+const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
@@ -189,6 +221,391 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
             .await
             .map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "workflow_definition", &id)
+    }
+}
+
+#[async_trait::async_trait]
+impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
+    async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+        sqlx::query(
+            "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','[]',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+        )
+        .bind(lifecycle.id.to_string())
+        .bind(lifecycle.project_id.to_string())
+        .bind(&lifecycle.key)
+        .bind(&lifecycle.name)
+        .bind(&lifecycle.description)
+        .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
+        .bind(serde_json::to_string(&lifecycle.source)?)
+        .bind(lifecycle.version)
+        .bind(&lifecycle.entry_activity_key)
+        .bind(&lifecycle.entry_activity_key)
+        .bind(serde_json::to_string(&lifecycle.activities)?)
+        .bind(serde_json::to_string(&lifecycle.transitions)?)
+        .bind(installed_library_asset_id(&lifecycle.installed_source))
+        .bind(installed_source_ref(&lifecycle.installed_source))
+        .bind(installed_source_version(&lifecycle.installed_source))
+        .bind(installed_source_digest(&lifecycle.installed_source))
+        .bind(installed_at(&lifecycle.installed_source))
+        .bind(lifecycle.created_at.to_rfc3339())
+        .bind(lifecycle.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    async fn get_by_id(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE id = $1 AND entry_activity_key <> ''"
+        ))
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
+    async fn get_by_project_and_key(
+        &self,
+        project_id: uuid::Uuid,
+        key: &str,
+    ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND key = $2 AND entry_activity_key <> ''"
+        ))
+        .bind(project_id.to_string())
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
+    async fn list_by_project(
+        &self,
+        project_id: uuid::Uuid,
+    ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
+        sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND entry_activity_key <> '' ORDER BY created_at DESC"
+        ))
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
+    async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,entry_activity_key=$9,activities=$10,transitions=$11,library_asset_id=$12,source_ref=$13,source_version=$14,source_digest=$15,installed_at=$16,updated_at=$17 WHERE id=$18")
+            .bind(lifecycle.project_id.to_string())
+            .bind(&lifecycle.key)
+            .bind(&lifecycle.name)
+            .bind(&lifecycle.description)
+            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
+            .bind(serde_json::to_string(&lifecycle.source)?)
+            .bind(lifecycle.version)
+            .bind(&lifecycle.entry_activity_key)
+            .bind(&lifecycle.entry_activity_key)
+            .bind(serde_json::to_string(&lifecycle.activities)?)
+            .bind(serde_json::to_string(&lifecycle.transitions)?)
+            .bind(installed_library_asset_id(&lifecycle.installed_source))
+            .bind(installed_source_ref(&lifecycle.installed_source))
+            .bind(installed_source_version(&lifecycle.installed_source))
+            .bind(installed_source_digest(&lifecycle.installed_source))
+            .bind(installed_at(&lifecycle.installed_source))
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(lifecycle.id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        ensure_rows_affected(
+            result.rows_affected(),
+            "activity_lifecycle_definition",
+            &lifecycle.id,
+        )
+    }
+
+    async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
+        let result = sqlx::query(
+            "DELETE FROM lifecycle_definitions WHERE id = $1 AND entry_activity_key <> ''",
+        )
+        .bind(id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        ensure_rows_affected(result.rows_affected(), "activity_lifecycle_definition", &id)
+    }
+}
+
+#[async_trait::async_trait]
+impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
+    async fn install_workflow_template_bundle(
+        &self,
+        bundle: WorkflowTemplateInstallBundle,
+    ) -> Result<WorkflowTemplateInstallResult, DomainError> {
+        let mut tx = self.pool.begin().await.map_err(db_err)?;
+        let mut workflow_keys = std::collections::BTreeSet::new();
+        for workflow in &bundle.workflows {
+            if !workflow_keys.insert(workflow.key.clone()) {
+                return Err(DomainError::InvalidConfig(format!(
+                    "workflow template 内 workflow key 重复: {}",
+                    workflow.key
+                )));
+            }
+        }
+        if workflow_keys.contains(&bundle.lifecycle.key) {
+            return Err(DomainError::InvalidConfig(format!(
+                "workflow template 的 workflow key 与 lifecycle key 冲突: {}",
+                bundle.lifecycle.key
+            )));
+        }
+
+        let mut persisted_workflows = Vec::with_capacity(bundle.workflows.len());
+        for mut workflow in bundle.workflows {
+            let existing = sqlx::query_as::<_, ExistingProjectResourceRow>(
+                "SELECT id,version,created_at FROM workflow_definitions WHERE project_id = $1 AND key = $2",
+            )
+            .bind(workflow.project_id.to_string())
+            .bind(&workflow.key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+
+            if let Some(existing) = existing {
+                if !bundle.overwrite {
+                    return Err(DomainError::InvalidConfig(format!(
+                        "Project Workflow key 已存在: {}",
+                        workflow.key
+                    )));
+                }
+                workflow.id = parse_uuid(&existing.id, "workflow_definition")?;
+                workflow.version = existing.version + 1;
+                workflow.created_at = parse_time(&existing.created_at)?;
+                workflow.updated_at = chrono::Utc::now();
+                sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,library_asset_id=$9,source_ref=$10,source_version=$11,source_digest=$12,installed_at=$13,updated_at=$14 WHERE id=$15")
+                    .bind(workflow.project_id.to_string())
+                    .bind(&workflow.key)
+                    .bind(&workflow.name)
+                    .bind(&workflow.description)
+                    .bind(serde_json::to_string(&workflow.binding_kinds)?)
+                    .bind(serde_json::to_string(&workflow.source)?)
+                    .bind(workflow.version)
+                    .bind(serde_json::to_string(&workflow.contract)?)
+                    .bind(installed_library_asset_id(&workflow.installed_source))
+                    .bind(installed_source_ref(&workflow.installed_source))
+                    .bind(installed_source_version(&workflow.installed_source))
+                    .bind(installed_source_digest(&workflow.installed_source))
+                    .bind(installed_at(&workflow.installed_source))
+                    .bind(workflow.updated_at.to_rfc3339())
+                    .bind(workflow.id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            } else {
+                sqlx::query(&format!("INSERT INTO workflow_definitions ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"))
+                    .bind(workflow.id.to_string())
+                    .bind(workflow.project_id.to_string())
+                    .bind(&workflow.key)
+                    .bind(&workflow.name)
+                    .bind(&workflow.description)
+                    .bind(serde_json::to_string(&workflow.binding_kinds)?)
+                    .bind(serde_json::to_string(&workflow.source)?)
+                    .bind(workflow.version)
+                    .bind(serde_json::to_string(&workflow.contract)?)
+                    .bind(installed_library_asset_id(&workflow.installed_source))
+                    .bind(installed_source_ref(&workflow.installed_source))
+                    .bind(installed_source_version(&workflow.installed_source))
+                    .bind(installed_source_digest(&workflow.installed_source))
+                    .bind(installed_at(&workflow.installed_source))
+                    .bind(workflow.created_at.to_rfc3339())
+                    .bind(workflow.updated_at.to_rfc3339())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db_err)?;
+            }
+            persisted_workflows.push(workflow);
+        }
+
+        let mut lifecycle = bundle.lifecycle;
+        let existing = sqlx::query_as::<_, ExistingProjectResourceRow>(
+            "SELECT id,version,created_at FROM lifecycle_definitions WHERE project_id = $1 AND key = $2 AND entry_activity_key <> ''",
+        )
+        .bind(lifecycle.project_id.to_string())
+        .bind(&lifecycle.key)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_err)?;
+
+        if let Some(existing) = existing {
+            if !bundle.overwrite {
+                return Err(DomainError::InvalidConfig(format!(
+                    "Project Lifecycle key 已存在: {}",
+                    lifecycle.key
+                )));
+            }
+            lifecycle.id = parse_uuid(&existing.id, "activity_lifecycle_definition")?;
+            lifecycle.version = existing.version + 1;
+            lifecycle.created_at = parse_time(&existing.created_at)?;
+            lifecycle.updated_at = chrono::Utc::now();
+            sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,steps='[]',edges='[]',entry_activity_key=$9,activities=$10,transitions=$11,library_asset_id=$12,source_ref=$13,source_version=$14,source_digest=$15,installed_at=$16,updated_at=$17 WHERE id=$18")
+                .bind(lifecycle.project_id.to_string())
+                .bind(&lifecycle.key)
+                .bind(&lifecycle.name)
+                .bind(&lifecycle.description)
+                .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
+                .bind(serde_json::to_string(&lifecycle.source)?)
+                .bind(lifecycle.version)
+                .bind(&lifecycle.entry_activity_key)
+                .bind(&lifecycle.entry_activity_key)
+                .bind(serde_json::to_string(&lifecycle.activities)?)
+                .bind(serde_json::to_string(&lifecycle.transitions)?)
+                .bind(installed_library_asset_id(&lifecycle.installed_source))
+                .bind(installed_source_ref(&lifecycle.installed_source))
+                .bind(installed_source_version(&lifecycle.installed_source))
+                .bind(installed_source_digest(&lifecycle.installed_source))
+                .bind(installed_at(&lifecycle.installed_source))
+                .bind(lifecycle.updated_at.to_rfc3339())
+                .bind(lifecycle.id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+        } else {
+            sqlx::query(
+                "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','[]',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+            )
+            .bind(lifecycle.id.to_string())
+            .bind(lifecycle.project_id.to_string())
+            .bind(&lifecycle.key)
+            .bind(&lifecycle.name)
+            .bind(&lifecycle.description)
+            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
+            .bind(serde_json::to_string(&lifecycle.source)?)
+            .bind(lifecycle.version)
+            .bind(&lifecycle.entry_activity_key)
+            .bind(&lifecycle.entry_activity_key)
+            .bind(serde_json::to_string(&lifecycle.activities)?)
+            .bind(serde_json::to_string(&lifecycle.transitions)?)
+            .bind(installed_library_asset_id(&lifecycle.installed_source))
+            .bind(installed_source_ref(&lifecycle.installed_source))
+            .bind(installed_source_version(&lifecycle.installed_source))
+            .bind(installed_source_digest(&lifecycle.installed_source))
+            .bind(installed_at(&lifecycle.installed_source))
+            .bind(lifecycle.created_at.to_rfc3339())
+            .bind(lifecycle.updated_at.to_rfc3339())
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        tx.commit().await.map_err(db_err)?;
+        Ok(WorkflowTemplateInstallResult {
+            workflows: persisted_workflows,
+            lifecycle,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
+    async fn create_or_get(
+        &self,
+        claim: &ActivityExecutionClaim,
+    ) -> Result<ActivityExecutionClaim, DomainError> {
+        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
+            "INSERT INTO activity_execution_claims ({ACTIVITY_CLAIM_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
+             ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = activity_execution_claims.updated_at \
+             RETURNING {ACTIVITY_CLAIM_COLS}"
+        ))
+        .bind(claim.claim_id.to_string())
+        .bind(claim.run_id.to_string())
+        .bind(&claim.activity_key)
+        .bind(claim.attempt as i32)
+        .bind(&claim.executor_kind)
+        .bind(claim.status.as_str())
+        .bind(&claim.idempotency_key)
+        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
+        .bind(claim.created_at.to_rfc3339())
+        .bind(claim.updated_at.to_rfc3339())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_err)?
+        .try_into()
+    }
+
+    async fn get_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
+        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
+            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE idempotency_key = $1"
+        ))
+        .bind(idempotency_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
+    async fn list_active_by_run(
+        &self,
+        run_id: uuid::Uuid,
+    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
+        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
+            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims WHERE run_id = $1 AND status IN ('claiming','running') ORDER BY created_at ASC"
+        ))
+        .bind(run_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
+    async fn update(&self, claim: &ActivityExecutionClaim) -> Result<(), DomainError> {
+        let result = sqlx::query(
+            "UPDATE activity_execution_claims SET status=$1,executor_run_ref=$2,updated_at=$3 WHERE claim_id=$4",
+        )
+        .bind(claim.status.as_str())
+        .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
+        .bind(claim.updated_at.to_rfc3339())
+        .bind(claim.claim_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        ensure_rows_affected(
+            result.rows_affected(),
+            "activity_execution_claim",
+            &claim.claim_id,
+        )
+    }
+
+    async fn abandon_claiming_before(
+        &self,
+        cutoff: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
+        let now = chrono::Utc::now();
+        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
+            "UPDATE activity_execution_claims SET status='abandoned',updated_at=$1 \
+             WHERE status='claiming' AND updated_at < $2 RETURNING {ACTIVITY_CLAIM_COLS}"
+        ))
+        .bind(now.to_rfc3339())
+        .bind(cutoff.to_rfc3339())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 }
 
@@ -319,7 +736,7 @@ impl LifecycleDefinitionRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
@@ -329,6 +746,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind(serde_json::to_string(&run.step_states)?)
         .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
+        .bind(serialize_activity_state(&run.activity_state)?)
         .bind(run.created_at.to_rfc3339())
         .bind(run.updated_at.to_rfc3339())
         .bind(run.last_activity_at.to_rfc3339())
@@ -396,11 +814,12 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,activity_state=$7,updated_at=$8,last_activity_at=$9 WHERE id=$10")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.step_states)?)
             .bind(serde_json::to_string(&run.execution_log)?)
+            .bind(serialize_activity_state(&run.activity_state)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
@@ -440,6 +859,88 @@ async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> 
     Ok(())
 }
 
+async fn add_lifecycle_run_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for query in [
+        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS record_artifacts TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS activity_state TEXT",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn add_activity_lifecycle_columns(pool: &PgPool) -> Result<(), DomainError> {
+    for query in [
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS entry_activity_key TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS activities TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS transitions TEXT NOT NULL DEFAULT '[]'",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
+async fn migrate_legacy_lifecycle_definitions_to_activity(
+    pool: &PgPool,
+) -> Result<(), DomainError> {
+    let rows = sqlx::query_as::<_, LegacyLifecyclePayloadRow>(
+        "SELECT id,entry_step_key,steps,edges FROM lifecycle_definitions WHERE entry_activity_key = '' AND steps <> '[]'",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+
+    for row in rows {
+        let mut lifecycle = serde_json::json!({
+            "entry_step_key": row.entry_step_key,
+            "steps": parse_json_column::<serde_json::Value>(
+                &row.steps,
+                "lifecycle_definitions.steps",
+            )?,
+            "edges": parse_json_column::<serde_json::Value>(
+                &row.edges,
+                "lifecycle_definitions.edges",
+            )?,
+        });
+        agentdash_domain::shared_library::normalize_workflow_lifecycle_value(&mut lifecycle)?;
+        let entry_activity_key = lifecycle
+            .get("entry_activity_key")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                DomainError::InvalidConfig(
+                    "迁移 lifecycle_definitions.entry_activity_key 失败".to_string(),
+                )
+            })?
+            .to_string();
+        let activities = serde_json::to_string(&lifecycle["activities"])?;
+        let transitions = serde_json::to_string(&lifecycle["transitions"])?;
+        sqlx::query(
+            "UPDATE lifecycle_definitions SET entry_step_key=$1,steps='[]',edges='[]',entry_activity_key=$2,activities=$3,transitions=$4,updated_at=$5 WHERE id=$6",
+        )
+        .bind(&entry_activity_key)
+        .bind(&entry_activity_key)
+        .bind(activities)
+        .bind(transitions)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(row.id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+
+    Ok(())
+}
+
+async fn initialize_activity_execution_claims(pool: &PgPool) -> Result<(), DomainError> {
+    for query in [
+        "CREATE INDEX IF NOT EXISTS idx_activity_execution_claims_run_id ON activity_execution_claims(run_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_activity_execution_claims_active_attempt ON activity_execution_claims(run_id, activity_key, attempt) WHERE status IN ('claiming','running')",
+    ] {
+        sqlx::query(query).execute(pool).await.map_err(db_err)?;
+    }
+    Ok(())
+}
+
 fn ensure_rows_affected(
     rows_affected: u64,
     entity: &'static str,
@@ -453,6 +954,21 @@ fn ensure_rows_affected(
     } else {
         Ok(())
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct ExistingProjectResourceRow {
+    id: String,
+    version: i32,
+    created_at: String,
+}
+
+#[derive(sqlx::FromRow)]
+struct LegacyLifecyclePayloadRow {
+    id: String,
+    entry_step_key: String,
+    steps: String,
+    edges: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -498,6 +1014,59 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             )?,
             version: row.version,
             contract: serde_json::from_str(&row.contract)?,
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ActivityLifecycleDefinitionRow {
+    id: String,
+    project_id: String,
+    key: String,
+    name: String,
+    description: String,
+    binding_kinds: String,
+    source: String,
+    version: i32,
+    entry_activity_key: String,
+    activities: String,
+    transitions: String,
+    library_asset_id: Option<String>,
+    source_ref: Option<String>,
+    source_version: Option<String>,
+    source_digest: Option<String>,
+    installed_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl TryFrom<ActivityLifecycleDefinitionRow> for ActivityLifecycleDefinition {
+    type Error = DomainError;
+    fn try_from(row: ActivityLifecycleDefinitionRow) -> Result<Self, Self::Error> {
+        Ok(ActivityLifecycleDefinition {
+            id: parse_uuid(&row.id, "activity_lifecycle_definition")?,
+            project_id: parse_uuid(&row.project_id, "project")?,
+            key: row.key,
+            name: row.name,
+            description: row.description,
+            binding_kinds: parse_json_column(
+                &row.binding_kinds,
+                "lifecycle_definitions.binding_kinds",
+            )?,
+            source: serde_json::from_str(&row.source)?,
+            installed_source: parse_installed_source(
+                row.library_asset_id,
+                row.source_ref,
+                row.source_version,
+                row.source_digest,
+                row.installed_at,
+            )?,
+            version: row.version,
+            entry_activity_key: row.entry_activity_key,
+            activities: parse_json_column(&row.activities, "lifecycle_definitions.activities")?,
+            transitions: parse_json_column(&row.transitions, "lifecycle_definitions.transitions")?,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
         })
@@ -566,6 +1135,7 @@ struct LifecycleRunRow {
     status: String,
     step_states: String,
     execution_log: String,
+    activity_state: Option<String>,
     created_at: String,
     updated_at: String,
     last_activity_at: String,
@@ -576,17 +1146,38 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
     fn try_from(row: LifecycleRunRow) -> Result<Self, Self::Error> {
         let step_states: Vec<agentdash_domain::workflow::LifecycleStepState> =
             serde_json::from_str(&row.step_states)?;
-        let active_node_keys: Vec<String> = step_states
-            .iter()
-            .filter(|s| {
-                matches!(
-                    s.status,
-                    agentdash_domain::workflow::LifecycleStepExecutionStatus::Ready
-                        | agentdash_domain::workflow::LifecycleStepExecutionStatus::Running
-                )
-            })
-            .map(|s| s.step_key.clone())
-            .collect();
+        let activity_state: Option<agentdash_domain::workflow::ActivityLifecycleRunState> = row
+            .activity_state
+            .as_deref()
+            .map(|raw| parse_json_column(raw, "lifecycle_runs.activity_state"))
+            .transpose()?;
+        let active_node_keys: Vec<String> = if let Some(activity_state) = &activity_state {
+            activity_state
+                .attempts
+                .iter()
+                .filter(|attempt| {
+                    matches!(
+                        attempt.status,
+                        agentdash_domain::workflow::ActivityAttemptStatus::Ready
+                            | agentdash_domain::workflow::ActivityAttemptStatus::Claiming
+                            | agentdash_domain::workflow::ActivityAttemptStatus::Running
+                    )
+                })
+                .map(|attempt| attempt.activity_key.clone())
+                .collect()
+        } else {
+            step_states
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.status,
+                        agentdash_domain::workflow::LifecycleStepExecutionStatus::Ready
+                            | agentdash_domain::workflow::LifecycleStepExecutionStatus::Running
+                    )
+                })
+                .map(|s| s.step_key.clone())
+                .collect()
+        };
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
@@ -596,9 +1187,61 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             active_node_keys,
             step_states,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
+            activity_state,
             created_at: parse_time(&row.created_at)?,
             updated_at: parse_time(&row.updated_at)?,
             last_activity_at: parse_time(&row.last_activity_at)?,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ActivityExecutionClaimRow {
+    claim_id: String,
+    run_id: String,
+    activity_key: String,
+    attempt: i32,
+    executor_kind: String,
+    status: String,
+    idempotency_key: String,
+    executor_run_ref: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
+    type Error = DomainError;
+
+    fn try_from(row: ActivityExecutionClaimRow) -> Result<Self, Self::Error> {
+        let status = row
+            .status
+            .parse::<ActivityExecutionClaimStatus>()
+            .map_err(DomainError::InvalidConfig)?;
+        let executor_run_ref = row
+            .executor_run_ref
+            .map(|raw| {
+                parse_json_column::<ExecutorRunRef>(
+                    &raw,
+                    "activity_execution_claims.executor_run_ref",
+                )
+            })
+            .transpose()?;
+        Ok(ActivityExecutionClaim {
+            run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
+            activity_key: row.activity_key,
+            attempt: u32::try_from(row.attempt).map_err(|_| {
+                DomainError::InvalidConfig(format!(
+                    "activity_execution_claims.attempt 无效: {}",
+                    row.attempt
+                ))
+            })?,
+            claim_id: parse_uuid(&row.claim_id, "activity_execution_claim")?,
+            executor_kind: row.executor_kind,
+            status,
+            idempotency_key: row.idempotency_key,
+            executor_run_ref,
+            created_at: parse_time(&row.created_at)?,
+            updated_at: parse_time(&row.updated_at)?,
         })
     }
 }
@@ -620,6 +1263,26 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
 
 fn parse_time(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
     super::parse_pg_timestamp_checked(raw, "workflow.timestamp")
+}
+
+fn serialize_executor_run_ref(
+    executor_run_ref: &Option<ExecutorRunRef>,
+) -> Result<Option<String>, DomainError> {
+    executor_run_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Into::into)
+}
+
+fn serialize_activity_state(
+    activity_state: &Option<agentdash_domain::workflow::ActivityLifecycleRunState>,
+) -> Result<Option<String>, DomainError> {
+    activity_state
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(Into::into)
 }
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
@@ -676,4 +1339,200 @@ fn parse_installed_source(
             "installed_source.installed_at",
         )?,
     }))
+}
+
+#[cfg(test)]
+mod workflow_claim_tests {
+    use super::*;
+    use crate::persistence::postgres::test_pg_pool;
+    use agentdash_domain::workflow::{
+        ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
+        AgentActivityExecutorSpec, AgentSessionPolicy, WorkflowContract,
+        WorkflowTemplateInstallBundle,
+    };
+
+    #[test]
+    fn workflow_claim_row_parses_executor_run_ref() {
+        let run_id = uuid::Uuid::new_v4();
+        let claim_id = uuid::Uuid::new_v4();
+        let now = chrono::Utc::now().to_rfc3339();
+        let row = ActivityExecutionClaimRow {
+            claim_id: claim_id.to_string(),
+            run_id: run_id.to_string(),
+            activity_key: "plan".to_string(),
+            attempt: 2,
+            executor_kind: "agent".to_string(),
+            status: "running".to_string(),
+            idempotency_key: format!("{run_id}:plan:2"),
+            executor_run_ref: Some(
+                serde_json::to_string(&ExecutorRunRef::AgentSession {
+                    session_id: "child-session".to_string(),
+                })
+                .expect("executor run json"),
+            ),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let claim = ActivityExecutionClaim::try_from(row).expect("claim");
+
+        assert_eq!(claim.run_id, run_id);
+        assert_eq!(claim.claim_id, claim_id);
+        assert_eq!(claim.activity_key, "plan");
+        assert_eq!(claim.attempt, 2);
+        assert_eq!(claim.status, ActivityExecutionClaimStatus::Running);
+        assert!(claim.status.is_active());
+        assert_eq!(
+            claim.executor_run_ref,
+            Some(ExecutorRunRef::AgentSession {
+                session_id: "child-session".to_string()
+            })
+        );
+    }
+
+    fn test_workflow(project_id: uuid::Uuid, key: &str, digest: &str) -> WorkflowDefinition {
+        let mut workflow = WorkflowDefinition::new(
+            project_id,
+            key,
+            format!("Workflow {digest}"),
+            "",
+            vec![WorkflowBindingKind::Project],
+            agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
+            WorkflowContract::default(),
+        )
+        .expect("workflow");
+        workflow.installed_source = Some(InstalledAssetSource::new(
+            uuid::Uuid::new_v4(),
+            "template",
+            digest,
+            format!("sha256:{digest}"),
+        ));
+        workflow
+    }
+
+    fn test_lifecycle(
+        project_id: uuid::Uuid,
+        key: &str,
+        workflow_key: &str,
+        digest: &str,
+    ) -> ActivityLifecycleDefinition {
+        let mut lifecycle = ActivityLifecycleDefinition::new(
+            project_id,
+            key,
+            format!("Lifecycle {digest}"),
+            "",
+            vec![WorkflowBindingKind::Project],
+            agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
+            "plan",
+            vec![ActivityDefinition {
+                key: "plan".to_string(),
+                description: String::new(),
+                executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                    workflow_key: workflow_key.to_string(),
+                    session_policy: AgentSessionPolicy::SpawnChild,
+                }),
+                input_ports: vec![],
+                output_ports: vec![],
+                completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
+                iteration_policy: Default::default(),
+                join_policy: Default::default(),
+            }],
+            vec![],
+        )
+        .expect("lifecycle");
+        lifecycle.installed_source = Some(InstalledAssetSource::new(
+            uuid::Uuid::new_v4(),
+            "template",
+            digest,
+            format!("sha256:{digest}"),
+        ));
+        lifecycle
+    }
+
+    #[tokio::test]
+    async fn workflow_template_install_overwrite_is_transactional_and_bumps_versions() {
+        let Some(pool) = test_pg_pool("workflow_template_install").await else {
+            return;
+        };
+        let repo = PostgresWorkflowRepository::new(pool);
+        repo.initialize().await.expect("initialize");
+
+        let project_id = uuid::Uuid::new_v4();
+        let workflow_key = format!("wf_{}", uuid::Uuid::new_v4().simple());
+        let lifecycle_key = format!("lc_{}", uuid::Uuid::new_v4().simple());
+
+        repo.install_workflow_template_bundle(WorkflowTemplateInstallBundle {
+            workflows: vec![test_workflow(project_id, &workflow_key, "v1")],
+            lifecycle: test_lifecycle(project_id, &lifecycle_key, &workflow_key, "v1"),
+            overwrite: false,
+        })
+        .await
+        .expect("first install");
+
+        let conflict = repo
+            .install_workflow_template_bundle(WorkflowTemplateInstallBundle {
+                workflows: vec![test_workflow(project_id, &workflow_key, "v2")],
+                lifecycle: test_lifecycle(project_id, &lifecycle_key, &workflow_key, "v2"),
+                overwrite: false,
+            })
+            .await
+            .expect_err("conflict should fail without overwrite");
+        assert!(conflict.to_string().contains("已存在"));
+
+        let workflow_after_conflict =
+            WorkflowDefinitionRepository::get_by_project_and_key(&repo, project_id, &workflow_key)
+                .await
+                .expect("get workflow")
+                .expect("workflow exists");
+        assert_eq!(workflow_after_conflict.version, 1);
+        assert_eq!(
+            workflow_after_conflict
+                .installed_source
+                .as_ref()
+                .expect("source")
+                .source_version,
+            "v1"
+        );
+
+        let result = repo
+            .install_workflow_template_bundle(WorkflowTemplateInstallBundle {
+                workflows: vec![test_workflow(project_id, &workflow_key, "v2")],
+                lifecycle: test_lifecycle(project_id, &lifecycle_key, &workflow_key, "v2"),
+                overwrite: true,
+            })
+            .await
+            .expect("overwrite install");
+
+        assert_eq!(result.workflows[0].version, 2);
+        assert_eq!(result.lifecycle.version, 2);
+        let workflow =
+            WorkflowDefinitionRepository::get_by_project_and_key(&repo, project_id, &workflow_key)
+                .await
+                .expect("get workflow")
+                .expect("workflow exists");
+        let lifecycle = ActivityLifecycleDefinitionRepository::get_by_project_and_key(
+            &repo,
+            project_id,
+            &lifecycle_key,
+        )
+        .await
+        .expect("get lifecycle")
+        .expect("lifecycle exists");
+        assert_eq!(workflow.version, 2);
+        assert_eq!(lifecycle.version, 2);
+        assert_eq!(
+            workflow
+                .installed_source
+                .expect("workflow source")
+                .source_version,
+            "v2"
+        );
+        assert_eq!(
+            lifecycle
+                .installed_source
+                .expect("lifecycle source")
+                .source_version,
+            "v2"
+        );
+    }
 }

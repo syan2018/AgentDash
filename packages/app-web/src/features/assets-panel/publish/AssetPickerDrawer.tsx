@@ -11,7 +11,7 @@ import { useWorkflowStore } from "../../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../../services/mcpPreset";
 import { fetchProjectSkillAssets } from "../../../services/skillAsset";
 import type {
-  LifecycleDefinition,
+  ActivityLifecycleDefinition,
   McpPresetDto,
   ProjectAgent,
   PublishLibraryAssetKind,
@@ -291,7 +291,7 @@ function WorkflowList({ onPick }: { onPick: (s: AssetPickerSelection) => void })
     <PickList
       items={visible}
       keyOf={(lc) => lc.id}
-      titleOf={(lc: LifecycleDefinition) => lc.name}
+      titleOf={(lc: ActivityLifecycleDefinition) => lc.name}
       hintOf={(lc) => `key: ${lc.key}`}
       onPick={(lc) =>
         onPick({

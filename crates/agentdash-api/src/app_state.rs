@@ -265,7 +265,10 @@ impl AppState {
             skill_asset_repo: skill_asset_repo.clone(),
             project_agent_repo: project_agent_repo.clone(),
             workflow_definition_repo: workflow_repo.clone(),
+            workflow_template_install_repo: workflow_repo.clone(),
             lifecycle_definition_repo: workflow_repo.clone(),
+            activity_lifecycle_definition_repo: workflow_repo.clone(),
+            activity_execution_claim_repo: workflow_repo.clone(),
             lifecycle_run_repo: workflow_repo.clone(),
             routine_repo: routine_repo.clone(),
             routine_execution_repo: routine_execution_repo.clone(),
@@ -403,7 +406,6 @@ impl AppState {
             workflow_repo.clone(),
             workflow_repo.clone(),
             inline_file_repo.clone(),
-            state_change_repo.clone(),
         ));
         let extra_skill_dirs = plugin_registration.extra_skill_dirs.clone();
         let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
@@ -500,6 +502,8 @@ impl AppState {
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
                 session_binding_repo: session_binding_repo.clone(),
+                workflow_definition_repo: workflow_repo.clone(),
+                activity_lifecycle_definition_repo: workflow_repo.clone(),
                 lifecycle_run_repo: workflow_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;

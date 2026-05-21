@@ -1,7 +1,7 @@
 {
   "key": "trellis_dag_task",
   "name": "Trellis DAG Lifecycle / Task",
-  "description": "DAG 编排示例：research (AgentNode) → implement (AgentNode)，每个 node 创建独立 session。",
+  "description": "DAG 编排示例：research → implement，每个 Activity 创建独立 session。",
   "binding_kinds": ["story"],
   "workflows": [
     {
@@ -10,7 +10,7 @@
       "description": "调研与方案设计阶段。",
       "contract": {
         "injection": {
-          "guidance": "当前处于 Research 阶段（agent_node），负责需求分析、技术调研和方案设计。\n\n要求：\n- 将调研报告写入 lifecycle://artifacts/research_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上调研摘要"
+          "guidance": "当前处于 Research Activity，负责需求分析、技术调研和方案设计。\n\n要求：\n- 将调研报告写入 lifecycle://artifacts/research_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上调研摘要"
         },
         "hook_rules": [
           {
@@ -40,7 +40,7 @@
       "description": "基于调研结论执行实现。",
       "contract": {
         "injection": {
-          "guidance": "当前处于 Implement 阶段（agent_node），基于前一阶段的调研结论执行编码实现。\n\n要求：\n- 将实现报告写入 lifecycle://artifacts/implementation_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上实现摘要"
+          "guidance": "当前处于 Implement Activity，基于前一阶段的调研结论执行编码实现。\n\n要求：\n- 将实现报告写入 lifecycle://artifacts/implementation_report 路径\n- 完成后必须调用 complete_lifecycle_node 工具声明完成，并附上实现摘要"
         },
         "hook_rules": [
           {
@@ -75,27 +75,37 @@
   "lifecycle": {
     "key": "trellis_dag_task",
     "name": "Trellis DAG Lifecycle / Task",
-    "description": "DAG 编排示例：research → implement，每个 node 为独立 Agent Session。",
-    "entry_step_key": "research",
-    "steps": [
+    "description": "DAG 编排示例：research → implement，每个 activity 为独立 Agent Session。",
+    "entry_activity_key": "research",
+    "activities": [
       {
         "key": "research",
-        "description": "需求分析与技术调研（独立 Agent Session）",
-        "workflow_key": "trellis_dag_task_research",
-        "node_type": "agent_node",
+        "description": "需求分析与技术调研（独立 Agent Session）。",
+        "executor": {
+          "kind": "agent",
+          "workflow_key": "trellis_dag_task_research",
+          "session_policy": "spawn_child"
+        },
         "output_ports": [
           {
             "key": "research_report",
             "description": "调研报告——包含需求分析、技术选型和方案设计",
             "gate_strategy": "existence"
           }
-        ]
+        ],
+        "completion_policy": {
+          "kind": "output_ports",
+          "required_ports": ["research_report"]
+        }
       },
       {
         "key": "implement",
-        "description": "基于调研结论执行实现（独立 Agent Session）",
-        "workflow_key": "trellis_dag_task_implement",
-        "node_type": "agent_node",
+        "description": "基于调研结论执行实现（独立 Agent Session）。",
+        "executor": {
+          "kind": "agent",
+          "workflow_key": "trellis_dag_task_implement",
+          "session_policy": "spawn_child"
+        },
         "input_ports": [
           {
             "key": "research_input",
@@ -109,16 +119,24 @@
             "description": "实现报告——包含实现方案、变更摘要和测试结果",
             "gate_strategy": "existence"
           }
-        ]
+        ],
+        "completion_policy": {
+          "kind": "output_ports",
+          "required_ports": ["implementation_report"]
+        }
       }
     ],
-    "edges": [
+    "transitions": [
       {
+        "from": "research",
+        "to": "implement",
         "kind": "artifact",
-        "from_node": "research",
-        "from_port": "research_report",
-        "to_node": "implement",
-        "to_port": "research_input"
+        "artifact_bindings": [
+          {
+            "from_port": "research_report",
+            "to_port": "research_input"
+          }
+        ]
       }
     ]
   }

@@ -68,6 +68,7 @@ Agent 执行是异步的，前端需要：
 | [质量规范](./quality-guidelines.md) | 代码标准、禁止模式 | ✅ 已更新 |
 | [类型安全](./type-safety.md) | snake_case 直接映射、类型守卫 | ✅ 已更新 |
 | [设计语言](./design-language.md) | Token / Radius / Surface / Primitive 总览 | ✅ 已更新 |
+| [Activity Lifecycle](./workflow-activity-lifecycle.md) | Activity / Executor / Attempt / Transition 编辑与运行观察契约 | ✅ 已更新 |
 
 ---
 
@@ -102,5 +103,4 @@ Agent 执行是异步的，前端需要：
 - 项目设置页必须明确区分逻辑 Workspace、物理 bindings 和派生出的 runtime preview
 
 ---
-
 

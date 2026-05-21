@@ -53,7 +53,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         story_repo: state.repos.story_repo.clone(),
         workspace_repo: state.repos.workspace_repo.clone(),
         workflow_definition_repo: state.repos.workflow_definition_repo.clone(),
-        lifecycle_definition_repo: state.repos.lifecycle_definition_repo.clone(),
+        activity_lifecycle_definition_repo: state.repos.activity_lifecycle_definition_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services).build();
@@ -323,16 +323,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_workflows).post(workflows::create_workflow_definition),
         )
         .route(
-            "/lifecycle-definitions",
-            get(workflows::list_lifecycles).post(workflows::create_lifecycle_definition),
+            "/activity-lifecycle-definitions",
+            get(workflows::list_activity_lifecycles)
+                .post(workflows::create_activity_lifecycle_definition),
         )
         .route(
             "/workflow-definitions/validate",
             post(workflows::validate_workflow_definition),
         )
         .route(
-            "/lifecycle-definitions/validate",
-            post(workflows::validate_lifecycle_definition),
+            "/activity-lifecycle-definitions/validate",
+            post(workflows::validate_activity_lifecycle_definition),
         )
         .route(
             "/workflow-definitions/{id}",
@@ -341,10 +342,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(workflows::delete_workflow_definition),
         )
         .route(
-            "/lifecycle-definitions/{id}",
-            get(workflows::get_lifecycle_definition)
-                .put(workflows::update_lifecycle_definition)
-                .delete(workflows::delete_lifecycle_definition),
+            "/activity-lifecycle-definitions/{id}",
+            get(workflows::get_activity_lifecycle_definition)
+                .put(workflows::update_activity_lifecycle_definition)
+                .delete(workflows::delete_activity_lifecycle_definition),
         )
         .route("/tool-catalog", get(workflows::query_tool_catalog))
         .route("/hook-presets", get(workflows::list_hook_presets))
@@ -367,12 +368,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_lifecycle_runs_by_session),
         )
         .route(
-            "/lifecycle-runs/{id}/steps/{step_key}/activate",
-            post(workflows::activate_workflow_step),
-        )
-        .route(
-            "/lifecycle-runs/{id}/steps/{step_key}/complete",
-            post(workflows::complete_workflow_step),
+            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            post(workflows::submit_human_decision),
         )
         // Backend
         .route(

@@ -700,6 +700,340 @@ impl LifecycleStepDefinition {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ActivityDefinition {
+    pub key: String,
+    #[serde(default)]
+    pub description: String,
+    pub executor: ActivityExecutorSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_ports: Vec<InputPortDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_ports: Vec<OutputPortDefinition>,
+    #[serde(default)]
+    pub completion_policy: ActivityCompletionPolicy,
+    #[serde(default)]
+    pub iteration_policy: ActivityIterationPolicy,
+    #[serde(default)]
+    pub join_policy: ActivityJoinPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActivityExecutorSpec {
+    Agent(AgentActivityExecutorSpec),
+    Function(FunctionActivityExecutorSpec),
+    Human(HumanActivityExecutorSpec),
+}
+
+impl ActivityExecutorSpec {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Agent(_) => "agent",
+            Self::Function(_) => "function",
+            Self::Human(_) => "human",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct AgentActivityExecutorSpec {
+    pub workflow_key: String,
+    #[serde(default)]
+    pub session_policy: AgentSessionPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentSessionPolicy {
+    #[default]
+    SpawnChild,
+    ContinueRoot,
+    AttachExisting,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FunctionActivityExecutorSpec {
+    ApiRequest(ApiRequestExecutorSpec),
+    BashExec(BashExecExecutorSpec),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ApiRequestExecutorSpec {
+    pub method: String,
+    pub url_template: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_template: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct BashExecExecutorSpec {
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HumanActivityExecutorSpec {
+    Approval(HumanApprovalExecutorSpec),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct HumanApprovalExecutorSpec {
+    pub form_schema_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActivityCompletionPolicy {
+    OutputPorts { required_ports: Vec<String> },
+    ExecutorTerminal,
+    HumanDecision { decision_port: String },
+    HookGate { hook_key: String },
+    OpenEnded,
+}
+
+impl Default for ActivityCompletionPolicy {
+    fn default() -> Self {
+        Self::ExecutorTerminal
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ActivityIterationPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+    #[serde(default)]
+    pub artifact_alias: ArtifactAliasPolicy,
+}
+
+impl Default for ActivityIterationPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: Some(1),
+            artifact_alias: ArtifactAliasPolicy::Latest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactAliasPolicy {
+    #[default]
+    Latest,
+    PerAttempt,
+    LatestAndHistory,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityJoinPolicy {
+    #[default]
+    All,
+    Any,
+    First,
+    NOfM {
+        n: u32,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ActivityTransition {
+    pub from: String,
+    pub to: String,
+    #[serde(default = "default_activity_transition_kind")]
+    pub kind: ActivityTransitionKind,
+    #[serde(default)]
+    pub condition: TransitionCondition,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifact_bindings: Vec<ArtifactBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_traversals: Option<u32>,
+}
+
+fn default_activity_transition_kind() -> ActivityTransitionKind {
+    ActivityTransitionKind::Flow
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityTransitionKind {
+    Flow,
+    Artifact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TransitionCondition {
+    Always,
+    ArtifactFieldEquals {
+        activity: String,
+        port: String,
+        path: String,
+        value: Value,
+    },
+    HumanDecisionEquals {
+        activity: String,
+        decision_port: String,
+        value: String,
+    },
+    AgentSignalEquals {
+        activity: String,
+        signal_key: String,
+        value: Value,
+    },
+}
+
+impl Default for TransitionCondition {
+    fn default() -> Self {
+        Self::Always
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct ArtifactBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_activity: Option<String>,
+    pub from_port: String,
+    pub to_port: String,
+    #[serde(default)]
+    pub alias: ArtifactAliasPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityAttemptStatus {
+    Pending,
+    Ready,
+    Claiming,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl ActivityAttemptStatus {
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed | Self::Cancelled)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityAttemptState {
+    pub activity_key: String,
+    pub attempt: u32,
+    pub status: ActivityAttemptStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor_run: Option<ExecutorRunRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityPortValue {
+    pub port_key: String,
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityOutputArtifact {
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+    pub value: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityInputArtifact {
+    pub activity_key: String,
+    pub attempt: u32,
+    pub port_key: String,
+    pub source_activity_key: String,
+    pub source_attempt: u32,
+    pub source_port_key: String,
+    pub value: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ActivityLifecycleRunState {
+    pub status: ActivityRunStatus,
+    pub attempts: Vec<ActivityAttemptState>,
+    pub outputs: Vec<ActivityOutputArtifact>,
+    pub inputs: Vec<ActivityInputArtifact>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityRunStatus {
+    Ready,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExecutorRunRef {
+    AgentSession { session_id: ChildSessionId },
+    FunctionRun { run_id: String },
+    HumanDecision { decision_id: String },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityExecutionClaimStatus {
+    Claiming,
+    Running,
+    Succeeded,
+    Failed,
+    Abandoned,
+}
+
+impl ActivityExecutionClaimStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claiming => "claiming",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Abandoned => "abandoned",
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Claiming | Self::Running)
+    }
+}
+
+impl std::str::FromStr for ActivityExecutionClaimStatus {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "claiming" => Ok(Self::Claiming),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "abandoned" => Ok(Self::Abandoned),
+            _ => Err(format!("activity execution claim status 无效: {raw}")),
+        }
+    }
+}
+
 impl CapabilityConfig {
     pub fn is_empty(&self) -> bool {
         self.tool_directives.is_empty() && self.mount_directives.is_empty()
@@ -860,6 +1194,367 @@ pub fn validate_lifecycle_definition(
     }
 
     Ok(())
+}
+
+pub fn validate_activity_lifecycle_definition(
+    key: &str,
+    name: &str,
+    entry_activity_key: &str,
+    activities: &[ActivityDefinition],
+    transitions: &[ActivityTransition],
+) -> Result<(), String> {
+    validate_identity("lifecycle.key", key)?;
+    validate_non_empty("lifecycle.name", name)?;
+    validate_identity("lifecycle.entry_activity_key", entry_activity_key)?;
+    if activities.is_empty() {
+        return Err("lifecycle.activities 至少需要一个 activity".to_string());
+    }
+
+    let mut seen_activity_keys = std::collections::BTreeSet::new();
+    for (index, activity) in activities.iter().enumerate() {
+        let path = format!("lifecycle.activities[{index}]");
+        validate_identity(&format!("{path}.key"), &activity.key)?;
+        if !seen_activity_keys.insert(activity.key.clone()) {
+            return Err(format!("{path}.key 重复: {}", activity.key));
+        }
+        validate_activity_executor(&activity.executor, &format!("{path}.executor"))?;
+        validate_activity_ports(activity, &path)?;
+        validate_activity_policies(activity, &path)?;
+    }
+
+    if !seen_activity_keys.contains(entry_activity_key) {
+        return Err(format!(
+            "lifecycle.entry_activity_key `{entry_activity_key}` 未出现在 lifecycle.activities 中"
+        ));
+    }
+    if activities.len() >= 2 && transitions.is_empty() {
+        return Err(
+            "lifecycle.transitions 不能为空：多 activity lifecycle 必须显式声明 transition"
+                .to_string(),
+        );
+    }
+
+    for (index, transition) in transitions.iter().enumerate() {
+        validate_activity_transition(
+            transition,
+            index,
+            activities,
+            &seen_activity_keys,
+            entry_activity_key,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_activity_executor(
+    executor: &ActivityExecutorSpec,
+    field_path: &str,
+) -> Result<(), String> {
+    match executor {
+        ActivityExecutorSpec::Agent(spec) => {
+            validate_identity(&format!("{field_path}.workflow_key"), &spec.workflow_key)?;
+        }
+        ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::ApiRequest(spec)) => {
+            validate_non_empty(&format!("{field_path}.method"), &spec.method)?;
+            validate_non_empty(&format!("{field_path}.url_template"), &spec.url_template)?;
+        }
+        ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::BashExec(spec)) => {
+            validate_non_empty(&format!("{field_path}.command"), &spec.command)?;
+        }
+        ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(spec)) => {
+            validate_identity(
+                &format!("{field_path}.form_schema_key"),
+                &spec.form_schema_key,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_activity_ports(activity: &ActivityDefinition, field_path: &str) -> Result<(), String> {
+    let mut seen_output_port_keys = std::collections::BTreeSet::new();
+    for (index, port) in activity.output_ports.iter().enumerate() {
+        validate_identity(
+            &format!("{field_path}.output_ports[{index}].key"),
+            &port.key,
+        )?;
+        validate_non_empty(
+            &format!("{field_path}.output_ports[{index}].description"),
+            &port.description,
+        )?;
+        if !seen_output_port_keys.insert(port.key.clone()) {
+            return Err(format!(
+                "{field_path}.output_ports[{index}].key 重复: {}",
+                port.key
+            ));
+        }
+    }
+
+    let mut seen_input_port_keys = std::collections::BTreeSet::new();
+    for (index, port) in activity.input_ports.iter().enumerate() {
+        validate_identity(&format!("{field_path}.input_ports[{index}].key"), &port.key)?;
+        validate_non_empty(
+            &format!("{field_path}.input_ports[{index}].description"),
+            &port.description,
+        )?;
+        if !seen_input_port_keys.insert(port.key.clone()) {
+            return Err(format!(
+                "{field_path}.input_ports[{index}].key 重复: {}",
+                port.key
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_activity_policies(
+    activity: &ActivityDefinition,
+    field_path: &str,
+) -> Result<(), String> {
+    if matches!(
+        activity.iteration_policy.max_attempts,
+        Some(max_attempts) if max_attempts == 0
+    ) {
+        return Err(format!(
+            "{field_path}.iteration_policy.max_attempts 必须大于 0"
+        ));
+    }
+
+    if let ActivityJoinPolicy::NOfM { n } = activity.join_policy
+        && n == 0
+    {
+        return Err(format!("{field_path}.join_policy.n 必须大于 0"));
+    }
+
+    match &activity.completion_policy {
+        ActivityCompletionPolicy::OutputPorts { required_ports } => {
+            if required_ports.is_empty() {
+                return Err(format!(
+                    "{field_path}.completion_policy.required_ports 不能为空"
+                ));
+            }
+            for (index, port_key) in required_ports.iter().enumerate() {
+                validate_identity(
+                    &format!("{field_path}.completion_policy.required_ports[{index}]"),
+                    port_key,
+                )?;
+                if !activity
+                    .output_ports
+                    .iter()
+                    .any(|port| port.key == *port_key)
+                {
+                    return Err(format!(
+                        "{field_path}.completion_policy.required_ports[{index}] 引用了不存在的 output port: {port_key}"
+                    ));
+                }
+            }
+        }
+        ActivityCompletionPolicy::HumanDecision { decision_port } => {
+            validate_identity(
+                &format!("{field_path}.completion_policy.decision_port"),
+                decision_port,
+            )?;
+            if !activity
+                .output_ports
+                .iter()
+                .any(|port| port.key == *decision_port)
+            {
+                return Err(format!(
+                    "{field_path}.completion_policy.decision_port 引用了不存在的 output port: {decision_port}"
+                ));
+            }
+        }
+        ActivityCompletionPolicy::HookGate { hook_key } => {
+            validate_identity(
+                &format!("{field_path}.completion_policy.hook_key"),
+                hook_key,
+            )?;
+        }
+        ActivityCompletionPolicy::ExecutorTerminal | ActivityCompletionPolicy::OpenEnded => {}
+    }
+    Ok(())
+}
+
+fn validate_activity_transition(
+    transition: &ActivityTransition,
+    index: usize,
+    activities: &[ActivityDefinition],
+    activity_keys: &std::collections::BTreeSet<String>,
+    entry_activity_key: &str,
+) -> Result<(), String> {
+    let field_path = format!("lifecycle.transitions[{index}]");
+    validate_identity(&format!("{field_path}.from"), &transition.from)?;
+    validate_identity(&format!("{field_path}.to"), &transition.to)?;
+    if !activity_keys.contains(&transition.from) {
+        return Err(format!(
+            "{field_path}.from 引用了不存在的 activity: {}",
+            transition.from
+        ));
+    }
+    if !activity_keys.contains(&transition.to) {
+        return Err(format!(
+            "{field_path}.to 引用了不存在的 activity: {}",
+            transition.to
+        ));
+    }
+    if transition.from == transition.to
+        && matches!(transition.condition, TransitionCondition::Always)
+    {
+        return Err(format!("{field_path} 不允许无条件自环"));
+    }
+    if transition.to == entry_activity_key && transition.from != entry_activity_key {
+        validate_bounded_loop(transition, activities, &field_path)?;
+    }
+    validate_transition_condition(&transition.condition, activities, &field_path)?;
+
+    for (binding_index, binding) in transition.artifact_bindings.iter().enumerate() {
+        let binding_path = format!("{field_path}.artifact_bindings[{binding_index}]");
+        let from_activity = binding
+            .from_activity
+            .as_deref()
+            .unwrap_or(transition.from.as_str());
+        validate_identity(&format!("{binding_path}.from_activity"), from_activity)?;
+        validate_identity(&format!("{binding_path}.from_port"), &binding.from_port)?;
+        validate_identity(&format!("{binding_path}.to_port"), &binding.to_port)?;
+        let Some(source) = find_activity(activities, from_activity) else {
+            return Err(format!(
+                "{binding_path}.from_activity 引用了不存在的 activity: {from_activity}"
+            ));
+        };
+        let Some(target) = find_activity(activities, &transition.to) else {
+            return Err(format!(
+                "{field_path}.to 引用了不存在的 activity: {}",
+                transition.to
+            ));
+        };
+        if !source
+            .output_ports
+            .iter()
+            .any(|port| port.key == binding.from_port)
+        {
+            return Err(format!(
+                "{binding_path}.from_port 引用了不存在的 output port: {}.{}",
+                from_activity, binding.from_port
+            ));
+        }
+        if !target
+            .input_ports
+            .iter()
+            .any(|port| port.key == binding.to_port)
+        {
+            return Err(format!(
+                "{binding_path}.to_port 引用了不存在的 input port: {}.{}",
+                transition.to, binding.to_port
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_bounded_loop(
+    transition: &ActivityTransition,
+    activities: &[ActivityDefinition],
+    field_path: &str,
+) -> Result<(), String> {
+    let target = find_activity(activities, &transition.to)
+        .ok_or_else(|| format!("{field_path}.to 引用了不存在的 activity: {}", transition.to))?;
+    let has_target_attempt_limit = target.iteration_policy.max_attempts.is_some();
+    let has_transition_limit = transition.max_traversals.is_some();
+    let has_structured_condition = !matches!(transition.condition, TransitionCondition::Always);
+    if has_target_attempt_limit || has_transition_limit || has_structured_condition {
+        Ok(())
+    } else {
+        Err(format!(
+            "{field_path} 指向入口 activity 的循环 transition 必须由 max_attempts、max_traversals 或结构化条件约束"
+        ))
+    }
+}
+
+fn validate_transition_condition(
+    condition: &TransitionCondition,
+    activities: &[ActivityDefinition],
+    field_path: &str,
+) -> Result<(), String> {
+    match condition {
+        TransitionCondition::Always => {}
+        TransitionCondition::ArtifactFieldEquals {
+            activity,
+            port,
+            path,
+            value: _,
+        } => {
+            validate_activity_output_port_ref(
+                activities,
+                activity,
+                port,
+                &format!("{field_path}.condition"),
+            )?;
+            validate_non_empty(&format!("{field_path}.condition.path"), path)?;
+        }
+        TransitionCondition::HumanDecisionEquals {
+            activity,
+            decision_port,
+            value,
+        } => {
+            validate_activity_output_port_ref(
+                activities,
+                activity,
+                decision_port,
+                &format!("{field_path}.condition"),
+            )?;
+            validate_non_empty(&format!("{field_path}.condition.value"), value)?;
+        }
+        TransitionCondition::AgentSignalEquals {
+            activity,
+            signal_key,
+            value: _,
+        } => {
+            validate_identity(&format!("{field_path}.condition.activity"), activity)?;
+            if find_activity(activities, activity).is_none() {
+                return Err(format!(
+                    "{field_path}.condition.activity 引用了不存在的 activity: {activity}"
+                ));
+            }
+            validate_identity(&format!("{field_path}.condition.signal_key"), signal_key)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_activity_output_port_ref(
+    activities: &[ActivityDefinition],
+    activity_key: &str,
+    port_key: &str,
+    field_path: &str,
+) -> Result<(), String> {
+    validate_identity(&format!("{field_path}.activity"), activity_key)?;
+    validate_identity(&format!("{field_path}.port"), port_key)?;
+    let Some(activity) = find_activity(activities, activity_key) else {
+        return Err(format!(
+            "{field_path}.activity 引用了不存在的 activity: {activity_key}"
+        ));
+    };
+    if !activity
+        .output_ports
+        .iter()
+        .any(|port| port.key == port_key)
+    {
+        return Err(format!(
+            "{field_path}.port 引用了不存在的 output port: {activity_key}.{port_key}"
+        ));
+    }
+    Ok(())
+}
+
+fn find_activity<'a>(
+    activities: &'a [ActivityDefinition],
+    activity_key: &str,
+) -> Option<&'a ActivityDefinition> {
+    activities
+        .iter()
+        .find(|activity| activity.key == activity_key)
 }
 
 fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<(), String> {
@@ -1279,6 +1974,75 @@ mod tests {
         }
     }
 
+    fn activity_agent(
+        key: &str,
+        input_ports: Vec<InputPortDefinition>,
+        output_ports: Vec<OutputPortDefinition>,
+    ) -> ActivityDefinition {
+        ActivityDefinition {
+            key: key.to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: format!("workflow.{key}"),
+                session_policy: AgentSessionPolicy::SpawnChild,
+            }),
+            input_ports,
+            output_ports,
+            completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
+            iteration_policy: ActivityIterationPolicy {
+                max_attempts: Some(3),
+                artifact_alias: ArtifactAliasPolicy::LatestAndHistory,
+            },
+            join_policy: ActivityJoinPolicy::All,
+        }
+    }
+
+    fn activity_human_approval(
+        key: &str,
+        input_ports: Vec<InputPortDefinition>,
+        output_ports: Vec<OutputPortDefinition>,
+    ) -> ActivityDefinition {
+        ActivityDefinition {
+            key: key.to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(
+                HumanApprovalExecutorSpec {
+                    form_schema_key: "approval.plan_review".to_string(),
+                    title: None,
+                },
+            )),
+            input_ports,
+            output_ports,
+            completion_policy: ActivityCompletionPolicy::HumanDecision {
+                decision_port: "decision".to_string(),
+            },
+            iteration_policy: ActivityIterationPolicy {
+                max_attempts: Some(3),
+                artifact_alias: ArtifactAliasPolicy::LatestAndHistory,
+            },
+            join_policy: ActivityJoinPolicy::All,
+        }
+    }
+
+    fn input_port(key: &str) -> InputPortDefinition {
+        InputPortDefinition {
+            key: key.to_string(),
+            description: format!("{key} input"),
+            context_strategy: ContextStrategy::Full,
+            context_template: None,
+            standalone_fulfillment: StandaloneFulfillment::Required,
+        }
+    }
+
+    fn output_port(key: &str) -> OutputPortDefinition {
+        OutputPortDefinition {
+            key: key.to_string(),
+            description: format!("{key} output"),
+            gate_strategy: GateStrategy::Existence,
+            gate_params: None,
+        }
+    }
+
     #[test]
     fn validate_rejects_multi_step_without_edges() {
         let steps = vec![simple_step("a"), simple_step("b")];
@@ -1340,6 +2104,230 @@ mod tests {
         let edges = vec![LifecycleEdge::flow("a", "b"), LifecycleEdge::flow("b", "c")];
         validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
             .expect("pure flow lifecycle should pass");
+    }
+
+    #[test]
+    fn validate_activity_lifecycle_accepts_human_approval_loop() {
+        let activities = vec![
+            activity_agent(
+                "plan",
+                vec![input_port("feedback")],
+                vec![output_port("proposal")],
+            ),
+            activity_human_approval(
+                "approval",
+                vec![input_port("proposal")],
+                vec![output_port("decision")],
+            ),
+            activity_agent(
+                "implement",
+                vec![input_port("approved_plan")],
+                vec![output_port("summary")],
+            ),
+        ];
+        let transitions = vec![
+            ActivityTransition {
+                from: "plan".to_string(),
+                to: "approval".to_string(),
+                kind: ActivityTransitionKind::Flow,
+                condition: TransitionCondition::Always,
+                artifact_bindings: vec![ArtifactBinding {
+                    from_activity: None,
+                    from_port: "proposal".to_string(),
+                    to_port: "proposal".to_string(),
+                    alias: ArtifactAliasPolicy::Latest,
+                }],
+                max_traversals: None,
+            },
+            ActivityTransition {
+                from: "approval".to_string(),
+                to: "implement".to_string(),
+                kind: ActivityTransitionKind::Flow,
+                condition: TransitionCondition::HumanDecisionEquals {
+                    activity: "approval".to_string(),
+                    decision_port: "decision".to_string(),
+                    value: "approved".to_string(),
+                },
+                artifact_bindings: vec![ArtifactBinding {
+                    from_activity: Some("plan".to_string()),
+                    from_port: "proposal".to_string(),
+                    to_port: "approved_plan".to_string(),
+                    alias: ArtifactAliasPolicy::Latest,
+                }],
+                max_traversals: None,
+            },
+            ActivityTransition {
+                from: "approval".to_string(),
+                to: "plan".to_string(),
+                kind: ActivityTransitionKind::Flow,
+                condition: TransitionCondition::HumanDecisionEquals {
+                    activity: "approval".to_string(),
+                    decision_port: "decision".to_string(),
+                    value: "rejected".to_string(),
+                },
+                artifact_bindings: vec![ArtifactBinding {
+                    from_activity: None,
+                    from_port: "decision".to_string(),
+                    to_port: "feedback".to_string(),
+                    alias: ArtifactAliasPolicy::Latest,
+                }],
+                max_traversals: None,
+            },
+        ];
+
+        validate_activity_lifecycle_definition(
+            "lc",
+            "Lifecycle",
+            "plan",
+            &activities,
+            &transitions,
+        )
+        .expect("approval loop should be bounded by typed decision and retry policy");
+    }
+
+    #[test]
+    fn validate_activity_lifecycle_rejects_missing_artifact_port() {
+        let activities = vec![
+            activity_agent("plan", vec![], vec![output_port("proposal")]),
+            activity_agent("implement", vec![input_port("approved_plan")], vec![]),
+        ];
+        let transitions = vec![ActivityTransition {
+            from: "plan".to_string(),
+            to: "implement".to_string(),
+            kind: ActivityTransitionKind::Flow,
+            condition: TransitionCondition::Always,
+            artifact_bindings: vec![ArtifactBinding {
+                from_activity: None,
+                from_port: "missing".to_string(),
+                to_port: "approved_plan".to_string(),
+                alias: ArtifactAliasPolicy::Latest,
+            }],
+            max_traversals: None,
+        }];
+
+        let err = validate_activity_lifecycle_definition(
+            "lc",
+            "Lifecycle",
+            "plan",
+            &activities,
+            &transitions,
+        )
+        .expect_err("missing output port should fail");
+        assert!(err.contains("from_port"));
+    }
+
+    #[test]
+    fn validate_activity_lifecycle_rejects_unbounded_entry_loop() {
+        let mut plan = activity_agent("plan", vec![], vec![output_port("proposal")]);
+        plan.iteration_policy.max_attempts = None;
+        let activities = vec![
+            plan,
+            activity_agent("review", vec![input_port("proposal")], vec![]),
+        ];
+        let transitions = vec![
+            ActivityTransition {
+                from: "plan".to_string(),
+                to: "review".to_string(),
+                kind: ActivityTransitionKind::Flow,
+                condition: TransitionCondition::Always,
+                artifact_bindings: vec![ArtifactBinding {
+                    from_activity: None,
+                    from_port: "proposal".to_string(),
+                    to_port: "proposal".to_string(),
+                    alias: ArtifactAliasPolicy::Latest,
+                }],
+                max_traversals: None,
+            },
+            ActivityTransition {
+                from: "review".to_string(),
+                to: "plan".to_string(),
+                kind: ActivityTransitionKind::Flow,
+                condition: TransitionCondition::Always,
+                artifact_bindings: vec![],
+                max_traversals: None,
+            },
+        ];
+
+        let err = validate_activity_lifecycle_definition(
+            "lc",
+            "Lifecycle",
+            "plan",
+            &activities,
+            &transitions,
+        )
+        .expect_err("unbounded loop should fail");
+        assert!(err.contains("循环 transition"));
+    }
+
+    #[test]
+    fn validate_activity_lifecycle_rejects_unconditional_self_loop() {
+        let activities = vec![activity_agent(
+            "plan",
+            vec![],
+            vec![output_port("proposal")],
+        )];
+        let transitions = vec![ActivityTransition {
+            from: "plan".to_string(),
+            to: "plan".to_string(),
+            kind: ActivityTransitionKind::Flow,
+            condition: TransitionCondition::Always,
+            artifact_bindings: vec![],
+            max_traversals: Some(3),
+        }];
+
+        let err = validate_activity_lifecycle_definition(
+            "lc",
+            "Lifecycle",
+            "plan",
+            &activities,
+            &transitions,
+        )
+        .expect_err("unconditional self loop should fail");
+        assert!(err.contains("无条件自环"));
+    }
+
+    #[test]
+    fn activity_executor_serializes_human_kind_and_type() {
+        let executor = ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(
+            HumanApprovalExecutorSpec {
+                form_schema_key: "approval.plan_review".to_string(),
+                title: None,
+            },
+        ));
+
+        let value = serde_json::to_value(executor).expect("serialize executor");
+        assert_eq!(value["kind"], "human");
+        assert_eq!(value["type"], "approval");
+        assert_eq!(value["form_schema_key"], "approval.plan_review");
+    }
+
+    #[test]
+    fn activity_executor_serializes_function_kind_and_type() {
+        let executor = ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::BashExec(
+            BashExecExecutorSpec {
+                command: "pnpm".to_string(),
+                args: vec!["test".to_string()],
+                working_directory: None,
+            },
+        ));
+
+        let value = serde_json::to_value(executor).expect("serialize executor");
+        assert_eq!(value["kind"], "function");
+        assert_eq!(value["type"], "bash_exec");
+        assert_eq!(value["command"], "pnpm");
+    }
+
+    #[test]
+    fn activity_executor_serializes_agent_kind() {
+        let executor = ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+            workflow_key: "workflow.plan".to_string(),
+            session_policy: AgentSessionPolicy::SpawnChild,
+        });
+
+        let value = serde_json::to_value(executor).expect("serialize executor");
+        assert_eq!(value["kind"], "agent");
+        assert_eq!(value["workflow_key"], "workflow.plan");
+        assert_eq!(value["session_policy"], "spawn_child");
     }
 
     #[test]

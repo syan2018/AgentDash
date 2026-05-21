@@ -274,17 +274,28 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
-    // 自动启动 Lifecycle Run（如果 ProjectAgent 配置了 default_lifecycle_key）
-    if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref()
-        && let Err(err) =
+    // 自动启动显式 Lifecycle；未配置时归属到 freeform LifecycleRun。
+    if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref() {
+        if let Err(err) =
             auto_start_lifecycle_run(&state, project.id, &meta.id, lifecycle_key).await
+        {
+            tracing::warn!(
+                project_id = %project.id,
+                agent_key = %agent_key,
+                lifecycle_key = %lifecycle_key,
+                error = %err,
+                "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+            );
+        }
+    } else if let Err(err) =
+        crate::routes::acp_sessions::ensure_freeform_lifecycle_run(&state, project.id, &meta.id)
+            .await
     {
         tracing::warn!(
             project_id = %project.id,
             agent_key = %agent_key,
-            lifecycle_key = %lifecycle_key,
             error = %err,
-            "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
+            "自动启动 freeform LifecycleRun 失败（不阻塞 session 创建）"
         );
     }
 
@@ -778,11 +789,17 @@ async fn resolve_lifecycle_key_for_project_agent(
 ) -> Result<Option<String>, ApiError> {
     if let Some(lk) = lifecycle_key {
         let trimmed = lk.trim().to_string();
-        return Ok(if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        });
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        state
+            .repos
+            .activity_lifecycle_definition_repo
+            .get_by_project_and_key(project_id, &trimmed)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .ok_or_else(|| ApiError::NotFound(format!("Lifecycle `{trimmed}` 不存在")))?;
+        return Ok(Some(trimmed));
     }
 
     if let Some(wk) = workflow_key {
@@ -794,7 +811,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         let workflow = state
             .repos
             .workflow_definition_repo
-            .get_by_key(&wk)
+            .get_by_project_and_key(project_id, &wk)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
             .ok_or_else(|| ApiError::NotFound(format!("Workflow `{wk}` 不存在")))?;
@@ -803,16 +820,18 @@ async fn resolve_lifecycle_key_for_project_agent(
 
         let existing = state
             .repos
-            .lifecycle_definition_repo
-            .get_by_key(&auto_key)
+            .activity_lifecycle_definition_repo
+            .get_by_project_and_key(project_id, &auto_key)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
 
         if existing.is_none() {
             use agentdash_domain::workflow::{
-                LifecycleDefinition, LifecycleStepDefinition, WorkflowDefinitionSource,
+                ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
+                ActivityLifecycleDefinition, AgentActivityExecutorSpec, AgentSessionPolicy,
+                WorkflowDefinitionSource,
             };
-            let lifecycle = LifecycleDefinition {
+            let lifecycle = ActivityLifecycleDefinition {
                 id: Uuid::new_v4(),
                 project_id,
                 key: auto_key.clone(),
@@ -822,23 +841,27 @@ async fn resolve_lifecycle_key_for_project_agent(
                 source: WorkflowDefinitionSource::UserAuthored,
                 installed_source: None,
                 version: 1,
-                steps: vec![LifecycleStepDefinition {
+                activities: vec![ActivityDefinition {
                     key: "main".to_string(),
                     description: String::new(),
-                    workflow_key: Some(wk),
-                    node_type: Default::default(),
+                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                        workflow_key: wk,
+                        session_policy: AgentSessionPolicy::ContinueRoot,
+                    }),
                     output_ports: vec![],
                     input_ports: vec![],
-                    capability_config: Default::default(),
+                    completion_policy: ActivityCompletionPolicy::OpenEnded,
+                    iteration_policy: Default::default(),
+                    join_policy: Default::default(),
                 }],
-                edges: vec![],
-                entry_step_key: "main".to_string(),
+                transitions: vec![],
+                entry_activity_key: "main".to_string(),
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             };
             state
                 .repos
-                .lifecycle_definition_repo
+                .activity_lifecycle_definition_repo
                 .create(&lifecycle)
                 .await
                 .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -909,16 +932,17 @@ async fn auto_start_lifecycle_run(
     lifecycle_key: &str,
 ) -> Result<(), String> {
     use agentdash_application::workflow::{
-        LifecycleRunService, StartLifecycleRunCommand, build_step_projector_from_repos,
+        ActivityLifecycleRunService, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
+        AgentActivityRuntimePort, StartActivityLifecycleRunCommand,
     };
 
-    let service = LifecycleRunService::new(
-        state.repos.lifecycle_definition_repo.as_ref(),
+    let service = ActivityLifecycleRunService::new(
+        state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
-    )
-    .with_projector(build_step_projector_from_repos(&state.repos));
+        state.repos.activity_execution_claim_repo.as_ref(),
+    );
 
-    let cmd = StartLifecycleRunCommand {
+    let cmd = StartActivityLifecycleRunCommand {
         project_id,
         lifecycle_id: None,
         lifecycle_key: Some(lifecycle_key.to_string()),
@@ -930,18 +954,27 @@ async fn auto_start_lifecycle_run(
         .await
         .map_err(|e| format!("start_run 失败: {e}"))?;
 
-    // 自动激活首步
-    if let Some(step_key) = run.current_step_key() {
-        use agentdash_application::workflow::BindAndActivateLifecycleStepCommand;
-        let activate_cmd = BindAndActivateLifecycleStepCommand {
-            run_id: run.id,
-            step_key: step_key.to_string(),
-            session_id: session_id.to_string(),
-        };
-        if let Err(e) = service.bind_session_and_activate_step(activate_cmd).await {
-            tracing::warn!(run_id = %run.id, step_key = %step_key, error = %e, "自动激活首步失败");
-        }
-    }
+    let launcher = AgentActivityExecutorLauncher::new(
+        AgentActivityLaunchContext {
+            project_id: run.project_id,
+            lifecycle_key: lifecycle_key.to_string(),
+            root_session_id: run.session_id.clone(),
+        },
+        AgentActivityRuntimePort::new(
+            state.services.session_core.clone(),
+            state.services.session_launch.clone(),
+            state.repos.clone(),
+        )
+        .with_runtime_context(
+            state.services.session_hooks.clone(),
+            state.services.session_capability.clone(),
+            state.config.platform_config.clone(),
+        ),
+    );
+    service
+        .launch_ready_attempts(run.id, &launcher)
+        .await
+        .map_err(|e| format!("启动 lifecycle activity 失败: {e}"))?;
 
     Ok(())
 }

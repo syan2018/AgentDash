@@ -458,7 +458,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const hasLifecycleGraph = useMemo(
     () =>
       lifecycleRuns.some((run) =>
-        run.step_states.some((step) => Boolean(step.session_id))
+        (run.activity_state?.attempts.some((attempt) =>
+          attempt.executor_run?.kind === "agent_session"
+            ? Boolean(attempt.executor_run.session_id)
+            : false,
+        ) ?? false)
         || (run.active_node_keys?.length ?? 0) > 0
       ),
     [lifecycleRuns],

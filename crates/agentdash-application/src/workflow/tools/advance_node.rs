@@ -1,7 +1,7 @@
 use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::tools::provider::SessionToolServices;
 use crate::workflow::{
-    AdvanceCurrentNodeInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
+    AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,
 };
 use agentdash_domain::workflow::LifecycleStepExecutionStatus;
@@ -12,8 +12,6 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-
-use super::active_workflow_locator_from_snapshot;
 
 /// Agent 主动声明当前 lifecycle node 完成或失败。
 ///
@@ -99,13 +97,6 @@ impl AgentTool for CompleteLifecycleNodeTool {
             )
         })?;
 
-        let locator =
-            active_workflow_locator_from_snapshot(&hook_session.snapshot()).ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 session 没有关联 active workflow，无法推进 lifecycle node".to_string(),
-                )
-            })?;
-
         let session_services = self.session_services.clone().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "session services 尚未就绪，无法推进 lifecycle node".to_string(),
@@ -123,12 +114,12 @@ impl AgentTool for CompleteLifecycleNodeTool {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,
         };
+        let snapshot = hook_session.snapshot();
         let result = orchestrator
-            .advance_current_node(AdvanceCurrentNodeInput {
+            .advance_current_activity(AdvanceCurrentActivityInput {
                 hook_session: hook_session.clone(),
                 turn_id: self.current_turn_id.clone(),
-                run_id: locator.run_id,
-                step_key: locator.step_key.clone(),
+                session_id: snapshot.session_id.clone(),
                 outcome,
                 summary: params.summary.clone(),
             })
@@ -145,7 +136,7 @@ fn build_tool_result(
     match result.status {
         AdvanceCurrentNodeStatus::Failed => Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "Node `{}` 已标记为 **Failed**。{}",
+                "Activity `{}` 已标记为 **Failed**。{}",
                 result.step_key,
                 result
                     .run
@@ -171,13 +162,13 @@ fn build_tool_result(
             let missing_list = missing_output_keys.join(", ");
             let content = if terminal_failed {
                 format!(
-                    "Node `{}` 因连续 {gate_collision_count} 次门禁碰撞已标记为 **Failed**。\n\
+                    "Activity `{}` 因连续 {gate_collision_count} 次门禁碰撞已标记为 **Failed**。\n\
                      未交付的 output port: [{}]",
                     result.step_key, missing_list
                 )
             } else {
                 format!(
-                    "**门禁拒绝**（碰撞 {gate_collision_count}/3）：Node `{}` 尚有 {} 个 output port 未交付。\n\
+                    "**门禁拒绝**（碰撞 {gate_collision_count}/3）：Activity `{}` 尚有 {} 个 output port 未交付。\n\
                      缺失: [{}]\n\n\
                      请通过 `write_file` 写入 `lifecycle://artifacts/{{port_key}}` 完成交付后重试。",
                     result.step_key,
@@ -209,18 +200,21 @@ fn build_tool_result(
                 if result.run.active_node_keys.is_empty() {
                     "lifecycle 已全部完成。".to_string()
                 } else {
-                    format!("活跃 node: [{}]", result.run.active_node_keys.join(", "))
+                    format!(
+                        "活跃 activity: [{}]",
+                        result.run.active_node_keys.join(", ")
+                    )
                 }
             } else {
-                format!("后继 node 已就绪: [{}]", newly_ready.join(", "))
+                format!("后继 activity 已就绪: [{}]", newly_ready.join(", "))
             };
             let message = if let Some(warning) = result.orchestration_warning.as_deref() {
                 format!(
-                    "Node `{}` 已完成。{successor_info}\n[warning] {warning}",
+                    "Activity `{}` 已完成。{successor_info}\n[warning] {warning}",
                     result.step_key
                 )
             } else {
-                format!("Node `{}` 已完成。{successor_info}", result.step_key)
+                format!("Activity `{}` 已完成。{successor_info}", result.step_key)
             };
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(message)],

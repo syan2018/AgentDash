@@ -22,7 +22,7 @@ export function LifecycleEditorShellPage() {
   const lifecycleId = id ?? "new";
   const seedKey = searchParams.get("key") ?? undefined;
   const seedName = searchParams.get("name") ?? undefined;
-  const seedInitialStepKey = searchParams.get("step") ?? undefined;
+  const seedInitialActivityKey = searchParams.get("activity") ?? searchParams.get("step") ?? undefined;
 
   const handleBack = useCallback(() => {
     if (isDirty && !window.confirm("当前 Workflow 有未保存修改，确定离开吗？")) {
@@ -68,7 +68,7 @@ export function LifecycleEditorShellPage() {
       <div className="flex-1 overflow-hidden">
         <LifecycleEditorShell
           lifecycleId={lifecycleId}
-          seed={{ key: seedKey, name: seedName, initial_step_key: seedInitialStepKey }}
+          seed={{ key: seedKey, name: seedName, initial_activity_key: seedInitialActivityKey }}
           projectId={currentProjectId ?? ""}
           onSaved={handleSaved}
         />

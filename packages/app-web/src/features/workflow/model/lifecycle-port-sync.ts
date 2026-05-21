@@ -1,7 +1,7 @@
 import type {
+  ActivityDefinition,
+  ActivityTransition,
   InputPortDefinition,
-  LifecycleEdge,
-  LifecycleStepDefinition,
   OutputPortDefinition,
   WorkflowDefinition,
 } from "../../../types";
@@ -26,17 +26,17 @@ function fallbackInputPort(key: string): InputPortDefinition {
 }
 
 function workflowForStep(
-  step: LifecycleStepDefinition,
+  step: ActivityDefinition,
   workflowByKey: Map<string, WorkflowDefinition>,
 ): WorkflowDefinition | null {
-  const workflowKey = step.workflow_key?.trim();
+  const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key.trim() : "";
   return workflowKey ? workflowByKey.get(workflowKey) ?? null : null;
 }
 
 export function mergeWorkflowPortsIntoLifecycleStep(
-  step: LifecycleStepDefinition,
+  step: ActivityDefinition,
   workflow: WorkflowDefinition,
-): LifecycleStepDefinition {
+): ActivityDefinition {
   const existingOutputKeys = new Set(step.output_ports.map((port) => port.key));
   const existingInputKeys = new Set(step.input_ports.map((port) => port.key));
   const missingOutputPorts = workflow.contract.output_ports
@@ -63,10 +63,10 @@ export function mergeWorkflowPortsIntoLifecycleStep(
 }
 
 export function syncLifecycleStepPortsForArtifactEdges(input: {
-  steps: LifecycleStepDefinition[];
-  edges: LifecycleEdge[];
+  steps: ActivityDefinition[];
+  edges: ActivityTransition[];
   workflows: WorkflowDefinition[];
-}): { steps: LifecycleStepDefinition[]; changed: boolean } {
+}): { steps: ActivityDefinition[]; changed: boolean } {
   const workflowByKey = new Map(input.workflows.map((workflow) => [workflow.key, workflow]));
   const stepIndexByKey = new Map(input.steps.map((step, index) => [step.key, index]));
   let changed = false;
@@ -78,28 +78,29 @@ export function syncLifecycleStepPortsForArtifactEdges(input: {
 
   for (const edge of input.edges) {
     if (edge.kind !== "artifact") continue;
-    if (!edge.from_port || !edge.to_port) continue;
+    const binding = edge.artifact_bindings[0];
+    if (!binding?.from_port || !binding.to_port) continue;
 
-    const sourceIndex = stepIndexByKey.get(edge.from_node);
+    const sourceIndex = stepIndexByKey.get(edge.from);
     if (sourceIndex != null) {
       const sourceStep = steps[sourceIndex];
-      const hasOutputPort = sourceStep.output_ports.some((port) => port.key === edge.from_port);
+      const hasOutputPort = sourceStep.output_ports.some((port) => port.key === binding.from_port);
       if (!hasOutputPort) {
         const workflow = workflowForStep(sourceStep, workflowByKey);
-        const recommended = workflow?.contract.output_ports.find((port) => port.key === edge.from_port);
-        sourceStep.output_ports.push(recommended ? cloneOutputPort(recommended) : fallbackOutputPort(edge.from_port));
+        const recommended = workflow?.contract.output_ports.find((port) => port.key === binding.from_port);
+        sourceStep.output_ports.push(recommended ? cloneOutputPort(recommended) : fallbackOutputPort(binding.from_port));
         changed = true;
       }
     }
 
-    const targetIndex = stepIndexByKey.get(edge.to_node);
+    const targetIndex = stepIndexByKey.get(edge.to);
     if (targetIndex != null) {
       const targetStep = steps[targetIndex];
-      const hasInputPort = targetStep.input_ports.some((port) => port.key === edge.to_port);
+      const hasInputPort = targetStep.input_ports.some((port) => port.key === binding.to_port);
       if (!hasInputPort) {
         const workflow = workflowForStep(targetStep, workflowByKey);
-        const recommended = workflow?.contract.input_ports.find((port) => port.key === edge.to_port);
-        targetStep.input_ports.push(recommended ? cloneInputPort(recommended) : fallbackInputPort(edge.to_port));
+        const recommended = workflow?.contract.input_ports.find((port) => port.key === binding.to_port);
+        targetStep.input_ports.push(recommended ? cloneInputPort(recommended) : fallbackInputPort(binding.to_port));
         changed = true;
       }
     }

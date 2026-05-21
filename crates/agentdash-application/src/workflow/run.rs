@@ -365,10 +365,19 @@ where
             (None, None) => Err(WorkflowApplicationError::BadRequest(
                 "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
             )),
-            (Some(lifecycle_id), None) => self.load_lifecycle(*lifecycle_id).await,
+            (Some(lifecycle_id), None) => {
+                let lifecycle = self.load_lifecycle(*lifecycle_id).await?;
+                if lifecycle.project_id != cmd.project_id {
+                    return Err(WorkflowApplicationError::NotFound(format!(
+                        "lifecycle_definition 不存在: {}",
+                        lifecycle_id
+                    )));
+                }
+                Ok(lifecycle)
+            }
             (None, Some(lifecycle_key)) => self
                 .lifecycle_repo
-                .get_by_key(lifecycle_key)
+                .get_by_project_and_key(cmd.project_id, lifecycle_key)
                 .await?
                 .ok_or_else(|| {
                     WorkflowApplicationError::NotFound(format!(
@@ -859,6 +868,67 @@ mod tests {
     }
 
     // ── 实际断言测试 ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn start_run_resolves_lifecycle_key_within_project() {
+        let project_a = Uuid::new_v4();
+        let project_b = Uuid::new_v4();
+        let lifecycle_a = LifecycleDefinition::new(
+            project_a,
+            "same-key",
+            "Lifecycle A",
+            "",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::BuiltinSeed,
+            "only",
+            vec![make_step("only")],
+            vec![],
+        )
+        .expect("lifecycle_a");
+        let lifecycle_b = LifecycleDefinition::new(
+            project_b,
+            "same-key",
+            "Lifecycle B",
+            "",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::BuiltinSeed,
+            "only",
+            vec![make_step("only")],
+            vec![],
+        )
+        .expect("lifecycle_b");
+        let lifecycle_def_repo = InMemoryLifecycleDefRepo {
+            definitions: Mutex::new(vec![lifecycle_a.clone(), lifecycle_b.clone()]),
+        };
+        let run_repo = InMemoryLifecycleRunRepo {
+            runs: Mutex::new(Vec::new()),
+        };
+        let service = LifecycleRunService::new(&lifecycle_def_repo, &run_repo);
+
+        let run = service
+            .start_run(StartLifecycleRunCommand {
+                project_id: project_b,
+                lifecycle_id: None,
+                lifecycle_key: Some("same-key".to_string()),
+                session_id: "sess-project-scoped".to_string(),
+            })
+            .await
+            .expect("start run");
+
+        assert_eq!(run.project_id, project_b);
+        assert_eq!(run.lifecycle_id, lifecycle_b.id);
+
+        let err = service
+            .start_run(StartLifecycleRunCommand {
+                project_id: project_b,
+                lifecycle_id: Some(lifecycle_a.id),
+                lifecycle_key: None,
+                session_id: "sess-cross-project-id".to_string(),
+            })
+            .await
+            .expect_err("cross-project lifecycle id should be hidden");
+        assert!(matches!(err, WorkflowApplicationError::NotFound(_)));
+    }
 
     #[tokio::test]
     async fn projector_projects_task_on_complete_step() {

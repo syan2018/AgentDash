@@ -256,6 +256,7 @@ mod tests {
                 subject: "test-subject".to_string(),
                 display_name: Some("Test User".to_string()),
                 email: Some("test@example.com".to_string()),
+                avatar_url: None,
                 groups: vec![],
                 is_admin: false,
                 provider: Some("test.auth".to_string()),

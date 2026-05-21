@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { LoginCredentials, LoginMetadata } from '../types';
-import { fetchLoginMetadata, postLogin } from '../api/auth';
+import { fetchLoginMetadata, postLogin, startRedirectLogin } from '../api/auth';
 import { setStoredToken, clearStoredToken } from '../api/client';
 import { useCurrentUserStore } from './currentUserStore';
 
@@ -13,6 +13,7 @@ interface AuthState {
 
   fetchMetadata: () => Promise<LoginMetadata | null>;
   login: (credentials: LoginCredentials) => Promise<boolean>;
+  startRedirectLogin: () => Promise<void>;
   logout: () => void;
 }
 
@@ -51,6 +52,21 @@ export const useAuthStore = create<AuthState>((set) => ({
         loginError: (e as Error).message || '登录失败',
       });
       return false;
+    }
+  },
+
+  startRedirectLogin: async () => {
+    set({ isLoginLoading: true, loginError: null });
+    try {
+      const response = await startRedirectLogin({
+        return_to: window.location.href,
+      });
+      window.location.assign(response.auth_url);
+    } catch (e) {
+      set({
+        isLoginLoading: false,
+        loginError: (e as Error).message || '启动登录失败',
+      });
     }
   },
 

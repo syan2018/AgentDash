@@ -112,6 +112,7 @@ impl BuiltinPersonalAuthProvider {
                 subject,
                 display_name,
                 email,
+                avatar_url: None,
                 groups,
                 is_admin,
                 provider: Some("builtin.personal".to_string()),

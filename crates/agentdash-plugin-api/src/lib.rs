@@ -29,8 +29,9 @@ pub use agentdash_spi::AgentConnector;
 pub use agentdash_spi::{RoutineTriggerProvider, SourceResolver, VfsDiscoveryProvider};
 
 pub use auth::{
-    AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest, LoginCredentials,
-    LoginFieldDescriptor, LoginMetadata, LoginResponse,
+    AuthCallbackRequest, AuthError, AuthGroup, AuthIdentity, AuthMode, AuthProvider, AuthRequest,
+    AuthStartRequest, AuthStartResponse, LoginCredentials, LoginFieldDescriptor, LoginMetadata,
+    LoginMode, LoginResponse,
 };
 pub use external::{
     ExternalServiceClient, ListOptions, ProviderCapabilities, ProviderError, ResourceContent,

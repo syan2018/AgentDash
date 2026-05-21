@@ -58,6 +58,20 @@ pub struct LoginCredentials {
     pub extra: serde_json::Value,
 }
 
+/// 登录交互模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginMode {
+    /// 前端渲染账号密码或其它字段表单。
+    Form,
+    /// 前端跳转到外部身份提供方。
+    Redirect,
+}
+
+fn default_login_mode() -> LoginMode {
+    LoginMode::Form
+}
+
 /// 登录成功的响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -105,8 +119,37 @@ pub struct LoginMetadata {
     pub description: Option<String>,
     /// 登录表单需要的字段列表
     pub fields: Vec<LoginFieldDescriptor>,
+    /// 登录交互模式
+    #[serde(default = "default_login_mode")]
+    pub login_mode: LoginMode,
+    /// 重定向登录的启动接口
+    pub start_url: Option<String>,
     /// 是否需要交互式登录（false = 无需登录页，如 personal 模式）
     pub requires_login: bool,
+}
+
+/// 重定向式登录启动请求。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct AuthStartRequest {
+    pub return_to: Option<String>,
+}
+
+/// 重定向式登录启动响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AuthStartResponse {
+    pub auth_url: String,
+    pub state: String,
+    pub expires_at_epoch_seconds: u64,
+}
+
+/// 重定向式登录回调请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AuthCallbackRequest {
+    pub code: String,
+    pub state: String,
 }
 
 /// 认证与授权提供者
@@ -147,6 +190,26 @@ pub trait AuthProvider: Send + Sync {
         ))
     }
 
+    /// 启动重定向式登录。
+    async fn start_login(
+        &self,
+        _request: &AuthStartRequest,
+    ) -> Result<AuthStartResponse, AuthError> {
+        Err(AuthError::BadRequest(
+            "该认证模式不支持重定向登录".to_string(),
+        ))
+    }
+
+    /// 完成重定向式登录回调。
+    async fn complete_login(
+        &self,
+        _request: &AuthCallbackRequest,
+    ) -> Result<LoginResponse, AuthError> {
+        Err(AuthError::BadRequest(
+            "该认证模式不支持重定向登录回调".to_string(),
+        ))
+    }
+
     /// 返回登录方式元数据，供前端渲染登录表单
     ///
     /// 默认实现返回 personal 模式描述（不需要登录页）。
@@ -156,6 +219,8 @@ pub trait AuthProvider: Send + Sync {
             display_name: "个人模式".to_string(),
             description: Some("无需登录，使用固定本地身份".to_string()),
             fields: vec![],
+            login_mode: LoginMode::Form,
+            start_url: None,
             requires_login: false,
         }
     }

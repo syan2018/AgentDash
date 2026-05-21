@@ -378,6 +378,7 @@ pub async fn persist_identity_snapshot(
         identity.auth_mode.to_string(),
         identity.display_name.clone(),
         identity.email.clone(),
+        identity.avatar_url.clone(),
         identity.is_admin,
         identity.provider.clone(),
     );

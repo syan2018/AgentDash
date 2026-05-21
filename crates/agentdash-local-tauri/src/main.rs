@@ -833,6 +833,13 @@ fn external_desktop_api_origin() -> Option<String> {
         return explicit_origin;
     }
 
+    let build_default_origin = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    if build_default_origin.is_some() {
+        return build_default_origin;
+    }
+
     let mode = std::env::var(DESKTOP_API_MODE_ENV)
         .ok()
         .map(|value| value.trim().to_ascii_lowercase())

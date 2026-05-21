@@ -21,6 +21,7 @@ impl PostgresUserDirectoryRepository {
                 auth_mode TEXT NOT NULL,
                 display_name TEXT,
                 email TEXT,
+                avatar_url TEXT,
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 provider TEXT,
                 created_at TEXT NOT NULL,
@@ -31,6 +32,11 @@ impl PostgresUserDirectoryRepository {
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+
+        sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
 
         sqlx::query(
             r#"
@@ -94,13 +100,14 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         sqlx::query(
             r#"
             INSERT INTO users (
-                user_id, subject, auth_mode, display_name, email, is_admin, provider, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                user_id, subject, auth_mode, display_name, email, avatar_url, is_admin, provider, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT(user_id) DO UPDATE SET
                 subject = excluded.subject,
                 auth_mode = excluded.auth_mode,
                 display_name = excluded.display_name,
                 email = excluded.email,
+                avatar_url = excluded.avatar_url,
                 is_admin = excluded.is_admin,
                 provider = excluded.provider,
                 updated_at = excluded.updated_at
@@ -111,6 +118,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(&user.auth_mode)
         .bind(&user.display_name)
         .bind(&user.email)
+        .bind(&user.avatar_url)
         .bind(user.is_admin)
         .bind(&user.provider)
         .bind(user.created_at.to_rfc3339())
@@ -125,7 +133,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
-            SELECT user_id, subject, auth_mode, display_name, email, is_admin, provider, created_at, updated_at
+            SELECT user_id, subject, auth_mode, display_name, email, avatar_url, is_admin, provider, created_at, updated_at
             FROM users
             WHERE user_id = $1
             "#,
@@ -157,7 +165,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
     async fn list_users(&self) -> Result<Vec<User>, DomainError> {
         let rows = sqlx::query_as::<_, UserRow>(
             r#"
-            SELECT user_id, subject, auth_mode, display_name, email, is_admin, provider, created_at, updated_at
+            SELECT user_id, subject, auth_mode, display_name, email, avatar_url, is_admin, provider, created_at, updated_at
             FROM users
             ORDER BY updated_at DESC, user_id ASC
             "#,
@@ -272,6 +280,7 @@ struct UserRow {
     auth_mode: String,
     display_name: Option<String>,
     email: Option<String>,
+    avatar_url: Option<String>,
     is_admin: bool,
     provider: Option<String>,
     created_at: String,
@@ -296,6 +305,7 @@ impl TryFrom<UserRow> for User {
             auth_mode: row.auth_mode,
             display_name: row.display_name,
             email: row.email,
+            avatar_url: row.avatar_url,
             is_admin: row.is_admin,
             provider: row.provider,
             created_at: super::parse_pg_timestamp_checked(&row.created_at, "users.created_at")?,

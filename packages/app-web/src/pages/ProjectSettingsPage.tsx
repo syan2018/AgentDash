@@ -26,6 +26,7 @@ import type { ResolvedMountSummary } from "../types";
 import {
   DangerConfirmDialog,
 } from "@agentdash/ui";
+import { UserAvatar } from "../components/ui/user-avatar";
 import { fetchDirectoryGroups, fetchDirectoryUsers } from "../services/directory";
 import {
   createProjectBackendAccess,
@@ -85,6 +86,18 @@ function resolveGrantSubjectLabel(
 
   const group = groups.find((item) => item.group_id === grant.subject_id);
   return group?.display_name?.trim() || grant.subject_id;
+}
+
+function resolveDirectoryUserLabel(user: DirectoryUser): string {
+  return user.display_name?.trim() || user.email?.trim() || user.user_id;
+}
+
+function findGrantUser(
+  grant: ProjectSubjectGrant,
+  users: DirectoryUser[],
+): DirectoryUser | null {
+  if (grant.subject_type !== "user") return null;
+  return users.find((item) => item.user_id === grant.subject_id) ?? null;
 }
 
 function SectionCard({
@@ -1161,7 +1174,7 @@ export function ProjectSettingsPage() {
                                 <option value="">选择用户</option>
                                 {availableUsers.map((user) => (
                                   <option key={user.user_id} value={user.user_id}>
-                                    {user.display_name?.trim() || user.email?.trim() || user.user_id}
+                                    {resolveDirectoryUserLabel(user)}
                                   </option>
                                 ))}
                               </select>
@@ -1220,36 +1233,49 @@ export function ProjectSettingsPage() {
                           </p>
                         ) : (
                           <div className="space-y-2">
-                            {grants.map((grant) => (
-                              <div
-                                key={`${grant.subject_type}:${grant.subject_id}`}
-                                className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3"
-                              >
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] uppercase text-muted-foreground">
-                                      {grant.subject_type}
-                                    </span>
-                                    <span className="text-sm font-medium text-foreground">
-                                      {resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups)}
-                                    </span>
-                                    <span className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
-                                      {PROJECT_ROLE_LABELS[grant.role]}
-                                    </span>
-                                  </div>
-                                  <p className="mt-1 text-xs text-muted-foreground">
-                                    subject_id: {grant.subject_id} · granted_by: {grant.granted_by_user_id}
-                                  </p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => void revokeGrant(grant)}
-                                  className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
+                            {grants.map((grant) => {
+                              const grantUser = findGrantUser(grant, directoryUsers);
+                              const subjectLabel = resolveGrantSubjectLabel(grant, directoryUsers, directoryGroups);
+                              return (
+                                <div
+                                  key={`${grant.subject_type}:${grant.subject_id}`}
+                                  className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-border bg-background px-3 py-3"
                                 >
-                                  撤销
-                                </button>
-                              </div>
-                            ))}
+                                  <div className="flex min-w-0 items-center gap-3">
+                                    {grantUser && (
+                                      <UserAvatar
+                                        avatarUrl={grantUser.avatar_url}
+                                        fallback={subjectLabel}
+                                        sizeClassName="h-8 w-8"
+                                      />
+                                    )}
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] uppercase text-muted-foreground">
+                                          {grant.subject_type}
+                                        </span>
+                                        <span className="text-sm font-medium text-foreground">
+                                          {subjectLabel}
+                                        </span>
+                                        <span className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground">
+                                          {PROJECT_ROLE_LABELS[grant.role]}
+                                        </span>
+                                      </div>
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        subject_id: {grant.subject_id} · granted_by: {grant.granted_by_user_id}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => void revokeGrant(grant)}
+                                    className="rounded-[8px] border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-xs text-destructive transition-colors hover:bg-destructive/10"
+                                  >
+                                    撤销
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </ContentGroup>

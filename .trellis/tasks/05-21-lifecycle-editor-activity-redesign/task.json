@@ -3,7 +3,7 @@
   "name": "lifecycle-editor-activity-redesign",
   "title": "Lifecycle Designer 基于 Activity 模型重设计",
   "description": "前端 Lifecycle 编辑器（lifecycle-editor-shell + step-inspector + lifecycle-dag-canvas + transition editor）按 Activity 一等公民重设计：① 取消 Form/DAG sticky 双模式，统一 DAG；② Inspector 改为 Identity / Executor / Ports & Policy 三段，按 executor.kind 切换 Agent / Function (api_request|bash_exec) / Human (approval) 表单；③ DAG 节点卡片化，徽章展示 executor + completion policy 组合；④ Transition 面板支持完整 4 种 condition（artifact_field_equals / agent_signal_equals 接入），并新增 artifact_bindings 可视化编辑；⑤ entry/iteration/join_policy 编辑面板。依赖 lifecycle-step-fallback-cleanup 先落地。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

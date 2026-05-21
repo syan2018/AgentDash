@@ -31,11 +31,14 @@ import "@xyflow/react/dist/style.css";
 import type {
   ActivityDefinition,
   ActivityTransition,
+  TransitionCondition,
+  ValidationIssue,
   WorkflowDefinition,
 } from "../../../types";
 import { DagNode, type DagNodeData } from "./dag-node";
 import { applyDagreLayout, generateLinearEdges, wouldCreateCycle } from "../model/dag-layout";
 import { syncLifecycleStepPortsForArtifactEdges } from "../model/lifecycle-port-sync";
+import { transitionId as deriveTransitionId } from "../../../stores/workflowStore";
 
 // ─── 常量 ───
 
@@ -63,26 +66,55 @@ function savePositions(lifecycleKey: string, positions: Record<string, { x: numb
 
 // ─── 数据转换：domain ↔ ReactFlow ───
 
+function buildActivityTooltip(step: ActivityDefinition, workflowName: string | null): string {
+  const lines: string[] = [];
+  if (step.description) lines.push(step.description);
+  if (step.executor.kind === "agent") {
+    lines.push(`Agent · ${workflowName ?? step.executor.workflow_key} · ${step.executor.session_policy}`);
+  } else if (step.executor.kind === "human") {
+    lines.push(`Human · ${step.executor.title ?? step.executor.form_schema_key}`);
+  } else {
+    lines.push(`Function · ${step.executor.type}`);
+  }
+  lines.push(`completion_policy: ${step.completion_policy.kind}`);
+  const max = step.iteration_policy.max_attempts;
+  lines.push(`iteration: ${max == null ? "∞" : max} · ${step.iteration_policy.artifact_alias}`);
+  const join = typeof step.join_policy === "string" ? step.join_policy : `n_of_m(${step.join_policy.n_of_m.n})`;
+  lines.push(`join: ${join}`);
+  return lines.join("\n");
+}
+
+function countValidationIssuesForActivity(issues: ValidationIssue[], activityKey: string): number {
+  return issues.filter(
+    (i) =>
+      i.severity === "error" &&
+      (i.field_path === activityKey ||
+        i.field_path.startsWith(`activities[${activityKey}]`) ||
+        i.field_path.includes(`activity:${activityKey}`)),
+  ).length;
+}
+
 function stepsToNodes(
   steps: ActivityDefinition[],
   entryStepKey: string,
   workflowDefs: WorkflowDefinition[],
   positions: Record<string, { x: number; y: number }>,
+  validationIssues: ValidationIssue[],
 ): Node<DagNodeData>[] {
   const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
   return steps.map((step, idx) => {
     const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key : null;
     const wf = workflowKey ? wfMap.get(workflowKey) : null;
     const data: DagNodeData = {
-      stepKey: step.key,
+      activityKey: step.key,
       description: step.description,
       executorKind: step.executor.kind,
-      sessionPolicy: step.executor.kind === "agent" ? step.executor.session_policy : null,
-      workflowKey,
-      workflowName: wf?.name ?? null,
+      completionPolicyKind: step.completion_policy.kind,
+      isEntryNode: step.key === entryStepKey,
+      validationCount: countValidationIssuesForActivity(validationIssues, step.key),
       inputPorts: step.input_ports,
       outputPorts: step.output_ports,
-      isEntryNode: step.key === entryStepKey,
+      tooltip: buildActivityTooltip(step, wf?.name ?? null),
     };
     return {
       id: step.key,
@@ -93,29 +125,59 @@ function stepsToNodes(
   });
 }
 
-function lifecycleEdgeId(e: ActivityTransition): string {
-  const binding = e.artifact_bindings[0];
-  return e.kind === "flow"
-    ? `flow:${e.from}->${e.to}:${e.condition.kind}`
-    : `${e.from}:${binding?.from_port ?? ""}--${e.to}:${binding?.to_port ?? ""}:${e.condition.kind}`;
+/** 与 store.transitionId 一致的派生：`${from}-->${to}#${idx}` */
+function lifecycleEdgeId(e: ActivityTransition, idx: number): string {
+  return deriveTransitionId(e, idx);
 }
 
-function lifecycleEdgesToRfEdges(edges: ActivityTransition[]): Edge[] {
-  return edges.map((e) => {
+function edgeStrokeForCondition(condition: TransitionCondition, isFlow: boolean): string {
+  if (condition.kind === "human_decision_equals") return "hsl(217 91% 60%)"; // blue-500
+  if (isFlow) return "hsl(var(--primary))";
+  return "hsl(var(--border))";
+}
+
+function buildEdgeLabel(e: ActivityTransition): string | undefined {
+  const parts: string[] = [];
+  if (e.kind === "flow") {
+    const cond = conditionLabel(e.condition);
+    if (cond) parts.push(cond);
+  } else {
+    const summary = e.artifact_bindings
+      .slice(0, 2)
+      .map((b) => `${b.from_port}→${b.to_port}`)
+      .join(", ");
+    if (summary) parts.push(summary);
+    if (e.artifact_bindings.length > 2) parts.push(`+${e.artifact_bindings.length - 2}`);
+  }
+  if (e.max_traversals != null && e.max_traversals > 1) {
+    parts.push(`↻${e.max_traversals}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+function lifecycleEdgesToRfEdges(edges: ActivityTransition[], selectedTransitionId: string | null): Edge[] {
+  return edges.map((e, idx) => {
     const isFlow = e.kind === "flow";
     const binding = e.artifact_bindings[0];
+    const id = lifecycleEdgeId(e, idx);
+    const isSelected = selectedTransitionId === id;
+    const stroke = edgeStrokeForCondition(e.condition, isFlow);
     return {
-      id: lifecycleEdgeId(e),
+      id,
       source: e.from,
       sourceHandle: isFlow ? undefined : binding?.from_port ?? undefined,
       target: e.to,
       targetHandle: isFlow ? undefined : binding?.to_port ?? undefined,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-      label: isFlow ? conditionLabel(e.condition) : `${binding?.from_port ?? ""} → ${binding?.to_port ?? ""}`,
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: stroke },
+      label: buildEdgeLabel(e),
       labelStyle: { fontSize: 10, fill: "hsl(var(--muted-foreground))" },
-      style: isFlow
-        ? { stroke: "hsl(var(--primary))", strokeWidth: 2 }
-        : { stroke: "hsl(var(--border))", strokeWidth: 2, strokeDasharray: "6 4" },
+      labelBgStyle: { fill: "hsl(var(--background))", fillOpacity: 0.9 },
+      style: {
+        stroke,
+        strokeWidth: isSelected ? 3 : 2,
+        strokeDasharray: isFlow ? undefined : "6 4",
+      },
+      selected: isSelected,
     };
   });
 }
@@ -167,9 +229,15 @@ export interface LifecycleDagCanvasProps {
   entryActivityKey: string;
   workflowDefs: WorkflowDefinition[];
   selectedActivityKey: string | null;
+  /** 当前选中的 transition id（与 selectedActivityKey 互斥，由 shell 的 selection 模型派生） */
+  selectedTransitionId?: string | null;
   onSelectActivity: (activityKey: string | null) => void;
+  /** 选中边回调；shell 调 store.selectLifecycleTransition。 */
+  onSelectTransition?: (transitionId: string | null) => void;
   onActivitiesChange: (next: ActivityDefinition[]) => void;
   onEdgesChange: (next: ActivityTransition[]) => void;
+  /** Validation 结果，供节点角标 badge 渲染 */
+  validationIssues?: ValidationIssue[];
   /** 顶部工具栏插槽（校验/保存按钮等）。 */
   toolbarExtras?: React.ReactNode;
   /** 右上状态插槽。 */
@@ -189,9 +257,12 @@ function LifecycleDagCanvasInner({
   entryActivityKey,
   workflowDefs,
   selectedActivityKey,
+  selectedTransitionId = null,
   onSelectActivity,
+  onSelectTransition,
   onActivitiesChange,
   onEdgesChange,
+  validationIssues = [],
   toolbarExtras,
   statusExtras,
   bottomLeftOverlay,
@@ -204,48 +275,22 @@ function LifecycleDagCanvasInner({
   const [rfEdges, setRfEdges, onRfEdgesChange] = useEdgesState<Edge>([]);
 
   // ── 从 props 同步到 RF state ──
-  const lastStepsRef = useRef<ActivityDefinition[] | undefined>(undefined);
-  const lastEdgesRef = useRef<ActivityTransition[] | undefined>(undefined);
+  // 每次 props 变化都通过 stepsToNodes / lifecycleEdgesToRfEdges 重建节点；
+  // positions cache 保留拖动后的坐标，validationIssues 与 selectedTransitionId
+  // 也一并参与 deps 以驱动徽章和高亮刷新。
   useEffect(() => {
-    const stepsChanged = lastStepsRef.current !== activities;
-    const edgesChanged = lastEdgesRef.current !== transitions;
-    lastStepsRef.current = activities;
-    lastEdgesRef.current = transitions;
-
-    if (stepsChanged || edgesChanged) {
-      setNodes(stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current));
-      setRfEdges(lifecycleEdgesToRfEdges(transitions));
-    } else {
-      // 仅 workflowDefs / entry_activity_key 变化 → 就地 patch
-      const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
-      const stepKeys = new Set(activities.map((s) => s.key));
-      setNodes((nds: Node<DagNodeData>[]) =>
-        nds
-          .filter((node) => stepKeys.has(node.id))
-          .map((node) => {
-            const step = activities.find((s) => s.key === node.id);
-            if (!step) return node;
-            const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key : null;
-            const wf = workflowKey ? wfMap.get(workflowKey) ?? null : null;
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                stepKey: step.key,
-                description: step.description,
-                executorKind: step.executor.kind,
-                sessionPolicy: step.executor.kind === "agent" ? step.executor.session_policy : null,
-                workflowKey,
-                workflowName: wf?.name ?? null,
-                outputPorts: step.output_ports,
-                inputPorts: step.input_ports,
-                isEntryNode: step.key === entryActivityKey,
-              },
-            };
-          }),
-      );
-    }
-  }, [activities, transitions, entryActivityKey, workflowDefs, setNodes, setRfEdges]);
+    setNodes(stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current, validationIssues));
+    setRfEdges(lifecycleEdgesToRfEdges(transitions, selectedTransitionId));
+  }, [
+    activities,
+    transitions,
+    entryActivityKey,
+    workflowDefs,
+    validationIssues,
+    selectedTransitionId,
+    setNodes,
+    setRfEdges,
+  ]);
 
   const handleNodesChangeWrapped = useCallback(
     (changes: Parameters<typeof onNodesChange>[0]) => {
@@ -290,13 +335,25 @@ function LifecycleDagCanvasInner({
 
       if (deletedEdges.length > 0) {
         const deletedEdgeIds = new Set(deletedEdges.map((e) => e.id));
-        newEdges = newEdges.filter((e) => !deletedEdgeIds.has(lifecycleEdgeId(e)));
+        newEdges = newEdges.filter((e, idx) => !deletedEdgeIds.has(lifecycleEdgeId(e, idx)));
+        if (selectedTransitionId && deletedEdgeIds.has(selectedTransitionId)) {
+          onSelectTransition?.(null);
+        }
       }
 
       if (newSteps !== activities) onActivitiesChange(newSteps);
       if (newEdges !== transitions) onEdgesChange(newEdges);
     },
-    [activities, transitions, selectedActivityKey, onSelectActivity, onActivitiesChange, onEdgesChange],
+    [
+      activities,
+      transitions,
+      selectedActivityKey,
+      selectedTransitionId,
+      onSelectActivity,
+      onSelectTransition,
+      onActivitiesChange,
+      onEdgesChange,
+    ],
   );
 
   // ── Connect：新边 ──
@@ -396,13 +453,21 @@ function LifecycleDagCanvasInner({
     [onSelectActivity],
   );
 
+  const handleEdgeClick = useCallback(
+    (_e: React.MouseEvent, edge: Edge) => {
+      onSelectTransition?.(edge.id);
+    },
+    [onSelectTransition],
+  );
+
   const handlePaneClick = useCallback(() => {
     onSelectActivity(null);
-  }, [onSelectActivity]);
+    onSelectTransition?.(null);
+  }, [onSelectActivity, onSelectTransition]);
 
   const handleAutoLayout = useCallback(() => {
-    const freshNodes = stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current);
-    const freshEdges = lifecycleEdgesToRfEdges(transitions);
+    const freshNodes = stepsToNodes(activities, entryActivityKey, workflowDefs, positions.current, validationIssues);
+    const freshEdges = lifecycleEdgesToRfEdges(transitions, selectedTransitionId);
     const laid = applyDagreLayout(freshNodes, freshEdges);
     setNodes(laid);
     const pos: Record<string, { x: number; y: number }> = {};
@@ -410,7 +475,17 @@ function LifecycleDagCanvasInner({
     positions.current = pos;
     savePositions(storageKey, pos);
     requestAnimationFrame(() => reactFlowInstance.fitView({ padding: 0.2 }));
-  }, [activities, transitions, entryActivityKey, workflowDefs, setNodes, reactFlowInstance, storageKey]);
+  }, [
+    activities,
+    transitions,
+    entryActivityKey,
+    workflowDefs,
+    validationIssues,
+    selectedTransitionId,
+    setNodes,
+    reactFlowInstance,
+    storageKey,
+  ]);
 
   const handleAutoWire = useCallback(() => {
     const nodeIds = activities.map((s) => s.key);
@@ -463,6 +538,7 @@ function LifecycleDagCanvasInner({
       onEdgesChange={handleEdgesChangeWrapped}
       onConnect={handleConnect}
       onNodeClick={handleNodeClick}
+      onEdgeClick={handleEdgeClick}
       onPaneClick={handlePaneClick}
       onDelete={handleDelete}
       nodeTypes={NODE_TYPES}

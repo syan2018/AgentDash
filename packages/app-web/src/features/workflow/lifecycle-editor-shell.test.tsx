@@ -1,88 +1,73 @@
 /**
- * LifecycleEditorShell 关键状态机测试。
+ * LifecycleEditorShell store-level integration 测试。
  *
- * 由于项目未引入 @testing-library/react，这里以"纯逻辑"方式校验 mode 判定规则 +
- * store 层驱动的 sticky_dag 交互，不直接渲染 React 树。
+ * shell 已收敛为 DAG 单一布局；不再有 Form/DAG mode 判定。本测试覆盖 selection
+ * 模型驱动的 sidebar 路由：activity / transition / null 三态对应不同 inspector。
+ *
+ * 项目未引入 @testing-library/react；通过 store action + 派生 selection 字段
+ * 验证状态机正确，UI 渲染层由 activity-inspector / transition-inspector 自身
+ * 测试覆盖。
  */
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { useWorkflowStore } from "../../stores/workflowStore";
+import { transitionId, useWorkflowStore } from "../../stores/workflowStore";
 
-/**
- * mode 判定规则镜像（与 shell 内部 useMemo 对齐）。
- * 单独导出方便测试，后续如果内置逻辑变化本测试会跟 shell 一起失败。
- */
-function judgeMode(params: {
-  stepCount: number;
-  edgeCount: number;
-  stickyDag: boolean;
-}): "form" | "dag" {
-  if (params.stickyDag) return "dag";
-  if (params.stepCount <= 1 && params.edgeCount === 0) return "form";
-  return "dag";
-}
-
-describe("LifecycleEditorShell mode judgement", () => {
-  it("新建 + 单 step + 0 edges → Form", () => {
-    expect(judgeMode({ stepCount: 1, edgeCount: 0, stickyDag: false })).toBe("form");
-  });
-
-  it("2 steps → DAG", () => {
-    expect(judgeMode({ stepCount: 2, edgeCount: 0, stickyDag: false })).toBe("dag");
-  });
-
-  it("1 step + 1 edge（异常但应当进 DAG） → DAG", () => {
-    expect(judgeMode({ stepCount: 1, edgeCount: 1, stickyDag: false })).toBe("dag");
-  });
-
-  it("sticky_dag 覆盖所有情况", () => {
-    expect(judgeMode({ stepCount: 1, edgeCount: 0, stickyDag: true })).toBe("dag");
-    expect(judgeMode({ stepCount: 3, edgeCount: 2, stickyDag: true })).toBe("dag");
-  });
-});
-
-describe("LifecycleEditorShell store integration", () => {
+describe("LifecycleEditorShell selection 路由", () => {
   afterEach(() => {
     useWorkflowStore.getState().closeLifecycleEditor();
   });
 
-  it("openLifecycleForm 后默认 1 step → 应当 Form 模式", () => {
+  it("openLifecycleForm 后默认选中入口 activity → sidebar 渲染 ActivityInspector", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
-    const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    if (!draft) throw new Error("draft should be initialized");
-    expect(draft.activities).toHaveLength(1);
-    expect(draft.transitions).toHaveLength(0);
-    expect(
-      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: false }),
-    ).toBe("form");
+    const editor = useWorkflowStore.getState().lifecycleEditor;
+    expect(editor.selection).toEqual({ kind: "activity", activityKey: "start" });
   });
 
-  it("addLifecycleEditorActivity 后 steps=2 → 应当 DAG 模式（即使没 sticky）", () => {
+  it("selectLifecycleActivity(null) → selection 清空，sidebar 显示 LifecycleHeader", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
-    store.addLifecycleEditorActivity();
-    const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    if (!draft) throw new Error("draft should be initialized");
-    expect(draft.activities).toHaveLength(2);
-    expect(
-      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: false }),
-    ).toBe("dag");
+    store.selectLifecycleActivity(null);
+    const editor = useWorkflowStore.getState().lifecycleEditor;
+    expect(editor.selection).toBeNull();
   });
 
-  it("2 steps 删回 1 step + stickyDag=true → 画布保留（DAG）", () => {
+  it("addLifecycleEditorActivity → 选中切到新增 activity", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
-    const second = store.addLifecycleEditorActivity();
-    if (!second) throw new Error("second activity should be created");
-    // 假设 sticky 已被 shell 设为 true
-    store.removeLifecycleEditorActivity(second);
-    const { draft } = useWorkflowStore.getState().lifecycleEditor;
-    if (!draft) throw new Error("draft should be initialized");
-    expect(draft.activities).toHaveLength(1);
-    expect(
-      judgeMode({ stepCount: draft.activities.length, edgeCount: draft.transitions.length, stickyDag: true }),
-    ).toBe("dag");
+    const newKey = store.addLifecycleEditorActivity()!;
+    const editor = useWorkflowStore.getState().lifecycleEditor;
+    expect(editor.selection).toEqual({ kind: "activity", activityKey: newKey });
+  });
+
+  it("selectLifecycleTransition → sidebar 渲染 TransitionInspector（selection.kind === 'transition'）", () => {
+    const store = useWorkflowStore.getState();
+    store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
+    const second = store.addLifecycleEditorActivity()!;
+    store.updateLifecycleEditorDraft({
+      transitions: [
+        { kind: "flow", from: "start", to: second, condition: { kind: "always" }, artifact_bindings: [] },
+      ],
+    });
+    const id = transitionId(useWorkflowStore.getState().lifecycleEditor.draft!.transitions[0], 0);
+    store.selectLifecycleTransition(id);
+    const editor = useWorkflowStore.getState().lifecycleEditor;
+    expect(editor.selection).toEqual({ kind: "transition", transitionId: id });
+  });
+
+  it("setActivityExecutor 切到 human → completion_policy 自动联动 + reset 返回值供 toast 使用", () => {
+    const store = useWorkflowStore.getState();
+    store.openLifecycleForm("p1", { key: "k", initial_activity_key: "start" });
+    const result = store.setActivityExecutor("start", {
+      kind: "human",
+      type: "approval",
+      form_schema_key: "approve",
+      title: null,
+    });
+    expect(result?.reset).toBe(true);
+    expect(result?.previous.kind).toBe("executor_terminal");
+    const activity = useWorkflowStore.getState().lifecycleEditor.draft!.activities[0];
+    expect(activity.completion_policy.kind).toBe("human_decision");
   });
 });

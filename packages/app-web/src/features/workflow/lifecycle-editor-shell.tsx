@@ -1,71 +1,39 @@
 /**
- * LifecycleEditorShell —— 统一的 Workflow 资产编辑器入口。
+ * LifecycleEditorShell —— 统一的 Activity Lifecycle 编辑器入口。
  *
- * 按 activity 规模自适应布局：
- *   - Form 模式：activities.length === 1 && transitions.length === 0 && !sticky_dag
- *     - 头部 Lifecycle 基础信息 + 单 activity 的所有 contract panel 平铺
- *   - DAG 模式：进入后永不回退（sticky_dag = true）
- *     - 左侧 DAG 画布；右侧选中 step 的 inline inspector（不再开抽屉）
+ * 单一布局：左侧 DAG 画布固定常驻，右侧 sidebar 由 store 的 selection 模型驱动：
+ *   - selection.kind === "activity"   → ActivityInspector
+ *   - selection.kind === "transition" → TransitionInspector
+ *   - selection === null              → LifecycleHeader（顶层信息）
  *
- * sticky_dag 粘性：使用 localStorage 记忆；首次从 Form 升 DAG 后置 true，
- * 之后即便删回 1 step 也保持 DAG。
+ * 不再有 Form / DAG 双模式；不再读写 sticky_dag。1 个 activity 也直接画 1 个节点。
  *
  * 保存语义：单 save → 内部先 upsert 每个 Agent activity 的 workflow，再 upsert lifecycle。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect } from "react";
 
 import type {
   ActivityDefinition,
   ActivityTransition,
-  WorkflowDefinition,
+  WorkflowTargetKind,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
-import type { LifecycleDraftSeed } from "../../stores/workflowStore";
+import type { LifecycleDraftSeed, LifecycleSelection } from "../../stores/workflowStore";
+import { transitionId as deriveTransitionId } from "../../stores/workflowStore";
 import { LifecycleDagCanvas } from "./ui/lifecycle-dag-canvas";
-import { StepInspector } from "./ui/step-inspector";
+import { ActivityInspector } from "./ui/activity-inspector";
+import { TransitionInspector } from "./ui/transition-inspector";
 import { ValidationPanel } from "./ui/validation-panel";
 import {
   TARGET_KIND_LABEL,
   TARGET_KIND_OPTIONS,
 } from "./shared-labels";
-import type { WorkflowTargetKind } from "../../types";
-
-const STICKY_DAG_PREFIX = "agentdash:editor-dag-sticky:";
-
-function readStickyDag(lifecycleKey: string): boolean {
-  try {
-    return localStorage.getItem(STICKY_DAG_PREFIX + lifecycleKey) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeStickyDag(lifecycleKey: string, value: boolean) {
-  try {
-    if (value) localStorage.setItem(STICKY_DAG_PREFIX + lifecycleKey, "1");
-    else localStorage.removeItem(STICKY_DAG_PREFIX + lifecycleKey);
-  } catch {
-    // 忽略
-  }
-}
-
-function migrateStickyDag(fromKey: string, toKey: string) {
-  try {
-    const v = localStorage.getItem(STICKY_DAG_PREFIX + fromKey);
-    if (v === "1") {
-      localStorage.setItem(STICKY_DAG_PREFIX + toKey, "1");
-      localStorage.removeItem(STICKY_DAG_PREFIX + fromKey);
-    }
-  } catch {
-    // 忽略
-  }
-}
 
 export interface LifecycleEditorShellProps {
   /** "new" 表示新建；否则是 lifecycle definition id */
   lifecycleId: string | "new";
-  /** 新建时的种子：key / name / initial_step_key */
+  /** 新建时的种子：key / name / initial_activity_key */
   seed?: LifecycleDraftSeed;
   /** 项目 id（仅新建模式使用） */
   projectId: string;
@@ -81,8 +49,7 @@ export function LifecycleEditorShell({
 }: LifecycleEditorShellProps) {
   const draft = useWorkflowStore((s) => s.lifecycleEditor.draft);
   const workflowDraftsByActivityKey = useWorkflowStore((s) => s.lifecycleEditor.workflowDraftsByActivityKey);
-  const selectedActivityKey = useWorkflowStore((s) => s.lifecycleEditor.selectedActivityKey);
-  const originalId = useWorkflowStore((s) => s.lifecycleEditor.originalId);
+  const selection = useWorkflowStore((s) => s.lifecycleEditor.selection);
   const validation = useWorkflowStore((s) => s.lifecycleEditor.validation);
   const isSaving = useWorkflowStore((s) => s.lifecycleEditor.isSaving);
   const isValidating = useWorkflowStore((s) => s.lifecycleEditor.isValidating);
@@ -98,18 +65,24 @@ export function LifecycleEditorShell({
   const openLifecycleForm = useWorkflowStore((s) => s.openLifecycleForm);
   const openLifecycleById = useWorkflowStore((s) => s.openLifecycleById);
   const selectLifecycleActivity = useWorkflowStore((s) => s.selectLifecycleActivity);
+  const selectLifecycleTransition = useWorkflowStore((s) => s.selectLifecycleTransition);
   const updateLifecycleEditorDraft = useWorkflowStore((s) => s.updateLifecycleEditorDraft);
   const updateLifecycleEditorActivity = useWorkflowStore((s) => s.updateLifecycleEditorActivity);
   const updateActivityWorkflowDraft = useWorkflowStore((s) => s.updateActivityWorkflowDraft);
   const addLifecycleEditorActivity = useWorkflowStore((s) => s.addLifecycleEditorActivity);
   const removeLifecycleEditorActivity = useWorkflowStore((s) => s.removeLifecycleEditorActivity);
-  const cloneWorkflowIntoActivity = useWorkflowStore((s) => s.cloneWorkflowIntoActivity);
+  const setActivityExecutor = useWorkflowStore((s) => s.setActivityExecutor);
+  const setActivityCompletionPolicy = useWorkflowStore((s) => s.setActivityCompletionPolicy);
+  const setActivityIterationPolicy = useWorkflowStore((s) => s.setActivityIterationPolicy);
+  const setActivityJoinPolicy = useWorkflowStore((s) => s.setActivityJoinPolicy);
+  const updateLifecycleEditorTransition = useWorkflowStore((s) => s.updateLifecycleEditorTransition);
+  const setTransitionKind = useWorkflowStore((s) => s.setTransitionKind);
+  const addArtifactBinding = useWorkflowStore((s) => s.addArtifactBinding);
+  const updateArtifactBinding = useWorkflowStore((s) => s.updateArtifactBinding);
+  const removeArtifactBinding = useWorkflowStore((s) => s.removeArtifactBinding);
   const validateLifecycleBundle = useWorkflowStore((s) => s.validateLifecycleBundle);
   const saveLifecycleBundle = useWorkflowStore((s) => s.saveLifecycleBundle);
   const closeLifecycleEditor = useWorkflowStore((s) => s.closeLifecycleEditor);
-
-  // Sticky-dag：按 lifecycle key 存 localStorage；新建用 __new__ 桶
-  const [stickyDag, setStickyDag] = useState<boolean>(false);
 
   // ── 加载 hook presets + workflow definitions ──
   useEffect(() => {
@@ -133,42 +106,13 @@ export function LifecycleEditorShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lifecycleId]);
 
-  // ── 读取 sticky-dag（draft 就绪后） ──
-  useEffect(() => {
-    if (!draft) return;
-    setStickyDag(readStickyDag(draft.key || "__new__"));
-  }, [draft?.key, draft]);
-
-  // ── 模式判定 ──
-  const mode: "form" | "dag" = useMemo(() => {
-    if (!draft) return "form";
-    const stepCount = draft.activities.length;
-    const edgeCount = draft.transitions.length;
-    if (stickyDag) return "dag";
-    if (stepCount <= 1 && edgeCount === 0) return "form";
-    return "dag";
-  }, [draft, stickyDag]);
-
-  // ── 升级 DAG：Form 下"+加 step"触发 ──
-  const upgradeToDag = useCallback(() => {
-    const key = draft?.key || "__new__";
-    writeStickyDag(key, true);
-    setStickyDag(true);
-  }, [draft?.key]);
-
   // ── 保存 ──
   const handleSave = useCallback(async () => {
     const result = await validateLifecycleBundle();
     if (result && result.issues.some((i) => i.severity === "error")) return;
     const saved = await saveLifecycleBundle();
-    if (saved) {
-      // 迁移 sticky-dag bucket：__new__ → 真实 key
-      if (!originalId) {
-        migrateStickyDag("__new__", saved.key);
-      }
-      onSaved?.(saved.id);
-    }
-  }, [originalId, validateLifecycleBundle, saveLifecycleBundle, onSaved]);
+    if (saved) onSaved?.(saved.id);
+  }, [validateLifecycleBundle, saveLifecycleBundle, onSaved]);
 
   // Ctrl+S
   useEffect(() => {
@@ -196,7 +140,7 @@ export function LifecycleEditorShell({
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
-          {/* eslint-disable-next-line no-restricted-syntax -- 圆形 spinner，rounded-full 是必需视觉形态 */}
+          {/* eslint-disable-next-line no-restricted-syntax -- spinner 圆形 */}
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p className="mt-3 text-sm text-muted-foreground">正在加载 Workflow...</p>
         </div>
@@ -212,51 +156,27 @@ export function LifecycleEditorShell({
     );
   }
 
-  const isNew = originalId === null;
+  const isNew = !useWorkflowStore.getState().lifecycleEditor.originalId;
   const hasErrors = validation?.issues.some((i) => i.severity === "error") ?? false;
+  const availableWorkflows = allWorkflowDefs.filter((d) => d.project_id === draft.project_id);
 
-  // ── 子组件 props ──
-
-  const availableWorkflows = allWorkflowDefs.filter(
-    (d) => d.project_id === draft.project_id,
-  );
+  // selection 派生：transition selection 时把 transition 对象解析出来
+  const selectedActivityKey =
+    selection?.kind === "activity" ? selection.activityKey : null;
+  const selectedTransitionId =
+    selection?.kind === "transition" ? selection.transitionId : null;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 顶部操作栏 */}
-      <div className="flex shrink-0 items-center justify-between border-b border-border bg-background px-6 py-3">
-        <div className="flex items-center gap-3">
-          <p className="text-sm font-semibold tracking-tight text-foreground">
-            Workflow 编辑器 — {draft.name || draft.key || "新建"}
-          </p>
-          <span className="rounded-[6px] border border-border bg-secondary/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-            {mode === "form" ? "Form 模式" : "DAG 模式"}
-          </span>
-          {isDirty && (
-            <span className="rounded-[8px] bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
-              未保存
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void validateLifecycleBundle()}
-            disabled={isValidating}
-            className="agentdash-button-secondary text-sm"
-          >
-            {isValidating ? "校验中…" : "校验"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={isSaving || hasErrors}
-            className="agentdash-button-primary text-sm"
-          >
-            {isSaving ? "保存中…" : "保存"}
-          </button>
-        </div>
-      </div>
+      <TopBar
+        title={`Workflow 编辑器 — ${draft.name || draft.key || "新建"}`}
+        isDirty={isDirty}
+        isSaving={isSaving}
+        isValidating={isValidating}
+        hasErrors={hasErrors}
+        onValidate={() => void validateLifecycleBundle()}
+        onSave={() => void handleSave()}
+      />
 
       {error && (
         <div className="shrink-0 border-b border-destructive/30 bg-destructive/5 px-6 py-2">
@@ -264,144 +184,60 @@ export function LifecycleEditorShell({
         </div>
       )}
 
-      {mode === "form" ? (
-        <FormLayout
-          draft={draft}
-          isNew={isNew}
-          availableWorkflows={availableWorkflows}
-          workflowDraft={
-            draft.activities[0] ? workflowDraftsByActivityKey[draft.activities[0].key] ?? null : null
-          }
-          hookPresets={hookPresets}
-          validation={validation}
-          onLifecycleChange={updateLifecycleEditorDraft}
-          onStepChange={(patch) => {
-            const firstKey = draft.activities[0]?.key;
-            if (firstKey) updateLifecycleEditorActivity(firstKey, patch);
-          }}
-          onWorkflowChange={(patch) => {
-            const firstKey = draft.activities[0]?.key;
-            if (firstKey) updateActivityWorkflowDraft(firstKey, patch);
-          }}
-          onCloneFromWorkflow={(wf) => {
-            const firstKey = draft.activities[0]?.key;
-            if (firstKey) cloneWorkflowIntoActivity(firstKey, wf);
-          }}
-          onAddStep={() => {
-            upgradeToDag();
-            addLifecycleEditorActivity();
-          }}
-        />
-      ) : (
-        <DagLayout
-          draft={draft}
-          availableWorkflows={availableWorkflows}
-          workflowDraftsByActivityKey={workflowDraftsByActivityKey}
-          selectedActivityKey={selectedActivityKey}
-          hookPresets={hookPresets}
-          validation={validation}
-          onLifecycleChange={updateLifecycleEditorDraft}
-          onSelectActivity={selectLifecycleActivity}
-          onActivityChange={(activityKey, patch) => updateLifecycleEditorActivity(activityKey, patch)}
-          onWorkflowChange={(activityKey, patch) => updateActivityWorkflowDraft(activityKey, patch)}
-          onCloneFromWorkflow={(activityKey, wf) => cloneWorkflowIntoActivity(activityKey, wf)}
-          onAddActivity={() => addLifecycleEditorActivity()}
-          onRemoveActivity={(activityKey) => removeLifecycleEditorActivity(activityKey)}
-        />
-      )}
-    </div>
-  );
-}
-
-// ─── Form 模式布局 ─────────────────────────────────────
-
-function FormLayout(props: {
-  draft: NonNullable<ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["draft"]>;
-  isNew: boolean;
-  availableWorkflows: WorkflowDefinition[];
-  workflowDraft:
-    | ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByActivityKey"][string]
-    | null;
-  hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
-  validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
-  onLifecycleChange: (patch: Partial<typeof props.draft>) => void;
-  onStepChange: (patch: Partial<ActivityDefinition>) => void;
-  onWorkflowChange: (patch: Partial<NonNullable<typeof props.workflowDraft>>) => void;
-  onCloneFromWorkflow: (wf: WorkflowDefinition) => void;
-  onAddStep: () => void;
-}) {
-  const {
-    draft,
-    isNew,
-    availableWorkflows,
-    workflowDraft,
-    hookPresets,
-    validation,
-    onLifecycleChange,
-    onStepChange,
-    onWorkflowChange,
-    onCloneFromWorkflow,
-    onAddStep,
-  } = props;
-
-  const step = draft.activities[0];
-  if (!step || !workflowDraft) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <button
-          type="button"
-          onClick={onAddStep}
-          className="agentdash-button-primary"
-        >
-          + 添加起始 Step
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
-        {/* Lifecycle 顶层信息 */}
-        <LifecycleHeader
-          draft={draft}
-          isNew={isNew}
-          onChange={onLifecycleChange}
-        />
-
-        {validation && validation.issues.length > 0 && (
-          <ValidationPanel issues={validation.issues} />
-        )}
-
-        {/* Step 升级按钮 */}
-        <div className="flex items-center justify-between rounded-[8px] border border-dashed border-border bg-secondary/20 px-3 py-2">
-          <p className="text-xs text-muted-foreground">
-            当前为单 step 模式。添加第二个 step 即切到 DAG 编辑。
-          </p>
-          <button
-            type="button"
-            onClick={onAddStep}
-            className="agentdash-button-secondary text-xs"
-          >
-            + 添加 Step（进入 DAG）
-          </button>
+      <div className="flex h-full min-h-0 flex-1">
+        {/* 左：DAG 画布 */}
+        <div className="relative flex-1">
+          <LifecycleDagCanvas
+            storageKey={draft.key || "__new__"}
+            activities={draft.activities}
+            transitions={draft.transitions}
+            entryActivityKey={draft.entry_activity_key}
+            workflowDefs={availableWorkflows}
+            selectedActivityKey={selectedActivityKey}
+            selectedTransitionId={selectedTransitionId}
+            validationIssues={validation?.issues ?? []}
+            onSelectActivity={selectLifecycleActivity}
+            onSelectTransition={selectLifecycleTransition}
+            onActivitiesChange={(next) => updateLifecycleEditorDraft({ activities: next })}
+            onEdgesChange={(next) => updateLifecycleEditorDraft({ transitions: next })}
+            onAddActivity={() => addLifecycleEditorActivity()}
+            bottomLeftOverlay={
+              validation && validation.issues.length > 0 ? (
+                <div className="max-h-40 w-96 overflow-y-auto rounded-[8px] border border-border bg-background/95 shadow-sm backdrop-blur-sm">
+                  <ValidationPanel issues={validation.issues} />
+                </div>
+              ) : null
+            }
+          />
         </div>
 
-        {/* Step Inspector（平铺，Form 模式隐藏 tab、只展示 Detail + 顶部基础信息） */}
-        <div className="rounded-[12px] border border-border bg-background">
-          <StepInspector
-            step={step}
-            workflowDraft={workflowDraft}
-            isEntry
-            hideStepActions
-            hideTabs
+        {/* 右：Inspector / Lifecycle 配置（按 selection 路由） */}
+        <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
+          <SidebarRouter
+            selection={selection}
+            draft={draft}
+            workflowDraftsByActivityKey={workflowDraftsByActivityKey}
             availableWorkflows={availableWorkflows}
             hookPresets={hookPresets}
-            targetKinds={draft.target_kinds}
-            projectId={draft.project_id}
-            onStepChange={onStepChange}
-            onWorkflowChange={onWorkflowChange}
-            onCloneFromWorkflow={onCloneFromWorkflow}
+            isNew={isNew}
+            onLifecycleChange={updateLifecycleEditorDraft}
+            onActivityChange={updateLifecycleEditorActivity}
+            onWorkflowChange={updateActivityWorkflowDraft}
+            onSetActivityExecutor={setActivityExecutor}
+            onSetActivityCompletionPolicy={setActivityCompletionPolicy}
+            onSetActivityIterationPolicy={setActivityIterationPolicy}
+            onSetActivityJoinPolicy={setActivityJoinPolicy}
+            onSetEntry={(activityKey) =>
+              updateLifecycleEditorDraft({ entry_activity_key: activityKey })
+            }
+            onRemoveActivity={removeLifecycleEditorActivity}
+            onSelectActivity={selectLifecycleActivity}
+            onSelectTransition={selectLifecycleTransition}
+            onTransitionChange={updateLifecycleEditorTransition}
+            onSetTransitionKind={setTransitionKind}
+            onAddBinding={addArtifactBinding}
+            onUpdateBinding={updateArtifactBinding}
+            onRemoveBinding={removeArtifactBinding}
           />
         </div>
       </div>
@@ -409,275 +245,189 @@ function FormLayout(props: {
   );
 }
 
-// ─── DAG 模式布局 ──────────────────────────────────────
+// ─── Top Bar ────────────────────────────────────────────
 
-function DagLayout(props: {
+function TopBar({
+  title,
+  isDirty,
+  isSaving,
+  isValidating,
+  hasErrors,
+  onValidate,
+  onSave,
+}: {
+  title: string;
+  isDirty: boolean;
+  isSaving: boolean;
+  isValidating: boolean;
+  hasErrors: boolean;
+  onValidate: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between border-b border-border bg-background px-6 py-3">
+      <div className="flex items-center gap-3">
+        <p className="text-sm font-semibold tracking-tight text-foreground">{title}</p>
+        {isDirty && (
+          <span className="rounded-[8px] bg-warning/10 px-2 py-0.5 text-[10px] text-warning">
+            未保存
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onValidate}
+          disabled={isValidating}
+          className="agentdash-button-secondary text-sm"
+        >
+          {isValidating ? "校验中…" : "校验"}
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={isSaving || hasErrors}
+          className="agentdash-button-primary text-sm"
+        >
+          {isSaving ? "保存中…" : "保存"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar Router ─────────────────────────────────────
+
+interface SidebarRouterProps {
+  selection: LifecycleSelection | null;
   draft: NonNullable<ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["draft"]>;
-  availableWorkflows: WorkflowDefinition[];
   workflowDraftsByActivityKey: ReturnType<
     typeof useWorkflowStore.getState
   >["lifecycleEditor"]["workflowDraftsByActivityKey"];
-  selectedActivityKey: string | null;
+  availableWorkflows: ReturnType<typeof useWorkflowStore.getState>["definitions"];
   hookPresets: ReturnType<typeof useWorkflowStore.getState>["hookPresets"];
-  validation: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["validation"];
-  onLifecycleChange: (patch: Partial<typeof props.draft>) => void;
-  onSelectActivity: (activityKey: string | null) => void;
+  isNew: boolean;
+  onLifecycleChange: (patch: Partial<SidebarRouterProps["draft"]>) => void;
   onActivityChange: (activityKey: string, patch: Partial<ActivityDefinition>) => void;
   onWorkflowChange: (
     activityKey: string,
-    patch: Partial<
-      NonNullable<
-        ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["workflowDraftsByActivityKey"][string]
-      >
-    >,
+    patch: Partial<SidebarRouterProps["workflowDraftsByActivityKey"][string]>,
   ) => void;
-  onCloneFromWorkflow: (activityKey: string, wf: WorkflowDefinition) => void;
-  onAddActivity: () => void;
+  onSetActivityExecutor: ReturnType<typeof useWorkflowStore.getState>["setActivityExecutor"];
+  onSetActivityCompletionPolicy: ReturnType<
+    typeof useWorkflowStore.getState
+  >["setActivityCompletionPolicy"];
+  onSetActivityIterationPolicy: ReturnType<
+    typeof useWorkflowStore.getState
+  >["setActivityIterationPolicy"];
+  onSetActivityJoinPolicy: ReturnType<typeof useWorkflowStore.getState>["setActivityJoinPolicy"];
+  onSetEntry: (activityKey: string) => void;
   onRemoveActivity: (activityKey: string) => void;
-}) {
+  onSelectActivity: (activityKey: string | null) => void;
+  onSelectTransition: (transitionId: string | null) => void;
+  onTransitionChange: (id: string, patch: Partial<ActivityTransition>) => void;
+  onSetTransitionKind: (id: string, kind: ActivityTransition["kind"]) => void;
+  onAddBinding: ReturnType<typeof useWorkflowStore.getState>["addArtifactBinding"];
+  onUpdateBinding: ReturnType<typeof useWorkflowStore.getState>["updateArtifactBinding"];
+  onRemoveBinding: ReturnType<typeof useWorkflowStore.getState>["removeArtifactBinding"];
+}
+
+function SidebarRouter(props: SidebarRouterProps) {
   const {
+    selection,
     draft,
-    availableWorkflows,
     workflowDraftsByActivityKey,
-    selectedActivityKey,
+    availableWorkflows,
     hookPresets,
-    validation,
+    isNew,
     onLifecycleChange,
-    onSelectActivity,
     onActivityChange,
     onWorkflowChange,
-    onCloneFromWorkflow,
-    onAddActivity,
+    onSetActivityExecutor,
+    onSetActivityCompletionPolicy,
+    onSetActivityIterationPolicy,
+    onSetActivityJoinPolicy,
+    onSetEntry,
     onRemoveActivity,
+    onSelectActivity,
+    onSelectTransition,
+    onTransitionChange,
+    onSetTransitionKind,
+    onAddBinding,
+    onUpdateBinding,
+    onRemoveBinding,
   } = props;
 
-  const selectedActivity =
-    selectedActivityKey ? draft.activities.find((s) => s.key === selectedActivityKey) ?? null : null;
-  const selectedWorkflowDraft =
-    selectedActivityKey ? workflowDraftsByActivityKey[selectedActivityKey] ?? null : null;
-
-  const handleStepsChange = useCallback(
-    (nextSteps: ActivityDefinition[]) => {
-      onLifecycleChange({ activities: nextSteps });
-    },
-    [onLifecycleChange],
-  );
-
-  const handleEdgesChange = useCallback(
-    (nextEdges: ActivityTransition[]) => {
-      onLifecycleChange({ transitions: nextEdges });
-    },
-    [onLifecycleChange],
-  );
-
-  return (
-    <div className="flex h-full min-h-0 flex-1">
-      {/* 左：DAG 画布 */}
-      <div className="relative flex-1">
-        <LifecycleDagCanvas
-          storageKey={draft.key || "__new__"}
-          activities={draft.activities}
-          transitions={draft.transitions}
-          entryActivityKey={draft.entry_activity_key}
-          workflowDefs={availableWorkflows}
-          selectedActivityKey={selectedActivityKey}
-          onSelectActivity={onSelectActivity}
-          onActivitiesChange={handleStepsChange}
-          onEdgesChange={handleEdgesChange}
-          onAddActivity={onAddActivity}
-          bottomLeftOverlay={
-            validation && validation.issues.length > 0 ? (
-              <div className="max-h-40 w-96 overflow-y-auto rounded-[8px] border border-border bg-background/95 shadow-sm backdrop-blur-sm">
-                <ValidationPanel issues={validation.issues} />
-              </div>
-            ) : null
-          }
-        />
-      </div>
-
-      {/* 右：Inspector / Lifecycle 配置 */}
-      <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
-        {selectedActivity && selectedWorkflowDraft ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1">
-              <StepInspector
-                step={selectedActivity}
-                workflowDraft={selectedWorkflowDraft}
-                isEntry={selectedActivity.key === draft.entry_activity_key}
-                availableWorkflows={availableWorkflows}
-                hookPresets={hookPresets}
-                targetKinds={draft.target_kinds}
-                projectId={draft.project_id}
-                onStepChange={(patch) => onActivityChange(selectedActivity.key, patch)}
-                onWorkflowChange={(patch) => onWorkflowChange(selectedActivity.key, patch)}
-                onSetEntry={() => onLifecycleChange({ entry_activity_key: selectedActivity.key })}
-                onRemove={() => onRemoveActivity(selectedActivity.key)}
-                onClose={() => onSelectActivity(null)}
-                onCloneFromWorkflow={(wf) => onCloneFromWorkflow(selectedActivity.key, wf)}
-              />
-            </div>
-            <TransitionPanel
-              activityKey={selectedActivity.key}
-              activityKeys={draft.activities.map((activity) => activity.key)}
-              transitions={draft.transitions.filter((transition) => transition.from === selectedActivity.key)}
-              onChange={(updated) => {
-                onLifecycleChange({
-                  transitions: draft.transitions.map((transition) =>
-                    transition.from === selectedActivity.key && transition.to === updated.to
-                      ? updated
-                      : transition,
-                  ),
-                });
-              }}
-            />
-          </div>
-        ) : (
-          <LifecycleHeader
-            draft={draft}
-            isNew={false}
-            onChange={onLifecycleChange}
-            compact
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function TransitionPanel({
-  activityKey,
-  activityKeys,
-  transitions,
-  onChange,
-}: {
-  activityKey: string;
-  activityKeys: string[];
-  transitions: ActivityTransition[];
-  onChange: (transition: ActivityTransition) => void;
-}) {
-  return (
-    <section className="shrink-0 border-t border-border bg-secondary/20 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Transitions
-        </p>
-        <span className="rounded-[6px] border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {transitions.length}
-        </span>
-      </div>
-      <div className="max-h-52 space-y-2 overflow-y-auto">
-        {transitions.length === 0 && (
-          <p className="rounded-[8px] border border-dashed border-border bg-background px-3 py-3 text-center text-xs text-muted-foreground">
-            选中连线后可在这里编辑条件
-          </p>
-        )}
-        {transitions.map((transition) => (
-          <TransitionEditor
-            key={`${transition.from}->${transition.to}`}
-            activityKey={activityKey}
-            activityKeys={activityKeys}
-            transition={transition}
-            onChange={onChange}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function TransitionEditor({
-  activityKey,
-  activityKeys,
-  transition,
-  onChange,
-}: {
-  activityKey: string;
-  activityKeys: string[];
-  transition: ActivityTransition;
-  onChange: (transition: ActivityTransition) => void;
-}) {
-  const conditionKind = transition.condition.kind;
-  const humanCondition =
-    transition.condition.kind === "human_decision_equals"
-      ? transition.condition
-      : null;
-  const setConditionKind = (kind: "always" | "human_decision_equals") => {
-    if (kind === "always") {
-      onChange({ ...transition, condition: { kind } });
-      return;
+  // selection.kind === "activity" 路由
+  if (selection?.kind === "activity") {
+    const activity = draft.activities.find((a) => a.key === selection.activityKey);
+    const wfDraft = workflowDraftsByActivityKey[selection.activityKey];
+    if (!activity || !wfDraft) {
+      return <SidebarPlaceholder text="找不到选中的 activity，请重新选择" />;
     }
-    onChange({
-      ...transition,
-      condition: {
-        kind,
-        activity: activityKey,
-        decision_port: "decision",
-        value: "approved",
-      },
-    });
-  };
+    return (
+      <ActivityInspector
+        activity={activity}
+        workflowDraft={wfDraft}
+        isEntry={activity.key === draft.entry_activity_key}
+        availableWorkflows={availableWorkflows}
+        hookPresets={hookPresets}
+        targetKinds={draft.target_kinds}
+        projectId={draft.project_id}
+        onActivityChange={(patch) => onActivityChange(activity.key, patch)}
+        onWorkflowChange={(patch) => onWorkflowChange(activity.key, patch)}
+        onSetExecutor={(executor) => onSetActivityExecutor(activity.key, executor)}
+        onSetCompletionPolicy={(policy) => onSetActivityCompletionPolicy(activity.key, policy)}
+        onSetIterationPolicy={(patch) => onSetActivityIterationPolicy(activity.key, patch)}
+        onSetJoinPolicy={(policy) => onSetActivityJoinPolicy(activity.key, policy)}
+        onSetEntry={() => onSetEntry(activity.key)}
+        onRemove={() => onRemoveActivity(activity.key)}
+        onClose={() => onSelectActivity(null)}
+      />
+    );
+  }
 
+  // selection.kind === "transition" 路由
+  if (selection?.kind === "transition") {
+    const transition = findTransitionById(draft.transitions, selection.transitionId);
+    if (!transition) {
+      return <SidebarPlaceholder text="找不到选中的 transition，请重新选择" />;
+    }
+    return (
+      <TransitionInspector
+        transition={transition}
+        activities={draft.activities}
+        onClose={() => onSelectTransition(null)}
+        onSetKind={(kind) => onSetTransitionKind(selection.transitionId, kind)}
+        onConditionChange={(condition) =>
+          onTransitionChange(selection.transitionId, { condition })
+        }
+        onMaxTraversalsChange={(max_traversals) =>
+          onTransitionChange(selection.transitionId, { max_traversals })
+        }
+        onAddBinding={(binding) => onAddBinding(selection.transitionId, binding)}
+        onUpdateBinding={(idx, patch) => onUpdateBinding(selection.transitionId, idx, patch)}
+        onRemoveBinding={(idx) => onRemoveBinding(selection.transitionId, idx)}
+      />
+    );
+  }
+
+  // 无选中 → LifecycleHeader
+  return <LifecycleHeader draft={draft} isNew={isNew} onChange={onLifecycleChange} />;
+}
+
+function findTransitionById(
+  transitions: ActivityTransition[],
+  id: string,
+): ActivityTransition | null {
+  const idx = transitions.findIndex((t, i) => deriveTransitionId(t, i) === id);
+  return idx >= 0 ? transitions[idx] : null;
+}
+
+function SidebarPlaceholder({ text }: { text: string }) {
   return (
-    <div className="rounded-[8px] border border-border bg-background p-2.5">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="truncate font-mono text-[11px] text-foreground">
-          {transition.from} → {transition.to}
-        </span>
-        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-          {transition.kind}
-        </span>
-      </div>
-      <label className="agentdash-form-label">Condition</label>
-      <select
-        value={conditionKind === "human_decision_equals" ? "human_decision_equals" : "always"}
-        onChange={(event) => setConditionKind(event.target.value as "always" | "human_decision_equals")}
-        className="agentdash-form-select"
-      >
-        <option value="always">Always</option>
-        <option value="human_decision_equals">Human Decision Equals</option>
-      </select>
-      {humanCondition && (
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <select
-            value={humanCondition.activity}
-            onChange={(event) =>
-              onChange({
-                ...transition,
-                condition: { ...humanCondition, activity: event.target.value },
-              })
-            }
-            className="agentdash-form-select"
-          >
-            {activityKeys.map((key) => (
-              <option key={key} value={key}>{key}</option>
-            ))}
-          </select>
-          <input
-            value={humanCondition.decision_port}
-            onChange={(event) =>
-              onChange({
-                ...transition,
-                condition: { ...humanCondition, decision_port: event.target.value },
-              })
-            }
-            className="agentdash-form-input"
-            placeholder="decision"
-          />
-          <select
-            value={humanCondition.value}
-            onChange={(event) =>
-              onChange({
-                ...transition,
-                condition: { ...humanCondition, value: event.target.value },
-              })
-            }
-            className="agentdash-form-select"
-          >
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
-          </select>
-        </div>
-      )}
+    <div className="flex h-full items-center justify-center px-4">
+      <p className="text-center text-xs text-muted-foreground">{text}</p>
     </div>
   );
 }
@@ -687,12 +437,10 @@ function TransitionEditor({
 function LifecycleHeader({
   draft,
   isNew,
-  compact = false,
   onChange,
 }: {
   draft: NonNullable<ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]["draft"]>;
   isNew: boolean;
-  compact?: boolean;
   onChange: (patch: Partial<typeof draft>) => void;
 }) {
   const toggleKind = (value: WorkflowTargetKind) => {
@@ -706,83 +454,85 @@ function LifecycleHeader({
   };
 
   return (
-    <div className={compact ? "flex h-full flex-col" : ""}>
-      <section className={compact ? "flex-1 space-y-3 overflow-y-auto p-4" : "space-y-3"}>
-        <div>
-          <label className="agentdash-form-label">Key</label>
-          <input
-            value={draft.key}
-            onChange={(e) => onChange({ key: e.target.value })}
-            disabled={!isNew}
-            className="agentdash-form-input disabled:opacity-60"
-            placeholder="my_workflow"
-          />
-        </div>
+    <section className="flex-1 space-y-3 overflow-y-auto p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Lifecycle 信息
+      </p>
 
-        <div>
-          <label className="agentdash-form-label">名称</label>
-          <input
-            value={draft.name}
-            onChange={(e) => onChange({ name: e.target.value })}
-            className="agentdash-form-input"
-            placeholder="My Workflow"
-          />
-        </div>
+      <div>
+        <label className="agentdash-form-label">Key</label>
+        <input
+          value={draft.key}
+          onChange={(e) => onChange({ key: e.target.value })}
+          disabled={!isNew}
+          className="agentdash-form-input disabled:opacity-60"
+          placeholder="my_workflow"
+        />
+      </div>
 
-        <div>
-          <label className="agentdash-form-label">描述</label>
-          <textarea
-            value={draft.description}
-            onChange={(e) => onChange({ description: e.target.value })}
-            rows={2}
-            className="agentdash-form-textarea"
-            placeholder="这个 Workflow 做什么"
-          />
-        </div>
+      <div>
+        <label className="agentdash-form-label">名称</label>
+        <input
+          value={draft.name}
+          onChange={(e) => onChange({ name: e.target.value })}
+          className="agentdash-form-input"
+          placeholder="My Workflow"
+        />
+      </div>
 
-        <div>
-          <label className="agentdash-form-label">挂载类型</label>
-          <div className="flex flex-wrap gap-2">
-            {TARGET_KIND_OPTIONS.map((kind) => {
-              const checked = draft.target_kinds.includes(kind);
-              return (
-                <label
-                  key={kind}
-                  className={`flex cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-colors ${
-                    checked
-                      ? "border-primary/40 bg-primary/5 text-foreground"
-                      : "border-border bg-background text-muted-foreground hover:border-primary/20"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleKind(kind)}
-                    className="sr-only"
-                  />
-                  {TARGET_KIND_LABEL[kind]}
-                </label>
-              );
-            })}
-          </div>
-        </div>
+      <div>
+        <label className="agentdash-form-label">描述</label>
+        <textarea
+          value={draft.description}
+          onChange={(e) => onChange({ description: e.target.value })}
+          rows={2}
+          className="agentdash-form-textarea"
+          placeholder="这个 Workflow 做什么"
+        />
+      </div>
 
-        <div>
-          <label className="agentdash-form-label">入口节点</label>
-          <input
-            value={draft.entry_activity_key}
-            onChange={(e) => onChange({ entry_activity_key: e.target.value })}
-            list="lifecycle-entry-step-opts-shell"
-            className="agentdash-form-input"
-            placeholder="start"
-          />
-          <datalist id="lifecycle-entry-step-opts-shell">
-            {draft.activities.filter((s) => s.key).map((s) => (
-              <option key={s.key} value={s.key} />
-            ))}
-          </datalist>
+      <div>
+        <label className="agentdash-form-label">挂载类型</label>
+        <div className="flex flex-wrap gap-2">
+          {TARGET_KIND_OPTIONS.map((kind) => {
+            const checked = draft.target_kinds.includes(kind);
+            return (
+              <label
+                key={kind}
+                className={`flex cursor-pointer items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs transition-colors ${
+                  checked
+                    ? "border-primary/40 bg-primary/5 text-foreground"
+                    : "border-border bg-background text-muted-foreground hover:border-primary/20"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleKind(kind)}
+                  className="sr-only"
+                />
+                {TARGET_KIND_LABEL[kind]}
+              </label>
+            );
+          })}
         </div>
-      </section>
-    </div>
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">入口节点</label>
+        <input
+          value={draft.entry_activity_key}
+          onChange={(e) => onChange({ entry_activity_key: e.target.value })}
+          list="lifecycle-entry-activity-opts-shell"
+          className="agentdash-form-input"
+          placeholder="start"
+        />
+        <datalist id="lifecycle-entry-activity-opts-shell">
+          {draft.activities.filter((a) => a.key).map((a) => (
+            <option key={a.key} value={a.key} />
+          ))}
+        </datalist>
+      </div>
+    </section>
   );
 }

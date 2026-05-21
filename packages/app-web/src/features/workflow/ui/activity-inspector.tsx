@@ -1,0 +1,1278 @@
+/**
+ * ActivityInspector —— 选中 lifecycle activity 节点时右侧栏的编辑面板。
+ *
+ * 受控组件：接收 activity + 对应 workflowDraft + 一组细粒度 callback；不直接调
+ * workflowStore（shell 在装配时把 store actions 包装传入）。
+ *
+ * 结构（双 tab 信息架构）：
+ *   - sticky header: key 标题 + 入口切换 + 关闭
+ *   - 顶部 tab 切换：Activity（外层编排） / Contract（仅 Agent 可见）
+ *   - reset toast 槽：Executor 切换触发 completion_policy 重置时显示
+ *   - **Activity tab**：
+ *       §1 Identity（key / description；iteration / join 折在「高级」）
+ *       §2 Executor（kind + 主字段；可选项折在「高级」）
+ *       §3 Ports & Policy（input/output ports + completion_policy）
+ *   - **Contract tab**（Agent only）：Injection / Capability / HookRules / Contract Ports
+ *   - footer: 删除按钮
+ */
+
+import { useCallback, useState } from "react";
+
+import type {
+  ActivityCompletionPolicy,
+  ActivityDefinition,
+  ActivityExecutorSpec,
+  ActivityJoinPolicy,
+  AgentSessionPolicy,
+  ArtifactAliasPolicy,
+  CapabilityDirective,
+  HookRulePreset,
+  InputPortDefinition,
+  OutputPortDefinition,
+  WorkflowContextBinding,
+  WorkflowDefinition,
+  WorkflowHookRuleSpec,
+  WorkflowInjectionSpec,
+  WorkflowTargetKind,
+} from "../../../types";
+import type { WorkflowEditorDraft } from "../../../stores/workflowStore";
+import {
+  CapabilityPanel,
+  HookRulesPanel,
+  InjectionPanel,
+  InputPortItem,
+  OutputPortItem,
+  PortsPanel,
+} from "./panels";
+
+// ─── Props ──────────────────────────────────────────────
+
+export interface ActivityInspectorProps {
+  activity: ActivityDefinition;
+  workflowDraft: WorkflowEditorDraft;
+  isEntry: boolean;
+  availableWorkflows: WorkflowDefinition[];
+  hookPresets: HookRulePreset[];
+  targetKinds: WorkflowTargetKind[];
+  projectId: string;
+
+  // 细粒度回调（与 workflowStore actions 对应）
+  onActivityChange: (patch: Partial<ActivityDefinition>) => void;
+  onWorkflowChange: (patch: Partial<WorkflowEditorDraft>) => void;
+  onSetExecutor: (
+    executor: ActivityExecutorSpec,
+  ) => { reset: boolean; previous: ActivityCompletionPolicy } | null;
+  onSetCompletionPolicy: (policy: ActivityCompletionPolicy) => void;
+  onSetIterationPolicy: (patch: Partial<ActivityDefinition["iteration_policy"]>) => void;
+  onSetJoinPolicy: (policy: ActivityJoinPolicy) => void;
+  onSetEntry: () => void;
+  onRemove: () => void;
+  onClose: () => void;
+}
+
+// ─── 主组件 ─────────────────────────────────────────────
+
+type InspectorTab = "activity" | "contract";
+
+export function ActivityInspector(props: ActivityInspectorProps) {
+  const {
+    activity,
+    workflowDraft,
+    isEntry,
+    availableWorkflows,
+    hookPresets,
+    targetKinds,
+    projectId,
+    onActivityChange,
+    onWorkflowChange,
+    onSetExecutor,
+    onSetCompletionPolicy,
+    onSetIterationPolicy,
+    onSetJoinPolicy,
+    onSetEntry,
+    onRemove,
+    onClose,
+  } = props;
+
+  const isAgent = activity.executor.kind === "agent";
+  const [tab, setTab] = useState<InspectorTab>("activity");
+  // 非 Agent 时强制只显示 activity tab（contract tab 不存在）
+  const activeTab: InspectorTab = isAgent ? tab : "activity";
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
+
+  // ─── §4 Workflow Contract 同步 helpers（沿用 step-inspector 双层 ports 同步） ───
+  const updateInjection = useCallback(
+    (patch: Partial<WorkflowInjectionSpec>) => {
+      onWorkflowChange({
+        contract: {
+          ...workflowDraft.contract,
+          injection: { ...workflowDraft.contract.injection, ...patch },
+        },
+      });
+    },
+    [workflowDraft, onWorkflowChange],
+  );
+
+  const handleBindingChange = useCallback(
+    (idx: number, patch: Partial<WorkflowContextBinding>) => {
+      const next = workflowDraft.contract.injection.context_bindings.map((b, i) =>
+        i === idx ? { ...b, ...patch } : b,
+      );
+      updateInjection({ context_bindings: next });
+    },
+    [workflowDraft, updateInjection],
+  );
+
+  const handleBindingAdd = useCallback(() => {
+    const next: WorkflowContextBinding[] = [
+      ...workflowDraft.contract.injection.context_bindings,
+      { locator: "", reason: "", required: true, title: null },
+    ];
+    updateInjection({ context_bindings: next });
+  }, [workflowDraft, updateInjection]);
+
+  const handleBindingRemove = useCallback(
+    (idx: number) => {
+      const next = workflowDraft.contract.injection.context_bindings.filter((_, i) => i !== idx);
+      updateInjection({ context_bindings: next });
+    },
+    [workflowDraft, updateInjection],
+  );
+
+  const handleAddHookRule = useCallback(
+    (rule: WorkflowHookRuleSpec) => {
+      if (workflowDraft.contract.hook_rules.some((r) => r.key === rule.key)) return;
+      onWorkflowChange({
+        contract: {
+          ...workflowDraft.contract,
+          hook_rules: [...workflowDraft.contract.hook_rules, rule],
+        },
+      });
+    },
+    [workflowDraft, onWorkflowChange],
+  );
+
+  const handleToggleHookRule = useCallback(
+    (key: string) => {
+      const next = workflowDraft.contract.hook_rules.map((r) =>
+        r.key === key ? { ...r, enabled: !r.enabled } : r,
+      );
+      onWorkflowChange({
+        contract: { ...workflowDraft.contract, hook_rules: next },
+      });
+    },
+    [workflowDraft, onWorkflowChange],
+  );
+
+  const handleRemoveHookRule = useCallback(
+    (key: string) => {
+      const next = workflowDraft.contract.hook_rules.filter((r) => r.key !== key);
+      onWorkflowChange({
+        contract: { ...workflowDraft.contract, hook_rules: next },
+      });
+    },
+    [workflowDraft, onWorkflowChange],
+  );
+
+  const handleDirectivesChange = useCallback(
+    (next: CapabilityDirective[]) => {
+      onWorkflowChange({
+        contract: {
+          ...workflowDraft.contract,
+          capability_config: { ...workflowDraft.contract.capability_config, tool_directives: next },
+        },
+      });
+    },
+    [workflowDraft, onWorkflowChange],
+  );
+
+  // Port 双层同步：contract → activity 自动合并（保留 step-extra）
+  const propsActivityOutputPorts = activity.output_ports;
+  const propsActivityInputPorts = activity.input_ports;
+
+  const handleContractOutputPortsChange = useCallback(
+    (nextContractPorts: OutputPortDefinition[]) => {
+      const oldContractPorts = workflowDraft.contract.output_ports ?? [];
+      onWorkflowChange({
+        contract: { ...workflowDraft.contract, output_ports: nextContractPorts },
+      });
+      const merged = mergeContractIntoStep(oldContractPorts, nextContractPorts, propsActivityOutputPorts);
+      onActivityChange({ output_ports: merged });
+    },
+    [workflowDraft, onWorkflowChange, propsActivityOutputPorts, onActivityChange],
+  );
+
+  const handleContractInputPortsChange = useCallback(
+    (nextContractPorts: InputPortDefinition[]) => {
+      const oldContractPorts = workflowDraft.contract.input_ports ?? [];
+      onWorkflowChange({
+        contract: { ...workflowDraft.contract, input_ports: nextContractPorts },
+      });
+      const merged = mergeContractIntoStep(oldContractPorts, nextContractPorts, propsActivityInputPorts);
+      onActivityChange({ input_ports: merged });
+    },
+    [workflowDraft, onWorkflowChange, propsActivityInputPorts, onActivityChange],
+  );
+
+  // ─── Executor 切换：调 store action 拿 reset 反馈，触发 toast ───
+  const handleExecutorChange = useCallback(
+    (next: ActivityExecutorSpec) => {
+      const result = onSetExecutor(next);
+      if (result?.reset) {
+        setResetNotice(
+          `executor 切到 ${next.kind} 后 completion_policy 已自动调整为兼容值（原: ${result.previous.kind}）`,
+        );
+      } else {
+        setResetNotice(null);
+      }
+    },
+    [onSetExecutor],
+  );
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <Header activity={activity} isEntry={isEntry} onSetEntry={onSetEntry} onClose={onClose} />
+
+      {/* Tab bar：仅 Agent activity 时显示 Contract tab */}
+      {isAgent && (
+        <div className="flex shrink-0 gap-1 border-b border-border bg-secondary/35 p-1">
+          <TabButton active={activeTab === "activity"} onClick={() => setTab("activity")}>
+            Activity
+          </TabButton>
+          <TabButton active={activeTab === "contract"} onClick={() => setTab("contract")}>
+            Contract
+          </TabButton>
+        </div>
+      )}
+
+      {resetNotice && (
+        <div className="shrink-0 border-b border-warning/30 bg-warning/10 px-4 py-2">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-[11px] text-warning">{resetNotice}</p>
+            <button
+              type="button"
+              onClick={() => setResetNotice(null)}
+              className="text-[11px] text-muted-foreground hover:text-foreground"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === "activity" ? (
+          <div className="space-y-5 p-4">
+            <IdentitySection
+              activity={activity}
+              onActivityChange={onActivityChange}
+              onSetIterationPolicy={onSetIterationPolicy}
+              onSetJoinPolicy={onSetJoinPolicy}
+            />
+
+            <ExecutorSection
+              activity={activity}
+              workflowDraft={workflowDraft}
+              availableWorkflows={availableWorkflows}
+              isEntry={isEntry}
+              onExecutorChange={handleExecutorChange}
+            />
+
+            <PortsAndPolicySection
+              activity={activity}
+              contractOutputKeys={
+                new Set((workflowDraft.contract.output_ports ?? []).map((p) => p.key))
+              }
+              contractInputKeys={
+                new Set((workflowDraft.contract.input_ports ?? []).map((p) => p.key))
+              }
+              onActivityChange={onActivityChange}
+              onSetCompletionPolicy={onSetCompletionPolicy}
+            />
+          </div>
+        ) : (
+          <div className="p-4">
+            <WorkflowContractTabContent
+              workflowDraft={workflowDraft}
+              hookPresets={hookPresets}
+              targetKinds={targetKinds}
+              projectId={projectId}
+              onUpdateInjection={updateInjection}
+              onBindingChange={handleBindingChange}
+              onBindingAdd={handleBindingAdd}
+              onBindingRemove={handleBindingRemove}
+              onAddHookRule={handleAddHookRule}
+              onToggleHookRule={handleToggleHookRule}
+              onRemoveHookRule={handleRemoveHookRule}
+              onDirectivesChange={handleDirectivesChange}
+              onContractOutputPortsChange={handleContractOutputPortsChange}
+              onContractInputPortsChange={handleContractInputPortsChange}
+            />
+          </div>
+        )}
+      </div>
+
+      <footer className="shrink-0 border-t border-border px-4 py-3">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="w-full rounded-[8px] border border-destructive/30 px-3 py-2 text-xs text-destructive transition-colors hover:bg-destructive/5"
+        >
+          删除此 Activity
+        </button>
+      </footer>
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 rounded-[8px] px-2 py-1.5 text-xs font-medium transition-colors ${
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Header ─────────────────────────────────────────────
+
+function Header({
+  activity,
+  isEntry,
+  onSetEntry,
+  onClose,
+}: {
+  activity: ActivityDefinition;
+  isEntry: boolean;
+  onSetEntry: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
+      <div className="overflow-hidden">
+        <p className="truncate text-sm font-semibold text-foreground">
+          {activity.key || "(no key)"}
+        </p>
+        {isEntry ? (
+          <p className="text-[10px] text-success">入口节点</p>
+        ) : (
+          <button
+            type="button"
+            onClick={onSetEntry}
+            className="mt-0.5 rounded-[6px] px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-primary/10"
+          >
+            设为入口
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        className="rounded-[8px] p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        title="关闭面板"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M18 6 6 18" />
+          <path d="m6 6 12 12" />
+        </svg>
+      </button>
+    </header>
+  );
+}
+
+// ─── §1 Identity ────────────────────────────────────────
+
+function IdentitySection({
+  activity,
+  onActivityChange,
+  onSetIterationPolicy,
+  onSetJoinPolicy,
+}: {
+  activity: ActivityDefinition;
+  onActivityChange: (patch: Partial<ActivityDefinition>) => void;
+  onSetIterationPolicy: (patch: Partial<ActivityDefinition["iteration_policy"]>) => void;
+  onSetJoinPolicy: (policy: ActivityJoinPolicy) => void;
+}) {
+  const maxAttempts = activity.iteration_policy.max_attempts;
+  const isInfinite = maxAttempts === null || maxAttempts === undefined;
+
+  const joinKind: "all" | "any" | "first" | "n_of_m" =
+    typeof activity.join_policy === "string" ? activity.join_policy : "n_of_m";
+  const joinN = typeof activity.join_policy === "object" ? activity.join_policy.n_of_m.n : 1;
+
+  const handleJoinKindChange = (kind: "all" | "any" | "first" | "n_of_m") => {
+    if (kind === "n_of_m") {
+      onSetJoinPolicy({ n_of_m: { n: Math.max(1, joinN) } });
+    } else {
+      onSetJoinPolicy(kind);
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <SectionTitle>Identity</SectionTitle>
+
+      <div>
+        <label className="agentdash-form-label">Key</label>
+        <input
+          value={activity.key}
+          onChange={(e) => onActivityChange({ key: e.target.value })}
+          className="agentdash-form-input"
+          placeholder="implement"
+        />
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">描述</label>
+        <textarea
+          value={activity.description}
+          onChange={(e) => onActivityChange({ description: e.target.value })}
+          rows={2}
+          className="agentdash-form-textarea"
+          placeholder="Activity 的职责与边界"
+        />
+      </div>
+
+      {/* iteration / join 是 lifecycle 进阶语义，默认折叠以减轻视觉负担 */}
+      <details className="rounded-[8px] border border-border bg-secondary/15 p-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground">
+          高级（迭代 / 汇聚）
+          <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+            iter:{isInfinite ? "∞" : maxAttempts}/{activity.iteration_policy.artifact_alias} · join:{joinKind === "n_of_m" ? `n_of_m(${joinN})` : joinKind}
+          </span>
+        </summary>
+        <div className="mt-2 space-y-3">
+          <div>
+            <label className="agentdash-form-label">Iteration Policy</label>
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={isInfinite ? "" : maxAttempts ?? ""}
+                  disabled={isInfinite}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    onSetIterationPolicy({ max_attempts: Number.isFinite(n) && n > 0 ? n : 1 });
+                  }}
+                  className="agentdash-form-input flex-1 disabled:opacity-50"
+                  placeholder="max_attempts"
+                />
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={isInfinite}
+                    onChange={(e) => onSetIterationPolicy({ max_attempts: e.target.checked ? null : 1 })}
+                  />
+                  无限
+                </label>
+              </div>
+              <select
+                value={activity.iteration_policy.artifact_alias}
+                onChange={(e) =>
+                  onSetIterationPolicy({ artifact_alias: e.target.value as ArtifactAliasPolicy })
+                }
+                className="agentdash-form-select"
+              >
+                <option value="latest">latest</option>
+                <option value="per_attempt">per_attempt</option>
+                <option value="latest_and_history">latest_and_history</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="agentdash-form-label">Join Policy</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={joinKind}
+                onChange={(e) =>
+                  handleJoinKindChange(e.target.value as "all" | "any" | "first" | "n_of_m")
+                }
+                className="agentdash-form-select flex-1"
+              >
+                <option value="all">all</option>
+                <option value="any">any</option>
+                <option value="first">first</option>
+                <option value="n_of_m">n_of_m</option>
+              </select>
+              {joinKind === "n_of_m" && (
+                <input
+                  type="number"
+                  min={1}
+                  value={joinN}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    onSetJoinPolicy({ n_of_m: { n: Number.isFinite(n) && n > 0 ? n : 1 } });
+                  }}
+                  className="agentdash-form-input w-20"
+                  placeholder="n"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+// ─── §2 Executor ────────────────────────────────────────
+
+function ExecutorSection({
+  activity,
+  workflowDraft,
+  availableWorkflows,
+  isEntry,
+  onExecutorChange,
+}: {
+  activity: ActivityDefinition;
+  workflowDraft: WorkflowEditorDraft;
+  availableWorkflows: WorkflowDefinition[];
+  isEntry: boolean;
+  onExecutorChange: (next: ActivityExecutorSpec) => void;
+}) {
+  const handleKindSwitch = (kind: ActivityExecutorSpec["kind"]) => {
+    if (kind === activity.executor.kind) return;
+    if (kind === "agent") {
+      onExecutorChange({
+        kind: "agent",
+        workflow_key: workflowDraft.key,
+        session_policy: "spawn_child",
+      });
+    } else if (kind === "human") {
+      onExecutorChange({
+        kind: "human",
+        type: "approval",
+        form_schema_key: "approval",
+        title: null,
+      });
+    } else {
+      onExecutorChange({
+        kind: "function",
+        type: "bash_exec",
+        command: "",
+        args: [],
+        working_directory: null,
+      });
+    }
+  };
+
+  return (
+    <section className="space-y-3">
+      <SectionTitle>Executor</SectionTitle>
+
+      <select
+        value={activity.executor.kind}
+        onChange={(e) => handleKindSwitch(e.target.value as ActivityExecutorSpec["kind"])}
+        className="agentdash-form-select"
+      >
+        <option value="agent">Agent</option>
+        <option value="human">Human Approval</option>
+        <option value="function" disabled={isEntry}>
+          Function{isEntry ? "（入口暂不支持）" : ""}
+        </option>
+      </select>
+
+      {activity.executor.kind === "agent" && (
+        <AgentExecutorForm
+          executor={activity.executor}
+          workflowKeyHint={workflowDraft.key}
+          availableWorkflows={availableWorkflows}
+          onChange={onExecutorChange}
+        />
+      )}
+
+      {activity.executor.kind === "function" && (
+        <FunctionExecutorForm executor={activity.executor} onChange={onExecutorChange} />
+      )}
+
+      {activity.executor.kind === "human" && (
+        <HumanExecutorForm executor={activity.executor} onChange={onExecutorChange} />
+      )}
+    </section>
+  );
+}
+
+function AgentExecutorForm({
+  executor,
+  workflowKeyHint,
+  availableWorkflows,
+  onChange,
+}: {
+  executor: Extract<ActivityExecutorSpec, { kind: "agent" }>;
+  workflowKeyHint: string;
+  availableWorkflows: WorkflowDefinition[];
+  onChange: (next: ActivityExecutorSpec) => void;
+}) {
+  const sortedWorkflows = [...availableWorkflows].sort((a, b) =>
+    a.name.localeCompare(b.name, "zh-CN"),
+  );
+  const isOwn = executor.workflow_key === workflowKeyHint;
+  const mode: "own" | "reference" = isOwn ? "own" : "reference";
+
+  return (
+    <div className="grid gap-2">
+      <div>
+        <label className="agentdash-form-label">Workflow 来源</label>
+        <div className="flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-1">
+          <ModeButton
+            active={mode === "own"}
+            onClick={() => onChange({ ...executor, workflow_key: workflowKeyHint })}
+          >
+            专属（随此 activity 创建）
+          </ModeButton>
+          <ModeButton
+            active={mode === "reference"}
+            onClick={() => {
+              const first = sortedWorkflows.find((w) => w.key !== workflowKeyHint);
+              onChange({ ...executor, workflow_key: first?.key ?? "" });
+            }}
+          >
+            引用已有
+          </ModeButton>
+        </div>
+      </div>
+
+      {mode === "own" ? (
+        <div className="rounded-[8px] border border-primary/30 bg-primary/5 px-3 py-2">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Workflow Key</p>
+          <p className="mt-0.5 truncate font-mono text-xs text-foreground">{workflowKeyHint}</p>
+        </div>
+      ) : (
+        <div>
+          <label className="agentdash-form-label">引用 Workflow</label>
+          <select
+            value={executor.workflow_key}
+            onChange={(e) => onChange({ ...executor, workflow_key: e.target.value })}
+            className="agentdash-form-select"
+          >
+            {!sortedWorkflows.some((w) => w.key === executor.workflow_key) && (
+              <option value={executor.workflow_key}>
+                {executor.workflow_key || "(请选择)"}
+              </option>
+            )}
+            {sortedWorkflows
+              .filter((w) => w.key !== workflowKeyHint)
+              .map((w) => (
+                <option key={w.id} value={w.key}>
+                  {w.name}{w.name !== w.key ? ` · ${w.key}` : ""}
+                </option>
+              ))}
+          </select>
+          <p className="mt-1 text-[11px] text-warning">
+            修改 Contract 会影响所有引用此 workflow 的 activity
+          </p>
+        </div>
+      )}
+
+      <div>
+        <label className="agentdash-form-label">Session Policy</label>
+        <select
+          value={executor.session_policy}
+          onChange={(e) =>
+            onChange({ ...executor, session_policy: e.target.value as AgentSessionPolicy })
+          }
+          className="agentdash-form-select"
+        >
+          <option value="spawn_child">Spawn Child</option>
+          <option value="continue_root">Continue Root</option>
+          <option value="attach_existing">Attach Existing</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-1 rounded-[6px] px-2 py-1 text-[11px] font-medium transition-colors ${
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FunctionExecutorForm({
+  executor,
+  onChange,
+}: {
+  executor: Extract<ActivityExecutorSpec, { kind: "function" }>;
+  onChange: (next: ActivityExecutorSpec) => void;
+}) {
+  const handleTypeSwitch = (type: "api_request" | "bash_exec") => {
+    if (type === executor.type) return;
+    if (type === "api_request") {
+      onChange({
+        kind: "function",
+        type: "api_request",
+        method: "POST",
+        url_template: "",
+        body_template: null,
+      });
+    } else {
+      onChange({
+        kind: "function",
+        type: "bash_exec",
+        command: "",
+        args: [],
+        working_directory: null,
+      });
+    }
+  };
+
+  return (
+    <div className="grid gap-2">
+      <div>
+        <label className="agentdash-form-label">Function Type</label>
+        <select
+          value={executor.type}
+          onChange={(e) => handleTypeSwitch(e.target.value as "api_request" | "bash_exec")}
+          className="agentdash-form-select"
+        >
+          <option value="api_request">API Request</option>
+          <option value="bash_exec">Bash Exec</option>
+        </select>
+      </div>
+
+      {executor.type === "api_request" && (
+        <>
+          <div>
+            <label className="agentdash-form-label">Method</label>
+            <select
+              value={executor.method}
+              onChange={(e) => onChange({ ...executor, method: e.target.value })}
+              className="agentdash-form-select"
+            >
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </div>
+          <div>
+            <label className="agentdash-form-label">URL Template</label>
+            <input
+              value={executor.url_template}
+              onChange={(e) => onChange({ ...executor, url_template: e.target.value })}
+              className="agentdash-form-input"
+              placeholder="https://api.example.com/{{ inputs.path }}"
+            />
+          </div>
+          <details className="rounded-[8px] border border-border bg-secondary/15 p-2">
+            <summary className="cursor-pointer text-[11px] font-medium text-foreground">
+              高级（请求体）
+              <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                {executor.body_template ? "已配置" : "无"}
+              </span>
+            </summary>
+            <div className="mt-2">
+              <label className="agentdash-form-label">Body Template (JSON)</label>
+              <textarea
+                value={executor.body_template ? JSON.stringify(executor.body_template, null, 2) : ""}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  if (raw === "") {
+                    onChange({ ...executor, body_template: null });
+                    return;
+                  }
+                  try {
+                    const parsed = JSON.parse(raw) as Record<string, unknown>;
+                    onChange({ ...executor, body_template: parsed });
+                  } catch {
+                    // keep typing；不抛错
+                  }
+                }}
+                rows={4}
+                className="agentdash-form-textarea font-mono text-xs"
+                placeholder={`{\n  "key": "{{ inputs.value }}"\n}`}
+              />
+            </div>
+          </details>
+        </>
+      )}
+
+      {executor.type === "bash_exec" && (
+        <>
+          <div>
+            <label className="agentdash-form-label">Command</label>
+            <input
+              value={executor.command}
+              onChange={(e) => onChange({ ...executor, command: e.target.value })}
+              className="agentdash-form-input"
+              placeholder="pnpm"
+            />
+          </div>
+          <div>
+            <label className="agentdash-form-label">Args</label>
+            <input
+              value={executor.args.join(" ")}
+              onChange={(e) =>
+                onChange({ ...executor, args: e.target.value.split(" ").filter(Boolean) })
+              }
+              className="agentdash-form-input"
+              placeholder="test workflow"
+            />
+          </div>
+          <details className="rounded-[8px] border border-border bg-secondary/15 p-2">
+            <summary className="cursor-pointer text-[11px] font-medium text-foreground">
+              高级（工作目录）
+              <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                {executor.working_directory ?? "默认"}
+              </span>
+            </summary>
+            <div className="mt-2">
+              <label className="agentdash-form-label">Working Directory</label>
+              <input
+                value={executor.working_directory ?? ""}
+                onChange={(e) =>
+                  onChange({ ...executor, working_directory: e.target.value || null })
+                }
+                className="agentdash-form-input"
+                placeholder="(可空，默认 lifecycle 工作区)"
+              />
+            </div>
+          </details>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HumanExecutorForm({
+  executor,
+  onChange,
+}: {
+  executor: Extract<ActivityExecutorSpec, { kind: "human" }>;
+  onChange: (next: ActivityExecutorSpec) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <div>
+        <label className="agentdash-form-label">Form Schema Key</label>
+        <input
+          value={executor.form_schema_key}
+          onChange={(e) => onChange({ ...executor, form_schema_key: e.target.value })}
+          className="agentdash-form-input"
+          placeholder="approval"
+        />
+      </div>
+      <details className="rounded-[8px] border border-border bg-secondary/15 p-2">
+        <summary className="cursor-pointer text-[11px] font-medium text-foreground">
+          高级（标题）
+          <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+            {executor.title ?? "默认"}
+          </span>
+        </summary>
+        <div className="mt-2">
+          <label className="agentdash-form-label">标题</label>
+          <input
+            value={executor.title ?? ""}
+            onChange={(e) => onChange({ ...executor, title: e.target.value || null })}
+            className="agentdash-form-input"
+            placeholder="等待人工审批"
+          />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+// ─── §3 Ports & Policy ──────────────────────────────────
+
+function PortsAndPolicySection({
+  activity,
+  contractOutputKeys,
+  contractInputKeys,
+  onActivityChange,
+  onSetCompletionPolicy,
+}: {
+  activity: ActivityDefinition;
+  contractOutputKeys: Set<string>;
+  contractInputKeys: Set<string>;
+  onActivityChange: (patch: Partial<ActivityDefinition>) => void;
+  onSetCompletionPolicy: (policy: ActivityCompletionPolicy) => void;
+}) {
+  return (
+    <section className="space-y-3">
+      <SectionTitle>Ports &amp; Policy</SectionTitle>
+
+      <ActivityOutputPortsList
+        ports={activity.output_ports}
+        contractKeys={contractOutputKeys}
+        onChange={(next) => onActivityChange({ output_ports: next })}
+      />
+
+      <ActivityInputPortsList
+        ports={activity.input_ports}
+        contractKeys={contractInputKeys}
+        onChange={(next) => onActivityChange({ input_ports: next })}
+      />
+
+      <CompletionPolicyEditor
+        activity={activity}
+        onChange={onSetCompletionPolicy}
+      />
+    </section>
+  );
+}
+
+function CompletionPolicyEditor({
+  activity,
+  onChange,
+}: {
+  activity: ActivityDefinition;
+  onChange: (next: ActivityCompletionPolicy) => void;
+}) {
+  const policy = activity.completion_policy;
+  const handleKindChange = (kind: ActivityCompletionPolicy["kind"]) => {
+    if (kind === policy.kind) return;
+    switch (kind) {
+      case "output_ports":
+        onChange({ kind, required_ports: activity.output_ports.map((p) => p.key) });
+        break;
+      case "executor_terminal":
+        onChange({ kind });
+        break;
+      case "human_decision":
+        onChange({ kind, decision_port: "decision" });
+        break;
+      case "hook_gate":
+        onChange({ kind, hook_key: "" });
+        break;
+      case "open_ended":
+        onChange({ kind });
+        break;
+    }
+  };
+
+  return (
+    <div>
+      <label className="agentdash-form-label">Completion Policy</label>
+      <select
+        value={policy.kind}
+        onChange={(e) => handleKindChange(e.target.value as ActivityCompletionPolicy["kind"])}
+        className="agentdash-form-select"
+      >
+        <option value="output_ports">output_ports</option>
+        <option value="executor_terminal">executor_terminal</option>
+        <option value="human_decision">human_decision</option>
+        <option value="hook_gate">hook_gate</option>
+        <option value="open_ended">open_ended</option>
+      </select>
+
+      {policy.kind === "output_ports" && (
+        <div className="mt-2 space-y-1.5 rounded-[8px] border border-border bg-secondary/20 p-2">
+          <p className="text-[11px] text-muted-foreground">勾选必须交付才视为完成</p>
+          {activity.output_ports.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">先添加 output ports</p>
+          ) : (
+            activity.output_ports.map((p) => {
+              const checked = policy.required_ports.includes(p.key);
+              return (
+                <label key={p.key} className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = checked
+                        ? policy.required_ports.filter((k) => k !== p.key)
+                        : [...policy.required_ports, p.key];
+                      onChange({ kind: "output_ports", required_ports: next });
+                    }}
+                  />
+                  <span className="font-mono">{p.key}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      )}
+
+      {policy.kind === "human_decision" && (
+        <div className="mt-2">
+          <label className="agentdash-form-label">Decision Port</label>
+          <input
+            value={policy.decision_port}
+            list="completion-decision-port-opts"
+            onChange={(e) => onChange({ kind: "human_decision", decision_port: e.target.value })}
+            className="agentdash-form-input"
+            placeholder="decision"
+          />
+          <datalist id="completion-decision-port-opts">
+            {activity.output_ports.map((p) => (
+              <option key={p.key} value={p.key} />
+            ))}
+          </datalist>
+        </div>
+      )}
+
+      {policy.kind === "hook_gate" && (
+        <div className="mt-2">
+          <label className="agentdash-form-label">Hook Key</label>
+          <input
+            value={policy.hook_key}
+            onChange={(e) => onChange({ kind: "hook_gate", hook_key: e.target.value })}
+            className="agentdash-form-input"
+            placeholder="my_hook"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Activity ports 列表（contract 标记只读 / extras 可编辑） ─────
+
+function ActivityOutputPortsList({
+  ports,
+  contractKeys,
+  onChange,
+}: {
+  ports: OutputPortDefinition[];
+  contractKeys: Set<string>;
+  onChange: (next: OutputPortDefinition[]) => void;
+}) {
+  const handleAdd = () =>
+    onChange([...ports, { key: "", description: "", gate_strategy: "existence" }]);
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className="agentdash-form-label m-0">Output Ports ({ports.length})</label>
+        <button
+          type="button"
+          onClick={handleAdd}
+          className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
+        >
+          + 添加
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {ports.length === 0 && (
+          <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
+        )}
+        {ports.map((p, idx) => {
+          const isContract = p.key !== "" && contractKeys.has(p.key);
+          return (
+            <OutputPortItem
+              key={idx}
+              port={p}
+              readOnly={isContract}
+              badge={isContract ? "标准" : undefined}
+              onChange={
+                isContract
+                  ? undefined
+                  : (next) => {
+                      const n = [...ports];
+                      n[idx] = next;
+                      onChange(n);
+                    }
+              }
+              onRemove={
+                isContract ? undefined : () => onChange(ports.filter((_, i) => i !== idx))
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ActivityInputPortsList({
+  ports,
+  contractKeys,
+  onChange,
+}: {
+  ports: InputPortDefinition[];
+  contractKeys: Set<string>;
+  onChange: (next: InputPortDefinition[]) => void;
+}) {
+  const handleAdd = () =>
+    onChange([...ports, { key: "", description: "", context_strategy: "full" }]);
+
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <label className="agentdash-form-label m-0">Input Ports ({ports.length})</label>
+        <button
+          type="button"
+          onClick={handleAdd}
+          className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] text-foreground transition-colors hover:bg-secondary"
+        >
+          + 添加
+        </button>
+      </div>
+      <div className="space-y-1.5">
+        {ports.length === 0 && (
+          <p className="py-2 text-center text-xs text-muted-foreground">暂无</p>
+        )}
+        {ports.map((p, idx) => {
+          const isContract = p.key !== "" && contractKeys.has(p.key);
+          return (
+            <InputPortItem
+              key={idx}
+              port={p}
+              readOnly={isContract}
+              badge={isContract ? "标准" : undefined}
+              onChange={
+                isContract
+                  ? undefined
+                  : (next) => {
+                      const n = [...ports];
+                      n[idx] = next;
+                      onChange(n);
+                    }
+              }
+              onRemove={
+                isContract ? undefined : () => onChange(ports.filter((_, i) => i !== idx))
+              }
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Contract tab 内容 ─────────────────────────────────
+
+function WorkflowContractTabContent({
+  workflowDraft,
+  hookPresets,
+  targetKinds,
+  projectId,
+  onUpdateInjection,
+  onBindingChange,
+  onBindingAdd,
+  onBindingRemove,
+  onAddHookRule,
+  onToggleHookRule,
+  onRemoveHookRule,
+  onDirectivesChange,
+  onContractOutputPortsChange,
+  onContractInputPortsChange,
+}: {
+  workflowDraft: WorkflowEditorDraft;
+  hookPresets: HookRulePreset[];
+  targetKinds: WorkflowTargetKind[];
+  projectId: string;
+  onUpdateInjection: (patch: Partial<WorkflowInjectionSpec>) => void;
+  onBindingChange: (idx: number, patch: Partial<WorkflowContextBinding>) => void;
+  onBindingAdd: () => void;
+  onBindingRemove: (idx: number) => void;
+  onAddHookRule: (rule: WorkflowHookRuleSpec) => void;
+  onToggleHookRule: (key: string) => void;
+  onRemoveHookRule: (key: string) => void;
+  onDirectivesChange: (next: CapabilityDirective[]) => void;
+  onContractOutputPortsChange: (next: OutputPortDefinition[]) => void;
+  onContractInputPortsChange: (next: InputPortDefinition[]) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="rounded-[8px] border border-dashed border-border bg-secondary/15 px-3 py-2">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Workflow Key</p>
+        <p className="mt-0.5 truncate font-mono text-xs text-foreground">
+          {workflowDraft.key || "(未命名)"}
+        </p>
+      </div>
+      <InjectionPanel
+        injection={workflowDraft.contract.injection}
+        compact
+        onGuidanceChange={(guidance) => onUpdateInjection({ guidance })}
+        onBindingChange={onBindingChange}
+        onBindingAdd={onBindingAdd}
+        onBindingRemove={onBindingRemove}
+      />
+      <CapabilityPanel
+        projectId={projectId}
+        targetKinds={targetKinds}
+        directives={workflowDraft.contract.capability_config.tool_directives}
+        compact
+        onDirectivesChange={onDirectivesChange}
+      />
+      <HookRulesPanel
+        hookRules={workflowDraft.contract.hook_rules}
+        presets={hookPresets}
+        compact
+        onAdd={onAddHookRule}
+        onToggle={onToggleHookRule}
+        onRemove={onRemoveHookRule}
+      />
+      <PortsPanel
+        outputPorts={workflowDraft.contract.output_ports ?? []}
+        inputPorts={workflowDraft.contract.input_ports ?? []}
+        compact
+        onOutputChange={onContractOutputPortsChange}
+        onInputChange={onContractInputPortsChange}
+      />
+    </div>
+  );
+}
+
+// ─── 辅助 ───────────────────────────────────────────────
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="sticky top-0 -mx-1 bg-background/95 px-1 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur">
+      {children}
+    </h3>
+  );
+}
+
+/**
+ * 双层 ports 同步：contract 改后，把改动合并到 activity ports，保留 step-extra
+ * （activity 自加的、不在旧 contract 集合里的 port）。
+ */
+function mergeContractIntoStep<P extends { key: string }>(
+  oldContract: P[],
+  newContract: P[],
+  currentActivity: P[],
+): P[] {
+  const oldContractKeys = new Set(oldContract.map((p) => p.key));
+  const stepExtras = currentActivity.filter((p) => !oldContractKeys.has(p.key));
+  return [...newContract, ...stepExtras];
+}
+

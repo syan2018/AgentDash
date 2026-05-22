@@ -62,8 +62,13 @@ impl SessionCapabilityService {
 
     pub(crate) async fn enqueue_pending_runtime_context_transition(
         &self,
-        input: PendingRuntimeContextTransitionInput,
+        mut input: PendingRuntimeContextTransitionInput,
     ) -> Result<(), String> {
+        self.derive_skill_baseline_for_transition_state(
+            input.before_state.as_ref(),
+            &mut input.after_state,
+        )
+        .await;
         self.hub
             .enqueue_pending_runtime_context_transition(input)
             .await
@@ -72,8 +77,13 @@ impl SessionCapabilityService {
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
         hook_session: &agentdash_spi::hooks::SharedHookSessionRuntime,
-        input: LiveRuntimeContextTransitionInput,
+        mut input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
+        self.derive_skill_baseline_for_transition_state(
+            input.before_state.as_ref(),
+            &mut input.after_state,
+        )
+        .await;
         self.hub
             .apply_live_runtime_context_transition(hook_session, input)
             .await
@@ -88,14 +98,8 @@ impl SessionCapabilityService {
         phase_node: &str,
         apply_mode: &'static str,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
-        let skills = self
-            .derive_skill_entries_for_active_vfs(&active_vfs)
-            .await
-            .map(|skills| merge_live_vfs_skill_entries(&before_state.skill.skills, skills))
-            .unwrap_or_else(|| before_state.skill.skills.clone());
         let mut after_state = before_state.clone();
         after_state.vfs.active = Some(active_vfs);
-        after_state.skill.skills = skills;
         let capability_keys = after_state.capability_keys();
         self.apply_live_runtime_context_transition(
             hook_session,
@@ -113,6 +117,23 @@ impl SessionCapabilityService {
             },
         )
         .await
+    }
+
+    async fn derive_skill_baseline_for_transition_state(
+        &self,
+        before_state: Option<&CapabilityState>,
+        after_state: &mut CapabilityState,
+    ) {
+        let Some(active_vfs) = after_state.vfs.active.as_ref() else {
+            return;
+        };
+        let Some(skills) = self.derive_skill_entries_for_active_vfs(active_vfs).await else {
+            return;
+        };
+        let existing = before_state
+            .map(|state| state.skill.skills.as_slice())
+            .unwrap_or_else(|| after_state.skill.skills.as_slice());
+        after_state.skill.skills = merge_live_vfs_skill_entries(existing, skills);
     }
 
     async fn derive_skill_entries_for_active_vfs(

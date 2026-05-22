@@ -34,7 +34,9 @@ use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
     PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
-use super::SessionRuntimeInner;
+use super::{
+    LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
+};
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RelayVfsService, RuntimeFileEntry,
@@ -568,6 +570,43 @@ impl MountProvider for SkillFixtureMountProvider {
     }
 }
 
+fn skill_fixture_vfs_service() -> Arc<RelayVfsService> {
+    let mut registry = MountProviderRegistry::new();
+    registry.register(Arc::new(SkillFixtureMountProvider));
+    Arc::new(RelayVfsService::new(Arc::new(registry)))
+}
+
+fn canvas_skill_vfs() -> agentdash_spi::Vfs {
+    agentdash_spi::Vfs {
+        mounts: vec![agentdash_domain::common::Mount {
+            id: "cvs-demo".to_string(),
+            provider: "canvas_fs".to_string(),
+            backend_id: "demo".to_string(),
+            root_ref: "canvas:demo".to_string(),
+            capabilities: vec![
+                agentdash_domain::common::MountCapability::Read,
+                agentdash_domain::common::MountCapability::List,
+            ],
+            default_write: true,
+            display_name: "Demo Canvas".to_string(),
+            metadata: serde_json::json!({ "canvas_id": "demo" }),
+        }],
+        default_mount_id: Some("cvs-demo".to_string()),
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    }
+}
+
+fn canvas_skill_entry() -> agentdash_spi::context::capability::SkillEntry {
+    agentdash_spi::context::capability::SkillEntry {
+        name: "canvas-system".to_string(),
+        description: "Canvas authoring skill".to_string(),
+        file_path: "cvs-demo://skills/canvas-system/SKILL.md".to_string(),
+        disable_model_invocation: false,
+    }
+}
+
 #[tokio::test]
 async fn replace_current_capability_state_updates_active_turn_capability_state() {
     let base = tempfile::tempdir().expect("tempdir");
@@ -648,22 +687,19 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
 }
 
 #[tokio::test]
-async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
+async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
     let base = tempfile::tempdir().expect("tempdir");
     let queries = Arc::new(TokioMutex::new(Vec::new()));
     let hook_provider = Arc::new(StaticResolutionHookProvider {
         queries,
         resolution: HookResolution::default(),
     });
-    let mut registry = MountProviderRegistry::new();
-    registry.register(Arc::new(SkillFixtureMountProvider));
-    let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
     let hub = test_hub(
         base.path().to_path_buf(),
         Arc::new(PendingConnector),
         Some(hook_provider),
     )
-    .with_vfs_service(vfs_service);
+    .with_vfs_service(skill_fixture_vfs_service());
     let session = hub
         .create_session("canvas-skill-capability")
         .await
@@ -708,45 +744,32 @@ async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
         })
         .await;
 
-    let active_vfs = agentdash_spi::Vfs {
-        mounts: vec![agentdash_domain::common::Mount {
-            id: "cvs-demo".to_string(),
-            provider: "canvas_fs".to_string(),
-            backend_id: "demo".to_string(),
-            root_ref: "canvas:demo".to_string(),
-            capabilities: vec![
-                agentdash_domain::common::MountCapability::Read,
-                agentdash_domain::common::MountCapability::List,
-            ],
-            default_write: true,
-            display_name: "Demo Canvas".to_string(),
-            metadata: serde_json::json!({ "canvas_id": "demo" }),
-        }],
-        default_mount_id: Some("cvs-demo".to_string()),
-        source_project_id: None,
-        source_story_id: None,
-        links: Vec::new(),
-    };
-    let skills = vec![agentdash_spi::context::capability::SkillEntry {
-        name: "canvas-system".to_string(),
-        description: "Canvas authoring skill".to_string(),
-        file_path: "cvs-demo://skills/canvas-system/SKILL.md".to_string(),
-        disable_model_invocation: false,
-    }];
+    let active_vfs = canvas_skill_vfs();
+    let skills = vec![canvas_skill_entry()];
     let hook_session = hub
         .get_hook_session_runtime(&session.id)
         .await
         .expect("hook runtime should exist");
+    let mut after_state = before_state.clone();
+    after_state.vfs.active = Some(active_vfs.clone());
+    let capability_keys = after_state.capability_keys();
 
     let outcome = hub
         .capability_service()
-        .apply_live_vfs_capability_state(
+        .apply_live_runtime_context_transition(
             &hook_session,
-            &session.id,
-            before_state,
-            active_vfs.clone(),
-            "canvas",
-            "canvas_visible",
+            LiveRuntimeContextTransitionInput {
+                session_id: session.id.clone(),
+                turn_id: None,
+                phase_node: "canvas".to_string(),
+                run_id: None,
+                lifecycle_key: None,
+                before_state: Some(before_state),
+                after_state,
+                capability_keys,
+                key_delta: agentdash_spi::hooks::CapabilityDelta::default(),
+                apply_mode: "canvas_visible",
+            },
         )
         .await
         .expect("live vfs capability update should apply");
@@ -821,6 +844,77 @@ async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
                 .unwrap_or_default();
             assert!(rendered.contains("Skill Delta"));
             assert!(rendered.contains("canvas-system"));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pending_runtime_context_transition_derives_skill_dimension_from_active_vfs() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None)
+        .with_vfs_service(skill_fixture_vfs_service());
+    let session = hub
+        .create_session("pending-skill-capability")
+        .await
+        .expect("create");
+
+    let mut before_state = CapabilityState::default();
+    before_state.vfs.active = Some(agentdash_spi::Vfs::default());
+    let mut after_state = before_state.clone();
+    after_state.vfs.active = Some(canvas_skill_vfs());
+
+    hub.capability_service()
+        .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
+            session_id: session.id.clone(),
+            turn_id: None,
+            transition_id: "transition-skill-vfs".to_string(),
+            phase_node: "review".to_string(),
+            run_id: uuid::Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            before_state: Some(before_state),
+            after_state,
+            capability_keys: std::collections::BTreeSet::new(),
+            source_turn_id: None,
+            created_at: 1,
+        })
+        .await
+        .expect("pending transition should enqueue");
+
+    let commands = hub
+        .persistence
+        .list_runtime_commands_by_status(&[RuntimeCommandStatus::Requested], 10)
+        .await
+        .expect("runtime commands should load");
+    let command = commands
+        .iter()
+        .find(|command| command.transition_id == "transition-skill-vfs")
+        .expect("pending transition should exist");
+    assert_eq!(
+        command.transition.state.skill.skills,
+        vec![canvas_skill_entry()]
+    );
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let event = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("capability_state_changed")
+        })
+        .expect("capability state event should exist");
+    match &event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            assert_eq!(value["apply_mode"], "pending_next_turn");
+            assert_eq!(value["delta"]["skills"]["added"], json!(["canvas-system"]));
         }
         other => panic!("unexpected event: {other:?}"),
     }

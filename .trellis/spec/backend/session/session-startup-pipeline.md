@@ -283,13 +283,13 @@ requested/failed 事实供下一轮恢复。
 #### 2. Signatures
 
 - Persisted payload type: `PendingCapabilityStateTransition`
-- Patch field: `RuntimeContextPatch { tool, companion, vfs_overlay, mount_directives }`
+- Patch field: `RuntimeContextPatch { tool_directives, tool_intent, mcp_intent, companion_intent, vfs_intent }`
 - Replay entry: `apply_runtime_context_patch(base_state, patch) -> CapabilityState`
 
 #### 3. Contracts
 
 - `PendingCapabilityStateTransition` 保存 phase metadata：`run_id`、`lifecycle_key`、`phase_node`、`capability_keys`、`source_turn_id`。
-- `RuntimeContextPatch.tool` 承载 tool capability、tool policy 与 MCP server 列表；`companion` 承载 companion 维度；`vfs_overlay` 承载 runtime 追加的 VFS surface；`mount_directives` 承载 workflow/runtime 的 mount 指令。
+- `RuntimeContextPatch.tool_directives` 保留 source capability 指令；`tool_intent` 表达本次 runtime action 对 effective tool capability / policy 的明确设置；`mcp_intent` 表达 effective MCP server 设置；`companion_intent` 表达 companion agent 设置；`vfs_intent.overlay` 与 `vfs_intent.mount_directives` 表达 runtime 追加的 VFS surface 与 mount 指令。
 - replay 先从 construction base capability state 开始，叠加 VFS overlay，再应用 mount directives，随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
 - repository 继续使用 runtime command `payload_json` 容器；payload 语义是 intent，而不是 full `CapabilityState` projection。
 

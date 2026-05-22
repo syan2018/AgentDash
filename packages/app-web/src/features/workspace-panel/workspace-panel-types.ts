@@ -7,6 +7,7 @@ import type {
   TaskSessionExecutorSummary,
   WorkflowRun,
 } from "../../types";
+import type { SessionRuntimeStateStatus } from "./model/useSessionRuntimeState";
 
 /** WorkspacePanel 对外命令式 API */
 export interface WorkspacePanelHandle {
@@ -14,10 +15,10 @@ export interface WorkspacePanelHandle {
   openTab: (typeId: string, uri?: string) => void;
 }
 
-export interface WorkspacePanelProps {
+export interface WorkspaceRuntimeData {
   sessionId: string | null;
-
-  /** Context 概览 Tab 所需数据 */
+  runtimeStatus: SessionRuntimeStateStatus;
+  runtimeError: string | null;
   contextSnapshot: SessionContextSnapshot | null;
   ownerStory: Story | null;
   ownerProjectName: string;
@@ -29,4 +30,8 @@ export interface WorkspacePanelProps {
 
   /** Canvas Tab 所需数据 */
   activeCanvasId: string | null;
+}
+
+export interface WorkspacePanelProps {
+  runtimeData: WorkspaceRuntimeData;
 }

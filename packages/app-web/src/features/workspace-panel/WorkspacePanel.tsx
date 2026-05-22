@@ -20,18 +20,8 @@ registerBuiltinTabTypes();
 
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
-    const {
-      sessionId,
-      contextSnapshot,
-      ownerStory,
-      ownerProjectName,
-      executorSummary,
-      runtimeSurface,
-      hookRuntime,
-      sessionCapabilities,
-      workflowRuns,
-      activeCanvasId,
-    } = props;
+    const { runtimeData } = props;
+    const { sessionId, activeCanvasId } = runtimeData;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
@@ -91,22 +81,7 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       [tabs, activeTabId],
     );
 
-    const workspaceData: WorkspaceData = useMemo(() => ({
-      sessionId,
-      contextSnapshot,
-      ownerStory,
-      ownerProjectName,
-      executorSummary,
-      runtimeSurface,
-      hookRuntime,
-      sessionCapabilities,
-      workflowRuns,
-      activeCanvasId,
-    }), [
-      sessionId, contextSnapshot, ownerStory, ownerProjectName,
-      executorSummary, runtimeSurface, hookRuntime,
-      sessionCapabilities, workflowRuns, activeCanvasId,
-    ]);
+    const workspaceData: WorkspaceData = useMemo(() => runtimeData, [runtimeData]);
 
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {

@@ -45,6 +45,8 @@ Session workspace panel、context overview 与 VFS tab 以 `runtime_surface: Res
 
 Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfaceSource` 解析 preview surface；Session 入口直接消费 `session_runtime` 的 `runtime_surface`。两类入口共享 VFS browser 组件，但各自的 surface 来源显式表达，方便在跨层测试里验证 preview 与 runtime 语义。
 
+Session 右侧 WorkspacePanel 消费 current runtime projection state。该 state 以 `session_id + owner/source key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`canvas_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。
+
 ---
 
 ## 禁止模式

@@ -1,13 +1,14 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use agentdash_agent_protocol::ContentBlock;
-use agentdash_domain::workflow::MountDirective;
+use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
 use agentdash_spi::PromptPayload;
-use agentdash_spi::{CompanionDimension, ToolDimension, Vfs};
+use agentdash_spi::context::capability::CompanionAgentEntry;
+use agentdash_spi::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 use uuid::Uuid;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -48,23 +49,89 @@ pub struct PendingCapabilityStateTransition {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeContextPatch {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_directives: Vec<ToolCapabilityDirective>,
+    #[serde(default)]
+    pub tool_intent: RuntimeToolIntent,
+    #[serde(default)]
+    pub mcp_intent: RuntimeMcpIntent,
+    #[serde(default)]
+    pub companion_intent: RuntimeCompanionIntent,
+    #[serde(default)]
+    pub vfs_intent: RuntimeVfsIntent,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RuntimeToolIntent {
+    #[default]
+    NoChange,
+    SetEffectiveTool {
+        capabilities: BTreeSet<ToolCapability>,
+        enabled_clusters: BTreeSet<ToolCluster>,
+        tool_policy: BTreeMap<String, ToolCapabilityFilter>,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RuntimeMcpIntent {
+    #[default]
+    NoChange,
+    SetEffectiveServers {
+        servers: Vec<SessionMcpServer>,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RuntimeCompanionIntent {
+    #[default]
+    NoChange,
+    SetAgents {
+        agents: Vec<CompanionAgentEntry>,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeVfsIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool: Option<ToolDimension>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub companion: Option<CompanionDimension>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vfs_overlay: Option<Vfs>,
+    pub overlay: Option<Vfs>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mount_directives: Vec<MountDirective>,
 }
 
+impl RuntimeVfsIntent {
+    pub fn is_empty(&self) -> bool {
+        self.overlay.is_none() && self.mount_directives.is_empty()
+    }
+}
+
 impl RuntimeContextPatch {
-    pub fn from_target_state(state: &CapabilityState) -> Self {
+    pub fn from_effective_runtime_projection(
+        state: &CapabilityState,
+        vfs_overlay: Option<Vfs>,
+        mount_directives: Vec<MountDirective>,
+        tool_directives: Vec<ToolCapabilityDirective>,
+    ) -> Self {
         Self {
-            tool: Some(state.tool.clone()),
-            companion: Some(state.companion.clone()),
-            vfs_overlay: state.vfs.active.clone(),
-            mount_directives: Vec::new(),
+            tool_directives,
+            tool_intent: RuntimeToolIntent::SetEffectiveTool {
+                capabilities: state.tool.capabilities.clone(),
+                enabled_clusters: state.tool.enabled_clusters.clone(),
+                tool_policy: state.tool.tool_policy.clone(),
+            },
+            mcp_intent: RuntimeMcpIntent::SetEffectiveServers {
+                servers: state.tool.mcp_servers.clone(),
+            },
+            companion_intent: RuntimeCompanionIntent::SetAgents {
+                agents: state.companion.agents.clone(),
+            },
+            vfs_intent: RuntimeVfsIntent {
+                overlay: vfs_overlay,
+                mount_directives,
+            },
         }
     }
 }

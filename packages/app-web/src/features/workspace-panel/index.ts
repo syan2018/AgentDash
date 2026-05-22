@@ -12,4 +12,5 @@ export type {
 export type {
   WorkspacePanelHandle,
   WorkspacePanelProps,
+  WorkspaceRuntimeData,
 } from "./workspace-panel-types";

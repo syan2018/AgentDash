@@ -68,8 +68,9 @@ pub use capability_projection::{
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
     CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
-    apply_runtime_context_patch, compose_vfs_with_overlay_and_directives,
-    compute_capability_state_delta, merge_vfs_overlay,
+    apply_runtime_context_patch, apply_runtime_mcp_intent, apply_runtime_vfs_intent,
+    compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
+    replay_runtime_context_patch,
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
@@ -110,7 +111,8 @@ pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     CapabilityState, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,
-    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeContextPatch,
+    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCompanionIntent,
+    RuntimeContextPatch, RuntimeMcpIntent, RuntimeToolIntent, RuntimeVfsIntent,
     SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
 };

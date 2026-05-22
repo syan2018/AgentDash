@@ -32,8 +32,8 @@ use super::super::hub_support::{
 use super::super::local_workspace_vfs;
 use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
-    PendingCapabilityStateTransition, RuntimeContextPatch, SessionBootstrapState,
-    SessionExecutionState, UserPromptInput,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
+    SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
@@ -864,12 +864,13 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
     let mut after_state = before_state.clone();
     after_state.vfs.active = Some(canvas_skill_vfs());
-    let patch = RuntimeContextPatch::from_effective_runtime_projection(
+    let transition = RuntimeCapabilityTransition::from_runtime_projection_parts(
         &after_state,
         after_state.vfs.active.clone(),
         Vec::new(),
         Vec::new(),
-    );
+    )
+    .expect("transition builds");
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
@@ -881,7 +882,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
             lifecycle_key: "dev".to_string(),
             before_state: Some(before_state),
             after_state,
-            patch,
+            transition,
             capability_keys: std::collections::BTreeSet::new(),
             source_turn_id: None,
             created_at: 1,
@@ -903,13 +904,16 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     assert_eq!(
         command
             .transition
-            .patch
-            .vfs_intent
-            .overlay
-            .as_ref()
-            .and_then(|vfs| vfs.mounts.first())
-            .map(|mount| mount.id.as_str()),
-        Some("cvs-demo")
+            .transition
+            .effects
+            .iter()
+            .find(|effect| effect.effect_type == EFFECT_TYPE_APPLY_VFS_OVERLAY)
+            .and_then(|effect| {
+                serde_json::from_value::<agentdash_spi::Vfs>(effect.payload["overlay"].clone()).ok()
+            })
+            .and_then(|vfs| vfs.mounts.into_iter().next())
+            .map(|mount| mount.id),
+        Some("cvs-demo".to_string())
     );
 
     let events = hub
@@ -995,12 +999,13 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
-            patch: RuntimeContextPatch::from_effective_runtime_projection(
+            transition: RuntimeCapabilityTransition::from_runtime_projection_parts(
                 &target_flow,
                 target_flow.vfs.active.clone(),
                 Vec::new(),
                 Vec::new(),
-            ),
+            )
+            .expect("transition builds"),
             created_at: 1,
             source_turn_id: None,
         },
@@ -2276,7 +2281,7 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            patch: RuntimeContextPatch::default(),
+            transition: RuntimeCapabilityTransition::default(),
             created_at: 1,
             source_turn_id: None,
         },

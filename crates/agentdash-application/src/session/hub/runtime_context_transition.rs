@@ -19,8 +19,9 @@ use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
-    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition, RuntimeContextPatch,
-    RuntimeContextTransition, apply_runtime_context_patch, compute_capability_state_delta,
+    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
+    RuntimeCapabilityTransition, RuntimeContextTransition, apply_runtime_capability_transition,
+    compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -53,7 +54,7 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub lifecycle_key: String,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
-    pub patch: RuntimeContextPatch,
+    pub transition: RuntimeCapabilityTransition,
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
@@ -188,7 +189,7 @@ impl SessionRuntimeInner {
         };
         let Some(pending_transition) = transition.to_pending_capability_state_transition(
             input.transition_id,
-            input.patch,
+            input.transition,
             input.source_turn_id,
             input.created_at,
         ) else {
@@ -249,7 +250,20 @@ impl SessionRuntimeInner {
             let pending_after_state = if index + 1 == transitions.len() {
                 final_capability_state.clone()
             } else {
-                apply_runtime_context_patch(&pending_event_before_state, &pending.patch)
+                match apply_runtime_capability_transition(
+                    &pending_event_before_state,
+                    &pending.transition,
+                ) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id,
+                            transition_id = %pending.id,
+                            "pending runtime capability transition replay failed before event emission: {error}"
+                        );
+                        pending_event_before_state.clone()
+                    }
+                }
             };
             let payload = RuntimeContextTransition {
                 phase_node: &pending.phase_node,

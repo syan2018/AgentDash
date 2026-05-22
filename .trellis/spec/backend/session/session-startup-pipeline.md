@@ -89,6 +89,57 @@ Context endpoint、权限展示、audit 和 inspector 都投影同一份
 Companion parent facts 由 construction/assembler 根据 parent session id 解析；
 API/bootstrap 只传 parent 引用与 dispatch policy。
 
+## Scenario: Capability Projection Normalization
+
+### 1. Scope / Trigger
+
+- Trigger: Session runtime surface、VFS、MCP、Skill baseline 与 `CapabilityState` 是同一份 construction projection 的不同维度，需要在 launch、context inspect 与 runtime transition 中保持一致。
+
+### 2. Signatures
+
+- Application entry: `derive_session_capability_projection(SessionCapabilityProjectionInput) -> SessionCapabilityProjection`
+- Application entry: `normalize_capability_state_dimensions(&mut CapabilityState, Option<Vfs>, Vec<SessionMcpServer>, &SessionBaselineCapabilities)`
+- Context query: `build_session_context_plan(...) -> SessionConstructionPlan`，并在 construction finalize 后生成 query-only `runtime_surface`
+
+### 3. Contracts
+
+- `CapabilityResolver` 继续只解析 tool / MCP / companion 维度。
+- Effective VFS 由 construction finalize 合并 owner/session/runtime-command facts 后确定。
+- Skill baseline 与 guidelines 从 effective VFS 派生；local extra skills 以 VFS skill name map 作为冲突基线。
+- `CapabilityState.vfs.active` 必须等于 final `plan.surface.vfs`。
+- `CapabilityState.tool.mcp_servers` 必须等于 final `plan.projections.mcp_servers`。
+- `runtime_surface` 是 query DTO，只从 final `plan.surface.vfs` 生成。
+
+### 4. Validation & Error Matrix
+
+- final VFS 缺失且无可解析 workspace root -> `BadRequest`
+- final VFS 缺少 default mount 或 default mount root 无效 -> `BadRequest`
+- `CapabilityState.vfs.active != plan.surface.vfs` -> launch validation failure
+- `CapabilityState.tool.mcp_servers != plan.projections.mcp_servers` -> launch validation failure
+
+### 5. Good / Base / Bad Cases
+
+- Good: pending VFS overlay 合并后，context response 的 `vfs` 与 `runtime_surface.mounts` 都包含 overlay mount。
+- Base: 没有 pending runtime command 时，context response 从 construction base VFS 派生 surface。
+- Bad: runtime transition 的 after-state 缺少 Skill baseline，导致下一轮 context frame 与工具可见说明不包含 active VFS 内嵌 skill。
+
+### 6. Tests Required
+
+- API/session context test：final `surface.vfs` 与 `runtime_surface` 使用同一 mount 集合。
+- Application/session test：live 与 pending runtime transition 都从 active VFS 派生 Skill baseline。
+- Canvas tool test：`present_canvas` 在 `canvas_presented` 事件前完成 session meta、active VFS 与 Skill baseline 同步。
+
+### 7. Implementation Shape
+
+```text
+base construction facts
+  -> effective VFS / MCP resolution
+  -> derive_session_capability_projection
+  -> normalize_capability_state_dimensions
+  -> final SessionConstructionPlan
+  -> query-only runtime_surface
+```
+
 ## LaunchExecution Contract
 
 `SessionLaunchPlanner::plan` 返回 `LaunchExecution`。planner 输入由

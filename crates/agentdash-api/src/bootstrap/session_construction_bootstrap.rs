@@ -4,15 +4,11 @@
 //! 组装逻辑。它只返回 application construction plan；
 //! route 层不再承载 launch composition 主分支。
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::context::mount_file_discovery::BUILTIN_GUIDELINE_RULES;
-use agentdash_application::context::mount_file_discovery::discover_mount_files;
 use agentdash_application::session::UserPromptInput;
-use agentdash_application::session::baseline_capabilities::build_session_baseline_capabilities;
 use agentdash_application::session::construction::{
     ConstructionResolutionPlan, ExtensionCommandProjection, ExtensionFlagProjection,
     ExtensionInstallationProjection, ExtensionMessageRendererProjection,
@@ -29,6 +25,10 @@ use agentdash_application::session::{
     OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
+};
+use agentdash_application::session::{
+    SessionCapabilityProjectionInput, derive_session_capability_projection,
+    normalize_capability_state_dimensions,
 };
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
@@ -295,77 +295,15 @@ pub(crate) async fn finalize_session_construction_projection(
             (base_mcp_servers.clone(), base_mcp_source)
         };
 
-    let mut skills = {
-        let result = agentdash_application::skill::load_skills_from_vfs(
-            &state.services.vfs_service,
-            &effective_vfs,
-        )
-        .await;
-        for diag in &result.diagnostics {
-            tracing::warn!(
-                skill_name = %diag.name,
-                path = %diag.file_path.display(),
-                "skill 诊断: {}",
-                diag.message
-            );
-        }
-        result.skills
-    };
-    if !state.services.extra_skill_dirs.is_empty() {
-        let existing_names: HashMap<String, String> = skills
-            .iter()
-            .map(|skill| {
-                (
-                    skill.name.clone(),
-                    skill.file_path.to_string_lossy().to_string(),
-                )
-            })
-            .collect();
-        let result = agentdash_application::skill::load_skills_from_local_dirs(
-            &state.services.extra_skill_dirs,
-            &existing_names,
-        );
-        for diag in &result.diagnostics {
-            tracing::warn!(
-                skill_name = %diag.name,
-                path = %diag.file_path.display(),
-                "skill 诊断 (plugin): {}",
-                diag.message
-            );
-        }
-        skills.extend(result.skills);
-    }
-    let session_capabilities = build_session_baseline_capabilities(&skills);
-    let guideline_result = discover_mount_files(
-        &state.services.vfs_service,
-        &effective_vfs,
-        BUILTIN_GUIDELINE_RULES,
-    )
+    let projection = derive_session_capability_projection(SessionCapabilityProjectionInput {
+        vfs_service: Some(&state.services.vfs_service),
+        active_vfs: Some(&effective_vfs),
+        extra_skill_dirs: &state.services.extra_skill_dirs,
+        diagnostics_label: "session_construction_finalize",
+    })
     .await;
-    for diag in &guideline_result.diagnostics {
-        tracing::warn!(
-            rule_key = %diag.rule_key,
-            mount_id = %diag.mount_id,
-            path = %diag.path,
-            "guideline 发现诊断: {}",
-            diag.message
-        );
-    }
-    let discovered_guidelines = guideline_result
-        .files
-        .into_iter()
-        .map(|file| agentdash_spi::DiscoveredGuideline {
-            file_name: file
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&file.path)
-                .to_string(),
-            mount_id: file.mount_id,
-            path: file.path,
-            content: file.content,
-        })
-        .collect::<Vec<_>>();
+    let session_capabilities = projection.session_capabilities;
+    let discovered_guidelines = projection.discovered_guidelines;
 
     let executor_source = if plan.execution_profile.executor_config.is_some() {
         "construction.execution_profile.executor_config"
@@ -396,18 +334,24 @@ pub(crate) async fn finalize_session_construction_projection(
         .clone()
         .or_else(|| facts.cached_capability_state.clone())
         .unwrap_or_default();
-    base_capability_state.vfs.active = Some(base_vfs);
-    base_capability_state.tool.mcp_servers = base_mcp_servers;
-    base_capability_state.skill.skills = session_capabilities.skills.clone();
+    normalize_capability_state_dimensions(
+        &mut base_capability_state,
+        Some(base_vfs),
+        base_mcp_servers,
+        &session_capabilities,
+    );
 
     let mut final_capability_state = facts
         .requested_runtime_commands
         .last()
         .map(|command| command.transition.state.clone())
         .unwrap_or_else(|| base_capability_state.clone());
-    final_capability_state.vfs.active = Some(effective_vfs.clone());
-    final_capability_state.tool.mcp_servers = mcp_servers.clone();
-    final_capability_state.skill.skills = session_capabilities.skills.clone();
+    normalize_capability_state_dimensions(
+        &mut final_capability_state,
+        Some(effective_vfs.clone()),
+        mcp_servers.clone(),
+        &session_capabilities,
+    );
     let extension_runtime =
         build_extension_runtime_projection(state, plan.owner.project_id).await?;
 

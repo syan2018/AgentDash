@@ -6,10 +6,16 @@
 //! 设计参考 `skill/loader.rs` 的 VFS scan 模式，但抽象为通用的"规则 + 扫描"机制，
 //! 不绑定特定文件格式。
 
-use agentdash_spi::{MountCapability, Vfs};
+use agentdash_spi::{Mount, MountCapability, Vfs};
 
 use crate::vfs::types::ResourceRef;
-use crate::vfs::{ListOptions, RelayVfsService};
+use crate::vfs::{
+    ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
+    PROVIDER_SKILL_ASSET_FS, RelayVfsService,
+};
+
+const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
+const DISCOVERY_POLICY_METADATA_KEY: &str = "agentdash_discovery_policy";
 
 // ─── 规则定义 ─────────────────────────────────────────────────
 
@@ -108,6 +114,15 @@ pub async fn discover_mount_files(
     let mut result = MountFileDiscoveryResult::default();
 
     for mount in &vfs.mounts {
+        if !should_scan_mount_for_discovery(mount) {
+            tracing::debug!(
+                mount_id = %mount.id,
+                provider = %mount.provider,
+                "跳过 mount 自动文件发现"
+            );
+            continue;
+        }
+
         let has_read = mount.capabilities.contains(&MountCapability::Read);
         if !has_read {
             continue;
@@ -152,6 +167,41 @@ pub async fn discover_mount_files(
 }
 
 // ─── 内部辅助 ─────────────────────────────────────────────────
+
+fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
+    match mount.metadata.get(AUTO_DISCOVERY_METADATA_KEY) {
+        Some(serde_json::Value::Bool(enabled)) => return *enabled,
+        Some(serde_json::Value::String(value)) => {
+            match value.trim().to_ascii_lowercase().as_str() {
+                "true" | "allow" | "auto" => return true,
+                "false" | "deny" | "skip" | "manual" => return false,
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    match mount
+        .metadata
+        .get(DISCOVERY_POLICY_METADATA_KEY)
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("auto") | Some("allow") => return true,
+        Some("manual") | Some("skip") | Some("deny") => return false,
+        _ => {}
+    }
+
+    matches!(
+        mount.provider.as_str(),
+        PROVIDER_RELAY_FS
+            | PROVIDER_INLINE_FS
+            | PROVIDER_LIFECYCLE_VFS
+            | PROVIDER_CANVAS_FS
+            | PROVIDER_SKILL_ASSET_FS
+    )
+}
 
 /// 尝试从 mount 中读取单个文件，成功则追加到结果。
 async fn try_read_file(
@@ -260,6 +310,19 @@ async fn list_root_children(service: &RelayVfsService, vfs: &Vfs, mount_id: &str
 mod tests {
     use super::*;
 
+    fn mount(provider: &str, metadata: serde_json::Value) -> Mount {
+        Mount {
+            id: provider.to_string(),
+            provider: provider.to_string(),
+            backend_id: String::new(),
+            root_ref: ".".to_string(),
+            capabilities: vec![MountCapability::Read, MountCapability::List],
+            default_write: false,
+            display_name: provider.to_string(),
+            metadata,
+        }
+    }
+
     #[test]
     fn builtin_guideline_rules_cover_agents_and_memory() {
         assert_eq!(BUILTIN_GUIDELINE_RULES.len(), 2);
@@ -277,5 +340,49 @@ mod tests {
         let result = MountFileDiscoveryResult::default();
         assert!(result.files.is_empty());
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn discovery_scans_builtin_low_cost_mounts_by_default() {
+        for provider in [
+            PROVIDER_RELAY_FS,
+            PROVIDER_INLINE_FS,
+            PROVIDER_LIFECYCLE_VFS,
+            PROVIDER_CANVAS_FS,
+            PROVIDER_SKILL_ASSET_FS,
+        ] {
+            assert!(
+                should_scan_mount_for_discovery(&mount(provider, serde_json::Value::Null)),
+                "{provider} should be auto-discoverable"
+            );
+        }
+    }
+
+    #[test]
+    fn discovery_skips_external_mounts_by_default() {
+        assert!(!should_scan_mount_for_discovery(&mount(
+            "external_docs",
+            serde_json::Value::Null
+        )));
+        assert!(!should_scan_mount_for_discovery(&mount(
+            "custom_remote_provider",
+            serde_json::Value::Null
+        )));
+    }
+
+    #[test]
+    fn discovery_metadata_can_override_default_policy() {
+        assert!(should_scan_mount_for_discovery(&mount(
+            "external_docs",
+            serde_json::json!({ AUTO_DISCOVERY_METADATA_KEY: true })
+        )));
+        assert!(!should_scan_mount_for_discovery(&mount(
+            PROVIDER_INLINE_FS,
+            serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "manual" })
+        )));
+        assert!(should_scan_mount_for_discovery(&mount(
+            "custom_remote_provider",
+            serde_json::json!({ DISCOVERY_POLICY_METADATA_KEY: "auto" })
+        )));
     }
 }

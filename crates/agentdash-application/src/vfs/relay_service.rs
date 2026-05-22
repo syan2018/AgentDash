@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::runtime::Mount;
 use crate::vfs::*;
@@ -88,10 +89,10 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            return provider
-                .read_text(mount, &path, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.read_text(mount, &path, &ctx).await;
+            log_vfs_operation_result(mount, "read_text", &path, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -121,10 +122,10 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            return provider
-                .read_binary(mount, &path, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.read_binary(mount, &path, &ctx).await;
+            log_vfs_operation_result(mount, "read_binary", &path, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -156,10 +157,10 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            return provider
-                .write_text(mount, &path, content, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.write_text(mount, &path, content, &ctx).await;
+            log_vfs_operation_result(mount, "write_text", &path, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -221,10 +222,10 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            return provider
-                .delete_text(mount, &path, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.delete_text(mount, &path, &ctx).await;
+            log_vfs_operation_result(mount, "delete_text", &path, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -290,10 +291,18 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            return provider
+            let started_at = Instant::now();
+            let result = provider
                 .rename_text(mount, &from_path, &to_path, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+                .await;
+            log_vfs_operation_result(
+                mount,
+                "rename_text",
+                &format!("{from_path} -> {to_path}"),
+                started_at,
+                result.is_ok(),
+            );
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -341,7 +350,10 @@ impl RelayVfsService {
             let ctx = MountOperationContext {
                 identity: identity.cloned(),
             };
-            match provider.stat(mount, &path, &ctx).await {
+            let started_at = Instant::now();
+            let result = provider.stat(mount, &path, &ctx).await;
+            log_vfs_operation_result(mount, "stat", &path, started_at, result.is_ok());
+            match result {
                 Ok(entry) => return Ok(entry),
                 Err(MountError::NotSupported(_)) => {}
                 Err(error) => return Err(error.to_string()),
@@ -587,10 +599,10 @@ impl RelayVfsService {
                     pattern: options.pattern,
                     recursive: options.recursive,
                 };
-                return provider
-                    .list(mount, &opts, &ctx)
-                    .await
-                    .map_err(|e| e.to_string());
+                let started_at = Instant::now();
+                let result = provider.list(mount, &opts, &ctx).await;
+                log_vfs_operation_result(mount, "list", &opts.path, started_at, result.is_ok());
+                return result.map_err(|e| e.to_string());
             }
             // 有 overlay：从 provider 读取完整文件映射，合并 overlay，再列出
             let full_opts = ListOptions {
@@ -598,10 +610,16 @@ impl RelayVfsService {
                 pattern: None,
                 recursive: true,
             };
-            let full_result = provider
-                .list(mount, &full_opts, &ctx)
-                .await
-                .map_err(|e| e.to_string())?;
+            let started_at = Instant::now();
+            let full_result = provider.list(mount, &full_opts, &ctx).await;
+            log_vfs_operation_result(
+                mount,
+                "list",
+                &full_opts.path,
+                started_at,
+                full_result.is_ok(),
+            );
+            let full_result = full_result.map_err(|e| e.to_string())?;
             let mut files = BTreeMap::new();
             for entry in full_result.entries {
                 if !entry.is_dir {
@@ -630,10 +648,10 @@ impl RelayVfsService {
                 pattern: options.pattern,
                 recursive: options.recursive,
             };
-            return provider
-                .list(mount, &opts, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.list(mount, &opts, &ctx).await;
+            log_vfs_operation_result(mount, "list", &opts.path, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -653,10 +671,10 @@ impl RelayVfsService {
                 timeout_ms: request.timeout_ms,
                 streaming_call_id: request.streaming_call_id.clone(),
             };
-            return provider
-                .exec(mount, &req, &ctx)
-                .await
-                .map_err(|e| e.to_string());
+            let started_at = Instant::now();
+            let result = provider.exec(mount, &req, &ctx).await;
+            log_vfs_operation_result(mount, "exec", &req.cwd, started_at, result.is_ok());
+            return result.map_err(|e| e.to_string());
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -713,10 +731,16 @@ impl RelayVfsService {
                 case_sensitive: true,
                 max_results: Some(params.max_results),
             };
-            let result = provider
-                .search_text(mount, &sq, &ctx)
-                .await
-                .map_err(|e| e.to_string())?;
+            let started_at = Instant::now();
+            let result = provider.search_text(mount, &sq, &ctx).await;
+            log_vfs_operation_result(
+                mount,
+                "search_text",
+                sq.path.as_deref().unwrap_or("."),
+                started_at,
+                result.is_ok(),
+            );
+            let result = result.map_err(|e| e.to_string())?;
             let hits: Vec<String> = result
                 .matches
                 .iter()
@@ -823,6 +847,24 @@ impl RelayVfsService {
 
         Ok((hits, truncated))
     }
+}
+
+fn log_vfs_operation_result(
+    mount: &Mount,
+    operation: &str,
+    path: &str,
+    started_at: Instant,
+    success: bool,
+) {
+    tracing::debug!(
+        provider = %mount.provider,
+        mount_id = %mount.id,
+        operation,
+        path,
+        duration_ms = started_at.elapsed().as_millis(),
+        success,
+        "VFS mount operation completed"
+    );
 }
 
 /// 从 patch 内的路径拆出 mount 前缀，并规范化 mount 相对路径。

@@ -37,6 +37,24 @@ describe("VfsBrowserPanel mount browsing policy", () => {
     expect(resolveDefaultMountId(mounts, "workspace", undefined)).toBe("context");
   });
 
+  it("默认选择会避开外部服务 mount，除非用户明确指定", () => {
+    const mounts = [
+      mount("knowledge", "external_docs", true),
+      mount("main", "relay_fs", true),
+      mount("context", "inline_fs", true),
+    ];
+
+    expect(resolveDefaultMountId(mounts, undefined, "knowledge")).toBe("main");
+    expect(resolveDefaultMountId(mounts, "knowledge", undefined)).toBe("knowledge");
+  });
+
+  it("只有外部服务可浏览时仍允许作为兜底选择", () => {
+    const mounts = [mount("knowledge", "external_docs", true)];
+
+    expect(resolveDefaultMountId(mounts, undefined, "knowledge")).toBe("knowledge");
+    expect(resolveDefaultMountId(mounts)).toBe("knowledge");
+  });
+
   it("全部不可浏览时仍保留第一个 mount 作为摘要选择", () => {
     const mounts = [mount("workspace", "relay_fs", false)];
 

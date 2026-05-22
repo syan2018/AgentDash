@@ -48,7 +48,7 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
     BuiltinAssetVersion {
         asset_type: LibraryAssetType::SkillTemplate,
         key: "canvas-system",
-        version: "1.0.0",
+        version: "1.0.4",
     },
 ];
 
@@ -186,11 +186,11 @@ fn skill_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
                 .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
             let files = template
                 .bundle
-                .materialized_files()
+                .files
                 .into_iter()
                 .map(|file| SkillTemplateFilePayload {
-                    path: file.path,
-                    content: file.content,
+                    path: file.relative_path.to_string(),
+                    content: file.content.to_string(),
                     kind: embedded_skill_kind_to_asset_kind(file.kind),
                 })
                 .collect::<Vec<_>>();
@@ -271,6 +271,34 @@ mod tests {
             versions.len(),
             seeds.len(),
             "builtin asset version manifest 不能包含未使用的资产版本"
+        );
+    }
+
+    #[test]
+    fn builtin_canvas_system_skill_template_uses_skill_asset_relative_paths() {
+        let seed = builtin_library_seeds()
+            .expect("load seeds")
+            .into_iter()
+            .find(|seed| {
+                seed.asset_type == LibraryAssetType::SkillTemplate && seed.key == "canvas-system"
+            })
+            .expect("canvas-system skill template seed");
+        let payload = serde_json::from_value::<SkillTemplatePayload>(seed.payload)
+            .expect("skill template payload should be typed");
+
+        assert!(payload.files.iter().any(|file| file.path == "SKILL.md"));
+        assert!(
+            payload
+                .files
+                .iter()
+                .any(|file| file.path == "references/runtime-bridge.md")
+        );
+        assert!(
+            payload
+                .files
+                .iter()
+                .all(|file| !file.path.starts_with("skills/canvas-system/")),
+            "SkillTemplate payload paths are SkillAsset-root relative; the skill_asset_fs provider adds skills/<key>/ during projection"
         );
     }
 }

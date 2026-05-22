@@ -6,12 +6,14 @@ use agentdash_domain::canvas::{Canvas, CanvasImportMap};
 use agentdash_spi::Vfs;
 
 use crate::runtime_gateway::RuntimeSurface;
-use crate::vfs::{RelayVfsService, parse_mount_uri};
+use crate::vfs::{RelayVfsService, ResolvedVfsSurfaceSource, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {
     pub canvas_id: uuid::Uuid,
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_surface_ref: Option<String>,
     pub entry: String,
     pub files: Vec<CanvasRuntimeFile>,
     pub bindings: Vec<CanvasRuntimeBinding>,
@@ -114,6 +116,7 @@ pub fn build_runtime_snapshot(
     CanvasRuntimeSnapshot {
         canvas_id: canvas.id,
         session_id,
+        resource_surface_ref: None,
         entry: canvas.entry_file.clone(),
         files,
         bindings,
@@ -133,6 +136,14 @@ pub async fn build_runtime_snapshot_with_bindings(
     let Some(vfs) = vfs else {
         return snapshot;
     };
+    if let Some(session_id) = snapshot.session_id.as_deref() {
+        snapshot.resource_surface_ref = Some(
+            ResolvedVfsSurfaceSource::SessionRuntime {
+                session_id: session_id.to_string(),
+            }
+            .surface_ref(),
+        );
+    }
 
     for binding in &mut snapshot.bindings {
         let Ok(resource_ref) = parse_mount_uri(&binding.source_uri, vfs) else {
@@ -170,6 +181,8 @@ fn infer_file_type(path: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use uuid::Uuid;
 
     use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile};
@@ -180,6 +193,7 @@ mod tests {
         RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeContext,
         RuntimeSurface,
     };
+    use crate::vfs::MountProviderRegistry;
 
     #[test]
     fn build_runtime_snapshot_marks_binding_unresolved_until_session_wiring_exists() {
@@ -201,6 +215,7 @@ mod tests {
         let snapshot = build_runtime_snapshot(&canvas, Some("session-1".to_string()));
 
         assert_eq!(snapshot.entry, "src/main.tsx");
+        assert!(snapshot.resource_surface_ref.is_none());
         assert!(snapshot.files.iter().any(|file| file.file_type == "code"));
         assert!(
             snapshot
@@ -223,6 +238,7 @@ mod tests {
 
         let snapshot = build_runtime_snapshot(&canvas, None);
 
+        assert!(snapshot.resource_surface_ref.is_none());
         assert!(!snapshot.runtime_bridge.enabled);
         assert!(snapshot.runtime_bridge.surface.is_none());
         assert!(
@@ -232,6 +248,31 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("Session")
+        );
+    }
+
+    #[tokio::test]
+    async fn build_runtime_snapshot_with_runtime_vfs_exposes_resource_surface_ref() {
+        let canvas = Canvas::new(
+            Uuid::new_v4(),
+            "demo".to_string(),
+            "Demo".to_string(),
+            String::new(),
+        );
+        let vfs = Vfs::default();
+        let service = RelayVfsService::new(Arc::new(MountProviderRegistry::default()));
+
+        let snapshot = build_runtime_snapshot_with_bindings(
+            &canvas,
+            Some("session-1".to_string()),
+            Some(&vfs),
+            &service,
+        )
+        .await;
+
+        assert_eq!(
+            snapshot.resource_surface_ref.as_deref(),
+            Some("session-runtime:session-1")
         );
     }
 

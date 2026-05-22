@@ -234,6 +234,7 @@ export interface SessionEventEnvelope {
 
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =
+  | "turn_fold"
   | "file_read"
   | "search"
   | "web_fetch"
@@ -339,6 +340,7 @@ export function isAggregatedContextFrameGroup(
   return (entry as AggregatedContextFrameGroup).type === "aggregated_context_frames";
 }
 
+// 历史保留；新算法不再产出 file_edit 类型
 export function isAggregatedDiffGroup(
   entry: AcpDisplayItem,
 ): entry is AggregatedEntryGroup {

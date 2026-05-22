@@ -99,6 +99,8 @@ payload: dimension-owned typed payload or validated JSON
 - runtime command payload 不保存完整 `CapabilityState`、`ToolDimension`、`CompanionDimension` 或 runtime surface projection。
 - replay 主入口只遍历 effect records，并按 dimension module 分发处理。
 - construction / context query / next-turn launch / pending apply event 继续共享统一 replay + projection normalizer。
+- 多个 requested runtime command 必须按创建顺序 fold replay 到 construction base projection；VFS/mount operation 不能只读取最后一个 pending transition。
+- 内置 dimension module 的 envelope payload 必须在 module 边界 decode 到强类型 payload 并执行 validation；`serde_json::Value` 只作为主干 envelope 的持久化容器。
 - 新增能力维度必须通过 dimension module 接入，不能要求主干结构新增维度字段。
 - 更新 backend specs，让 future agent 能判断新增能力是否违反模块边界。
 - 补充测试，证明 payload 是 record/envelope 形态，且 replay 后 final projection 与现有行为等价。
@@ -111,10 +113,12 @@ payload: dimension-owned typed payload or validated JSON
 - [ ] runtime command payload 类型从维度字段平铺改为 declaration/effect records 或等价 envelope 结构。
 - [ ] replay 入口通过 dimension key 分发到 registered module，而不是主干手写每个维度字段。
 - [ ] tool、MCP、companion、VFS 的 record validation / decode / replay 逻辑位于对应 dimension module。
+- [ ] construction / context query / next-turn launch / pending apply event 使用同一个 replay 函数按顺序应用所有 requested transitions。
 - [ ] 旧 `RuntimeContextPatch` / `Runtime*Intent` replay 生产链路被移除，生产路径只使用 `RuntimeCapabilityTransition` records。
 - [ ] 生产代码不再出现新的 full projection -> runtime payload 反推路径。
 - [ ] serialization / repository 测试断言 payload 不含 `state`、`tool`、`companion` replacement，也不含 runtime surface / skill baseline projection。
-- [ ] runtime/context/launch 聚焦测试仍证明 pending VFS/MCP/tool/companion replay 后 final projection 与现有行为等价。
+- [ ] runtime/context/launch 聚焦测试仍证明 pending VFS/MCP/tool/companion 顺序 replay 后 final projection 与现有行为等价。
+- [ ] built-in module 测试覆盖非法 payload decode / validation error，证明错误停在 module 边界。
 - [ ] plugin/extension 规划边界更新：extension 新能力应产出 declaration/effect records 或注册 dimension module，而不是要求修改主干 DTO。
 - [ ] 不修改 runtime command 数据库表结构。
 

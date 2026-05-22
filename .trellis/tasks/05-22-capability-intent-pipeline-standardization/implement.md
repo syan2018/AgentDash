@@ -15,7 +15,7 @@
 完成标准：
 
 - future agent 能判断新增能力应该注册 runtime module，还是 projection-only module。
-- spec 明确反模式：新增能力时修改一串主干 DTO 加字段。
+- spec 以正向契约说明：新增能力通过 record envelope 与 dimension module 注册接入，主干只维护 envelope、ordering、dispatch 与 projection 汇聚。
 
 ### Phase 2: Built-in Dimension Modules
 
@@ -27,11 +27,13 @@
 - [ ] 拆出 Companion dimension module：decode roster effect payload，replay companion agents。
 - [ ] 拆出 VFS dimension module：decode VFS overlay / mount operation effect payload，replay VFS changes。
 - [ ] 将现有 overlay merge、mount operation application、MCP set、companion roster set、tool access set 从主 replay helper 迁入 modules。
+- [ ] 为 built-in module 增加 typed payload decode / validation 测试，覆盖缺字段、未知 effect type、payload 类型不匹配等失败路径。
 
 完成标准：
 
 - 核心解析/replay 逻辑已经模块化。
 - 旧主 replay helper 内不再直接持有各维度业务分支。
+- envelope 的 `serde_json::Value` 在 module 边界被转换为强类型 payload，replay 内部不直接操作裸 JSON。
 
 ### Phase 3: Envelope Payload Types And Registry
 
@@ -46,12 +48,14 @@
 - [ ] 新增 `CapabilityDimensionRegistry`，集中维护 module map 与 ordering。
 - [ ] projection-only module 先记录 spec / scaffold，避免本轮过度重写 Skill/guideline。
 - [ ] 将 `replay_runtime_context_patch` 改为 registry dispatch。
+- [ ] 新增统一 fold replay 入口，按 runtime command store 返回顺序应用所有 requested transitions。
 - [ ] 将 pending transition payload 从 `patch: RuntimeContextPatch` 迁移为 `transition: RuntimeCapabilityTransition` 或等价命名。
 
 完成标准：
 
 - replay 主干只遍历 effect records。
 - 新增维度无需修改 transition struct。
+- construction / context query / next-turn launch / pending apply event 能复用同一个 replay 结果类型。
 
 ### Phase 4: Replace Production Chain
 
@@ -59,7 +63,8 @@
 
 - [ ] `StepActivation` / workflow pending path 生成 declaration records。
 - [ ] `StepActivation` / resolver output 生成 runtime effect records。
-- [ ] 更新 construction/prompt pipeline 对 pending MCP/VFS 的读取方式，通过 registry context 获取 effect replay 结果。
+- [ ] 更新 construction/prompt pipeline 对 pending MCP/VFS 的读取方式，通过 registry context 获取顺序 fold 后的 effect replay 结果。
+- [ ] 移除 production callsite 对最后一个 pending command 的专用读取逻辑，改为统一 replay 所有 requested transitions。
 - [ ] 更新 hub pending transition input/output，持久化 `RuntimeCapabilityTransition`。
 - [ ] 移除或重命名 `RuntimeContextPatch`、`RuntimeToolIntent`、`RuntimeMcpIntent`、`RuntimeCompanionIntent`、`RuntimeVfsIntent` 生产类型。
 - [ ] 移除旧 `apply_runtime_context_patch` / `replay_runtime_context_patch` 生产入口。
@@ -71,6 +76,7 @@
 - production 代码不存在 full projection -> runtime payload 反推路径。
 - pending payload 可追溯 declarations，也能稳定 replay effects。
 - 生产代码唯一 replay 入口是 registry-dispatched `RuntimeCapabilityTransition`。
+- 多个 pending transitions 的 VFS/mount operation 不会因为只读取最后一个 command 而丢失。
 
 ### Phase 5: Tests And Review Gates
 
@@ -78,6 +84,7 @@
 
 - [ ] serialization test 断言 payload 有 `declarations` / `effects` records，且没有 final projection cache。
 - [ ] replay test 断言 registry dispatch 生成等价 final projection。
+- [ ] replay fold test 断言多个 pending transitions 按顺序叠加 VFS/mount effects。
 - [ ] repository/runtime/context 聚焦测试更新到新 JSON shape。
 - [ ] 增加 search gate，覆盖旧字段与 per-dimension 顶层 payload 反模式。
 - [ ] 运行 Rust 聚焦验证。
@@ -116,6 +123,8 @@ pnpm --filter app-web lint
 - 新能力维度必须通过 dimension module 接入，不允许在主干 payload struct 增加专用字段。
 - runtime command payload 不允许保存 final `CapabilityState`、runtime surface、skill baseline、guideline projection。
 - replay 入口只能遍历 effect records，并由 registry 分发。
+- construction / context query / next-turn launch / pending apply event 必须共用同一个 transition fold replay 入口。
+- built-in module 必须在 module 边界 decode typed payload 并 validation，业务 replay 内不直接消费裸 `serde_json::Value`。
 - declarations 可以用于审计和后续迁移，但不能绕过 resolver/normalizer 直接拼 final projection。
 - dimension ordering 必须在 registry/spec 集中声明。
 - plugin/extension 新能力必须产出 records 或注册 module，不能要求主干 DTO 扩字段。

@@ -810,6 +810,7 @@ pub struct BuiltinSeed {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub version: String,
+    pub source_ref: String,
     pub payload_digest: String,
     pub payload: Value,
 }

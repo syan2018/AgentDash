@@ -64,6 +64,8 @@
 - plugin 只声明 `PluginLibraryAssetSeed`，不直接写数据库，也不修改 Project 运行配置。
 - 宿主统一计算 digest、设置 `scope=system`、`source=plugin_embedded` 和 `source_ref=plugin:{plugin_name}:{asset_type}:{key}`。
 - seed payload 必须通过 Shared Library typed validator；例如 runtime extension 走 `extension_template` schema。
+- `PluginLibraryAssetSeed.version` 表达单个 embedded asset 的版本，不表达 plugin 包版本；plugin 包版本只用于审计或发布节奏。
+- 宿主在启动 seed 阶段校验 version/digest 不变量：payload digest 变化时 asset version 必须提升，asset version 提升时 payload digest 也必须变化。
 - 该入口继承 native plugin 的重启边界：管理员安装/更新 plugin 后重启服务，用户再从 Marketplace 显式安装到 Project。
 
 ---

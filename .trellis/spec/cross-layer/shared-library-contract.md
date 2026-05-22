@@ -70,6 +70,9 @@ Project 内运行资源使用 Project 前缀或既有项目资源名：
 - `current_source_version`
 - `current_source_digest`
 
+`source_status` 只表达用户可操作状态。builtin / plugin_embedded asset 的 payload digest 与 version 维护错误由后端
+seed/startup fail-fast 拦截，不扩展为前端 enum，也不要求用户在 Marketplace 中理解平台维护问题。
+
 ## Payload 规则
 
 - API 可以返回 `payload`，但保存/安装前后端都必须按 `asset_type` 做类型化校验。
@@ -299,6 +302,9 @@ Project Assets 发布行为：
 - 删除 Marketplace 安装的 Lifecycle 时，同安装包 workflow 仍被其它 Activity Lifecycle 引用 -> `400 BadRequest`
 - 来源 `LibraryAsset` 缺失、不可见或 deprecated -> `source_status = source_missing`
 - 来源版本或 digest 不一致 -> `source_status = update_available`
+
+对于 builtin / plugin_embedded 来源，后端 seed/startup 必须先保证“digest 变化时 version 已提升”的不变量；因此
+`update_available` 对前端始终表示可由用户手动覆盖更新的正常状态。
 
 ### 5. Good/Base/Bad Cases
 

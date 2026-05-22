@@ -50,8 +50,14 @@ impl<'a> SharedLibraryService<'a> {
         &self,
         input: SeedBuiltinLibraryAssetsInput,
     ) -> Result<Vec<LibraryAsset>, DomainError> {
+        let is_unfiltered_seed = input.asset_type.is_none() && input.key.is_none();
+        let seeds = builtin_library_seeds()?;
+        let active_builtin_identities = seeds
+            .iter()
+            .map(|seed| (seed.asset_type, seed.key.clone()))
+            .collect::<std::collections::HashSet<_>>();
         let mut seeded = Vec::new();
-        for seed in builtin_library_seeds()? {
+        for seed in seeds {
             if input
                 .asset_type
                 .is_some_and(|asset_type| asset_type != seed.asset_type)
@@ -75,10 +81,11 @@ impl<'a> SharedLibraryService<'a> {
                 seed.description,
                 seed.version,
                 LibraryAssetSource::Builtin,
-                Some(seed.key),
+                Some(seed.source_ref),
                 seed.payload_digest,
                 seed.payload,
             )?;
+            self.validate_seed_version_progression(&asset).await?;
             seeded.push(self.repo.upsert(&asset).await?);
         }
 
@@ -87,6 +94,11 @@ impl<'a> SharedLibraryService<'a> {
                 entity: "builtin_library_asset",
                 id: input.key.unwrap_or_else(|| "matching_filter".to_string()),
             });
+        }
+
+        if is_unfiltered_seed {
+            self.deprecate_removed_builtin_assets(&active_builtin_identities)
+                .await?;
         }
 
         Ok(seeded)
@@ -133,6 +145,7 @@ impl<'a> SharedLibraryService<'a> {
                 payload_digest,
                 item.seed.payload.clone(),
             )?;
+            validate_seed_version(&asset.version, source_ref.clone())?;
 
             match self
                 .repo
@@ -143,6 +156,7 @@ impl<'a> SharedLibraryService<'a> {
                     if existing.source == LibraryAssetSource::PluginEmbedded
                         && existing.source_ref.as_deref() == Some(source_ref.as_str()) =>
                 {
+                    validate_seed_asset_progression(&existing, &asset, &source_ref)?;
                     let mut updated = asset;
                     updated.id = existing.id;
                     updated.created_at = existing.created_at;
@@ -168,6 +182,129 @@ impl<'a> SharedLibraryService<'a> {
 
         Ok(seeded)
     }
+
+    async fn validate_seed_version_progression(
+        &self,
+        asset: &LibraryAsset,
+    ) -> Result<(), DomainError> {
+        let Some(existing) = self
+            .repo
+            .find_by_identity(
+                asset.asset_type,
+                asset.scope,
+                asset.owner_id.as_deref(),
+                &asset.key,
+            )
+            .await?
+        else {
+            validate_seed_version(&asset.version, asset_identity(asset))?;
+            return Ok(());
+        };
+
+        validate_seed_asset_progression(
+            &existing,
+            asset,
+            asset.source_ref.as_deref().unwrap_or(asset.key.as_str()),
+        )
+    }
+
+    async fn deprecate_removed_builtin_assets(
+        &self,
+        active_identities: &std::collections::HashSet<(LibraryAssetType, String)>,
+    ) -> Result<(), DomainError> {
+        let existing_assets = self
+            .repo
+            .list(LibraryAssetListFilter {
+                scope: Some(LibraryAssetScope::Builtin),
+                include_deprecated: true,
+                ..Default::default()
+            })
+            .await?;
+
+        for mut asset in existing_assets {
+            if asset.source != LibraryAssetSource::Builtin
+                || active_identities.contains(&(asset.asset_type, asset.key.clone()))
+                || asset.deprecated
+            {
+                continue;
+            }
+            asset.mark_deprecated();
+            self.repo.update(&asset).await?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct SemverCore {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+fn validate_seed_asset_progression(
+    existing: &LibraryAsset,
+    current: &LibraryAsset,
+    source_ref: &str,
+) -> Result<(), DomainError> {
+    let existing_version = parse_seed_version(&existing.version, source_ref)?;
+    let current_version = parse_seed_version(&current.version, source_ref)?;
+
+    match (
+        existing.payload == current.payload,
+        existing.version == current.version,
+    ) {
+        (true, true) => Ok(()),
+        (true, false) => Err(DomainError::InvalidConfig(format!(
+            "Shared Library seed version 变更但 payload 未变化: {source_ref} {} -> {}",
+            existing.version, current.version
+        ))),
+        (false, _) if current_version > existing_version => Ok(()),
+        (false, _) => Err(DomainError::InvalidConfig(format!(
+            "Shared Library seed payload 变化但 version 未提升: {source_ref} {} -> {}",
+            existing.version, current.version
+        ))),
+    }
+}
+
+fn validate_seed_version(version: &str, source_ref: String) -> Result<(), DomainError> {
+    parse_seed_version(version, &source_ref).map(|_| ())
+}
+
+fn parse_seed_version(version: &str, source_ref: &str) -> Result<SemverCore, DomainError> {
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return Err(invalid_seed_version(version, source_ref));
+    }
+
+    let parse_part = |raw: &str| -> Result<u64, DomainError> {
+        if raw.is_empty() || !raw.chars().all(|ch| ch.is_ascii_digit()) {
+            return Err(invalid_seed_version(version, source_ref));
+        }
+        raw.parse::<u64>()
+            .map_err(|_| invalid_seed_version(version, source_ref))
+    };
+
+    Ok(SemverCore {
+        major: parse_part(parts[0])?,
+        minor: parse_part(parts[1])?,
+        patch: parse_part(parts[2])?,
+    })
+}
+
+fn invalid_seed_version(version: &str, source_ref: &str) -> DomainError {
+    DomainError::InvalidConfig(format!(
+        "Shared Library seed version 必须使用 major.minor.patch: {source_ref} version={version}"
+    ))
+}
+
+fn asset_identity(asset: &LibraryAsset) -> String {
+    asset
+        .source_ref
+        .as_deref()
+        .unwrap_or(&asset.key)
+        .to_string()
 }
 
 #[cfg(test)]
@@ -322,6 +459,224 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plugin_embedded_seed_rejects_payload_change_without_version_bump() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let base_seed = PluginEmbeddedLibraryAssetSeed {
+            plugin_name: "corp.catalog".to_string(),
+            seed: PluginLibraryAssetSeed {
+                asset_type: LibraryAssetType::McpServerTemplate,
+                key: "corp-search".to_string(),
+                display_name: "Corp Search".to_string(),
+                description: None,
+                version: "0.2.0".to_string(),
+                payload: json!({
+                    "transport": {
+                        "type": "http",
+                        "url": "https://mcp.example.com/search"
+                    },
+                    "route_policy": "direct",
+                    "capabilities": ["search"]
+                }),
+            },
+        };
+
+        service
+            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .await
+            .expect("initial seed");
+
+        let mut changed_seed = base_seed;
+        changed_seed.seed.payload = json!({
+            "transport": {
+                "type": "http",
+                "url": "https://mcp.example.com/search-v2"
+            },
+            "route_policy": "direct",
+            "capabilities": ["search"]
+        });
+
+        let error = service
+            .seed_plugin_embedded_assets(vec![changed_seed])
+            .await
+            .expect_err("payload change without version bump must fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidConfig(message) if message.contains("payload 变化但 version 未提升"))
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_embedded_seed_repairs_digest_when_payload_and_version_are_unchanged() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let payload = json!({
+            "transport": {
+                "type": "http",
+                "url": "https://mcp.example.com/search"
+            },
+            "route_policy": "direct",
+            "capabilities": ["search"]
+        });
+        let existing = LibraryAsset::new(
+            LibraryAssetType::McpServerTemplate,
+            LibraryAssetScope::System,
+            None,
+            "corp-search",
+            "Corp Search",
+            None,
+            "0.2.0",
+            LibraryAssetSource::PluginEmbedded,
+            Some("plugin:corp.catalog:mcp_server_template:corp-search".to_string()),
+            "sha256:stale",
+            payload.clone(),
+        )
+        .expect("existing asset");
+        repo.create(&existing).await.expect("insert existing");
+
+        let seeded = service
+            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
+                plugin_name: "corp.catalog".to_string(),
+                seed: PluginLibraryAssetSeed {
+                    asset_type: LibraryAssetType::McpServerTemplate,
+                    key: "corp-search".to_string(),
+                    display_name: "Corp Search".to_string(),
+                    description: None,
+                    version: "0.2.0".to_string(),
+                    payload,
+                },
+            }])
+            .await
+            .expect("unchanged payload/version should repair digest");
+
+        assert_eq!(seeded[0].id, existing.id);
+        assert_ne!(seeded[0].payload_digest, "sha256:stale");
+    }
+
+    #[tokio::test]
+    async fn plugin_embedded_seed_rejects_version_bump_without_payload_change() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let base_seed = PluginEmbeddedLibraryAssetSeed {
+            plugin_name: "corp.catalog".to_string(),
+            seed: PluginLibraryAssetSeed {
+                asset_type: LibraryAssetType::ExtensionTemplate,
+                key: "corp-extension".to_string(),
+                display_name: "Corp Extension".to_string(),
+                description: None,
+                version: "0.2.0".to_string(),
+                payload: json!({
+                    "manifest_version": "1",
+                    "extension_id": "corp-extension",
+                    "commands": [],
+                    "flags": [],
+                    "message_renderers": [],
+                    "capability_directives": [],
+                    "asset_refs": []
+                }),
+            },
+        };
+
+        service
+            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .await
+            .expect("initial seed");
+
+        let mut changed_seed = base_seed;
+        changed_seed.seed.version = "0.2.1".to_string();
+
+        let error = service
+            .seed_plugin_embedded_assets(vec![changed_seed])
+            .await
+            .expect_err("version bump without payload change must fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidConfig(message) if message.contains("version 变更但 payload 未变化"))
+        );
+    }
+
+    #[tokio::test]
+    async fn plugin_embedded_seed_accepts_payload_change_with_version_bump() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let base_seed = PluginEmbeddedLibraryAssetSeed {
+            plugin_name: "corp.catalog".to_string(),
+            seed: PluginLibraryAssetSeed {
+                asset_type: LibraryAssetType::McpServerTemplate,
+                key: "corp-search".to_string(),
+                display_name: "Corp Search".to_string(),
+                description: None,
+                version: "0.2.0".to_string(),
+                payload: json!({
+                    "transport": {
+                        "type": "http",
+                        "url": "https://mcp.example.com/search"
+                    },
+                    "route_policy": "direct",
+                    "capabilities": ["search"]
+                }),
+            },
+        };
+
+        let first = service
+            .seed_plugin_embedded_assets(vec![base_seed.clone()])
+            .await
+            .expect("initial seed");
+
+        let mut changed_seed = base_seed;
+        changed_seed.seed.version = "0.2.1".to_string();
+        changed_seed.seed.payload = json!({
+            "transport": {
+                "type": "http",
+                "url": "https://mcp.example.com/search-v2"
+            },
+            "route_policy": "direct",
+            "capabilities": ["search"]
+        });
+
+        let second = service
+            .seed_plugin_embedded_assets(vec![changed_seed])
+            .await
+            .expect("payload change with version bump should update");
+
+        assert_eq!(first[0].id, second[0].id);
+        assert_eq!(second[0].version, "0.2.1");
+        assert_ne!(first[0].payload_digest, second[0].payload_digest);
+    }
+
+    #[tokio::test]
+    async fn plugin_embedded_seed_rejects_non_semver_version() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+
+        let error = service
+            .seed_plugin_embedded_assets(vec![PluginEmbeddedLibraryAssetSeed {
+                plugin_name: "corp.catalog".to_string(),
+                seed: PluginLibraryAssetSeed {
+                    asset_type: LibraryAssetType::McpServerTemplate,
+                    key: "corp-search".to_string(),
+                    display_name: "Corp Search".to_string(),
+                    description: None,
+                    version: "next".to_string(),
+                    payload: json!({
+                        "transport": {
+                            "type": "http",
+                            "url": "https://mcp.example.com/search"
+                        },
+                        "route_policy": "direct",
+                        "capabilities": ["search"]
+                    }),
+                },
+            }])
+            .await
+            .expect_err("non-semver version must fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidConfig(message) if message.contains("major.minor.patch"))
+        );
+    }
+
+    #[tokio::test]
     async fn builtin_seeds_are_idempotent_and_filterable() {
         let repo = InMemoryLibraryAssetRepository::default();
         let service = SharedLibraryService::new(&repo);
@@ -346,6 +701,12 @@ mod tests {
                 Some(&asset.id),
                 "builtin seed upsert 应保留资产 identity 的稳定 id"
             );
+            let expected_source_ref =
+                format!("builtin:{}:{}", asset.asset_type.as_str(), asset.key);
+            assert_eq!(
+                asset.source_ref.as_deref(),
+                Some(expected_source_ref.as_str())
+            );
         }
 
         let skill_templates = service
@@ -361,5 +722,88 @@ mod tests {
                 .iter()
                 .all(|asset| asset.asset_type == LibraryAssetType::SkillTemplate)
         );
+    }
+
+    #[tokio::test]
+    async fn builtin_seed_rejects_payload_change_without_version_bump() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let payload = json!({
+            "config": {
+                "executor": "PI_AGENT",
+                "system_prompt": "旧 payload",
+                "system_prompt_mode": "append",
+                "capability_directives": []
+            }
+        });
+        let existing = LibraryAsset::new(
+            LibraryAssetType::AgentTemplate,
+            LibraryAssetScope::Builtin,
+            None,
+            "pi_agent_general",
+            "Pi Agent General",
+            Some("平台内置通用 Agent 模板".to_string()),
+            "1.0.0",
+            LibraryAssetSource::Builtin,
+            Some("pi_agent_general".to_string()),
+            seed_digest(&payload).expect("digest"),
+            payload,
+        )
+        .expect("existing asset");
+        repo.create(&existing).await.expect("insert existing");
+
+        let error = service
+            .seed_builtin_assets(SeedBuiltinLibraryAssetsInput {
+                asset_type: Some(LibraryAssetType::AgentTemplate),
+                key: Some("pi_agent_general".to_string()),
+            })
+            .await
+            .expect_err("builtin payload change without version bump must fail");
+
+        assert!(
+            matches!(error, DomainError::InvalidConfig(message) if message.contains("payload 变化但 version 未提升"))
+        );
+    }
+
+    #[tokio::test]
+    async fn builtin_seed_marks_removed_assets_deprecated() {
+        let repo = InMemoryLibraryAssetRepository::default();
+        let service = SharedLibraryService::new(&repo);
+        let payload = json!({
+            "config": {
+                "executor": "PI_AGENT",
+                "system_prompt": "已移除模板",
+                "system_prompt_mode": "append",
+                "capability_directives": []
+            }
+        });
+        let stale = LibraryAsset::new(
+            LibraryAssetType::AgentTemplate,
+            LibraryAssetScope::Builtin,
+            None,
+            "removed_agent",
+            "Removed Agent",
+            None,
+            "1.0.0",
+            LibraryAssetSource::Builtin,
+            Some("builtin:agent_template:removed_agent".to_string()),
+            seed_digest(&payload).expect("digest"),
+            payload,
+        )
+        .expect("stale asset");
+        let stale_id = stale.id;
+        repo.create(&stale).await.expect("insert stale asset");
+
+        service
+            .seed_builtin_assets(Default::default())
+            .await
+            .expect("seed all builtins");
+
+        let stale = repo
+            .get(stale_id)
+            .await
+            .expect("load stale")
+            .expect("stale asset still exists");
+        assert!(stale.deprecated);
     }
 }

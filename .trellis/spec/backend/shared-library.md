@@ -55,6 +55,14 @@ Registry 负责：
 
 Project 资源不会因 builtin seed 更新而静默变化。
 
+Builtin 版本治理：
+
+- `version` 是维护者声明的资产升级事实，粒度为 `asset_type + key`；不同 builtin asset 不共享全局版本常量。
+- `source_ref` 使用 `builtin:{asset_type}:{key}`，用于审计、Project installed source 和版本治理诊断。
+- `payload_digest` 由 seed 构造阶段按 canonical JSON sha256 自动计算，不在版本 manifest 中手写。
+- seed/startup 阶段必须校验 version/digest 不变量：payload digest 变化时 version 必须提升；version 提升时 payload digest 也必须变化。
+- 版本维护错误属于平台不变量破坏，必须 fail-fast，不作为 Marketplace 用户态 `source_status` 返回。
+
 ## InstalledAssetSource
 
 安装到 Project 后的资源必须记录来源：
@@ -70,6 +78,9 @@ Project 资源不会因 builtin seed 更新而静默变化。
 - `up_to_date`: 来源版本/digest 一致。
 - `update_available`: Shared Library 中来源版本或 digest 已更新。
 - `source_missing`: 来源资产不可见、被删除或 deprecated。
+
+`source_status` 只表达用户可操作状态。对于 builtin / plugin_embedded source，seed/startup 已保证 digest
+变化必然伴随 version 提升；如果这个不变量被破坏，服务应在 seed/startup 阶段失败，而不是把维护错误降级成前端状态。
 
 更新策略：
 
@@ -147,6 +158,7 @@ Project 资源不会因 builtin seed 更新而静默变化。
 - plugin seed 必须走与 builtin/user asset 相同的 `LibraryAssetPayload` typed validator。
 - 同一 `asset_type + scope + key` 被不同 plugin 或不同 source 占用时启动期 fail-fast，不做隐式覆盖。
 - 同一 plugin 的同一 seed 可幂等更新，保留原 `LibraryAsset.id` 与 `created_at`。
+- plugin seed 的 `version` 是资产版本，不等同于 plugin 包版本；宿主计算 digest 后按同一套 version/digest 不变量校验。
 
 ## 迁移原则
 

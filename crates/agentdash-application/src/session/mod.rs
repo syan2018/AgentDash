@@ -67,11 +67,13 @@ pub use capability_projection::{
 };
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
-    CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta, NamedEntityDelta,
-    RuntimeCapabilityReplay, RuntimeCapabilityReplayContext, RuntimeContextTransition, SetDelta,
-    VfsSurfaceDelta, apply_runtime_capability_transition, compose_vfs_with_overlay_and_directives,
-    compute_capability_state_delta, merge_vfs_overlay, replay_runtime_capability_transition,
-    replay_runtime_capability_transitions,
+    CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
+    CompanionCapabilityDimensionModule, McpCapabilityDimensionModule, NamedEntityDelta,
+    RuntimeCapabilityProjectionContext, RuntimeCapabilityReplay, RuntimeCapabilityReplayContext,
+    RuntimeContextTransition, SetDelta, ToolCapabilityDimensionModule,
+    VfsCapabilityDimensionModule, VfsSurfaceDelta, apply_runtime_capability_transition,
+    compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
+    replay_runtime_capability_transition, replay_runtime_capability_transitions,
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
@@ -112,12 +114,13 @@ pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
-    CapabilityDeclarationRecord, CapabilityDimensionKey, CapabilityState, CompanionSessionContext,
-    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
-    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
-    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, HookSnapshotReloadTrigger,
-    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCapabilityEffectRecord,
-    RuntimeCapabilityTransition, RuntimeCapabilityTransitionInput, SessionBootstrapState,
+    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
+    CapabilityState, CompanionSessionContext, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+    DECLARATION_TYPE_MOUNT_OPERATION, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
+    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
+    HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionBootstrapState,
     SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
     SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
     UserPromptInput, resolve_session_prompt_lifecycle,

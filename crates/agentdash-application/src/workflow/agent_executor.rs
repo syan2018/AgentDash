@@ -16,12 +16,16 @@ use super::scheduler::{
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
+use crate::session::capability_state::{
+    CapabilityDimensionRegistry, CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
+};
 use crate::session::hub::PendingRuntimeContextTransitionInput;
+use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::session::{
     LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
     SessionLaunchService, UserPromptInput,
 };
-use crate::session::{RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::workflow::step_activation::apply_to_running_session;
 use crate::workflow::{
     activate_step_with_platform, agent_mcp_entries_from_servers,
@@ -308,20 +312,38 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 platform_config,
             );
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
-            let transition = RuntimeCapabilityTransition::from_runtime_effects(
-                crate::session::RuntimeCapabilityTransitionInput {
-                    tool_directives: activation.tool_directives.clone(),
-                    tool_access: SetToolAccessEffect {
-                        capabilities: activation.capability_state.tool.capabilities.clone(),
-                        enabled_clusters: activation.capability_state.tool.enabled_clusters.clone(),
-                        tool_policy: activation.capability_state.tool.tool_policy.clone(),
-                    },
-                    mcp_servers: activation.mcp_servers.clone(),
-                    companion_agents: activation.capability_state.companion.agents.clone(),
-                    vfs_overlay: Some(activation.lifecycle_vfs.clone()),
-                    mount_directives: activation.mount_directives.clone(),
-                },
-            )?;
+            let mut declarations =
+                ToolCapabilityDimensionModule::capability_directive_declarations(
+                    CapabilityArtifactSource::workflow(),
+                    activation.tool_directives.clone(),
+                )?;
+            declarations.extend(VfsCapabilityDimensionModule::mount_operation_declarations(
+                CapabilityArtifactSource::workflow(),
+                activation.mount_directives.clone(),
+            )?);
+            let mut effects = vec![
+                ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
+                    capabilities: activation.capability_state.tool.capabilities.clone(),
+                    enabled_clusters: activation.capability_state.tool.enabled_clusters.clone(),
+                    tool_policy: activation.capability_state.tool.tool_policy.clone(),
+                })?,
+                McpCapabilityDimensionModule::set_server_set_effect(
+                    activation.mcp_servers.clone(),
+                )?,
+                CompanionCapabilityDimensionModule::set_agent_roster_effect(
+                    activation.capability_state.companion.agents.clone(),
+                )?,
+                VfsCapabilityDimensionModule::apply_vfs_overlay_effect(
+                    activation.lifecycle_vfs.clone(),
+                )?,
+            ];
+            if !activation.mount_directives.is_empty() {
+                effects.push(VfsCapabilityDimensionModule::apply_mount_operations_effect(
+                    activation.mount_directives.clone(),
+                )?);
+            }
+            let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
+            CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     session_id: root_session_id.to_string(),

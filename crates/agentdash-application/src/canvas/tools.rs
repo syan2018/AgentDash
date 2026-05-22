@@ -655,14 +655,26 @@ fn build_canvas_presented_notification(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
-    use agentdash_spi::Vfs;
+    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+    use agentdash_spi::hooks::{
+        ExecutionHookProvider, HookEvaluationQuery, HookResolution, SessionHookRefreshQuery,
+        SessionHookSnapshot, SessionHookSnapshotQuery,
+    };
+    use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
     use async_trait::async_trait;
+    use futures::stream;
     use tokio::sync::RwLock;
 
+    use crate::session::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
+    use crate::session::hub::SessionRuntimeInner;
+    use crate::session::ownership::SessionOwnerResolver;
+    use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::vfs::tools::fs::FsApplyPatchTool;
+    use crate::vfs::tools::provider::SessionToolServices;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, RelayVfsService};
 
     use super::*;
@@ -748,6 +760,141 @@ mod tests {
             self.canvases.write().await.remove(&id);
             Ok(())
         }
+    }
+
+    #[derive(Default)]
+    struct PendingConnector;
+
+    #[async_trait]
+    impl AgentConnector for PendingConnector {
+        fn connector_id(&self) -> &'static str {
+            "pending"
+        }
+
+        fn connector_type(&self) -> agentdash_spi::ConnectorType {
+            agentdash_spi::ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> agentdash_spi::ConnectorCapabilities {
+            agentdash_spi::ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<agentdash_spi::AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: agentdash_spi::ExecutionContext,
+        ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
+            Ok(Box::pin(stream::pending()))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct EmptyHookProvider;
+
+    #[async_trait]
+    impl ExecutionHookProvider for EmptyHookProvider {
+        async fn load_session_snapshot(
+            &self,
+            query: SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.session_id,
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn evaluate_hook(
+            &self,
+            _query: HookEvaluationQuery,
+        ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+            Ok(HookResolution::default())
+        }
+    }
+
+    fn prompt_construction(
+        session_id: &str,
+        project_id: Uuid,
+        working_dir: &std::path::Path,
+    ) -> SessionConstructionPlan {
+        let user_input = UserPromptInput {
+            executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
+            ..UserPromptInput::from_text("present canvas")
+        };
+        let binding = SessionBinding::new(
+            uuid::Uuid::new_v4(),
+            session_id.to_string(),
+            SessionOwnerType::Project,
+            project_id,
+            "project_agent:test",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let mut construction =
+            SessionConstructionPlan::from_source_input(session_id, owner, &user_input);
+        let vfs = local_workspace_vfs(working_dir);
+        let mut capability_state =
+            CapabilityState::from_clusters([agentdash_spi::ToolCluster::Canvas]);
+        capability_state.vfs.active = Some(vfs.clone());
+        construction.workspace.working_directory = Some(working_dir.to_path_buf());
+        construction.execution_profile.executor_config = user_input.executor_config;
+        construction.surface.vfs = Some(vfs.clone());
+        construction.projections.context.vfs = Some(vfs);
+        construction.projections.capability_state = Some(capability_state);
+        construction.resolution = ConstructionResolutionPlan {
+            vfs_source: Some("test.local_workspace_vfs".to_string()),
+            mcp_source: Some("test.empty".to_string()),
+            capability_source: Some("test.capability_state".to_string()),
+            executor_source: Some("test.executor_config".to_string()),
+            working_directory_source: Some("test.working_dir".to_string()),
+            pending_overlay_applied: false,
+            runtime_base_capability_state: None,
+        };
+        construction
     }
 
     #[tokio::test]
@@ -903,6 +1050,132 @@ mod tests {
                 .any(|mount| mount.id == "cvs-existing-kpi"),
             "shared VFS should contain the attached canvas mount"
         );
+    }
+
+    #[tokio::test]
+    async fn present_canvas_updates_meta_capability_skill_and_events() {
+        let project_id = Uuid::new_v4();
+        let canvas_repo = Arc::new(MemoryCanvasRepository::default());
+        let canvas = build_canvas(
+            project_id,
+            Some("demo".to_string()),
+            "Demo".to_string(),
+            "already created".to_string(),
+            Default::default(),
+        )
+        .expect("应能构建 canvas");
+        canvas_repo.create(&canvas).await.expect("应能写入仓储");
+
+        let mut registry = MountProviderRegistry::new();
+        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
+        let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let base = tempfile::tempdir().expect("tempdir");
+        let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
+            Arc::new(PendingConnector),
+            Some(Arc::new(EmptyHookProvider)),
+            Arc::new(MemorySessionPersistence::default()),
+        )
+        .with_vfs_service(vfs_service);
+        let session = hub
+            .create_session("present-canvas")
+            .await
+            .expect("session 应能创建");
+        hub.ensure_session(&session.id).await;
+        let turn_id = hub
+            .start_prompt(
+                &session.id,
+                prompt_construction(&session.id, project_id, base.path()),
+            )
+            .await
+            .expect("prompt 应能启动");
+        hub.reload_session_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+            .await
+            .expect("hook runtime 应能刷新");
+
+        let handle = SharedSessionToolServicesHandle::default();
+        handle
+            .set(SessionToolServices {
+                core: hub.core_service(),
+                eventing: hub.eventing_service(),
+                control: hub.control_service(),
+                launch: hub.launch_service(),
+                hooks: hub.hook_service(),
+                capability: hub.capability_service(),
+                companion_wait_registry: hub.companion_wait_registry.clone(),
+            })
+            .await;
+
+        let shared_vfs = SharedRuntimeVfs::new(local_workspace_vfs(base.path()));
+        let present_tool = PresentCanvasTool::new(
+            canvas_repo,
+            shared_vfs,
+            handle,
+            session.id.clone(),
+            turn_id,
+            project_id,
+        );
+
+        present_tool
+            .execute(
+                "tool-present",
+                serde_json::json!({ "canvas_id": "demo" }),
+                CancellationToken::new(),
+                None,
+            )
+            .await
+            .expect("present_canvas 应成功");
+
+        let meta = hub
+            .get_session_meta(&session.id)
+            .await
+            .expect("meta 查询应成功")
+            .expect("meta 应存在");
+        assert_eq!(meta.visible_canvas_mount_ids, vec!["demo".to_string()]);
+
+        let state = hub
+            .get_current_capability_state(&session.id)
+            .await
+            .expect("当前 capability state 应存在");
+        let active_vfs = state.vfs.active.expect("active VFS 应存在");
+        assert!(active_vfs.mounts.iter().any(|mount| mount.id == "cvs-demo"));
+        assert!(
+            state
+                .skill
+                .skills
+                .iter()
+                .any(|skill| skill.name == "canvas-system"
+                    && skill.file_path == "cvs-demo://skills/canvas-system/SKILL.md")
+        );
+
+        let events = hub
+            .eventing_service()
+            .list_event_page(&session.id, 0, 100)
+            .await
+            .expect("events 应能读取")
+            .events;
+        let capability_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.notification.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                    ) if key == "capability_state_changed"
+                )
+            })
+            .expect("应写入 capability_state_changed 事件");
+        let presented_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    &event.notification.event,
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
+                    ) if key == "canvas_presented"
+                )
+            })
+            .expect("应写入 canvas_presented 事件");
+        assert!(capability_index < presented_index);
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@ mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
 pub mod bootstrap;
+pub mod capability_projection;
 pub mod capability_service;
 pub mod capability_state;
 mod compaction_context_frame;
@@ -58,6 +59,11 @@ pub use assembler::{
     SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
     compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
+};
+pub use capability_projection::{
+    SessionCapabilityProjection, SessionCapabilityProjectionInput,
+    derive_session_capability_projection, derive_session_guidelines, derive_session_skill_baseline,
+    merge_live_vfs_skill_entries, normalize_capability_state_dimensions,
 };
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{

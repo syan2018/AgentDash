@@ -150,6 +150,7 @@ function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSn
   return {
     canvas_id: String(raw.canvas_id ?? ""),
     session_id: raw.session_id != null ? String(raw.session_id) : null,
+    resource_surface_ref: raw.resource_surface_ref != null ? String(raw.resource_surface_ref) : null,
     entry: String(raw.entry ?? ""),
     files: asRecordArray(raw.files).map(mapCanvasRuntimeFile),
     bindings: asRecordArray(raw.bindings).map(mapCanvasRuntimeBinding),

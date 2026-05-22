@@ -8,15 +8,21 @@ Canvas preview iframe exposes one SDK object:
 
 ```ts
 window.agentdash.invoke(actionKey: string, input?: unknown): Promise<RuntimeInvocationResult>
+window.agentdash.assets.url(uri: string): Promise<string>
+window.agentdash.assets.revoke(url: string): void
 ```
 
-Rules:
+The `invoke` API is for Session Runtime Actions. The `assets` API is for Canvas browser resource loading.
+
+`invoke` rules:
 
 - Call it only from explicit user actions such as button clicks, form submits, or refresh controls.
 - Do not call it during module load, React render, or automatic polling.
 - Pass only the action key and provider input. The platform supplies actor, session context, policy, trace, and routing.
 - Do not send tokens, backend ids, MCP transports, relay commands, absolute paths, or arbitrary HTTP requests.
 - Do not build a runtime action discovery flow inside the canvas. Use action keys and input contracts provided by the platform, user request, or task context.
+
+These `invoke` rules do not prohibit loading VFS image assets during component effects. Use `window.agentdash.assets.url(uri)` for image rendering instead of routing images through runtime actions.
 
 ## Result Shape
 
@@ -41,6 +47,54 @@ interface RuntimeInvocationResult {
 Provider-specific data is under `result.output.output`.
 
 `invoke` rejects when the action is unavailable, denied by capability policy, given invalid input, or fails in the provider. Show a compact error state in the canvas UI.
+
+## VFS Image Assets
+
+Use this API to render image binary files from mounts visible in the current session runtime surface:
+
+```ts
+const imageUrl = await window.agentdash.assets.url("main://docs/diagram.png");
+```
+
+The URI shape is:
+
+```text
+<mount_id>://<mount_relative_path>
+```
+
+Examples:
+
+```ts
+await window.agentdash.assets.url("main://docs/diagram.png");
+await window.agentdash.assets.url("skill-assets://skills/demo/assets/logo.png");
+await window.agentdash.assets.url("ld-km://assets/doc-id/source-id.png");
+```
+
+Behavior:
+
+- Resolves only against the current Canvas/session VFS surface.
+- Returns a browser URL suitable for `<img src={imageUrl}>`.
+- Rejects non-image MIME types.
+- Rejects invalid mount URIs, unavailable mounts, missing sessions, and provider read failures.
+- Does not expose VFS `surface_ref`, backend ids, auth headers, signed provider URLs, or local paths to Canvas code.
+
+Cleanup:
+
+```ts
+const imageUrl = await window.agentdash.assets.url(uri);
+// later, when no longer needed:
+window.agentdash.assets.revoke(imageUrl);
+```
+
+The preview runtime also revokes generated URLs when the Canvas reloads or unmounts.
+
+Do not use:
+
+```tsx
+<img src="main://docs/diagram.png" />
+```
+
+Browsers cannot load VFS mount URIs directly. Always resolve them through `window.agentdash.assets.url(uri)` first.
 
 ## Runtime Actions
 

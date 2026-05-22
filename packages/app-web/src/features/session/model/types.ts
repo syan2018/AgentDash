@@ -278,7 +278,6 @@ export interface AggregatedEntryGroup {
   entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
-  filePath?: string;
 }
 
 /** 思考条目组 */

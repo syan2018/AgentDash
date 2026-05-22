@@ -295,7 +295,6 @@ function isAggregatedGroupEqual(a: SessionDisplayItem, b: SessionDisplayItem): b
     const gb = b as AggregatedEntryGroup;
     if (ga.groupKey !== gb.groupKey) return false;
     if (ga.aggregationType !== gb.aggregationType) return false;
-    if (ga.filePath !== gb.filePath) return false;
     if (ga.entries.length !== gb.entries.length) return false;
     for (let i = 0; i < ga.entries.length; i += 1) {
       if (!entryShallowEqual(ga.entries[i]!, gb.entries[i]!)) return false;

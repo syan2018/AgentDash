@@ -290,6 +290,8 @@ requested/failed 事实供下一轮恢复。
 
 - `PendingCapabilityStateTransition` 保存 phase metadata：`run_id`、`lifecycle_key`、`phase_node`、`capability_keys`、`source_turn_id`。
 - `RuntimeCapabilityTransition.declarations` 保留 source capability / mount declarations；`effects` 保存 tool access、MCP server set、companion roster、VFS overlay 与 mount operations 等可 replay runtime effects。
+- workflow pending path 通过 built-in dimension module 生成 records：Tool module 生成 `capability_directive` declarations 与 `set_tool_access` effect；VFS module 生成 `mount_operation` declarations、`apply_vfs_overlay` effect 与 `apply_mount_operations` effect；MCP / Companion module 分别生成 server set 与 roster effects。
+- 写入 runtime command store 前必须通过 `CapabilityDimensionRegistry::validate_transition` 验证 declarations/effects，确保 JSON payload 已能在 module 边界 decode 为强类型 payload。
 - replay 先从 construction base capability state 开始，按 store 返回顺序 fold 所有 requested transitions，并由 dimension registry 分发 effect records；随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
 - repository 继续使用 runtime command `payload_json` 容器；payload 语义是 intent，而不是 full `CapabilityState` projection。
 

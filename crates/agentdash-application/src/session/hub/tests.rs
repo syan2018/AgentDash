@@ -38,6 +38,11 @@ use super::super::types::{
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
+use crate::session::SetToolAccessEffect;
+use crate::session::capability_state::{
+    CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
+};
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RelayVfsService, RuntimeFileEntry,
@@ -54,6 +59,31 @@ fn test_hub(
         hook_provider,
         Arc::new(MemorySessionPersistence::default()),
     )
+}
+
+fn runtime_transition_from_state(
+    state: &CapabilityState,
+    vfs_overlay: Option<agentdash_spi::Vfs>,
+) -> RuntimeCapabilityTransition {
+    let mut effects = vec![
+        ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
+            capabilities: state.tool.capabilities.clone(),
+            enabled_clusters: state.tool.enabled_clusters.clone(),
+            tool_policy: state.tool.tool_policy.clone(),
+        })
+        .expect("tool effect builds"),
+        McpCapabilityDimensionModule::set_server_set_effect(state.tool.mcp_servers.clone())
+            .expect("mcp effect builds"),
+        CompanionCapabilityDimensionModule::set_agent_roster_effect(state.companion.agents.clone())
+            .expect("companion effect builds"),
+    ];
+    if let Some(overlay) = vfs_overlay {
+        effects.push(
+            VfsCapabilityDimensionModule::apply_vfs_overlay_effect(overlay)
+                .expect("vfs overlay effect builds"),
+        );
+    }
+    RuntimeCapabilityTransition::from_records(Vec::new(), effects)
 }
 
 fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
@@ -864,13 +894,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
     let mut after_state = before_state.clone();
     after_state.vfs.active = Some(canvas_skill_vfs());
-    let transition = RuntimeCapabilityTransition::from_runtime_projection_parts(
-        &after_state,
-        after_state.vfs.active.clone(),
-        Vec::new(),
-        Vec::new(),
-    )
-    .expect("transition builds");
+    let transition = runtime_transition_from_state(&after_state, after_state.vfs.active.clone());
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
@@ -999,13 +1023,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
-            transition: RuntimeCapabilityTransition::from_runtime_projection_parts(
-                &target_flow,
-                target_flow.vfs.active.clone(),
-                Vec::new(),
-                Vec::new(),
-            )
-            .expect("transition builds"),
+            transition: runtime_transition_from_state(&target_flow, target_flow.vfs.active.clone()),
             created_at: 1,
             source_turn_id: None,
         },

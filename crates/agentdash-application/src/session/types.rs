@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use agentdash_agent_protocol::ContentBlock;
-use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
+use agentdash_domain::workflow::MountDirective;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -82,6 +82,15 @@ pub struct CapabilityDeclarationRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CapabilityContributionRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub contribution_type: String,
+    pub source: CapabilityArtifactSource,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeCapabilityEffectRecord {
     pub dimension: CapabilityDimensionKey,
     pub effect_type: String,
@@ -108,6 +117,7 @@ pub const CAPABILITY_DIMENSION_COMPANION: &str = "companion";
 pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
 
 pub const DECLARATION_TYPE_CAPABILITY_DIRECTIVE: &str = "capability_directive";
+pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";
 
 pub const EFFECT_TYPE_SET_TOOL_ACCESS: &str = "set_tool_access";
 pub const EFFECT_TYPE_SET_MCP_SERVER_SET: &str = "set_server_set";
@@ -147,93 +157,34 @@ pub struct ApplyMountOperationsEffect {
     pub operations: Vec<MountDirective>,
 }
 
-pub struct RuntimeCapabilityTransitionInput {
-    pub tool_directives: Vec<ToolCapabilityDirective>,
-    pub tool_access: SetToolAccessEffect,
-    pub mcp_servers: Vec<SessionMcpServer>,
-    pub companion_agents: Vec<CompanionAgentEntry>,
-    pub vfs_overlay: Option<Vfs>,
-    pub mount_directives: Vec<MountDirective>,
-}
-
 impl RuntimeCapabilityTransition {
-    pub fn from_runtime_effects(input: RuntimeCapabilityTransitionInput) -> Result<Self, String> {
-        let declarations = input
-            .tool_directives
-            .into_iter()
-            .map(|directive| {
-                Ok(CapabilityDeclarationRecord {
-                    dimension: CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
-                    declaration_type: DECLARATION_TYPE_CAPABILITY_DIRECTIVE.to_string(),
-                    source: CapabilityArtifactSource::workflow(),
-                    payload: serde_json::to_value(directive).map_err(|error| {
-                        format!("tool capability declaration payload serialize failed: {error}")
-                    })?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
-        let mut effects = vec![
-            RuntimeCapabilityEffectRecord::typed(
-                CAPABILITY_DIMENSION_TOOL,
-                EFFECT_TYPE_SET_TOOL_ACCESS,
-                &input.tool_access,
-            )?,
-            RuntimeCapabilityEffectRecord::typed(
-                CAPABILITY_DIMENSION_MCP,
-                EFFECT_TYPE_SET_MCP_SERVER_SET,
-                &SetMcpServerSetEffect {
-                    servers: input.mcp_servers,
-                },
-            )?,
-            RuntimeCapabilityEffectRecord::typed(
-                CAPABILITY_DIMENSION_COMPANION,
-                EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
-                &SetCompanionAgentRosterEffect {
-                    agents: input.companion_agents,
-                },
-            )?,
-        ];
-        if let Some(overlay) = input.vfs_overlay {
-            effects.push(RuntimeCapabilityEffectRecord::typed(
-                CAPABILITY_DIMENSION_VFS,
-                EFFECT_TYPE_APPLY_VFS_OVERLAY,
-                &ApplyVfsOverlayEffect { overlay },
-            )?);
-        }
-        if !input.mount_directives.is_empty() {
-            effects.push(RuntimeCapabilityEffectRecord::typed(
-                CAPABILITY_DIMENSION_VFS,
-                EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
-                &ApplyMountOperationsEffect {
-                    operations: input.mount_directives,
-                },
-            )?);
-        }
-
-        Ok(Self {
+    pub fn from_records(
+        declarations: Vec<CapabilityDeclarationRecord>,
+        effects: Vec<RuntimeCapabilityEffectRecord>,
+    ) -> Self {
+        Self {
             declarations,
             effects,
-        })
+        }
     }
+}
 
-    pub fn from_runtime_projection_parts(
-        state: &CapabilityState,
-        vfs_overlay: Option<Vfs>,
-        mount_directives: Vec<MountDirective>,
-        tool_directives: Vec<ToolCapabilityDirective>,
+impl CapabilityDeclarationRecord {
+    pub fn typed(
+        dimension: &str,
+        declaration_type: &str,
+        source: CapabilityArtifactSource,
+        payload: &impl Serialize,
     ) -> Result<Self, String> {
-        Self::from_runtime_effects(RuntimeCapabilityTransitionInput {
-            tool_directives,
-            tool_access: SetToolAccessEffect {
-                capabilities: state.tool.capabilities.clone(),
-                enabled_clusters: state.tool.enabled_clusters.clone(),
-                tool_policy: state.tool.tool_policy.clone(),
-            },
-            mcp_servers: state.tool.mcp_servers.clone(),
-            companion_agents: state.companion.agents.clone(),
-            vfs_overlay,
-            mount_directives,
+        Ok(Self {
+            dimension: CapabilityDimensionKey::new(dimension),
+            declaration_type: declaration_type.to_string(),
+            source,
+            payload: serde_json::to_value(payload).map_err(|error| {
+                format!(
+                    "{dimension}.{declaration_type} declaration payload serialize failed: {error}"
+                )
+            })?,
         })
     }
 }

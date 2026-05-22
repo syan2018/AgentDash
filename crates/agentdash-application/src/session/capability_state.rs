@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::common::{MountLink, Vfs};
-use agentdash_domain::workflow::MountDirective;
+use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
 use agentdash_spi::SessionMcpServer;
 use agentdash_spi::hooks::CapabilityDelta;
 use serde::de::DeserializeOwned;
@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use super::types::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
-    CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CapabilityState,
+    CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS,
+    CapabilityArtifactSource, CapabilityContributionRecord, CapabilityDeclarationRecord,
+    CapabilityState, DECLARATION_TYPE_CAPABILITY_DIRECTIVE, DECLARATION_TYPE_MOUNT_OPERATION,
     EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition, RuntimeCapabilityEffectRecord,
@@ -240,8 +242,23 @@ pub struct RuntimeCapabilityReplayContext {
     pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
 }
 
+#[derive(Debug, Default)]
+pub struct RuntimeCapabilityProjectionContext;
+
 pub trait CapabilityDimensionModule {
     fn key(&self) -> &'static str;
+
+    fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String>;
+
+    fn compile_declaration(
+        &self,
+        record: &CapabilityDeclarationRecord,
+    ) -> Result<Option<CapabilityContributionRecord>, String> {
+        self.validate_declaration(record)?;
+        Ok(None)
+    }
+
+    fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String>;
 
     fn replay_effect(
         &self,
@@ -249,6 +266,14 @@ pub trait CapabilityDimensionModule {
         context: &mut RuntimeCapabilityReplayContext,
         record: &RuntimeCapabilityEffectRecord,
     ) -> Result<(), String>;
+
+    fn normalize_projection(
+        &self,
+        _state: &mut CapabilityState,
+        _context: &RuntimeCapabilityProjectionContext,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct CapabilityDimensionRegistry {
@@ -256,15 +281,38 @@ pub struct CapabilityDimensionRegistry {
 }
 
 impl CapabilityDimensionRegistry {
-    pub fn built_in() -> Self {
+    pub fn new() -> Self {
         Self {
-            modules: vec![
-                Box::new(VfsCapabilityDimensionModule),
-                Box::new(ToolCapabilityDimensionModule),
-                Box::new(McpCapabilityDimensionModule),
-                Box::new(CompanionCapabilityDimensionModule),
-            ],
+            modules: Vec::new(),
         }
+    }
+
+    pub fn built_in() -> Self {
+        let mut registry = Self::new();
+        registry
+            .register_module(VfsCapabilityDimensionModule)
+            .expect("built-in vfs dimension should register");
+        registry
+            .register_module(ToolCapabilityDimensionModule)
+            .expect("built-in tool dimension should register");
+        registry
+            .register_module(McpCapabilityDimensionModule)
+            .expect("built-in mcp dimension should register");
+        registry
+            .register_module(CompanionCapabilityDimensionModule)
+            .expect("built-in companion dimension should register");
+        registry
+    }
+
+    pub fn register_module<M>(&mut self, module: M) -> Result<(), String>
+    where
+        M: CapabilityDimensionModule + 'static,
+    {
+        if self.module_for(module.key()).is_some() {
+            return Err(format!("capability dimension `{}` 已注册", module.key()));
+        }
+        self.modules.push(Box::new(module));
+        Ok(())
     }
 
     fn module_for(&self, key: &str) -> Option<&dyn CapabilityDimensionModule> {
@@ -274,12 +322,40 @@ impl CapabilityDimensionRegistry {
             .map(|module| module.as_ref())
     }
 
-    fn replay_transition(
+    pub fn validate_transition(
+        &self,
+        transition: &RuntimeCapabilityTransition,
+    ) -> Result<(), String> {
+        for record in &transition.declarations {
+            let module = self.module_for(record.dimension.as_str()).ok_or_else(|| {
+                format!(
+                    "未注册 capability dimension `{}`，无法验证 `{}` declaration",
+                    record.dimension.as_str(),
+                    record.declaration_type
+                )
+            })?;
+            module.validate_declaration(record)?;
+        }
+        for record in &transition.effects {
+            let module = self.module_for(record.dimension.as_str()).ok_or_else(|| {
+                format!(
+                    "未注册 capability dimension `{}`，无法验证 `{}` effect",
+                    record.dimension.as_str(),
+                    record.effect_type
+                )
+            })?;
+            module.validate_effect(record)?;
+        }
+        Ok(())
+    }
+
+    pub fn replay_transition(
         &self,
         state: &mut CapabilityState,
         context: &mut RuntimeCapabilityReplayContext,
         transition: &RuntimeCapabilityTransition,
     ) -> Result<(), String> {
+        self.validate_transition(transition)?;
         for module in &self.modules {
             for record in transition
                 .effects
@@ -289,27 +365,126 @@ impl CapabilityDimensionRegistry {
                 module.replay_effect(state, context, record)?;
             }
         }
-        for record in &transition.effects {
-            if self.module_for(record.dimension.as_str()).is_none() {
-                return Err(format!(
-                    "未注册 capability dimension `{}`，无法 replay `{}` effect",
-                    record.dimension.as_str(),
-                    record.effect_type
-                ));
-            }
-        }
         Ok(())
     }
 }
 
-struct ToolCapabilityDimensionModule;
-struct McpCapabilityDimensionModule;
-struct CompanionCapabilityDimensionModule;
-struct VfsCapabilityDimensionModule;
+impl Default for CapabilityDimensionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct ToolCapabilityDimensionModule;
+pub struct McpCapabilityDimensionModule;
+pub struct CompanionCapabilityDimensionModule;
+pub struct VfsCapabilityDimensionModule;
+
+impl ToolCapabilityDimensionModule {
+    pub fn capability_directive_declarations(
+        source: CapabilityArtifactSource,
+        directives: impl IntoIterator<Item = ToolCapabilityDirective>,
+    ) -> Result<Vec<CapabilityDeclarationRecord>, String> {
+        directives
+            .into_iter()
+            .map(|directive| {
+                CapabilityDeclarationRecord::typed(
+                    CAPABILITY_DIMENSION_TOOL,
+                    DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+                    source.clone(),
+                    &directive,
+                )
+            })
+            .collect()
+    }
+
+    pub fn set_tool_access_effect(
+        payload: SetToolAccessEffect,
+    ) -> Result<RuntimeCapabilityEffectRecord, String> {
+        RuntimeCapabilityEffectRecord::typed(
+            CAPABILITY_DIMENSION_TOOL,
+            EFFECT_TYPE_SET_TOOL_ACCESS,
+            &payload,
+        )
+    }
+}
+
+impl McpCapabilityDimensionModule {
+    pub fn set_server_set_effect(
+        servers: Vec<SessionMcpServer>,
+    ) -> Result<RuntimeCapabilityEffectRecord, String> {
+        RuntimeCapabilityEffectRecord::typed(
+            CAPABILITY_DIMENSION_MCP,
+            EFFECT_TYPE_SET_MCP_SERVER_SET,
+            &SetMcpServerSetEffect { servers },
+        )
+    }
+}
+
+impl CompanionCapabilityDimensionModule {
+    pub fn set_agent_roster_effect(
+        agents: Vec<agentdash_spi::context::capability::CompanionAgentEntry>,
+    ) -> Result<RuntimeCapabilityEffectRecord, String> {
+        RuntimeCapabilityEffectRecord::typed(
+            CAPABILITY_DIMENSION_COMPANION,
+            EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
+            &SetCompanionAgentRosterEffect { agents },
+        )
+    }
+}
+
+impl VfsCapabilityDimensionModule {
+    pub fn mount_operation_declarations(
+        source: CapabilityArtifactSource,
+        directives: impl IntoIterator<Item = MountDirective>,
+    ) -> Result<Vec<CapabilityDeclarationRecord>, String> {
+        directives
+            .into_iter()
+            .map(|directive| {
+                CapabilityDeclarationRecord::typed(
+                    CAPABILITY_DIMENSION_VFS,
+                    DECLARATION_TYPE_MOUNT_OPERATION,
+                    source.clone(),
+                    &directive,
+                )
+            })
+            .collect()
+    }
+
+    pub fn apply_vfs_overlay_effect(overlay: Vfs) -> Result<RuntimeCapabilityEffectRecord, String> {
+        RuntimeCapabilityEffectRecord::typed(
+            CAPABILITY_DIMENSION_VFS,
+            EFFECT_TYPE_APPLY_VFS_OVERLAY,
+            &ApplyVfsOverlayEffect { overlay },
+        )
+    }
+
+    pub fn apply_mount_operations_effect(
+        operations: Vec<MountDirective>,
+    ) -> Result<RuntimeCapabilityEffectRecord, String> {
+        RuntimeCapabilityEffectRecord::typed(
+            CAPABILITY_DIMENSION_VFS,
+            EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+            &ApplyMountOperationsEffect { operations },
+        )
+    }
+}
 
 impl CapabilityDimensionModule for ToolCapabilityDimensionModule {
     fn key(&self) -> &'static str {
         CAPABILITY_DIMENSION_TOOL
+    }
+
+    fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
+        ensure_declaration_type(record, DECLARATION_TYPE_CAPABILITY_DIRECTIVE)?;
+        let _: ToolCapabilityDirective = decode_declaration_payload(record)?;
+        Ok(())
+    }
+
+    fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_TOOL_ACCESS)?;
+        let _: SetToolAccessEffect = decode_effect_payload(record)?;
+        Ok(())
     }
 
     fn replay_effect(
@@ -332,6 +507,20 @@ impl CapabilityDimensionModule for McpCapabilityDimensionModule {
         CAPABILITY_DIMENSION_MCP
     }
 
+    fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
+        Err(format!(
+            "dimension `{}` 当前不支持 declaration type `{}`",
+            record.dimension.as_str(),
+            record.declaration_type
+        ))
+    }
+
+    fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_MCP_SERVER_SET)?;
+        let _: SetMcpServerSetEffect = decode_effect_payload(record)?;
+        Ok(())
+    }
+
     fn replay_effect(
         &self,
         state: &mut CapabilityState,
@@ -351,6 +540,20 @@ impl CapabilityDimensionModule for CompanionCapabilityDimensionModule {
         CAPABILITY_DIMENSION_COMPANION
     }
 
+    fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
+        Err(format!(
+            "dimension `{}` 当前不支持 declaration type `{}`",
+            record.dimension.as_str(),
+            record.declaration_type
+        ))
+    }
+
+    fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER)?;
+        let _: SetCompanionAgentRosterEffect = decode_effect_payload(record)?;
+        Ok(())
+    }
+
     fn replay_effect(
         &self,
         state: &mut CapabilityState,
@@ -367,6 +570,29 @@ impl CapabilityDimensionModule for CompanionCapabilityDimensionModule {
 impl CapabilityDimensionModule for VfsCapabilityDimensionModule {
     fn key(&self) -> &'static str {
         CAPABILITY_DIMENSION_VFS
+    }
+
+    fn validate_declaration(&self, record: &CapabilityDeclarationRecord) -> Result<(), String> {
+        ensure_declaration_type(record, DECLARATION_TYPE_MOUNT_OPERATION)?;
+        let _: MountDirective = decode_declaration_payload(record)?;
+        Ok(())
+    }
+
+    fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String> {
+        match record.effect_type.as_str() {
+            EFFECT_TYPE_APPLY_VFS_OVERLAY => {
+                let _: ApplyVfsOverlayEffect = decode_effect_payload(record)?;
+                Ok(())
+            }
+            EFFECT_TYPE_APPLY_MOUNT_OPERATIONS => {
+                let _: ApplyMountOperationsEffect = decode_effect_payload(record)?;
+                Ok(())
+            }
+            other => Err(format!(
+                "dimension `{}` 不支持 effect type `{other}`",
+                record.dimension.as_str()
+            )),
+        }
     }
 
     fn replay_effect(
@@ -413,6 +639,32 @@ fn ensure_effect_type(
         record.dimension.as_str(),
         record.effect_type
     ))
+}
+
+fn ensure_declaration_type(
+    record: &CapabilityDeclarationRecord,
+    expected: &'static str,
+) -> Result<(), String> {
+    if record.declaration_type == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "dimension `{}` 不支持 declaration type `{}`，期望 `{expected}`",
+        record.dimension.as_str(),
+        record.declaration_type
+    ))
+}
+
+fn decode_declaration_payload<T: DeserializeOwned>(
+    record: &CapabilityDeclarationRecord,
+) -> Result<T, String> {
+    serde_json::from_value(record.payload.clone()).map_err(|error| {
+        format!(
+            "dimension `{}` declaration `{}` payload decode failed: {error}",
+            record.dimension.as_str(),
+            record.declaration_type
+        )
+    })
 }
 
 fn decode_effect_payload<T: DeserializeOwned>(
@@ -674,6 +926,59 @@ mod tests {
         }
     }
 
+    fn transition_from_parts(
+        state: &CapabilityState,
+        vfs_overlay: Option<Vfs>,
+        mount_directives: Vec<MountDirective>,
+        tool_directives: Vec<ToolCapabilityDirective>,
+    ) -> RuntimeCapabilityTransition {
+        let mut declarations = ToolCapabilityDimensionModule::capability_directive_declarations(
+            CapabilityArtifactSource::workflow(),
+            tool_directives,
+        )
+        .expect("tool declarations build");
+        declarations.extend(
+            VfsCapabilityDimensionModule::mount_operation_declarations(
+                CapabilityArtifactSource::workflow(),
+                mount_directives.clone(),
+            )
+            .expect("vfs declarations build"),
+        );
+
+        let mut effects = vec![
+            ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
+                capabilities: state.tool.capabilities.clone(),
+                enabled_clusters: state.tool.enabled_clusters.clone(),
+                tool_policy: state.tool.tool_policy.clone(),
+            })
+            .expect("tool effect builds"),
+            McpCapabilityDimensionModule::set_server_set_effect(state.tool.mcp_servers.clone())
+                .expect("mcp effect builds"),
+            CompanionCapabilityDimensionModule::set_agent_roster_effect(
+                state.companion.agents.clone(),
+            )
+            .expect("companion effect builds"),
+        ];
+        if let Some(overlay) = vfs_overlay {
+            effects.push(
+                VfsCapabilityDimensionModule::apply_vfs_overlay_effect(overlay)
+                    .expect("vfs overlay effect builds"),
+            );
+        }
+        if !mount_directives.is_empty() {
+            effects.push(
+                VfsCapabilityDimensionModule::apply_mount_operations_effect(mount_directives)
+                    .expect("mount operation effect builds"),
+            );
+        }
+
+        let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
+        CapabilityDimensionRegistry::built_in()
+            .validate_transition(&transition)
+            .expect("transition validates");
+        transition
+    }
+
     #[test]
     fn mount_directives_can_add_remove_link_and_switch_default() {
         let base = Vfs {
@@ -796,7 +1101,7 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         });
-        let transition = RuntimeCapabilityTransition::from_runtime_projection_parts(
+        let transition = transition_from_parts(
             &target,
             target.vfs.active.clone(),
             vec![MountDirective::SetDefaultMount {
@@ -804,7 +1109,6 @@ mod tests {
             }],
             Vec::new(),
         );
-        let transition = transition.expect("transition builds");
 
         let replayed = apply_runtime_capability_transition(&base, &transition).expect("replay");
         let replayed_vfs = replayed.vfs.active.as_ref().expect("active vfs");
@@ -876,22 +1180,20 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        let add_review = RuntimeCapabilityTransition::from_runtime_projection_parts(
+        let add_review = transition_from_parts(
             &CapabilityState::default(),
             Some(overlay),
             Vec::new(),
             Vec::new(),
-        )
-        .expect("transition builds");
-        let set_default = RuntimeCapabilityTransition::from_runtime_projection_parts(
+        );
+        let set_default = transition_from_parts(
             &CapabilityState::default(),
             None,
             vec![MountDirective::SetDefaultMount {
                 mount_id: Some("review".to_string()),
             }],
             Vec::new(),
-        )
-        .expect("transition builds");
+        );
         let transitions = vec![
             PendingCapabilityStateTransition {
                 id: "pending-a".to_string(),
@@ -949,5 +1251,35 @@ mod tests {
         let error = replay_runtime_capability_transition(&CapabilityState::default(), &transition)
             .expect_err("invalid payload should fail at module boundary");
         assert!(error.contains("payload decode failed"));
+    }
+
+    #[test]
+    fn runtime_capability_transition_validates_declarations_at_module_boundary() {
+        let transition = transition_from_parts(
+            &CapabilityState::default(),
+            None,
+            vec![MountDirective::SetDefaultMount {
+                mount_id: Some("workspace".to_string()),
+            }],
+            vec![ToolCapabilityDirective::add_simple("file_read")],
+        );
+
+        assert!(
+            transition.declarations.iter().any(|record| {
+                record.dimension.as_str() == CAPABILITY_DIMENSION_TOOL
+                    && record.declaration_type == DECLARATION_TYPE_CAPABILITY_DIRECTIVE
+            }),
+            "tool directives must stay visible as declaration records"
+        );
+        assert!(
+            transition.declarations.iter().any(|record| {
+                record.dimension.as_str() == CAPABILITY_DIMENSION_VFS
+                    && record.declaration_type == DECLARATION_TYPE_MOUNT_OPERATION
+            }),
+            "mount operations must stay visible as VFS declaration records"
+        );
+        CapabilityDimensionRegistry::built_in()
+            .validate_transition(&transition)
+            .expect("declarations should validate");
     }
 }

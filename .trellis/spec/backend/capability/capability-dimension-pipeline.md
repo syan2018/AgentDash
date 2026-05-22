@@ -38,6 +38,75 @@ payload 不保存完整 `CapabilityState`、`ToolDimension`、`CompanionDimensio
 
 多个 requested runtime command 按 store 返回顺序 fold replay 到 construction base projection。VFS/mount operation 是有序 effect；construction、context query、next-turn launch 与 pending apply event 共用同一个 transition fold replay 入口。
 
+## Scenario: Dimension Module Runtime Transition
+
+### 1. Scope / Trigger
+
+- Trigger: runtime command payload 是跨 construction、launch、context query 和 pending apply event 的共享契约；新增能力维度必须通过 module 注册进入全链路，而不是扩展中心 DTO 字段。
+
+### 2. Signatures
+
+- `CapabilityDimensionModule::validate_declaration(&CapabilityDeclarationRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::compile_declaration(&CapabilityDeclarationRecord) -> Result<Option<CapabilityContributionRecord>, String>`
+- `CapabilityDimensionModule::validate_effect(&RuntimeCapabilityEffectRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::replay_effect(&mut CapabilityState, &mut RuntimeCapabilityReplayContext, &RuntimeCapabilityEffectRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::normalize_projection(&mut CapabilityState, &RuntimeCapabilityProjectionContext) -> Result<(), String>`
+- `CapabilityDimensionRegistry::register_module(module) -> Result<(), String>`
+- `CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -> Result<(), String>`
+
+### 3. Contracts
+
+- `RuntimeCapabilityTransition` 只由 `declarations` 与 `effects` 两组 records 组成。
+- 生产代码通过 dimension module builder 产出 records；不使用聚合所有维度字段的 transition input struct。
+- Tool declaration 使用 `dimension=tool / declaration_type=capability_directive`。
+- VFS mount declaration 使用 `dimension=vfs / declaration_type=mount_operation`。
+- Tool / MCP / Companion / VFS effect payload 在对应 module 边界 decode 为强类型 payload。
+- registry 先 validate declarations/effects，再按注册顺序 replay effects。
+
+### 4. Validation & Error Matrix
+
+- declaration dimension 未注册 -> transition validation error。
+- effect dimension 未注册 -> transition validation error。
+- declaration type 不属于该 module -> module validation error。
+- effect type 不属于该 module -> module validation error。
+- payload 无法 decode 到 module-owned typed payload -> module validation error。
+- 重复注册同一个 dimension key -> registry registration error。
+
+### 5. Good / Base / Bad Cases
+
+- Good: workflow activation 生成 tool capability declarations、VFS mount declarations、tool/MCP/companion/VFS effects，registry validation 通过后写入 runtime command store。
+- Base: 没有 mount directives 时，transition 可只有 tool declarations 与 replacement-style effects。
+- Bad: 新能力在 `RuntimeCapabilityTransitionInput` 这类中心 struct 中增加字段；这会把维度知识重新扩散到 production builder、replay helper 和 tests。
+
+### 6. Tests Required
+
+- Unit: registry validation 接受 built-in module declarations/effects。
+- Unit: 非法 effect payload 在 module decode 边界失败。
+- Unit: mount directive 同时作为 VFS declaration 与 mount operation effect 出现在 transition。
+- Search gate: production code 不出现 `RuntimeCapabilityTransitionInput`、`from_runtime_effects`、`RuntimeContextPatch` 或 `Runtime*Intent` 生产路径。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+RuntimeCapabilityTransitionInput {
+    tool_directives,
+    mcp_servers,
+    mount_directives,
+    // 新维度继续加字段
+}
+```
+
+#### Correct
+
+```rust
+let declarations = ToolCapabilityDimensionModule::capability_directive_declarations(source, directives)?;
+let effect = VfsCapabilityDimensionModule::apply_mount_operations_effect(operations)?;
+let transition = RuntimeCapabilityTransition::from_records(declarations, vec![effect]);
+CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
+```
+
 ## Built-in Dimension Matrix
 
 | 维度 | Declaration | Runtime Effect | Projection | 模块状态 |

@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { ConfirmDialog, PromptDialog } from "@agentdash/ui";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   createSurfaceFile,
@@ -79,6 +80,11 @@ interface SelectedBinaryFile {
   size?: number | null;
 }
 
+type FilePromptState =
+  | { kind: "create"; value: string }
+  | { kind: "rename"; value: string }
+  | { kind: "upload"; value: string; file: File };
+
 export function VfsBrowserPanel({
   surface,
   vfs,
@@ -97,6 +103,8 @@ export function VfsBrowserPanel({
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [operationBusy, setOperationBusy] = useState(false);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [filePrompt, setFilePrompt] = useState<FilePromptState | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const surfaceRef = surface?.surface_ref ?? null;
@@ -256,12 +264,16 @@ export function VfsBrowserPanel({
     const suggestedPath = selectedFilePath
       ? `${parentPath(toScopedDisplayPath(selectedFilePath, scopedRootPath))}new-file.txt`
       : "new-file.txt";
-    const path = window.prompt("新建文件路径", suggestedPath);
+    setFilePrompt({ kind: "create", value: suggestedPath });
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, selectedFilePath, scopedRootPath]);
+
+  const handleConfirmCreateFile = useCallback(async (path: string) => {
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedMount?.editCapabilities.create) return;
     const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath) return;
-
     setOperationBusy(true);
     setOperationError(null);
+    setFilePrompt(null);
     try {
       await createSurfaceFile({
         surfaceRef,
@@ -279,14 +291,18 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, selectedFilePath, scopedRootPath, refreshTree, onNavigate, replaceBinaryFile]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedMount, scopedRootPath, refreshTree, onNavigate, replaceBinaryFile]);
 
   const handleDeleteFile = useCallback(async () => {
     if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
-    if (!window.confirm(`删除文件「${toScopedDisplayPath(selectedFilePath, scopedRootPath)}」？`)) return;
+    setDeleteConfirmOpen(true);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount]);
 
+  const handleConfirmDeleteFile = useCallback(async () => {
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.delete) return;
     setOperationBusy(true);
     setOperationError(null);
+    setDeleteConfirmOpen(false);
     try {
       await deleteSurfaceFile({
         surfaceRef,
@@ -303,16 +319,20 @@ export function VfsBrowserPanel({
     } finally {
       setOperationBusy(false);
     }
-  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath, refreshTree, onNavigate, replaceBinaryFile]);
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, refreshTree, onNavigate, replaceBinaryFile]);
 
   const handleRenameFile = useCallback(async () => {
     if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
-    const path = window.prompt("重命名为", toScopedDisplayPath(selectedFilePath, scopedRootPath));
+    setFilePrompt({ kind: "rename", value: toScopedDisplayPath(selectedFilePath, scopedRootPath) });
+  }, [surfaceRef, selectedMountId, selectedMountBrowsable, selectedFilePath, selectedFileProtected, selectedMount, scopedRootPath]);
+
+  const handleConfirmRenameFile = useCallback(async (path: string) => {
+    if (!surfaceRef || !selectedMountId || !selectedMountBrowsable || !selectedFilePath || selectedFileProtected || !selectedMount?.editCapabilities.rename) return;
     const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath || normalizedPath === selectedFilePath) return;
-
     setOperationBusy(true);
     setOperationError(null);
+    setFilePrompt(null);
     try {
       await renameSurfaceFile({
         surfaceRef,
@@ -334,12 +354,16 @@ export function VfsBrowserPanel({
     if (!surfaceRef || !selectedMountId || !canUploadImage || !files?.length) return;
     const file = files[0];
     const suggestedPath = `assets/${file.name}`;
-    const path = window.prompt("图片保存路径", suggestedPath);
+    setFilePrompt({ kind: "upload", value: suggestedPath, file });
+  }, [surfaceRef, selectedMountId, canUploadImage]);
+
+  const handleConfirmUploadImage = useCallback(async (path: string, file: File) => {
+    if (!surfaceRef || !selectedMountId || !canUploadImage) return;
     const normalizedPath = resolveScopedPath(scopedRootPath, path);
     if (!normalizedPath) return;
-
     setOperationBusy(true);
     setOperationError(null);
+    setFilePrompt(null);
     try {
       const result = await uploadSurfaceFileBlob({
         surfaceRef,
@@ -363,6 +387,24 @@ export function VfsBrowserPanel({
       if (uploadInputRef.current) uploadInputRef.current.value = "";
     }
   }, [surfaceRef, selectedMountId, canUploadImage, scopedRootPath, refreshTree, handleSelectFile]);
+
+  const handleConfirmFilePrompt = useCallback(() => {
+    if (!filePrompt) return;
+    if (filePrompt.kind === "create") {
+      void handleConfirmCreateFile(filePrompt.value);
+      return;
+    }
+    if (filePrompt.kind === "rename") {
+      void handleConfirmRenameFile(filePrompt.value);
+      return;
+    }
+    void handleConfirmUploadImage(filePrompt.value, filePrompt.file);
+  }, [filePrompt, handleConfirmCreateFile, handleConfirmRenameFile, handleConfirmUploadImage]);
+
+  const handleCloseFilePrompt = useCallback(() => {
+    setFilePrompt(null);
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
+  }, []);
 
   if (mounts.length === 0) {
     return (
@@ -401,6 +443,17 @@ export function VfsBrowserPanel({
     refreshTree,
   };
   const inspector = renderInspector?.(inspectorContext) ?? null;
+  const promptNormalizedPath = filePrompt ? resolveScopedPath(scopedRootPath, filePrompt.value) : null;
+  const promptDisabled = operationBusy
+    || !promptNormalizedPath
+    || (filePrompt?.kind === "rename" && promptNormalizedPath === selectedFilePath);
+  const promptTitle = filePrompt?.kind === "create"
+    ? "新建文件"
+    : filePrompt?.kind === "rename"
+      ? "重命名文件"
+      : "上传图片";
+  const promptLabel = filePrompt?.kind === "upload" ? "图片保存路径" : "文件路径";
+  const promptConfirmLabel = filePrompt?.kind === "rename" ? "重命名" : filePrompt?.kind === "upload" ? "上传" : "新建";
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -549,6 +602,29 @@ export function VfsBrowserPanel({
           </>
         )}
       </Group>
+      <PromptDialog
+        open={filePrompt !== null}
+        title={promptTitle}
+        label={promptLabel}
+        value={filePrompt?.value ?? ""}
+        confirmLabel={promptConfirmLabel}
+        disabled={promptDisabled}
+        isConfirming={operationBusy}
+        onValueChange={(value) => setFilePrompt((current) => current ? { ...current, value } : current)}
+        onClose={handleCloseFilePrompt}
+        onConfirm={handleConfirmFilePrompt}
+      />
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="删除文件"
+        description={`确定删除文件「${selectedFilePath ? toScopedDisplayPath(selectedFilePath, scopedRootPath) : ""}」？`}
+        confirmLabel="删除"
+        tone="danger"
+        disabled={operationBusy}
+        isConfirming={operationBusy}
+        onClose={() => setDeleteConfirmOpen(false)}
+        onConfirm={handleConfirmDeleteFile}
+      />
     </div>
   );
 }

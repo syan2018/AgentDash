@@ -12,6 +12,8 @@
  *   - ArtifactBindingsEditor（仅 kind=artifact 显示）
  */
 
+import { useState } from "react";
+import { ConfirmDialog } from "@agentdash/ui";
 import type {
   ActivityDefinition,
   ActivityTransition,
@@ -52,25 +54,31 @@ export function TransitionInspector(props: TransitionInspectorProps) {
   const toActivity = activities.find((a) => a.key === transition.to) ?? null;
   const maxAttempts = transition.max_traversals;
   const isInfinite = maxAttempts === null || maxAttempts === undefined;
+  const [pendingKind, setPendingKind] = useState<ActivityTransition["kind"] | null>(null);
 
   const handleKindSwitch = (next: ActivityTransition["kind"]) => {
     if (next === transition.kind) return;
     if (
       transition.kind === "artifact" &&
       next === "flow" &&
-      transition.artifact_bindings.length > 0 &&
-      typeof window !== "undefined" &&
-      typeof window.confirm === "function"
+      transition.artifact_bindings.length > 0
     ) {
-      const ok = window.confirm("切换到 flow 将清空当前所有 artifact_bindings，是否继续？");
-      if (!ok) return;
+      setPendingKind(next);
+      return;
     }
     onSetKind(next);
   };
 
+  const confirmKindSwitch = () => {
+    if (!pendingKind) return;
+    onSetKind(pendingKind);
+    setPendingKind(null);
+  };
+
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
+    <>
+      <div className="flex h-full flex-col overflow-hidden">
+        <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
         <div className="overflow-hidden">
           <p className="truncate font-mono text-sm text-foreground">
             {transition.from} → {transition.to}
@@ -164,6 +172,16 @@ export function TransitionInspector(props: TransitionInspectorProps) {
           )}
         </div>
       </div>
-    </div>
+      </div>
+      <ConfirmDialog
+        open={pendingKind !== null}
+        title="切换 Transition 类型"
+        description="切换到 flow 将清空当前所有 artifact bindings，是否继续？"
+        confirmLabel="切换"
+        tone="danger"
+        onClose={() => setPendingKind(null)}
+        onConfirm={confirmKindSwitch}
+      />
+    </>
   );
 }

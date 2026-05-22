@@ -18,6 +18,7 @@ import {
   CardMenu,
   CreateButton,
   CheckboxField,
+  ConfirmDialog,
   DangerConfirmDialog,
   DetailMenu,
   DetailPanel,
@@ -33,6 +34,7 @@ import {
   StatusDot,
   TextInput,
   Textarea,
+  PromptDialog,
   cn,
 } from "@agentdash/ui";
 
@@ -1058,17 +1060,26 @@ function PrimCardMenu() {
 
 function PrimDetailPanel() {
   const [panelOpen, setPanelOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
+  const [promptValue, setPromptValue] = useState("references/notes.md");
   const [dangerOpen, setDangerOpen] = useState(false);
   const [confirmInput, setConfirmInput] = useState("");
 
   return (
     <PrimSlot
-      name="DetailPanel / DetailSection / DetailMenu / DangerConfirmDialog"
-      importHint='import { DetailPanel, DetailSection, DetailMenu, DangerConfirmDialog } from "@agentdash/ui"'
+      name="DetailPanel / DetailSection / DetailMenu / ConfirmDialog / PromptDialog / DangerConfirmDialog"
+      importHint='import { DetailPanel, DetailSection, DetailMenu, ConfirmDialog, PromptDialog, DangerConfirmDialog } from "@agentdash/ui"'
     >
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" onClick={() => setPanelOpen(true)}>
           打开 DetailPanel
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setConfirmOpen(true)}>
+          打开 ConfirmDialog
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => setPromptOpen(true)}>
+          打开 PromptDialog
         </Button>
         <Button variant="danger" size="sm" onClick={() => setDangerOpen(true)}>
           打开 DangerConfirmDialog
@@ -1098,6 +1109,27 @@ function PrimDetailPanel() {
           </DetailSection>
         </div>
       </DetailPanel>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        title="确认切换"
+        description="此弹窗用于普通确认或轻量危险操作，由调用方决定确认后的业务动作。"
+        confirmLabel="确认"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => setConfirmOpen(false)}
+      />
+
+      <PromptDialog
+        open={promptOpen}
+        title="输入文件路径"
+        description="用于路径、名称等短文本输入。"
+        label="文件路径"
+        value={promptValue}
+        confirmLabel="确认"
+        onValueChange={setPromptValue}
+        onClose={() => setPromptOpen(false)}
+        onConfirm={() => setPromptOpen(false)}
+      />
 
       <DangerConfirmDialog
         open={dangerOpen}

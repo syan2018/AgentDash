@@ -33,7 +33,7 @@ import {
 import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, CreateButton } from "@agentdash/ui";
+import { CardMenu, ConfirmDialog, CreateButton, PromptDialog } from "@agentdash/ui";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import {
@@ -825,6 +825,10 @@ function SkillYamlMetaPanel({
 
 // ─── Extra Files Editor ──────────────────────────────────
 
+type SkillExtraFilePromptState =
+  | { kind: "create"; value: string }
+  | { kind: "rename"; originalPath: string; value: string };
+
 function SkillExtraFilesEditor({
   files,
   onChange,
@@ -833,38 +837,53 @@ function SkillExtraFilesEditor({
   onChange: (files: SkillAssetDraft["files"]) => void;
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(files[0]?.relative_path ?? null);
+  const [filePrompt, setFilePrompt] = useState<SkillExtraFilePromptState | null>(null);
+  const [deleteTargetPath, setDeleteTargetPath] = useState<string | null>(null);
   const selectedFile = files.find((f) => f.relative_path === selectedPath) ?? files[0] ?? null;
 
   const createFile = () => {
-    const path = window.prompt("新建附加文件路径", nextExtraFilePath(files));
-    const normalizedPath = normalizeSkillExtraPath(path ?? "");
+    setFilePrompt({ kind: "create", value: nextExtraFilePath(files) });
+  };
+
+  const confirmCreateFile = (path: string) => {
+    const normalizedPath = normalizeSkillExtraPath(path);
     if (!normalizedPath || files.some((f) => f.relative_path === normalizedPath)) return;
     onChange([...files, { relative_path: normalizedPath, content: "" }]);
     setSelectedPath(normalizedPath);
+    setFilePrompt(null);
   };
 
   const renameFile = () => {
     if (!selectedFile) return;
-    const path = window.prompt("重命名附加文件", selectedFile.relative_path);
-    const normalizedPath = normalizeSkillExtraPath(path ?? "");
-    if (!normalizedPath || normalizedPath === selectedFile.relative_path) return;
+    setFilePrompt({ kind: "rename", originalPath: selectedFile.relative_path, value: selectedFile.relative_path });
+  };
+
+  const confirmRenameFile = (originalPath: string, path: string) => {
+    const normalizedPath = normalizeSkillExtraPath(path);
+    if (!normalizedPath || normalizedPath === originalPath) return;
     if (files.some((f) => f.relative_path === normalizedPath)) return;
     onChange(
       files.map((f) =>
-        f.relative_path === selectedFile.relative_path
+        f.relative_path === originalPath
           ? { ...f, relative_path: normalizedPath }
           : f,
       ),
     );
     setSelectedPath(normalizedPath);
+    setFilePrompt(null);
   };
 
   const deleteFile = () => {
     if (!selectedFile) return;
-    if (!window.confirm(`删除附加文件「${selectedFile.relative_path}」？`)) return;
-    const nextFiles = files.filter((f) => f.relative_path !== selectedFile.relative_path);
+    setDeleteTargetPath(selectedFile.relative_path);
+  };
+
+  const confirmDeleteFile = () => {
+    if (!deleteTargetPath) return;
+    const nextFiles = files.filter((f) => f.relative_path !== deleteTargetPath);
     onChange(nextFiles);
     setSelectedPath(nextFiles[0]?.relative_path ?? null);
+    setDeleteTargetPath(null);
   };
 
   const saveContent = (content: string) => {
@@ -875,9 +894,22 @@ function SkillExtraFilesEditor({
       ),
     );
   };
+  const normalizedPromptPath = filePrompt ? normalizeSkillExtraPath(filePrompt.value) : "";
+  const promptDuplicate = Boolean(
+    normalizedPromptPath
+    && files.some((f) =>
+      f.relative_path === normalizedPromptPath
+      && (filePrompt?.kind !== "rename" || f.relative_path !== filePrompt.originalPath),
+    ),
+  );
+  const promptDisabled = !normalizedPromptPath
+    || promptDuplicate
+    || (filePrompt?.kind === "rename" && normalizedPromptPath === filePrompt.originalPath);
+  const promptError = promptDuplicate ? "同名附加文件已存在" : null;
 
   return (
-    <section className="overflow-hidden rounded-[8px] border border-border">
+    <>
+      <section className="overflow-hidden rounded-[8px] border border-border">
       <header className="flex items-center justify-between border-b border-border bg-secondary/20 px-3 py-2">
         <p className="agentdash-form-label">附加文件</p>
         <div className="flex items-center gap-1">
@@ -932,7 +964,36 @@ function SkillExtraFilesEditor({
           )}
         </div>
       </div>
-    </section>
+      </section>
+      <PromptDialog
+        open={filePrompt !== null}
+        title={filePrompt?.kind === "rename" ? "重命名附加文件" : "新建附加文件"}
+        label="文件路径"
+        value={filePrompt?.value ?? ""}
+        confirmLabel={filePrompt?.kind === "rename" ? "重命名" : "新建"}
+        disabled={promptDisabled}
+        error={promptError}
+        onValueChange={(value) => setFilePrompt((current) => current ? { ...current, value } : current)}
+        onClose={() => setFilePrompt(null)}
+        onConfirm={() => {
+          if (!filePrompt) return;
+          if (filePrompt.kind === "create") {
+            confirmCreateFile(filePrompt.value);
+            return;
+          }
+          confirmRenameFile(filePrompt.originalPath, filePrompt.value);
+        }}
+      />
+      <ConfirmDialog
+        open={deleteTargetPath !== null}
+        title="删除附加文件"
+        description={`确定删除附加文件「${deleteTargetPath ?? ""}」？`}
+        confirmLabel="删除"
+        tone="danger"
+        onClose={() => setDeleteTargetPath(null)}
+        onConfirm={confirmDeleteFile}
+      />
+    </>
   );
 }
 

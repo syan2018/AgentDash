@@ -15,6 +15,7 @@ import { llmProvidersApi } from "../api/llmProviders";
 import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
 import type { BackendConfig } from "../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
+import { ConfirmDialog } from "@agentdash/ui";
 import { getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../desktop/localRuntimeBridge";
 import { hasDesktopExternalBrowserOpener, openDesktopExternalBrowser } from "../desktop/externalBrowser";
 
@@ -527,6 +528,7 @@ function LlmProviderForm({
   const [modelsTouched, setModelsTouched] = useState(false);
   const [blockedModels, setBlockedModels] = useState<string[]>(parseStringList(provider.blocked_models));
   const [blockedModelsTouched, setBlockedModelsTouched] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   // 实时探测状态：用当前表单 credentials 探测到的模型列表
   const [probedModels, setProbedModels] = useState<ProbeModelEntry[] | null>(null);
@@ -672,21 +674,16 @@ function LlmProviderForm({
     setCodexLoginStatus("starting");
     setCodexLoginMessage(null);
     setCodexAuthUrl(null);
-    const useDesktopExternalBrowser = hasDesktopExternalBrowserOpener();
-    const loginWindow = useDesktopExternalBrowser ? null : window.open("about:blank", "_blank");
     try {
       const flow = await llmProvidersApi.startCodexOAuth(provider.id);
       codexFlowIdRef.current = flow.flow_id;
       setCodexAuthUrl(flow.auth_url);
       setCodexLoginStatus("waiting");
-      setCodexLoginMessage("等待 ChatGPT 授权完成…");
-      const openedInDesktop = useDesktopExternalBrowser
-        ? await openDesktopExternalBrowser(flow.auth_url)
-        : false;
-      if (loginWindow) {
-        loginWindow.location.href = flow.auth_url;
-      } else if (!openedInDesktop) {
-        window.open(flow.auth_url, "_blank", "noopener,noreferrer");
+      if (hasDesktopExternalBrowserOpener()) {
+        await openDesktopExternalBrowser(flow.auth_url);
+        setCodexLoginMessage("已在外部浏览器打开 ChatGPT 授权页，等待授权完成…");
+      } else {
+        setCodexLoginMessage("请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。");
       }
       void pollCodexOAuth(flow.flow_id).catch((e) => {
         codexFlowIdRef.current = null;
@@ -694,7 +691,6 @@ function LlmProviderForm({
         setCodexLoginMessage(e instanceof Error ? e.message : String(e));
       });
     } catch (e) {
-      if (loginWindow) loginWindow.close();
       const flowId = codexFlowIdRef.current;
       if (flowId) {
         await llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
@@ -734,7 +730,8 @@ function LlmProviderForm({
   };
 
   return (
-    <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+    <>
+      <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
       {/* Name */}
       <Field label="名称" desc="Provider 显示名称">
         <input type="text" className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
@@ -793,7 +790,7 @@ function LlmProviderForm({
                 target="_blank"
                 rel="noreferrer"
               >
-                重新打开登录页
+                打开 ChatGPT 授权页
               </a>
             )}
           </div>
@@ -888,7 +885,7 @@ function LlmProviderForm({
         <button
           type="button"
           className="text-xs text-destructive hover:text-destructive/80"
-          onClick={() => { if (window.confirm(`删除 Provider「${provider.name}」？`)) onDelete(); }}
+          onClick={() => setDeleteConfirmOpen(true)}
         >
           删除此 Provider
         </button>
@@ -896,7 +893,22 @@ function LlmProviderForm({
           {saving ? "保存中…" : "保存"}
         </button>
       </div>
-    </div>
+      </div>
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        title="删除 Provider"
+        description={`确定删除 Provider「${provider.name}」？`}
+        confirmLabel="删除"
+        tone="danger"
+        disabled={saving}
+        isConfirming={saving}
+        onClose={() => setDeleteConfirmOpen(false)}
+        onConfirm={() => {
+          setDeleteConfirmOpen(false);
+          onDelete();
+        }}
+      />
+    </>
   );
 }// ---------------------------------------------------------------------------
 // 统一模型管理

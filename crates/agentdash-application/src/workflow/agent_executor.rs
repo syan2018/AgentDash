@@ -16,12 +16,12 @@ use super::scheduler::{
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
-use crate::session::RuntimeContextPatch;
 use crate::session::hub::PendingRuntimeContextTransitionInput;
 use crate::session::{
     LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
     SessionLaunchService, UserPromptInput,
 };
+use crate::session::{RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::workflow::step_activation::apply_to_running_session;
 use crate::workflow::{
     activate_step_with_platform, agent_mcp_entries_from_servers,
@@ -308,12 +308,20 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 platform_config,
             );
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
-            let patch = RuntimeContextPatch::from_effective_runtime_projection(
-                &surface,
-                Some(activation.lifecycle_vfs.clone()),
-                activation.mount_directives.clone(),
-                activation.tool_directives.clone(),
-            );
+            let transition = RuntimeCapabilityTransition::from_runtime_effects(
+                crate::session::RuntimeCapabilityTransitionInput {
+                    tool_directives: activation.tool_directives.clone(),
+                    tool_access: SetToolAccessEffect {
+                        capabilities: activation.capability_state.tool.capabilities.clone(),
+                        enabled_clusters: activation.capability_state.tool.enabled_clusters.clone(),
+                        tool_policy: activation.capability_state.tool.tool_policy.clone(),
+                    },
+                    mcp_servers: activation.mcp_servers.clone(),
+                    companion_agents: activation.capability_state.companion.agents.clone(),
+                    vfs_overlay: Some(activation.lifecycle_vfs.clone()),
+                    mount_directives: activation.mount_directives.clone(),
+                },
+            )?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     session_id: root_session_id.to_string(),
@@ -329,7 +337,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                     lifecycle_key: definition.key.clone(),
                     before_state: base_surface,
                     after_state: surface,
-                    patch,
+                    transition,
                     capability_keys: activation.capability_keys,
                     source_turn_id: None,
                     created_at: chrono::Utc::now().timestamp_millis(),

@@ -97,7 +97,7 @@
 ## Validation Commands
 
 ```bash
-cargo test -p agentdash-application runtime_context_patch --lib
+cargo test -p agentdash-application runtime_capability_transition --lib
 cargo test -p agentdash-application runtime_command_store --lib
 cargo test -p agentdash-application pending_capability_state_transition --lib
 cargo test -p agentdash-application pending_runtime_context_transition --lib

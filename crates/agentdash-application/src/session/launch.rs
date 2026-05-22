@@ -505,7 +505,7 @@ mod tests {
         ConstructionResolutionPlan, SessionConstructionContextProjection, SessionConstructionPlan,
     };
     use super::super::ownership::SessionOwnerResolver;
-    use super::super::types::{RuntimeContextPatch, UserPromptInput};
+    use super::super::types::{RuntimeCapabilityTransition, UserPromptInput};
     use super::*;
 
     fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchExecutionInput {
@@ -575,7 +575,7 @@ mod tests {
                     lifecycle_key: "dev".to_string(),
                     phase_node: "phase-a".to_string(),
                     capability_keys: Default::default(),
-                    patch: RuntimeContextPatch::default(),
+                    transition: RuntimeCapabilityTransition::default(),
                     created_at: 1,
                     source_turn_id: None,
                 },
@@ -585,7 +585,7 @@ mod tests {
                     lifecycle_key: "dev".to_string(),
                     phase_node: "phase-b".to_string(),
                     capability_keys: Default::default(),
-                    patch: RuntimeContextPatch::default(),
+                    transition: RuntimeCapabilityTransition::default(),
                     created_at: 2,
                     source_turn_id: None,
                 },
@@ -694,7 +694,7 @@ mod tests {
             lifecycle_key: "dev".to_string(),
             phase_node: "phase-c".to_string(),
             capability_keys: Default::default(),
-            patch: RuntimeContextPatch::default(),
+            transition: RuntimeCapabilityTransition::default(),
             created_at: 3,
             source_turn_id: None,
         }];

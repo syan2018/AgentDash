@@ -4,13 +4,19 @@ use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::MountDirective;
 use agentdash_spi::SessionMcpServer;
 use agentdash_spi::hooks::CapabilityDelta;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::types::{
-    CapabilityState, PendingCapabilityStateTransition, RuntimeCompanionIntent, RuntimeContextPatch,
-    RuntimeMcpIntent, RuntimeToolIntent, RuntimeVfsIntent,
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CAPABILITY_DIMENSION_COMPANION,
+    CAPABILITY_DIMENSION_MCP, CAPABILITY_DIMENSION_TOOL, CAPABILITY_DIMENSION_VFS, CapabilityState,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, PendingCapabilityStateTransition, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
+    SetToolAccessEffect,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,7 +202,7 @@ impl<'a> RuntimeContextTransition<'a> {
     pub fn to_pending_capability_state_transition(
         &self,
         id: String,
-        patch: RuntimeContextPatch,
+        transition: RuntimeCapabilityTransition,
         source_turn_id: Option<String>,
         created_at: i64,
     ) -> Option<PendingCapabilityStateTransition> {
@@ -206,88 +212,256 @@ impl<'a> RuntimeContextTransition<'a> {
             lifecycle_key: self.lifecycle_key?.to_string(),
             phase_node: self.phase_node.to_string(),
             capability_keys: self.capability_keys.clone(),
-            patch,
+            transition,
             created_at,
             source_turn_id,
         })
     }
 }
 
-pub fn apply_runtime_context_patch(
+pub fn apply_runtime_capability_transition(
     base_state: &CapabilityState,
-    patch: &RuntimeContextPatch,
-) -> CapabilityState {
-    replay_runtime_context_patch(base_state, patch).capability_state
+    transition: &RuntimeCapabilityTransition,
+) -> Result<CapabilityState, String> {
+    replay_runtime_capability_transition(base_state, transition)
+        .map(|replay| replay.capability_state)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeContextReplay {
+pub struct RuntimeCapabilityReplay {
     pub capability_state: CapabilityState,
     pub effective_vfs: Option<Vfs>,
     pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
 }
 
-pub fn replay_runtime_context_patch(
-    base_state: &CapabilityState,
-    patch: &RuntimeContextPatch,
-) -> RuntimeContextReplay {
-    let mut state = base_state.clone();
-    if let RuntimeToolIntent::SetEffectiveTool {
-        capabilities,
-        enabled_clusters,
-        tool_policy,
-    } = &patch.tool_intent
-    {
-        state.tool.capabilities = capabilities.clone();
-        state.tool.enabled_clusters = enabled_clusters.clone();
-        state.tool.tool_policy = tool_policy.clone();
-    }
-    let effective_mcp_servers = match &patch.mcp_intent {
-        RuntimeMcpIntent::NoChange => None,
-        RuntimeMcpIntent::SetEffectiveServers { servers } => {
-            state.tool.mcp_servers = servers.clone();
-            Some(servers.clone())
+#[derive(Debug, Default)]
+pub struct RuntimeCapabilityReplayContext {
+    pub effective_vfs: Option<Vfs>,
+    pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
+}
+
+pub trait CapabilityDimensionModule {
+    fn key(&self) -> &'static str;
+
+    fn replay_effect(
+        &self,
+        state: &mut CapabilityState,
+        context: &mut RuntimeCapabilityReplayContext,
+        record: &RuntimeCapabilityEffectRecord,
+    ) -> Result<(), String>;
+}
+
+pub struct CapabilityDimensionRegistry {
+    modules: Vec<Box<dyn CapabilityDimensionModule>>,
+}
+
+impl CapabilityDimensionRegistry {
+    pub fn built_in() -> Self {
+        Self {
+            modules: vec![
+                Box::new(VfsCapabilityDimensionModule),
+                Box::new(ToolCapabilityDimensionModule),
+                Box::new(McpCapabilityDimensionModule),
+                Box::new(CompanionCapabilityDimensionModule),
+            ],
         }
-    };
-    if let RuntimeCompanionIntent::SetAgents { agents } = &patch.companion_intent {
-        state.companion.agents = agents.clone();
     }
-    if let Some(overlay) = patch.vfs_intent.overlay.as_ref() {
-        state.vfs.active = Some(match state.vfs.active.take() {
-            Some(base_vfs) => merge_vfs_overlay(base_vfs, overlay),
-            None => overlay.clone(),
-        });
+
+    fn module_for(&self, key: &str) -> Option<&dyn CapabilityDimensionModule> {
+        self.modules
+            .iter()
+            .find(|module| module.key() == key)
+            .map(|module| module.as_ref())
     }
-    if !patch.vfs_intent.mount_directives.is_empty() {
-        let mut vfs = state.vfs.active.take().unwrap_or_default();
-        apply_mount_directives(&mut vfs, &patch.vfs_intent.mount_directives);
-        state.vfs.active = Some(vfs);
+
+    fn replay_transition(
+        &self,
+        state: &mut CapabilityState,
+        context: &mut RuntimeCapabilityReplayContext,
+        transition: &RuntimeCapabilityTransition,
+    ) -> Result<(), String> {
+        for module in &self.modules {
+            for record in transition
+                .effects
+                .iter()
+                .filter(|record| record.dimension.as_str() == module.key())
+            {
+                module.replay_effect(state, context, record)?;
+            }
+        }
+        for record in &transition.effects {
+            if self.module_for(record.dimension.as_str()).is_none() {
+                return Err(format!(
+                    "未注册 capability dimension `{}`，无法 replay `{}` effect",
+                    record.dimension.as_str(),
+                    record.effect_type
+                ));
+            }
+        }
+        Ok(())
     }
+}
+
+struct ToolCapabilityDimensionModule;
+struct McpCapabilityDimensionModule;
+struct CompanionCapabilityDimensionModule;
+struct VfsCapabilityDimensionModule;
+
+impl CapabilityDimensionModule for ToolCapabilityDimensionModule {
+    fn key(&self) -> &'static str {
+        CAPABILITY_DIMENSION_TOOL
+    }
+
+    fn replay_effect(
+        &self,
+        state: &mut CapabilityState,
+        _context: &mut RuntimeCapabilityReplayContext,
+        record: &RuntimeCapabilityEffectRecord,
+    ) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_TOOL_ACCESS)?;
+        let payload: SetToolAccessEffect = decode_effect_payload(record)?;
+        state.tool.capabilities = payload.capabilities;
+        state.tool.enabled_clusters = payload.enabled_clusters;
+        state.tool.tool_policy = payload.tool_policy;
+        Ok(())
+    }
+}
+
+impl CapabilityDimensionModule for McpCapabilityDimensionModule {
+    fn key(&self) -> &'static str {
+        CAPABILITY_DIMENSION_MCP
+    }
+
+    fn replay_effect(
+        &self,
+        state: &mut CapabilityState,
+        context: &mut RuntimeCapabilityReplayContext,
+        record: &RuntimeCapabilityEffectRecord,
+    ) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_MCP_SERVER_SET)?;
+        let payload: SetMcpServerSetEffect = decode_effect_payload(record)?;
+        state.tool.mcp_servers = payload.servers.clone();
+        context.effective_mcp_servers = Some(payload.servers);
+        Ok(())
+    }
+}
+
+impl CapabilityDimensionModule for CompanionCapabilityDimensionModule {
+    fn key(&self) -> &'static str {
+        CAPABILITY_DIMENSION_COMPANION
+    }
+
+    fn replay_effect(
+        &self,
+        state: &mut CapabilityState,
+        _context: &mut RuntimeCapabilityReplayContext,
+        record: &RuntimeCapabilityEffectRecord,
+    ) -> Result<(), String> {
+        ensure_effect_type(record, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER)?;
+        let payload: SetCompanionAgentRosterEffect = decode_effect_payload(record)?;
+        state.companion.agents = payload.agents;
+        Ok(())
+    }
+}
+
+impl CapabilityDimensionModule for VfsCapabilityDimensionModule {
+    fn key(&self) -> &'static str {
+        CAPABILITY_DIMENSION_VFS
+    }
+
+    fn replay_effect(
+        &self,
+        state: &mut CapabilityState,
+        context: &mut RuntimeCapabilityReplayContext,
+        record: &RuntimeCapabilityEffectRecord,
+    ) -> Result<(), String> {
+        match record.effect_type.as_str() {
+            EFFECT_TYPE_APPLY_VFS_OVERLAY => {
+                let payload: ApplyVfsOverlayEffect = decode_effect_payload(record)?;
+                state.vfs.active = Some(match state.vfs.active.take() {
+                    Some(base_vfs) => merge_vfs_overlay(base_vfs, &payload.overlay),
+                    None => payload.overlay,
+                });
+            }
+            EFFECT_TYPE_APPLY_MOUNT_OPERATIONS => {
+                let payload: ApplyMountOperationsEffect = decode_effect_payload(record)?;
+                let mut vfs = state.vfs.active.take().unwrap_or_default();
+                apply_mount_directives(&mut vfs, &payload.operations);
+                state.vfs.active = Some(vfs);
+            }
+            other => {
+                return Err(format!(
+                    "dimension `{}` 不支持 effect type `{other}`",
+                    record.dimension.as_str()
+                ));
+            }
+        }
+        context.effective_vfs = state.vfs.active.clone();
+        Ok(())
+    }
+}
+
+fn ensure_effect_type(
+    record: &RuntimeCapabilityEffectRecord,
+    expected: &'static str,
+) -> Result<(), String> {
+    if record.effect_type == expected {
+        return Ok(());
+    }
+    Err(format!(
+        "dimension `{}` 不支持 effect type `{}`，期望 `{expected}`",
+        record.dimension.as_str(),
+        record.effect_type
+    ))
+}
+
+fn decode_effect_payload<T: DeserializeOwned>(
+    record: &RuntimeCapabilityEffectRecord,
+) -> Result<T, String> {
+    serde_json::from_value(record.payload.clone()).map_err(|error| {
+        format!(
+            "dimension `{}` effect `{}` payload decode failed: {error}",
+            record.dimension.as_str(),
+            record.effect_type
+        )
+    })
+}
+
+pub fn replay_runtime_capability_transition(
+    base_state: &CapabilityState,
+    transition: &RuntimeCapabilityTransition,
+) -> Result<RuntimeCapabilityReplay, String> {
+    let mut state = base_state.clone();
+    let mut context = RuntimeCapabilityReplayContext::default();
+    CapabilityDimensionRegistry::built_in().replay_transition(
+        &mut state,
+        &mut context,
+        transition,
+    )?;
     let effective_vfs = state.vfs.active.clone();
-    RuntimeContextReplay {
+    Ok(RuntimeCapabilityReplay {
         capability_state: state,
         effective_vfs,
-        effective_mcp_servers,
-    }
+        effective_mcp_servers: context.effective_mcp_servers,
+    })
 }
 
-pub fn apply_runtime_vfs_intent(base_vfs: Vfs, intent: &RuntimeVfsIntent) -> Vfs {
-    let mut vfs = base_vfs;
-    if let Some(overlay) = intent.overlay.as_ref() {
-        merge_vfs_overlay_into(&mut vfs, overlay);
+pub fn replay_runtime_capability_transitions(
+    base_state: &CapabilityState,
+    transitions: &[PendingCapabilityStateTransition],
+) -> Result<RuntimeCapabilityReplay, String> {
+    let mut state = base_state.clone();
+    let mut context = RuntimeCapabilityReplayContext::default();
+    let registry = CapabilityDimensionRegistry::built_in();
+    for transition in transitions {
+        registry.replay_transition(&mut state, &mut context, &transition.transition)?;
     }
-    apply_mount_directives(&mut vfs, &intent.mount_directives);
-    vfs
-}
-
-pub fn apply_runtime_mcp_intent(
-    base_mcp_servers: Vec<SessionMcpServer>,
-    intent: &RuntimeMcpIntent,
-) -> Vec<SessionMcpServer> {
-    match intent {
-        RuntimeMcpIntent::NoChange => base_mcp_servers,
-        RuntimeMcpIntent::SetEffectiveServers { servers } => servers.clone(),
-    }
+    let effective_vfs = state.vfs.active.clone();
+    Ok(RuntimeCapabilityReplay {
+        capability_state: state,
+        effective_vfs,
+        effective_mcp_servers: context.effective_mcp_servers,
+    })
 }
 
 pub fn compose_vfs_with_overlay_and_directives(
@@ -597,7 +771,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_context_patch_replays_vfs_overlay_without_persisting_full_state() {
+    fn runtime_capability_transition_replays_vfs_overlay_without_persisting_full_state() {
         let mut base = CapabilityState {
             vfs: agentdash_spi::VfsDimension {
                 active: Some(Vfs {
@@ -622,7 +796,7 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         });
-        let patch = RuntimeContextPatch::from_effective_runtime_projection(
+        let transition = RuntimeCapabilityTransition::from_runtime_projection_parts(
             &target,
             target.vfs.active.clone(),
             vec![MountDirective::SetDefaultMount {
@@ -630,8 +804,9 @@ mod tests {
             }],
             Vec::new(),
         );
+        let transition = transition.expect("transition builds");
 
-        let replayed = apply_runtime_context_patch(&base, &patch);
+        let replayed = apply_runtime_capability_transition(&base, &transition).expect("replay");
         let replayed_vfs = replayed.vfs.active.as_ref().expect("active vfs");
         let mount_ids = replayed_vfs
             .mounts
@@ -656,24 +831,123 @@ mod tests {
                 .enabled_clusters
                 .contains(&agentdash_spi::ToolCluster::Read)
         );
-        assert_eq!(apply_runtime_context_patch(&base, &patch), replayed);
+        assert_eq!(
+            apply_runtime_capability_transition(&base, &transition).expect("replay"),
+            replayed
+        );
 
         let serialized = serde_json::to_value(PendingCapabilityStateTransition {
-            id: "pending-patch".to_string(),
+            id: "pending-transition".to_string(),
             run_id: Uuid::new_v4(),
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: BTreeSet::new(),
-            patch,
+            transition,
             created_at: 1,
             source_turn_id: None,
         })
         .expect("transition serializes");
-        assert!(serialized.get("patch").is_some());
+        assert!(serialized.get("transition").is_some());
         assert!(serialized.get("state").is_none());
-        assert!(serialized["patch"].get("tool").is_none());
-        assert!(serialized["patch"].get("companion").is_none());
-        assert!(serialized["patch"].get("toolIntent").is_some());
-        assert!(serialized["patch"].get("companionIntent").is_some());
+        assert!(serialized["transition"].get("tool").is_none());
+        assert!(serialized["transition"].get("companion").is_none());
+        assert!(serialized["transition"].get("declarations").is_some());
+        assert!(serialized["transition"].get("effects").is_some());
+    }
+
+    #[test]
+    fn runtime_capability_transition_fold_replays_multiple_vfs_effects_in_order() {
+        let base = CapabilityState {
+            vfs: agentdash_spi::VfsDimension {
+                active: Some(Vfs {
+                    mounts: vec![mount("workspace", "relay_fs")],
+                    default_mount_id: Some("workspace".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+            },
+            ..Default::default()
+        };
+        let overlay = Vfs {
+            mounts: vec![mount("review", "inline_fs")],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let add_review = RuntimeCapabilityTransition::from_runtime_projection_parts(
+            &CapabilityState::default(),
+            Some(overlay),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("transition builds");
+        let set_default = RuntimeCapabilityTransition::from_runtime_projection_parts(
+            &CapabilityState::default(),
+            None,
+            vec![MountDirective::SetDefaultMount {
+                mount_id: Some("review".to_string()),
+            }],
+            Vec::new(),
+        )
+        .expect("transition builds");
+        let transitions = vec![
+            PendingCapabilityStateTransition {
+                id: "pending-a".to_string(),
+                run_id: Uuid::new_v4(),
+                lifecycle_key: "dev".to_string(),
+                phase_node: "review-a".to_string(),
+                capability_keys: BTreeSet::new(),
+                transition: add_review,
+                created_at: 1,
+                source_turn_id: None,
+            },
+            PendingCapabilityStateTransition {
+                id: "pending-b".to_string(),
+                run_id: Uuid::new_v4(),
+                lifecycle_key: "dev".to_string(),
+                phase_node: "review-b".to_string(),
+                capability_keys: BTreeSet::new(),
+                transition: set_default,
+                created_at: 2,
+                source_turn_id: None,
+            },
+        ];
+
+        let replay =
+            replay_runtime_capability_transitions(&base, &transitions).expect("fold replay");
+        let vfs = replay
+            .capability_state
+            .vfs
+            .active
+            .expect("active vfs after replay");
+        let mount_ids = vfs
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(mount_ids, BTreeSet::from(["review", "workspace"]));
+        assert_eq!(vfs.default_mount_id.as_deref(), Some("review"));
+    }
+
+    #[test]
+    fn runtime_capability_transition_rejects_invalid_module_payload() {
+        let transition = RuntimeCapabilityTransition {
+            declarations: Vec::new(),
+            effects: vec![RuntimeCapabilityEffectRecord {
+                dimension: crate::session::CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
+                effect_type: EFFECT_TYPE_SET_TOOL_ACCESS.to_string(),
+                payload: serde_json::json!({
+                    "capabilities": "not-a-set",
+                    "enabledClusters": [],
+                    "toolPolicy": {}
+                }),
+            }],
+        };
+
+        let error = replay_runtime_capability_transition(&CapabilityState::default(), &transition)
+            .expect_err("invalid payload should fail at module boundary");
+        assert!(error.contains("payload decode failed"));
     }
 }

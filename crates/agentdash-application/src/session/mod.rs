@@ -67,10 +67,11 @@ pub use capability_projection::{
 };
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
-    CapabilityStateDelta, NamedEntityDelta, RuntimeContextTransition, SetDelta, VfsSurfaceDelta,
-    apply_runtime_context_patch, apply_runtime_mcp_intent, apply_runtime_vfs_intent,
-    compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
-    replay_runtime_context_patch,
+    CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta, NamedEntityDelta,
+    RuntimeCapabilityReplay, RuntimeCapabilityReplayContext, RuntimeContextTransition, SetDelta,
+    VfsSurfaceDelta, apply_runtime_capability_transition, compose_vfs_with_overlay_and_directives,
+    compute_capability_state_delta, merge_vfs_overlay, replay_runtime_capability_transition,
+    replay_runtime_capability_transitions,
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
@@ -110,9 +111,14 @@ pub use title_generator::SessionTitleGenerator;
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{
-    CapabilityState, CompanionSessionContext, ExecutionStatus, HookSnapshotReloadTrigger,
-    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCompanionIntent,
-    RuntimeContextPatch, RuntimeMcpIntent, RuntimeToolIntent, RuntimeVfsIntent,
-    SessionBootstrapState, SessionExecutionState, SessionMeta, SessionPromptLifecycle,
-    SessionRepositoryRehydrateMode, TitleSource, UserPromptInput, resolve_session_prompt_lifecycle,
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
+    CapabilityDeclarationRecord, CapabilityDimensionKey, CapabilityState, CompanionSessionContext,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, HookSnapshotReloadTrigger,
+    PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, RuntimeCapabilityTransitionInput, SessionBootstrapState,
+    SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
+    UserPromptInput, resolve_session_prompt_lifecycle,
 };

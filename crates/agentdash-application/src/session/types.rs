@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use agentdash_agent_protocol::ContentBlock;
 use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
@@ -26,8 +27,8 @@ pub struct UserPromptInput {
 
 /// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的意图。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把 patch replay
-/// 到 construction base projection 上，再由 capability projection normalizer 补齐派生维度。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把 transition
+/// effects replay 到 construction base projection 上，再由 capability projection normalizer 补齐派生维度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCapabilityStateTransition {
@@ -36,103 +37,220 @@ pub struct PendingCapabilityStateTransition {
     pub lifecycle_key: String,
     pub phase_node: String,
     pub capability_keys: BTreeSet<String>,
-    pub patch: RuntimeContextPatch,
+    pub transition: RuntimeCapabilityTransition,
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_turn_id: Option<String>,
 }
 
-/// Runtime command store 持久化的上下文变更意图。
-///
-/// 这里保存的是可解释 patch，而不是完整 `CapabilityState` 快照。Skill baseline、
-/// effective VFS、runtime surface 等派生维度在 replay 后由 projection pipeline 生成。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeContextPatch {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_directives: Vec<ToolCapabilityDirective>,
-    #[serde(default)]
-    pub tool_intent: RuntimeToolIntent,
-    #[serde(default)]
-    pub mcp_intent: RuntimeMcpIntent,
-    #[serde(default)]
-    pub companion_intent: RuntimeCompanionIntent,
-    #[serde(default)]
-    pub vfs_intent: RuntimeVfsIntent,
-}
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CapabilityDimensionKey(pub String);
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RuntimeToolIntent {
-    #[default]
-    NoChange,
-    SetEffectiveTool {
-        capabilities: BTreeSet<ToolCapability>,
-        enabled_clusters: BTreeSet<ToolCluster>,
-        tool_policy: BTreeMap<String, ToolCapabilityFilter>,
-    },
-}
+impl CapabilityDimensionKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RuntimeMcpIntent {
-    #[default]
-    NoChange,
-    SetEffectiveServers {
-        servers: Vec<SessionMcpServer>,
-    },
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum RuntimeCompanionIntent {
-    #[default]
-    NoChange,
-    SetAgents {
-        agents: Vec<CompanionAgentEntry>,
-    },
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeVfsIntent {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub overlay: Option<Vfs>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub mount_directives: Vec<MountDirective>,
-}
-
-impl RuntimeVfsIntent {
-    pub fn is_empty(&self) -> bool {
-        self.overlay.is_none() && self.mount_directives.is_empty()
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-impl RuntimeContextPatch {
-    pub fn from_effective_runtime_projection(
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityArtifactSource {
+    pub kind: String,
+}
+
+impl CapabilityArtifactSource {
+    pub fn workflow() -> Self {
+        Self {
+            kind: "workflow".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityDeclarationRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub declaration_type: String,
+    pub source: CapabilityArtifactSource,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCapabilityEffectRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub effect_type: String,
+    pub payload: Value,
+}
+
+/// Runtime command store 持久化的能力上下文变更。
+///
+/// 主干只保存 declaration/effect records。各维度的 payload 在 built-in dimension
+/// module 边界反序列化为强类型结构，Skill baseline、runtime surface 等派生投影在
+/// replay 后由 projection pipeline 生成。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCapabilityTransition {
+    #[serde(default)]
+    pub declarations: Vec<CapabilityDeclarationRecord>,
+    #[serde(default)]
+    pub effects: Vec<RuntimeCapabilityEffectRecord>,
+}
+
+pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
+pub const CAPABILITY_DIMENSION_MCP: &str = "mcp";
+pub const CAPABILITY_DIMENSION_COMPANION: &str = "companion";
+pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
+
+pub const DECLARATION_TYPE_CAPABILITY_DIRECTIVE: &str = "capability_directive";
+
+pub const EFFECT_TYPE_SET_TOOL_ACCESS: &str = "set_tool_access";
+pub const EFFECT_TYPE_SET_MCP_SERVER_SET: &str = "set_server_set";
+pub const EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER: &str = "set_agent_roster";
+pub const EFFECT_TYPE_APPLY_VFS_OVERLAY: &str = "apply_vfs_overlay";
+pub const EFFECT_TYPE_APPLY_MOUNT_OPERATIONS: &str = "apply_mount_operations";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetToolAccessEffect {
+    pub capabilities: BTreeSet<ToolCapability>,
+    pub enabled_clusters: BTreeSet<ToolCluster>,
+    pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetMcpServerSetEffect {
+    pub servers: Vec<SessionMcpServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCompanionAgentRosterEffect {
+    pub agents: Vec<CompanionAgentEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyVfsOverlayEffect {
+    pub overlay: Vfs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyMountOperationsEffect {
+    pub operations: Vec<MountDirective>,
+}
+
+pub struct RuntimeCapabilityTransitionInput {
+    pub tool_directives: Vec<ToolCapabilityDirective>,
+    pub tool_access: SetToolAccessEffect,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub companion_agents: Vec<CompanionAgentEntry>,
+    pub vfs_overlay: Option<Vfs>,
+    pub mount_directives: Vec<MountDirective>,
+}
+
+impl RuntimeCapabilityTransition {
+    pub fn from_runtime_effects(input: RuntimeCapabilityTransitionInput) -> Result<Self, String> {
+        let declarations = input
+            .tool_directives
+            .into_iter()
+            .map(|directive| {
+                Ok(CapabilityDeclarationRecord {
+                    dimension: CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
+                    declaration_type: DECLARATION_TYPE_CAPABILITY_DIRECTIVE.to_string(),
+                    source: CapabilityArtifactSource::workflow(),
+                    payload: serde_json::to_value(directive).map_err(|error| {
+                        format!("tool capability declaration payload serialize failed: {error}")
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let mut effects = vec![
+            RuntimeCapabilityEffectRecord::typed(
+                CAPABILITY_DIMENSION_TOOL,
+                EFFECT_TYPE_SET_TOOL_ACCESS,
+                &input.tool_access,
+            )?,
+            RuntimeCapabilityEffectRecord::typed(
+                CAPABILITY_DIMENSION_MCP,
+                EFFECT_TYPE_SET_MCP_SERVER_SET,
+                &SetMcpServerSetEffect {
+                    servers: input.mcp_servers,
+                },
+            )?,
+            RuntimeCapabilityEffectRecord::typed(
+                CAPABILITY_DIMENSION_COMPANION,
+                EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
+                &SetCompanionAgentRosterEffect {
+                    agents: input.companion_agents,
+                },
+            )?,
+        ];
+        if let Some(overlay) = input.vfs_overlay {
+            effects.push(RuntimeCapabilityEffectRecord::typed(
+                CAPABILITY_DIMENSION_VFS,
+                EFFECT_TYPE_APPLY_VFS_OVERLAY,
+                &ApplyVfsOverlayEffect { overlay },
+            )?);
+        }
+        if !input.mount_directives.is_empty() {
+            effects.push(RuntimeCapabilityEffectRecord::typed(
+                CAPABILITY_DIMENSION_VFS,
+                EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+                &ApplyMountOperationsEffect {
+                    operations: input.mount_directives,
+                },
+            )?);
+        }
+
+        Ok(Self {
+            declarations,
+            effects,
+        })
+    }
+
+    pub fn from_runtime_projection_parts(
         state: &CapabilityState,
         vfs_overlay: Option<Vfs>,
         mount_directives: Vec<MountDirective>,
         tool_directives: Vec<ToolCapabilityDirective>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        Self::from_runtime_effects(RuntimeCapabilityTransitionInput {
             tool_directives,
-            tool_intent: RuntimeToolIntent::SetEffectiveTool {
+            tool_access: SetToolAccessEffect {
                 capabilities: state.tool.capabilities.clone(),
                 enabled_clusters: state.tool.enabled_clusters.clone(),
                 tool_policy: state.tool.tool_policy.clone(),
             },
-            mcp_intent: RuntimeMcpIntent::SetEffectiveServers {
-                servers: state.tool.mcp_servers.clone(),
-            },
-            companion_intent: RuntimeCompanionIntent::SetAgents {
-                agents: state.companion.agents.clone(),
-            },
-            vfs_intent: RuntimeVfsIntent {
-                overlay: vfs_overlay,
-                mount_directives,
-            },
-        }
+            mcp_servers: state.tool.mcp_servers.clone(),
+            companion_agents: state.companion.agents.clone(),
+            vfs_overlay,
+            mount_directives,
+        })
+    }
+}
+
+impl RuntimeCapabilityEffectRecord {
+    pub fn typed(
+        dimension: &str,
+        effect_type: &str,
+        payload: &impl Serialize,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            dimension: CapabilityDimensionKey::new(dimension),
+            effect_type: effect_type.to_string(),
+            payload: serde_json::to_value(payload).map_err(|error| {
+                format!("{dimension}.{effect_type} payload serialize failed: {error}")
+            })?,
+        })
     }
 }
 

@@ -274,7 +274,7 @@ requested -> failed
 connector.prompt accepted 后再标记 applied；connector.prompt 失败时保留
 requested/failed 事实供下一轮恢复。
 
-### Scenario: Runtime Context Patch Replay
+### Scenario: Runtime Capability Transition Replay
 
 #### 1. Scope / Trigger
 
@@ -283,14 +283,14 @@ requested/failed 事实供下一轮恢复。
 #### 2. Signatures
 
 - Persisted payload type: `PendingCapabilityStateTransition`
-- Patch field: `RuntimeContextPatch { tool_directives, tool_intent, mcp_intent, companion_intent, vfs_intent }`
-- Replay entry: `apply_runtime_context_patch(base_state, patch) -> CapabilityState`
+- Transition field: `RuntimeCapabilityTransition { declarations, effects }`
+- Replay entry: `replay_runtime_capability_transitions(base_state, transitions) -> RuntimeCapabilityReplay`
 
 #### 3. Contracts
 
 - `PendingCapabilityStateTransition` 保存 phase metadata：`run_id`、`lifecycle_key`、`phase_node`、`capability_keys`、`source_turn_id`。
-- `RuntimeContextPatch.tool_directives` 保留 source capability 指令；`tool_intent` 表达本次 runtime action 对 effective tool capability / policy 的明确设置；`mcp_intent` 表达 effective MCP server 设置；`companion_intent` 表达 companion agent 设置；`vfs_intent.overlay` 与 `vfs_intent.mount_directives` 表达 runtime 追加的 VFS surface 与 mount 指令。
-- replay 先从 construction base capability state 开始，叠加 VFS overlay，再应用 mount directives，随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
+- `RuntimeCapabilityTransition.declarations` 保留 source capability / mount declarations；`effects` 保存 tool access、MCP server set、companion roster、VFS overlay 与 mount operations 等可 replay runtime effects。
+- replay 先从 construction base capability state 开始，按 store 返回顺序 fold 所有 requested transitions，并由 dimension registry 分发 effect records；随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
 - repository 继续使用 runtime command `payload_json` 容器；payload 语义是 intent，而不是 full `CapabilityState` projection。
 
 #### 4. Validation & Error Matrix
@@ -308,14 +308,15 @@ requested/failed 事实供下一轮恢复。
 
 #### 6. Tests Required
 
-- Unit: patch replay 合并 VFS overlay、应用 mount directives，并断言 serialized payload 没有 `state` 字段。
-- Repository: requested command supersede、applied、failed 状态仍能保存和读取 patch payload。
+- Unit: transition replay 合并 VFS overlay、应用 mount directives，并断言 serialized payload 没有 `state` 字段。
+- Repository: requested command supersede、applied、failed 状态仍能保存和读取 transition payload。
 - Runtime: pending transition 的 event/context frame 使用 replay + normalizer 后的 final capability projection。
 
 #### 7. Implementation Boundary
 
 ```rust
-let mut state = apply_runtime_context_patch(&base_capability_state, &command.transition.patch);
+let replay = replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)?;
+let mut state = replay.capability_state;
 normalize_capability_state_dimensions(&mut state, Some(effective_vfs), mcp_servers, &baseline);
 ```
 

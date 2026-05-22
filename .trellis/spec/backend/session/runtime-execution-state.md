@@ -126,7 +126,8 @@ applied。若 applied 状态提交失败，必须立刻尝试把同一批 comman
 等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
 数据库迁移会把既有 runtime command 行更新为 `requested`。
 
-runtime command payload 保存 typed intent。`RuntimeContextPatch` 不保存完整
+runtime command payload 保存 `RuntimeCapabilityTransition` records。payload 不保存完整
 `CapabilityState`，也不保存 `ToolDimension` / `CompanionDimension` replacement；
-tool、MCP、companion、VFS 与 mount directive 分别作为 intent 字段 replay 到
-construction base projection，再由 capability projection normalizer 生成闭包状态。
+tool、MCP、companion、VFS 与 mount directive 分别作为 dimension effect records replay 到
+construction base projection，再由 capability projection normalizer 生成闭包状态。多个
+requested runtime command 必须按 store 返回顺序 fold replay。

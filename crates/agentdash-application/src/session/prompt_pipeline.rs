@@ -380,24 +380,27 @@ impl SessionLaunchExecutor {
         }
         base_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
 
-        let mut final_capability_state = requested_runtime_commands
-            .last()
-            .map(|command| {
-                super::capability_state::apply_runtime_context_patch(
-                    &base_capability_state,
-                    &command.transition.patch,
-                )
-            })
+        let requested_transitions = requested_runtime_commands
+            .iter()
+            .map(|command| command.transition.clone())
+            .collect::<Vec<_>>();
+        let replay = if requested_transitions.is_empty() {
+            None
+        } else {
+            super::capability_state::replay_runtime_capability_transitions(
+                &base_capability_state,
+                &requested_transitions,
+            )
+            .ok()
+        };
+        let mut final_capability_state = replay
+            .as_ref()
+            .map(|replay| replay.capability_state.clone())
             .unwrap_or_else(|| base_capability_state.clone());
         if let Some(base_vfs) = construction.surface.vfs.clone() {
-            let effective_vfs = requested_runtime_commands
-                .last()
-                .map(|command| {
-                    super::capability_state::apply_runtime_vfs_intent(
-                        base_vfs.clone(),
-                        &command.transition.patch.vfs_intent,
-                    )
-                })
+            let effective_vfs = replay
+                .as_ref()
+                .and_then(|replay| replay.effective_vfs.clone())
                 .unwrap_or(base_vfs);
             construction.workspace.working_directory = effective_vfs
                 .default_mount()
@@ -407,14 +410,9 @@ impl SessionLaunchExecutor {
             construction.surface.vfs = Some(effective_vfs.clone());
             final_capability_state.vfs.active = Some(effective_vfs);
         }
-        let effective_mcp_servers = requested_runtime_commands
-            .last()
-            .map(|command| {
-                super::capability_state::apply_runtime_mcp_intent(
-                    construction.projections.mcp_servers.clone(),
-                    &command.transition.patch.mcp_intent,
-                )
-            })
+        let effective_mcp_servers = replay
+            .as_ref()
+            .and_then(|replay| replay.effective_mcp_servers.clone())
             .unwrap_or_else(|| construction.projections.mcp_servers.clone());
         construction.projections.mcp_servers = effective_mcp_servers.clone();
         final_capability_state.tool.mcp_servers = effective_mcp_servers;

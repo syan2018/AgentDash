@@ -19,6 +19,7 @@ use agentdash_application::session::construction_provider::{
 };
 use agentdash_application::session::local_workspace_vfs;
 use agentdash_application::session::ownership::SessionOwnerResolver;
+use agentdash_application::session::replay_runtime_capability_transitions;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
     OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
@@ -28,9 +29,6 @@ use agentdash_application::session::{
 use agentdash_application::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
-};
-use agentdash_application::session::{
-    apply_runtime_context_patch, apply_runtime_mcp_intent, apply_runtime_vfs_intent,
 };
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
@@ -243,21 +241,6 @@ pub(crate) async fn finalize_session_construction_projection(
         ));
     };
 
-    let mut effective_vfs = base_vfs.clone();
-    let mut pending_overlay_applied = false;
-    if let Some(command) = facts.requested_runtime_commands.last() {
-        effective_vfs =
-            apply_runtime_vfs_intent(effective_vfs, &command.transition.patch.vfs_intent);
-        pending_overlay_applied = !command.transition.patch.vfs_intent.is_empty();
-    }
-    let working_directory = effective_vfs
-        .default_mount()
-        .map(|mount| PathBuf::from(mount.root_ref.trim()))
-        .filter(|path| !path.as_os_str().is_empty())
-        .ok_or_else(|| {
-            ApiError::BadRequest("vfs 缺少 default_mount 或 root_ref 无效".to_string())
-        })?;
-
     let (base_mcp_servers, base_mcp_source) = if !plan.projections.mcp_servers.is_empty() {
         (
             plan.projections.mcp_servers.clone(),
@@ -271,17 +254,58 @@ pub(crate) async fn finalize_session_construction_projection(
     } else {
         (Vec::new(), "empty".to_string())
     };
-    let (mcp_servers, mcp_source) = if let Some(command) = facts.requested_runtime_commands.last() {
+
+    let mut base_capability_state = plan
+        .projections
+        .capability_state
+        .clone()
+        .unwrap_or_default();
+    base_capability_state.vfs.active = Some(base_vfs.clone());
+    base_capability_state.tool.mcp_servers = base_mcp_servers.clone();
+
+    let requested_transitions = facts
+        .requested_runtime_commands
+        .iter()
+        .map(|command| command.transition.clone())
+        .collect::<Vec<_>>();
+    let replay = if requested_transitions.is_empty() {
+        None
+    } else {
+        Some(
+            replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)
+                .map_err(ApiError::BadRequest)?,
+        )
+    };
+    let effective_vfs = replay
+        .as_ref()
+        .and_then(|replay| replay.effective_vfs.clone())
+        .unwrap_or_else(|| base_vfs.clone());
+    let pending_overlay_applied = requested_transitions.iter().any(|transition| {
+        transition
+            .transition
+            .effects
+            .iter()
+            .any(|effect| effect.dimension.as_str() == "vfs")
+    });
+    let (mcp_servers, mcp_source) = if let Some(replay) = replay.as_ref() {
         (
-            apply_runtime_mcp_intent(
-                base_mcp_servers.clone(),
-                &command.transition.patch.mcp_intent,
-            ),
+            replay
+                .effective_mcp_servers
+                .clone()
+                .unwrap_or_else(|| replay.capability_state.tool.mcp_servers.clone()),
             "runtime_command.pending_transition".to_string(),
         )
     } else {
         (base_mcp_servers.clone(), base_mcp_source)
     };
+
+    let working_directory = effective_vfs
+        .default_mount()
+        .map(|mount| PathBuf::from(mount.root_ref.trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| {
+            ApiError::BadRequest("vfs 缺少 default_mount 或 root_ref 无效".to_string())
+        })?;
 
     let projection = derive_session_capability_projection(SessionCapabilityProjectionInput {
         vfs_service: Some(&state.services.vfs_service),
@@ -316,11 +340,6 @@ pub(crate) async fn finalize_session_construction_projection(
         ));
     }
 
-    let mut base_capability_state = plan
-        .projections
-        .capability_state
-        .clone()
-        .unwrap_or_default();
     normalize_capability_state_dimensions(
         &mut base_capability_state,
         Some(base_vfs),
@@ -328,12 +347,8 @@ pub(crate) async fn finalize_session_construction_projection(
         &session_capabilities,
     );
 
-    let mut final_capability_state = facts
-        .requested_runtime_commands
-        .last()
-        .map(|command| {
-            apply_runtime_context_patch(&base_capability_state, &command.transition.patch)
-        })
+    let mut final_capability_state = replay
+        .map(|replay| replay.capability_state)
         .unwrap_or_else(|| base_capability_state.clone());
     normalize_capability_state_dimensions(
         &mut final_capability_state,

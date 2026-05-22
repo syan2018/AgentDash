@@ -6,7 +6,7 @@
 owner / session meta / request facts
   -> SessionConstructionPlan(seed)
   -> assembler / bootstrap 分散填充 VFS、MCP、capability_state
-  -> finalize 合并 cached runtime state 与 pending VFS overlay
+  -> finalize 合并 pending runtime patch / VFS overlay
   -> LaunchExecution / ExecutionContext
   -> TurnExecution / SessionProfile 保存运行态快照
 ```
@@ -37,7 +37,7 @@ owner context plan
 - `Vfs` 被当成运行态快照到处传递，而不是由 owner、session meta、workflow mount directives、runtime command 等意图统一投影。
 - pending runtime command 需要表达“下轮要应用什么变化”，而不是把闭包后的 `CapabilityState` 当成长期事实。
 - `runtime_surface` 是 final VFS 的 DTO 投影，却在 context query 中早于 finalize 生成。
-- `SessionProfile` / `TurnExecution` 是 connector 与 hot-update 所需缓存，但部分路径会把 cached capability 当构建兜底来源，事实源边界变模糊。
+- `SessionProfile` / `TurnExecution` 是 connector 与 hot-update 所需缓存；construction facts 需要保持为 owner、session meta、runtime command 等可解释输入。
 
 ## 目标链路
 
@@ -110,7 +110,7 @@ runtime action intent
 目标：清理“cached runtime state 兜底构建事实”的灰区。
 
 - `SessionProfile` / `TurnExecution` 明确只作为 projection cache。
-- construction 不再把 cached capability 当常规 VFS/MCP 事实源；只在明确的 resume/recovery 场景读取，并写入 trace。
+- construction 不再把 cached capability 当常规 VFS/MCP 事实源；恢复场景应通过明确输入与 trace 表达。
 - owner/session meta/workflow/runtime command 成为可解释的 durable inputs。
 - `validate_for_launch` 扩展为 pipeline 输出 gate，覆盖 VFS、MCP、Skill、runtime surface 的一致性。
 

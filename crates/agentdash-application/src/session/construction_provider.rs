@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use super::construction::SessionConstructionPlan;
 use super::launch::LaunchCommand;
 use super::runtime_commands::RuntimeCommandRecord;
-use super::types::{CapabilityState, SessionMeta};
+use super::types::SessionMeta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLaunchPhase {
@@ -57,7 +57,6 @@ pub struct SessionConstructionProviderInput {
     pub command: LaunchCommand,
     pub session_meta: SessionMeta,
     pub had_existing_runtime: bool,
-    pub cached_capability_state: Option<CapabilityState>,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
 }
 

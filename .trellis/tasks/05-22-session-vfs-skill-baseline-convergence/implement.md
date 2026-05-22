@@ -73,10 +73,10 @@
 
 本阶段执行：
 
-- [ ] 明确 `SessionProfile` / `TurnExecution` 只作为 projection cache 和 connector hot-update cache。
-- [ ] construction 默认不再从 cached capability state 补 VFS/MCP；只在明确 resume/recovery 场景读取。
-- [ ] 所有读取 cached runtime state 的路径写入 resolution trace，说明 recovery 来源。
-- [ ] 扩展 `validate_for_launch` 或新增 pipeline gate，覆盖 VFS、MCP、Skill、runtime surface 的一致性。
+- [x] 明确 `SessionProfile` / `TurnExecution` 只作为 projection cache 和 connector hot-update cache。
+- [x] construction 默认不再从 cached capability state 补 VFS/MCP；恢复场景后续通过显式输入与 trace 表达。
+- [x] 所有读取 cached runtime state 的路径写入 resolution trace，说明 recovery 来源。
+- [x] 扩展 `validate_for_launch` 或新增 pipeline gate，覆盖 VFS、MCP、Skill、runtime surface 的一致性。
 
 完成标准：
 
@@ -134,6 +134,8 @@ cargo test -p agentdash-application session::hub::tests
 cargo test -p agentdash-application session::memory_persistence
 cargo test -p agentdash-application session::launch
 cargo check -p agentdash-api
+cargo test -p agentdash-api session_context
+cargo test -p agentdash-application session::construction
 ```
 
 ## Review Gates

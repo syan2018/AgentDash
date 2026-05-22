@@ -140,11 +140,6 @@ pub(crate) async fn build_session_context_plan(
         executor_config: session_meta.executor_config.clone(),
     };
     let had_existing_runtime = state.services.connector.has_live_session(session_id).await;
-    let cached_capability_state = state
-        .services
-        .session_capability
-        .get_latest_capability_state(session_id)
-        .await;
     let requested_runtime_commands = state
         .services
         .session_capability
@@ -156,7 +151,6 @@ pub(crate) async fn build_session_context_plan(
         command: LaunchCommand::http_prompt_input(user_input, Some(current_user.clone())),
         session_meta,
         had_existing_runtime,
-        cached_capability_state,
         requested_runtime_commands,
     };
     plan = finalize_session_construction_projection(

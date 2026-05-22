@@ -94,7 +94,6 @@ effective capability projection
 
 - construction base `plan.surface.vfs`
 - local relay workspace fallback
-- cached runtime capability VFS
 - session meta visible canvas mounts 已在 owner context planner / assembler 中进入 base VFS
 - requested runtime command 中的 pending VFS overlay
 - workflow / step mount directives

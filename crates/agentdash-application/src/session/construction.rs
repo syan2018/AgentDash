@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
@@ -291,6 +291,38 @@ impl SessionConstructionPlan {
                     .to_string(),
             );
         }
+        if let Some(session_capabilities) = self.projections.session_capabilities.as_ref()
+            && capability_state.skill.skills != session_capabilities.skills
+        {
+            return Err(
+                "SessionConstructionPlan capability_state.skill.skills 必须等于 projections.session_capabilities.skills"
+                    .to_string(),
+            );
+        }
+        if let Some(runtime_surface) = self.surface.runtime_surface.as_ref() {
+            let vfs_mount_ids = vfs
+                .mounts
+                .iter()
+                .map(|mount| mount.id.as_str())
+                .collect::<BTreeSet<_>>();
+            let surface_mount_ids = runtime_surface
+                .mounts
+                .iter()
+                .map(|mount| mount.id.as_str())
+                .collect::<BTreeSet<_>>();
+            if vfs_mount_ids != surface_mount_ids {
+                return Err(
+                    "SessionConstructionPlan runtime_surface.mounts 必须来自 surface.vfs"
+                        .to_string(),
+                );
+            }
+            if runtime_surface.default_mount_id != vfs.default_mount_id {
+                return Err(
+                    "SessionConstructionPlan runtime_surface.default_mount_id 必须等于 surface.vfs.default_mount_id"
+                        .to_string(),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -420,6 +452,62 @@ mod tests {
             plan.validate_for_launch()
                 .expect_err("capability/vfs drift must be rejected")
                 .contains("capability_state.vfs.active")
+        );
+    }
+
+    #[test]
+    fn validate_for_launch_rejects_skill_projection_drift() {
+        let binding = SessionBinding::new(
+            Uuid::new_v4(),
+            "sess-skill-drift".to_string(),
+            SessionOwnerType::Project,
+            Uuid::new_v4(),
+            "execution",
+        );
+        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let vfs = Vfs {
+            mounts: vec![Mount {
+                id: "workspace".to_string(),
+                provider: "relay_fs".to_string(),
+                backend_id: "backend".to_string(),
+                root_ref: "/workspace".to_string(),
+                capabilities: vec![MountCapability::Read, MountCapability::List],
+                default_write: false,
+                display_name: "Workspace".to_string(),
+                metadata: serde_json::Value::Null,
+            }],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let mut capability_state = CapabilityState::default();
+        capability_state.vfs.active = Some(vfs.clone());
+        capability_state
+            .skill
+            .skills
+            .push(agentdash_spi::SkillEntry {
+                name: "drift".to_string(),
+                description: "drift".to_string(),
+                file_path: "workspace://skills/drift/SKILL.md".to_string(),
+                disable_model_invocation: false,
+            });
+        let mut plan = SessionConstructionPlan::new(
+            "sess-skill-drift",
+            owner,
+            SessionConstructionContextProjection::default(),
+        );
+        plan.workspace.working_directory = Some(PathBuf::from("/workspace"));
+        plan.execution_profile.executor_config = Some(AgentConfig::new("PI_AGENT"));
+        plan.surface.vfs = Some(vfs);
+        plan.projections.capability_state = Some(capability_state);
+        plan.projections.session_capabilities =
+            Some(agentdash_spi::SessionBaselineCapabilities::default());
+
+        assert!(
+            plan.validate_for_launch()
+                .expect_err("skill projection drift must be rejected")
+                .contains("capability_state.skill.skills")
         );
     }
 }

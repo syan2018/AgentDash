@@ -225,7 +225,7 @@ impl SessionLaunchExecutor {
         };
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
-        let cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
+        let _cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
         let sid = session_id.to_string();
         let meta_store = self.deps.stores.meta.clone();
         let runtime_command_store = self.deps.stores.runtime_commands.clone();
@@ -273,9 +273,6 @@ impl SessionLaunchExecutor {
                 command: command.clone(),
                 session_meta: session_meta.clone(),
                 had_existing_runtime,
-                cached_capability_state: cached_continuation
-                    .as_ref()
-                    .map(|profile| profile.capability_state.clone()),
                 requested_runtime_commands: requested_runtime_commands.clone(),
             })
             .await

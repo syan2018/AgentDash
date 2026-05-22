@@ -9,6 +9,7 @@ import {
   revokeAllRuntimeAssetUrls as revokeAllRuntimeAssetUrlsInCache,
   revokeRuntimeAssetUrl as revokeRuntimeAssetUrlInCache,
   type BuiltPreviewDocument,
+  type RuntimeAssetUrlCache,
 } from "./CanvasRuntimePreview.runtime";
 
 export interface CanvasRuntimePreviewProps {
@@ -62,6 +63,11 @@ interface AssetRevokeEnvelope {
   url: string;
 }
 
+interface PreviewGeneration {
+  frameId: string;
+  assetCache: RuntimeAssetUrlCache;
+}
+
 /**
  * Blob URL revoke 的安全延迟（ms）。
  * iframe srcDoc 更新后浏览器异步解析新文档并 fetch blob URL，
@@ -72,42 +78,46 @@ const BLOB_REVOKE_DELAY_MS = 8_000;
 export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   // 使用 React useId 生成渲染期稳定的 frame id，避免 Math.random 在 render 中被纯度规则拒绝。
-  const frameId = `canvas-preview-${useId()}`;
+  const frameIdBase = `canvas-preview-${useId()}`;
+  const generationSeqRef = useRef(0);
+  const activeGenerationRef = useRef<PreviewGeneration | null>(null);
   const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
-  const runtimeAssetUrlCacheRef = useRef(createRuntimeAssetUrlCache());
 
   const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
 
-  const revokeRuntimeAssetUrl = useCallback((url: string) => {
-    revokeRuntimeAssetUrlInCache(runtimeAssetUrlCacheRef.current, url);
-  }, []);
-
-  const revokeAllRuntimeAssetUrls = useCallback(() => {
-    revokeAllRuntimeAssetUrlsInCache(runtimeAssetUrlCacheRef.current);
-  }, []);
-
   // snapshot 变化时重建预览文档。构建失败/成功都要把结果写回 UI 状态，属于合法的 derived state。
   useEffect(() => {
     if (!snapshot) {
+      const capturedGeneration = activeGenerationRef.current;
+      activeGenerationRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveSrcDoc(null);
       setBuildError(null);
       setRuntimeStatus("idle");
       setRuntimeMessage(null);
-      revokeAllRuntimeAssetUrls();
+      if (capturedGeneration) {
+        revokeAllRuntimeAssetUrlsInCache(capturedGeneration.assetCache);
+      }
       return;
     }
 
+    const generation: PreviewGeneration = {
+      frameId: `${frameIdBase}-${++generationSeqRef.current}`,
+      assetCache: createRuntimeAssetUrlCache(),
+    };
     let built: BuiltPreviewDocument | null = null;
     try {
-      built = buildPreviewDocument(snapshot, frameId);
+      built = buildPreviewDocument(snapshot, generation.frameId);
+      activeGenerationRef.current = generation;
       setActiveSrcDoc(built.srcDoc);
       setBuildError(null);
       setRuntimeStatus("building");
       setRuntimeMessage("正在装载 Canvas 运行时...");
     } catch (error) {
+      activeGenerationRef.current = null;
+      revokeAllRuntimeAssetUrlsInCache(generation.assetCache);
       setActiveSrcDoc(null);
       setBuildError(error instanceof Error ? error.message : "Canvas 预览构建失败");
       setRuntimeStatus("error");
@@ -119,16 +129,21 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     // cleanup 使用捕获值可避免触发 react-hooks/exhaustive-deps 对 ref 的警告。
     const capturedIframe = iframeRef.current;
     return () => {
+      if (activeGenerationRef.current === generation) {
+        activeGenerationRef.current = null;
+      }
       if (!capturedBuilt) return;
 
       if (capturedIframe) {
         capturedIframe.srcdoc = "";
       }
 
-      setTimeout(() => capturedBuilt.dispose(), BLOB_REVOKE_DELAY_MS);
-      setTimeout(revokeAllRuntimeAssetUrls, BLOB_REVOKE_DELAY_MS);
+      setTimeout(() => {
+        capturedBuilt.dispose();
+        revokeAllRuntimeAssetUrlsInCache(generation.assetCache);
+      }, BLOB_REVOKE_DELAY_MS);
     };
-  }, [snapshot, frameId, revokeAllRuntimeAssetUrls]);
+  }, [snapshot, frameIdBase]);
 
   const sendRuntimeResult = useCallback((payload: RuntimeResultEnvelope) => {
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
@@ -139,10 +154,15 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   }, []);
 
   const handleRuntimeInvoke = useCallback(async (payload: RuntimeInvokeEnvelope) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId) {
+      return;
+    }
+
     if (!snapshot?.session_id) {
       sendRuntimeResult({
         kind: "canvas-runtime-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: false,
         error: "Canvas runtime bridge 需要绑定 Session 后才能调用",
@@ -155,7 +175,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     if (!snapshot.runtime_bridge.enabled || !actionVisible) {
       sendRuntimeResult({
         kind: "canvas-runtime-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: false,
         error: `Canvas runtime action 不可见: ${payload.action_key}`,
@@ -169,30 +189,41 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
         action_key: payload.action_key,
         input: payload.input ?? {},
       });
+      if (activeGenerationRef.current !== generation) {
+        return;
+      }
       sendRuntimeResult({
         kind: "canvas-runtime-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: true,
         result,
       });
     } catch (error) {
+      if (activeGenerationRef.current !== generation) {
+        return;
+      }
       sendRuntimeResult({
         kind: "canvas-runtime-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: false,
         error: error instanceof Error ? error.message : "Canvas runtime action 调用失败",
       });
     }
-  }, [frameId, sendRuntimeResult, snapshot]);
+  }, [sendRuntimeResult, snapshot]);
 
   const handleAssetUrlRequest = useCallback(async (payload: AssetUrlRequestEnvelope) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId) {
+      return;
+    }
+
     const surfaceRef = snapshot?.resource_surface_ref?.trim();
     if (!snapshot?.session_id || !surfaceRef) {
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: false,
         error: "Canvas 图片资源需要绑定 Session",
@@ -204,26 +235,33 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       const url = await resolveRuntimeAssetUrl({
         surfaceRef,
         uri: payload.uri,
-        cache: runtimeAssetUrlCacheRef.current,
+        cache: generation.assetCache,
         readBlob: readSurfaceFileBlob,
       });
+      if (activeGenerationRef.current !== generation) {
+        revokeRuntimeAssetUrlInCache(generation.assetCache, url);
+        return;
+      }
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: true,
         url,
       });
     } catch (error) {
+      if (activeGenerationRef.current !== generation) {
+        return;
+      }
       sendAssetUrlResult({
         kind: "canvas-asset-url-result",
-        frame_id: frameId,
+        frame_id: generation.frameId,
         request_id: payload.request_id,
         ok: false,
         error: error instanceof Error ? error.message : "图片资源读取失败",
       });
     }
-  }, [frameId, sendAssetUrlResult, snapshot]);
+  }, [sendAssetUrlResult, snapshot]);
 
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
@@ -231,22 +269,23 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       return;
     }
     const payload = event.data;
-    if (isRuntimeInvokeEnvelope(payload) && payload.frame_id === frameId) {
+    const generation = activeGenerationRef.current;
+    if (isRuntimeInvokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
       void handleRuntimeInvoke(payload);
       return;
     }
 
-    if (isAssetUrlRequestEnvelope(payload) && payload.frame_id === frameId) {
+    if (isAssetUrlRequestEnvelope(payload) && payload.frame_id === generation?.frameId) {
       void handleAssetUrlRequest(payload);
       return;
     }
 
-    if (isAssetRevokeEnvelope(payload) && payload.frame_id === frameId) {
-      revokeRuntimeAssetUrl(payload.url);
+    if (isAssetRevokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
+      revokeRuntimeAssetUrlInCache(generation.assetCache, payload.url);
       return;
     }
 
-    if (!isPreviewEnvelope(payload) || payload.frame_id !== frameId) {
+    if (!isPreviewEnvelope(payload) || payload.frame_id !== generation?.frameId) {
       return;
     }
 
@@ -257,7 +296,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, [frameId, handleAssetUrlRequest, handleRuntimeInvoke, revokeRuntimeAssetUrl]);
+  }, [handleAssetUrlRequest, handleRuntimeInvoke]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);

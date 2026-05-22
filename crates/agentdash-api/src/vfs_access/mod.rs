@@ -26,7 +26,7 @@ mod tests {
     use agentdash_domain::context_container::{
         ContextContainerDefinition, ContextContainerFile, ContextContainerProvider,
     };
-    use agentdash_domain::project_filespace::ProjectVfsMountBinding;
+    use agentdash_domain::project_vfs_mount::ProjectVfsMount;
     use agentdash_domain::workspace::Workspace;
 
     use crate::relay::registry::ConnectedBackend;
@@ -71,13 +71,8 @@ mod tests {
         }
     }
 
-    fn filespace_binding(project_id: uuid::Uuid, mount_id: &str) -> ProjectVfsMountBinding {
-        ProjectVfsMountBinding::new_filespace(
-            project_id,
-            mount_id.to_string(),
-            mount_id.to_string(),
-            uuid::Uuid::new_v4(),
-        )
+    fn inline_mount(project_id: uuid::Uuid, mount_id: &str) -> ProjectVfsMount {
+        ProjectVfsMount::new_inline(project_id, mount_id.to_string(), mount_id.to_string())
     }
 
     #[test]
@@ -315,7 +310,7 @@ mod tests {
     fn build_task_vfs_merges_project_story_and_workspace_policy() {
         let service = RelayVfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
-        let bindings = vec![filespace_binding(project.id, "spec")];
+        let bindings = vec![inline_mount(project.id, "spec")];
 
         let mut story =
             agentdash_domain::story::Story::new(project.id, "story".into(), "desc".into());
@@ -354,8 +349,8 @@ mod tests {
         let service = RelayVfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         let bindings = vec![
-            filespace_binding(project.id, "shared"),
-            filespace_binding(project.id, "km"),
+            inline_mount(project.id, "shared"),
+            inline_mount(project.id, "km"),
         ];
 
         let mut story =

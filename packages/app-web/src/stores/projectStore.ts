@@ -47,6 +47,11 @@ interface ProjectState {
   }) => Promise<ProjectAgent | null>;
   deleteProjectAgent: (projectId: string, agentId: string) => Promise<boolean>;
 
+  // Project VFS Mount Binding 失效信号：UI 操作后 bump 版本号，
+  // VfsAccessPicker 等订阅方据此重新 fetch
+  vfsMountsRevision: Record<string, number>;
+  bumpVfsMountsRevision: (projectId: string) => void;
+
   // 既有接口
   fetchProjects: () => Promise<void>;
   createProject: (name: string, description: string, config?: Partial<ProjectConfig>) => Promise<Project | null>;
@@ -163,6 +168,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   // ─── Project Agent 管理 ───
   projectAgentConfigsByProjectId: {},
+
+  vfsMountsRevision: {},
+  bumpVfsMountsRevision: (projectId) => {
+    set((s) => ({
+      vfsMountsRevision: {
+        ...s.vfsMountsRevision,
+        [projectId]: (s.vfsMountsRevision[projectId] ?? 0) + 1,
+      },
+    }));
+  },
 
   fetchProjectAgentConfigs: async (projectId) => {
     try {

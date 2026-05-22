@@ -10,11 +10,11 @@ import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../../services/mcpPreset";
 import { fetchProjectSkillAssets } from "../../../services/skillAsset";
-import { listProjectFilespaces } from "../../../services/projectFilespaces";
+import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
 import type {
   ActivityLifecycleDefinition,
   McpPresetDto,
-  ProjectFilespace,
+  ProjectVfsMount,
   ProjectAgent,
   PublishLibraryAssetKind,
   SkillAssetDto,
@@ -43,7 +43,7 @@ const KIND_OPTIONS: Array<{ value: PublishLibraryAssetKind; label: string; hint:
   { value: "mcp_preset", label: "MCP Server", hint: "Project MCP Preset → mcp_server_template" },
   { value: "workflow_bundle", label: "Workflow", hint: "Project Lifecycle bundle → workflow_template" },
   { value: "skill_asset", label: "Skill", hint: "Project Skill 资产 → skill_template" },
-  { value: "filespace", label: "Filespace", hint: "Project Filespace → filespace_template" },
+  { value: "vfs_mount", label: "VFS Mount", hint: "Project VFS Mount → vfs_mount_template" },
 ];
 
 export function AssetPickerDrawer({
@@ -162,8 +162,8 @@ function AssetStep({
       {kind === "skill_asset" && (
         <SkillList projectId={projectId} onPick={onPick} />
       )}
-      {kind === "filespace" && (
-        <FilespaceList projectId={projectId} onPick={onPick} />
+      {kind === "vfs_mount" && (
+        <VfsMountList projectId={projectId} onPick={onPick} />
       )}
     </section>
   );
@@ -374,19 +374,19 @@ function SkillList({
   );
 }
 
-function FilespaceList({
+function VfsMountList({
   projectId,
   onPick,
 }: {
   projectId: string;
   onPick: (s: AssetPickerSelection) => void;
 }) {
-  const [items, setItems] = useState<ProjectFilespace[] | null>(null);
+  const [items, setItems] = useState<ProjectVfsMount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    listProjectFilespaces(projectId)
+    listProjectVfsMounts(projectId)
       .then((list) => {
         if (cancelled) return;
         setItems(list);
@@ -400,23 +400,30 @@ function FilespaceList({
     };
   }, [projectId]);
 
+  const visible = useMemo(
+    () => (items ?? []).filter((item) => !item.installed_source),
+    [items],
+  );
+
   if (error) return <Hint message={error} tone="danger" />;
-  if (items === null) return <Hint message="正在加载 Filespace…" />;
-  if (items.length === 0) {
-    return <Hint message="项目内暂无可发布的 Filespace。" />;
+  if (items === null) return <Hint message="正在加载 VFS Mount…" />;
+  if (visible.length === 0) {
+    return <Hint message="项目内暂无可发布的 user VFS Mount。Marketplace 安装的 mount 不能再次发布。" />;
   }
   return (
     <PickList
-      items={items}
-      keyOf={(item) => item.id}
+      items={visible}
+      keyOf={(item) => item.mount_id}
       titleOf={(item) => item.display_name}
-      hintOf={(item) => `mount: ${item.key}`}
+      hintOf={(item) =>
+        `mount: ${item.mount_id} · ${item.content.kind === "inline" ? "Inline" : "External"}`
+      }
       onPick={(item) =>
         onPick({
-          assetKind: "filespace",
-          projectAssetId: item.id,
+          assetKind: "vfs_mount",
+          projectAssetId: item.mount_id,
           defaults: {
-            key: item.key,
+            key: item.mount_id,
             display_name: item.display_name,
             description: item.description ?? null,
           },

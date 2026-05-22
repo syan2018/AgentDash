@@ -6,13 +6,13 @@ use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::common::AgentPresetConfig;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
-use agentdash_domain::project_filespace::{
-    PROJECT_FILESPACE_CONTAINER_ID, ProjectFilespace, ProjectVfsMountBinding,
-};
+use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
 use agentdash_domain::shared_library::{
-    FilespaceTemplatePayload, InstalledAssetSource, LibraryAsset, LibraryAssetPayload,
-    ProjectExtensionInstallation, SharedLibrarySourceStatus, normalize_workflow_template_value,
+    InstalledAssetSource, LibraryAsset, LibraryAssetPayload, ProjectExtensionInstallation,
+    SharedLibrarySourceStatus, VfsMountTemplatePayload, normalize_workflow_template_value,
 };
+
+use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 use agentdash_domain::workflow::{WorkflowDefinitionSource, WorkflowTemplateInstallBundle};
 
@@ -42,8 +42,9 @@ pub enum InstallLibraryAssetOutput {
     SkillAsset {
         id: Uuid,
     },
-    Filespace {
+    VfsMount {
         id: Uuid,
+        mount_id: String,
     },
     ExtensionInstallation {
         id: Uuid,
@@ -55,7 +56,7 @@ pub struct ProjectAssetSourceStatus {
     pub project_agents: Vec<ProjectAssetSourceStatusItem>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
-    pub filespaces: Vec<ProjectAssetSourceStatusItem>,
+    pub vfs_mounts: Vec<ProjectAssetSourceStatusItem>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
@@ -128,8 +129,8 @@ pub async fn install_library_asset_to_project(
                 .collect();
             upsert_skill_asset(repos, skill, input.overwrite).await
         }
-        LibraryAssetPayload::FilespaceTemplate(payload) => {
-            install_filespace_template(repos, input, asset, payload).await
+        LibraryAssetPayload::VfsMountTemplate(payload) => {
+            install_vfs_mount_template(repos, input, asset, payload).await
         }
         LibraryAssetPayload::ExtensionTemplate(payload) => {
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
@@ -186,19 +187,19 @@ pub async fn list_project_asset_source_status(
         }
     }
 
-    let mut filespaces = Vec::new();
-    for filespace in repos
-        .project_filespace_repo
+    let mut vfs_mounts = Vec::new();
+    for mount in repos
+        .project_vfs_mount_repo
         .list_by_project(project_id)
         .await?
     {
-        if let Some(installed_source) = filespace.installed_source {
-            filespaces.push(
+        if let Some(installed_source) = mount.installed_source {
+            vfs_mounts.push(
                 source_status_item(
                     repos,
-                    "project_filespace",
-                    filespace.id,
-                    filespace.key,
+                    "project_vfs_mount",
+                    mount.id,
+                    mount.mount_id,
                     installed_source,
                 )
                 .await?,
@@ -268,7 +269,7 @@ pub async fn list_project_asset_source_status(
         project_agents,
         mcp_presets,
         skill_assets,
-        filespaces,
+        vfs_mounts,
         workflow_definitions,
         activity_lifecycle_definitions,
         extension_installations,
@@ -317,103 +318,150 @@ async fn install_agent_template(
     })
 }
 
-async fn install_filespace_template(
+async fn install_vfs_mount_template(
     repos: &RepositorySet,
     input: InstallLibraryAssetInput,
     asset: LibraryAsset,
-    payload: FilespaceTemplatePayload,
+    payload: VfsMountTemplatePayload,
 ) -> Result<InstallLibraryAssetOutput, DomainError> {
-    let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
+    let target_mount_id = target_key_or_asset_key(
+        input.target_key.as_deref(),
+        if payload.mount_id().trim().is_empty() {
+            asset.key.as_str()
+        } else {
+            payload.mount_id()
+        },
+    );
     let installed_source = installed_source_from_asset(&asset);
-    let mut filespace =
-        ProjectFilespace::new(input.project_id, key.clone(), asset.display_name.clone());
-    filespace.description = asset.description.clone();
-    filespace.installed_source = Some(installed_source);
+    let display_name = if payload.display_name().trim().is_empty() {
+        asset.display_name.clone()
+    } else {
+        payload.display_name().to_string()
+    };
+    let description = payload
+        .description()
+        .map(str::to_string)
+        .or_else(|| asset.description.clone());
+    let capabilities = payload.capabilities().to_vec();
+
+    let (mut mount, files) = match payload {
+        VfsMountTemplatePayload::Inline { files, .. } => {
+            let mount = ProjectVfsMount {
+                id: Uuid::new_v4(),
+                project_id: input.project_id,
+                mount_id: target_mount_id.clone(),
+                display_name: display_name.clone(),
+                description: description.clone(),
+                capabilities: capabilities.clone(),
+                installed_source: Some(installed_source.clone()),
+                content: ProjectVfsMountContent::Inline,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            (mount, Some(files))
+        }
+        VfsMountTemplatePayload::ExternalService {
+            service_id,
+            root_ref,
+            ..
+        } => {
+            let mount = ProjectVfsMount {
+                id: Uuid::new_v4(),
+                project_id: input.project_id,
+                mount_id: target_mount_id.clone(),
+                display_name: display_name.clone(),
+                description: description.clone(),
+                capabilities: capabilities.clone(),
+                installed_source: Some(installed_source.clone()),
+                content: ProjectVfsMountContent::ExternalService {
+                    service_id,
+                    root_ref,
+                },
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            (mount, None)
+        }
+    };
 
     if let Some(existing) = repos
-        .project_filespace_repo
-        .get_by_project_and_key(input.project_id, &key)
+        .project_vfs_mount_repo
+        .get_by_project_and_mount_id(input.project_id, &target_mount_id)
         .await?
     {
         if !input.overwrite {
             return Err(DomainError::InvalidConfig(format!(
-                "Project Filespace key 已存在: {key}"
+                "Project VFS Mount 已存在: {target_mount_id}"
             )));
         }
-        filespace.id = existing.id;
-        filespace.created_at = existing.created_at;
-        filespace.updated_at = chrono::Utc::now();
-        repos.project_filespace_repo.update(&filespace).await?;
+        mount.id = existing.id;
+        mount.created_at = existing.created_at;
+        mount.updated_at = chrono::Utc::now();
+        repos.project_vfs_mount_repo.update(&mount).await?;
         repos
             .inline_file_repo
-            .delete_by_owner(InlineFileOwnerKind::ProjectFilespace, filespace.id)
+            .delete_by_owner(InlineFileOwnerKind::ProjectVfsMount, mount.id)
             .await?;
     } else {
-        repos.project_filespace_repo.create(&filespace).await?;
-        let binding = ProjectVfsMountBinding::new_filespace(
-            input.project_id,
-            key.clone(),
-            asset.display_name,
-            filespace.id,
-        );
-        repos
-            .project_vfs_mount_binding_repo
-            .create(&binding)
-            .await?;
+        repos.project_vfs_mount_repo.create(&mount).await?;
     }
 
-    let files = payload
-        .files
-        .into_iter()
-        .map(|file| {
-            let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
-                .map_err(DomainError::InvalidConfig)?;
-            match file.content_kind.as_str() {
-                "text" => Ok(InlineFile::new_text(
-                    InlineFileOwnerKind::ProjectFilespace,
-                    filespace.id,
-                    PROJECT_FILESPACE_CONTAINER_ID,
-                    path,
-                    file.content.unwrap_or_default(),
-                )),
-                "binary" => {
-                    let encoded = file.data_base64.ok_or_else(|| {
-                        DomainError::InvalidConfig(
-                            "filespace_template binary 文件缺少 data_base64".to_string(),
-                        )
-                    })?;
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(encoded)
-                        .map_err(|error| {
-                            DomainError::InvalidConfig(format!(
-                                "filespace_template binary base64 非法: {error}"
-                            ))
-                        })?;
-                    if bytes.len() as u64 != file.size_bytes {
-                        return Err(DomainError::InvalidConfig(format!(
-                            "filespace_template 文件 `{}` 的 size_bytes 与 data_base64 不一致",
-                            file.path
-                        )));
-                    }
-                    Ok(InlineFile::new_binary(
-                        InlineFileOwnerKind::ProjectFilespace,
-                        filespace.id,
-                        PROJECT_FILESPACE_CONTAINER_ID,
+    if let Some(files) = files {
+        let inline_files = files
+            .into_iter()
+            .map(|file| {
+                let path = crate::vfs::normalize_mount_relative_path(&file.path, false)
+                    .map_err(DomainError::InvalidConfig)?;
+                match file.content_kind.as_str() {
+                    "text" => Ok(InlineFile::new_text(
+                        InlineFileOwnerKind::ProjectVfsMount,
+                        mount.id,
+                        PROJECT_VFS_MOUNT_CONTAINER_ID,
                         path,
-                        bytes,
-                        file.mime_type
-                            .unwrap_or_else(|| "application/octet-stream".to_string()),
-                    ))
+                        file.content.unwrap_or_default(),
+                    )),
+                    "binary" => {
+                        let encoded = file.data_base64.ok_or_else(|| {
+                            DomainError::InvalidConfig(
+                                "vfs_mount_template binary 文件缺少 data_base64".to_string(),
+                            )
+                        })?;
+                        let bytes = base64::engine::general_purpose::STANDARD
+                            .decode(encoded)
+                            .map_err(|error| {
+                                DomainError::InvalidConfig(format!(
+                                    "vfs_mount_template binary base64 非法: {error}"
+                                ))
+                            })?;
+                        if bytes.len() as u64 != file.size_bytes {
+                            return Err(DomainError::InvalidConfig(format!(
+                                "vfs_mount_template 文件 `{}` 的 size_bytes 与 data_base64 不一致",
+                                file.path
+                            )));
+                        }
+                        Ok(InlineFile::new_binary(
+                            InlineFileOwnerKind::ProjectVfsMount,
+                            mount.id,
+                            PROJECT_VFS_MOUNT_CONTAINER_ID,
+                            path,
+                            bytes,
+                            file.mime_type
+                                .unwrap_or_else(|| "application/octet-stream".to_string()),
+                        ))
+                    }
+                    other => Err(DomainError::InvalidConfig(format!(
+                        "vfs_mount_template content_kind 非法: {other}"
+                    ))),
                 }
-                other => Err(DomainError::InvalidConfig(format!(
-                    "filespace_template content_kind 非法: {other}"
-                ))),
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    repos.inline_file_repo.upsert_files(&files).await?;
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        repos.inline_file_repo.upsert_files(&inline_files).await?;
+    }
 
-    Ok(InstallLibraryAssetOutput::Filespace { id: filespace.id })
+    Ok(InstallLibraryAssetOutput::VfsMount {
+        id: mount.id,
+        mount_id: mount.mount_id,
+    })
 }
 
 async fn upsert_mcp_preset(

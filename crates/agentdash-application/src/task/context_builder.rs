@@ -114,8 +114,8 @@ pub async fn build_task_session_context(
     let effective_agent_type = resolved_config
         .as_ref()
         .map(|config| config.executor.as_str());
-    let project_mount_bindings = repos
-        .project_vfs_mount_binding_repo
+    let project_vfs_mounts = repos
+        .project_vfs_mount_repo
         .list_by_project(project.id)
         .await
         .ok()?;
@@ -124,7 +124,7 @@ pub async fn build_task_session_context(
             vfs_service
                 .build_vfs(
                     &project,
-                    &project_mount_bindings,
+                    &project_vfs_mounts,
                     Some(&story),
                     workspace.as_ref(),
                     SessionMountTarget::Task,

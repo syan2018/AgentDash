@@ -847,9 +847,9 @@ impl<'a> SessionRequestAssembler<'a> {
         let project_id = spec.owner.project_id();
         let owner_ctx = spec.owner.owner_ctx();
         let active_workflow = spec.active_workflow.clone();
-        let project_mount_bindings = self
+        let project_vfs_mounts = self
             .repos
-            .project_vfs_mount_binding_repo
+            .project_vfs_mount_repo
             .list_by_project(project_id)
             .await
             .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))?;
@@ -866,7 +866,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         workspace,
                     } => self.vfs_service.build_vfs(
                         project,
-                        &project_mount_bindings,
+                        &project_vfs_mounts,
                         Some(*story),
                         *workspace,
                         target,
@@ -876,7 +876,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         project, workspace, ..
                     } => self.vfs_service.build_vfs(
                         project,
-                        &project_mount_bindings,
+                        &project_vfs_mounts,
                         None,
                         *workspace,
                         target,
@@ -1135,7 +1135,7 @@ impl<'a> SessionRequestAssembler<'a> {
                         spec.project,
                         &self
                             .repos
-                            .project_vfs_mount_binding_repo
+                            .project_vfs_mount_repo
                             .list_by_project(spec.project.id)
                             .await
                             .map_err(|error| {

@@ -15,7 +15,7 @@ const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   mcp_server_template: "MCP Server",
   workflow_template: "Workflow",
   skill_template: "Skill",
-  filespace_template: "Filespace",
+  vfs_mount_template: "VFS Mount",
   extension_template: "Extension",
 };
 
@@ -219,8 +219,8 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
   switch (asset.asset_type) {
     case "skill_template":
       return <SkillTemplateBody payload={asset.payload} />;
-    case "filespace_template":
-      return <FilespaceTemplateBody payload={asset.payload} />;
+    case "vfs_mount_template":
+      return <VfsMountTemplateBody payload={asset.payload} />;
     case "workflow_template":
       return <WorkflowTemplateBody payload={asset.payload} />;
     case "mcp_server_template":
@@ -234,38 +234,93 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
   }
 }
 
-function FilespaceTemplateBody({ payload }: { payload: unknown }) {
-  const parsed = useMemo(() => parseFilespacePayload(payload), [payload]);
+function VfsMountTemplateBody({ payload }: { payload: unknown }) {
+  const parsed = useMemo(() => parseVfsMountPayload(payload), [payload]);
   if (!parsed) return <RawPayloadFallback payload={payload} />;
+  if (parsed.kind === "inline") {
+    return (
+      <section className="space-y-3">
+        <SectionLabel>VFS Mount 模板 (Inline)</SectionLabel>
+        <div className="flex flex-wrap gap-1.5">
+          <MetaChip>mount: {parsed.mount_id}</MetaChip>
+          <MetaChip>{parsed.files.length} 个文件</MetaChip>
+          {parsed.capabilities.map((cap) => (
+            <MetaChip key={cap}>{cap}</MetaChip>
+          ))}
+        </div>
+        <ul className="space-y-1">
+          {parsed.files.slice(0, 12).map((file) => (
+            <li key={file.path} className="truncate text-xs text-muted-foreground">
+              {file.content_kind} · {file.path}
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  }
   return (
     <section className="space-y-3">
-      <SectionLabel>Filespace 模板</SectionLabel>
-      <div className="rounded-[8px] border border-border bg-secondary/20 p-3">
-        <p className="text-xs text-muted-foreground">文件数量</p>
-        <p className="mt-1 text-sm font-medium text-foreground">{parsed.files.length}</p>
-      </div>
-      <ul className="space-y-1">
-        {parsed.files.slice(0, 12).map((file) => (
-          <li key={file.path} className="truncate text-xs text-muted-foreground">
-            {file.content_kind} · {file.path}
-          </li>
+      <SectionLabel>VFS Mount 模板 (External Service)</SectionLabel>
+      <div className="flex flex-wrap gap-1.5">
+        <MetaChip>mount: {parsed.mount_id}</MetaChip>
+        <MetaChip>service: {parsed.service_id}</MetaChip>
+        {parsed.capabilities.map((cap) => (
+          <MetaChip key={cap}>{cap}</MetaChip>
         ))}
-      </ul>
+      </div>
+      <p className="break-all rounded-[8px] border border-border bg-secondary/20 p-3 text-xs text-muted-foreground">
+        root_ref: {parsed.root_ref}
+      </p>
     </section>
   );
 }
 
-function parseFilespacePayload(payload: unknown): null | { files: Array<{ path: string; content_kind: string }> } {
-  if (!isObject(payload) || !Array.isArray(payload.files)) return null;
-  return {
-    files: payload.files
-      .filter(isObject)
-      .map((file) => ({
-        path: asString(file.path) ?? "",
-        content_kind: asString(file.content_kind) ?? "text",
-      }))
-      .filter((file) => file.path.length > 0),
-  };
+type ParsedVfsMountPayload =
+  | {
+      kind: "inline";
+      mount_id: string;
+      capabilities: string[];
+      files: Array<{ path: string; content_kind: string }>;
+    }
+  | {
+      kind: "external_service";
+      mount_id: string;
+      capabilities: string[];
+      service_id: string;
+      root_ref: string;
+    };
+
+function parseVfsMountPayload(payload: unknown): ParsedVfsMountPayload | null {
+  if (!isObject(payload)) return null;
+  const kind = asString(payload.kind);
+  const mount_id = asString(payload.mount_id) ?? "";
+  const capabilities = Array.isArray(payload.capabilities)
+    ? (payload.capabilities.filter((v): v is string => typeof v === "string"))
+    : [];
+  if (kind === "inline" && Array.isArray(payload.files)) {
+    return {
+      kind: "inline",
+      mount_id,
+      capabilities,
+      files: payload.files
+        .filter(isObject)
+        .map((file) => ({
+          path: asString(file.path) ?? "",
+          content_kind: asString(file.content_kind) ?? "text",
+        }))
+        .filter((file) => file.path.length > 0),
+    };
+  }
+  if (kind === "external_service") {
+    return {
+      kind: "external_service",
+      mount_id,
+      capabilities,
+      service_id: asString(payload.service_id) ?? "",
+      root_ref: asString(payload.root_ref) ?? "",
+    };
+  }
+  return null;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {

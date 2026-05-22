@@ -9,9 +9,9 @@ use agentdash_domain::DomainError;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 use agentdash_domain::shared_library::{
-    AgentTemplateConfig, FilespaceTemplateFilePayload, FilespaceTemplatePayload, LibraryAsset,
-    LibraryAssetScope, LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload,
-    SkillTemplateFilePayload, SkillTemplatePayload,
+    AgentTemplateConfig, InlineMountFilePayload, LibraryAsset, LibraryAssetScope,
+    LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, SkillTemplateFilePayload,
+    SkillTemplatePayload, VfsMountTemplatePayload,
 };
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, ActivityLifecycleDefinition, WorkflowDefinition,
@@ -29,7 +29,7 @@ pub enum ProjectAssetPublishKind {
     McpPreset,
     WorkflowBundle,
     SkillAsset,
-    Filespace,
+    VfsMount,
 }
 
 impl ProjectAssetPublishKind {
@@ -39,7 +39,7 @@ impl ProjectAssetPublishKind {
             Self::McpPreset => LibraryAssetType::McpServerTemplate,
             Self::WorkflowBundle => LibraryAssetType::WorkflowTemplate,
             Self::SkillAsset => LibraryAssetType::SkillTemplate,
-            Self::Filespace => LibraryAssetType::FilespaceTemplate,
+            Self::VfsMount => LibraryAssetType::VfsMountTemplate,
         }
     }
 }
@@ -79,7 +79,7 @@ pub async fn publish_project_asset_to_library(
         ProjectAssetPublishKind::McpPreset => publish_mcp_payload(repos, &input).await?,
         ProjectAssetPublishKind::WorkflowBundle => publish_workflow_payload(repos, &input).await?,
         ProjectAssetPublishKind::SkillAsset => publish_skill_payload(repos, &input).await?,
-        ProjectAssetPublishKind::Filespace => publish_filespace_payload(repos, &input).await?,
+        ProjectAssetPublishKind::VfsMount => publish_vfs_mount_payload(repos, &input).await?,
     };
     let payload_digest = seed_digest(&payload)?;
     let source_ref = Some(format!(
@@ -133,51 +133,75 @@ pub async fn publish_project_asset_to_library(
     }
 }
 
-async fn publish_filespace_payload(
+async fn publish_vfs_mount_payload(
     repos: &RepositorySet,
     input: &PublishLibraryAssetInput,
 ) -> Result<serde_json::Value, PublishLibraryAssetError> {
-    let filespace = repos
-        .project_filespace_repo
+    let mount = repos
+        .project_vfs_mount_repo
         .get_by_id(input.project_asset_id)
         .await?
         .ok_or_else(|| DomainError::NotFound {
-            entity: "project_filespace",
+            entity: "project_vfs_mount",
             id: input.project_asset_id.to_string(),
         })?;
-    if filespace.project_id != input.project_id {
+    if mount.project_id != input.project_id {
         return Err(PublishLibraryAssetError::BadRequest(
-            "Project Filespace 不属于当前 Project".to_string(),
+            "Project VFS Mount 不属于当前 Project".to_string(),
         ));
     }
-    let files = repos
-        .inline_file_repo
-        .list_files_by_owner(InlineFileOwnerKind::ProjectFilespace, filespace.id)
-        .await?
-        .into_iter()
-        .map(|file| {
-            let (content_kind, content, mime_type, data_base64) = match file.content {
-                agentdash_domain::common::StoredFileContent::Text { content } => {
-                    ("text".to_string(), Some(content), None, None)
-                }
-                agentdash_domain::common::StoredFileContent::Binary { bytes, mime_type } => (
-                    "binary".to_string(),
-                    None,
-                    Some(mime_type),
-                    Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
-                ),
-            };
-            FilespaceTemplateFilePayload {
-                path: file.path,
-                content_kind,
-                content,
-                mime_type,
-                size_bytes: file.size_bytes,
-                data_base64,
+    let payload = match &mount.content {
+        agentdash_domain::project_vfs_mount::ProjectVfsMountContent::Inline => {
+            let files = repos
+                .inline_file_repo
+                .list_files_by_owner(InlineFileOwnerKind::ProjectVfsMount, mount.id)
+                .await?
+                .into_iter()
+                .map(|file| {
+                    let (content_kind, content, mime_type, data_base64) = match file.content {
+                        agentdash_domain::common::StoredFileContent::Text { content } => {
+                            ("text".to_string(), Some(content), None, None)
+                        }
+                        agentdash_domain::common::StoredFileContent::Binary {
+                            bytes,
+                            mime_type,
+                        } => (
+                            "binary".to_string(),
+                            None,
+                            Some(mime_type),
+                            Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                        ),
+                    };
+                    InlineMountFilePayload {
+                        path: file.path,
+                        content_kind,
+                        content,
+                        mime_type,
+                        size_bytes: file.size_bytes,
+                        data_base64,
+                    }
+                })
+                .collect::<Vec<_>>();
+            VfsMountTemplatePayload::Inline {
+                mount_id: mount.mount_id.clone(),
+                display_name: mount.display_name.clone(),
+                description: mount.description.clone(),
+                capabilities: mount.capabilities.clone(),
+                files,
             }
-        })
-        .collect::<Vec<_>>();
-    let payload = FilespaceTemplatePayload { files };
+        }
+        agentdash_domain::project_vfs_mount::ProjectVfsMountContent::ExternalService {
+            service_id,
+            root_ref,
+        } => VfsMountTemplatePayload::ExternalService {
+            mount_id: mount.mount_id.clone(),
+            display_name: mount.display_name.clone(),
+            description: mount.description.clone(),
+            capabilities: mount.capabilities.clone(),
+            service_id: service_id.clone(),
+            root_ref: root_ref.clone(),
+        },
+    };
     serde_json::to_value(payload)
         .map_err(|error| PublishLibraryAssetError::Domain(DomainError::Serialization(error)))
 }

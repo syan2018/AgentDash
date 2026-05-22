@@ -20,6 +20,7 @@ Shared Library 中的共享配置统一使用 `*Template` 后缀：
 - `McpServerTemplate`
 - `WorkflowTemplate`
 - `SkillTemplate`
+- `VfsMountTemplate`
 - `ExtensionTemplate`
 
 Project 内运行资源使用 Project 前缀或既有项目资源名：
@@ -144,6 +145,40 @@ DTO 层 [crates/agentdash-api/src/dto/shared_library.rs](../../../crates/agentda
 }
 ```
 
+### `vfs_mount_template`
+
+Tagged enum：`kind` 决定子类型；inline 子类型携带文件，external_service 子类型携带 service_id + root_ref。Mount-level 元数据（mount_id、display_name、capabilities、default_write）两类共享。
+
+```jsonc
+// Inline
+{
+  "kind": "inline",
+  "mount_id": "string",
+  "display_name": "string",
+  "description": "string?",
+  "capabilities": ["read" | "write" | "list" | "search"],
+  "files": [{
+    "path": "string",
+    "content_kind": "text | binary",
+    "content": "string?",       // text only
+    "mime_type": "string?",     // binary only
+    "size_bytes": "u64",
+    "data_base64": "string?"    // binary only
+  }]
+}
+
+// External service
+{
+  "kind": "external_service",
+  "mount_id": "string",
+  "display_name": "string",
+  "description": "string?",
+  "capabilities": ["read" | "list" | "search"],
+  "service_id": "string",
+  "root_ref": "string"
+}
+```
+
 ### `extension_template`
 
 ```jsonc
@@ -250,9 +285,11 @@ Project Assets 发布行为：
   - `skill_assets`
   - `workflow_definitions`
   - `activity_lifecycle_definitions`
+  - `vfs_mounts`
 - 每个 status item 必须包含 `installed_source` 与 `source_status`。
 - 前端项目资源卡片展示来源时，若资源存在 `installed_source`，必须优先显示 Marketplace/Shared Library 来源，而不是只显示 `user`。
 - `extension_template` 安装后必须返回 `asset_kind = extension_installation`，并在 `source-status.extension_installations` 中出现。
+- Project VFS Mount 列表 / 详情 DTO 必须透出 `installed_source: Option<InstalledAssetSource>`，与 Skill / MCP / Workflow 同款序列化形态；前端 `AssetPickerDrawer` 必须按 `installed_source` 过滤掉 Marketplace 安装来的 mount，避免被重复发布。Marketplace 安装语义：单步即可用，install_vfs_mount_template 直接产出可用 mount，权限闸门由 Agent VFS access policy 单点控制。
 
 ### 4. Validation & Error Matrix
 

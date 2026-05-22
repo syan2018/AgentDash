@@ -12,7 +12,7 @@ pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
-pub mod project_filespaces;
+pub mod project_vfs_mounts;
 pub mod project_sessions;
 pub mod projects;
 pub mod routines;
@@ -85,20 +85,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/projects/{id}/clone", post(projects::clone_project))
         .route("/projects/{id}/grants", get(projects::list_project_grants))
         .route(
-            "/projects/{project_id}/filespaces",
-            get(project_filespaces::list_filespaces).post(project_filespaces::create_filespace),
+            "/projects/{project_id}/vfs-mounts",
+            get(project_vfs_mounts::list_vfs_mounts).post(project_vfs_mounts::create_vfs_mount),
         )
         .route(
-            "/projects/{project_id}/filespaces/{filespace_id}",
-            put(project_filespaces::update_filespace).delete(project_filespaces::delete_filespace),
-        )
-        .route(
-            "/projects/{project_id}/vfs-mount-bindings",
-            get(project_filespaces::list_mount_bindings),
-        )
-        .route(
-            "/projects/{project_id}/vfs-mount-bindings/{binding_id}",
-            put(project_filespaces::update_mount_binding),
+            "/projects/{project_id}/vfs-mounts/{mount_id}",
+            get(project_vfs_mounts::get_vfs_mount)
+                .put(project_vfs_mounts::update_vfs_mount)
+                .delete(project_vfs_mounts::delete_vfs_mount),
         )
         .route(
             "/projects/{id}/grants/users/{user_id}",

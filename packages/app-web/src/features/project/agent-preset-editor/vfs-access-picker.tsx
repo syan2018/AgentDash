@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import type { AgentVfsAccessGrant, ProjectVfsMountBinding } from "../../../types";
-import { listProjectVfsMountBindings } from "../../../services/projectFilespaces";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { AgentVfsAccessGrant, ProjectVfsMount } from "../../../types";
+import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
+import { useProjectStore } from "../../../stores/projectStore";
 
 const VFS_CAPS = [
   { key: "read", label: "Read" },
@@ -20,32 +21,29 @@ export function VfsAccessPicker({
   grants: AgentVfsAccessGrant[];
   onChange: (next: AgentVfsAccessGrant[]) => void;
 }) {
-  const [items, setItems] = useState<ProjectVfsMountBinding[]>([]);
+  const [items, setItems] = useState<ProjectVfsMount[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mountsRevision = useProjectStore(
+    (s) => (projectId ? s.vfsMountsRevision[projectId] ?? 0 : 0),
+  );
+
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      setItems(await listProjectVfsMounts(projectId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId]);
 
   useEffect(() => {
-    if (!projectId) {
-      return;
-    }
-    let cancelled = false;
-    listProjectVfsMountBindings(projectId)
-      .then((next) => {
-        if (!cancelled) {
-          setItems(next);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+    void load();
+  }, [load, mountsRevision]);
 
   const grantByMountId = useMemo(() => {
     const map = new Map<string, AgentVfsAccessGrant>();
@@ -77,7 +75,7 @@ export function VfsAccessPicker({
           const selected = grantByMountId.get(item.mount_id)?.capabilities ?? [];
           const allowed = VFS_CAPS.filter((cap) => item.capabilities.includes(cap.key));
           return (
-            <div key={item.id} className="rounded-[8px] border border-border bg-card/40 p-3">
+            <div key={item.mount_id} className="rounded-[8px] border border-border bg-card/40 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-foreground">{item.display_name}</div>

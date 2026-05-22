@@ -11,7 +11,7 @@ pub use persistence::postgres::PostgresMcpPresetRepository;
 pub use persistence::postgres::PostgresProjectAgentRepository;
 pub use persistence::postgres::PostgresProjectBackendAccessRepository;
 pub use persistence::postgres::PostgresProjectExtensionInstallationRepository;
-pub use persistence::postgres::PostgresProjectFilespaceRepository;
+pub use persistence::postgres::PostgresProjectVfsMountRepository;
 pub use persistence::postgres::PostgresProjectRepository;
 pub use persistence::postgres::PostgresRoutineExecutionRepository;
 pub use persistence::postgres::PostgresRoutineRepository;

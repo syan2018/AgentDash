@@ -84,7 +84,7 @@ pub struct InstallLibraryAssetRequest {
 #[derive(Debug, Deserialize)]
 pub struct PublishLibraryAssetRequest {
     pub asset_kind: String,
-    pub project_asset_id: Uuid,
+    pub project_asset_id: String,
     #[serde(default = "default_user_scope")]
     pub scope: String,
     pub key: String,
@@ -116,8 +116,9 @@ pub enum InstallLibraryAssetResponse {
     SkillAsset {
         id: Uuid,
     },
-    Filespace {
+    VfsMount {
         id: Uuid,
+        mount_id: String,
     },
     ExtensionInstallation {
         id: Uuid,
@@ -129,7 +130,7 @@ pub struct ProjectAssetSourceStatusResponse {
     pub project_agents: Vec<ProjectAssetSourceStatusItemResponse>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub filespaces: Vec<ProjectAssetSourceStatusItemResponse>,
+    pub vfs_mounts: Vec<ProjectAssetSourceStatusItemResponse>,
     pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItemResponse>,

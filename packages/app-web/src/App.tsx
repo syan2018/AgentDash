@@ -93,9 +93,9 @@ const AssetsSkillPanel = lazy(async () => {
   return { default: m.SkillCategoryPanel };
 });
 
-const AssetsFilespacePanel = lazy(async () => {
+const AssetsVfsMountPanel = lazy(async () => {
   const m = await import("./features/assets-panel");
-  return { default: m.FilespaceCategoryPanel };
+  return { default: m.VfsMountCategoryPanel };
 });
 
 // 统一 Workflow 编辑器（自适应 Form / DAG 布局）
@@ -281,7 +281,7 @@ function AppContent() {
               <Route path="canvas" element={<AssetsCanvasPanel />} />
               <Route path="mcp-preset" element={<AssetsMcpPresetPanel />} />
               <Route path="skill" element={<AssetsSkillPanel />} />
-              <Route path="filespace" element={<AssetsFilespacePanel />} />
+              <Route path="vfs-mount" element={<AssetsVfsMountPanel />} />
             </Route>
             {/* 旧路径深链兼容：重定向到 Assets 对应子类目，避免收藏 / 外部链接失效 */}
             <Route path="canvas" element={<Navigate to="/dashboard/assets/canvas" replace />} />

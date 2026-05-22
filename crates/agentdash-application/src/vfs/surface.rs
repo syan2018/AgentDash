@@ -35,9 +35,9 @@ pub enum ResolvedVfsSurfaceSource {
     ProjectSkillAssets {
         project_id: Uuid,
     },
-    ProjectFilespace {
+    ProjectVfsMount {
         project_id: Uuid,
-        filespace_id: Uuid,
+        mount_id: String,
     },
     ProjectAgentKnowledge {
         project_id: Uuid,
@@ -64,10 +64,10 @@ impl ResolvedVfsSurfaceSource {
             Self::ProjectSkillAssets { project_id } => {
                 format!("project-skill-assets:{project_id}")
             }
-            Self::ProjectFilespace {
+            Self::ProjectVfsMount {
                 project_id,
-                filespace_id,
-            } => format!("project-filespace:{project_id}:{filespace_id}"),
+                mount_id,
+            } => format!("project-vfs-mount:{project_id}:{mount_id}"),
             Self::ProjectAgentKnowledge {
                 project_id,
                 project_agent_id,
@@ -132,23 +132,21 @@ impl ResolvedVfsSurfaceSource {
                 .map_err(|_| format!("无效的 project skill assets surface_ref: {trimmed}"))?;
             return Ok(Self::ProjectSkillAssets { project_id });
         }
-        if let Some(rest) = trimmed.strip_prefix("project-filespace:") {
-            let mut parts = rest.split(':');
+        if let Some(rest) = trimmed.strip_prefix("project-vfs-mount:") {
+            let mut parts = rest.splitn(2, ':');
             let project_id = parts
                 .next()
-                .ok_or_else(|| format!("无效的 project filespace surface_ref: {trimmed}"))?;
-            let filespace_id = parts
+                .ok_or_else(|| format!("无效的 project vfs mount surface_ref: {trimmed}"))?;
+            let mount_id = parts
                 .next()
-                .ok_or_else(|| format!("无效的 project filespace surface_ref: {trimmed}"))?;
-            if parts.next().is_some() {
-                return Err(format!("无效的 project filespace surface_ref: {trimmed}"));
+                .ok_or_else(|| format!("无效的 project vfs mount surface_ref: {trimmed}"))?;
+            if mount_id.trim().is_empty() {
+                return Err(format!("无效的 project vfs mount surface_ref: {trimmed}"));
             }
-            return Ok(Self::ProjectFilespace {
+            return Ok(Self::ProjectVfsMount {
                 project_id: Uuid::parse_str(project_id)
-                    .map_err(|_| format!("无效的 project filespace project_id: {project_id}"))?,
-                filespace_id: Uuid::parse_str(filespace_id).map_err(|_| {
-                    format!("无效的 project filespace filespace_id: {filespace_id}")
-                })?,
+                    .map_err(|_| format!("无效的 project vfs mount project_id: {project_id}"))?,
+                mount_id: mount_id.to_string(),
             });
         }
         if let Some(rest) = trimmed.strip_prefix("project-agent-knowledge:") {
@@ -182,13 +180,9 @@ pub struct ResolvedMountSummary {
     pub display_name: String,
     pub provider: String,
     pub backend_id: String,
-    pub root_ref: String,
     pub capabilities: Vec<String>,
     pub default_write: bool,
     pub purpose: ResolvedMountPurpose,
-    pub owner_kind: ResolvedMountOwnerKind,
-    pub owner_id: String,
-    pub container_id: Option<String>,
     pub backend_online: Option<bool>,
     pub file_count: Option<usize>,
     pub edit_capabilities: ResolvedMountEditCapabilities,
@@ -208,7 +202,7 @@ pub struct ResolvedMountEditCapabilities {
 pub enum ResolvedMountPurpose {
     Workspace,
     ProjectContainer,
-    Filespace,
+    VfsMount,
     StoryContainer,
     AgentKnowledge,
     Lifecycle,

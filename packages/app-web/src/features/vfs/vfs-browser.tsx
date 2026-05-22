@@ -271,7 +271,9 @@ function MountSummaryItem({
         )}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-        <span className="min-w-0 truncate font-mono">{mount.root_ref}</span>
+        {"root_ref" in mount && mount.root_ref && (
+          <span className="min-w-0 truncate font-mono">{mount.root_ref}</span>
+        )}
         <span>{capabilities.join(" / ")}</span>
       </div>
     </div>

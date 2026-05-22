@@ -1,0 +1,11 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "crates/agentdash-application/src/vfs/mutation_dispatcher.rs", "reason": "新增统一 VFS mutation dispatcher 与 InlineStorageKey resolver"}
+{"file": "crates/agentdash-api/src/routes/vfs_surfaces.rs", "reason": "Surface mutation handlers 改为经 application dispatcher 分发"}
+{"file": "crates/agentdash-api/src/app_state.rs", "reason": "挂载 VfsMutationDispatcher 到 ServiceSet"}
+{"file": "crates/agentdash-application/src/vfs/surface.rs", "reason": "ResolvedMountSummary 使用 context_container_id 表达展示上下文"}
+{"file": "packages/app-web/src/types/context.ts", "reason": "前端类型同步 context_container_id"}
+{"file": "crates/agentdash-api/src/routes/vfs_surfaces/dto.rs", "reason": "Surface API DTO 从 handler 文件拆出"}
+{"file": "crates/agentdash-api/src/routes/vfs_surfaces/resolver.rs", "reason": "Surface source resolution 与 mount summary 从 handler 文件拆出"}
+{"file": "crates/agentdash-api/src/routes/vfs_surfaces/helpers.rs", "reason": "Surface API helper 与错误映射从 handler 文件拆出"}
+{"file": "packages/app-web/src/features/vfs/vfs-browser.tsx", "reason": "Surface mount summary 不再依赖 root_ref"}
+{"file": "packages/app-web/src/pages/ProjectSettingsPage.tsx", "reason": "Project settings VFS preview 不展示 surface root_ref"}

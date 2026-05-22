@@ -27,7 +27,7 @@ const SHAREABLE_CATEGORIES: CategoryItem[] = [
   { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
   { segment: "mcp-preset", label: "MCP", hint: "MCP Server 模板" },
   { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
-  { segment: "filespace", label: "Filespace", hint: "Project VFS 文件空间" },
+  { segment: "vfs-mount", label: "VFS Mount", hint: "Project VFS 挂载点 (Inline / External)" },
 ];
 
 const LOCAL_CATEGORIES: CategoryItem[] = [
@@ -69,7 +69,7 @@ export function AssetsTabView() {
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-foreground">项目资产</h2>
             <p className="text-xs text-muted-foreground">
-              {currentProject.name} · 统一管理 Workflow / MCP / Skill / Canvas 等项目级可复用资产
+              {currentProject.name} · 统一管理 Workflow / MCP / Skill / VFS Mount / Canvas 等项目级可复用资产
             </p>
           </div>
         </div>

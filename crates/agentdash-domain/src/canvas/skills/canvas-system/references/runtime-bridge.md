@@ -50,7 +50,7 @@ Provider-specific data is under `result.output.output`.
 
 ## VFS Image Assets
 
-Use this API to render image binary files from mounts visible in the current session runtime surface:
+Use this API to render image binary files from mounts visible in the current session runtime surface. This is the standard route for VFS images in Canvas source:
 
 ```ts
 const imageUrl = await window.agentdash.assets.url("main://docs/diagram.png");

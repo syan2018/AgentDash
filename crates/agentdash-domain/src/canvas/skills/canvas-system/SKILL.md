@@ -48,7 +48,7 @@ Adjust the relative path from the importing source file.
 
 ## VFS Image Assets
 
-Use `window.agentdash.assets.url(uri)` when a Canvas needs to render image files from visible VFS mounts. The `uri` must be a mount URI such as `main://docs/diagram.png`, `skill-assets://skills/demo/assets/logo.png`, or a provider-specific mount exposed in the current session.
+Use `window.agentdash.assets.url(uri)` when a Canvas needs to render image files from visible VFS mounts. This is the standard route. The `uri` must be a mount URI such as `main://docs/diagram.png`, `skill-assets://skills/demo/assets/logo.png`, or a provider-specific mount exposed in the current session.
 
 ```tsx
 const src = await window.agentdash.assets.url("main://docs/diagram.png");

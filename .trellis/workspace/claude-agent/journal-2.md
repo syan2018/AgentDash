@@ -755,3 +755,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 49: Capability维度管线标准化收口
+
+**Date**: 2026-05-22
+**Task**: Capability维度管线标准化收口
+**Branch**: `codex/capability-intent-pipeline-standardization`
+
+### Summary
+
+收口 capability dimension pipeline：扩展维度模块接口和 registry validation，移除中心化 RuntimeCapabilityTransitionInput，生产链路改为各 built-in module 生成 declaration/effect records，并补齐 VFS mount declaration provenance、规格和验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `31a1339f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

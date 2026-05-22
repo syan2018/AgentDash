@@ -35,7 +35,7 @@ owner context plan
 
 - `CapabilityResolver` 只解析 tool / MCP / companion，但 `CapabilityState` 实际还承载 VFS / Skill，调用点需要自己记得补齐依赖。
 - `Vfs` 被当成运行态快照到处传递，而不是由 owner、session meta、workflow mount directives、runtime command 等意图统一投影。
-- `PendingCapabilityStateTransition` 保存完整 state，但 state 入库前没有统一 normalizer，容易保存缺 Skill / VFS 派生的半成品。
+- pending runtime command 需要表达“下轮要应用什么变化”，而不是把闭包后的 `CapabilityState` 当成长期事实。
 - `runtime_surface` 是 final VFS 的 DTO 投影，却在 context query 中早于 finalize 生成。
 - `SessionProfile` / `TurnExecution` 是 connector 与 hot-update 所需缓存，但部分路径会把 cached capability 当构建兜底来源，事实源边界变模糊。
 
@@ -74,8 +74,7 @@ runtime action intent
 - `CapabilityProjectionPipeline` 负责依赖闭包：VFS -> Skill / guidelines -> final capability state。
 - `runtime_surface` 只从 final VFS 生成，不参与状态维护。
 - `SessionProfile` / `TurnExecution` 只保存 projection cache，不作为 owner/context 事实源。
-- 短期允许 pending command 继续保存完整 `CapabilityState`，但入库前必须由 pipeline 生成。
-- 长期将 pending command 从完整 state 快照迁移为 typed patch：tool directives、mount directives、VFS overlay、MCP delta。
+- pending command 保存 typed patch：tool / companion 维度、VFS overlay 与 phase metadata；replay 后再由 pipeline 生成闭包 projection。
 
 ## 本任务完成态
 
@@ -83,7 +82,7 @@ runtime action intent
 - construction finalize、context inspect、live transition、pending transition 使用同一 capability projection normalizer。
 - Skill baseline discovery 只有一个主入口。
 - Canvas 可见性通过工具级测试覆盖 meta、VFS、Skill、事件。
-- 文档记录后续 typed patch/event 方向，但本任务不迁移持久化 schema。
+- pending runtime command 不再持久化完整 after-state 快照，而是持久化可解释 patch。
 
 ## 完整重构覆盖矩阵
 

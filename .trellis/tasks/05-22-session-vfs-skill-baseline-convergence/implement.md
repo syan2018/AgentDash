@@ -48,7 +48,7 @@
 
 - construction finalize、context inspect、live transition、pending transition 不再各自补 Skill/VFS 派生。
 - `runtime_surface` 只从 final VFS 生成。
-- pending transition 继续保存完整 state，但该 state 已由 normalizer 闭包完成。
+- pending transition 在 Phase 1 末仍由 normalizer 产出闭包 state；Phase 2 迁移为 patch replay。
 
 ### Phase 2: Runtime Command Intent 化
 
@@ -56,10 +56,10 @@
 
 本阶段执行：
 
-- [ ] 设计 `RuntimeContextPatch` 或等价结构，覆盖 tool directives、mount directives、VFS overlay、MCP delta、phase metadata。
-- [ ] 将 pending command repository payload 从完整 `CapabilityState` 快照迁移为 patch / intent。
-- [ ] next-turn launch、context query、live apply 都 replay patch，经 `CapabilityProjectionPipeline` 得到 effective projection。
-- [ ] 增加 repository 与恢复测试，覆盖 requested / applied / failed 状态下 patch replay 的幂等行为。
+- [x] 设计 `RuntimeContextPatch` 或等价结构，覆盖 tool directives、mount directives、VFS overlay、MCP delta、phase metadata。
+- [x] 将 pending command repository payload 从完整 `CapabilityState` 快照迁移为 patch / intent。
+- [x] next-turn launch、context query、live apply 都 replay patch，经 `CapabilityProjectionPipeline` 得到 effective projection。
+- [x] 增加 repository 与恢复测试，覆盖 requested / applied / failed 状态下 patch replay 的幂等行为。
 
 完成标准：
 
@@ -125,6 +125,15 @@ cargo test -p agentdash-application session::construction
 cargo test -p agentdash-api session_context
 pnpm --filter app-web test -- SessionPage.hook-runtime.test.tsx
 python ./.trellis/scripts/task.py validate .trellis/tasks/05-22-session-vfs-skill-baseline-convergence
+cargo test -p agentdash-application runtime_context_patch_replays_vfs_overlay_without_persisting_full_state
+cargo test -p agentdash-application runtime_command_store_supersedes_and_marks_applied
+cargo test -p agentdash-application pending_runtime_context_transition_derives_skill_dimension_from_active_vfs
+cargo test -p agentdash-application pending_capability_state_transition
+cargo test -p agentdash-application connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
+cargo test -p agentdash-application session::hub::tests
+cargo test -p agentdash-application session::memory_persistence
+cargo test -p agentdash-application session::launch
+cargo check -p agentdash-api
 ```
 
 ## Review Gates
@@ -132,7 +141,7 @@ python ./.trellis/scripts/task.py validate .trellis/tasks/05-22-session-vfs-skil
 - 确认没有新增直接手写 `CapabilityState.skill.skills = ...` 的业务路径。
 - 确认 `runtime_surface` 不再早于 finalize 生成。
 - 确认 `CapabilityResolver` 仍保持 tool/MCP/companion 纯解析职责，VFS/Skill 派生由 projection normalizer 负责。
-- 确认 `PendingCapabilityStateTransition.state` 入库前是闭包完整 state，而不是缺 Skill / VFS 的中间状态。
+- 确认 pending runtime command payload 保存 patch，并在 launch / query / live apply 前 replay 到 projection pipeline。
 - 确认 Canvas 工具仍在 `canvas_presented` 之前完成 VFS / meta / capability 同步。
 - 确认工作区没有无关格式化或文档 churn。
 
@@ -153,4 +162,4 @@ python ./.trellis/scripts/task.py validate .trellis/tasks/05-22-session-vfs-skil
 - 不引入兼容性分支或 fallback。
 - 不修改数据库 schema。
 - 如果抽取 resolver 后发现 API crate 依赖方向不适合直接调用，resolver 应放在 application crate 并通过 public/internal API 暴露给 API bootstrap。
-- Runtime command typed patch/event 是后续任务；本轮只保证现有 full-state transition 在入队前被 normalizer 关闭依赖闭包。
+- Runtime command typed patch/event 已在 Phase 2 进入既有 payload 容器，后续阶段继续收口 cached runtime fact source。

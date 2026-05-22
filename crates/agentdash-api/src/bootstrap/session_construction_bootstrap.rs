@@ -18,7 +18,6 @@ use agentdash_application::session::construction_provider::{
     CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase, TaskLaunchSource,
 };
 use agentdash_application::session::local_workspace_vfs;
-use agentdash_application::session::merge_vfs_overlay;
 use agentdash_application::session::ownership::SessionOwnerResolver;
 use agentdash_application::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
@@ -30,6 +29,7 @@ use agentdash_application::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
 };
+use agentdash_application::session::{apply_runtime_context_patch, merge_vfs_overlay};
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
@@ -252,7 +252,7 @@ pub(crate) async fn finalize_session_construction_projection(
     if let Some(pending_vfs) = facts
         .requested_runtime_commands
         .last()
-        .and_then(|command| command.transition.state.vfs.active.as_ref())
+        .and_then(|command| command.transition.patch.vfs_overlay.as_ref())
     {
         effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
         pending_overlay_applied = true;
@@ -288,7 +288,13 @@ pub(crate) async fn finalize_session_construction_projection(
     let (mcp_servers, mcp_source) =
         if let Some(pending_state) = facts.requested_runtime_commands.last() {
             (
-                pending_state.transition.state.tool.mcp_servers.clone(),
+                pending_state
+                    .transition
+                    .patch
+                    .tool
+                    .as_ref()
+                    .map(|tool| tool.mcp_servers.clone())
+                    .unwrap_or_else(|| base_mcp_servers.clone()),
                 "runtime_command.pending_transition".to_string(),
             )
         } else {
@@ -344,7 +350,9 @@ pub(crate) async fn finalize_session_construction_projection(
     let mut final_capability_state = facts
         .requested_runtime_commands
         .last()
-        .map(|command| command.transition.state.clone())
+        .map(|command| {
+            apply_runtime_context_patch(&base_capability_state, &command.transition.patch)
+        })
         .unwrap_or_else(|| base_capability_state.clone());
     normalize_capability_state_dimensions(
         &mut final_capability_state,

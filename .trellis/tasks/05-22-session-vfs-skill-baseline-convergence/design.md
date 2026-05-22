@@ -6,14 +6,14 @@
 
 ## Scope
 
-本任务从单点修复扩展为 Session capability projection pipeline 的第一阶段，目标是先建立统一 normalizer 并删除冗余派生路径：
+本任务从单点修复扩展为 Session capability projection pipeline 的分阶段收束，已按阶段先建立统一 normalizer，再把 pending runtime command 改为 typed patch：
 
 - 修正 `/sessions/{session_id}/context` 的 `runtime_surface` 生成时机。
 - 抽出 application 层 capability projection normalizer，统一补齐 VFS 依赖维度。
 - 让 Skill baseline discovery 成为 normalizer 的派生阶段。
 - 覆盖 Canvas 工具级联动测试。
 
-本任务不改变 VFS provider、数据库 schema，也不把 runtime command 持久化模型迁移成 typed patch/event。
+本任务不改变 VFS provider 或数据库 schema；runtime command 仍使用既有 `payload_json` 容器，但 payload 内容表达 typed patch / intent。
 
 完整重构覆盖 Phase 1-4，见参考文档的覆盖矩阵。本文只展开 Phase 1 的可执行设计，并为 Phase 2-4 保留明确接口方向。
 
@@ -191,7 +191,7 @@ pub struct CapabilityProjectionOutput {
 
 ## Runtime Command State Model
 
-长期更理想的模型是持久化 typed intent / patch：
+runtime command 持久化 typed intent / patch：
 
 ```text
 RuntimeContextPatch {
@@ -205,11 +205,7 @@ RuntimeContextPatch {
 
 每次 query / launch / live apply 都从 base facts + patches 重新生成 effective projection。
 
-本轮不做该迁移，原因：
-
-- 持久化结构会影响 SQLite / PostgreSQL repository 与恢复语义。
-- 当前已有 `PendingCapabilityStateTransition` 流程可作为第一阶段承载，只要入队前通过 normalizer 得到闭包完整的 state。
-- 先建立 normalizer 后，后续把 full-state snapshot 改为 patch replay 会更直接。
+当前阶段保留既有 repository 表结构，是因为 `payload_json` 已经是 runtime command 的事件容器；变更集中在 payload 类型与 replay 管线，SQLite / PostgreSQL 的状态流仍保持 `requested -> applied / failed`。
 
 ## Data Flow
 

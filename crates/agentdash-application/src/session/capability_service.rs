@@ -53,14 +53,8 @@ impl SessionCapabilityService {
     pub async fn enqueue_pending_capability_state_transition(
         &self,
         session_id: &str,
-        mut transition: PendingCapabilityStateTransition,
+        transition: PendingCapabilityStateTransition,
     ) -> std::io::Result<()> {
-        let before_state = self.get_latest_capability_state(session_id).await;
-        self.derive_skill_baseline_for_transition_state(
-            before_state.as_ref(),
-            &mut transition.state,
-        )
-        .await;
         self.hub
             .enqueue_pending_capability_state_transition(session_id, transition)
             .await
@@ -162,6 +156,7 @@ impl SessionCapabilityService {
         turn_id: &str,
         hook_session: Option<&agentdash_spi::hooks::SharedHookSessionRuntime>,
         before_state: CapabilityState,
+        final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
         tools: &[agentdash_agent_types::DynAgentTool],
     ) -> PendingRuntimeContextApplication {
@@ -171,6 +166,7 @@ impl SessionCapabilityService {
                 turn_id,
                 hook_session,
                 before_state,
+                final_capability_state,
                 transitions,
                 tools,
             )

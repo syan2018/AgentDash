@@ -35,6 +35,11 @@ use super::super::types::{
     PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::SessionRuntimeInner;
+use crate::vfs::{
+    ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
+    MountProvider, MountProviderRegistry, ReadResult, RelayVfsService, RuntimeFileEntry,
+    SearchQuery, SearchResult,
+};
 
 fn test_hub(
     _mount_root: PathBuf,
@@ -490,6 +495,79 @@ impl AgentConnector for CapturingConnector {
     }
 }
 
+struct SkillFixtureMountProvider;
+
+#[async_trait::async_trait]
+impl MountProvider for SkillFixtureMountProvider {
+    fn provider_id(&self) -> &str {
+        "canvas_fs"
+    }
+
+    async fn read_text(
+        &self,
+        _mount: &agentdash_domain::common::Mount,
+        path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        if path == "skills/canvas-system/SKILL.md" {
+            Ok(ReadResult::new(
+                path,
+                "---\nname: canvas-system\ndescription: Canvas authoring skill\n---\nUse Canvas.",
+            ))
+        } else {
+            Err(MountError::NotFound(format!("文件不存在: {path}")))
+        }
+    }
+
+    async fn write_text(
+        &self,
+        _mount: &agentdash_domain::common::Mount,
+        path: &str,
+        _content: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        Err(MountError::NotSupported(format!("只读测试 mount: {path}")))
+    }
+
+    async fn list(
+        &self,
+        _mount: &agentdash_domain::common::Mount,
+        options: &ListOptions,
+        _ctx: &MountOperationContext,
+    ) -> Result<ListResult, MountError> {
+        let entries = match options.path.as_str() {
+            "skills" => vec![RuntimeFileEntry::dir("skills/canvas-system")],
+            "skills/canvas-system" => {
+                vec![RuntimeFileEntry::file("skills/canvas-system/SKILL.md")]
+            }
+            _ => Vec::new(),
+        };
+        Ok(ListResult { entries })
+    }
+
+    async fn search_text(
+        &self,
+        _mount: &agentdash_domain::common::Mount,
+        _query: &SearchQuery,
+        _ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        Ok(SearchResult {
+            matches: Vec::new(),
+        })
+    }
+
+    async fn exec(
+        &self,
+        _mount: &agentdash_domain::common::Mount,
+        _request: &ExecRequest,
+        _ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError> {
+        Err(MountError::NotSupported(
+            "测试 skill mount 不支持 exec".to_string(),
+        ))
+    }
+}
+
 #[tokio::test]
 async fn replace_current_capability_state_updates_active_turn_capability_state() {
     let base = tempfile::tempdir().expect("tempdir");
@@ -577,11 +655,15 @@ async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
         queries,
         resolution: HookResolution::default(),
     });
+    let mut registry = MountProviderRegistry::new();
+    registry.register(Arc::new(SkillFixtureMountProvider));
+    let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
     let hub = test_hub(
         base.path().to_path_buf(),
         Arc::new(PendingConnector),
         Some(hook_provider),
-    );
+    )
+    .with_vfs_service(vfs_service);
     let session = hub
         .create_session("canvas-skill-capability")
         .await
@@ -632,7 +714,10 @@ async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
             provider: "canvas_fs".to_string(),
             backend_id: "demo".to_string(),
             root_ref: "canvas:demo".to_string(),
-            capabilities: vec![agentdash_domain::common::MountCapability::Read],
+            capabilities: vec![
+                agentdash_domain::common::MountCapability::Read,
+                agentdash_domain::common::MountCapability::List,
+            ],
             default_write: true,
             display_name: "Demo Canvas".to_string(),
             metadata: serde_json::json!({ "canvas_id": "demo" }),
@@ -660,7 +745,6 @@ async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
             &session.id,
             before_state,
             active_vfs.clone(),
-            skills.clone(),
             "canvas",
             "canvas_visible",
         )

@@ -2,8 +2,10 @@ use agentdash_spi::context::capability::SkillEntry;
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::io;
 
+use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::hub::SessionRuntimeInner;
 use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
@@ -83,13 +85,17 @@ impl SessionCapabilityService {
         session_id: &str,
         before_state: CapabilityState,
         active_vfs: Vfs,
-        skills: Vec<SkillEntry>,
         phase_node: &str,
         apply_mode: &'static str,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
+        let skills = self
+            .derive_skill_entries_for_active_vfs(&active_vfs)
+            .await
+            .map(|skills| merge_live_vfs_skill_entries(&before_state.skill.skills, skills))
+            .unwrap_or_else(|| before_state.skill.skills.clone());
         let mut after_state = before_state.clone();
         after_state.vfs.active = Some(active_vfs);
-        after_state.skill.skills = merge_live_vfs_skill_entries(&before_state.skill.skills, skills);
+        after_state.skill.skills = skills;
         let capability_keys = after_state.capability_keys();
         self.apply_live_runtime_context_transition(
             hook_session,
@@ -107,6 +113,56 @@ impl SessionCapabilityService {
             },
         )
         .await
+    }
+
+    async fn derive_skill_entries_for_active_vfs(
+        &self,
+        active_vfs: &Vfs,
+    ) -> Option<Vec<SkillEntry>> {
+        let mut skills = if let Some(vfs_service) = self.hub.vfs_service.as_ref() {
+            let result = crate::skill::load_skills_from_vfs(vfs_service, active_vfs).await;
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "live VFS skill 诊断: {}",
+                    diag.message
+                );
+            }
+            result.skills
+        } else {
+            Vec::new()
+        };
+
+        if !self.hub.extra_skill_dirs.is_empty() {
+            let existing_names: HashMap<String, String> = skills
+                .iter()
+                .map(|skill| {
+                    (
+                        skill.name.clone(),
+                        skill.file_path.to_string_lossy().to_string(),
+                    )
+                })
+                .collect();
+            let result = crate::skill::load_skills_from_local_dirs(
+                &self.hub.extra_skill_dirs,
+                &existing_names,
+            );
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    skill_name = %diag.name,
+                    path = %diag.file_path.display(),
+                    "live VFS skill 诊断 (plugin): {}",
+                    diag.message
+                );
+            }
+            skills.extend(result.skills);
+        }
+
+        if self.hub.vfs_service.is_none() && self.hub.extra_skill_dirs.is_empty() {
+            return None;
+        }
+        Some(build_session_baseline_capabilities(&skills).skills)
     }
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(

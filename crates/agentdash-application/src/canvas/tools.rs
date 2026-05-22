@@ -15,10 +15,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::canvas::{build_canvas, upsert_canvas_binding};
-use crate::session::baseline_capabilities::build_session_baseline_capabilities;
+use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
 use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
-use crate::vfs::{RelayVfsService, build_canvas_mount_id};
 
 #[derive(Clone)]
 pub struct ListCanvasesTool {
@@ -38,7 +37,6 @@ impl ListCanvasesTool {
 #[derive(Clone)]
 pub struct StartCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
-    vfs_service: Arc<RelayVfsService>,
     project_id: Uuid,
     vfs: SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
@@ -48,7 +46,6 @@ pub struct StartCanvasTool {
 impl StartCanvasTool {
     pub fn new(
         canvas_repo: Arc<dyn CanvasRepository>,
-        vfs_service: Arc<RelayVfsService>,
         project_id: Uuid,
         vfs: SharedRuntimeVfs,
         session_services_handle: SharedSessionToolServicesHandle,
@@ -56,7 +53,6 @@ impl StartCanvasTool {
     ) -> Self {
         Self {
             canvas_repo,
-            vfs_service,
             project_id,
             vfs,
             session_services_handle,
@@ -101,7 +97,6 @@ pub struct BindCanvasDataParams {
 #[derive(Clone)]
 pub struct PresentCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
-    vfs_service: Arc<RelayVfsService>,
     vfs: SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: String,
@@ -112,7 +107,6 @@ pub struct PresentCanvasTool {
 impl PresentCanvasTool {
     pub fn new(
         canvas_repo: Arc<dyn CanvasRepository>,
-        vfs_service: Arc<RelayVfsService>,
         vfs: SharedRuntimeVfs,
         session_services_handle: SharedSessionToolServicesHandle,
         current_session_id: String,
@@ -121,7 +115,6 @@ impl PresentCanvasTool {
     ) -> Self {
         Self {
             canvas_repo,
-            vfs_service,
             vfs,
             session_services_handle,
             current_session_id,
@@ -346,7 +339,6 @@ impl AgentTool for StartCanvasTool {
 
         expose_canvas_to_session(
             &self.vfs,
-            &self.vfs_service,
             &self.session_services_handle,
             self.current_session_id.as_deref(),
             &canvas,
@@ -483,7 +475,6 @@ impl AgentTool for PresentCanvasTool {
 
         expose_canvas_to_session(
             &self.vfs,
-            &self.vfs_service,
             &self.session_services_handle,
             Some(&self.current_session_id),
             &canvas,
@@ -557,7 +548,6 @@ fn ensure_canvas_project(
 
 async fn expose_canvas_to_session(
     vfs: &SharedRuntimeVfs,
-    vfs_service: &RelayVfsService,
     session_services_handle: &SharedSessionToolServicesHandle,
     current_session_id: Option<&str>,
     canvas: &Canvas,
@@ -580,15 +570,13 @@ async fn expose_canvas_to_session(
             })
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        sync_canvas_mount_capability_state(vfs, vfs_service, &session_services, session_id, canvas)
-            .await?;
+        sync_canvas_mount_capability_state(vfs, &session_services, session_id, canvas).await?;
     }
     Ok(())
 }
 
 async fn sync_canvas_mount_capability_state(
     vfs: &SharedRuntimeVfs,
-    vfs_service: &RelayVfsService,
     session_services: &crate::vfs::tools::provider::SessionToolServices,
     session_id: &str,
     canvas: &Canvas,
@@ -620,19 +608,6 @@ async fn sync_canvas_mount_capability_state(
     };
 
     let active_vfs = vfs.snapshot().await;
-    let discovered_skills = crate::skill::load_skills_from_vfs(vfs_service, &active_vfs).await;
-    for diagnostic in &discovered_skills.diagnostics {
-        tracing::warn!(
-            session_id = %session_id,
-            canvas_id = %canvas.mount_id,
-            skill = %diagnostic.name,
-            path = %diagnostic.file_path.display(),
-            message = %diagnostic.message,
-            "刷新 Canvas 可见能力时发现 skill 诊断"
-        );
-    }
-    let session_capabilities = build_session_baseline_capabilities(&discovered_skills.skills);
-
     session_services
         .capability
         .apply_live_vfs_capability_state(
@@ -640,7 +615,6 @@ async fn sync_canvas_mount_capability_state(
             session_id,
             before_state,
             active_vfs,
-            session_capabilities.skills,
             "canvas",
             "canvas_visible",
         )
@@ -776,12 +750,6 @@ mod tests {
         }
     }
 
-    fn canvas_vfs_service(canvas_repo: Arc<MemoryCanvasRepository>) -> Arc<RelayVfsService> {
-        let mut registry = MountProviderRegistry::new();
-        registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo)));
-        Arc::new(RelayVfsService::new(Arc::new(registry)))
-    }
-
     #[tokio::test]
     async fn canvas_start_creates_shared_mounts_for_followup_apply_patch() {
         let project_id = Uuid::new_v4();
@@ -794,7 +762,6 @@ mod tests {
 
         let start_tool = StartCanvasTool::new(
             canvas_repo.clone(),
-            service.clone(),
             project_id,
             shared_vfs.clone(),
             SharedSessionToolServicesHandle::default(),
@@ -894,10 +861,8 @@ mod tests {
             .expect("应能写入仓储");
 
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
-        let service = canvas_vfs_service(canvas_repo.clone());
         let start_tool = StartCanvasTool::new(
             canvas_repo.clone(),
-            service,
             project_id,
             shared_vfs.clone(),
             SharedSessionToolServicesHandle::default(),
@@ -1000,10 +965,8 @@ mod tests {
         let project_id = Uuid::new_v4();
         let canvas_repo = Arc::new(MemoryCanvasRepository::default());
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
-        let service = canvas_vfs_service(canvas_repo.clone());
         let start_tool = StartCanvasTool::new(
             canvas_repo.clone(),
-            service,
             project_id,
             shared_vfs,
             SharedSessionToolServicesHandle::default(),

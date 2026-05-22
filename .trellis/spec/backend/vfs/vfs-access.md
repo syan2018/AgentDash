@@ -55,7 +55,7 @@ Provider 返回的 `RuntimeFileEntry.attributes` 是结构化 metadata 通道，
 
 ### 3. Contracts
 - Canvas 工具在发送 `canvas_presented` 展示事件前，先把目标 Canvas 追加到 live runtime VFS，把 `canvas.mount_id` 写入 `visible_canvas_mount_ids`，并同步刷新 `CapabilityState.vfs.active`。
-- Canvas 可见后，Skill 维度必须从刷新后的 live VFS 重新 discovery，并写入 `CapabilityState.skill.skills`；Canvas 工具返回值中的 `skill_name` / `skill_path` 只作为工具结果提示，不作为能力状态事实源。
+- Canvas 可见后，状态更新服务必须从刷新后的 live VFS 重新 discovery Skill 维度，并写入 `CapabilityState.skill.skills`；Canvas 工具返回值中的 `skill_name` / `skill_path` 只作为工具结果提示，不作为能力状态事实源。
 - `CapabilityState.vfs.active` 与 `CapabilityState.skill.skills` 变化必须走统一 runtime context transition，产出 `capability_state_changed` 与 `context_frame(kind="capability_state_update")`，其中 VFS delta 包含新增的 `cvs-<canvas.mount_id>`，Skill delta 包含新增或变更的 Canvas 内嵌 skill。
 - `/sessions/{session_id}/context` 基于 session meta 重新构建 `SessionRuntime` surface，并通过 `append_visible_canvas_mounts` 追加可见 Canvas mounts。
 - 前端收到 `canvas_presented` 后刷新 session context，再打开或继续使用 Canvas / VFS tab；VFS browser 只消费刷新后的 `runtime_surface`，以 `surface_ref + mount_id + path` 访问文件。

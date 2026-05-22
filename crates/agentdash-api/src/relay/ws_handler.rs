@@ -527,6 +527,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseWorkspaceDetect { .. }
             | RelayMessage::ResponseWorkspaceDetectGit { .. }
             | RelayMessage::ResponseToolFileRead { .. }
+            | RelayMessage::ResponseToolFileReadBinary { .. }
             | RelayMessage::ResponseToolFileWrite { .. }
             | RelayMessage::ResponseToolFileDelete { .. }
             | RelayMessage::ResponseToolFileRename { .. }
@@ -832,6 +833,17 @@ mod tests {
     fn vfs_materialize_response_is_routed_to_pending_requests() {
         let response = RelayMessage::ResponseVfsMaterialize {
             id: "vfs-materialize-1".to_string(),
+            payload: None,
+            error: None,
+        };
+
+        assert!(is_pending_response_message(&response));
+    }
+
+    #[test]
+    fn binary_file_read_response_is_routed_to_pending_requests() {
+        let response = RelayMessage::ResponseToolFileReadBinary {
+            id: "file-read-binary-1".to_string(),
             payload: None,
             error: None,
         };

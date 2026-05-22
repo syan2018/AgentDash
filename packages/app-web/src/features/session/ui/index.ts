@@ -6,35 +6,35 @@ export { SessionChatView, type SessionChatViewProps, type PromptTemplate } from 
 export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {
-  AcpToolCallCard as SessionToolCallCard,
-  type AcpToolCallCardProps as SessionToolCallCardProps,
+  SessionToolCallCard as SessionToolCallCard,
+  type SessionToolCallCardProps as SessionToolCallCardProps,
 } from "./SessionToolCallCard";
 export {
-  AcpMessageCard as SessionMessageCard,
-  type AcpMessageCardProps as SessionMessageCardProps,
+  SessionMessageCard as SessionMessageCard,
+  type SessionMessageCardProps as SessionMessageCardProps,
 } from "./SessionMessageCard";
 export {
-  AcpPlanCard as SessionPlanCard,
-  type AcpPlanCardProps as SessionPlanCardProps,
+  SessionPlanCard as SessionPlanCard,
+  type SessionPlanCardProps as SessionPlanCardProps,
 } from "./SessionPlanCard";
 export {
-  AcpSystemEventCard as SessionSystemEventCard,
-  type AcpSystemEventCardProps as SessionSystemEventCardProps,
+  SessionSystemEventCard as SessionSystemEventCard,
+  type SessionSystemEventCardProps as SessionSystemEventCardProps,
 } from "./SessionSystemEventCard";
 export {
-  AcpUsageCard as SessionUsageCard,
-  type AcpUsageCardProps as SessionUsageCardProps,
+  SessionUsageCard as SessionUsageCard,
+  type SessionUsageCardProps as SessionUsageCardProps,
 } from "./SessionUsageCard";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
 export {
-  AcpTaskContextCard as SessionTaskContextCard,
-  type AcpTaskContextCardProps as SessionTaskContextCardProps,
+  SessionTaskContextCard as SessionTaskContextCard,
+  type SessionTaskContextCardProps as SessionTaskContextCardProps,
 } from "./SessionTaskContextCard";
 export {
-  AcpOwnerContextCard as SessionOwnerContextCard,
-  type AcpOwnerContextCardProps as SessionOwnerContextCardProps,
+  SessionOwnerContextCard as SessionOwnerContextCard,
+  type SessionOwnerContextCardProps as SessionOwnerContextCardProps,
 } from "./SessionOwnerContextCard";
 export {
-  AcpTaskEventCard as SessionTaskEventCard,
-  type AcpTaskEventCardProps as SessionTaskEventCardProps,
+  SessionTaskEventCard as SessionTaskEventCard,
+  type SessionTaskEventCardProps as SessionTaskEventCardProps,
 } from "./SessionTaskEventCard";

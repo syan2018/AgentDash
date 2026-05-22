@@ -1,11 +1,11 @@
-use agentdash_spi::context::capability::SkillEntry;
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::io;
 
-use super::baseline_capabilities::build_session_baseline_capabilities;
+use super::capability_projection::{
+    SessionCapabilityProjectionInput, derive_session_skill_baseline, merge_live_vfs_skill_entries,
+};
 use super::hub::SessionRuntimeInner;
 use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
@@ -139,51 +139,15 @@ impl SessionCapabilityService {
     async fn derive_skill_entries_for_active_vfs(
         &self,
         active_vfs: &Vfs,
-    ) -> Option<Vec<SkillEntry>> {
-        let mut skills = if let Some(vfs_service) = self.hub.vfs_service.as_ref() {
-            let result = crate::skill::load_skills_from_vfs(vfs_service, active_vfs).await;
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "live VFS skill 诊断: {}",
-                    diag.message
-                );
-            }
-            result.skills
-        } else {
-            Vec::new()
-        };
-
-        if !self.hub.extra_skill_dirs.is_empty() {
-            let existing_names: HashMap<String, String> = skills
-                .iter()
-                .map(|skill| {
-                    (
-                        skill.name.clone(),
-                        skill.file_path.to_string_lossy().to_string(),
-                    )
-                })
-                .collect();
-            let result = crate::skill::load_skills_from_local_dirs(
-                &self.hub.extra_skill_dirs,
-                &existing_names,
-            );
-            for diag in &result.diagnostics {
-                tracing::warn!(
-                    skill_name = %diag.name,
-                    path = %diag.file_path.display(),
-                    "live VFS skill 诊断 (plugin): {}",
-                    diag.message
-                );
-            }
-            skills.extend(result.skills);
-        }
-
-        if self.hub.vfs_service.is_none() && self.hub.extra_skill_dirs.is_empty() {
-            return None;
-        }
-        Some(build_session_baseline_capabilities(&skills).skills)
+    ) -> Option<Vec<agentdash_spi::context::capability::SkillEntry>> {
+        derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: self.hub.vfs_service.as_deref(),
+            active_vfs: Some(active_vfs),
+            extra_skill_dirs: &self.hub.extra_skill_dirs,
+            diagnostics_label: "runtime_context_transition",
+        })
+        .await
+        .map(|caps| caps.skills)
     }
 
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
@@ -192,6 +156,7 @@ impl SessionCapabilityService {
         turn_id: &str,
         hook_session: Option<&agentdash_spi::hooks::SharedHookSessionRuntime>,
         before_state: CapabilityState,
+        final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
         tools: &[agentdash_agent_types::DynAgentTool],
     ) -> PendingRuntimeContextApplication {
@@ -201,27 +166,12 @@ impl SessionCapabilityService {
                 turn_id,
                 hook_session,
                 before_state,
+                final_capability_state,
                 transitions,
                 tools,
             )
             .await
     }
-}
-
-fn merge_live_vfs_skill_entries(
-    existing: &[SkillEntry],
-    refreshed_vfs_skills: Vec<SkillEntry>,
-) -> Vec<SkillEntry> {
-    let mut merged = refreshed_vfs_skills;
-    for skill in existing {
-        if skill.file_path.contains("://") {
-            continue;
-        }
-        if !merged.iter().any(|item| item.name == skill.name) {
-            merged.push(skill.clone());
-        }
-    }
-    merged
 }
 
 #[async_trait]

@@ -19,7 +19,7 @@ type DisplayStatus =
 
 const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 
-export interface AcpToolCallCardProps {
+export interface SessionToolCallCardProps {
   item: ThreadItem;
   isPendingApproval?: boolean;
   compact?: boolean;
@@ -27,13 +27,13 @@ export interface AcpToolCallCardProps {
   outputText?: string;
 }
 
-export const AcpToolCallCard = memo(function AcpToolCallCard({
+export const SessionToolCallCard = memo(function SessionToolCallCard({
   item,
   isPendingApproval,
   compact = false,
   sessionId,
   outputText,
-}: AcpToolCallCardProps) {
+}: SessionToolCallCardProps) {
   const title = getThreadItemTitle(item);
   const status = getThreadItemStatus(item) as DisplayStatus;
   const kind = getThreadItemKind(item);
@@ -296,4 +296,4 @@ function safeJson(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-export default AcpToolCallCard;
+export default SessionToolCallCard;

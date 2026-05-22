@@ -137,7 +137,7 @@ store.write_meta(&session_meta).await?;
 | 字段 | 用途 | 展示 |
 |------|------|------|
 | `system_context` | owner 级上下文，每轮随 system prompt 注入 Agent | 不出现在用户消息流 |
-| `prompt_blocks` resource block | `agentdash://project-context/` URI，仅前端展示锚点 | 渲染为 AcpOwnerContextCard |
+| `prompt_blocks` resource block | `agentdash://project-context/` URI，仅前端展示锚点 | 渲染为 SessionOwnerContextCard |
 
 **禁止**：在 `prompt_blocks` 中放 instruction text block；在用户消息文本中暴露技术 slot 标识。
 

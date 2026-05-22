@@ -67,7 +67,7 @@ Examples:
 ```ts
 await window.agentdash.assets.url("main://docs/diagram.png");
 await window.agentdash.assets.url("skill-assets://skills/demo/assets/logo.png");
-await window.agentdash.assets.url("ld-km://assets/doc-1/source-123.png");
+await window.agentdash.assets.url("docs-media://assets/doc-1/source-123.png");
 ```
 
 Behavior:

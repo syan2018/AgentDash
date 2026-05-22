@@ -1,6 +1,7 @@
 //! PiAgent Tool Call 命令处理——file_read/write/delete/rename/apply_patch/shell_exec/file_list/search
 
 use agentdash_relay::*;
+use base64::Engine;
 
 use super::CommandHandler;
 
@@ -25,6 +26,37 @@ impl CommandHandler {
                 error: None,
             },
             Err(e) => RelayMessage::ResponseToolFileRead {
+                id,
+                payload: None,
+                error: Some(RelayError::io_error(e.to_string())),
+            },
+        }
+    }
+
+    pub(super) async fn handle_tool_file_read_binary(
+        &self,
+        id: String,
+        payload: ToolFileReadPayload,
+    ) -> RelayMessage {
+        match self
+            .tool_executor
+            .file_read_binary(&payload.path, &payload.mount_root_ref)
+            .await
+        {
+            Ok(result) => {
+                let data_base64 = base64::engine::general_purpose::STANDARD.encode(&result.data);
+                RelayMessage::ResponseToolFileReadBinary {
+                    id,
+                    payload: Some(ToolFileReadBinaryResponse {
+                        call_id: payload.call_id,
+                        data_base64,
+                        mime_type: result.mime_type,
+                        size: result.data.len() as u64,
+                    }),
+                    error: None,
+                }
+            }
+            Err(e) => RelayMessage::ResponseToolFileReadBinary {
                 id,
                 payload: None,
                 error: Some(RelayError::io_error(e.to_string())),

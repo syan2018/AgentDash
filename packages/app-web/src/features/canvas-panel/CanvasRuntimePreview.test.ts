@@ -35,8 +35,8 @@ function snapshot(): CanvasRuntimeSnapshot {
 
 describe("CanvasRuntimePreview VFS image assets", () => {
   it("parses safe VFS image mount URIs", () => {
-    expect(parseVfsAssetUri("ld-km://assets/doc-1/source.png")).toEqual({
-      mountId: "ld-km",
+    expect(parseVfsAssetUri("docs-media://assets/doc-1/source.png")).toEqual({
+      mountId: "docs-media",
       path: "assets/doc-1/source.png",
     });
     expect(parseVfsAssetUri("skill-assets://skills/demo/assets/logo.png")).toEqual({
@@ -47,9 +47,9 @@ describe("CanvasRuntimePreview VFS image assets", () => {
 
   it("rejects non-VFS or escaping image URIs", () => {
     expect(parseVfsAssetUri("https://example.test/image.png")).toBe("无效的 VFS 图片 URI");
-    expect(parseVfsAssetUri("ld-km:///absolute.png")).toBe("VFS 图片路径必须是 mount 相对路径");
-    expect(parseVfsAssetUri("ld-km://assets/../secret.png")).toBe("VFS 图片路径不能包含 ..");
-    expect(parseVfsAssetUri("ld-km://assets/image.png?token=1")).toBe(
+    expect(parseVfsAssetUri("docs-media:///absolute.png")).toBe("VFS 图片路径必须是 mount 相对路径");
+    expect(parseVfsAssetUri("docs-media://assets/../secret.png")).toBe("VFS 图片路径不能包含 ..");
+    expect(parseVfsAssetUri("docs-media://assets/image.png?token=1")).toBe(
       "VFS 图片 URI 不支持 query 或 fragment",
     );
   });
@@ -78,14 +78,14 @@ describe("CanvasRuntimePreview VFS image assets", () => {
 
     const firstUrl = await resolveRuntimeAssetUrl({
       surfaceRef: "session-runtime:session-1",
-      uri: "ld-km://assets/doc-1/source.png",
+      uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
       createObjectUrl,
     });
     const secondUrl = await resolveRuntimeAssetUrl({
       surfaceRef: "session-runtime:session-1",
-      uri: "ld-km://assets/doc-1/source.png",
+      uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
       createObjectUrl,
@@ -96,7 +96,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     expect(readBlob).toHaveBeenCalledTimes(1);
     expect(readBlob).toHaveBeenCalledWith({
       surfaceRef: "session-runtime:session-1",
-      mountId: "ld-km",
+      mountId: "docs-media",
       path: "assets/doc-1/source.png",
     });
     expect(createObjectUrl).toHaveBeenCalledTimes(1);
@@ -108,7 +108,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
 
     await expect(resolveRuntimeAssetUrl({
       surfaceRef: "session-runtime:session-1",
-      uri: "ld-km://assets/doc-1/source.json",
+      uri: "docs-media://assets/doc-1/source.json",
       cache,
       readBlob,
       createObjectUrl: () => "blob:asset-json",
@@ -135,7 +135,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
 
     const firstUrl = await resolveRuntimeAssetUrl({
       surfaceRef: "session-runtime:session-1",
-      uri: "ld-km://assets/doc-1/source.png",
+      uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
       createObjectUrl,
@@ -143,7 +143,7 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     revokeRuntimeAssetUrl(cache, firstUrl, revokeObjectUrl);
     const secondUrl = await resolveRuntimeAssetUrl({
       surfaceRef: "session-runtime:session-1",
-      uri: "ld-km://assets/doc-1/source.png",
+      uri: "docs-media://assets/doc-1/source.png",
       cache,
       readBlob,
       createObjectUrl,

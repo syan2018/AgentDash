@@ -11,9 +11,9 @@ import { ATTEMPT_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-label
 import type {
   ActiveWorkflowHookMetadata,
   ActivityAttemptState,
-  ExecutionVfs,
   HookInjection,
   HookSessionRuntimeInfo,
+  ResolvedMountSummary,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionComposition,
@@ -31,7 +31,6 @@ export interface ContextOverviewTabProps {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
-  vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: WorkflowRun[];
@@ -123,7 +122,6 @@ export function ContextOverviewTab({
   ownerProjectName,
   executorSummary,
   runtimeSurface,
-  vfs,
   hookRuntime,
   sessionCapabilities,
   workflowRuns,
@@ -167,14 +165,13 @@ export function ContextOverviewTab({
 
       {/* 共享目录 */}
       <SharedFoldersCard
-        vfs={vfs}
         runtimeSurface={runtimeSurface}
       />
 
       <WorkflowContextCard
         hookRuntime={hookRuntime}
         workflowRuns={workflowRuns}
-        vfs={vfs}
+        runtimeSurface={runtimeSurface}
         composition={composition}
       />
 
@@ -189,7 +186,7 @@ export function ContextOverviewTab({
       {contextSnapshot && (
         <TechnicalBadges
           contextSnapshot={contextSnapshot}
-          vfs={vfs}
+          runtimeSurface={runtimeSurface}
         />
       )}
     </div>
@@ -199,18 +196,18 @@ export function ContextOverviewTab({
 function WorkflowContextCard({
   hookRuntime,
   workflowRuns,
-  vfs,
+  runtimeSurface,
   composition,
 }: {
   hookRuntime: HookSessionRuntimeInfo | null;
   workflowRuns: WorkflowRun[];
-  vfs: ExecutionVfs | null;
+  runtimeSurface: ResolvedVfsSurface | null;
   composition: SessionComposition | null;
 }) {
   const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
   const activeRun = resolveActiveRun(workflowRuns, activeWorkflow);
   const activeAttempt = resolveActiveAttempt(activeRun, activeWorkflow);
-  const lifecycleMounts = vfs?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
+  const lifecycleMounts = runtimeSurface?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
   const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
   const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
 
@@ -456,30 +453,22 @@ function AgentSummaryCard({
 }
 
 function SharedFoldersCard({
-  vfs,
   runtimeSurface,
 }: {
-  vfs: ExecutionVfs | null;
   runtimeSurface: ResolvedVfsSurface | null;
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
-  const hasMounts =
-    (vfs && vfs.mounts.length > 0) || (runtimeSurface && runtimeSurface.mounts.length > 0);
+  const hasMounts = Boolean(runtimeSurface?.mounts.length);
 
-  const folders = vfs
-    ? vfs.mounts
-        .filter(
-          (m) =>
-            m.provider !== "relay_fs" &&
-            m.provider !== "lifecycle_vfs" &&
-            m.provider !== "canvas_fs",
-        )
-        .map((m) => ({
-          id: m.id,
-          title: m.display_name || m.id,
-          mount: m.id,
-          writable: m.default_write || m.capabilities.includes("write"),
-        }))
+  const folders = runtimeSurface
+    ? runtimeSurface.mounts
+      .filter(isSharedFolderMount)
+      .map((m) => ({
+        id: m.id,
+        title: m.display_name || m.id,
+        mount: m.id,
+        writable: m.default_write || m.capabilities.includes("write"),
+      }))
     : [];
 
   return (
@@ -519,7 +508,7 @@ function SharedFoldersCard({
           </button>
           {browserOpen && (
             <div className="mt-2">
-              <VfsBrowser surface={runtimeSurface} vfs={vfs} />
+              <VfsBrowser surface={runtimeSurface} />
             </div>
           )}
         </div>
@@ -571,17 +560,17 @@ function SessionCapabilitiesCard({
 
 function TechnicalBadges({
   contextSnapshot,
-  vfs,
+  runtimeSurface,
 }: {
   contextSnapshot: SessionContextSnapshot;
-  vfs: ExecutionVfs | null;
+  runtimeSurface: ResolvedVfsSurface | null;
 }) {
   const { runtime_policy, tool_visibility } = contextSnapshot.effective;
   const badges = [
     tool_visibility.resolved ? "工具面已解析" : "工具面未解析",
     runtime_policy.workspace_attached ? "已附着 workspace" : "未附着 workspace",
     runtime_policy.mcp_enabled ? "MCP 已启用" : "MCP 未启用",
-    vfs?.mounts.length ? `${vfs.mounts.length} 个运行时 mount` : "无运行时 mount",
+    runtimeSurface?.mounts.length ? `${runtimeSurface.mounts.length} 个运行时 mount` : "无运行时 mount",
   ];
 
   return (
@@ -601,4 +590,8 @@ function TechnicalBadges({
       </p>
     </SurfaceCard>
   );
+}
+
+function isSharedFolderMount(mount: ResolvedMountSummary): boolean {
+  return !["relay_fs", "lifecycle_vfs", "canvas_fs"].includes(mount.provider);
 }

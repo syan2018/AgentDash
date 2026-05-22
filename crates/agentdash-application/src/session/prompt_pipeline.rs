@@ -225,7 +225,7 @@ impl SessionLaunchExecutor {
         };
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
-        let cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
+        let _cached_continuation = self.deps.turn_supervisor.claim_prompt(session_id).await?;
         let sid = session_id.to_string();
         let meta_store = self.deps.stores.meta.clone();
         let runtime_command_store = self.deps.stores.runtime_commands.clone();
@@ -273,9 +273,6 @@ impl SessionLaunchExecutor {
                 command: command.clone(),
                 session_meta: session_meta.clone(),
                 had_existing_runtime,
-                cached_capability_state: cached_continuation
-                    .as_ref()
-                    .map(|profile| profile.capability_state.clone()),
                 requested_runtime_commands: requested_runtime_commands.clone(),
             })
             .await
@@ -383,17 +380,27 @@ impl SessionLaunchExecutor {
         }
         base_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
 
-        let mut final_capability_state = requested_runtime_commands
-            .last()
-            .map(|command| command.transition.state.clone())
+        let requested_transitions = requested_runtime_commands
+            .iter()
+            .map(|command| command.transition.clone())
+            .collect::<Vec<_>>();
+        let replay = if requested_transitions.is_empty() {
+            None
+        } else {
+            super::capability_state::replay_runtime_capability_transitions(
+                &base_capability_state,
+                &requested_transitions,
+            )
+            .ok()
+        };
+        let mut final_capability_state = replay
+            .as_ref()
+            .map(|replay| replay.capability_state.clone())
             .unwrap_or_else(|| base_capability_state.clone());
         if let Some(base_vfs) = construction.surface.vfs.clone() {
-            let effective_vfs = requested_runtime_commands
-                .last()
-                .and_then(|command| command.transition.state.vfs.active.as_ref())
-                .map(|pending_vfs| {
-                    super::capability_state::merge_vfs_overlay(base_vfs.clone(), pending_vfs)
-                })
+            let effective_vfs = replay
+                .as_ref()
+                .and_then(|replay| replay.effective_vfs.clone())
                 .unwrap_or(base_vfs);
             construction.workspace.working_directory = effective_vfs
                 .default_mount()
@@ -403,15 +410,12 @@ impl SessionLaunchExecutor {
             construction.surface.vfs = Some(effective_vfs.clone());
             final_capability_state.vfs.active = Some(effective_vfs);
         }
-        if let Some(pending_mcp) = requested_runtime_commands
-            .last()
-            .map(|command| command.transition.state.tool.mcp_servers.clone())
-        {
-            construction.projections.mcp_servers = pending_mcp.clone();
-            final_capability_state.tool.mcp_servers = pending_mcp;
-        } else {
-            final_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
-        }
+        let effective_mcp_servers = replay
+            .as_ref()
+            .and_then(|replay| replay.effective_mcp_servers.clone())
+            .unwrap_or_else(|| construction.projections.mcp_servers.clone());
+        construction.projections.mcp_servers = effective_mcp_servers.clone();
+        final_capability_state.tool.mcp_servers = effective_mcp_servers;
         construction.projections.capability_state = Some(final_capability_state);
         construction.resolution.runtime_base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {
@@ -573,6 +577,7 @@ impl SessionLaunchExecutor {
                     &turn_id,
                     hook_session.as_ref(),
                     base_capability_state,
+                    &capability_state,
                     &launch_execution
                         .runtime_commands
                         .pending_capability_transitions,

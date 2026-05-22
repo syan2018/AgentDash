@@ -7,17 +7,17 @@
 import { memo, useState } from "react";
 import type { TurnPlanStep, TurnPlanStepStatus } from "../../../generated/backbone-protocol";
 
-export interface AcpPlanCardProps {
+export interface SessionPlanCardProps {
   steps: TurnPlanStep[];
   collapsible?: boolean;
   defaultCollapsed?: boolean;
 }
 
-export const AcpPlanCard = memo(function AcpPlanCard({
+export const SessionPlanCard = memo(function SessionPlanCard({
   steps,
   collapsible = true,
   defaultCollapsed = false,
-}: AcpPlanCardProps) {
+}: SessionPlanCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
   if (steps.length === 0) {
@@ -140,4 +140,4 @@ function getStatusConfig(status: TurnPlanStepStatus): {
   }
 }
 
-export default AcpPlanCard;
+export default SessionPlanCard;

@@ -7,6 +7,7 @@ use agentdash_domain::{
     task::AgentBinding,
     workspace::Workspace,
 };
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::{
@@ -20,12 +21,13 @@ use crate::{
     repository_set::RepositorySet,
     runtime_bridge::session_mcp_servers_to_runtime,
     session::{
-        ExecutorResolution, SessionMeta,
+        ExecutorResolution, SessionCapabilityProjectionInput, SessionMeta,
         bootstrap::{
             BootstrapOwnerVariant, BootstrapPlanInput, build_bootstrap_plan,
             derive_session_context_snapshot,
         },
         context::{extract_story_overrides, normalize_optional_string},
+        derive_session_skill_baseline,
     },
     vfs::{
         RelayVfsService, SessionMountTarget, append_agent_knowledge_mounts,
@@ -69,21 +71,22 @@ impl SessionConstructionPlanner {
     pub async fn build_session_capabilities(
         vfs_service: &RelayVfsService,
         vfs: Option<&agentdash_spi::Vfs>,
+        extra_skill_dirs: &[PathBuf],
     ) -> Option<agentdash_spi::SessionBaselineCapabilities> {
-        let skills = if let Some(space) = vfs {
-            let result = crate::skill::load_skills_from_vfs(vfs_service, space).await;
-            result.skills
-        } else {
-            Vec::new()
-        };
-
-        let caps = super::baseline_capabilities::build_session_baseline_capabilities(&skills);
+        let caps = derive_session_skill_baseline(SessionCapabilityProjectionInput {
+            vfs_service: Some(vfs_service),
+            active_vfs: vfs,
+            extra_skill_dirs,
+            diagnostics_label: "construction_planner",
+        })
+        .await?;
         if caps.is_empty() { None } else { Some(caps) }
     }
 
     pub async fn plan_task_context_query(
         repos: &RepositorySet,
         vfs_service: &RelayVfsService,
+        extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
@@ -105,7 +108,8 @@ impl SessionConstructionPlanner {
             .as_ref()
             .and_then(|context| context.vfs.clone());
         let capabilities =
-            Self::build_session_capabilities(vfs_service, resolved_vfs.as_ref()).await;
+            Self::build_session_capabilities(vfs_service, resolved_vfs.as_ref(), extra_skill_dirs)
+                .await;
 
         Self::plan_context(
             session_id,
@@ -124,6 +128,7 @@ impl SessionConstructionPlanner {
     pub async fn plan_story_context_query(
         repos: &RepositorySet,
         vfs_service: &RelayVfsService,
+        extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
@@ -250,7 +255,9 @@ impl SessionConstructionPlanner {
             workflow: active_workflow,
         });
         let snapshot = derive_session_context_snapshot(&plan);
-        let capabilities = Self::build_session_capabilities(vfs_service, plan.vfs.as_ref()).await;
+        let capabilities =
+            Self::build_session_capabilities(vfs_service, plan.vfs.as_ref(), extra_skill_dirs)
+                .await;
 
         Ok(Some(Self::plan_context(
             session_id,
@@ -269,6 +276,7 @@ impl SessionConstructionPlanner {
     pub async fn plan_project_context_query(
         repos: &RepositorySet,
         vfs_service: &RelayVfsService,
+        extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
@@ -414,7 +422,9 @@ impl SessionConstructionPlanner {
             workflow: active_workflow,
         });
         let snapshot = derive_session_context_snapshot(&plan);
-        let capabilities = Self::build_session_capabilities(vfs_service, plan.vfs.as_ref()).await;
+        let capabilities =
+            Self::build_session_capabilities(vfs_service, plan.vfs.as_ref(), extra_skill_dirs)
+                .await;
 
         Ok(Self::plan_context(
             session_id,

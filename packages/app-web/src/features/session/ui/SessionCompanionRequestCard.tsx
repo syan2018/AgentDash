@@ -13,12 +13,12 @@ import { extractPlatformEventData } from "../model/platformEvent";
 import { EventFullCard } from "./EventCards";
 import { respondCompanionRequest } from "../../../services/executor";
 
-export interface AcpCompanionRequestCardProps {
+export interface SessionCompanionRequestCardProps {
   event: BackboneEvent;
   sessionId?: string;
 }
 
-export function AcpCompanionRequestCard({ event, sessionId }: AcpCompanionRequestCardProps) {
+export function SessionCompanionRequestCard({ event, sessionId }: SessionCompanionRequestCardProps) {
   const data = extractPlatformEventData(event);
 
   const requestId = typeof data?.request_id === "string" ? data.request_id : null;

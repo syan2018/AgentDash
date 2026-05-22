@@ -32,6 +32,12 @@ pub struct ShellResult {
     pub stderr: String,
 }
 
+/// 文件 bytes 读取结果
+pub struct BinaryFileResult {
+    pub data: Vec<u8>,
+    pub mime_type: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("路径安全检查失败: {0} 不在 accessible_roots 内")]
@@ -99,6 +105,23 @@ impl ToolExecutor {
         tracing::debug!(path = %full_path.display(), "file_read");
         let content = tokio::fs::read_to_string(&full_path).await?;
         Ok(content)
+    }
+
+    pub async fn file_read_binary(
+        &self,
+        path: &str,
+        workspace_root: &str,
+    ) -> Result<BinaryFileResult, ToolError> {
+        let full_path = self.resolve_existing_path(path, workspace_root)?;
+        if !full_path.is_file() {
+            return Err(ToolError::InvalidPath(path.to_string()));
+        }
+        tracing::debug!(path = %full_path.display(), "file_read_binary");
+        let data = tokio::fs::read(&full_path).await?;
+        Ok(BinaryFileResult {
+            data,
+            mime_type: infer_mime_type(path),
+        })
     }
 
     pub async fn file_write(
@@ -766,6 +789,8 @@ async fn collect_entries(
                         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|duration| duration.as_millis() as i64),
                     is_dir,
+                    content_kind: file_content_kind(&path, is_dir),
+                    mime_type: file_mime_type(&path, is_dir),
                 });
             }
 
@@ -783,6 +808,42 @@ async fn collect_entries(
     }
 
     Ok(())
+}
+
+fn file_content_kind(path: &Path, is_dir: bool) -> Option<String> {
+    if is_dir {
+        return None;
+    }
+    is_image_path(path).then(|| "binary".to_string())
+}
+
+fn file_mime_type(path: &Path, is_dir: bool) -> Option<String> {
+    if is_dir {
+        return None;
+    }
+    let mime_type = infer_mime_type(&path.to_string_lossy());
+    (mime_type != "application/octet-stream").then_some(mime_type)
+}
+
+fn infer_mime_type(path: &str) -> String {
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        "image/png".to_string()
+    } else if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg".to_string()
+    } else if lower.ends_with(".webp") {
+        "image/webp".to_string()
+    } else if lower.ends_with(".gif") {
+        "image/gif".to_string()
+    } else if lower.ends_with(".svg") {
+        "image/svg+xml".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    }
+}
+
+fn is_image_path(path: &Path) -> bool {
+    infer_mime_type(&path.to_string_lossy()).starts_with("image/")
 }
 
 fn shell_command(command: &str, cwd: &Path) -> tokio::process::Command {
@@ -860,6 +921,44 @@ mod tests {
             .expect("delete should succeed");
 
         assert!(!file.exists());
+    }
+
+    #[tokio::test]
+    async fn file_read_binary_returns_svg_bytes_and_mime() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("diagram.svg");
+        std::fs::write(&file, "<svg></svg>").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let result = executor
+            .file_read_binary("diagram.svg", &root)
+            .await
+            .expect("read binary");
+
+        assert_eq!(result.data, b"<svg></svg>");
+        assert_eq!(result.mime_type, "image/svg+xml");
+    }
+
+    #[tokio::test]
+    async fn file_list_marks_svg_as_image_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("diagram.svg");
+        std::fs::write(&file, "<svg></svg>").expect("write");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let entries = executor
+            .file_list(".", &root, None, false)
+            .await
+            .expect("list");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.path == "diagram.svg")
+            .expect("svg entry");
+
+        assert_eq!(entry.content_kind.as_deref(), Some("binary"));
+        assert_eq!(entry.mime_type.as_deref(), Some("image/svg+xml"));
     }
 
     #[tokio::test]

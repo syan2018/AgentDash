@@ -125,3 +125,14 @@ applied。若 applied 状态提交失败，必须立刻尝试把同一批 comman
 清理 turn，并让本次 launch 返回错误；不能继续启动 processor，也不能保留 `requested`
 等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
 数据库迁移会把既有 runtime command 行更新为 `requested`。
+
+runtime command payload 保存 `RuntimeCapabilityTransition` records。payload 不保存完整
+`CapabilityState`，也不保存 `ToolDimension` / `CompanionDimension` replacement；
+tool、MCP、companion、VFS 与 mount directive 分别作为 dimension effect records replay 到
+construction base projection，再由 capability projection normalizer 生成闭包状态。多个
+requested runtime command 必须按 store 返回顺序 fold replay。
+
+runtime transition 的生产入口由各 dimension module 生成 records，并在写入 store 前调用
+`CapabilityDimensionRegistry::validate_transition`。mount directive 同时保留为
+`dimension=vfs / declaration_type=mount_operation` declaration 与
+`apply_mount_operations` effect，使审计来源与可 replay effect 分离但保持同源。

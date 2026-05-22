@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 46
-- **Last Active**: 2026-05-21
+- **Total Sessions**: 49
+- **Last Active**: 2026-05-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~686 | Active |
+| `journal-2.md` | ~790 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 49 | 2026-05-22 | Capability维度管线标准化收口 | `31a1339f` | `codex/capability-intent-pipeline-standardization` |
+| 48 | 2026-05-22 | Runtime Context Patch Typed Intent 标准化 | `8f2d8a37` | `main` |
+| 47 | 2026-05-22 | Session Capability Projection Pipeline 收束 | `bf969a20`, `2a48c118`, `bf6f4604`, `190ca01f`, `751569f6`, `9b065b31` | `main` |
 | 46 | 2026-05-21 | VFS Mount 与 Filespace 扁平化 | `4c56eedd` | `main` |
 | 45 | 2026-05-21 | Project Filespace 资产化与 Agent VFS 能力迁移 | `b362100c`, `e212a3a3` | `main` |
 | 44 | 2026-05-21 | 实时流通路收敛 | `ca68536d` | `main` |

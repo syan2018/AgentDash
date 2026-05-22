@@ -15,8 +15,8 @@ import {
 } from "./types";
 import type {
   AggregatedContextFrameGroup,
-  AcpDisplayEntry,
-  AcpDisplayItem,
+  SessionDisplayEntry,
+  SessionDisplayItem,
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
   SessionEventEnvelope,
@@ -32,8 +32,8 @@ export interface UseSessionFeedOptions {
 }
 
 export interface UseSessionFeedResult {
-  displayItems: AcpDisplayItem[];
-  rawEntries: AcpDisplayEntry[];
+  displayItems: SessionDisplayItem[];
+  rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
   isLoading: boolean;
@@ -58,29 +58,12 @@ function getToolAggregationType(event: BackboneEvent): ToolAggregationType | nul
   if (!item) return null;
 
   switch (item.type) {
-    case "commandExecution": {
-      const cmd = item.command.toLowerCase();
-      if (cmd.includes("cat") || cmd.includes("less") || cmd.includes("head") || cmd.includes("tail")) {
-        return "info_gather";
-      }
-      if (cmd.includes("grep") || cmd.includes("find") || cmd.includes("rg")) {
-        return "info_gather";
-      }
-      if (cmd.includes("curl") || cmd.includes("wget") || cmd.includes("fetch")) {
-        return "info_gather";
-      }
-      if (cmd.includes("sed") || cmd.includes("awk")) {
-        return "command_run_edit";
-      }
-      return null;
-    }
+    case "commandExecution":
     case "fileChange":
-      return "file_edit";
     case "mcpToolCall":
     case "dynamicToolCall":
-      return "info_gather";
     case "webSearch":
-      return "info_gather";
+      return "turn_fold";
     default:
       return null;
   }
@@ -88,11 +71,6 @@ function getToolAggregationType(event: BackboneEvent): ToolAggregationType | nul
 
 function isThinkingEvent(event: BackboneEvent): boolean {
   return event.type === "reasoning_text_delta" || event.type === "reasoning_summary_delta";
-}
-
-function isFileEditEvent(event: BackboneEvent): boolean {
-  const item = extractThreadItem(event);
-  return item?.type === "fileChange";
 }
 
 function isContextFrameEvent(event: BackboneEvent): boolean {
@@ -103,133 +81,165 @@ function isContextFrameEvent(event: BackboneEvent): boolean {
   );
 }
 
-function getFilePathFromEvent(event: BackboneEvent): string | null {
-  const item = extractThreadItem(event);
-  if (item?.type === "fileChange" && item.changes.length > 0) {
-    return item.changes[0]!.path;
-  }
-  return null;
-}
-
 function isNonAggregatableEvent(event: BackboneEvent): boolean {
   return (
     event.type === "platform" ||
     event.type === "token_usage_updated" ||
     event.type === "thread_status_changed" ||
-    event.type === "turn_started" ||
-    event.type === "turn_completed" ||
     event.type === "error" ||
     event.type === "approval_request"
   );
 }
 
-function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
-  const result: AcpDisplayItem[] = [];
-  let currentToolGroup: AggregatedEntryGroup | null = null;
+type EntryClassification =
+  | "turn_boundary"
+  | "message"
+  | "tool_like"
+  | "thinking"
+  | "context_frame"
+  | "non_agg";
+
+function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
+  const event = entry.event;
+  if (event.type === "turn_started" || event.type === "turn_completed") {
+    return "turn_boundary";
+  }
+  if (event.type === "agent_message_delta") {
+    return "message";
+  }
+  if (isThinkingEvent(event)) {
+    return "thinking";
+  }
+  if (isContextFrameEvent(event)) {
+    return "context_frame";
+  }
+  if (getToolAggregationType(event) !== null) {
+    return "tool_like";
+  }
+  if (isNonAggregatableEvent(event)) {
+    return "non_agg";
+  }
+  return "non_agg";
+}
+
+function isEffectivelyEmptyMessage(entry: SessionDisplayEntry): boolean {
+  if (entry.event.type !== "agent_message_delta") return false;
+  const text = entry.accumulatedText ?? entry.event.payload.delta ?? "";
+  return text.trim().length === 0;
+}
+
+function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
+  const result: SessionDisplayItem[] = [];
+  let currentUnit: AggregatedEntryGroup | null = null;
   let currentThinkingGroup: AggregatedThinkingGroup | null = null;
-  let currentDiffGroup: AggregatedEntryGroup | null = null;
   let currentContextFrameGroup: AggregatedContextFrameGroup | null = null;
 
-  const flushGroups = () => {
-    if (currentToolGroup) {
-      result.push(currentToolGroup);
-      currentToolGroup = null;
+  const flushUnit = () => {
+    if (currentUnit) {
+      result.push(currentUnit);
+      currentUnit = null;
     }
+  };
+
+  const flushThinking = () => {
     if (currentThinkingGroup) {
       result.push(currentThinkingGroup);
       currentThinkingGroup = null;
     }
-    if (currentDiffGroup) {
-      result.push(currentDiffGroup);
-      currentDiffGroup = null;
-    }
+  };
+
+  const flushContextFrame = () => {
     if (currentContextFrameGroup) {
       result.push(currentContextFrameGroup);
       currentContextFrameGroup = null;
     }
   };
 
+  const flushAll = () => {
+    flushUnit();
+    flushThinking();
+    flushContextFrame();
+  };
+
   for (const entry of entries) {
-    const event = entry.event;
+    const cls = classifyEntry(entry);
 
-    if (isContextFrameEvent(event)) {
-      if (currentContextFrameGroup) {
-        currentContextFrameGroup.entries.push(entry);
-      } else {
-        flushGroups();
-        currentContextFrameGroup = {
-          type: "aggregated_context_frames",
-          entries: [entry],
-          id: entry.id,
-          groupKey: `context-frame-${entry.id}`,
-        };
+    switch (cls) {
+      case "turn_boundary": {
+        flushAll();
+        result.push(entry);
+        break;
       }
-      continue;
-    }
 
-    if (isNonAggregatableEvent(event)) {
-      flushGroups();
-      result.push(entry);
-      continue;
-    }
+      case "message": {
+        if (isEffectivelyEmptyMessage(entry)) {
+          // 空消息：完全丢弃，既不切断 unit 也不进入结果
+          break;
+        }
+        flushAll();
+        result.push(entry);
+        break;
+      }
 
-    if (isFileEditEvent(event)) {
-      const filePath = getFilePathFromEvent(event);
-      if (filePath) {
-        if (currentDiffGroup && currentDiffGroup.filePath === filePath) {
-          currentDiffGroup.entries.push(entry);
+      case "tool_like": {
+        flushThinking();
+        flushContextFrame();
+        if (currentUnit) {
+          currentUnit.entries.push(entry);
         } else {
-          flushGroups();
-          currentDiffGroup = {
+          currentUnit = {
             type: "aggregated_group",
-            aggregationType: "file_edit",
+            aggregationType: "turn_fold",
             entries: [entry],
             id: entry.id,
-            groupKey: `diff-${entry.id}`,
-            filePath,
+            groupKey: `tool-${entry.id}`,
           };
         }
-        continue;
+        break;
+      }
+
+      case "thinking": {
+        flushUnit();
+        flushContextFrame();
+        if (currentThinkingGroup) {
+          currentThinkingGroup.entries.push(entry);
+        } else {
+          currentThinkingGroup = {
+            type: "aggregated_thinking",
+            entries: [entry],
+            id: entry.id,
+            groupKey: `thinking-${entry.id}`,
+          };
+        }
+        break;
+      }
+
+      case "context_frame": {
+        flushUnit();
+        flushThinking();
+        if (currentContextFrameGroup) {
+          currentContextFrameGroup.entries.push(entry);
+        } else {
+          currentContextFrameGroup = {
+            type: "aggregated_context_frames",
+            entries: [entry],
+            id: entry.id,
+            groupKey: `context-frame-${entry.id}`,
+          };
+        }
+        break;
+      }
+
+      case "non_agg":
+      default: {
+        flushAll();
+        result.push(entry);
+        break;
       }
     }
-
-    const aggType = getToolAggregationType(event);
-    if (aggType && aggType !== "file_edit") {
-      if (currentToolGroup && currentToolGroup.aggregationType === aggType) {
-        currentToolGroup.entries.push(entry);
-      } else {
-        flushGroups();
-        currentToolGroup = {
-          type: "aggregated_group",
-          aggregationType: aggType,
-          entries: [entry],
-          id: entry.id,
-          groupKey: `tool-${entry.id}`,
-        };
-      }
-      continue;
-    }
-
-    if (isThinkingEvent(event)) {
-      if (currentThinkingGroup) {
-        currentThinkingGroup.entries.push(entry);
-      } else {
-        flushGroups();
-        currentThinkingGroup = {
-          type: "aggregated_thinking",
-          entries: [entry],
-          id: entry.id,
-          groupKey: `thinking-${entry.id}`,
-        };
-      }
-      continue;
-    }
-
-    flushGroups();
-    result.push(entry);
   }
 
-  flushGroups();
+  flushAll();
 
   return result.map((item) => {
     if (
@@ -254,7 +264,9 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
   });
 }
 
-function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
+export { aggregateEntries };
+
+function entryShallowEqual(a: SessionDisplayEntry, b: SessionDisplayEntry): boolean {
   return (
     a.id === b.id &&
     a.eventSeq === b.eventSeq &&
@@ -263,7 +275,7 @@ function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
   );
 }
 
-function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
+function isAggregatedGroupEqual(a: SessionDisplayItem, b: SessionDisplayItem): boolean {
   if (a === b) return true;
 
   const aIsGroup = isAggregatedGroupItem(a);
@@ -283,7 +295,6 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
     const gb = b as AggregatedEntryGroup;
     if (ga.groupKey !== gb.groupKey) return false;
     if (ga.aggregationType !== gb.aggregationType) return false;
-    if (ga.filePath !== gb.filePath) return false;
     if (ga.entries.length !== gb.entries.length) return false;
     for (let i = 0; i < ga.entries.length; i += 1) {
       if (!entryShallowEqual(ga.entries[i]!, gb.entries[i]!)) return false;
@@ -313,7 +324,7 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
     return true;
   }
 
-  return entryShallowEqual(a as AcpDisplayEntry, b as AcpDisplayEntry);
+  return entryShallowEqual(a as SessionDisplayEntry, b as SessionDisplayEntry);
 }
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
@@ -336,18 +347,18 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     enabled,
   });
 
-  const prevDisplayItemsRef = useRef<AcpDisplayItem[]>([]);
+  const prevDisplayItemsRef = useRef<SessionDisplayItem[]>([]);
 
   /* eslint-disable react-hooks/refs */
   const displayItems = useMemo(() => {
-    const next: AcpDisplayItem[] = enableAggregation
+    const next: SessionDisplayItem[] = enableAggregation
       ? aggregateEntries(entries)
-      : (entries as AcpDisplayItem[]);
+      : (entries as SessionDisplayItem[]);
 
     const prev = prevDisplayItemsRef.current;
     if (prev.length === next.length) {
       let allEqual = true;
-      const stabilized: AcpDisplayItem[] = new Array(next.length);
+      const stabilized: SessionDisplayItem[] = new Array(next.length);
       for (let i = 0; i < next.length; i += 1) {
         const a = prev[i]!;
         const b = next[i]!;

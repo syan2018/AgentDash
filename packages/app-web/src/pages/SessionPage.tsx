@@ -5,22 +5,21 @@ import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
-import { WorkspacePanel, type WorkspacePanelHandle } from "../features/workspace-panel";
-import { fetchSessionBindings, fetchSessionContext, fetchSessionHookRuntime, fetchSessionMeta } from "../services/session";
+import {
+  WorkspacePanel,
+  type WorkspacePanelHandle,
+  type WorkspaceRuntimeData,
+} from "../features/workspace-panel";
+import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
+import { fetchSessionBindings, fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { useWorkflowStore } from "../stores/workflowStore";
 import { useWorkspaceStore } from "../stores/workspaceStore";
 import type {
-  AgentBinding,
-  ExecutionVfs,
-  HookSessionRuntimeInfo,
   ProjectSessionAgentContext,
-  ResolvedVfsSurface,
-  SessionBaselineCapabilities,
   SessionBindingOwner,
-  SessionContextSnapshot,
   SessionNavigationState,
   Story,
   StoryNavigationState,
@@ -51,17 +50,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
-  const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
-  const [loadedSessionContext, setLoadedSessionContext] = useState<{
-    session_id: string;
-    source_key: string;
-    workspace_id: string | null;
-    task_agent_binding: AgentBinding | null;
-    vfs: ExecutionVfs | null;
-    runtime_surface: ResolvedVfsSurface | null;
-    context_snapshot: SessionContextSnapshot | null;
-    session_capabilities: SessionBaselineCapabilities | null;
-  } | null>(null);
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
     story: Story | null;
@@ -97,31 +85,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
   const returnTarget = routeState?.return_to ?? null;
   const currentSessionId = propSessionId ?? null;
-
-  const refreshHookRuntime = useCallback(async (sessionId: string) => {
-    try {
-      const runtime = await fetchSessionHookRuntime(sessionId);
-      setLoadedHookRuntime(runtime);
-    } catch {
-      setLoadedHookRuntime(null);
-    }
-  }, []);
-
-  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
-    if (!currentSessionId) return;
-    if (hookRuntimeRefreshTimerRef.current) {
-      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-      hookRuntimeRefreshTimerRef.current = null;
-    }
-    if (immediate) {
-      void refreshHookRuntime(currentSessionId);
-      return;
-    }
-    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
-      hookRuntimeRefreshTimerRef.current = null;
-      void refreshHookRuntime(currentSessionId);
-    }, 180);
-  }, [currentSessionId, refreshHookRuntime]);
 
   // ─── session ID 同步 ──────────────────────────────────
 
@@ -184,30 +147,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     };
   }, []);
 
-  useEffect(() => {
-    if (!currentSessionId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const runtime = await fetchSessionHookRuntime(currentSessionId);
-        if (!cancelled) setLoadedHookRuntime(runtime);
-      } catch {
-        if (!cancelled) setLoadedHookRuntime(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      if (hookRuntimeRefreshTimerRef.current) {
-        window.clearTimeout(hookRuntimeRefreshTimerRef.current);
-        hookRuntimeRefreshTimerRef.current = null;
-      }
-    };
-  }, [currentSessionId]);
-
   const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
-  const activeHookRuntime = loadedHookRuntime?.session_id === currentSessionId
-    ? loadedHookRuntime
-    : null;
 
   const sessionOwnerBinding = useMemo(() => {
     if (sessionBindings.length === 0) return null;
@@ -242,60 +182,39 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     return null;
   }, [sessionOwnerBinding]);
 
-  const refreshSessionContext = useCallback(async () => {
-    if (!sessionOwnerBinding || !sessionContextSourceKey || !currentSessionId) return;
-    try {
-      const ctx = await fetchSessionContext(currentSessionId);
-      setLoadedSessionContext({
-        session_id: currentSessionId,
-        source_key: sessionContextSourceKey,
-        workspace_id: ctx?.workspace_id ?? null,
-        task_agent_binding: ctx?.agent_binding ?? null,
-        vfs: ctx?.vfs ?? null,
-        runtime_surface: ctx?.runtime_surface ?? null,
-        context_snapshot: ctx?.context_snapshot ?? null,
-        session_capabilities: ctx?.session_capabilities ?? null,
-      });
-    } catch {
-      setLoadedSessionContext(null);
-    }
-  }, [currentSessionId, sessionContextSourceKey, sessionOwnerBinding]);
+  const {
+    state: sessionRuntimeState,
+    refreshContext: refreshSessionRuntimeContext,
+    refreshHookRuntime: refreshSessionRuntimeHook,
+  } = useSessionRuntimeState({
+    sessionId: currentSessionId,
+    sourceKey: sessionContextSourceKey,
+  });
 
-  useEffect(() => {
-    if (!sessionOwnerBinding || !sessionContextSourceKey || !currentSessionId) {
+  const scheduleHookRuntimeRefresh = useCallback((_reason: string, immediate = false) => {
+    if (!currentSessionId) return;
+    if (hookRuntimeRefreshTimerRef.current) {
+      window.clearTimeout(hookRuntimeRefreshTimerRef.current);
+      hookRuntimeRefreshTimerRef.current = null;
+    }
+    if (immediate) {
+      void refreshSessionRuntimeHook();
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      const ctx = await fetchSessionContext(currentSessionId);
-      if (cancelled) return;
-      setLoadedSessionContext({
-        session_id: currentSessionId,
-        source_key: sessionContextSourceKey,
-        workspace_id: ctx?.workspace_id ?? null,
-        task_agent_binding: ctx?.agent_binding ?? null,
-        vfs: ctx?.vfs ?? null,
-        runtime_surface: ctx?.runtime_surface ?? null,
-        context_snapshot: ctx?.context_snapshot ?? null,
-        session_capabilities: ctx?.session_capabilities ?? null,
-      });
-    })().catch(() => {
-      if (!cancelled) setLoadedSessionContext(null);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionOwnerBinding, sessionContextSourceKey, currentSessionId]);
+    hookRuntimeRefreshTimerRef.current = window.setTimeout(() => {
+      hookRuntimeRefreshTimerRef.current = null;
+      void refreshSessionRuntimeHook();
+    }, 180);
+  }, [currentSessionId, refreshSessionRuntimeHook]);
 
-  const activeSessionContext = loadedSessionContext?.session_id === currentSessionId
-    && loadedSessionContext.source_key === sessionContextSourceKey
-    ? loadedSessionContext
+  const activeSessionContext = sessionRuntimeState.context;
+  const activeHookRuntime = sessionRuntimeState.hook_runtime?.session_id === currentSessionId
+    ? sessionRuntimeState.hook_runtime
     : null;
   const taskAgentBinding = taskContextFromRoute?.agent_binding
-    ?? activeSessionContext?.task_agent_binding
+    ?? activeSessionContext?.agent_binding
     ?? null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
-  const sessionVfs = activeSessionContext?.vfs ?? null;
   const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
   const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
@@ -400,6 +319,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       case "companion_result_returned":
         scheduleHookRuntimeRefresh(eventType);
         break;
+      case "capability_state_changed":
+        void refreshSessionRuntimeContext();
+        scheduleHookRuntimeRefresh(eventType);
+        break;
       case "session_meta_updated": {
         const data = extractPlatformEventData(_event);
         const newTitle = typeof data?.title === "string" ? (data.title as string).trim() : "";
@@ -421,7 +344,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);
-          void refreshSessionContext();
+          void refreshSessionRuntimeContext();
           expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
         }
         break;
@@ -429,7 +352,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, refreshSessionContext, expandWorkspacePanel]);
+  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, refreshSessionRuntimeContext, expandWorkspacePanel]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);
@@ -482,6 +405,33 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     () => (currentSessionId ? runsBySessionId[currentSessionId] ?? [] : []),
     [currentSessionId, runsBySessionId],
   );
+  const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
+    sessionId: currentSessionId,
+    runtimeStatus: sessionRuntimeState.status,
+    runtimeError: sessionRuntimeState.error,
+    contextSnapshot: sessionContextSnapshot,
+    ownerStory,
+    ownerProjectName,
+    executorSummary: taskExecutorSummary,
+    runtimeSurface: sessionRuntimeSurface,
+    hookRuntime: activeHookRuntime,
+    sessionCapabilities,
+    workflowRuns: lifecycleRuns,
+    activeCanvasId,
+  }), [
+    currentSessionId,
+    sessionRuntimeState.status,
+    sessionRuntimeState.error,
+    sessionContextSnapshot,
+    ownerStory,
+    ownerProjectName,
+    taskExecutorSummary,
+    sessionRuntimeSurface,
+    activeHookRuntime,
+    sessionCapabilities,
+    lifecycleRuns,
+    activeCanvasId,
+  ]);
   const hasLifecycleGraph = useMemo(
     () =>
       lifecycleRuns.some((run) =>
@@ -672,17 +622,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         >
           <WorkspacePanel
             ref={workspacePanelRef}
-            sessionId={currentSessionId}
-            contextSnapshot={sessionContextSnapshot}
-            ownerStory={ownerStory}
-            ownerProjectName={ownerProjectName}
-            executorSummary={taskExecutorSummary}
-            runtimeSurface={sessionRuntimeSurface}
-            vfs={sessionVfs}
-            hookRuntime={activeHookRuntime}
-            sessionCapabilities={sessionCapabilities}
-            workflowRuns={lifecycleRuns}
-            activeCanvasId={activeCanvasId}
+            runtimeData={workspaceRuntimeData}
           />
         </Panel>
       </Group>

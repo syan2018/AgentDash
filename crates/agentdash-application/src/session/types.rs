@@ -1,11 +1,15 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use agentdash_agent_protocol::ContentBlock;
+use agentdash_domain::workflow::MountDirective;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
 use agentdash_spi::PromptPayload;
+use agentdash_spi::context::capability::CompanionAgentEntry;
+use agentdash_spi::{SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs};
 use uuid::Uuid;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -21,10 +25,10 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。
+/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的意图。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把最后一个 state
-/// 作为本轮生效状态，并将 command 标记为 applied。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把 transition
+/// effects replay 到 construction base projection 上，再由 capability projection normalizer 补齐派生维度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCapabilityStateTransition {
@@ -33,10 +37,172 @@ pub struct PendingCapabilityStateTransition {
     pub lifecycle_key: String,
     pub phase_node: String,
     pub capability_keys: BTreeSet<String>,
-    pub state: CapabilityState,
+    pub transition: RuntimeCapabilityTransition,
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_turn_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CapabilityDimensionKey(pub String);
+
+impl CapabilityDimensionKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityArtifactSource {
+    pub kind: String,
+}
+
+impl CapabilityArtifactSource {
+    pub fn workflow() -> Self {
+        Self {
+            kind: "workflow".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityDeclarationRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub declaration_type: String,
+    pub source: CapabilityArtifactSource,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityContributionRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub contribution_type: String,
+    pub source: CapabilityArtifactSource,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCapabilityEffectRecord {
+    pub dimension: CapabilityDimensionKey,
+    pub effect_type: String,
+    pub payload: Value,
+}
+
+/// Runtime command store 持久化的能力上下文变更。
+///
+/// 主干只保存 declaration/effect records。各维度的 payload 在 built-in dimension
+/// module 边界反序列化为强类型结构，Skill baseline、runtime surface 等派生投影在
+/// replay 后由 projection pipeline 生成。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeCapabilityTransition {
+    #[serde(default)]
+    pub declarations: Vec<CapabilityDeclarationRecord>,
+    #[serde(default)]
+    pub effects: Vec<RuntimeCapabilityEffectRecord>,
+}
+
+pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
+pub const CAPABILITY_DIMENSION_MCP: &str = "mcp";
+pub const CAPABILITY_DIMENSION_COMPANION: &str = "companion";
+pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
+
+pub const DECLARATION_TYPE_CAPABILITY_DIRECTIVE: &str = "capability_directive";
+pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";
+
+pub const EFFECT_TYPE_SET_TOOL_ACCESS: &str = "set_tool_access";
+pub const EFFECT_TYPE_SET_MCP_SERVER_SET: &str = "set_server_set";
+pub const EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER: &str = "set_agent_roster";
+pub const EFFECT_TYPE_APPLY_VFS_OVERLAY: &str = "apply_vfs_overlay";
+pub const EFFECT_TYPE_APPLY_MOUNT_OPERATIONS: &str = "apply_mount_operations";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetToolAccessEffect {
+    pub capabilities: BTreeSet<ToolCapability>,
+    pub enabled_clusters: BTreeSet<ToolCluster>,
+    pub tool_policy: BTreeMap<String, ToolCapabilityFilter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetMcpServerSetEffect {
+    pub servers: Vec<SessionMcpServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetCompanionAgentRosterEffect {
+    pub agents: Vec<CompanionAgentEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyVfsOverlayEffect {
+    pub overlay: Vfs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyMountOperationsEffect {
+    pub operations: Vec<MountDirective>,
+}
+
+impl RuntimeCapabilityTransition {
+    pub fn from_records(
+        declarations: Vec<CapabilityDeclarationRecord>,
+        effects: Vec<RuntimeCapabilityEffectRecord>,
+    ) -> Self {
+        Self {
+            declarations,
+            effects,
+        }
+    }
+}
+
+impl CapabilityDeclarationRecord {
+    pub fn typed(
+        dimension: &str,
+        declaration_type: &str,
+        source: CapabilityArtifactSource,
+        payload: &impl Serialize,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            dimension: CapabilityDimensionKey::new(dimension),
+            declaration_type: declaration_type.to_string(),
+            source,
+            payload: serde_json::to_value(payload).map_err(|error| {
+                format!(
+                    "{dimension}.{declaration_type} declaration payload serialize failed: {error}"
+                )
+            })?,
+        })
+    }
+}
+
+impl RuntimeCapabilityEffectRecord {
+    pub fn typed(
+        dimension: &str,
+        effect_type: &str,
+        payload: &impl Serialize,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            dimension: CapabilityDimensionKey::new(dimension),
+            effect_type: effect_type.to_string(),
+            payload: serde_json::to_value(payload).map_err(|error| {
+                format!("{dimension}.{effect_type} payload serialize failed: {error}")
+            })?,
+        })
+    }
 }
 
 /// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。

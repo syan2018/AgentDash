@@ -9,10 +9,10 @@ import { useSessionFeed } from "../model";
 import type { UseSessionFeedOptions } from "../model";
 import { SessionEntry } from "./SessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { AcpDisplayItem } from "../model/types";
+import type { SessionDisplayItem } from "../model/types";
 
 export interface SessionListProps extends UseSessionFeedOptions {
-  renderItem?: (item: AcpDisplayItem, index: number) => React.ReactNode;
+  renderItem?: (item: SessionDisplayItem, index: number) => React.ReactNode;
   itemClassName?: string;
   className?: string;
   autoScroll?: boolean;
@@ -143,7 +143,7 @@ export function SessionList(props: SessionListProps) {
   );
 }
 
-function getItemKey(item: AcpDisplayItem): string {
+function getItemKey(item: SessionDisplayItem): string {
   if (isAggregatedGroup(item)) {
     return item.groupKey;
   }

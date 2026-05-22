@@ -2,7 +2,7 @@
  * Task Agent 执行面板
  *
  * 设计理念：
- * - 流区域顶部注入 Task 上下文卡片（与流式输出中的 AcpTaskContextCard 视觉统一）
+ * - 流区域顶部注入 Task 上下文卡片（与流式输出中的 SessionTaskContextCard 视觉统一）
  * - 输入框预填充任务默认 prompt（仅首次），发送按钮显示"执行"
  * - 首次发送调用 startTaskExecution，后续直接 promptSession
  * - 状态/执行器信息由左侧 Task 详情面板承载，聊天区不重复
@@ -259,7 +259,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
     </div>
   ) : null;
 
-  // ─── streamPrefixContent：与 AcpTaskContextCard 视觉统一的注入卡片 ──
+  // ─── streamPrefixContent：与 SessionTaskContextCard 视觉统一的注入卡片 ──
 
   const contextSources = task.agent_binding?.context_sources ?? [];
 

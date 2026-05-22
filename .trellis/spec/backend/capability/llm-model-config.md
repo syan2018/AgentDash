@@ -110,6 +110,25 @@ agent.pi.system_prompt       # PiAgent 系统提示词
   → AgentLoop → LLM API
 ```
 
+## PiAgent Live Runtime 模型切换
+
+PiAgent 的 `LlmBridge` 在 `Agent::new(bridge, config)` 时绑定具体 provider/model。
+同一个 `session_id` 的 live runtime 会跨 turn 复用 Agent 以保留会话历史、工具状态和
+identity prompt，因此后续 prompt 的 `executor_config.provider_id/model_id` 变化必须在
+connector 边界显式投影到 Agent bridge。
+
+### 契约
+
+- 每次 `PiAgentConnector::prompt` 从 `ExecutionContext.session.executor_config` 读取当前
+  `provider_id` 与 `model_id`，空白值按 `None` 处理。
+- live runtime 记录上一次已绑定 bridge 的模型选择。
+- 如果当前模型选择与 live runtime 记录不同，connector 必须用新 bridge 重建 Agent，并把
+  旧 Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
+- `thinking_level` 不要求重建 Agent；每轮 prompt 前调用 `agent.set_thinking_level(...)`
+  即可生效。
+- `SessionMeta.executor_config` 只记录会话生效配置；真正发往 LLM 的模型由 connector
+  runtime bridge 决定，测试需要覆盖 connector bridge 选择而不只检查 meta。
+
 ---
 
 ## 禁止模式

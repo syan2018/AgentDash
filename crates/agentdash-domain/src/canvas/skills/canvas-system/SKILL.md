@@ -50,11 +50,11 @@ Adjust the relative path from the importing source file.
 
 Use `window.agentdash.assets.url(uri)` when a Canvas needs to render image files from visible VFS mounts. This is the standard route. The `uri` must be a mount URI such as `main://docs/diagram.png`, `skill-assets://skills/demo/assets/logo.png`, or a provider-specific mount exposed in the current session.
 
-For KM image assets embedded in documents, use the image URI produced by the KM document content, for example `ld-km://assets/<doc_id>/<asset_file>`.
+For image assets embedded in external documents, use the image URI produced by the document provider, for example `docs-media://assets/<doc_id>/<asset_file>`.
 
 ```tsx
 const src = await window.agentdash.assets.url("main://docs/diagram.png");
-const kmSrc = await window.agentdash.assets.url("ld-km://assets/doc-1/source-123.png");
+const documentSrc = await window.agentdash.assets.url("docs-media://assets/doc-1/source-123.png");
 ```
 
 For a gallery, resolve the known image URIs before rendering:

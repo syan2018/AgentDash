@@ -20,7 +20,8 @@ use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
-    RuntimeContextTransition, compute_capability_state_delta,
+    RuntimeCapabilityTransition, RuntimeContextTransition, apply_runtime_capability_transition,
+    compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,7 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub lifecycle_key: String,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
+    pub transition: RuntimeCapabilityTransition,
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
@@ -187,6 +189,7 @@ impl SessionRuntimeInner {
         };
         let Some(pending_transition) = transition.to_pending_capability_state_transition(
             input.transition_id,
+            input.transition,
             input.source_turn_id,
             input.created_at,
         ) else {
@@ -227,6 +230,7 @@ impl SessionRuntimeInner {
         _turn_id: &str,
         hook_session: Option<&SharedHookSessionRuntime>,
         before_state: CapabilityState,
+        final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
         tools: &[DynAgentTool],
     ) -> PendingRuntimeContextApplication {
@@ -242,14 +246,32 @@ impl SessionRuntimeInner {
         }
 
         let mut pending_event_before_state = before_state;
-        for pending in transitions {
+        for (index, pending) in transitions.iter().enumerate() {
+            let pending_after_state = if index + 1 == transitions.len() {
+                final_capability_state.clone()
+            } else {
+                match apply_runtime_capability_transition(
+                    &pending_event_before_state,
+                    &pending.transition,
+                ) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        tracing::warn!(
+                            session_id,
+                            transition_id = %pending.id,
+                            "pending runtime capability transition replay failed before event emission: {error}"
+                        );
+                        pending_event_before_state.clone()
+                    }
+                }
+            };
             let payload = RuntimeContextTransition {
                 phase_node: &pending.phase_node,
                 run_id: Some(pending.run_id),
                 lifecycle_key: Some(&pending.lifecycle_key),
                 apply_mode: "applied_on_next_turn",
                 before_state: Some(&pending_event_before_state),
-                after_state: &pending.state,
+                after_state: &pending_after_state,
                 capability_keys: &pending.capability_keys,
                 steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
                 state_changed_override: None,
@@ -263,7 +285,7 @@ impl SessionRuntimeInner {
             if let Some(_hook_session) = hook_session {
                 let state_delta = compute_capability_state_delta(
                     Some(&pending_event_before_state),
-                    &pending.state,
+                    &pending_after_state,
                     &pending.capability_keys,
                 );
                 let capability_delta = CapabilityDelta {
@@ -278,7 +300,7 @@ impl SessionRuntimeInner {
                     &pending.capability_keys,
                     Some(&state_delta),
                     tools,
-                    &pending.state.skill.skills,
+                    &pending_after_state.skill.skills,
                 );
                 application.context_frames.push(notice.clone());
 
@@ -291,7 +313,7 @@ impl SessionRuntimeInner {
                     application.context_frames.push(workflow_frame);
                 }
             }
-            pending_event_before_state = pending.state.clone();
+            pending_event_before_state = pending_after_state;
         }
         application
     }

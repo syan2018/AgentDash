@@ -1,0 +1,134 @@
+# Capability 维度管线
+
+Capability 维度管线把能力系统收束为稳定主干和可注册维度模块。主干负责 record envelope、ordering、dispatch 与 projection 汇聚；tool、MCP、companion、VFS/mount、Skill baseline、guidelines、runtime surface、extension runtime 等维度由各自模块表达业务语义。
+
+## 核心术语
+
+| 层级 | 标准名 | 含义 |
+| --- | --- | --- |
+| Declaration | `CapabilityDeclarationRecord` | 配置、workflow、extension asset 等来源声明的能力意图 |
+| Contribution | `CapabilityContributionRecord` | 带来源身份、授权语义、候选事实的归约输入 |
+| Effect | `RuntimeCapabilityEffectRecord` | runtime command 可持久化并 replay 的执行效果 |
+| Projection | dimension-specific projection | connector、UI、model context 消费的闭包后输出 |
+| Dimension module | `CapabilityDimensionModule` | 一个能力维度的 declaration/effect validation、typed decode、replay、projection normalize 单元 |
+
+主干 record envelope 使用：
+
+```text
+dimension
+declaration_type / effect_type
+source
+payload
+```
+
+`payload` 可以用 `serde_json::Value` 持久化，但 built-in module 必须在 replay 前 decode 到 module-owned typed payload，并在 module 边界完成 validation。业务 replay 内部消费强类型 payload。
+
+## Runtime Transition Contract
+
+runtime command payload 保存 `PendingCapabilityStateTransition`，其中能力变化字段为：
+
+```rust
+RuntimeCapabilityTransition {
+    declarations: Vec<CapabilityDeclarationRecord>,
+    effects: Vec<RuntimeCapabilityEffectRecord>,
+}
+```
+
+payload 不保存完整 `CapabilityState`、`ToolDimension`、`CompanionDimension`、runtime surface、Skill baseline 或 guidelines projection。Skill baseline、guidelines 与 runtime surface 从 replay 后的 effective VFS / MCP / capability facts 派生。
+
+多个 requested runtime command 按 store 返回顺序 fold replay 到 construction base projection。VFS/mount operation 是有序 effect；construction、context query、next-turn launch 与 pending apply event 共用同一个 transition fold replay 入口。
+
+## Scenario: Dimension Module Runtime Transition
+
+### 1. Scope / Trigger
+
+- Trigger: runtime command payload 是跨 construction、launch、context query 和 pending apply event 的共享契约；新增能力维度必须通过 module 注册进入全链路，而不是扩展中心 DTO 字段。
+
+### 2. Signatures
+
+- `CapabilityDimensionModule::validate_declaration(&CapabilityDeclarationRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::compile_declaration(&CapabilityDeclarationRecord) -> Result<Option<CapabilityContributionRecord>, String>`
+- `CapabilityDimensionModule::validate_effect(&RuntimeCapabilityEffectRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::replay_effect(&mut CapabilityState, &mut RuntimeCapabilityReplayContext, &RuntimeCapabilityEffectRecord) -> Result<(), String>`
+- `CapabilityDimensionModule::normalize_projection(&mut CapabilityState, &RuntimeCapabilityProjectionContext) -> Result<(), String>`
+- `CapabilityDimensionRegistry::register_module(module) -> Result<(), String>`
+- `CapabilityDimensionRegistry::validate_transition(&RuntimeCapabilityTransition) -> Result<(), String>`
+
+### 3. Contracts
+
+- `RuntimeCapabilityTransition` 只由 `declarations` 与 `effects` 两组 records 组成。
+- 生产代码通过 dimension module builder 产出 records；不使用聚合所有维度字段的 transition input struct。
+- Tool declaration 使用 `dimension=tool / declaration_type=capability_directive`。
+- VFS mount declaration 使用 `dimension=vfs / declaration_type=mount_operation`。
+- Tool / MCP / Companion / VFS effect payload 在对应 module 边界 decode 为强类型 payload。
+- registry 先 validate declarations/effects，再按注册顺序 replay effects。
+
+### 4. Validation & Error Matrix
+
+- declaration dimension 未注册 -> transition validation error。
+- effect dimension 未注册 -> transition validation error。
+- declaration type 不属于该 module -> module validation error。
+- effect type 不属于该 module -> module validation error。
+- payload 无法 decode 到 module-owned typed payload -> module validation error。
+- 重复注册同一个 dimension key -> registry registration error。
+
+### 5. Good / Base / Bad Cases
+
+- Good: workflow activation 生成 tool capability declarations、VFS mount declarations、tool/MCP/companion/VFS effects，registry validation 通过后写入 runtime command store。
+- Base: 没有 mount directives 时，transition 可只有 tool declarations 与 replacement-style effects。
+- Bad: 新能力在 `RuntimeCapabilityTransitionInput` 这类中心 struct 中增加字段；这会把维度知识重新扩散到 production builder、replay helper 和 tests。
+
+### 6. Tests Required
+
+- Unit: registry validation 接受 built-in module declarations/effects。
+- Unit: 非法 effect payload 在 module decode 边界失败。
+- Unit: mount directive 同时作为 VFS declaration 与 mount operation effect 出现在 transition。
+- Search gate: production code 不出现 `RuntimeCapabilityTransitionInput`、`from_runtime_effects`、`RuntimeContextPatch` 或 `Runtime*Intent` 生产路径。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+RuntimeCapabilityTransitionInput {
+    tool_directives,
+    mcp_servers,
+    mount_directives,
+    // 新维度继续加字段
+}
+```
+
+#### Correct
+
+```rust
+let declarations = ToolCapabilityDimensionModule::capability_directive_declarations(source, directives)?;
+let effect = VfsCapabilityDimensionModule::apply_mount_operations_effect(operations)?;
+let transition = RuntimeCapabilityTransition::from_records(declarations, vec![effect]);
+CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
+```
+
+## Built-in Dimension Matrix
+
+| 维度 | Declaration | Runtime Effect | Projection | 模块状态 |
+| --- | --- | --- | --- | --- |
+| Tool | `dimension=tool`, `declaration_type=capability_directive` | `set_tool_access` | `CapabilityState.tool.capabilities / enabled_clusters / tool_policy` | built-in module |
+| MCP | 当前可由 tool declaration 的 `mcp:<server>` 间接声明 | `set_server_set` | `CapabilityState.tool.mcp_servers` | built-in module |
+| Companion | 当前来自 companion contribution 候选 | `set_agent_roster` | `CapabilityState.companion.agents` | built-in module |
+| VFS/mount | `mount_operation` | `apply_vfs_overlay` / `apply_mount_operations` | final VFS / runtime surface | built-in module |
+| Skill baseline | VFS files / local skill dirs | none | `SessionBaselineCapabilities.skills` | projection-only module |
+| Guidelines | VFS/project facts | none | `DiscoveredGuideline[]` | projection-only module |
+| Extension runtime | installed extension assets | future extension effects | command / flag / renderer projection | projection-only module |
+
+## Registry Ordering
+
+`CapabilityDimensionRegistry` 集中维护内置 replay 顺序：
+
+```text
+vfs -> tool -> mcp -> companion -> projection-only
+```
+
+VFS 先 replay，使 Skill/guideline 等 projection-only 维度能从 final VFS 派生。Tool 与 MCP 都写入 `CapabilityState.tool`，但 MCP server set 独立为 MCP effect。Companion 与 tool/MCP 相对独立。
+
+## Extension / Plugin Boundary
+
+runtime extension asset 或 plugin 新能力接入时，产出 `CapabilityDeclarationRecord` / `RuntimeCapabilityEffectRecord`，或注册对应 dimension module。主干结构只维护 envelope、ordering、dispatch 与 projection 汇聚；新增维度的业务 payload、validation 和 replay 由 module 拥有。

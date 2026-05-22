@@ -91,5 +91,6 @@
 | 文档 | 说明 |
 |------|------|
 | [工具能力管线](./capability/tool-capability-pipeline.md) | ToolCapability 协议 |
+| [Capability 维度管线](./capability/capability-dimension-pipeline.md) | declaration/effect record 与 dimension module 边界 |
 | [Plugin API](./capability/plugin-api.md) | 插件架构 |
 | [LLM Model Config](./capability/llm-model-config.md) | Provider Registry |

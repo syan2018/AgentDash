@@ -32,10 +32,16 @@ use super::super::hub_support::{
 use super::super::local_workspace_vfs;
 use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
-    PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
+    SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
+};
+use crate::session::SetToolAccessEffect;
+use crate::session::capability_state::{
+    CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
@@ -53,6 +59,31 @@ fn test_hub(
         hook_provider,
         Arc::new(MemorySessionPersistence::default()),
     )
+}
+
+fn runtime_transition_from_state(
+    state: &CapabilityState,
+    vfs_overlay: Option<agentdash_spi::Vfs>,
+) -> RuntimeCapabilityTransition {
+    let mut effects = vec![
+        ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
+            capabilities: state.tool.capabilities.clone(),
+            enabled_clusters: state.tool.enabled_clusters.clone(),
+            tool_policy: state.tool.tool_policy.clone(),
+        })
+        .expect("tool effect builds"),
+        McpCapabilityDimensionModule::set_server_set_effect(state.tool.mcp_servers.clone())
+            .expect("mcp effect builds"),
+        CompanionCapabilityDimensionModule::set_agent_roster_effect(state.companion.agents.clone())
+            .expect("companion effect builds"),
+    ];
+    if let Some(overlay) = vfs_overlay {
+        effects.push(
+            VfsCapabilityDimensionModule::apply_vfs_overlay_effect(overlay)
+                .expect("vfs overlay effect builds"),
+        );
+    }
+    RuntimeCapabilityTransition::from_records(Vec::new(), effects)
 }
 
 fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
@@ -863,6 +894,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
     let mut after_state = before_state.clone();
     after_state.vfs.active = Some(canvas_skill_vfs());
+    let transition = runtime_transition_from_state(&after_state, after_state.vfs.active.clone());
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
@@ -874,6 +906,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
             lifecycle_key: "dev".to_string(),
             before_state: Some(before_state),
             after_state,
+            transition,
             capability_keys: std::collections::BTreeSet::new(),
             source_turn_id: None,
             created_at: 1,
@@ -890,9 +923,21 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         .iter()
         .find(|command| command.transition_id == "transition-skill-vfs")
         .expect("pending transition should exist");
+    let payload = serde_json::to_value(&command.transition).expect("transition serializes");
+    assert!(payload.get("state").is_none());
     assert_eq!(
-        command.transition.state.skill.skills,
-        vec![canvas_skill_entry()]
+        command
+            .transition
+            .transition
+            .effects
+            .iter()
+            .find(|effect| effect.effect_type == EFFECT_TYPE_APPLY_VFS_OVERLAY)
+            .and_then(|effect| {
+                serde_json::from_value::<agentdash_spi::Vfs>(effect.payload["overlay"].clone()).ok()
+            })
+            .and_then(|vfs| vfs.mounts.into_iter().next())
+            .map(|mount| mount.id),
+        Some("cvs-demo".to_string())
     );
 
     let events = hub
@@ -967,6 +1012,9 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         source_story_id: None,
         links: Vec::new(),
     };
+    target_flow.tool.mcp_servers = vec![target_mcp];
+    target_flow.vfs.active = Some(pending_vfs);
+
     hub.enqueue_pending_capability_state_transition(
         &session.id,
         PendingCapabilityStateTransition {
@@ -975,11 +1023,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
-            state: {
-                target_flow.tool.mcp_servers = vec![target_mcp];
-                target_flow.vfs.active = Some(pending_vfs);
-                target_flow
-            },
+            transition: runtime_transition_from_state(&target_flow, target_flow.vfs.active.clone()),
             created_at: 1,
             source_turn_id: None,
         },
@@ -2255,7 +2299,7 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            state: agentdash_spi::CapabilityState::default(),
+            transition: RuntimeCapabilityTransition::default(),
             created_at: 1,
             source_turn_id: None,
         },

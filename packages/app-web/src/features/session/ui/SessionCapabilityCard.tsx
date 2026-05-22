@@ -35,11 +35,11 @@ export function isSessionCapabilitiesBlock(block: ContentBlock): boolean {
   return block.resource?.uri?.startsWith(CAPABILITY_URI_PREFIX) ?? false;
 }
 
-export interface AcpSessionCapabilityCardProps {
+export interface SessionCapabilityCardProps {
   block: ContentBlock;
 }
 
-export function AcpSessionCapabilityCard({ block }: AcpSessionCapabilityCardProps) {
+export function SessionCapabilityCard({ block }: SessionCapabilityCardProps) {
   const caps = useMemo(() => parseCapabilitiesBlock(block), [block]);
   const [expanded, setExpanded] = useState(false);
 
@@ -139,4 +139,4 @@ function SkillRow({ skill }: { skill: SkillEntry }) {
   );
 }
 
-export default AcpSessionCapabilityCard;
+export default SessionCapabilityCard;

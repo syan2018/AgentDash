@@ -46,11 +46,11 @@ const PHASE_LABELS: Record<ParsedTaskContext["phase"], string> = {
   unknown:  "未知",
 };
 
-export interface AcpTaskContextCardProps {
+export interface SessionTaskContextCardProps {
   block: ContentBlock;
 }
 
-export function AcpTaskContextCard({ block }: AcpTaskContextCardProps) {
+export function SessionTaskContextCard({ block }: SessionTaskContextCardProps) {
   const parsed = useMemo(() => parseTaskContextBlock(block), [block]);
   if (!parsed) return null;
 
@@ -73,4 +73,4 @@ export function AcpTaskContextCard({ block }: AcpTaskContextCardProps) {
   );
 }
 
-export default AcpTaskContextCard;
+export default SessionTaskContextCard;

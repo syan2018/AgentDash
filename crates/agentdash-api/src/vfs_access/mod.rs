@@ -14,6 +14,7 @@ mod tests {
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
     use agentdash_relay::RelayMessage;
     use async_trait::async_trait;
+    use base64::Engine;
     use chrono::Utc;
     use tokio::sync::{Mutex, mpsc};
 
@@ -649,6 +650,85 @@ mod tests {
 
         let result = handle.await.expect("task").expect("read");
         assert_eq!(result.content, "fn main() {}");
+    }
+
+    #[tokio::test]
+    async fn read_binary_routes_via_tool_transport() {
+        let registry = crate::relay::registry::BackendRegistry::new();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        registry
+            .try_register(ConnectedBackend {
+                backend_id: "backend-a".to_string(),
+                name: "test".to_string(),
+                version: "0.1.0".to_string(),
+                capabilities: agentdash_relay::CapabilitiesPayload {
+                    executors: Vec::new(),
+                    supports_cancel: true,
+                    supports_discover_options: true,
+                    mcp_servers: Vec::new(),
+                },
+                accessible_roots: vec!["/workspace".to_string()],
+                sender,
+                connected_at: Utc::now(),
+            })
+            .await
+            .expect("backend should register");
+
+        let mut mount_registry = MountProviderRegistry::new();
+        mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
+            registry.clone(),
+        )));
+        let service = RelayVfsService::new(Arc::new(mount_registry));
+        let session = service
+            .session_for_workspace(&sample_workspace())
+            .expect("session");
+
+        let handle = tokio::spawn({
+            let service = service.clone();
+            let session = session.clone();
+            async move {
+                service
+                    .read_binary(
+                        &session,
+                        &ResourceRef {
+                            mount_id: "main".to_string(),
+                            path: "docs/assets/readme-runtime-map.svg".to_string(),
+                        },
+                        None,
+                        None,
+                    )
+                    .await
+            }
+        });
+
+        let message = receiver.recv().await.expect("command sent");
+        let id = message.id().to_string();
+        match message {
+            RelayMessage::CommandToolFileReadBinary { payload, .. } => {
+                assert_eq!(payload.mount_root_ref, "/workspace/repo");
+                assert_eq!(payload.path, "docs/assets/readme-runtime-map.svg");
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        let data = b"<svg></svg>".to_vec();
+        let resolved = registry
+            .resolve_response(&RelayMessage::ResponseToolFileReadBinary {
+                id,
+                payload: Some(agentdash_relay::ToolFileReadBinaryResponse {
+                    call_id: "call".to_string(),
+                    data_base64: base64::engine::general_purpose::STANDARD.encode(&data),
+                    mime_type: "image/svg+xml".to_string(),
+                    size: data.len() as u64,
+                }),
+                error: None,
+            })
+            .await;
+        assert!(resolved);
+
+        let result = handle.await.expect("task").expect("read binary");
+        assert_eq!(result.data, data);
+        assert_eq!(result.mime_type, "image/svg+xml");
     }
 
     #[test]

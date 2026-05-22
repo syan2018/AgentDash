@@ -684,3 +684,107 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 47: Session Capability Projection Pipeline 收束
+
+**Date**: 2026-05-22
+**Task**: Session Capability Projection Pipeline 收束
+**Branch**: `main`
+
+### Summary
+
+完成 Session VFS / Skill / runtime surface / capability state 的分阶段 projection pipeline 收束：建立 normalizer，迁移 runtime command patch intent，清理 construction fact source，并让前端只消费 final runtime_surface projection。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bf969a20` | (see git log) |
+| `2a48c118` | (see git log) |
+| `bf6f4604` | (see git log) |
+| `190ca01f` | (see git log) |
+| `751569f6` | (see git log) |
+| `9b065b31` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 48: Runtime Context Patch Typed Intent 标准化
+
+**Date**: 2026-05-22
+**Task**: Runtime Context Patch Typed Intent 标准化
+**Branch**: `main`
+
+### Summary
+
+完成 RuntimeContextPatch typed intent 标准化：pending payload 改为 tool/MCP/companion/VFS intent，construction/context/launch 统一 replay 后 finalize projection；Session 右侧栏收束到 current runtime state，避免 session/source 切换或 runtime event 后展示旧 projection；补齐 specs、任务文档与聚焦验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f2d8a37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 49: Capability维度管线标准化收口
+
+**Date**: 2026-05-22
+**Task**: Capability维度管线标准化收口
+**Branch**: `codex/capability-intent-pipeline-standardization`
+
+### Summary
+
+收口 capability dimension pipeline：扩展维度模块接口和 registry validation，移除中心化 RuntimeCapabilityTransitionInput，生产链路改为各 built-in module 生成 declaration/effect records，并补齐 VFS mount declaration provenance、规格和验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `31a1339f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

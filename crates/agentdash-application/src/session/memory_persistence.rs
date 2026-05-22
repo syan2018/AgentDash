@@ -539,7 +539,7 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 #[cfg(test)]
 mod tests {
     use super::super::TerminalEffectType;
-    use super::super::types::TitleSource;
+    use super::super::types::{RuntimeCapabilityTransition, TitleSource};
     use super::*;
     use agentdash_agent_protocol::{
         BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -745,7 +745,7 @@ mod tests {
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            state: super::super::CapabilityState::default(),
+            transition: RuntimeCapabilityTransition::default(),
             created_at: 1,
             source_turn_id: None,
         };
@@ -775,6 +775,10 @@ mod tests {
             failed[0].last_error.as_deref(),
             Some("superseded_by_new_requested_command")
         );
+        let payload = serde_json::to_value(&pending[0].transition)
+            .expect("runtime command transition should serialize");
+        assert!(payload.get("transition").is_some());
+        assert!(payload.get("state").is_none());
 
         persistence
             .mark_runtime_commands_applied(&[second.id])

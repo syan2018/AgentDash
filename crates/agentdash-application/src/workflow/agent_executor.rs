@@ -16,7 +16,12 @@ use super::scheduler::{
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
+use crate::session::capability_state::{
+    CapabilityDimensionRegistry, CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
+};
 use crate::session::hub::PendingRuntimeContextTransitionInput;
+use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::session::{
     LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
     SessionLaunchService, UserPromptInput,
@@ -307,6 +312,38 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 platform_config,
             );
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
+            let mut declarations =
+                ToolCapabilityDimensionModule::capability_directive_declarations(
+                    CapabilityArtifactSource::workflow(),
+                    activation.tool_directives.clone(),
+                )?;
+            declarations.extend(VfsCapabilityDimensionModule::mount_operation_declarations(
+                CapabilityArtifactSource::workflow(),
+                activation.mount_directives.clone(),
+            )?);
+            let mut effects = vec![
+                ToolCapabilityDimensionModule::set_tool_access_effect(SetToolAccessEffect {
+                    capabilities: activation.capability_state.tool.capabilities.clone(),
+                    enabled_clusters: activation.capability_state.tool.enabled_clusters.clone(),
+                    tool_policy: activation.capability_state.tool.tool_policy.clone(),
+                })?,
+                McpCapabilityDimensionModule::set_server_set_effect(
+                    activation.mcp_servers.clone(),
+                )?,
+                CompanionCapabilityDimensionModule::set_agent_roster_effect(
+                    activation.capability_state.companion.agents.clone(),
+                )?,
+                VfsCapabilityDimensionModule::apply_vfs_overlay_effect(
+                    activation.lifecycle_vfs.clone(),
+                )?,
+            ];
+            if !activation.mount_directives.is_empty() {
+                effects.push(VfsCapabilityDimensionModule::apply_mount_operations_effect(
+                    activation.mount_directives.clone(),
+                )?);
+            }
+            let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
+            CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     session_id: root_session_id.to_string(),
@@ -322,6 +359,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                     lifecycle_key: definition.key.clone(),
                     before_state: base_surface,
                     after_state: surface,
+                    transition,
                     capability_keys: activation.capability_keys,
                     source_turn_id: None,
                     created_at: chrono::Utc::now().timestamp_millis(),

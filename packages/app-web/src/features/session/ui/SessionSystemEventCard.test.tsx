@@ -2,10 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { AcpSystemEventCard } from "./SessionSystemEventCard";
+import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 
-describe("AcpSystemEventCard", () => {
+describe("SessionSystemEventCard", () => {
   it("放行并渲染 context_frame 事件", () => {
     const event: BackboneEvent = {
       type: "platform",
@@ -49,7 +49,7 @@ describe("AcpSystemEventCard", () => {
 
     expect(isRenderableSystemEventUpdate(event)).toBe(true);
 
-    const html = renderToStaticMarkup(<AcpSystemEventCard event={event} />);
+    const html = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
 
     expect(html).toContain("CTX");
     expect(html).toContain("CAPABILITY");
@@ -91,7 +91,7 @@ describe("AcpSystemEventCard", () => {
     };
 
     expect(isRenderableSystemEventUpdate(event)).toBe(true);
-    const markup = renderToStaticMarkup(<AcpSystemEventCard event={event} />);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
     expect(markup).toContain("1 项上下文注入");
     expect(markup).toContain("workflow");
   });
@@ -126,7 +126,7 @@ describe("AcpSystemEventCard", () => {
     };
 
     expect(isRenderableSystemEventUpdate(event)).toBe(false);
-    expect(renderToStaticMarkup(<AcpSystemEventCard event={event} />)).toBe("");
+    expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 
   it("session_start 的 context_injected 在 injections 为空时隐藏", () => {
@@ -159,6 +159,6 @@ describe("AcpSystemEventCard", () => {
     };
 
     expect(isRenderableSystemEventUpdate(event)).toBe(false);
-    expect(renderToStaticMarkup(<AcpSystemEventCard event={event} />)).toBe("");
+    expect(renderToStaticMarkup(<SessionSystemEventCard event={event} />)).toBe("");
   });
 });

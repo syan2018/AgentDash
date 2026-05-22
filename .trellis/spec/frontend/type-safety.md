@@ -39,6 +39,14 @@ mapper 不负责：
 
 `CapabilityDirective` 使用 qualified path 字符串（`{ add: string } | { remove: string }`），支持能力级、工具级、MCP 能力。`CapabilityKey` 仅用于前端内置能力选项的 UI 展示，不要用它收窄 API 配置中的 `capability_directives`。
 
+## Session Runtime Projection DTO
+
+Session workspace panel、context overview 与 VFS tab 以 `runtime_surface: ResolvedVfsSurface` 作为运行时 mount 展示、默认 mount、可浏览性与编辑能力的唯一 UI 输入。`ExecutionVfs` 保留为 session context DTO 中的 runtime 诊断信息；界面读取 final projection DTO，可以保证 pending runtime patch、VFS overlay 与后端 capability projection 完成后，前端展示的是最终生效的地址空间。
+
+Project / Story / Task / Agent knowledge 等预览入口使用 `ResolvedVfsSurfaceSource` 解析 preview surface；Session 入口直接消费 `session_runtime` 的 `runtime_surface`。两类入口共享 VFS browser 组件，但各自的 surface 来源显式表达，方便在跨层测试里验证 preview 与 runtime 语义。
+
+Session 右侧 WorkspacePanel 消费 current runtime projection state。该 state 以 `session_id + owner/source key` 为边界，携带 loading / ready / refreshing / error 状态；key 不匹配时不暴露上一份 runtime surface、capabilities 或 context snapshot。`canvas_presented`、`capability_state_changed` 等事件只触发当前 state 的 invalidate/refetch，界面不创建新的长期快照事实源。
+
 ---
 
 ## 禁止模式

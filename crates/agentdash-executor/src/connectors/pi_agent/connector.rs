@@ -48,6 +48,23 @@ struct PiAgentSessionRuntime {
     tools: Vec<DynAgentTool>,
     /// 上一次应用到 agent 的 identity prompt（用于跨 turn 判断是否需要热更新）。
     last_identity_prompt: Option<String>,
+    /// 当前 Agent 内部 bridge 对应的模型选择。
+    model_selection: PiAgentModelSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PiAgentModelSelection {
+    provider_id: Option<String>,
+    model_id: Option<String>,
+}
+
+impl PiAgentModelSelection {
+    fn from_config(config: &agentdash_spi::AgentConfig) -> Self {
+        Self {
+            provider_id: normalize_model_selector_value(config.provider_id.as_deref()),
+            model_id: normalize_model_selector_value(config.model_id.as_deref()),
+        }
+    }
 }
 
 struct ProviderRuntimeState {
@@ -198,6 +215,13 @@ impl PiAgentConnector {
     }
 }
 
+fn normalize_model_selector_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+}
+
 use super::slash_commands::discover_skill_slash_commands;
 
 #[async_trait::async_trait]
@@ -331,6 +355,11 @@ impl AgentConnector for PiAgentConnector {
             agents.remove(session_id)
         };
 
+        let requested_model_selection =
+            PiAgentModelSelection::from_config(&context.session.executor_config);
+        let should_recreate_agent = existing_runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.model_selection != requested_model_selection);
         let is_new_agent = existing_runtime.is_none();
         let incoming_identity_prompt = extract_identity_prompt(&context.turn.context_frames);
         let mut cached_identity_prompt = existing_runtime
@@ -338,8 +367,36 @@ impl AgentConnector for PiAgentConnector {
             .and_then(|runtime| runtime.last_identity_prompt.clone());
         let mut current_tools: Vec<DynAgentTool> = Vec::new();
         let mut agent = if let Some(runtime) = existing_runtime {
-            current_tools = runtime.tools;
-            runtime.agent
+            if should_recreate_agent {
+                let preserved_messages = runtime.agent.messages().await;
+                let provider_state = self.load_provider_runtime_state().await;
+                if !provider_state.is_configured() {
+                    return Err(ConnectorError::InvalidConfig(
+                        "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
+                            .to_string(),
+                    ));
+                }
+                let bridge = self
+                    .resolve_bridge_for_execution(
+                        &provider_state,
+                        context.session.executor_config.provider_id.as_deref(),
+                        context.session.executor_config.model_id.as_deref(),
+                    )
+                    .await?;
+                let agent = self.create_agent_with_bridge(bridge);
+                agent.replace_messages(preserved_messages).await;
+                current_tools = context.turn.assembled_tools.clone();
+                tracing::info!(
+                    session_id = %session_id,
+                    provider_id = ?requested_model_selection.provider_id,
+                    model_id = ?requested_model_selection.model_id,
+                    "Pi Agent 模型选择变化，已重建 session agent bridge"
+                );
+                agent
+            } else {
+                current_tools = runtime.tools;
+                runtime.agent
+            }
         } else {
             let provider_state = self.load_provider_runtime_state().await;
             if !provider_state.is_configured() {
@@ -358,10 +415,15 @@ impl AgentConnector for PiAgentConnector {
             self.create_agent_with_bridge(bridge)
         };
 
-        if is_new_agent {
-            current_tools = context.turn.assembled_tools.clone();
+        if is_new_agent || should_recreate_agent {
+            if is_new_agent {
+                current_tools = context.turn.assembled_tools.clone();
+            }
 
-            if let Some(system_prompt) = incoming_identity_prompt.as_ref() {
+            if let Some(system_prompt) = incoming_identity_prompt
+                .as_ref()
+                .or(cached_identity_prompt.as_ref())
+            {
                 agent.set_system_prompt(system_prompt.clone());
                 cached_identity_prompt = Some(system_prompt.clone());
             }
@@ -398,6 +460,7 @@ impl AgentConnector for PiAgentConnector {
                 agent,
                 tools: current_tools,
                 last_identity_prompt: cached_identity_prompt,
+                model_selection: requested_model_selection,
             },
         );
 

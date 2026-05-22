@@ -13,7 +13,6 @@ function ContextTabContent() {
       ownerProjectName={data.ownerProjectName}
       executorSummary={data.executorSummary}
       runtimeSurface={data.runtimeSurface}
-      vfs={data.vfs}
       hookRuntime={data.hookRuntime}
       sessionCapabilities={data.sessionCapabilities}
       workflowRuns={data.workflowRuns}

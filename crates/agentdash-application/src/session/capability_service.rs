@@ -1,4 +1,6 @@
-use agentdash_spi::SessionMcpServer;
+use agentdash_spi::context::capability::SkillEntry;
+use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
+use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
 
@@ -75,6 +77,38 @@ impl SessionCapabilityService {
             .await
     }
 
+    pub(crate) async fn apply_live_vfs_capability_state(
+        &self,
+        hook_session: &SharedHookSessionRuntime,
+        session_id: &str,
+        before_state: CapabilityState,
+        active_vfs: Vfs,
+        skills: Vec<SkillEntry>,
+        phase_node: &str,
+        apply_mode: &'static str,
+    ) -> Result<RuntimeContextTransitionOutcome, String> {
+        let mut after_state = before_state.clone();
+        after_state.vfs.active = Some(active_vfs);
+        after_state.skill.skills = merge_live_vfs_skill_entries(&before_state.skill.skills, skills);
+        let capability_keys = after_state.capability_keys();
+        self.apply_live_runtime_context_transition(
+            hook_session,
+            LiveRuntimeContextTransitionInput {
+                session_id: session_id.to_string(),
+                turn_id: None,
+                phase_node: phase_node.to_string(),
+                run_id: None,
+                lifecycle_key: None,
+                before_state: Some(before_state),
+                after_state,
+                capability_keys,
+                key_delta: CapabilityDelta::default(),
+                apply_mode,
+            },
+        )
+        .await
+    }
+
     pub(crate) async fn apply_pending_runtime_context_transitions_on_turn(
         &self,
         session_id: &str,
@@ -95,6 +129,22 @@ impl SessionCapabilityService {
             )
             .await
     }
+}
+
+fn merge_live_vfs_skill_entries(
+    existing: &[SkillEntry],
+    refreshed_vfs_skills: Vec<SkillEntry>,
+) -> Vec<SkillEntry> {
+    let mut merged = refreshed_vfs_skills;
+    for skill in existing {
+        if skill.file_path.contains("://") {
+            continue;
+        }
+        if !merged.iter().any(|item| item.name == skill.name) {
+            merged.push(skill.clone());
+        }
+    }
+    merged
 }
 
 #[async_trait]

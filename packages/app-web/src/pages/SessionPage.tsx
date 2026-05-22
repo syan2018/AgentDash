@@ -53,6 +53,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
   const [loadedHookRuntime, setLoadedHookRuntime] = useState<HookSessionRuntimeInfo | null>(null);
   const [loadedSessionContext, setLoadedSessionContext] = useState<{
+    session_id: string;
     source_key: string;
     workspace_id: string | null;
     task_agent_binding: AgentBinding | null;
@@ -241,13 +242,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     return null;
   }, [sessionOwnerBinding]);
 
-  useEffect(() => {
+  const refreshSessionContext = useCallback(async () => {
     if (!sessionOwnerBinding || !sessionContextSourceKey || !currentSessionId) return;
-    let cancelled = false;
-    void (async () => {
+    try {
       const ctx = await fetchSessionContext(currentSessionId);
-      if (cancelled) return;
       setLoadedSessionContext({
+        session_id: currentSessionId,
         source_key: sessionContextSourceKey,
         workspace_id: ctx?.workspace_id ?? null,
         task_agent_binding: ctx?.agent_binding ?? null,
@@ -256,13 +256,39 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
         context_snapshot: ctx?.context_snapshot ?? null,
         session_capabilities: ctx?.session_capabilities ?? null,
       });
-    })();
+    } catch {
+      setLoadedSessionContext(null);
+    }
+  }, [currentSessionId, sessionContextSourceKey, sessionOwnerBinding]);
+
+  useEffect(() => {
+    if (!sessionOwnerBinding || !sessionContextSourceKey || !currentSessionId) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ctx = await fetchSessionContext(currentSessionId);
+      if (cancelled) return;
+      setLoadedSessionContext({
+        session_id: currentSessionId,
+        source_key: sessionContextSourceKey,
+        workspace_id: ctx?.workspace_id ?? null,
+        task_agent_binding: ctx?.agent_binding ?? null,
+        vfs: ctx?.vfs ?? null,
+        runtime_surface: ctx?.runtime_surface ?? null,
+        context_snapshot: ctx?.context_snapshot ?? null,
+        session_capabilities: ctx?.session_capabilities ?? null,
+      });
+    })().catch(() => {
+      if (!cancelled) setLoadedSessionContext(null);
+    });
     return () => {
       cancelled = true;
     };
   }, [sessionOwnerBinding, sessionContextSourceKey, currentSessionId]);
 
-  const activeSessionContext = loadedSessionContext?.source_key === sessionContextSourceKey
+  const activeSessionContext = loadedSessionContext?.session_id === currentSessionId
+    && loadedSessionContext.source_key === sessionContextSourceKey
     ? loadedSessionContext
     : null;
   const taskAgentBinding = taskContextFromRoute?.agent_binding
@@ -395,6 +421,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           : "";
         if (nextCanvasId) {
           setActiveCanvasId(nextCanvasId);
+          void refreshSessionContext();
           expandWorkspacePanel("canvas", `canvas://${nextCanvasId}`);
         }
         break;
@@ -402,7 +429,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
       default:
         break;
     }
-  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, expandWorkspacePanel]);
+  }, [scheduleHookRuntimeRefresh, currentSessionId, patchSessionLocally, refreshSessionContext, expandWorkspacePanel]);
 
   const handleNewSession = useCallback(() => {
     setActiveSessionId(null);

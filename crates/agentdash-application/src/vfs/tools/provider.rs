@@ -279,6 +279,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 ) {
                     tools.push(Arc::new(StartCanvasTool::new(
                         self.repos.canvas_repo.clone(),
+                        self.service.clone(),
                         project_id,
                         shared_vfs.clone(),
                         self.session_services_handle.clone(),
@@ -313,6 +314,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                     ) {
                         tools.push(Arc::new(PresentCanvasTool::new(
                             self.repos.canvas_repo.clone(),
+                            self.service.clone(),
+                            shared_vfs.clone(),
                             self.session_services_handle.clone(),
                             session_id,
                             context.session.turn_id.clone(),

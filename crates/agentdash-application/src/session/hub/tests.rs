@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -567,6 +567,179 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
     assert_eq!(turn.session_frame.vfs, Some(target_vfs));
     assert_eq!(profile.capability_state, turn.capability_state);
+}
+
+#[tokio::test]
+async fn live_vfs_capability_state_update_refreshes_skill_dimension() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let queries = Arc::new(TokioMutex::new(Vec::new()));
+    let hook_provider = Arc::new(StaticResolutionHookProvider {
+        queries,
+        resolution: HookResolution::default(),
+    });
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(PendingConnector),
+        Some(hook_provider),
+    );
+    let session = hub
+        .create_session("canvas-skill-capability")
+        .await
+        .expect("create");
+    let _rx = hub.ensure_session(&session.id).await;
+    hub.reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+        .await
+        .expect("hook runtime should load");
+
+    let mut before_state = CapabilityState::default();
+    before_state.vfs.active = Some(agentdash_spi::Vfs::default());
+    let local_skill = agentdash_spi::context::capability::SkillEntry {
+        name: "local-review".to_string(),
+        description: "Local review skill".to_string(),
+        file_path: base
+            .path()
+            .join("skills/local-review/SKILL.md")
+            .to_string_lossy()
+            .to_string(),
+        disable_model_invocation: false,
+    };
+    before_state.skill.skills = vec![local_skill.clone()];
+    let bundle_session_uuid = uuid::Uuid::new_v4();
+    hub.runtime_registry
+        .with_runtime_mut(&session.id, |runtime| {
+            let runtime = runtime.expect("session runtime should exist");
+            runtime.turn_state = TurnState::Active(Box::new(TurnExecution::new(
+                "turn-canvas".to_string(),
+                ExecutionSessionFrame {
+                    turn_id: "turn-canvas".to_string(),
+                    working_directory: base.path().to_path_buf(),
+                    environment_variables: HashMap::new(),
+                    executor_config: AgentConfig::new("PI_AGENT"),
+                    mcp_servers: vec![],
+                    vfs: before_state.vfs.active.clone(),
+                    identity: None,
+                },
+                before_state.clone(),
+                uuid::Uuid::new_v4(),
+                bundle_session_uuid,
+            )));
+        })
+        .await;
+
+    let active_vfs = agentdash_spi::Vfs {
+        mounts: vec![agentdash_domain::common::Mount {
+            id: "cvs-demo".to_string(),
+            provider: "canvas_fs".to_string(),
+            backend_id: "demo".to_string(),
+            root_ref: "canvas:demo".to_string(),
+            capabilities: vec![agentdash_domain::common::MountCapability::Read],
+            default_write: true,
+            display_name: "Demo Canvas".to_string(),
+            metadata: serde_json::json!({ "canvas_id": "demo" }),
+        }],
+        default_mount_id: Some("cvs-demo".to_string()),
+        source_project_id: None,
+        source_story_id: None,
+        links: Vec::new(),
+    };
+    let skills = vec![agentdash_spi::context::capability::SkillEntry {
+        name: "canvas-system".to_string(),
+        description: "Canvas authoring skill".to_string(),
+        file_path: "cvs-demo://skills/canvas-system/SKILL.md".to_string(),
+        disable_model_invocation: false,
+    }];
+    let hook_session = hub
+        .get_hook_session_runtime(&session.id)
+        .await
+        .expect("hook runtime should exist");
+
+    let outcome = hub
+        .capability_service()
+        .apply_live_vfs_capability_state(
+            &hook_session,
+            &session.id,
+            before_state,
+            active_vfs.clone(),
+            skills.clone(),
+            "canvas",
+            "canvas_visible",
+        )
+        .await
+        .expect("live vfs capability update should apply");
+
+    assert!(outcome.emitted_capability_change);
+    let (turn, profile) = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            let runtime = runtime?;
+            Some((
+                runtime.turn_state.active_turn().cloned()?,
+                runtime.session_profile.clone()?,
+            ))
+        })
+        .await
+        .expect("current turn execution state");
+    assert_eq!(turn.capability_state.vfs.active, Some(active_vfs));
+    let expected_skills = vec![skills[0].clone(), local_skill];
+    assert_eq!(turn.capability_state.skill.skills, expected_skills);
+    assert_eq!(profile.capability_state, turn.capability_state);
+
+    let events = hub
+        .persistence
+        .list_all_events(&session.id)
+        .await
+        .expect("events should load");
+    let state_event = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && event
+                    .notification
+                    .event
+                    .as_ref()
+                    .is_platform_session_meta_update("capability_state_changed")
+        })
+        .expect("capability state event should exist");
+    match &state_event.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            assert_eq!(value["apply_mode"], "canvas_visible");
+            assert_eq!(
+                value["delta"]["vfs"]["mounts"]["added"],
+                json!(["cvs-demo"])
+            );
+            assert_eq!(value["delta"]["skills"]["added"], json!(["canvas-system"]));
+            assert_eq!(
+                value["skills"]["items"],
+                json!(["canvas-system", "local-review"])
+            );
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    let context_frame = events
+        .iter()
+        .find(|event| {
+            event.session_update_type == "platform_event"
+                && matches!(
+                    &event.notification.event,
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                        if key == "context_frame"
+                            && value.get("kind").and_then(serde_json::Value::as_str)
+                                == Some("capability_state_update")
+                )
+        })
+        .expect("capability state update frame should exist");
+    match &context_frame.notification.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
+            let rendered = value
+                .get("rendered_text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            assert!(rendered.contains("Skill Delta"));
+            assert!(rendered.contains("canvas-system"));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 }
 
 #[tokio::test]

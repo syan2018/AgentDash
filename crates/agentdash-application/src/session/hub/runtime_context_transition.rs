@@ -19,7 +19,7 @@ use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::{
-    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
+    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition, RuntimeContextPatch,
     RuntimeContextTransition, apply_runtime_context_patch, compute_capability_state_delta,
 };
 
@@ -53,6 +53,7 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
     pub lifecycle_key: String,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
+    pub patch: RuntimeContextPatch,
     pub capability_keys: BTreeSet<String>,
     pub source_turn_id: Option<String>,
     pub created_at: i64,
@@ -187,6 +188,7 @@ impl SessionRuntimeInner {
         };
         let Some(pending_transition) = transition.to_pending_capability_state_transition(
             input.transition_id,
+            input.patch,
             input.source_turn_id,
             input.created_at,
         ) else {

@@ -29,7 +29,9 @@ use agentdash_application::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
 };
-use agentdash_application::session::{apply_runtime_context_patch, merge_vfs_overlay};
+use agentdash_application::session::{
+    apply_runtime_context_patch, apply_runtime_mcp_intent, apply_runtime_vfs_intent,
+};
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
@@ -243,13 +245,10 @@ pub(crate) async fn finalize_session_construction_projection(
 
     let mut effective_vfs = base_vfs.clone();
     let mut pending_overlay_applied = false;
-    if let Some(pending_vfs) = facts
-        .requested_runtime_commands
-        .last()
-        .and_then(|command| command.transition.patch.vfs_overlay.as_ref())
-    {
-        effective_vfs = merge_vfs_overlay(effective_vfs, pending_vfs);
-        pending_overlay_applied = true;
+    if let Some(command) = facts.requested_runtime_commands.last() {
+        effective_vfs =
+            apply_runtime_vfs_intent(effective_vfs, &command.transition.patch.vfs_intent);
+        pending_overlay_applied = !command.transition.patch.vfs_intent.is_empty();
     }
     let working_directory = effective_vfs
         .default_mount()
@@ -272,21 +271,17 @@ pub(crate) async fn finalize_session_construction_projection(
     } else {
         (Vec::new(), "empty".to_string())
     };
-    let (mcp_servers, mcp_source) =
-        if let Some(pending_state) = facts.requested_runtime_commands.last() {
-            (
-                pending_state
-                    .transition
-                    .patch
-                    .tool
-                    .as_ref()
-                    .map(|tool| tool.mcp_servers.clone())
-                    .unwrap_or_else(|| base_mcp_servers.clone()),
-                "runtime_command.pending_transition".to_string(),
-            )
-        } else {
-            (base_mcp_servers.clone(), base_mcp_source)
-        };
+    let (mcp_servers, mcp_source) = if let Some(command) = facts.requested_runtime_commands.last() {
+        (
+            apply_runtime_mcp_intent(
+                base_mcp_servers.clone(),
+                &command.transition.patch.mcp_intent,
+            ),
+            "runtime_command.pending_transition".to_string(),
+        )
+    } else {
+        (base_mcp_servers.clone(), base_mcp_source)
+    };
 
     let projection = derive_session_capability_projection(SessionCapabilityProjectionInput {
         vfs_service: Some(&state.services.vfs_service),

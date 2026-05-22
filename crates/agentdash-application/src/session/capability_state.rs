@@ -2,12 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::MountDirective;
+use agentdash_spi::SessionMcpServer;
 use agentdash_spi::hooks::CapabilityDelta;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::types::{CapabilityState, PendingCapabilityStateTransition, RuntimeContextPatch};
+use super::types::{
+    CapabilityState, PendingCapabilityStateTransition, RuntimeCompanionIntent, RuntimeContextPatch,
+    RuntimeMcpIntent, RuntimeToolIntent, RuntimeVfsIntent,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -192,6 +196,7 @@ impl<'a> RuntimeContextTransition<'a> {
     pub fn to_pending_capability_state_transition(
         &self,
         id: String,
+        patch: RuntimeContextPatch,
         source_turn_id: Option<String>,
         created_at: i64,
     ) -> Option<PendingCapabilityStateTransition> {
@@ -201,7 +206,7 @@ impl<'a> RuntimeContextTransition<'a> {
             lifecycle_key: self.lifecycle_key?.to_string(),
             phase_node: self.phase_node.to_string(),
             capability_keys: self.capability_keys.clone(),
-            patch: RuntimeContextPatch::from_target_state(self.after_state),
+            patch,
             created_at,
             source_turn_id,
         })
@@ -212,25 +217,77 @@ pub fn apply_runtime_context_patch(
     base_state: &CapabilityState,
     patch: &RuntimeContextPatch,
 ) -> CapabilityState {
+    replay_runtime_context_patch(base_state, patch).capability_state
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeContextReplay {
+    pub capability_state: CapabilityState,
+    pub effective_vfs: Option<Vfs>,
+    pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
+}
+
+pub fn replay_runtime_context_patch(
+    base_state: &CapabilityState,
+    patch: &RuntimeContextPatch,
+) -> RuntimeContextReplay {
     let mut state = base_state.clone();
-    if let Some(tool) = patch.tool.as_ref() {
-        state.tool = tool.clone();
+    if let RuntimeToolIntent::SetEffectiveTool {
+        capabilities,
+        enabled_clusters,
+        tool_policy,
+    } = &patch.tool_intent
+    {
+        state.tool.capabilities = capabilities.clone();
+        state.tool.enabled_clusters = enabled_clusters.clone();
+        state.tool.tool_policy = tool_policy.clone();
     }
-    if let Some(companion) = patch.companion.as_ref() {
-        state.companion = companion.clone();
+    let effective_mcp_servers = match &patch.mcp_intent {
+        RuntimeMcpIntent::NoChange => None,
+        RuntimeMcpIntent::SetEffectiveServers { servers } => {
+            state.tool.mcp_servers = servers.clone();
+            Some(servers.clone())
+        }
+    };
+    if let RuntimeCompanionIntent::SetAgents { agents } = &patch.companion_intent {
+        state.companion.agents = agents.clone();
     }
-    if let Some(overlay) = patch.vfs_overlay.as_ref() {
+    if let Some(overlay) = patch.vfs_intent.overlay.as_ref() {
         state.vfs.active = Some(match state.vfs.active.take() {
             Some(base_vfs) => merge_vfs_overlay(base_vfs, overlay),
             None => overlay.clone(),
         });
     }
-    if !patch.mount_directives.is_empty() {
+    if !patch.vfs_intent.mount_directives.is_empty() {
         let mut vfs = state.vfs.active.take().unwrap_or_default();
-        apply_mount_directives(&mut vfs, &patch.mount_directives);
+        apply_mount_directives(&mut vfs, &patch.vfs_intent.mount_directives);
         state.vfs.active = Some(vfs);
     }
-    state
+    let effective_vfs = state.vfs.active.clone();
+    RuntimeContextReplay {
+        capability_state: state,
+        effective_vfs,
+        effective_mcp_servers,
+    }
+}
+
+pub fn apply_runtime_vfs_intent(base_vfs: Vfs, intent: &RuntimeVfsIntent) -> Vfs {
+    let mut vfs = base_vfs;
+    if let Some(overlay) = intent.overlay.as_ref() {
+        merge_vfs_overlay_into(&mut vfs, overlay);
+    }
+    apply_mount_directives(&mut vfs, &intent.mount_directives);
+    vfs
+}
+
+pub fn apply_runtime_mcp_intent(
+    base_mcp_servers: Vec<SessionMcpServer>,
+    intent: &RuntimeMcpIntent,
+) -> Vec<SessionMcpServer> {
+    match intent {
+        RuntimeMcpIntent::NoChange => base_mcp_servers,
+        RuntimeMcpIntent::SetEffectiveServers { servers } => servers.clone(),
+    }
 }
 
 pub fn compose_vfs_with_overlay_and_directives(
@@ -565,12 +622,14 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         });
-        let mut patch = RuntimeContextPatch::from_target_state(&target);
-        patch
-            .mount_directives
-            .push(MountDirective::SetDefaultMount {
+        let patch = RuntimeContextPatch::from_effective_runtime_projection(
+            &target,
+            target.vfs.active.clone(),
+            vec![MountDirective::SetDefaultMount {
                 mount_id: Some("review".to_string()),
-            });
+            }],
+            Vec::new(),
+        );
 
         let replayed = apply_runtime_context_patch(&base, &patch);
         let replayed_vfs = replayed.vfs.active.as_ref().expect("active vfs");
@@ -612,5 +671,9 @@ mod tests {
         .expect("transition serializes");
         assert!(serialized.get("patch").is_some());
         assert!(serialized.get("state").is_none());
+        assert!(serialized["patch"].get("tool").is_none());
+        assert!(serialized["patch"].get("companion").is_none());
+        assert!(serialized["patch"].get("toolIntent").is_some());
+        assert!(serialized["patch"].get("companionIntent").is_some());
     }
 }

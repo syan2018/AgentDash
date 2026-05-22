@@ -2183,6 +2183,7 @@ mod tests {
         crate::workflow::StepActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
+            tool_directives: Vec::new(),
             capability_keys: BTreeSet::new(),
             kickoff_prompt: crate::workflow::KickoffPromptFragment {
                 title_line: String::new(),
@@ -2315,6 +2316,7 @@ mod tests {
         let activation = crate::workflow::StepActivation {
             capability_state: Default::default(),
             mcp_servers: vec![],
+            tool_directives: Vec::new(),
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
             kickoff_prompt: crate::workflow::KickoffPromptFragment {
                 title_line: "你正在执行 lifecycle `dev` 的 node `implement`。".to_string(),

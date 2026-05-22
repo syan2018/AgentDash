@@ -125,3 +125,8 @@ applied。若 applied 状态提交失败，必须立刻尝试把同一批 comman
 清理 turn，并让本次 launch 返回错误；不能继续启动 processor，也不能保留 `requested`
 等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
 数据库迁移会把既有 runtime command 行更新为 `requested`。
+
+runtime command payload 保存 typed intent。`RuntimeContextPatch` 不保存完整
+`CapabilityState`，也不保存 `ToolDimension` / `CompanionDimension` replacement；
+tool、MCP、companion、VFS 与 mount directive 分别作为 intent 字段 replay 到
+construction base projection，再由 capability projection normalizer 生成闭包状态。

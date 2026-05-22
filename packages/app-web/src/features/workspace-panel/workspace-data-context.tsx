@@ -8,28 +8,9 @@
 
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
-import type {
-  HookSessionRuntimeInfo,
-  ResolvedVfsSurface,
-  SessionBaselineCapabilities,
-  SessionContextSnapshot,
-  Story,
-  TaskSessionExecutorSummary,
-  WorkflowRun,
-} from "../../types";
+import type { WorkspaceRuntimeData } from "./workspace-panel-types";
 
-export interface WorkspaceData {
-  sessionId: string | null;
-  contextSnapshot: SessionContextSnapshot | null;
-  ownerStory: Story | null;
-  ownerProjectName: string;
-  executorSummary: TaskSessionExecutorSummary | null;
-  runtimeSurface: ResolvedVfsSurface | null;
-  hookRuntime: HookSessionRuntimeInfo | null;
-  sessionCapabilities: SessionBaselineCapabilities | null;
-  workflowRuns: WorkflowRun[];
-  activeCanvasId: string | null;
-}
+export type WorkspaceData = WorkspaceRuntimeData;
 
 const WorkspaceDataContext = createContext<WorkspaceData | null>(null);
 

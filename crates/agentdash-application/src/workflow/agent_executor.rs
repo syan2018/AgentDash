@@ -16,6 +16,7 @@ use super::scheduler::{
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
+use crate::session::RuntimeContextPatch;
 use crate::session::hub::PendingRuntimeContextTransitionInput;
 use crate::session::{
     LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
@@ -307,6 +308,12 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 platform_config,
             );
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
+            let patch = RuntimeContextPatch::from_effective_runtime_projection(
+                &surface,
+                Some(activation.lifecycle_vfs.clone()),
+                activation.mount_directives.clone(),
+                activation.tool_directives.clone(),
+            );
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     session_id: root_session_id.to_string(),
@@ -322,6 +329,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                     lifecycle_key: definition.key.clone(),
                     before_state: base_surface,
                     after_state: surface,
+                    patch,
                     capability_keys: activation.capability_keys,
                     source_turn_id: None,
                     created_at: chrono::Utc::now().timestamp_millis(),

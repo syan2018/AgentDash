@@ -745,7 +745,7 @@ mod tests {
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            patch: RuntimeContextPatch::from_target_state(&super::super::CapabilityState::default()),
+            patch: RuntimeContextPatch::default(),
             created_at: 1,
             source_turn_id: None,
         };

@@ -104,6 +104,8 @@ pub struct StepActivation {
     pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    /// workflow contract + step 级工具能力指令，作为 runtime command 的 source intent。
+    pub tool_directives: Vec<ToolCapabilityDirective>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
     /// kickoff prompt 结构化片段;若 step 没有 port/workflow,字段可能全为空。
@@ -144,7 +146,7 @@ pub fn activate_step_with_platform(
     contributions.push(ContextContributions {
         source: ContextContributionSource::Workflow,
         tool: Some(ToolContribution {
-            directives: combined_directives,
+            directives: combined_directives.clone(),
             has_active_workflow,
         }),
         companion: if !input.available_companions.is_empty() {
@@ -202,6 +204,7 @@ pub fn activate_step_with_platform(
     StepActivation {
         capability_state: cap_output,
         mcp_servers,
+        tool_directives: combined_directives,
         capability_keys,
         kickoff_prompt,
         lifecycle_mount,

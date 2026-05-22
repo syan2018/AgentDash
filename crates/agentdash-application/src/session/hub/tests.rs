@@ -864,6 +864,12 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     before_state.vfs.active = Some(agentdash_spi::Vfs::default());
     let mut after_state = before_state.clone();
     after_state.vfs.active = Some(canvas_skill_vfs());
+    let patch = RuntimeContextPatch::from_effective_runtime_projection(
+        &after_state,
+        after_state.vfs.active.clone(),
+        Vec::new(),
+        Vec::new(),
+    );
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
@@ -875,6 +881,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
             lifecycle_key: "dev".to_string(),
             before_state: Some(before_state),
             after_state,
+            patch,
             capability_keys: std::collections::BTreeSet::new(),
             source_turn_id: None,
             created_at: 1,
@@ -897,7 +904,8 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         command
             .transition
             .patch
-            .vfs_overlay
+            .vfs_intent
+            .overlay
             .as_ref()
             .and_then(|vfs| vfs.mounts.first())
             .map(|mount| mount.id.as_str()),
@@ -987,7 +995,12 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
-            patch: RuntimeContextPatch::from_target_state(&target_flow),
+            patch: RuntimeContextPatch::from_effective_runtime_projection(
+                &target_flow,
+                target_flow.vfs.active.clone(),
+                Vec::new(),
+                Vec::new(),
+            ),
             created_at: 1,
             source_turn_id: None,
         },
@@ -2263,9 +2276,7 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            patch: RuntimeContextPatch::from_target_state(
-                &agentdash_spi::CapabilityState::default(),
-            ),
+            patch: RuntimeContextPatch::default(),
             created_at: 1,
             source_turn_id: None,
         },

@@ -392,9 +392,11 @@ impl SessionLaunchExecutor {
         if let Some(base_vfs) = construction.surface.vfs.clone() {
             let effective_vfs = requested_runtime_commands
                 .last()
-                .and_then(|command| command.transition.patch.vfs_overlay.as_ref())
-                .map(|pending_vfs| {
-                    super::capability_state::merge_vfs_overlay(base_vfs.clone(), pending_vfs)
+                .map(|command| {
+                    super::capability_state::apply_runtime_vfs_intent(
+                        base_vfs.clone(),
+                        &command.transition.patch.vfs_intent,
+                    )
                 })
                 .unwrap_or(base_vfs);
             construction.workspace.working_directory = effective_vfs
@@ -405,16 +407,17 @@ impl SessionLaunchExecutor {
             construction.surface.vfs = Some(effective_vfs.clone());
             final_capability_state.vfs.active = Some(effective_vfs);
         }
-        if let Some(pending_mcp) = requested_runtime_commands
+        let effective_mcp_servers = requested_runtime_commands
             .last()
-            .and_then(|command| command.transition.patch.tool.as_ref())
-            .map(|tool| tool.mcp_servers.clone())
-        {
-            construction.projections.mcp_servers = pending_mcp.clone();
-            final_capability_state.tool.mcp_servers = pending_mcp;
-        } else {
-            final_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
-        }
+            .map(|command| {
+                super::capability_state::apply_runtime_mcp_intent(
+                    construction.projections.mcp_servers.clone(),
+                    &command.transition.patch.mcp_intent,
+                )
+            })
+            .unwrap_or_else(|| construction.projections.mcp_servers.clone());
+        construction.projections.mcp_servers = effective_mcp_servers.clone();
+        final_capability_state.tool.mcp_servers = effective_mcp_servers;
         construction.projections.capability_state = Some(final_capability_state);
         construction.resolution.runtime_base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {

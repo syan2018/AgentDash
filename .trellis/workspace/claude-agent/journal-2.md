@@ -722,3 +722,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 48: Runtime Context Patch Typed Intent 标准化
+
+**Date**: 2026-05-22
+**Task**: Runtime Context Patch Typed Intent 标准化
+**Branch**: `main`
+
+### Summary
+
+完成 RuntimeContextPatch typed intent 标准化：pending payload 改为 tool/MCP/companion/VFS intent，construction/context/launch 统一 replay 后 finalize projection；Session 右侧栏收束到 current runtime state，避免 session/source 切换或 runtime event 后展示旧 projection；补齐 specs、任务文档与聚焦验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f2d8a37` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

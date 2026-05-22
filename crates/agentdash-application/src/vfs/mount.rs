@@ -61,7 +61,7 @@ pub fn build_derived_vfs(
     story: Option<&Story>,
     workspace: Option<&Workspace>,
     _agent_type: Option<&str>,
-    _target: SessionMountTarget,
+    target: SessionMountTarget,
 ) -> Result<Vfs, String> {
     let mut mounts = Vec::new();
 
@@ -90,6 +90,10 @@ pub fn build_derived_vfs(
         for container in &story.context.context_containers {
             project_mounts.retain(|mount| mount.id.trim() != container.mount_id.trim());
         }
+    }
+
+    if matches!(target, SessionMountTarget::Story | SessionMountTarget::Task) {
+        project_mounts.retain(|mount| !is_external_project_vfs_mount(mount));
     }
 
     mounts.extend(project_mounts);
@@ -557,6 +561,10 @@ fn is_project_vfs_mount(mount: &Mount) -> bool {
         .unwrap_or(false)
 }
 
+fn is_external_project_vfs_mount(mount: &Mount) -> bool {
+    is_project_vfs_mount(mount) && mount.provider != PROVIDER_INLINE_FS
+}
+
 fn reset_default_mount(vfs: &mut Vfs) {
     if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
         && vfs.mounts.iter().any(|mount| mount.id == default_mount_id)
@@ -603,6 +611,16 @@ mod tests {
 
     fn inline_mount(project_id: Uuid, mount_id: &str) -> ProjectVfsMount {
         ProjectVfsMount::new_inline(project_id, mount_id.to_string(), mount_id.to_string())
+    }
+
+    fn external_mount(project_id: Uuid, mount_id: &str) -> ProjectVfsMount {
+        ProjectVfsMount::new_external_service(
+            project_id,
+            mount_id.to_string(),
+            mount_id.to_string(),
+            "external_docs".to_string(),
+            "knowledge".to_string(),
+        )
     }
 
     #[test]
@@ -674,6 +692,75 @@ mod tests {
             ))
         );
         assert_eq!(mount_owner_kind(mount), ResolvedMountOwnerKind::Project);
+    }
+
+    #[test]
+    fn story_target_excludes_external_project_vfs_mounts() {
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let mounts = vec![
+            inline_mount(project.id, "local"),
+            external_mount(project.id, "knowledge"),
+        ];
+        let story = Story::new(project.id, "story".to_string(), "desc".to_string());
+
+        let vfs = build_derived_vfs(
+            &project,
+            &mounts,
+            Some(&story),
+            None,
+            None,
+            SessionMountTarget::Story,
+        )
+        .expect("VFS should build");
+
+        assert!(vfs.mounts.iter().any(|mount| mount.id == "local"));
+        assert!(!vfs.mounts.iter().any(|mount| mount.id == "knowledge"));
+    }
+
+    #[test]
+    fn task_target_excludes_external_project_vfs_mounts() {
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let mounts = vec![
+            inline_mount(project.id, "local"),
+            external_mount(project.id, "knowledge"),
+        ];
+
+        let vfs = build_derived_vfs(
+            &project,
+            &mounts,
+            None,
+            None,
+            None,
+            SessionMountTarget::Task,
+        )
+        .expect("VFS should build");
+
+        assert!(vfs.mounts.iter().any(|mount| mount.id == "local"));
+        assert!(!vfs.mounts.iter().any(|mount| mount.id == "knowledge"));
+    }
+
+    #[test]
+    fn project_target_keeps_external_project_vfs_mounts_for_preview_and_grants() {
+        let project = Project::new("proj".to_string(), "desc".to_string());
+        let mounts = vec![external_mount(project.id, "knowledge")];
+
+        let vfs = build_derived_vfs(
+            &project,
+            &mounts,
+            None,
+            None,
+            None,
+            SessionMountTarget::Project,
+        )
+        .expect("VFS should build");
+
+        let mount = vfs
+            .mounts
+            .iter()
+            .find(|mount| mount.id == "knowledge")
+            .expect("project preview should keep external project VFS mount");
+        assert_eq!(mount.provider, "external_docs");
+        assert!(is_external_project_vfs_mount(mount));
     }
 }
 

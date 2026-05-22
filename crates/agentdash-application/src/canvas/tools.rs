@@ -97,6 +97,7 @@ pub struct BindCanvasDataParams {
 #[derive(Clone)]
 pub struct PresentCanvasTool {
     canvas_repo: Arc<dyn CanvasRepository>,
+    vfs: SharedRuntimeVfs,
     session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: String,
     current_turn_id: String,
@@ -106,6 +107,7 @@ pub struct PresentCanvasTool {
 impl PresentCanvasTool {
     pub fn new(
         canvas_repo: Arc<dyn CanvasRepository>,
+        vfs: SharedRuntimeVfs,
         session_services_handle: SharedSessionToolServicesHandle,
         current_session_id: String,
         current_turn_id: String,
@@ -113,6 +115,7 @@ impl PresentCanvasTool {
     ) -> Self {
         Self {
             canvas_repo,
+            vfs,
             session_services_handle,
             current_session_id,
             current_turn_id,
@@ -470,6 +473,14 @@ impl AgentTool for PresentCanvasTool {
         )
         .await?;
 
+        expose_canvas_to_session(
+            &self.vfs,
+            &self.session_services_handle,
+            Some(&self.current_session_id),
+            &canvas,
+        )
+        .await?;
+
         let notification = build_canvas_presented_notification(
             &self.current_session_id,
             &self.current_turn_id,
@@ -559,7 +570,56 @@ async fn expose_canvas_to_session(
             })
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        sync_canvas_mount_capability_state(vfs, &session_services, session_id, canvas).await?;
     }
+    Ok(())
+}
+
+async fn sync_canvas_mount_capability_state(
+    vfs: &SharedRuntimeVfs,
+    session_services: &crate::vfs::tools::provider::SessionToolServices,
+    session_id: &str,
+    canvas: &Canvas,
+) -> Result<(), AgentToolError> {
+    let Some(before_state) = session_services
+        .capability
+        .get_latest_capability_state(session_id)
+        .await
+    else {
+        tracing::debug!(
+            session_id = %session_id,
+            canvas_id = %canvas.mount_id,
+            "Canvas mount 已写入 VFS，但当前 session 尚无 CapabilityState 可同步"
+        );
+        return Ok(());
+    };
+
+    let Some(hook_session) = session_services
+        .hooks
+        .get_hook_session_runtime(session_id)
+        .await
+    else {
+        tracing::debug!(
+            session_id = %session_id,
+            canvas_id = %canvas.mount_id,
+            "Canvas mount 已写入 VFS，但当前 session 尚无 Hook runtime 可接收能力状态热更新"
+        );
+        return Ok(());
+    };
+
+    let active_vfs = vfs.snapshot().await;
+    session_services
+        .capability
+        .apply_live_vfs_capability_state(
+            &hook_session,
+            session_id,
+            before_state,
+            active_vfs,
+            "canvas",
+            "canvas_visible",
+        )
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
     Ok(())
 }
 
@@ -802,7 +862,7 @@ mod tests {
 
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
         let start_tool = StartCanvasTool::new(
-            canvas_repo,
+            canvas_repo.clone(),
             project_id,
             shared_vfs.clone(),
             SharedSessionToolServicesHandle::default(),

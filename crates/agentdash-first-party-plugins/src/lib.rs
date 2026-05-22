@@ -210,4 +210,26 @@ mod tests {
         assert_eq!(seeds[0].asset_type, LibraryAssetType::ExtensionTemplate);
         assert_eq!(seeds[0].key, "builtin-session-notes");
     }
+
+    #[test]
+    fn first_party_plugin_library_asset_seeds_are_versioned_and_valid() {
+        for plugin in builtin_plugins() {
+            for seed in plugin.library_asset_seeds() {
+                seed.validate().expect("first-party plugin seed validates");
+                assert!(
+                    is_semver_core(&seed.version),
+                    "first-party plugin asset `{}` version must be major.minor.patch",
+                    seed.key
+                );
+            }
+        }
+    }
+
+    fn is_semver_core(version: &str) -> bool {
+        let parts = version.split('.').collect::<Vec<_>>();
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    }
 }

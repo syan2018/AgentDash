@@ -1,0 +1,86 @@
+<svg width="1200" height="620" viewBox="0 0 1200 620" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">AgentDash 运行时控制平面</title>
+  <desc id="desc">AgentDash 运行空间示意图：Dashboard、云端 Agent Runtime、Agent Connector、Relay 信道、本机 Runtime、VFS 空间、Lifecycle 空间与 Backbone 事件流。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#101827"/>
+      <stop offset="0.55" stop-color="#152238"/>
+      <stop offset="1" stop-color="#10251f"/>
+    </linearGradient>
+    <linearGradient id="cloud" x1="330" y1="124" x2="870" y2="394" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2457E6"/>
+      <stop offset="1" stop-color="#20A67A"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-25%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.28"/>
+    </filter>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#7DB7FF"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0L10 5L0 10Z" fill="#6EE7B7"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="620" rx="28" fill="url(#bg)"/>
+  <circle cx="205" cy="110" r="135" fill="#2C6BFF" opacity="0.12"/>
+  <circle cx="1030" cy="525" r="155" fill="#21C087" opacity="0.1"/>
+
+  <text x="64" y="78" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="44" font-weight="750">AgentDash</text>
+  <text x="64" y="116" fill="#B9C6D6" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="18">面向 AI Agent 运行过程的空间化控制平面</text>
+
+  <g filter="url(#shadow)">
+    <rect x="60" y="178" width="240" height="138" rx="22" fill="#172033" stroke="#34445F"/>
+    <text x="88" y="222" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="23" font-weight="700">Dashboard</text>
+    <text x="88" y="254" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">观察 Session</text>
+    <text x="88" y="280" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">编辑 Lifecycle 图</text>
+    <text x="88" y="306" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">浏览 VFS 空间</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="360" y="140" width="480" height="220" rx="30" fill="url(#cloud)" opacity="0.96"/>
+    <text x="402" y="192" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="29" font-weight="760">云端 Agent Runtime</text>
+    <text x="402" y="230" fill="#DCEBFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">状态真相 · 推理循环 · Session 构建 · Lifecycle 引擎</text>
+    <rect x="402" y="263" width="174" height="54" rx="14" fill="#FFFFFF" opacity="0.15"/>
+    <text x="424" y="296" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="650">Agent Connector</text>
+    <rect x="592" y="263" width="196" height="54" rx="14" fill="#FFFFFF" opacity="0.15"/>
+    <text x="614" y="296" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" font-weight="650">Backbone 事件</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="910" y="178" width="230" height="138" rx="22" fill="#172033" stroke="#34445F"/>
+    <text x="938" y="222" fill="#F8FAFC" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="23" font-weight="700">本机 Runtime</text>
+    <text x="938" y="254" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">文件与 Shell</text>
+    <text x="938" y="280" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">MCP 与工具</text>
+    <text x="938" y="306" fill="#AEBBD0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">本机能力边界</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="126" y="425" width="286" height="106" rx="22" fill="#132B3F" stroke="#2D6C9C"/>
+    <text x="154" y="468" fill="#E6F4FF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">VFS 空间</text>
+    <text x="154" y="501" fill="#A9D8F8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">surface / mount / 相对路径</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="459" y="425" width="286" height="106" rx="22" fill="#17213E" stroke="#526FD4"/>
+    <text x="487" y="468" fill="#EEF2FF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">Lifecycle 空间</text>
+    <text x="487" y="501" fill="#C9D2FF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">Activity / 端口 / 产物</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="792" y="425" width="286" height="106" rx="22" fill="#123326" stroke="#2F946F"/>
+    <text x="820" y="468" fill="#ECFDF5" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">事件流</text>
+    <text x="820" y="501" fill="#B9F4D8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15">BackboneEnvelope 运行事实</text>
+  </g>
+
+  <path d="M300 247H346" stroke="#7DB7FF" stroke-width="3" marker-end="url(#arrow-blue)"/>
+  <path d="M840 247H900" stroke="#6EE7B7" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M910 268H854" stroke="#6EE7B7" stroke-width="3" marker-end="url(#arrow-green)" opacity="0.75"/>
+  <path d="M270 425C320 378 410 355 485 353" stroke="#7DB7FF" stroke-width="3" marker-end="url(#arrow-blue)" opacity="0.8"/>
+  <path d="M602 360V416" stroke="#B9C7FF" stroke-width="3" marker-end="url(#arrow-blue)" opacity="0.85"/>
+  <path d="M745 480H782" stroke="#6EE7B7" stroke-width="3" marker-end="url(#arrow-green)"/>
+  <path d="M930 425C862 378 790 355 704 352" stroke="#6EE7B7" stroke-width="3" marker-end="url(#arrow-green)" opacity="0.75"/>
+
+  <rect x="340" y="92" width="520" height="34" rx="17" fill="#FFFFFF" opacity="0.08"/>
+  <text x="600" y="114" fill="#D8E6F8" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="14" text-anchor="middle">云端 Agent Runtime + Connector + VFS + Lifecycle</text>
+</svg>

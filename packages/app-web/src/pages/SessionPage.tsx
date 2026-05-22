@@ -295,7 +295,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ?? activeSessionContext?.task_agent_binding
     ?? null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
-  const sessionVfs = activeSessionContext?.vfs ?? null;
   const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
   const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
   const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
@@ -678,7 +677,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
             ownerProjectName={ownerProjectName}
             executorSummary={taskExecutorSummary}
             runtimeSurface={sessionRuntimeSurface}
-            vfs={sessionVfs}
             hookRuntime={activeHookRuntime}
             sessionCapabilities={sessionCapabilities}
             workflowRuns={lifecycleRuns}

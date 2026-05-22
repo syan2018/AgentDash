@@ -1,5 +1,4 @@
 import type {
-  ExecutionVfs,
   HookSessionRuntimeInfo,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -24,7 +23,6 @@ export interface WorkspacePanelProps {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
-  vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: WorkflowRun[];

@@ -9,7 +9,6 @@
 import { createContext, useContext } from "react";
 import type { ReactNode } from "react";
 import type {
-  ExecutionVfs,
   HookSessionRuntimeInfo,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -26,7 +25,6 @@ export interface WorkspaceData {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
-  vfs: ExecutionVfs | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: WorkflowRun[];

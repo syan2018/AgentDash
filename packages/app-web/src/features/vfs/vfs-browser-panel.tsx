@@ -20,7 +20,7 @@ import {
   writeSurfaceFile,
 } from "../../services/vfs";
 import type { SurfaceMountEntry } from "../../services/vfs";
-import type { ExecutionVfs, ResolvedVfsSurface } from "../../types";
+import type { ResolvedVfsSurface } from "../../types";
 import { VfsFileTree } from "./vfs-file-tree";
 import { VfsCodeEditor } from "./vfs-code-editor";
 import { isVfsMountBrowsable, resolveDefaultMountId } from "./vfs-browser-panel-policy";
@@ -29,7 +29,6 @@ import { VfsImageFilePreview } from "./vfs-image-file-preview";
 
 export interface VfsBrowserPanelProps {
   surface?: ResolvedVfsSurface | null;
-  vfs?: ExecutionVfs | null;
   initialMountId?: string;
   initialFilePath?: string;
   /** 将浏览器裁切到 mount 内的某个子目录；文件操作仍使用完整 mount-relative path。 */
@@ -87,7 +86,6 @@ type FilePromptState =
 
 export function VfsBrowserPanel({
   surface,
-  vfs,
   initialMountId,
   initialFilePath,
   rootPath,
@@ -116,23 +114,16 @@ export function VfsBrowserPanel({
   const selectedFileProtected = selectedFilePath ? protectedPathSet.has(selectedFilePath) : false;
 
   const mounts = useMemo<VfsBrowserPanelMountOption[]>(() => {
-    const source = surface?.mounts ?? vfs?.mounts ?? [];
-    return source.map((m) => ({
+    return (surface?.mounts ?? []).map((m) => ({
       id: m.id,
       displayName: m.display_name || m.id,
       provider: m.provider,
       backendOnline: "backend_online" in m ? m.backend_online : null,
       browsable: isVfsMountBrowsable(m),
       canWrite: m.default_write || m.capabilities.includes("write"),
-      editCapabilities: "edit_capabilities" in m
-        ? m.edit_capabilities
-        : {
-            create: m.default_write || m.capabilities.includes("write"),
-            delete: false,
-            rename: false,
-          },
+      editCapabilities: m.edit_capabilities,
     }));
-  }, [surface, vfs]);
+  }, [surface]);
 
   const selectedMount = useMemo(
     () => mounts.find((m) => m.id === selectedMountId) ?? null,

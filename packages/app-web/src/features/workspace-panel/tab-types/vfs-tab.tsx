@@ -31,12 +31,10 @@ function buildMountUri(mountId: string, filePath?: string | null): string {
 }
 
 function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
-  const { vfs, runtimeSurface } = useWorkspaceData();
+  const { runtimeSurface } = useWorkspaceData();
   const parsed = parseMountUri(uri);
 
-  const hasMounts =
-    (vfs && vfs.mounts.length > 0) ||
-    (runtimeSurface && runtimeSurface.mounts.length > 0);
+  const hasMounts = Boolean(runtimeSurface?.mounts.length);
 
   const handleNavigate = useCallback(
     (mountId: string, filePath: string | null) => {
@@ -59,7 +57,6 @@ function VfsTabContent({ uri, tabId }: TabContentRenderProps) {
   return (
     <VfsBrowserPanel
       surface={runtimeSurface}
-      vfs={vfs}
       initialMountId={parsed?.mountId}
       initialFilePath={parsed?.path}
       onNavigate={handleNavigate}

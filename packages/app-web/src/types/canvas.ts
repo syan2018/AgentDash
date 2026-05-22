@@ -94,6 +94,7 @@ export interface CanvasRuntimeBridgeSnapshot {
 export interface CanvasRuntimeSnapshot {
   canvas_id: string;
   session_id?: string | null;
+  resource_surface_ref?: string | null;
   entry: string;
   files: CanvasRuntimeFile[];
   bindings: CanvasRuntimeBinding[];

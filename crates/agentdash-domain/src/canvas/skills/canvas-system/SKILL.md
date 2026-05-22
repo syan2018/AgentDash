@@ -37,6 +37,7 @@ Use this skill when working with AgentDashboard Canvas assets.
 - `alias` must be a plain name without `/` or `\`.
 - `content_type` defaults to `application/json`.
 - At preview time the runtime tries to read each `source_uri` from the session VFS. If it cannot resolve the source, the binding file remains `null`.
+- Data bindings are for text/JSON data. Do not use them to inline binary image bytes.
 - In canvas code, import bound data like:
 
 ```ts
@@ -44,6 +45,35 @@ import stats from "../bindings/stats.json";
 ```
 
 Adjust the relative path from the importing source file.
+
+## VFS Image Assets
+
+Use `window.agentdash.assets.url(uri)` when a Canvas needs to render image files from visible VFS mounts. This is the standard route. The `uri` must be a mount URI such as `main://docs/diagram.png`, `skill-assets://skills/demo/assets/logo.png`, or a provider-specific mount exposed in the current session.
+
+For image assets embedded in external documents, use the image URI produced by the document provider, for example `docs-media://assets/<doc_id>/<asset_file>`.
+
+```tsx
+const src = await window.agentdash.assets.url("main://docs/diagram.png");
+const documentSrc = await window.agentdash.assets.url("docs-media://assets/doc-1/source-123.png");
+```
+
+For a gallery, resolve the known image URIs before rendering:
+
+```tsx
+const images = await Promise.all(
+  records.map(async (record) => ({
+    ...record,
+    src: await window.agentdash.assets.url(record.uri),
+  })),
+);
+```
+
+- `assets.url(uri)` returns a browser URL that can be used in `<img src={src}>`.
+- `assets.url(uri)` only resolves images from mounts visible to the current session runtime surface.
+- `assets.url(uri)` rejects if the Canvas is not bound to a session, the mount/path is invalid, the mount is unavailable, or the resource is not `image/*`.
+- Call `window.agentdash.assets.revoke(src)` when you know an image URL is no longer needed; the preview runtime also cleans up URLs when the Canvas reloads.
+- Do not put VFS mount URIs directly into `<img src>`. Browsers do not know how to load `mount://...` addresses.
+- Do not fetch `/api/vfs-surfaces/*` directly from Canvas source.
 
 ## Runtime Bridge
 

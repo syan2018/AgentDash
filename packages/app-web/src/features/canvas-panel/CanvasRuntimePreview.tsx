@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import ts from "typescript";
 import { invokeCanvasRuntimeAction } from "../../services/canvas";
-import type { CanvasRuntimeFile, CanvasRuntimeSnapshot } from "../../types";
+import { readSurfaceFileBlob } from "../../services/vfs";
+import type { CanvasRuntimeSnapshot } from "../../types";
+import {
+  buildPreviewDocument,
+  createRuntimeAssetUrlCache,
+  resolveRuntimeAssetUrl,
+  revokeAllRuntimeAssetUrls as revokeAllRuntimeAssetUrlsInCache,
+  revokeRuntimeAssetUrl as revokeRuntimeAssetUrlInCache,
+  type BuiltPreviewDocument,
+} from "./CanvasRuntimePreview.runtime";
 
 export interface CanvasRuntimePreviewProps {
   snapshot: CanvasRuntimeSnapshot | null;
@@ -32,20 +40,27 @@ interface RuntimeResultEnvelope {
   error?: string;
 }
 
-interface BuiltPreviewDocument {
-  srcDoc: string;
-  dispose: () => void;
+interface AssetUrlRequestEnvelope {
+  kind: "canvas-asset-url-request";
+  frame_id: string;
+  request_id: string;
+  uri: string;
 }
 
-const DEFAULT_IMPORTS: Record<string, string> = {
-  react: "https://esm.sh/react@18?dev",
-  "react/jsx-runtime": "https://esm.sh/react@18/jsx-runtime?dev",
-  "react/jsx-dev-runtime": "https://esm.sh/react@18/jsx-dev-runtime?dev",
-  "react-dom": "https://esm.sh/react-dom@18?dev",
-  "react-dom/client": "https://esm.sh/react-dom@18/client?dev",
-};
+interface AssetUrlResultEnvelope {
+  kind: "canvas-asset-url-result";
+  frame_id: string;
+  request_id: string;
+  ok: boolean;
+  url?: string;
+  error?: string;
+}
 
-const MODULE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".json", ".css"];
+interface AssetRevokeEnvelope {
+  kind: "canvas-asset-revoke";
+  frame_id: string;
+  url: string;
+}
 
 /**
  * Blob URL revoke 的安全延迟（ms）。
@@ -60,9 +75,18 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   const frameId = `canvas-preview-${useId()}`;
   const [runtimeStatus, setRuntimeStatus] = useState<PreviewStatus>("idle");
   const [runtimeMessage, setRuntimeMessage] = useState<string | null>(null);
+  const runtimeAssetUrlCacheRef = useRef(createRuntimeAssetUrlCache());
 
   const [activeSrcDoc, setActiveSrcDoc] = useState<string | null>(null);
   const [buildError, setBuildError] = useState<string | null>(null);
+
+  const revokeRuntimeAssetUrl = useCallback((url: string) => {
+    revokeRuntimeAssetUrlInCache(runtimeAssetUrlCacheRef.current, url);
+  }, []);
+
+  const revokeAllRuntimeAssetUrls = useCallback(() => {
+    revokeAllRuntimeAssetUrlsInCache(runtimeAssetUrlCacheRef.current);
+  }, []);
 
   // snapshot 变化时重建预览文档。构建失败/成功都要把结果写回 UI 状态，属于合法的 derived state。
   useEffect(() => {
@@ -72,6 +96,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setBuildError(null);
       setRuntimeStatus("idle");
       setRuntimeMessage(null);
+      revokeAllRuntimeAssetUrls();
       return;
     }
 
@@ -101,10 +126,15 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       }
 
       setTimeout(() => capturedBuilt.dispose(), BLOB_REVOKE_DELAY_MS);
+      setTimeout(revokeAllRuntimeAssetUrls, BLOB_REVOKE_DELAY_MS);
     };
-  }, [snapshot, frameId]);
+  }, [snapshot, frameId, revokeAllRuntimeAssetUrls]);
 
   const sendRuntimeResult = useCallback((payload: RuntimeResultEnvelope) => {
+    iframeRef.current?.contentWindow?.postMessage(payload, "*");
+  }, []);
+
+  const sendAssetUrlResult = useCallback((payload: AssetUrlResultEnvelope) => {
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
 
@@ -157,6 +187,44 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     }
   }, [frameId, sendRuntimeResult, snapshot]);
 
+  const handleAssetUrlRequest = useCallback(async (payload: AssetUrlRequestEnvelope) => {
+    const surfaceRef = snapshot?.resource_surface_ref?.trim();
+    if (!snapshot?.session_id || !surfaceRef) {
+      sendAssetUrlResult({
+        kind: "canvas-asset-url-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: "Canvas 图片资源需要绑定 Session",
+      });
+      return;
+    }
+
+    try {
+      const url = await resolveRuntimeAssetUrl({
+        surfaceRef,
+        uri: payload.uri,
+        cache: runtimeAssetUrlCacheRef.current,
+        readBlob: readSurfaceFileBlob,
+      });
+      sendAssetUrlResult({
+        kind: "canvas-asset-url-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: true,
+        url,
+      });
+    } catch (error) {
+      sendAssetUrlResult({
+        kind: "canvas-asset-url-result",
+        frame_id: frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: error instanceof Error ? error.message : "图片资源读取失败",
+      });
+    }
+  }, [frameId, sendAssetUrlResult, snapshot]);
+
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
     if (!iframe || event.source !== iframe.contentWindow) {
@@ -165,6 +233,16 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     const payload = event.data;
     if (isRuntimeInvokeEnvelope(payload) && payload.frame_id === frameId) {
       void handleRuntimeInvoke(payload);
+      return;
+    }
+
+    if (isAssetUrlRequestEnvelope(payload) && payload.frame_id === frameId) {
+      void handleAssetUrlRequest(payload);
+      return;
+    }
+
+    if (isAssetRevokeEnvelope(payload) && payload.frame_id === frameId) {
+      revokeRuntimeAssetUrl(payload.url);
       return;
     }
 
@@ -179,7 +257,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, [frameId, handleRuntimeInvoke]);
+  }, [frameId, handleAssetUrlRequest, handleRuntimeInvoke, revokeRuntimeAssetUrl]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);
@@ -244,352 +322,6 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   );
 }
 
-function buildPreviewDocument(
-  snapshot: CanvasRuntimeSnapshot,
-  frameId: string,
-): BuiltPreviewDocument {
-  const fileMap = new Map(snapshot.files.map((file) => [normalizePath(file.path), file]));
-  const objectUrls = new Set<string>();
-  const moduleUrlCache = new Map<string, string>();
-
-  const importMap = {
-    imports: {
-      ...DEFAULT_IMPORTS,
-      ...snapshot.import_map.imports,
-    },
-  };
-
-  const cssContent = snapshot.files
-    .filter((file) => isCssFile(file.path))
-    .map((file) => file.content)
-    .join("\n\n");
-
-  const dispose = () => {
-    for (const url of objectUrls) {
-      URL.revokeObjectURL(url);
-    }
-  };
-
-  const createObjectUrl = (content: string, mimeType: string) => {
-    const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
-    objectUrls.add(url);
-    return url;
-  };
-
-  const getModuleUrl = (requestPath: string): string => {
-    const normalizedPath = resolveExistingModulePath(fileMap, requestPath);
-    const cached = moduleUrlCache.get(normalizedPath);
-    if (cached) {
-      return cached;
-    }
-
-    const file = fileMap.get(normalizedPath);
-    if (!file) {
-      throw new Error(`Canvas 预览缺少文件: ${normalizedPath}`);
-    }
-
-    const moduleCode = buildModuleCode(file, normalizedPath, fileMap, getModuleUrl);
-    const url = createObjectUrl(moduleCode, "text/javascript");
-    moduleUrlCache.set(normalizedPath, url);
-    return url;
-  };
-
-  const entryUrl = getModuleUrl(snapshot.entry);
-  const escapedImportMap = JSON.stringify(importMap, null, 2);
-  const safeCss = sanitizeCssForStyleTag(cssContent);
-  const bootScript = `
-    const frameId = ${JSON.stringify(frameId)};
-    const send = (kind, message) => {
-      window.parent.postMessage({ kind, frame_id: frameId, message }, "*");
-    };
-    const runtimeInvokeTimeoutMs = 60000;
-    const pendingRuntimeInvocations = new Map();
-    let runtimeInvokeSeq = 0;
-    window.agentdash = Object.freeze({
-      invoke(actionKey, input = {}) {
-        if (typeof actionKey !== "string" || actionKey.trim().length === 0) {
-          return Promise.reject(new Error("agentdash.invoke 需要非空 actionKey"));
-        }
-
-        const requestId = "canvas-rt-" + (++runtimeInvokeSeq);
-        return new Promise((resolve, reject) => {
-          const timeout = window.setTimeout(() => {
-            pendingRuntimeInvocations.delete(requestId);
-            reject(new Error("Canvas runtime action 调用超时"));
-          }, runtimeInvokeTimeoutMs);
-          pendingRuntimeInvocations.set(requestId, { resolve, reject, timeout });
-          window.parent.postMessage({
-            kind: "canvas-runtime-invoke",
-            frame_id: frameId,
-            request_id: requestId,
-            action_key: actionKey,
-            input,
-          }, "*");
-        });
-      },
-    });
-    window.addEventListener("message", (event) => {
-      const payload = event.data;
-      if (
-        !payload
-        || payload.kind !== "canvas-runtime-result"
-        || payload.frame_id !== frameId
-        || typeof payload.request_id !== "string"
-      ) {
-        return;
-      }
-
-      const pending = pendingRuntimeInvocations.get(payload.request_id);
-      if (!pending) {
-        return;
-      }
-      pendingRuntimeInvocations.delete(payload.request_id);
-      window.clearTimeout(pending.timeout);
-
-      if (payload.ok) {
-        pending.resolve(payload.result);
-      } else {
-        pending.reject(new Error(payload.error || "Canvas runtime action 调用失败"));
-      }
-    });
-    const isRootEmpty = (root) => {
-      if (!root) return false;
-      if (root.childElementCount > 0) return false;
-      return (root.textContent || "").trim().length === 0;
-    };
-
-    window.addEventListener("error", (event) => {
-      send("canvas-preview-error", event.message || "Canvas 运行时发生未捕获异常");
-    });
-
-    window.addEventListener("unhandledrejection", (event) => {
-      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason ?? "unknown");
-      send("canvas-preview-error", reason);
-    });
-
-    const explainDependencyFailure = (message) => {
-      const lower = String(message || "").toLowerCase();
-      if (
-        lower.includes("failed to fetch dynamically imported module")
-        || lower.includes("error resolving module specifier")
-        || lower.includes("module script")
-      ) {
-        return [
-          "Canvas 运行时依赖加载失败，可能是 react/react-dom 或 importmap CDN 不可达。",
-          "请检查网络/代理能否访问 esm.sh，或改为项目内本地依赖映射。",
-          String(message || ""),
-        ].join("\\n");
-      }
-      return message;
-    };
-
-    import(${JSON.stringify(entryUrl)})
-      .then(async (entryModule) => {
-        const root = document.getElementById("root");
-        const maybeComponent = entryModule && entryModule.default;
-        if (typeof maybeComponent === "function" && isRootEmpty(root)) {
-          try {
-            const [{ createElement }, { createRoot }] = await Promise.all([
-              import("react"),
-              import("react-dom/client"),
-            ]);
-            createRoot(root).render(createElement(maybeComponent));
-          } catch (renderError) {
-            const message = renderError instanceof Error
-              ? renderError.stack || renderError.message
-              : String(renderError ?? "unknown");
-            send(
-              "canvas-preview-error",
-              "检测到默认导出 React 组件，但运行时无法完成 React 挂载。请检查 react/react-dom 依赖可用性。\\n" + message,
-            );
-            return;
-          }
-        }
-        send("canvas-preview-ready");
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.stack || error.message : String(error ?? "unknown");
-        send("canvas-preview-error", explainDependencyFailure(message));
-      });
-  `;
-
-  return {
-    srcDoc: `<!DOCTYPE html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Canvas Preview</title>
-    <script type="importmap">${escapedImportMap}</script>
-    <style>
-      :root {
-        color-scheme: light;
-      }
-
-      html, body {
-        margin: 0;
-        min-height: 100%;
-        background: #ffffff;
-        color: #0f172a;
-        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      }
-
-      body {
-        min-height: 100vh;
-      }
-
-      #root {
-        min-height: 100vh;
-      }
-
-${safeCss}
-    </style>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module">
-${bootScript}
-    </script>
-  </body>
-</html>`,
-    dispose,
-  };
-}
-
-function buildModuleCode(
-  file: CanvasRuntimeFile,
-  normalizedPath: string,
-  fileMap: Map<string, CanvasRuntimeFile>,
-  getModuleUrl: (requestPath: string) => string,
-): string {
-  if (normalizedPath.endsWith(".json")) {
-    return `export default ${file.content.trim() || "null"};`;
-  }
-
-  if (normalizedPath.endsWith(".css")) {
-    return `export default ${JSON.stringify(normalizedPath)};`;
-  }
-
-  if (!isScriptFile(normalizedPath)) {
-    return `export default ${JSON.stringify(file.content)};`;
-  }
-
-  const transpiled = ts.transpileModule(file.content, {
-    compilerOptions: {
-      module: ts.ModuleKind.ESNext,
-      target: ts.ScriptTarget.ES2022,
-      jsx: ts.JsxEmit.ReactJSX,
-      jsxImportSource: "react",
-      verbatimModuleSyntax: true,
-      isolatedModules: true,
-      allowJs: true,
-    },
-    fileName: normalizedPath,
-    reportDiagnostics: true,
-  });
-
-  const diagnostics = transpiled.diagnostics ?? [];
-  const seriousDiagnostics = diagnostics.filter(
-    (item) => item.category === ts.DiagnosticCategory.Error,
-  );
-  if (seriousDiagnostics.length > 0) {
-    throw new Error(formatDiagnostics(seriousDiagnostics));
-  }
-
-  return rewriteModuleSpecifiers(transpiled.outputText, normalizedPath, fileMap, getModuleUrl);
-}
-
-function rewriteModuleSpecifiers(
-  code: string,
-  currentPath: string,
-  fileMap: Map<string, CanvasRuntimeFile>,
-  getModuleUrl: (requestPath: string) => string,
-): string {
-  const replaceSpecifier = (specifier: string) => {
-    if (!isLocalSpecifier(specifier)) {
-      return specifier;
-    }
-
-    const resolvedPath = resolveImportPath(currentPath, specifier);
-    const existingPath = resolveExistingModulePath(fileMap, resolvedPath);
-    return getModuleUrl(existingPath);
-  };
-
-  return code
-    .replace(/(\bfrom\s*["'])([^"']+)(["'])/g, (_, prefix: string, specifier: string, suffix: string) =>
-      `${prefix}${replaceSpecifier(specifier)}${suffix}`)
-    .replace(/(\bimport\s*["'])([^"']+)(["'])/g, (_, prefix: string, specifier: string, suffix: string) =>
-      `${prefix}${replaceSpecifier(specifier)}${suffix}`)
-    .replace(/(\bimport\(\s*["'])([^"']+)(["']\s*\))/g, (_, prefix: string, specifier: string, suffix: string) =>
-      `${prefix}${replaceSpecifier(specifier)}${suffix}`);
-}
-
-function resolveExistingModulePath(
-  fileMap: Map<string, CanvasRuntimeFile>,
-  requestPath: string,
-): string {
-  const normalizedRequest = normalizePath(requestPath);
-  const candidates = [
-    normalizedRequest,
-    ...MODULE_EXTENSIONS.map((extension) => `${normalizedRequest}${extension}`),
-    ...MODULE_EXTENSIONS.map((extension) => `${normalizedRequest}/index${extension}`),
-  ];
-
-  const matched = candidates.find((candidate) => fileMap.has(candidate));
-  if (!matched) {
-    throw new Error(`无法解析 Canvas 模块: ${requestPath}`);
-  }
-
-  return matched;
-}
-
-function resolveImportPath(currentPath: string, specifier: string): string {
-  if (specifier.startsWith("/")) {
-    return normalizePath(specifier);
-  }
-
-  const baseUrl = new URL(`canvas://preview/${normalizePath(currentPath)}`);
-  return normalizePath(new URL(specifier, baseUrl).pathname);
-}
-
-function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\/+/, "");
-}
-
-function isLocalSpecifier(specifier: string): boolean {
-  return specifier.startsWith("./") || specifier.startsWith("../") || specifier.startsWith("/");
-}
-
-function isScriptFile(path: string): boolean {
-  return [".ts", ".tsx", ".js", ".jsx", ".mjs"].some((extension) => path.endsWith(extension));
-}
-
-function isCssFile(path: string): boolean {
-  return path.endsWith(".css");
-}
-
-/**
- * 在 <style> 标签内安全嵌入 CSS。
- * <style> 的内容模型是 raw text，HTML 实体不会被解码，
- * 所以不能用 escapeHtml（会把 > 变成 &gt; 破坏 CSS 子选择器等）。
- * 唯一需要防范的是 CSS 中出现 </style 导致提前闭合标签。
- */
-function sanitizeCssForStyleTag(css: string): string {
-  return css.replace(/<\/(style)/gi, "<\\/$1");
-}
-
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-  return diagnostics
-    .map((item) => {
-      const message = ts.flattenDiagnosticMessageText(item.messageText, "\n");
-      const line = item.file && item.start != null
-        ? item.file.getLineAndCharacterOfPosition(item.start).line + 1
-        : null;
-      return line ? `第 ${line} 行: ${message}` : message;
-    })
-    .join("\n");
-}
-
 function isPreviewEnvelope(value: unknown): value is PreviewEnvelope {
   if (value == null || typeof value !== "object") {
     return false;
@@ -614,6 +346,33 @@ function isRuntimeInvokeEnvelope(value: unknown): value is RuntimeInvokeEnvelope
     && typeof record.frame_id === "string"
     && typeof record.request_id === "string"
     && typeof record.action_key === "string"
+  );
+}
+
+function isAssetUrlRequestEnvelope(value: unknown): value is AssetUrlRequestEnvelope {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === "canvas-asset-url-request"
+    && typeof record.frame_id === "string"
+    && typeof record.request_id === "string"
+    && typeof record.uri === "string"
+  );
+}
+
+function isAssetRevokeEnvelope(value: unknown): value is AssetRevokeEnvelope {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === "canvas-asset-revoke"
+    && typeof record.frame_id === "string"
+    && typeof record.url === "string"
   );
 }
 

@@ -11,7 +11,7 @@ use crate::Mount;
 // Error
 // ============================================================================
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MountError {
     NotSupported(String),
     NotFound(String),

@@ -99,6 +99,13 @@ pub enum RelayMessage {
         payload: ToolFileReadPayload,
     },
 
+    /// 读取文件 bytes，用于图片等浏览器资产加载
+    #[serde(rename = "command.tool.file_read_binary")]
+    CommandToolFileReadBinary {
+        id: String,
+        payload: ToolFileReadPayload,
+    },
+
     /// 写入文件
     #[serde(rename = "command.tool.file_write")]
     CommandToolFileWrite {
@@ -216,6 +223,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ToolFileReadResponse>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.tool.file_read_binary")]
+    ResponseToolFileReadBinary {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ToolFileReadBinaryResponse>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -491,6 +507,7 @@ impl RelayMessage {
             | Self::CommandWorkspaceDetectGit { id, .. }
             | Self::CommandBrowseDirectory { id, .. }
             | Self::CommandToolFileRead { id, .. }
+            | Self::CommandToolFileReadBinary { id, .. }
             | Self::CommandToolFileWrite { id, .. }
             | Self::CommandToolFileDelete { id, .. }
             | Self::CommandToolFileRename { id, .. }
@@ -506,6 +523,7 @@ impl RelayMessage {
             | Self::ResponseWorkspaceDetectGit { id, .. }
             | Self::ResponseBrowseDirectory { id, .. }
             | Self::ResponseToolFileRead { id, .. }
+            | Self::ResponseToolFileReadBinary { id, .. }
             | Self::ResponseToolFileWrite { id, .. }
             | Self::ResponseToolFileDelete { id, .. }
             | Self::ResponseToolFileRename { id, .. }
@@ -937,6 +955,10 @@ pub struct FileEntryRelay {
     pub modified_at: Option<i64>,
     #[serde(default)]
     pub is_dir: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -979,6 +1001,14 @@ pub struct ToolFileReadResponse {
     pub content: String,
     #[serde(default = "default_utf8")]
     pub encoding: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolFileReadBinaryResponse {
+    pub call_id: String,
+    pub data_base64: String,
+    pub mime_type: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

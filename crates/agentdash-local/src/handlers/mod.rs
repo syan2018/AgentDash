@@ -127,6 +127,9 @@ impl CommandHandler {
             RelayMessage::CommandToolFileRead { id, payload } => {
                 vec![self.handle_tool_file_read(id, payload).await]
             }
+            RelayMessage::CommandToolFileReadBinary { id, payload } => {
+                vec![self.handle_tool_file_read_binary(id, payload).await]
+            }
             RelayMessage::CommandToolFileWrite { id, payload } => {
                 vec![self.handle_tool_file_write(id, payload).await]
             }

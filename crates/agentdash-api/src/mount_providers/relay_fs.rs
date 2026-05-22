@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use agentdash_application::runtime::Mount;
 use agentdash_application::vfs::{
-    ApplyPatchRequest, ApplyPatchResult, ExecRequest, ExecResult, ListOptions, ListResult,
-    MountEditCapabilities, MountError, MountOperationContext, MountProvider, PROVIDER_RELAY_FS,
-    ReadResult, SearchMatch, SearchQuery, SearchResult, normalize_mount_relative_path,
+    ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
+    ListResult, MountEditCapabilities, MountError, MountOperationContext, MountProvider,
+    PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
+    normalize_mount_relative_path,
 };
 use agentdash_relay::{
     RelayMessage, ToolApplyPatchPayload, ToolFileDeletePayload, ToolFileListPayload,
@@ -12,6 +13,7 @@ use agentdash_relay::{
     ToolShellExecPayload,
 };
 use async_trait::async_trait;
+use base64::Engine;
 
 use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::runtime_bridge::relay_file_entries_to_runtime;
@@ -129,6 +131,55 @@ impl MountProvider for RelayFsMountProvider {
             } => Err(MountError::OperationFailed(error.message)),
             other => Err(MountError::OperationFailed(format!(
                 "file_write 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        _ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolFileReadBinary {
+                    id: RelayMessage::new_id("mp-read-bin"),
+                    payload: ToolFileReadPayload {
+                        call_id: RelayMessage::new_id("call"),
+                        path: path.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolFileReadBinary {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => {
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(payload.data_base64)
+                    .map_err(|error| {
+                        MountError::OperationFailed(format!(
+                            "file_read_binary 返回无效 base64: {error}"
+                        ))
+                    })?;
+                Ok(BinaryReadResult::new(path, data, payload.mime_type))
+            }
+            RelayMessage::ResponseToolFileReadBinary {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "file_read_binary 返回意外响应: {}",
                 other.id()
             ))),
         }

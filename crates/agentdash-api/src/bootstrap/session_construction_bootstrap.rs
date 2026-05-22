@@ -235,12 +235,6 @@ pub(crate) async fn finalize_session_construction_projection(
             local_workspace_vfs(root),
             "source.local_relay_workspace_root".to_string(),
         )
-    } else if let Some(vfs) = facts
-        .cached_capability_state
-        .as_ref()
-        .and_then(|state| state.vfs.active.clone())
-    {
-        (vfs, "runtime.cached_capability_state.vfs".to_string())
     } else {
         return Err(ApiError::BadRequest(
             "construction 未产出 VFS，且来源事实中没有可解析 workspace root".to_string(),
@@ -274,13 +268,6 @@ pub(crate) async fn finalize_session_construction_projection(
         (
             source_mcp_declarations,
             "source.mcp_declarations".to_string(),
-        )
-    } else if let Some(cached) = facts.cached_capability_state.as_ref()
-        && !cached.tool.mcp_servers.is_empty()
-    {
-        (
-            cached.tool.mcp_servers.clone(),
-            "runtime.cached_capability_state.mcp_servers".to_string(),
         )
     } else {
         (Vec::new(), "empty".to_string())
@@ -338,7 +325,6 @@ pub(crate) async fn finalize_session_construction_projection(
         .projections
         .capability_state
         .clone()
-        .or_else(|| facts.cached_capability_state.clone())
         .unwrap_or_default();
     normalize_capability_state_dimensions(
         &mut base_capability_state,

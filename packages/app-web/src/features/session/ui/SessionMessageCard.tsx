@@ -9,7 +9,7 @@ import {
   toFileUri,
 } from "../../file-reference/fileReferenceUi";
 
-export interface AcpMessageCardProps {
+export interface SessionMessageCardProps {
   type: "user" | "agent" | "thinking";
   content: string;
   isStreaming?: boolean;
@@ -53,13 +53,13 @@ function renderTextWithFilePills(text: string): ReactNode[] {
   return nodes;
 }
 
-export const AcpMessageCard = memo(function AcpMessageCard({
+export const SessionMessageCard = memo(function SessionMessageCard({
   type,
   content,
   isStreaming,
   collapsible = false,
   defaultCollapsed = false,
-}: AcpMessageCardProps) {
+}: SessionMessageCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
   const config = MESSAGE_CONFIG[type];
 
@@ -147,4 +147,4 @@ const MESSAGE_CONFIG = {
   },
 } as const;
 
-export default AcpMessageCard;
+export default SessionMessageCard;

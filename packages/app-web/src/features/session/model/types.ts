@@ -247,9 +247,9 @@ export type ToolAggregationType =
 
 /**
  * 显示条目 — entries 数组中的基本单元。
- * 每条 BackboneEvent 归并后对应一个 AcpDisplayEntry。
+ * 每条 BackboneEvent 归并后对应一个 SessionDisplayEntry。
  */
-export interface AcpDisplayEntry {
+export interface SessionDisplayEntry {
   id: string;
   sessionId: string;
   timestamp: number;
@@ -264,7 +264,7 @@ export interface AcpDisplayEntry {
 }
 
 /** 工具调用聚合状态 */
-export interface AcpToolCallState {
+export interface SessionToolCallState {
   itemId: string;
   startedItem: ThreadItem | null;
   completedItem: ThreadItem | null;
@@ -275,7 +275,7 @@ export interface AcpToolCallState {
 export interface AggregatedEntryGroup {
   type: "aggregated_group";
   aggregationType: ToolAggregationType;
-  entries: AcpDisplayEntry[];
+  entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
   filePath?: string;
@@ -284,7 +284,7 @@ export interface AggregatedEntryGroup {
 /** 思考条目组 */
 export interface AggregatedThinkingGroup {
   type: "aggregated_thinking";
-  entries: AcpDisplayEntry[];
+  entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
 }
@@ -292,21 +292,21 @@ export interface AggregatedThinkingGroup {
 /** 相邻 ContextFrame 的用户侧聚合组 */
 export interface AggregatedContextFrameGroup {
   type: "aggregated_context_frames";
-  entries: AcpDisplayEntry[];
+  entries: SessionDisplayEntry[];
   id: string;
   groupKey: string;
 }
 
 /** 显示条目（单个或聚合） */
-export type AcpDisplayItem =
-  | AcpDisplayEntry
+export type SessionDisplayItem =
+  | SessionDisplayEntry
   | AggregatedEntryGroup
   | AggregatedThinkingGroup
   | AggregatedContextFrameGroup;
 
 /** 条目更新回调 */
 export type OnEntriesUpdated = (
-  entries: AcpDisplayItem[],
+  entries: SessionDisplayItem[],
   loading: boolean,
 ) => void;
 
@@ -323,33 +323,33 @@ export interface TokenUsageInfo {
 // ==================== 类型守卫 ====================
 
 export function isAggregatedGroup(
-  entry: AcpDisplayItem,
+  entry: SessionDisplayItem,
 ): entry is AggregatedEntryGroup {
   return (entry as AggregatedEntryGroup).type === "aggregated_group";
 }
 
 export function isAggregatedThinkingGroup(
-  entry: AcpDisplayItem,
+  entry: SessionDisplayItem,
 ): entry is AggregatedThinkingGroup {
   return (entry as AggregatedThinkingGroup).type === "aggregated_thinking";
 }
 
 export function isAggregatedContextFrameGroup(
-  entry: AcpDisplayItem,
+  entry: SessionDisplayItem,
 ): entry is AggregatedContextFrameGroup {
   return (entry as AggregatedContextFrameGroup).type === "aggregated_context_frames";
 }
 
 // 历史保留；新算法不再产出 file_edit 类型
 export function isAggregatedDiffGroup(
-  entry: AcpDisplayItem,
+  entry: SessionDisplayItem,
 ): entry is AggregatedEntryGroup {
   return isAggregatedGroup(entry) && entry.aggregationType === "file_edit";
 }
 
 export function isDisplayEntry(
-  entry: AcpDisplayItem,
-): entry is AcpDisplayEntry {
+  entry: SessionDisplayItem,
+): entry is SessionDisplayEntry {
   return !isAggregatedGroup(entry) && !isAggregatedThinkingGroup(entry);
 }
 

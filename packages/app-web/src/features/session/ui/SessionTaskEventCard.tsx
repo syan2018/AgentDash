@@ -9,7 +9,7 @@ import { extractPlatformEventType, extractPlatformEventData, extractPlatformEven
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
 import { EventFullCard } from "./EventCards";
 
-export interface AcpTaskEventCardProps {
+export interface SessionTaskEventCardProps {
   event: BackboneEvent;
 }
 
@@ -20,7 +20,7 @@ const TASK_EVENT_LABELS: Record<string, string> = {
   task_start_failed:     "任务启动失败",
 };
 
-export function AcpTaskEventCard({ event }: AcpTaskEventCardProps) {
+export function SessionTaskEventCard({ event }: SessionTaskEventCardProps) {
   if (!isTaskEventUpdate(event)) return null;
 
   const eventType = extractPlatformEventType(event) ?? "task_event";
@@ -53,4 +53,4 @@ export function AcpTaskEventCard({ event }: AcpTaskEventCardProps) {
   );
 }
 
-export default AcpTaskEventCard;
+export default SessionTaskEventCard;

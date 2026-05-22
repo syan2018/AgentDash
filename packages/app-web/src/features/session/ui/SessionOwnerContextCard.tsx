@@ -56,11 +56,11 @@ const OWNER_TYPE_CONFIG: Record<OwnerContextType, { badge: string; label: string
   },
 };
 
-export interface AcpOwnerContextCardProps {
+export interface SessionOwnerContextCardProps {
   block: ContentBlock;
 }
 
-export function AcpOwnerContextCard({ block }: AcpOwnerContextCardProps) {
+export function SessionOwnerContextCard({ block }: SessionOwnerContextCardProps) {
   const parsed = useMemo(() => parseOwnerContextBlock(block), [block]);
   if (!parsed) return null;
 
@@ -91,4 +91,4 @@ export function AcpOwnerContextCard({ block }: AcpOwnerContextCardProps) {
   );
 }
 
-export default AcpOwnerContextCard;
+export default SessionOwnerContextCard;

@@ -13,7 +13,7 @@ import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { useSessionFeed } from "../model";
 import { SessionEntry } from "./SessionEntry";
 import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { AcpDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
+import type { SessionDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
 import { extractPlatformEventType } from "../model/platformEvent";
 import { promptSession, type ExecutorConfig } from "../../../services/executor";
 import {
@@ -58,7 +58,7 @@ function toExecutorConfigSource(
   return Object.keys(source).length === 0 ? null : source;
 }
 
-function getItemKey(item: AcpDisplayItem): string {
+function getItemKey(item: SessionDisplayItem): string {
   if (isAggregatedGroup(item)) return item.groupKey;
   if (isAggregatedThinkingGroup(item)) return item.groupKey;
   return item.id;

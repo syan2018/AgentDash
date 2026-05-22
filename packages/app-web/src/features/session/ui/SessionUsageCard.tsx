@@ -6,7 +6,7 @@
 
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
 
-export interface AcpUsageCardProps {
+export interface SessionUsageCardProps {
   event: BackboneEvent;
 }
 
@@ -17,7 +17,7 @@ function formatTokenCount(n: number | undefined): string {
   return String(n);
 }
 
-export function AcpUsageCard({ event }: AcpUsageCardProps) {
+export function SessionUsageCard({ event }: SessionUsageCardProps) {
   if (event.type !== "token_usage_updated") return null;
 
   const usage = event.payload.tokenUsage;
@@ -58,4 +58,4 @@ export function AcpUsageCard({ event }: AcpUsageCardProps) {
   );
 }
 
-export default AcpUsageCard;
+export default SessionUsageCard;

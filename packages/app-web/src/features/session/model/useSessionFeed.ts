@@ -15,8 +15,8 @@ import {
 } from "./types";
 import type {
   AggregatedContextFrameGroup,
-  AcpDisplayEntry,
-  AcpDisplayItem,
+  SessionDisplayEntry,
+  SessionDisplayItem,
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
   SessionEventEnvelope,
@@ -32,8 +32,8 @@ export interface UseSessionFeedOptions {
 }
 
 export interface UseSessionFeedResult {
-  displayItems: AcpDisplayItem[];
-  rawEntries: AcpDisplayEntry[];
+  displayItems: SessionDisplayItem[];
+  rawEntries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
   isLoading: boolean;
@@ -99,7 +99,7 @@ type EntryClassification =
   | "context_frame"
   | "non_agg";
 
-function classifyEntry(entry: AcpDisplayEntry): EntryClassification {
+function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   const event = entry.event;
   if (event.type === "turn_started" || event.type === "turn_completed") {
     return "turn_boundary";
@@ -122,14 +122,14 @@ function classifyEntry(entry: AcpDisplayEntry): EntryClassification {
   return "non_agg";
 }
 
-function isEffectivelyEmptyMessage(entry: AcpDisplayEntry): boolean {
+function isEffectivelyEmptyMessage(entry: SessionDisplayEntry): boolean {
   if (entry.event.type !== "agent_message_delta") return false;
   const text = entry.accumulatedText ?? entry.event.payload.delta ?? "";
   return text.trim().length === 0;
 }
 
-function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
-  const result: AcpDisplayItem[] = [];
+function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
+  const result: SessionDisplayItem[] = [];
   let currentUnit: AggregatedEntryGroup | null = null;
   let currentThinkingGroup: AggregatedThinkingGroup | null = null;
   let currentContextFrameGroup: AggregatedContextFrameGroup | null = null;
@@ -266,7 +266,7 @@ function aggregateEntries(entries: AcpDisplayEntry[]): AcpDisplayItem[] {
 
 export { aggregateEntries };
 
-function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
+function entryShallowEqual(a: SessionDisplayEntry, b: SessionDisplayEntry): boolean {
   return (
     a.id === b.id &&
     a.eventSeq === b.eventSeq &&
@@ -275,7 +275,7 @@ function entryShallowEqual(a: AcpDisplayEntry, b: AcpDisplayEntry): boolean {
   );
 }
 
-function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
+function isAggregatedGroupEqual(a: SessionDisplayItem, b: SessionDisplayItem): boolean {
   if (a === b) return true;
 
   const aIsGroup = isAggregatedGroupItem(a);
@@ -325,7 +325,7 @@ function isAggregatedGroupEqual(a: AcpDisplayItem, b: AcpDisplayItem): boolean {
     return true;
   }
 
-  return entryShallowEqual(a as AcpDisplayEntry, b as AcpDisplayEntry);
+  return entryShallowEqual(a as SessionDisplayEntry, b as SessionDisplayEntry);
 }
 
 export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedResult {
@@ -348,18 +348,18 @@ export function useSessionFeed(options: UseSessionFeedOptions): UseSessionFeedRe
     enabled,
   });
 
-  const prevDisplayItemsRef = useRef<AcpDisplayItem[]>([]);
+  const prevDisplayItemsRef = useRef<SessionDisplayItem[]>([]);
 
   /* eslint-disable react-hooks/refs */
   const displayItems = useMemo(() => {
-    const next: AcpDisplayItem[] = enableAggregation
+    const next: SessionDisplayItem[] = enableAggregation
       ? aggregateEntries(entries)
-      : (entries as AcpDisplayItem[]);
+      : (entries as SessionDisplayItem[]);
 
     const prev = prevDisplayItemsRef.current;
     if (prev.length === next.length) {
       let allEqual = true;
-      const stabilized: AcpDisplayItem[] = new Array(next.length);
+      const stabilized: SessionDisplayItem[] = new Array(next.length);
       for (let i = 0; i < next.length; i += 1) {
         const a = prev[i]!;
         const b = next[i]!;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { aggregateEntries } from "./useSessionFeed";
 import type {
-  AcpDisplayEntry,
+  SessionDisplayEntry,
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
 } from "./types";
@@ -12,7 +12,7 @@ function seq(): number {
   return nextSeq++;
 }
 
-function asEntry(id: string, event: BackboneEvent, extra?: Partial<AcpDisplayEntry>): AcpDisplayEntry {
+function asEntry(id: string, event: BackboneEvent, extra?: Partial<SessionDisplayEntry>): SessionDisplayEntry {
   return {
     id,
     sessionId: "s1",
@@ -23,7 +23,7 @@ function asEntry(id: string, event: BackboneEvent, extra?: Partial<AcpDisplayEnt
   };
 }
 
-function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: boolean }): AcpDisplayEntry {
+function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: boolean }): SessionDisplayEntry {
   const item = {
     type: "commandExecution",
     id,
@@ -44,7 +44,7 @@ function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: bo
   return asEntry(id, event, { isPendingApproval: opts?.isPendingApproval });
 }
 
-function mkFileChangeEntry(id: string, path: string): AcpDisplayEntry {
+function mkFileChangeEntry(id: string, path: string): SessionDisplayEntry {
   const item = {
     type: "fileChange",
     id,
@@ -58,7 +58,7 @@ function mkFileChangeEntry(id: string, path: string): AcpDisplayEntry {
   return asEntry(id, event);
 }
 
-function mkMcpEntry(id: string): AcpDisplayEntry {
+function mkMcpEntry(id: string): SessionDisplayEntry {
   const item = {
     type: "mcpToolCall",
     id,
@@ -77,7 +77,7 @@ function mkMcpEntry(id: string): AcpDisplayEntry {
   return asEntry(id, event);
 }
 
-function mkMessageEntry(id: string, text: string): AcpDisplayEntry {
+function mkMessageEntry(id: string, text: string): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "agent_message_delta",
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: text },
@@ -85,7 +85,7 @@ function mkMessageEntry(id: string, text: string): AcpDisplayEntry {
   return asEntry(id, event, { accumulatedText: text });
 }
 
-function mkTurnStarted(id = "ts"): AcpDisplayEntry {
+function mkTurnStarted(id = "ts"): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "turn_started",
     payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
@@ -93,7 +93,7 @@ function mkTurnStarted(id = "ts"): AcpDisplayEntry {
   return asEntry(id, event);
 }
 
-function mkTurnCompleted(id = "tc"): AcpDisplayEntry {
+function mkTurnCompleted(id = "tc"): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "turn_completed",
     payload: { threadId: "t1", turn: { id: "u1" } as unknown as never },
@@ -101,7 +101,7 @@ function mkTurnCompleted(id = "tc"): AcpDisplayEntry {
   return asEntry(id, event);
 }
 
-function mkReasoningEntry(id: string): AcpDisplayEntry {
+function mkReasoningEntry(id: string): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "reasoning_text_delta",
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: "...", contentIndex: 0 },
@@ -157,7 +157,7 @@ describe("aggregateEntries — turn fold", () => {
     expect(result).toHaveLength(3);
     expect(isToolGroup(result[0])).toBe(true);
     expect((result[0] as AggregatedEntryGroup).entries).toHaveLength(2);
-    expect((result[1] as AcpDisplayEntry).id).toBe("m1");
+    expect((result[1] as SessionDisplayEntry).id).toBe("m1");
     expect(isToolGroup(result[2])).toBe(true);
     expect((result[2] as AggregatedEntryGroup).entries).toHaveLength(2);
   });
@@ -167,7 +167,7 @@ describe("aggregateEntries — turn fold", () => {
     const result = aggregateEntries(entries);
     expect(result).toHaveLength(1);
     expect(isToolGroup(result[0])).toBe(false);
-    expect((result[0] as AcpDisplayEntry).id).toBe("c1");
+    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
   });
 
   it("T5: turn boundary splits units across turns", () => {
@@ -182,8 +182,8 @@ describe("aggregateEntries — turn fold", () => {
     const result = aggregateEntries(entries);
     expect(result).toHaveLength(4);
     expect(isToolGroup(result[0])).toBe(true);
-    expect((result[1] as AcpDisplayEntry).event.type).toBe("turn_completed");
-    expect((result[2] as AcpDisplayEntry).event.type).toBe("turn_started");
+    expect((result[1] as SessionDisplayEntry).event.type).toBe("turn_completed");
+    expect((result[2] as SessionDisplayEntry).event.type).toBe("turn_started");
     expect(isToolGroup(result[3])).toBe(true);
   });
 
@@ -234,9 +234,9 @@ describe("aggregateEntries — turn fold", () => {
     ];
     const result = aggregateEntries(entries);
     expect(result).toHaveLength(3);
-    expect((result[0] as AcpDisplayEntry).id).toBe("r1");
+    expect((result[0] as SessionDisplayEntry).id).toBe("r1");
     expect(isToolGroup(result[1])).toBe(true);
-    expect((result[2] as AcpDisplayEntry).id).toBe("r2");
+    expect((result[2] as SessionDisplayEntry).id).toBe("r2");
   });
 
   it("T10: turn boundary inside a flowing tool sequence flushes the unit", () => {
@@ -247,9 +247,9 @@ describe("aggregateEntries — turn fold", () => {
     ];
     const result = aggregateEntries(entries);
     expect(result).toHaveLength(3);
-    expect((result[0] as AcpDisplayEntry).id).toBe("c1");
-    expect((result[1] as AcpDisplayEntry).event.type).toBe("turn_completed");
-    expect((result[2] as AcpDisplayEntry).id).toBe("c2");
+    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
+    expect((result[1] as SessionDisplayEntry).event.type).toBe("turn_completed");
+    expect((result[2] as SessionDisplayEntry).id).toBe("c2");
   });
 
   it("T11: empty entries array returns empty array", () => {
@@ -267,8 +267,8 @@ describe("aggregateEntries — turn fold", () => {
 
     const frame2 = aggregateEntries([cmd1, mkMessageEntry("m1", "进度更新"), cmd2]);
     expect(frame2).toHaveLength(3);
-    expect((frame2[0] as AcpDisplayEntry).id).toBe("c1");
-    expect((frame2[1] as AcpDisplayEntry).id).toBe("m1");
-    expect((frame2[2] as AcpDisplayEntry).id).toBe("c2");
+    expect((frame2[0] as SessionDisplayEntry).id).toBe("c1");
+    expect((frame2[1] as SessionDisplayEntry).id).toBe("m1");
+    expect((frame2[2] as SessionDisplayEntry).id).toBe("c2");
   });
 });

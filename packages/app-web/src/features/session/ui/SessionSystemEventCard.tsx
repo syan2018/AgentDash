@@ -14,11 +14,11 @@ import {
   isRecord,
 } from "../model/platformEvent";
 import { EventStripCard, EventFullCard } from "./EventCards";
-import { AcpCompanionRequestCard } from "./SessionCompanionRequestCard";
+import { SessionCompanionRequestCard } from "./SessionCompanionRequestCard";
 import { ContextFrameCard } from "./ContextFrameCard";
 import { getDebugPrefs } from "../../../hooks/use-debug-prefs";
 
-export interface AcpSystemEventCardProps {
+export interface SessionSystemEventCardProps {
   event: BackboneEvent;
   sessionId?: string;
 }
@@ -187,7 +187,7 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps) {
+export function SessionSystemEventCard({ event, sessionId }: SessionSystemEventCardProps) {
   if (event.type !== "platform") return null;
 
   const eventType = extractPlatformEventType(event) ?? "system";
@@ -196,7 +196,7 @@ export function AcpSystemEventCard({ event, sessionId }: AcpSystemEventCardProps
 
   // ── companion_human_request → 交互卡片 ──
   if (eventType === "companion_human_request") {
-    return <AcpCompanionRequestCard event={event} sessionId={sessionId} />;
+    return <SessionCompanionRequestCard event={event} sessionId={sessionId} />;
   }
 
   if (eventType === "context_frame" && eventData) {
@@ -895,4 +895,4 @@ function formatExtraData(value: unknown): string | null {
   try { return JSON.stringify(value, null, 2); } catch { return null; }
 }
 
-export default AcpSystemEventCard;
+export default SessionSystemEventCard;

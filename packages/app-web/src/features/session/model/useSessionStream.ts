@@ -13,7 +13,7 @@ import {
   fetchSessionEvents,
 } from "../../../services/session";
 import type {
-  AcpDisplayEntry,
+  SessionDisplayEntry,
   SessionEventEnvelope,
   TokenUsageInfo,
 } from "./types";
@@ -27,14 +27,14 @@ export interface UseSessionStreamOptions {
   /** 设为 false 时跳过连接，返回空的初始状态。默认 true。 */
   enabled?: boolean;
   endpoint?: string;
-  initialEntries?: AcpDisplayEntry[];
-  onEntry?: (entry: AcpDisplayEntry) => void;
+  initialEntries?: SessionDisplayEntry[];
+  onEntry?: (entry: SessionDisplayEntry) => void;
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: Error) => void;
 }
 
 export interface UseSessionStreamResult {
-  entries: AcpDisplayEntry[];
+  entries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   isConnected: boolean;
   isLoading: boolean;
@@ -49,10 +49,10 @@ export interface UseSessionStreamResult {
 const FLUSH_INTERVAL_MS = 50;
 const RECEIVING_IDLE_TIMEOUT_MS = 600;
 const HISTORY_PAGE_SIZE = 500;
-const EMPTY_INITIAL_ENTRIES: AcpDisplayEntry[] = [];
+const EMPTY_INITIAL_ENTRIES: SessionDisplayEntry[] = [];
 
 interface SessionStreamState {
-  entries: AcpDisplayEntry[];
+  entries: SessionDisplayEntry[];
   rawEvents: SessionEventEnvelope[];
   tokenUsage: TokenUsageInfo | null;
   lastAppliedSeq: number;
@@ -70,7 +70,7 @@ type StreamInputEvent = {
   tool_call_id?: string | null;
 };
 
-function createInitialState(initialEntries: AcpDisplayEntry[]): SessionStreamState {
+function createInitialState(initialEntries: SessionDisplayEntry[]): SessionStreamState {
   const lastAppliedSeq = initialEntries.reduce((max, entry) => Math.max(max, entry.eventSeq), 0);
   return {
     entries: initialEntries,
@@ -154,7 +154,7 @@ function buildEntryId(event: SessionEventEnvelope, bbEvent: BackboneEvent): stri
   return `event:${event.event_seq}`;
 }
 
-function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): AcpDisplayEntry {
+function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): SessionDisplayEntry {
   return {
     id: buildEntryId(event, bbEvent),
     sessionId: event.notification.sessionId,
@@ -166,7 +166,7 @@ function makeDisplayEntry(event: SessionEventEnvelope, bbEvent: BackboneEvent): 
   };
 }
 
-function applyEventToEntries(prev: AcpDisplayEntry[], event: SessionEventEnvelope): AcpDisplayEntry[] {
+function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnvelope): SessionDisplayEntry[] {
   const bbEvent: BackboneEvent = event.notification.event;
 
   // ── agent_message_delta — 累积文本增量 ──

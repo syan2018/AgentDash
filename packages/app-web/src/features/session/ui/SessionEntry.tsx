@@ -2,12 +2,12 @@
  * 会话条目渲染组件
  *
  * 根据 BackboneEvent 类型渲染不同的 UI：
- * - agent_message_delta → AcpMessageCard (agent)
- * - reasoning_text_delta / reasoning_summary_delta → AcpMessageCard (thinking)
- * - item_started / item_completed → AcpToolCallCard (ThreadItem)
- * - turn_plan_updated → AcpPlanCard
+ * - agent_message_delta → SessionMessageCard (agent)
+ * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
+ * - item_started / item_completed → SessionToolCallCard (ThreadItem)
+ * - turn_plan_updated → SessionPlanCard
  * - platform:
- *   - user_message_chunk → AcpMessageCard (user)
+ *   - user_message_chunk → SessionMessageCard (user)
  *   - executor_session_bound / hook_trace / task_* / companion_* 等 → 系统事件卡片
  * - approval_request → 审批卡片
  * - error → 错误卡片
@@ -26,30 +26,30 @@ import {
   parseContentBlock,
 } from "../model/types";
 import type {
-  AcpDisplayItem,
-  AcpDisplayEntry,
+  SessionDisplayItem,
+  SessionDisplayEntry,
   AggregatedContextFrameGroup,
   AggregatedEntryGroup,
   AggregatedThinkingGroup,
 } from "../model/types";
 import { extractPlatformEventData } from "../model/platformEvent";
 import { parseContextFrame } from "../model/contextFrame";
-import { AcpToolCallCard } from "./SessionToolCallCard";
+import { SessionToolCallCard } from "./SessionToolCallCard";
 import { CommandExecutionCard } from "./CommandExecutionCard";
-import { AcpMessageCard } from "./SessionMessageCard";
-import { AcpPlanCard } from "./SessionPlanCard";
+import { SessionMessageCard } from "./SessionMessageCard";
+import { SessionPlanCard } from "./SessionPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
-import { AcpTaskContextCard } from "./SessionTaskContextCard";
+import { SessionTaskContextCard } from "./SessionTaskContextCard";
 import { isAgentDashTaskContextBlock } from "./SessionTaskContextGuard";
-import { AcpOwnerContextCard } from "./SessionOwnerContextCard";
-import { AcpSessionCapabilityCard, isSessionCapabilitiesBlock } from "./SessionCapabilityCard";
-import { AcpTaskEventCard } from "./SessionTaskEventCard";
+import { SessionOwnerContextCard } from "./SessionOwnerContextCard";
+import { SessionCapabilityCard, isSessionCapabilitiesBlock } from "./SessionCapabilityCard";
+import { SessionTaskEventCard } from "./SessionTaskEventCard";
 import { isTaskEventUpdate } from "./SessionTaskEventGuard";
-import { AcpSystemEventCard } from "./SessionSystemEventCard";
+import { SessionSystemEventCard } from "./SessionSystemEventCard";
 import { isRenderableSystemEventUpdate } from "./SessionSystemEventGuard";
 
 export interface SessionEntryProps {
-  item: AcpDisplayItem;
+  item: SessionDisplayItem;
   isStreaming?: boolean;
   sessionId?: string | null;
 }
@@ -79,7 +79,7 @@ export function SingleEntry({
   isStreaming = false,
   sessionId,
 }: {
-  entry: AcpDisplayEntry;
+  entry: SessionDisplayEntry;
   isStreaming?: boolean;
   sessionId?: string | null;
 }) {
@@ -88,7 +88,7 @@ export function SingleEntry({
   switch (event.type) {
     case "agent_message_delta": {
       return (
-        <AcpMessageCard
+        <SessionMessageCard
           type="agent"
           content={accumulatedText ?? event.payload.delta}
           isStreaming={isStreaming}
@@ -99,7 +99,7 @@ export function SingleEntry({
     case "reasoning_text_delta":
     case "reasoning_summary_delta": {
       return (
-        <AcpMessageCard
+        <SessionMessageCard
           type="thinking"
           content={accumulatedText ?? event.payload.delta}
         />
@@ -119,7 +119,7 @@ export function SingleEntry({
         );
       }
       return (
-        <AcpToolCallCard
+        <SessionToolCallCard
           item={threadItem}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}
@@ -129,7 +129,7 @@ export function SingleEntry({
     }
 
     case "turn_plan_updated": {
-      return <AcpPlanCard steps={event.payload.plan} />;
+      return <SessionPlanCard steps={event.payload.plan} />;
     }
 
     case "approval_request": {
@@ -164,7 +164,7 @@ export function SingleEntry({
           if (block.type === "resource" || block.type === "resource_link") {
             if (block.type === "resource") {
               if (isAgentDashTaskContextBlock(block)) {
-                return <AcpTaskContextCard block={block} />;
+                return <SessionTaskContextCard block={block} />;
               }
 
               const uri = block.resource.uri;
@@ -172,11 +172,11 @@ export function SingleEntry({
                 uri.startsWith("agentdash://project-context/") ||
                 uri.startsWith("agentdash://story-context/")
               ) {
-                return <AcpOwnerContextCard block={block} />;
+                return <SessionOwnerContextCard block={block} />;
               }
 
               if (isSessionCapabilitiesBlock(block)) {
-                return <AcpSessionCapabilityCard block={block} />;
+                return <SessionCapabilityCard block={block} />;
               }
             }
             return <ContentBlockCard block={block} variant="compact" />;
@@ -188,7 +188,7 @@ export function SingleEntry({
         }
 
         return (
-          <AcpMessageCard
+          <SessionMessageCard
             type="user"
             content={accumulatedText ?? extractTextFromContentBlock(block)}
           />
@@ -196,11 +196,11 @@ export function SingleEntry({
       }
 
       if (isTaskEventUpdate(event)) {
-        return <AcpTaskEventCard event={event} />;
+        return <SessionTaskEventCard event={event} />;
       }
 
       if (isRenderableSystemEventUpdate(event)) {
-        return <AcpSystemEventCard event={event} sessionId={sessionId ?? undefined} />;
+        return <SessionSystemEventCard event={event} sessionId={sessionId ?? undefined} />;
       }
 
       return null;
@@ -310,7 +310,7 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
   );
 }
 
-function extractThreadItem(entry: AcpDisplayEntry): import("../../../generated/backbone-protocol").ThreadItem | null {
+function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").ThreadItem | null {
   const evt = entry.event;
   if (evt.type === "item_started" || evt.type === "item_completed") {
     return evt.payload.item;

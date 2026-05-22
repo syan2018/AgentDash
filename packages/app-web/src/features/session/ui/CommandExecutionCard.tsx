@@ -1,7 +1,7 @@
 /**
  * 命令执行卡片 — 专用于 commandExecution 类型的 ThreadItem
  *
- * 与通用 AcpToolCallCard 分离，支持：
+ * 与通用 SessionToolCallCard 分离，支持：
  * - 流式终端输出渲染（monospace + ANSI 序列转换）
  * - 进程元信息（command / cwd / exit code）
  * - 自动滚底 + 最大高度折叠

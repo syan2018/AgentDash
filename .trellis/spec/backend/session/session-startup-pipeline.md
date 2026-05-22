@@ -274,6 +274,51 @@ requested -> failed
 connector.prompt accepted 后再标记 applied；connector.prompt 失败时保留
 requested/failed 事实供下一轮恢复。
 
+### Scenario: Runtime Context Patch Replay
+
+#### 1. Scope / Trigger
+
+- Trigger: pending runtime command 需要跨进程保存“下一轮应应用的 runtime context 变化”，同时保持 `CapabilityState`、VFS、Skill、MCP 与 runtime surface 由同一条 projection pipeline 生成。
+
+#### 2. Signatures
+
+- Persisted payload type: `PendingCapabilityStateTransition`
+- Patch field: `RuntimeContextPatch { tool, companion, vfs_overlay, mount_directives }`
+- Replay entry: `apply_runtime_context_patch(base_state, patch) -> CapabilityState`
+
+#### 3. Contracts
+
+- `PendingCapabilityStateTransition` 保存 phase metadata：`run_id`、`lifecycle_key`、`phase_node`、`capability_keys`、`source_turn_id`。
+- `RuntimeContextPatch.tool` 承载 tool capability、tool policy 与 MCP server 列表；`companion` 承载 companion 维度；`vfs_overlay` 承载 runtime 追加的 VFS surface；`mount_directives` 承载 workflow/runtime 的 mount 指令。
+- replay 先从 construction base capability state 开始，叠加 VFS overlay，再应用 mount directives，随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
+- repository 继续使用 runtime command `payload_json` 容器；payload 语义是 intent，而不是 full `CapabilityState` projection。
+
+#### 4. Validation & Error Matrix
+
+- pending payload 反序列化失败 -> repository 返回数据错误，当前预研阶段不保留旧 payload 兼容分支。
+- final VFS 缺少 default mount 或 root_ref -> construction `BadRequest`。
+- connector prompt accepted -> command 标记 `applied`。
+- connector setup / prompt 失败 -> command 保持 `requested` 或进入 `failed`，下一轮可按 store 状态恢复。
+
+#### 5. Good / Base / Bad Cases
+
+- Good: pending patch 含 VFS overlay，context query / next-turn launch replay 后 final VFS、runtime surface 与 Skill baseline 都包含 overlay mount。
+- Base: pending patch 只改 tool/MCP，construction base VFS 原样进入 final projection。
+- Bad: payload 保存闭包后的 Skill 列表，下一轮 replay 时会绕过 effective VFS 的 Skill baseline 派生。
+
+#### 6. Tests Required
+
+- Unit: patch replay 合并 VFS overlay、应用 mount directives，并断言 serialized payload 没有 `state` 字段。
+- Repository: requested command supersede、applied、failed 状态仍能保存和读取 patch payload。
+- Runtime: pending transition 的 event/context frame 使用 replay + normalizer 后的 final capability projection。
+
+#### 7. Implementation Boundary
+
+```rust
+let mut state = apply_runtime_context_patch(&base_capability_state, &command.transition.patch);
+normalize_capability_state_dimensions(&mut state, Some(effective_vfs), mcp_servers, &baseline);
+```
+
 `SessionLaunchPlanner` 不负责释放 turn claim 或清理 hook runtime。hook runtime
 准备失败时，错误返回到 `SessionLaunchExecutor::execute_constructed_launch`，由 executor
 统一调用 `TurnSupervisor::clear_turn_and_hook`，确保规划阶段不直接执行 turn 清理副作用。

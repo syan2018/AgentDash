@@ -21,7 +21,7 @@
 - `CapabilityResolver` 当前负责 tool / MCP / companion 维度，不负责 VFS / Skill / runtime surface；但 `capability/mod.rs` 注释已经把 VFS 投影列入目标职责。
 - `SessionConstructionPlan::validate_for_launch` 已要求 `capability_state.vfs.active == surface.vfs`、`capability_state.tool.mcp_servers == projections.mcp_servers`，说明构建阶段已有一致性 gate。
 - `SessionRuntime` / `SessionProfile` 缓存的是运行态 projection，不应成为 owner/context/VFS 解析事实源。
-- Runtime command 目前持有完整 `PendingCapabilityStateTransition.state` 快照，短期可继续使用，但需要在入队/应用前经过同一 normalizer，避免保存半派生状态。
+- Runtime command 需要从完整 after-state 快照收束为 typed patch / intent，并在 query / launch / live apply 时 replay 到 projection pipeline。
 
 ## Confirmed Facts
 
@@ -41,10 +41,10 @@
 - 必须在规划中覆盖完整重构终态，并按阶段区分本轮实现、后续 intent 化迁移、事实源边界收口、derived DTO 收口。
 - Skill baseline 派生必须由 normalizer 内的统一入口处理，供 session construction / context inspect / live transition 复用。
 - 统一入口必须保留现有行为：扫描 active VFS 中的 skill、合并 `extra_skill_dirs`、记录诊断、按 skill name 处理冲突。
-- live / pending runtime transition 入队前必须经过 normalizer，使 `PendingCapabilityStateTransition.state` 保存的是闭包完整的状态，而不是调用方手拼的半成品。
+- live / pending runtime transition 必须经过同一 replay + normalizer 链路，使 persisted command 表达 intent，runtime projection 表达闭包状态。
 - live / pending transition 的 VFS 派生 Skill 行为必须继续保留，并继续保留非 VFS/local skill 的合理继承语义。
 - Canvas 工具级测试必须覆盖可见 Canvas 后的 session meta、active VFS、Skill baseline、`capability_state_changed` 与 `canvas_presented` 事件结果。
-- 设计文档必须记录更长期的 typed runtime patch/event 模式，说明为什么本轮先保留完整 state 快照但收口 normalizer。
+- 设计文档必须记录 typed runtime patch/event 模式，说明为什么 runtime command store 保存 intent，而 runtime projection 由 pipeline 生成。
 - 不引入兼容性回退；以当前预研阶段的正确模型为准。
 
 ## Acceptance Criteria
@@ -64,7 +64,7 @@
 - 不重写 VFS provider、mount address 模型或 Canvas 资产模型。
 - 不调整数据库字段或 migration。
 - 不改变 Skill 文件格式、frontmatter 校验规则或 skill loader 的底层发现规则。
-- 不在 Phase 1 把 runtime command 持久化结构从完整 `CapabilityState` 快照迁移为 typed patch/event；该迁移属于 Phase 2，仍在完整重构矩阵内。
+- Phase 1 先建立 projection normalizer；Phase 2 在既有 runtime command payload 容器内迁移 typed patch/event。
 - 不处理非 Session runtime surface 的 Project / Story / Task preview surface 行为，除非实现中发现它们复用同一 bug 源。
 
 ## Open Questions

@@ -385,12 +385,17 @@ impl SessionLaunchExecutor {
 
         let mut final_capability_state = requested_runtime_commands
             .last()
-            .map(|command| command.transition.state.clone())
+            .map(|command| {
+                super::capability_state::apply_runtime_context_patch(
+                    &base_capability_state,
+                    &command.transition.patch,
+                )
+            })
             .unwrap_or_else(|| base_capability_state.clone());
         if let Some(base_vfs) = construction.surface.vfs.clone() {
             let effective_vfs = requested_runtime_commands
                 .last()
-                .and_then(|command| command.transition.state.vfs.active.as_ref())
+                .and_then(|command| command.transition.patch.vfs_overlay.as_ref())
                 .map(|pending_vfs| {
                     super::capability_state::merge_vfs_overlay(base_vfs.clone(), pending_vfs)
                 })
@@ -405,7 +410,8 @@ impl SessionLaunchExecutor {
         }
         if let Some(pending_mcp) = requested_runtime_commands
             .last()
-            .map(|command| command.transition.state.tool.mcp_servers.clone())
+            .and_then(|command| command.transition.patch.tool.as_ref())
+            .map(|tool| tool.mcp_servers.clone())
         {
             construction.projections.mcp_servers = pending_mcp.clone();
             final_capability_state.tool.mcp_servers = pending_mcp;
@@ -573,6 +579,7 @@ impl SessionLaunchExecutor {
                     &turn_id,
                     hook_session.as_ref(),
                     base_capability_state,
+                    &capability_state,
                     &launch_execution
                         .runtime_commands
                         .pending_capability_transitions,

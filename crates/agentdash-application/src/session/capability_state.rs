@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use super::types::{CapabilityState, PendingCapabilityStateTransition};
+use super::types::{CapabilityState, PendingCapabilityStateTransition, RuntimeContextPatch};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,11 +201,36 @@ impl<'a> RuntimeContextTransition<'a> {
             lifecycle_key: self.lifecycle_key?.to_string(),
             phase_node: self.phase_node.to_string(),
             capability_keys: self.capability_keys.clone(),
-            state: self.after_state.clone(),
+            patch: RuntimeContextPatch::from_target_state(self.after_state),
             created_at,
             source_turn_id,
         })
     }
+}
+
+pub fn apply_runtime_context_patch(
+    base_state: &CapabilityState,
+    patch: &RuntimeContextPatch,
+) -> CapabilityState {
+    let mut state = base_state.clone();
+    if let Some(tool) = patch.tool.as_ref() {
+        state.tool = tool.clone();
+    }
+    if let Some(companion) = patch.companion.as_ref() {
+        state.companion = companion.clone();
+    }
+    if let Some(overlay) = patch.vfs_overlay.as_ref() {
+        state.vfs.active = Some(match state.vfs.active.take() {
+            Some(base_vfs) => merge_vfs_overlay(base_vfs, overlay),
+            None => overlay.clone(),
+        });
+    }
+    if !patch.mount_directives.is_empty() {
+        let mut vfs = state.vfs.active.take().unwrap_or_default();
+        apply_mount_directives(&mut vfs, &patch.mount_directives);
+        state.vfs.active = Some(vfs);
+    }
+    state
 }
 
 pub fn compose_vfs_with_overlay_and_directives(
@@ -512,5 +537,80 @@ mod tests {
         assert!(payload.get("tool_clusters").is_none());
         assert!(payload.get("mcp_servers").is_none());
         assert!(payload.get("mounts").is_none());
+    }
+
+    #[test]
+    fn runtime_context_patch_replays_vfs_overlay_without_persisting_full_state() {
+        let mut base = CapabilityState {
+            vfs: agentdash_spi::VfsDimension {
+                active: Some(Vfs {
+                    mounts: vec![mount("workspace", "relay_fs")],
+                    default_mount_id: Some("workspace".to_string()),
+                    source_project_id: None,
+                    source_story_id: None,
+                    links: Vec::new(),
+                }),
+            },
+            ..Default::default()
+        };
+        base.tool
+            .enabled_clusters
+            .insert(agentdash_spi::ToolCluster::Read);
+
+        let mut target = CapabilityState::from_clusters([agentdash_spi::ToolCluster::Write]);
+        target.vfs.active = Some(Vfs {
+            mounts: vec![mount("review", "inline_fs")],
+            default_mount_id: None,
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        });
+        let mut patch = RuntimeContextPatch::from_target_state(&target);
+        patch
+            .mount_directives
+            .push(MountDirective::SetDefaultMount {
+                mount_id: Some("review".to_string()),
+            });
+
+        let replayed = apply_runtime_context_patch(&base, &patch);
+        let replayed_vfs = replayed.vfs.active.as_ref().expect("active vfs");
+        let mount_ids = replayed_vfs
+            .mounts
+            .iter()
+            .map(|mount| mount.id.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            mount_ids,
+            BTreeSet::from(["review", "workspace"]),
+            "patch replay 应把 pending VFS 作为 overlay 合并到 construction base VFS"
+        );
+        assert_eq!(replayed_vfs.default_mount_id.as_deref(), Some("review"));
+        assert!(
+            replayed
+                .tool
+                .enabled_clusters
+                .contains(&agentdash_spi::ToolCluster::Write)
+        );
+        assert!(
+            !replayed
+                .tool
+                .enabled_clusters
+                .contains(&agentdash_spi::ToolCluster::Read)
+        );
+        assert_eq!(apply_runtime_context_patch(&base, &patch), replayed);
+
+        let serialized = serde_json::to_value(PendingCapabilityStateTransition {
+            id: "pending-patch".to_string(),
+            run_id: Uuid::new_v4(),
+            lifecycle_key: "dev".to_string(),
+            phase_node: "review".to_string(),
+            capability_keys: BTreeSet::new(),
+            patch,
+            created_at: 1,
+            source_turn_id: None,
+        })
+        .expect("transition serializes");
+        assert!(serialized.get("patch").is_some());
+        assert!(serialized.get("state").is_none());
     }
 }

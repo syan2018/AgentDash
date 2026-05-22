@@ -32,7 +32,8 @@ use super::super::hub_support::{
 use super::super::local_workspace_vfs;
 use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
-    PendingCapabilityStateTransition, SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    PendingCapabilityStateTransition, RuntimeContextPatch, SessionBootstrapState,
+    SessionExecutionState, UserPromptInput,
 };
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
@@ -890,9 +891,17 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         .iter()
         .find(|command| command.transition_id == "transition-skill-vfs")
         .expect("pending transition should exist");
+    let payload = serde_json::to_value(&command.transition).expect("transition serializes");
+    assert!(payload.get("state").is_none());
     assert_eq!(
-        command.transition.state.skill.skills,
-        vec![canvas_skill_entry()]
+        command
+            .transition
+            .patch
+            .vfs_overlay
+            .as_ref()
+            .and_then(|vfs| vfs.mounts.first())
+            .map(|mount| mount.id.as_str()),
+        Some("cvs-demo")
     );
 
     let events = hub
@@ -967,6 +976,9 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         source_story_id: None,
         links: Vec::new(),
     };
+    target_flow.tool.mcp_servers = vec![target_mcp];
+    target_flow.vfs.active = Some(pending_vfs);
+
     hub.enqueue_pending_capability_state_transition(
         &session.id,
         PendingCapabilityStateTransition {
@@ -975,11 +987,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::from(["file_write".to_string()]),
-            state: {
-                target_flow.tool.mcp_servers = vec![target_mcp];
-                target_flow.vfs.active = Some(pending_vfs);
-                target_flow
-            },
+            patch: RuntimeContextPatch::from_target_state(&target_flow),
             created_at: 1,
             source_turn_id: None,
         },
@@ -2255,7 +2263,9 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             lifecycle_key: "dev".to_string(),
             phase_node: "review".to_string(),
             capability_keys: std::collections::BTreeSet::new(),
-            state: agentdash_spi::CapabilityState::default(),
+            patch: RuntimeContextPatch::from_target_state(
+                &agentdash_spi::CapabilityState::default(),
+            ),
             created_at: 1,
             source_turn_id: None,
         },

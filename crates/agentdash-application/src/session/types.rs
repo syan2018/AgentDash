@@ -1,11 +1,13 @@
 use std::collections::{BTreeSet, HashMap};
 
 use agentdash_agent_protocol::ContentBlock;
+use agentdash_domain::workflow::MountDirective;
 use serde::{Deserialize, Serialize};
 
 use agentdash_domain::session_binding::StorySessionId;
 pub use agentdash_spi::CapabilityState;
 use agentdash_spi::PromptPayload;
+use agentdash_spi::{CompanionDimension, ToolDimension, Vfs};
 use uuid::Uuid;
 
 /// 纯用户输入 — HTTP 反序列化的目标。
@@ -21,10 +23,10 @@ pub struct UserPromptInput {
     pub executor_config: Option<agentdash_spi::AgentConfig>,
 }
 
-/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的切换。
+/// PhaseNode 已激活但当前没有 live turn 可热更新时，写入 runtime command store 的意图。
 ///
-/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把最后一个 state
-/// 作为本轮生效状态，并将 command 标记为 applied。
+/// 下一次 prompt 进入 pipeline 时会按顺序消费 requested runtime commands，把 patch replay
+/// 到 construction base projection 上，再由 capability projection normalizer 补齐派生维度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingCapabilityStateTransition {
@@ -33,10 +35,38 @@ pub struct PendingCapabilityStateTransition {
     pub lifecycle_key: String,
     pub phase_node: String,
     pub capability_keys: BTreeSet<String>,
-    pub state: CapabilityState,
+    pub patch: RuntimeContextPatch,
     pub created_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_turn_id: Option<String>,
+}
+
+/// Runtime command store 持久化的上下文变更意图。
+///
+/// 这里保存的是可解释 patch，而不是完整 `CapabilityState` 快照。Skill baseline、
+/// effective VFS、runtime surface 等派生维度在 replay 后由 projection pipeline 生成。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeContextPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolDimension>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion: Option<CompanionDimension>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vfs_overlay: Option<Vfs>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mount_directives: Vec<MountDirective>,
+}
+
+impl RuntimeContextPatch {
+    pub fn from_target_state(state: &CapabilityState) -> Self {
+        Self {
+            tool: Some(state.tool.clone()),
+            companion: Some(state.companion.clone()),
+            vfs_overlay: state.vfs.active.clone(),
+            mount_directives: Vec::new(),
+        }
+    }
 }
 
 /// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。

@@ -159,4 +159,47 @@ describe("CanvasRuntimePreview VFS image assets", () => {
     expect(cache.uriCache.size).toBe(0);
     expect(cache.pending.size).toBe(0);
   });
+
+  it("keeps separate preview generation asset caches independent", async () => {
+    const firstGenerationCache = createRuntimeAssetUrlCache();
+    const secondGenerationCache = createRuntimeAssetUrlCache();
+    const readBlob = vi.fn(async () => new Blob(["image"], { type: "image/png" }));
+    const createObjectUrl = vi.fn()
+      .mockReturnValueOnce("blob:generation-1")
+      .mockReturnValueOnce("blob:generation-2");
+    const revokeObjectUrl = vi.fn();
+
+    const firstUrl = await resolveRuntimeAssetUrl({
+      surfaceRef: "session-runtime:session-1",
+      uri: "docs-media://assets/doc-1/source.png",
+      cache: firstGenerationCache,
+      readBlob,
+      createObjectUrl,
+    });
+    const secondUrl = await resolveRuntimeAssetUrl({
+      surfaceRef: "session-runtime:session-1",
+      uri: "docs-media://assets/doc-1/source.png",
+      cache: secondGenerationCache,
+      readBlob,
+      createObjectUrl,
+    });
+
+    revokeAllRuntimeAssetUrls(firstGenerationCache, revokeObjectUrl);
+    const stillVisibleUrl = await resolveRuntimeAssetUrl({
+      surfaceRef: "session-runtime:session-1",
+      uri: "docs-media://assets/doc-1/source.png",
+      cache: secondGenerationCache,
+      readBlob,
+      createObjectUrl,
+    });
+
+    expect(firstUrl).toBe("blob:generation-1");
+    expect(secondUrl).toBe("blob:generation-2");
+    expect(stillVisibleUrl).toBe("blob:generation-2");
+    expect(readBlob).toHaveBeenCalledTimes(2);
+    expect(createObjectUrl).toHaveBeenCalledTimes(2);
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:generation-1");
+    expect(secondGenerationCache.urls.has("blob:generation-2")).toBe(true);
+  });
 });

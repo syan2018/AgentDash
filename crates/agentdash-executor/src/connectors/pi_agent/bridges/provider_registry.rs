@@ -10,7 +10,7 @@ use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WirePro
 use futures::future::BoxFuture;
 use tokio::sync::RwLock;
 
-type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
+pub(crate) type BridgeFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmBridge> + Send + Sync>;
 
 pub(crate) const CONTEXT_WINDOW_STANDARD: u64 = 200_000;
 
@@ -141,6 +141,25 @@ impl ProviderEntry {
 
     pub(crate) fn create_bridge(&self, model_id: &str) -> Arc<dyn LlmBridge> {
         (self.bridge_factory)(model_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        provider_id: impl Into<String>,
+        provider_name: impl Into<String>,
+        default_model: impl Into<String>,
+        bridge_factory: BridgeFactory,
+        configured_models: Vec<ModelMeta>,
+    ) -> Self {
+        Self::new(
+            provider_id,
+            provider_name,
+            default_model.into(),
+            bridge_factory,
+            None,
+            configured_models,
+            HashSet::new(),
+        )
     }
 
     async fn load_models_raw(&self) -> Vec<ModelMeta> {

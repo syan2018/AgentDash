@@ -64,6 +64,37 @@ impl LlmBridge for RecordingBridge {
     }
 }
 
+#[derive(Default)]
+struct ModelRecordingState {
+    requests: StdMutex<Vec<(String, usize)>>,
+}
+
+struct ModelRecordingBridge {
+    model_id: String,
+    state: Arc<ModelRecordingState>,
+}
+
+#[async_trait::async_trait]
+impl LlmBridge for ModelRecordingBridge {
+    async fn stream_complete(
+        &self,
+        request: agentdash_agent::BridgeRequest,
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = agentdash_agent::StreamChunk> + Send>> {
+        self.state
+            .requests
+            .lock()
+            .expect("model recording bridge lock poisoned")
+            .push((self.model_id.clone(), request.messages.len()));
+        Box::pin(tokio_stream::once(agentdash_agent::StreamChunk::Done(
+            agentdash_agent::BridgeResponse {
+                message: agentdash_agent::AgentMessage::assistant("done"),
+                raw_content: vec![agentdash_agent::ContentPart::text("done")],
+                usage: agentdash_agent::TokenUsage::default(),
+            },
+        )))
+    }
+}
+
 struct StaticTool {
     name: String,
 }
@@ -1376,6 +1407,88 @@ async fn prompt_refreshes_system_prompt_when_identity_prompt_changes() {
 }
 
 #[tokio::test]
+async fn prompt_rebuilds_live_agent_when_model_selection_changes() {
+    let state = Arc::new(ModelRecordingState::default());
+    let factory_state = state.clone();
+    let bridge_factory: super::super::bridges::provider_registry::BridgeFactory =
+        Arc::new(move |model_id: &str| {
+            Arc::new(ModelRecordingBridge {
+                model_id: model_id.to_string(),
+                state: factory_state.clone(),
+            })
+        });
+
+    let mut connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
+    connector.add_provider(
+        super::super::bridges::provider_registry::ProviderEntry::new_for_test(
+            "test-provider",
+            "Test Provider",
+            "model-a",
+            bridge_factory,
+            vec![
+                super::super::bridges::provider_registry::ModelMeta::from_id("model-a"),
+                super::super::bridges::provider_registry::ModelMeta::from_id("model-b"),
+            ],
+        ),
+    );
+
+    let make_context = |turn_id: &str, model_id: &str| -> ExecutionContext {
+        let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+        executor_config.provider_id = Some("test-provider".to_string());
+        executor_config.model_id = Some(model_id.to_string());
+        ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: turn_id.to_string(),
+                working_directory: PathBuf::from("/tmp/test-workspace"),
+                environment_variables: HashMap::new(),
+                executor_config,
+                mcp_servers: Vec::new(),
+                vfs: Some(test_vfs("/tmp/test-workspace")),
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame::default(),
+        }
+    };
+
+    let mut stream = connector
+        .prompt(
+            "session-model-switch",
+            None,
+            &PromptPayload::Text("first".to_string()),
+            make_context("turn-a", "model-a"),
+        )
+        .await
+        .expect("turn 1 should start");
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    let mut stream = connector
+        .prompt(
+            "session-model-switch",
+            None,
+            &PromptPayload::Text("second".to_string()),
+            make_context("turn-b", "model-b"),
+        )
+        .await
+        .expect("turn 2 should start");
+    while let Some(next) = stream.next().await {
+        next.expect("stream item should succeed");
+    }
+
+    let requests = state
+        .requests
+        .lock()
+        .expect("model recording bridge lock poisoned")
+        .clone();
+    assert_eq!(
+        requests,
+        vec![("model-a".to_string(), 1), ("model-b".to_string(), 3)],
+        "切换模型后应使用新 bridge，同时保留上一轮会话消息"
+    );
+}
+
+#[tokio::test]
 async fn update_session_tools_replaces_all_tools() {
     let connector = PiAgentConnector::new(Arc::new(NoopBridge), "系统提示");
 
@@ -1394,6 +1507,10 @@ async fn update_session_tools_replaces_all_tools() {
             agent,
             tools: vec![old_tool],
             last_identity_prompt: None,
+            model_selection: PiAgentModelSelection {
+                provider_id: None,
+                model_id: None,
+            },
         },
     );
 

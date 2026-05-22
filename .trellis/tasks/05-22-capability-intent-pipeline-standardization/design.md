@@ -101,6 +101,22 @@ pub trait CapabilityDimensionModule {
 
 这些 modules 是替换后的生产单元。旧 helper 中的维度分支逻辑迁移到 modules 后，helper 只保留为 registry dispatch façade 或直接改名为新 replay 入口。
 
+## Payload Validation Boundary
+
+主干 envelope 使用 `serde_json::Value` 只解决持久化和扩展点问题，不把动态 JSON 传播到维度业务逻辑内部。每个 built-in module 在处理 declaration / effect 前都要完成：
+
+```text
+RuntimeCapabilityEffectRecord
+  -> match dimension + effect_type
+  -> deserialize payload into module-owned typed payload
+  -> validate required fields and semantic invariants
+  -> replay typed payload
+```
+
+例如 `dimension=mcp` / `effect_type=set_server_set` 的 payload 在 MCP module 内 decode 为强类型 `SetMcpServerSetEffect`，再写入 `CapabilityState.tool.mcp_servers`；`dimension=vfs` / `effect_type=apply_mount_operations` 的 payload 在 VFS module 内 decode 为 `ApplyMountOperationsEffect`，再按顺序应用 mount directives。
+
+typed payload 结构属于 module 内部边界；中心主干只要求 record envelope 完整、dimension 已注册、effect/declaration type 被对应 module 接受。这样既保留 plugin/future module 扩展性，也符合高频业务路径在执行前类型化的项目约定。
+
 ## Current Dimension Matrix
 
 | 维度 | Declaration Records | Contribution / Resolver | Runtime Effect Records | Projection | 首版模块状态 |
@@ -142,6 +158,34 @@ replay_runtime_capability_transition(base_state, transition, registry)
 ```
 
 旧 `apply_runtime_context_patch` / `replay_runtime_context_patch` 命名与类型在生产代码中退出。测试 helper 如需构造 payload，也使用 `RuntimeCapabilityTransition` record builder。
+
+## Pending Transition Fold
+
+runtime command store 可能存在多个 `requested` transition。旧 patch 链路部分 callsite 只读取最后一个 command；新 record 模型必须把所有 requested transitions 按 store 返回顺序 fold 到 base projection 上：
+
+```text
+construction base CapabilityState
+  -> replay transition[0].effects
+  -> projection normalize
+  -> replay transition[1].effects
+  -> projection normalize
+  -> ...
+  -> final projection
+```
+
+VFS/mount effect 尤其依赖这个语义，因为 `apply_mount_operations` 是有序操作，不是单纯 replacement。Tool / MCP / companion 首版 effect 可以保持 replacement 语义；它们仍通过同一个 fold 入口 replay，避免 construction、context query、next-turn launch 和 pending apply event 各自读取不同 payload 字段。
+
+统一入口建议返回 replay 后的辅助事实：
+
+```rust
+pub struct RuntimeCapabilityReplay {
+    pub capability_state: CapabilityState,
+    pub effective_vfs: Option<Vfs>,
+    pub effective_mcp_servers: Option<Vec<SessionMcpServer>>,
+}
+```
+
+construction finalize 只消费这个 replay 结果，再调用 projection normalizer 派生 Skill baseline、guidelines 与 runtime surface。pending apply event 也使用同一 fold 过程计算中间 before/after state，保持 event/context frame 与 launch projection 一致。
 
 ## Ordering
 

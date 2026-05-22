@@ -10,7 +10,6 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { StatusDot } from "@agentdash/ui";
 import type {
-  ExecutionVfs,
   ResolvedMountSummary,
   ResolvedVfsSurface,
   ResolvedVfsSurfaceSource,
@@ -24,8 +23,6 @@ export interface VfsBrowserProps {
   surface?: ResolvedVfsSurface | null;
   /** 在组件内部先 resolve surface（Project/Story/Agent Knowledge 预览入口） */
   source?: ResolvedVfsSurfaceSource;
-  /** 仅展示 mount 摘要；若未提供 surface/source，则无法进行文件浏览 */
-  vfs?: ExecutionVfs | null;
   /** 限制当前入口可见的 mount，适用于 Agent 知识库等专用入口 */
   visibleMountIds?: string[];
   /** 初始选中的 mount id */
@@ -60,7 +57,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
 export function VfsBrowser({
   surface,
   source,
-  vfs,
   visibleMountIds,
   initialMountId,
   initialFilePath,
@@ -108,12 +104,7 @@ export function VfsBrowser({
     [resolvedSurface, visibleSet],
   );
 
-  const filteredVfs = useMemo(
-    () => filterVfs(vfs ?? null, visibleSet),
-    [vfs, visibleSet],
-  );
-
-  const mounts = filteredSurface?.mounts ?? filteredVfs?.mounts ?? [];
+  const mounts = filteredSurface?.mounts ?? [];
   const hasBrowsableSurface = Boolean(filteredSurface?.surface_ref);
 
   if (loading) {
@@ -143,7 +134,7 @@ export function VfsBrowser({
   if (!hasBrowsableSurface) {
     return (
       <div className="space-y-2">
-        <MountSummaryList mounts={mounts} defaultMountId={filteredVfs?.default_mount_id ?? null} />
+        <MountSummaryList mounts={mounts} defaultMountId={filteredSurface?.default_mount_id ?? null} />
         <div className="rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground">
           当前入口只提供 mount 摘要，未附带可浏览的 resolved surface。
         </div>
@@ -156,14 +147,13 @@ export function VfsBrowser({
       <div className="border-b border-border bg-secondary/20 px-3 py-2">
         <MountSummaryList
           mounts={mounts}
-          defaultMountId={filteredSurface?.default_mount_id ?? filteredVfs?.default_mount_id ?? null}
+          defaultMountId={filteredSurface?.default_mount_id ?? null}
           compact
         />
       </div>
       <div className={browserHeightClassName}>
         <VfsBrowserPanel
           surface={filteredSurface}
-          vfs={filteredVfs}
           initialMountId={initialMountId}
           initialFilePath={initialFilePath}
           rootPath={rootPath}
@@ -188,16 +178,6 @@ function filterSurface(
   };
 }
 
-function filterVfs(vfs: ExecutionVfs | null, visibleSet: Set<string> | null): ExecutionVfs | null {
-  if (!vfs || !visibleSet) return vfs;
-  const mounts = vfs.mounts.filter((mount) => visibleSet.has(mount.id));
-  return {
-    ...vfs,
-    mounts,
-    default_mount_id: normalizeDefaultMount(vfs.default_mount_id, mounts),
-  };
-}
-
 function normalizeDefaultMount<T extends { id: string }>(
   defaultMountId: string | null | undefined,
   mounts: T[],
@@ -213,7 +193,7 @@ function MountSummaryList({
   defaultMountId,
   compact = false,
 }: {
-  mounts: Array<ResolvedMountSummary | ExecutionVfs["mounts"][number]>;
+  mounts: ResolvedMountSummary[];
   defaultMountId: string | null;
   compact?: boolean;
 }) {
@@ -236,7 +216,7 @@ function MountSummaryItem({
   isDefault,
   compact,
 }: {
-  mount: ResolvedMountSummary | ExecutionVfs["mounts"][number];
+  mount: ResolvedMountSummary;
   isDefault: boolean;
   compact: boolean;
 }) {
@@ -271,16 +251,13 @@ function MountSummaryItem({
         )}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-        {"root_ref" in mount && mount.root_ref && (
-          <span className="min-w-0 truncate font-mono">{mount.root_ref}</span>
-        )}
         <span>{capabilities.join(" / ")}</span>
       </div>
     </div>
   );
 }
 
-function MountStatusDot({ mount }: { mount: ResolvedMountSummary | ExecutionVfs["mounts"][number] }) {
+function MountStatusDot({ mount }: { mount: ResolvedMountSummary }) {
   if (mount.provider === "relay_fs" && "backend_online" in mount) {
     if (mount.backend_online === true) {
       return <StatusDot tone="success" title="Backend 在线" />;

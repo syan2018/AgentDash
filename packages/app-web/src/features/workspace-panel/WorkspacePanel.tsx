@@ -27,7 +27,6 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       ownerProjectName,
       executorSummary,
       runtimeSurface,
-      vfs,
       hookRuntime,
       sessionCapabilities,
       workflowRuns,
@@ -99,14 +98,13 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
       ownerProjectName,
       executorSummary,
       runtimeSurface,
-      vfs,
       hookRuntime,
       sessionCapabilities,
       workflowRuns,
       activeCanvasId,
     }), [
       sessionId, contextSnapshot, ownerStory, ownerProjectName,
-      executorSummary, runtimeSurface, vfs, hookRuntime,
+      executorSummary, runtimeSurface, hookRuntime,
       sessionCapabilities, workflowRuns, activeCanvasId,
     ]);
 

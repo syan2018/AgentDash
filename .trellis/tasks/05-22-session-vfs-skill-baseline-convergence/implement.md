@@ -90,10 +90,10 @@
 
 本阶段执行：
 
-- [ ] `runtime_surface`、guidelines、session_capabilities、tool schema delta 都从 final capability projection 派生。
-- [ ] 审查 Project / Story / Task preview surface：复用 Session runtime 语义的迁入同一 projection 边界，语义不同的显式分层。
-- [ ] 前端 VFS browser / workspace panel / session context 只消费 projection DTO，不自行拼 mount 或推断 capability visibility。
-- [ ] 增加前后端 contract 测试，覆盖 final projection DTO 的一致性。
+- [x] `runtime_surface`、guidelines、session_capabilities、tool schema delta 都从 final capability projection 派生。
+- [x] 审查 Project / Story / Task preview surface：复用 Session runtime 语义的迁入同一 projection 边界，语义不同的显式分层。
+- [x] 前端 VFS browser / workspace panel / session context 只消费 projection DTO，不自行拼 mount 或推断 capability visibility。
+- [x] 增加前后端 contract 测试，覆盖 final projection DTO 的一致性。
 
 完成标准：
 
@@ -136,6 +136,13 @@ cargo test -p agentdash-application session::launch
 cargo check -p agentdash-api
 cargo test -p agentdash-api session_context
 cargo test -p agentdash-application session::construction
+pnpm --filter app-web typecheck
+pnpm --filter app-web lint
+pnpm --filter app-web test -- ContextOverviewTab.projection.test.tsx
+pnpm --filter app-web test -- SessionPage.hook-runtime.test.tsx
+pnpm --filter app-web test -- vfs-browser-panel.test.ts
+python ./.trellis/scripts/task.py validate .trellis/tasks/05-22-session-vfs-skill-baseline-convergence
+git diff --check
 ```
 
 ## Review Gates

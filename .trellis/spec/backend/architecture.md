@@ -39,6 +39,8 @@
 
 Repository bootstrap 负责 PostgreSQL repository 实例化、`RepositorySet` 聚合、session persistence port、auth session service，以及启动期 Shared Library seed。这样 API composition root 依赖的是装配结果，而不是每个 repository 的具体初始化细节。
 
+Relay bootstrap 负责创建 backend registry、backend runtime event channel、shell output registry 与 terminal cache。VFS bootstrap 基于 repository ports、session persistence、relay registry 和插件 mount providers 构建 mount provider registry、VFS service、mutation dispatcher、runtime tool provider 与 materializing MCP relay。这样 session runtime 装配只消费 VFS/relay 的明确输出。
+
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。

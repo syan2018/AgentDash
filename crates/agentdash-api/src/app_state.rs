@@ -4,7 +4,6 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
-use crate::mount_providers::RelayFsMountProvider;
 use crate::plugins::{
     builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
 };
@@ -30,10 +29,8 @@ use agentdash_application::session::{
 };
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
-use agentdash_application::vfs::tools::provider::{
-    RelayRuntimeToolProvider, SessionToolServices, SharedSessionToolServicesHandle,
-};
-use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
+use agentdash_application::vfs::MountProviderRegistry;
+use agentdash_application::vfs::tools::provider::SessionToolServices;
 use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
 use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
@@ -140,52 +137,6 @@ impl AppState {
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
 
-        let backend_registry = BackendRegistry::new();
-        let (backend_runtime_events, _) =
-            broadcast::channel(BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY);
-        let mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider> = backend_registry.clone();
-        let setup_action_transport: Arc<
-            dyn agentdash_application::backend_transport::BackendTransport,
-        > = backend_registry.clone();
-        let shell_output_registry = agentdash_relay::ShellOutputRegistry::new();
-        let terminal_cache =
-            agentdash_application::session::terminal_cache::SessionTerminalCache::new();
-
-        let mut mount_registry_builder = MountProviderRegistryBuilder::new()
-            .with_builtins(
-                repos.lifecycle_run_repo.clone(),
-                repos.canvas_repo.clone(),
-                repos.inline_file_repo.clone(),
-                repos.skill_asset_repo.clone(),
-                session_persistence.clone(),
-            )
-            .register(Arc::new(RelayFsMountProvider::new(
-                backend_registry.clone(),
-            )));
-
-        for provider in plugin_registration.mount_providers {
-            tracing::info!("注册插件 MountProvider: {}", provider.provider_id());
-            mount_registry_builder = mount_registry_builder.register(provider);
-        }
-
-        let mount_provider_registry = Arc::new(mount_registry_builder.build());
-
-        let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
-        let vfs_mutation_dispatcher = Arc::new(VfsMutationDispatcher::new(
-            vfs_service.clone(),
-            repos.inline_file_repo.clone(),
-            mount_provider_registry.clone(),
-        ));
-        let session_services_handle = SharedSessionToolServicesHandle::default();
-
-        let inline_persister: Arc<
-            dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
-        > = Arc::new(
-            agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
-                repos.inline_file_repo.clone(),
-            ),
-        );
-
         let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
             mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
                 let port = std::env::var("PORT").unwrap_or_else(|_| "3001".into());
@@ -193,38 +144,33 @@ impl AppState {
             }),
         });
 
+        let relay_bootstrap =
+            crate::bootstrap::relay::build_relay_runtime(BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY);
+        let backend_registry = relay_bootstrap.backend_registry;
+        let backend_runtime_events = relay_bootstrap.backend_runtime_events;
+        let mcp_probe_relay = relay_bootstrap.mcp_probe_relay;
+        let setup_action_transport = relay_bootstrap.setup_action_transport;
+        let shell_output_registry = relay_bootstrap.shell_output_registry;
+        let terminal_cache = relay_bootstrap.terminal_cache;
+
+        let vfs_bootstrap = crate::bootstrap::vfs::build_vfs_kernel(
+            repos.clone(),
+            session_persistence.clone(),
+            backend_registry.clone(),
+            shell_output_registry.clone(),
+            platform_config.clone(),
+            plugin_registration.mount_providers,
+        );
+        let mount_provider_registry = vfs_bootstrap.mount_provider_registry;
+        let vfs_service = vfs_bootstrap.vfs_service;
+        let vfs_mutation_dispatcher = vfs_bootstrap.vfs_mutation_dispatcher;
+        let session_services_handle = vfs_bootstrap.session_services_handle;
+        let runtime_tool_provider = vfs_bootstrap.runtime_tool_provider;
+        let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
+
         let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
         let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
         let mut prompt_config: Option<(String, Vec<String>)> = None;
-        let materialization_transport = Arc::new(
-            crate::vfs_materialization::RelayVfsMaterializationTransport::new(
-                backend_registry.clone(),
-            ),
-        );
-        let materialization_service =
-            Arc::new(agentdash_application::vfs::VfsMaterializationService::new(
-                vfs_service.clone(),
-                materialization_transport.clone(),
-            ));
-
-        let runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider> =
-            Arc::new(
-                RelayRuntimeToolProvider::new(
-                    vfs_service.clone(),
-                    repos.clone(),
-                    session_services_handle.clone(),
-                    Some(inline_persister),
-                    platform_config.clone(),
-                )
-                .with_materialization_service(materialization_service.clone())
-                .with_shell_output_registry(shell_output_registry.clone()),
-            );
-        let mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider> = Arc::new(
-            crate::vfs_materialization::MaterializingMcpRelayProvider::new(
-                backend_registry.clone(),
-                materialization_service,
-            ),
-        );
 
         if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
             settings_repo: repos.settings_repo.clone(),

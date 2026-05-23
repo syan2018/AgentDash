@@ -28,7 +28,6 @@ use agentdash_application::session::{
     SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeBuilder,
     SessionRuntimeService, SessionTitleService,
 };
-use agentdash_application::shared_library::SharedLibraryService;
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::tools::provider::{
@@ -42,17 +41,6 @@ use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_infrastructure::{
-    PostgresAuthSessionRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresInlineFileRepository, PostgresLlmProviderRepository, PostgresMcpPresetRepository,
-    PostgresProjectAgentRepository, PostgresProjectBackendAccessRepository,
-    PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
-    PostgresProjectVfsMountRepository, PostgresRoutineExecutionRepository,
-    PostgresRoutineRepository, PostgresRuntimeHealthRepository, PostgresSessionBindingRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
-    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
-};
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
 
@@ -143,164 +131,14 @@ impl AppState {
         let plugin_registration = collect_plugin_registration(plugins)
             .map_err(|err| anyhow::anyhow!("插件注册失败: {err}"))?;
 
-        // 按依赖顺序初始化：projects → workspaces → stories → tasks
-        let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
-
-        let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
-
-        let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
-        workspace_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("workspaces 表初始化失败: {e}"))?;
-
-        let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
-        let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
-
-        let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
-        let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
-
-        let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
-        let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
-        runtime_health_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("runtime_health 表初始化失败: {e}"))?;
-        let project_backend_access_repo =
-            Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
-        project_backend_access_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("project_backend_access 表初始化失败: {e}"))?;
-
-        let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
-
-        let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
-
-        let shared_library_repo = Arc::new(PostgresSharedLibraryRepository::new(pool.clone()));
-        shared_library_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("library_assets 表初始化失败: {e}"))?;
-        {
-            let service = SharedLibraryService::new(shared_library_repo.as_ref());
-            let seeded = service
-                .seed_builtin_assets(Default::default())
-                .await
-                .map_err(|e| anyhow::anyhow!("builtin Shared Library assets 初始化失败: {e}"))?;
-            tracing::info!(
-                seeded = seeded.len(),
-                "已同步 builtin Shared Library assets"
-            );
-        }
-
-        let project_extension_installation_repo = Arc::new(
-            PostgresProjectExtensionInstallationRepository::new(pool.clone()),
-        );
-        project_extension_installation_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("project_extension_installations 表初始化失败: {e}"))?;
-
-        let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
-        project_agent_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("project_agents 表初始化失败: {e}"))?;
-
-        let project_vfs_mount_repo = Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
-        project_vfs_mount_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("project_vfs_mounts 表初始化失败: {e}"))?;
-
-        let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
-        routine_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("routines 表初始化失败: {e}"))?;
-        let routine_execution_repo =
-            Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
-        routine_execution_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("routine_executions 表初始化失败: {e}"))?;
-
-        let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
-        llm_provider_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("llm_providers 表初始化失败: {e}"))?;
-
-        let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
-        let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
-
-        let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
-
-        let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
-        mcp_preset_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("mcp_presets 表初始化失败: {e}"))?;
-
-        let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
-        skill_asset_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("skill_assets 表初始化失败: {e}"))?;
-
-        let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
-        inline_file_repo
-            .initialize()
-            .await
-            .map_err(|e| anyhow::anyhow!("inline_fs_files 表初始化失败: {e}"))?;
-
-        // RepositorySet —— 提前构造,供 build_pi_agent_connector / RoutineExecutor / AppState 共用
-        let repos = RepositorySet {
-            project_repo: project_repo.clone(),
-            canvas_repo: canvas_repo.clone(),
-            workspace_repo: workspace_repo.clone(),
-            story_repo: story_repo.clone(),
-            state_change_repo: state_change_repo.clone(),
-            session_binding_repo: session_binding_repo.clone(),
-            backend_repo: backend_repo.clone(),
-            runtime_health_repo: runtime_health_repo.clone(),
-            project_backend_access_repo: project_backend_access_repo.clone(),
-            backend_workspace_inventory_repo: project_backend_access_repo.clone(),
-            auth_session_repo: auth_session_repo.clone(),
-            user_directory_repo: user_directory_repo.clone(),
-            settings_repo: settings_repo.clone(),
-            shared_library_repo: shared_library_repo.clone(),
-            project_extension_installation_repo: project_extension_installation_repo.clone(),
-            llm_provider_repo: llm_provider_repo.clone(),
-            mcp_preset_repo: mcp_preset_repo.clone(),
-            skill_asset_repo: skill_asset_repo.clone(),
-            project_agent_repo: project_agent_repo.clone(),
-            project_vfs_mount_repo: project_vfs_mount_repo.clone(),
-            workflow_definition_repo: workflow_repo.clone(),
-            workflow_template_install_repo: workflow_repo.clone(),
-            lifecycle_definition_repo: workflow_repo.clone(),
-            activity_lifecycle_definition_repo: workflow_repo.clone(),
-            activity_execution_claim_repo: workflow_repo.clone(),
-            lifecycle_run_repo: workflow_repo.clone(),
-            routine_repo: routine_repo.clone(),
-            routine_execution_repo: routine_execution_repo.clone(),
-            inline_file_repo: inline_file_repo.clone(),
-        };
-
-        let plugin_asset_count = plugin_registration.library_asset_seeds.len();
-        if plugin_asset_count > 0 {
-            let service = SharedLibraryService::new(shared_library_repo.as_ref());
-            let seeded = service
-                .seed_plugin_embedded_assets(plugin_registration.library_asset_seeds.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("plugin embedded library assets 初始化失败: {e}"))?;
-            tracing::info!(
-                declared = plugin_asset_count,
-                seeded = seeded.len(),
-                "已同步 plugin embedded Shared Library assets"
-            );
-        }
+        let repository_bootstrap = crate::bootstrap::repositories::build_repositories(
+            pool,
+            plugin_registration.library_asset_seeds.clone(),
+        )
+        .await?;
+        let repos = repository_bootstrap.repos;
+        let auth_session_service = repository_bootstrap.auth_session_service;
+        let session_persistence = repository_bootstrap.session_persistence;
 
         let backend_registry = BackendRegistry::new();
         let (backend_runtime_events, _) =
@@ -315,11 +153,11 @@ impl AppState {
 
         let mut mount_registry_builder = MountProviderRegistryBuilder::new()
             .with_builtins(
-                workflow_repo.clone(),
-                canvas_repo.clone(),
-                inline_file_repo.clone(),
-                skill_asset_repo.clone(),
-                session_repo.clone(),
+                repos.lifecycle_run_repo.clone(),
+                repos.canvas_repo.clone(),
+                repos.inline_file_repo.clone(),
+                repos.skill_asset_repo.clone(),
+                session_persistence.clone(),
             )
             .register(Arc::new(RelayFsMountProvider::new(
                 backend_registry.clone(),
@@ -335,7 +173,7 @@ impl AppState {
         let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
         let vfs_mutation_dispatcher = Arc::new(VfsMutationDispatcher::new(
             vfs_service.clone(),
-            inline_file_repo.clone(),
+            repos.inline_file_repo.clone(),
             mount_provider_registry.clone(),
         ));
         let session_services_handle = SharedSessionToolServicesHandle::default();
@@ -344,7 +182,7 @@ impl AppState {
             dyn agentdash_application::vfs::inline_persistence::InlineContentPersister,
         > = Arc::new(
             agentdash_application::vfs::inline_persistence::DbInlineContentPersister::new(
-                inline_file_repo.clone(),
+                repos.inline_file_repo.clone(),
             ),
         );
 
@@ -389,8 +227,8 @@ impl AppState {
         );
 
         if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
-            settings_repo: settings_repo.clone(),
-            llm_provider_repo: llm_provider_repo.clone(),
+            settings_repo: repos.settings_repo.clone(),
+            llm_provider_repo: repos.llm_provider_repo.clone(),
         })
         .await
         {
@@ -417,19 +255,19 @@ impl AppState {
 
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let hook_provider = Arc::new(AppExecutionHookProvider::new(
-            project_repo.clone(),
-            story_repo.clone(),
-            session_binding_repo.clone(),
-            workflow_repo.clone(),
-            workflow_repo.clone(),
-            workflow_repo.clone(),
-            inline_file_repo.clone(),
+            repos.project_repo.clone(),
+            repos.story_repo.clone(),
+            repos.session_binding_repo.clone(),
+            repos.workflow_definition_repo.clone(),
+            repos.activity_lifecycle_definition_repo.clone(),
+            repos.lifecycle_run_repo.clone(),
+            repos.inline_file_repo.clone(),
         ));
         let extra_skill_dirs = plugin_registration.extra_skill_dirs.clone();
         let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
             connector.clone(),
             Some(hook_provider.clone()),
-            session_repo,
+            session_persistence.clone(),
         )
         .with_vfs_service(vfs_service.clone())
         .with_extra_skill_dirs(plugin_registration.extra_skill_dirs)
@@ -506,9 +344,10 @@ impl AppState {
 
         let lock_map = Arc::new(TaskLockMap::new());
 
-        let project_repo_port: Arc<dyn ProjectRepository> = project_repo.clone();
-        let state_change_repo_port: Arc<dyn StateChangeRepository> = state_change_repo.clone();
-        let story_repo_port: Arc<dyn StoryRepository> = story_repo.clone();
+        let project_repo_port: Arc<dyn ProjectRepository> = repos.project_repo.clone();
+        let state_change_repo_port: Arc<dyn StateChangeRepository> =
+            repos.state_change_repo.clone();
+        let story_repo_port: Arc<dyn StoryRepository> = repos.story_repo.clone();
 
         // 启动对账管线：Session → Task → Infrastructure（有序不可跳过）
         //
@@ -519,10 +358,12 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                session_binding_repo: session_binding_repo.clone(),
-                workflow_definition_repo: workflow_repo.clone(),
-                activity_lifecycle_definition_repo: workflow_repo.clone(),
-                lifecycle_run_repo: workflow_repo.clone(),
+                session_binding_repo: repos.session_binding_repo.clone(),
+                workflow_definition_repo: repos.workflow_definition_repo.clone(),
+                activity_lifecycle_definition_repo: repos
+                    .activity_lifecycle_definition_repo
+                    .clone(),
+                lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
             if report.has_errors() {

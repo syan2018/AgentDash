@@ -33,6 +33,12 @@
 | `agentdash-local` | 本机后端 |
 | `agentdash-local-tauri` | Tauri 桌面托管壳 |
 
+## AppState Bootstrap
+
+`agentdash-api/src/bootstrap/` 承载 API 宿主的装配切片。每个 bootstrap 模块接收启动期输入，返回后续装配真实需要的 output struct，让 `AppState::new_with_plugins` 表达高层构造顺序。
+
+Repository bootstrap 负责 PostgreSQL repository 实例化、`RepositorySet` 聚合、session persistence port、auth session service，以及启动期 Shared Library seed。这样 API composition root 依赖的是装配结果，而不是每个 repository 的具体初始化细节。
+
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。
@@ -49,4 +55,3 @@
 - [Quality Guidelines](./quality-guidelines.md)
 - [Logging Guidelines](./logging-guidelines.md)
 - [Runtime Gateway](./runtime-gateway.md)
-

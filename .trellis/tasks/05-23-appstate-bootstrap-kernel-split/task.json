@@ -3,7 +3,7 @@
   "name": "appstate-bootstrap-kernel-split",
   "title": "AppState Bootstrap 拆分",
   "description": "将 AppState::new_with_plugins 的系统装配拆成清晰的 bootstrap/kernel 模块，保持外部行为稳定。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

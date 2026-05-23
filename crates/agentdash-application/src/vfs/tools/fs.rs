@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+﻿use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use agentdash_spi::Vfs;
@@ -8,84 +8,20 @@ use async_trait::async_trait;
 use base64::Engine;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::vfs::build_canvas_mount;
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::mutation_queue::MutationQueue;
 use crate::vfs::relay_service::RelayVfsService;
 use crate::vfs::rewrite::find_mount_uri_candidates;
 use crate::vfs::{
     ExecRequest, ListOptions, MaterializationRewrite, PatchEntry, ResourceRef,
-    RewriteShellCommandOutput, VfsMaterializationService, capability_name,
-    normalize_mount_relative_path, parse_mount_uri, parse_patch_text, resolve_mount,
-    resolve_mount_id,
+    RewriteShellCommandOutput, VfsMaterializationService, normalize_mount_relative_path,
+    parse_patch_text, resolve_mount, resolve_mount_id,
 };
 
-/// Resolve a tool parameter path into a `ResourceRef`.
-///
-/// Rules:
-/// 1. Contains `://` -> split into mount_id and relative path by URI syntax
-/// 2. No `://` and the VFS has exactly one mount -> use that mount implicitly
-/// 3. Otherwise -> error, require explicit mount prefix
-pub fn resolve_uri_path(vfs: &Vfs, path: &str) -> Result<ResourceRef, String> {
-    let trimmed = path.trim();
-    if trimmed.is_empty() {
-        return Err("path must not be empty".to_string());
-    }
-
-    if trimmed.contains("://") {
-        return parse_mount_uri(trimmed, vfs);
-    }
-
-    if vfs.mounts.len() == 1 {
-        let mount_id = vfs.mounts[0].id.clone();
-        return Ok(ResourceRef {
-            mount_id,
-            path: trimmed.to_string(),
-        });
-    }
-
-    Err(format!(
-        "path `{trimmed}` is missing a mount prefix (format: mount_id://path). \
-        The current session has {} mount(s); call mounts_list to see available mounts, \
-        then use a fully qualified URI.",
-        vfs.mounts.len(),
-    ))
-}
-
-#[derive(Clone)]
-pub struct SharedRuntimeVfs {
-    inner: Arc<RwLock<Vfs>>,
-}
-
-impl SharedRuntimeVfs {
-    pub fn new(vfs: Vfs) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(vfs)),
-        }
-    }
-
-    pub async fn snapshot(&self) -> Vfs {
-        self.inner.read().await.clone()
-    }
-
-    pub async fn append_canvas_mount(&self, canvas: &agentdash_domain::canvas::Canvas) {
-        let mut guard = self.inner.write().await;
-        let mount = build_canvas_mount(canvas);
-        guard.mounts.retain(|existing| existing.id != mount.id);
-        guard.mounts.push(mount);
-    }
-}
-
-pub fn ok_text(text: String) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(text)],
-        is_error: false,
-        details: None,
-    }
-}
+pub use super::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
+pub use super::mounts::MountsListTool;
 
 // ---------------------------------------------------------------------------
 // fs_apply_patch — Codex-style description
@@ -135,75 +71,6 @@ Important:\n\
 - Context lines (space prefix) must exactly match the current file content.\n\
 - Add File content lines must ALL begin with `+`.\n\
 - Show ~3 lines of context above and below each change for reliable anchoring.";
-
-// ---------------------------------------------------------------------------
-// mounts_list
-// ---------------------------------------------------------------------------
-
-#[derive(Clone)]
-pub struct MountsListTool {
-    service: Arc<RelayVfsService>,
-    vfs: SharedRuntimeVfs,
-}
-
-impl MountsListTool {
-    pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
-        Self { service, vfs }
-    }
-}
-
-#[async_trait]
-impl AgentTool for MountsListTool {
-    fn name(&self) -> &str {
-        "mounts_list"
-    }
-    fn description(&self) -> &str {
-        "List all available mounts and their capabilities in the current session.\n\
-         \n\
-         Usage:\n\
-         - Call this tool first to discover which mounts (file systems) are accessible.\n\
-         - Each mount exposes a set of capabilities (read, write, exec, etc.).\n\
-         - Use the returned mount IDs as prefixes in paths for other tools (e.g., `main://src/lib.rs`).\n\
-         - If only one mount exists, the prefix can be omitted in other tool calls."
-    }
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({ "type": "object", "properties": {}, "required": [], "additionalProperties": false })
-    }
-    async fn execute(
-        &self,
-        _: &str,
-        _: serde_json::Value,
-        _: CancellationToken,
-        _: Option<ToolUpdateCallback>,
-    ) -> Result<AgentToolResult, AgentToolError> {
-        let vfs = self.vfs.snapshot().await;
-        let mounts = self.service.list_mounts(&vfs);
-        let body = mounts
-            .iter()
-            .map(|mount| {
-                let capabilities = mount
-                    .capabilities
-                    .iter()
-                    .map(capability_name)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "- {}:// — {} (capabilities=[{}])",
-                    mount.id, mount.display_name, capabilities
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(ok_text(if body.is_empty() {
-            "No mounts available in the current session.".to_string()
-        } else {
-            format!(
-                "Path format: mount_id://relative/path (prefix may be omitted when only one mount exists)\n\n{}",
-                body
-            )
-        }))
-    }
-}
 
 // ---------------------------------------------------------------------------
 // fs_read

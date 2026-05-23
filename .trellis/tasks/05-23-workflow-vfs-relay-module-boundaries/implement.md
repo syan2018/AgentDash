@@ -36,3 +36,8 @@ cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p a
   - `workflow/value_objects.rs` 保留可序列化 value types、capability directive reduction、binding helper。
   - `workflow/mod.rs` 继续 re-export public validation API，调用方不需要改公开路径。
   - 已验证 `cargo test -p agentdash-domain workflow::value_objects`、`cargo test -p agentdash-domain workflow::validation`、`cargo check -p agentdash-domain -p agentdash-application`。
+- Stage 2 已拆分 VFS tools 共享边界：
+  - 新增 `crates/agentdash-application/src/vfs/tools/common.rs` 承载 `SharedRuntimeVfs`、URI resolution、tool text result helper。
+  - 新增 `crates/agentdash-application/src/vfs/tools/mounts.rs` 承载 `mounts_list` discovery tool。
+  - `vfs/tools/fs.rs` 保留 file/search/patch/shell tools，并 re-export 旧路径上的 shared types，保持当前调用面稳定。
+  - 已验证 `cargo check -p agentdash-application`、`cargo check -p agentdash-api`。

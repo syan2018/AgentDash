@@ -7,6 +7,11 @@ use agentdash_contracts::mcp_preset::{
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
 };
+use agentdash_contracts::shared_library::{
+    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
+    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
+    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+};
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse,
     ListVfssResponse, ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface,
@@ -98,6 +103,22 @@ fn main() {
         export_all::<UpdateProjectVfsMountRequest>(dir);
         export_all::<ProjectVfsMountResponse>(dir);
     });
+
+    write_domain(
+        &generated_dir.join("shared-library-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<InstalledAssetSourceDto>(dir);
+            export_all::<LibraryAssetDto>(dir);
+            export_all::<ListLibraryAssetsQuery>(dir);
+            export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
+            export_all::<InstallLibraryAssetRequest>(dir);
+            export_all::<InstallLibraryAssetResponse>(dir);
+            export_all::<PublishLibraryAssetRequest>(dir);
+            export_all::<ProjectAssetSourceStatusDto>(dir);
+        },
+    );
 }
 
 fn write_domain(

@@ -1,153 +1,22 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Serialize;
 use uuid::Uuid;
 
-use agentdash_domain::shared_library::SharedLibrarySourceStatus;
+pub use agentdash_contracts::shared_library::{
+    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
+    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
+    ProjectAssetSourceStatusItemDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    SharedLibrarySourceStatus as ContractSharedLibrarySourceStatus,
+};
 use agentdash_domain::shared_library::{
     InstalledAssetSource, LibraryAsset, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
+    SharedLibrarySourceStatus,
 };
 
-#[derive(Debug, Serialize)]
-pub struct LibraryAssetResponse {
-    pub id: Uuid,
-    pub asset_type: &'static str,
-    pub scope: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner_id: Option<String>,
-    pub key: String,
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub version: String,
-    pub source: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_ref: Option<String>,
-    pub payload_digest: String,
-    pub deprecated: bool,
-    pub payload: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-impl From<LibraryAsset> for LibraryAssetResponse {
-    fn from(asset: LibraryAsset) -> Self {
-        Self {
-            id: asset.id,
-            asset_type: asset.asset_type.as_str(),
-            scope: asset.scope.as_str(),
-            owner_id: asset.owner_id,
-            key: asset.key,
-            display_name: asset.display_name,
-            description: asset.description,
-            version: asset.version,
-            source: asset.source.as_str(),
-            source_ref: asset.source_ref,
-            payload_digest: asset.payload_digest,
-            deprecated: asset.deprecated,
-            payload: asset.payload,
-            created_at: asset.created_at,
-            updated_at: asset.updated_at,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ListLibraryAssetsQuery {
-    #[serde(default)]
-    pub asset_type: Option<String>,
-    #[serde(default)]
-    pub scope: Option<String>,
-    #[serde(default)]
-    pub owner_id: Option<String>,
-    #[serde(default)]
-    pub include_deprecated: bool,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct SeedBuiltinLibraryAssetsRequest {
-    #[serde(default)]
-    pub asset_type: Option<String>,
-    #[serde(default)]
-    pub key: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct InstallLibraryAssetRequest {
-    pub library_asset_id: Uuid,
-    #[serde(default)]
-    pub target_key: Option<String>,
-    #[serde(default)]
-    pub overwrite: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PublishLibraryAssetRequest {
-    pub asset_kind: String,
-    pub project_asset_id: String,
-    #[serde(default = "default_user_scope")]
-    pub scope: String,
-    pub key: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub version: String,
-    #[serde(default)]
-    pub overwrite: bool,
-}
-
-fn default_user_scope() -> String {
-    "user".to_string()
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "asset_kind", rename_all = "snake_case")]
-pub enum InstallLibraryAssetResponse {
-    ProjectAgent {
-        project_agent_id: Uuid,
-    },
-    McpPreset {
-        id: Uuid,
-    },
-    WorkflowTemplate {
-        workflow_ids: Vec<Uuid>,
-        lifecycle_id: Uuid,
-    },
-    SkillAsset {
-        id: Uuid,
-    },
-    VfsMount {
-        id: Uuid,
-        mount_id: String,
-    },
-    ExtensionInstallation {
-        id: Uuid,
-    },
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectAssetSourceStatusResponse {
-    pub project_agents: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub mcp_presets: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub skill_assets: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub vfs_mounts: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub workflow_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemResponse>,
-    pub extension_installations: Vec<ProjectAssetSourceStatusItemResponse>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectAssetSourceStatusItemResponse {
-    pub asset_kind: &'static str,
-    pub project_asset_id: Uuid,
-    pub project_asset_key: String,
-    pub installed_source: InstalledAssetSourceResponse,
-    pub source_status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_source_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_source_digest: Option<String>,
-}
+pub use agentdash_contracts::shared_library::{
+    LibraryAssetScope as ContractLibraryAssetScope, LibraryAssetSource as ContractLibraryAssetSource,
+    LibraryAssetType as ContractLibraryAssetType,
+};
 
 #[derive(Debug, Serialize)]
 pub struct InstalledAssetSourceResponse {
@@ -170,8 +39,74 @@ impl From<InstalledAssetSource> for InstalledAssetSourceResponse {
     }
 }
 
-pub fn source_status_tag(status: SharedLibrarySourceStatus) -> &'static str {
-    status.as_str()
+pub fn library_asset_response(asset: LibraryAsset) -> LibraryAssetDto {
+    LibraryAssetDto {
+        id: asset.id.to_string(),
+        asset_type: contract_asset_type(asset.asset_type),
+        scope: contract_asset_scope(asset.scope),
+        owner_id: asset.owner_id,
+        key: asset.key,
+        display_name: asset.display_name,
+        description: asset.description,
+        version: asset.version,
+        source: contract_asset_source(asset.source),
+        source_ref: asset.source_ref,
+        payload_digest: asset.payload_digest,
+        deprecated: asset.deprecated,
+        payload: asset.payload,
+        created_at: asset.created_at.to_rfc3339(),
+        updated_at: asset.updated_at.to_rfc3339(),
+    }
+}
+
+pub fn installed_asset_source_response(source: InstalledAssetSource) -> InstalledAssetSourceDto {
+    InstalledAssetSourceDto {
+        library_asset_id: source.library_asset_id.to_string(),
+        source_ref: source.source_ref,
+        source_version: source.source_version,
+        source_digest: source.source_digest,
+        installed_at: source.installed_at.to_rfc3339(),
+    }
+}
+
+pub fn source_status_item_response(
+    asset_kind: &'static str,
+    project_asset_id: uuid::Uuid,
+    project_asset_key: String,
+    installed_source: InstalledAssetSource,
+    source_status: SharedLibrarySourceStatus,
+    current_source_version: Option<String>,
+    current_source_digest: Option<String>,
+) -> ProjectAssetSourceStatusItemDto {
+    ProjectAssetSourceStatusItemDto {
+        asset_kind: asset_kind.to_string(),
+        project_asset_id: project_asset_id.to_string(),
+        project_asset_key,
+        installed_source: installed_asset_source_response(installed_source),
+        source_status: contract_source_status(source_status),
+        current_source_version,
+        current_source_digest,
+    }
+}
+
+pub fn project_source_status_response(
+    project_agents: Vec<ProjectAssetSourceStatusItemDto>,
+    mcp_presets: Vec<ProjectAssetSourceStatusItemDto>,
+    skill_assets: Vec<ProjectAssetSourceStatusItemDto>,
+    vfs_mounts: Vec<ProjectAssetSourceStatusItemDto>,
+    workflow_definitions: Vec<ProjectAssetSourceStatusItemDto>,
+    activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItemDto>,
+    extension_installations: Vec<ProjectAssetSourceStatusItemDto>,
+) -> ProjectAssetSourceStatusDto {
+    ProjectAssetSourceStatusDto {
+        project_agents,
+        mcp_presets,
+        skill_assets,
+        vfs_mounts,
+        workflow_definitions,
+        activity_lifecycle_definitions,
+        extension_installations,
+    }
 }
 
 pub fn parse_asset_type(raw: &str) -> Result<LibraryAssetType, String> {
@@ -185,4 +120,54 @@ pub fn parse_asset_scope(raw: &str) -> Result<LibraryAssetScope, String> {
 #[allow(dead_code)]
 pub fn parse_asset_source(raw: &str) -> Result<LibraryAssetSource, String> {
     LibraryAssetSource::parse(raw).map_err(|error| error.to_string())
+}
+
+pub fn contract_asset_type(
+    asset_type: LibraryAssetType,
+) -> agentdash_contracts::shared_library::LibraryAssetType {
+    use agentdash_contracts::shared_library::LibraryAssetType as Contract;
+    match asset_type {
+        LibraryAssetType::AgentTemplate => Contract::AgentTemplate,
+        LibraryAssetType::McpServerTemplate => Contract::McpServerTemplate,
+        LibraryAssetType::WorkflowTemplate => Contract::WorkflowTemplate,
+        LibraryAssetType::SkillTemplate => Contract::SkillTemplate,
+        LibraryAssetType::VfsMountTemplate => Contract::VfsMountTemplate,
+        LibraryAssetType::ExtensionTemplate => Contract::ExtensionTemplate,
+    }
+}
+
+pub fn contract_asset_scope(
+    scope: LibraryAssetScope,
+) -> agentdash_contracts::shared_library::LibraryAssetScope {
+    use agentdash_contracts::shared_library::LibraryAssetScope as Contract;
+    match scope {
+        LibraryAssetScope::Builtin => Contract::Builtin,
+        LibraryAssetScope::System => Contract::System,
+        LibraryAssetScope::Org => Contract::Org,
+        LibraryAssetScope::User => Contract::User,
+    }
+}
+
+pub fn contract_asset_source(
+    source: LibraryAssetSource,
+) -> agentdash_contracts::shared_library::LibraryAssetSource {
+    use agentdash_contracts::shared_library::LibraryAssetSource as Contract;
+    match source {
+        LibraryAssetSource::Builtin => Contract::Builtin,
+        LibraryAssetSource::UserAuthored => Contract::UserAuthored,
+        LibraryAssetSource::RemoteImported => Contract::RemoteImported,
+        LibraryAssetSource::PluginEmbedded => Contract::PluginEmbedded,
+    }
+}
+
+pub fn contract_source_status(
+    status: SharedLibrarySourceStatus,
+) -> ContractSharedLibrarySourceStatus {
+    match status {
+        SharedLibrarySourceStatus::UpToDate => ContractSharedLibrarySourceStatus::UpToDate,
+        SharedLibrarySourceStatus::UpdateAvailable => {
+            ContractSharedLibrarySourceStatus::UpdateAvailable
+        }
+        SharedLibrarySourceStatus::SourceMissing => ContractSharedLibrarySourceStatus::SourceMissing,
+    }
 }

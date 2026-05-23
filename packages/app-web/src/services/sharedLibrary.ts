@@ -5,44 +5,10 @@ import type {
   InstallLibraryAssetResponse,
   InstalledAssetSourceDto,
   LibraryAssetDto,
-  LibraryAssetScope,
-  LibraryAssetSource,
-  LibraryAssetType,
   ListLibraryAssetsQuery,
   ProjectAssetSourceStatusDto,
-  ProjectAssetSourceStatusItemDto,
   PublishLibraryAssetRequest,
-  SharedLibrarySourceStatus,
 } from "../types";
-
-function normalizeAssetType(value: unknown): LibraryAssetType {
-  if (
-    value === "agent_template"
-    || value === "mcp_server_template"
-    || value === "workflow_template"
-    || value === "skill_template"
-    || value === "vfs_mount_template"
-    || value === "extension_template"
-  ) {
-    return value;
-  }
-  throw new Error(`未知 LibraryAsset asset_type: ${String(value)}`);
-}
-
-function normalizeScope(value: unknown): LibraryAssetScope {
-  if (value === "system" || value === "org" || value === "user") return value;
-  return "builtin";
-}
-
-function normalizeSource(value: unknown): LibraryAssetSource {
-  if (value === "user_authored" || value === "remote_imported" || value === "plugin_embedded") return value;
-  return "builtin";
-}
-
-function normalizeStatus(value: unknown): SharedLibrarySourceStatus {
-  if (value === "update_available" || value === "source_missing") return value;
-  return "up_to_date";
-}
 
 export function mapInstalledAssetSource(raw: unknown): InstalledAssetSourceDto | null {
   if (raw == null) return null;
@@ -57,55 +23,14 @@ export function mapInstalledAssetSource(raw: unknown): InstalledAssetSourceDto |
   };
 }
 
-function mapLibraryAsset(raw: Record<string, unknown>): LibraryAssetDto {
-  return {
-    id: String(raw.id ?? ""),
-    asset_type: normalizeAssetType(raw.asset_type),
-    scope: normalizeScope(raw.scope),
-    owner_id: raw.owner_id == null ? null : String(raw.owner_id),
-    key: String(raw.key ?? ""),
-    display_name: String(raw.display_name ?? raw.key ?? ""),
-    description: raw.description == null ? null : String(raw.description),
-    version: String(raw.version ?? ""),
-    source: normalizeSource(raw.source),
-    source_ref: raw.source_ref == null ? null : String(raw.source_ref),
-    payload_digest: String(raw.payload_digest ?? ""),
-    deprecated: Boolean(raw.deprecated),
-    payload: raw.payload,
-    created_at: String(raw.created_at ?? ""),
-    updated_at: String(raw.updated_at ?? ""),
-  };
-}
-
-function mapSourceStatusItem(raw: unknown): ProjectAssetSourceStatusItemDto {
-  const value = asRecord(raw);
-  if (!value) {
-    throw new Error("source status item 缺失或不是对象");
-  }
-  const installedSource = mapInstalledAssetSource(value.installed_source);
-  if (!installedSource) {
-    throw new Error("source status item 缺少 installed_source");
-  }
-  return {
-    asset_kind: String(value.asset_kind ?? ""),
-    project_asset_id: String(value.project_asset_id ?? ""),
-    project_asset_key: String(value.project_asset_key ?? ""),
-    installed_source: installedSource,
-    source_status: normalizeStatus(value.source_status),
-    current_source_version: value.current_source_version == null ? null : String(value.current_source_version),
-    current_source_digest: value.current_source_digest == null ? null : String(value.current_source_digest),
-  };
-}
-
-export async function fetchLibraryAssets(query: ListLibraryAssetsQuery = {}): Promise<LibraryAssetDto[]> {
+export async function fetchLibraryAssets(query: Partial<ListLibraryAssetsQuery> = {}): Promise<LibraryAssetDto[]> {
   const params = new URLSearchParams();
   if (query.asset_type) params.set("asset_type", query.asset_type);
   if (query.scope) params.set("scope", query.scope);
   if (query.owner_id) params.set("owner_id", query.owner_id);
   if (query.include_deprecated) params.set("include_deprecated", "true");
   const qs = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(`/shared-library/assets${qs}`);
-  return raw.map(mapLibraryAsset);
+  return api.get<LibraryAssetDto[]>(`/shared-library/assets${qs}`);
 }
 
 export async function installLibraryAsset(
@@ -122,34 +47,16 @@ export async function publishLibraryAsset(
   projectId: string,
   input: PublishLibraryAssetRequest,
 ): Promise<LibraryAssetDto> {
-  const raw = await api.post<Record<string, unknown>>(
+  return api.post<LibraryAssetDto>(
     `/projects/${encodeURIComponent(projectId)}/shared-library/publish`,
     input,
   );
-  return mapLibraryAsset(raw);
 }
 
 export async function fetchProjectAssetSourceStatus(
   projectId: string,
 ): Promise<ProjectAssetSourceStatusDto> {
-  const raw = await api.get<Record<string, unknown>>(
+  return api.get<ProjectAssetSourceStatusDto>(
     `/projects/${encodeURIComponent(projectId)}/shared-library/source-status`,
   );
-  return {
-    project_agents: Array.isArray(raw.project_agents)
-      ? raw.project_agents.map(mapSourceStatusItem)
-      : [],
-    mcp_presets: Array.isArray(raw.mcp_presets) ? raw.mcp_presets.map(mapSourceStatusItem) : [],
-    skill_assets: Array.isArray(raw.skill_assets) ? raw.skill_assets.map(mapSourceStatusItem) : [],
-    vfs_mounts: Array.isArray(raw.vfs_mounts) ? raw.vfs_mounts.map(mapSourceStatusItem) : [],
-    workflow_definitions: Array.isArray(raw.workflow_definitions)
-      ? raw.workflow_definitions.map(mapSourceStatusItem)
-      : [],
-    activity_lifecycle_definitions: Array.isArray(raw.activity_lifecycle_definitions)
-      ? raw.activity_lifecycle_definitions.map(mapSourceStatusItem)
-      : [],
-    extension_installations: Array.isArray(raw.extension_installations)
-      ? raw.extension_installations.map(mapSourceStatusItem)
-      : [],
-  };
 }

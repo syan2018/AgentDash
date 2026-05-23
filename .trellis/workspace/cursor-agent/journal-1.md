@@ -775,3 +775,42 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 完成业务 Contract 生成迁移
+
+**Date**: 2026-05-23
+**Task**: 完成业务 Contract 生成迁移
+**Branch**: `codex/architecture-review-convergence`
+
+### Summary
+
+按 MCP Preset、Session、Workflow、VFS、Shared Library、ProjectAgent 批次完成 agentdash-contracts 迁移，API route 使用 contract DTO，前端改为消费 generated contracts，并更新 cross-layer contract 基线。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f4651fc` | (see git log) |
+| `310cc877` | (see git log) |
+| `9a60e942` | (see git log) |
+| `8b914563` | (see git log) |
+| `ca39cd4d` | (see git log) |
+| `e9a5cf84` | (see git log) |
+| `7b7b22f3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

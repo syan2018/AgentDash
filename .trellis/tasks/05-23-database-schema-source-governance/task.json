@@ -3,7 +3,7 @@
   "name": "database-schema-source-governance",
   "title": "Database Schema 事实源决策",
   "description": "明确 PostgreSQL migrations、repository initialize、SQLite 初始化之间的 schema 事实源契约。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -45,3 +45,9 @@
 
 - 云端业务仓储统一 PostgreSQL
 - SQLite 仅保留本机端 `SqliteSessionRepository`
+
+## Schema Ownership
+
+PostgreSQL repository 实现假设业务 schema 已由 migration runner 初始化。Repository 的职责是持久化聚合、维护事务边界和映射领域错误；schema 变更通过 `crates/agentdash-infrastructure/migrations/` 进入。
+
+本机 SQLite session repository 是独立缓存存储，可以在 `initialize()` 中拥有本机缓存表结构。这个规则只适用于本机会话缓存，不扩展到云端 PostgreSQL repository。

@@ -20,11 +20,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 形成 schema 事实源设计结论，并记录为什么采用该策略。
-- [ ] PostgreSQL 与 SQLite 的初始化职责被明确区分。
-- [ ] spec 更新后不再同时表达互相冲突的 schema 来源。
-- [ ] 若决定 migrations-only，输出后续安全迁移 checklist。
-- [ ] 若保留 hybrid，说明 repository DDL 的边界和禁止事项。
+- [x] 形成 schema 事实源设计结论，并记录为什么采用该策略。
+- [x] PostgreSQL 与 SQLite 的初始化职责被明确区分。
+- [x] spec 更新后不再同时表达互相冲突的 schema 来源。
+- [x] 若决定 migrations-only，输出后续安全迁移 checklist。
+- [x] 若保留 hybrid，说明 repository DDL 的边界和禁止事项。
 
 ## Out of Scope
 

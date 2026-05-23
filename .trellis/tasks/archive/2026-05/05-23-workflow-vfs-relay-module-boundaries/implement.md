@@ -30,5 +30,4 @@ cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p a
 ## Progress
 
 - 已确认第一批不直接混合 Workflow、VFS、Relay、Agent loop 四个区域。
-- 已创建四个后续子任务，分别承接 workflow value objects、VFS、Relay protocol、Agent loop 的目录级拆分。
-- 当前总控任务的输出是拆分顺序和任务边界；具体代码移动在子任务中逐个执行。
+- 当前任务输出是分阶段提交顺序；后续直接在当前架构收敛父任务下按批次提交机械拆分。

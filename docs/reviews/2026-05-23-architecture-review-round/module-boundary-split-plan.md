@@ -2,7 +2,7 @@
 
 ## Decision
 
-Workflow, VFS, Relay protocol, and Agent loop will be split as separate batches. These areas sit in different layers and carry different invariants, so moving them together would make behavior review too noisy.
+Workflow, VFS, Relay protocol, and Agent loop will be split as separate commit batches under the same architecture-convergence work. These areas sit in different layers and carry different invariants, so moving them together would make behavior review too noisy.
 
 ## Batch Order
 
@@ -13,4 +13,4 @@ Workflow, VFS, Relay protocol, and Agent loop will be split as separate batches.
 | Relay protocol payloads | handshake, prompt, workspace, tool, MCP, terminal, session event, capabilities | Relay is a protocol bus; payload domains should be reviewable without changing wire format. |
 | Agent loop internals | turn, tool call, event mapping, cancellation, prompt, output | Agent loop carries streaming side effects, so it follows after lower-risk domain/protocol splits. |
 
-Each batch keeps public facades or re-exports, preserves serialized names and protocol shapes, and runs focused check/test commands before completion.
+Each batch keeps public facades or re-exports, preserves serialized names and protocol shapes, and runs focused check/test commands before its commit.

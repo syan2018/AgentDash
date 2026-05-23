@@ -18,12 +18,7 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "05-23-05-23-workflow-value-objects-boundary-split",
-    "05-23-05-23-vfs-provider-tools-boundary-split",
-    "05-23-05-23-agent-loop-internals-boundary-split",
-    "05-23-05-23-relay-protocol-payload-boundary-split"
-  ],
+  "children": [],
   "parent": "05-23-architecture-review-convergence-roadmap",
   "relatedFiles": [],
   "notes": "",

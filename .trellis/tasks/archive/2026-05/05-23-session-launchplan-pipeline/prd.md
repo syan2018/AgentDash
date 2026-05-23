@@ -20,12 +20,12 @@
 
 ## Acceptance Criteria
 
-- [ ] 有 `LaunchCommand -> LaunchPlanner -> LaunchPlan -> LaunchExecutor/TurnSupervisor` 或等价阶段设计。
-- [ ] `PromptSessionRequest` 不再作为跨阶段持续 mutation 的半成品计划对象，或其职责被明确收窄。
-- [ ] 至少 HTTP prompt 与 local relay prompt 入口进入统一 launch 阶段。
-- [ ] connector failure 不会提前提交 bootstrap 成功或留下 running 状态。
-- [ ] 并发 prompt claim/activate/terminal 语义由测试锁住。
-- [ ] session startup spec 更新为新的阶段边界。
+- [x] 有 `LaunchCommand -> LaunchPlanner -> LaunchPlan -> LaunchExecutor/TurnSupervisor` 或等价阶段设计。
+- [x] `PromptSessionRequest` 不再作为跨阶段持续 mutation 的半成品计划对象，或其职责被明确收窄。
+- [x] 至少 HTTP prompt 与 local relay prompt 入口进入统一 launch 阶段。
+- [x] connector failure 不会提前提交 bootstrap 成功或留下 running 状态。
+- [x] 并发 prompt claim/activate/terminal 语义由测试锁住。
+- [x] session startup spec 更新为新的阶段边界。
 
 ## Out of Scope
 

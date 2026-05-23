@@ -8,17 +8,13 @@ use crate::plugins::{builtin_plugins, collect_plugin_registration};
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
-    InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry, builtin_vfs_registry,
+    InMemoryContextAuditBus, SharedContextAuditBus, VfsDiscoveryRegistry,
 };
 use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::{PlatformConfig, SharedPlatformConfig};
 pub use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::routine::RoutineExecutor;
-use agentdash_application::runtime_gateway::{
-    McpCallToolProvider, McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway,
-    RuntimeSessionMcpAccess, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
-    WorkspaceDetectProvider,
-};
+use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
@@ -193,24 +189,10 @@ impl AppState {
 
         let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
             Arc::new(session_capability.clone());
-        let runtime_gateway = Arc::new(
-            RuntimeGateway::new()
-                .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
-                    mcp_probe_relay,
-                ))))
-                .with_provider(Arc::new(WorkspaceDetectProvider::new(
-                    setup_action_transport.clone(),
-                )))
-                .with_provider(Arc::new(WorkspaceDetectGitProvider::new(
-                    setup_action_transport.clone(),
-                )))
-                .with_provider(Arc::new(WorkspaceBrowseDirectoryProvider::new(
-                    setup_action_transport,
-                )))
-                .with_provider(Arc::new(McpListToolsProvider::new(
-                    session_mcp_access.clone(),
-                )))
-                .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access))),
+        let runtime_gateway = crate::bootstrap::runtime_gateway::build_runtime_gateway(
+            mcp_probe_relay,
+            setup_action_transport,
+            session_mcp_access,
         );
 
         let lock_map = Arc::new(TaskLockMap::new());
@@ -246,18 +228,13 @@ impl AppState {
             }
         }
 
-        let auth_mode = resolve_configured_auth_mode()?;
+        let auth_mode = crate::bootstrap::auth::validate_auth_provider_registered(
+            crate::bootstrap::auth::resolve_configured_auth_mode()?,
+            plugin_registration.auth_provider.is_some(),
+        )?;
 
-        if plugin_registration.auth_provider.is_none() {
-            anyhow::bail!("认证模式 `{auth_mode}` 未注册 AuthProvider，无法启动服务");
-        }
-
-        tracing::info!(auth_mode = %auth_mode, "认证模式已加载");
-
-        let mut vfs_registry = builtin_vfs_registry();
-        for provider in plugin_registration.vfs_providers {
-            vfs_registry.register(provider);
-        }
+        let vfs_registry =
+            crate::bootstrap::vfs::build_vfs_discovery_registry(plugin_registration.vfs_providers);
 
         let terminal_cancel_coordinator = Arc::new(
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
@@ -355,88 +332,8 @@ impl AppState {
             .await
             .map_err(|err| anyhow::anyhow!("AppState session 依赖未 ready: {err}"))?;
 
-        match state
-            .services
-            .session_effects
-            .replay_terminal_effect_outbox(100)
-            .await
-        {
-            Ok(count) if count > 0 => {
-                tracing::info!(count, "已调度 terminal effect outbox 恢复执行");
-            }
-            Ok(_) => {}
-            Err(error) => {
-                tracing::warn!(error = %error, "terminal effect outbox 恢复执行失败");
-            }
-        }
-
-        // 后台 session stall 检测：定期扫描 running session，超时自动取消
-        agentdash_application::session::stall_detector::spawn_stall_detector(
-            state.services.session_runtime.clone(),
-            agentdash_application::session::stall_detector::DEFAULT_STALL_TIMEOUT_MS,
-        );
-
-        // 后台 cron 调度器：从 Routine 表加载 scheduled 类型条目，按 cron 表达式触发
-        {
-            let routine_executor = Arc::new(
-                RoutineExecutor::new(
-                    state.repos.clone(),
-                    state.services.session_core.clone(),
-                    state.services.session_launch.clone(),
-                    state.services.vfs_service.clone(),
-                    state.services.connector.clone(),
-                    state.config.platform_config.clone(),
-                    state.services.backend_registry.clone(),
-                )
-                .with_audit_bus(state.services.audit_bus.clone()),
-            );
-            // 将 executor 注入 ServiceSet（通过 Arc::get_mut 安全修改）
-            // SAFETY: 此时 state 的 Arc 引用计数为 1，get_mut 保证成功
-            if let Some(s) = Arc::get_mut(&mut state) {
-                s.services.routine_executor = Some(routine_executor.clone());
-            }
-            let cron_repos = state.repos.clone();
-            let cron_handle = state.services.cron_scheduler.clone();
-            tokio::spawn(async move {
-                agentdash_application::scheduling::cron_scheduler::spawn_cron_scheduler(
-                    cron_repos,
-                    routine_executor,
-                    &cron_handle,
-                )
-                .await;
-            });
-        }
-
-        // 后台定时清理过期认证会话，避免 auth_sessions 无限增长。
-        {
-            let auth_session_service = state.services.auth_session_service.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
-                loop {
-                    interval.tick().await;
-                    match auth_session_service.cleanup_expired_sessions().await {
-                        Ok(count) if count > 0 => {
-                            tracing::info!(deleted = count, "已清理过期认证会话")
-                        }
-                        Ok(_) => {}
-                        Err(err) => {
-                            tracing::warn!(error = %err, "清理过期认证会话失败")
-                        }
-                    }
-                }
-            });
-        }
+        crate::bootstrap::background_workers::start_post_app_state_workers(&mut state).await;
 
         Ok(state)
-    }
-}
-
-fn resolve_configured_auth_mode() -> Result<AuthMode> {
-    match std::env::var("AGENTDASH_AUTH_MODE") {
-        Ok(raw) => raw
-            .parse::<AuthMode>()
-            .map_err(|err| anyhow::anyhow!("AGENTDASH_AUTH_MODE 配置无效: {err}")),
-        Err(std::env::VarError::NotPresent) => Ok(AuthMode::Personal),
-        Err(err) => Err(anyhow::anyhow!("读取 AGENTDASH_AUTH_MODE 失败: {err}")),
     }
 }

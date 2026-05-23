@@ -43,6 +43,8 @@ Relay bootstrap 负责创建 backend registry、backend runtime event channel、
 
 Session bootstrap 负责组合 Pi / relay / plugin connectors，构建 `CompositeConnector`、execution hook provider、`SessionRuntimeBuilder` 及 session service handles，并完成 lifecycle terminal callback 与 runtime tool session handle 绑定。`SessionRuntimeBuilder` 作为显式输出保留给 AppState 完成 construction provider、hook effect registry 与 audit bus 这些 AppState-aware 延迟绑定。
 
+Auth、runtime gateway 与 background worker bootstrap 分别负责认证模式校验、runtime action provider 组合、以及 AppState 构建完成后的 terminal effect replay、stall detector、routine scheduler 和 auth session cleanup。后台 worker 只在 AppState 已完成延迟绑定检查后启动。
+
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。

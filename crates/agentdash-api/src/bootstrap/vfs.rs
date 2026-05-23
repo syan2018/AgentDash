@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_application::context::{VfsDiscoveryRegistry, builtin_vfs_registry};
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
@@ -8,6 +9,7 @@ use agentdash_application::vfs::tools::provider::{
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
 use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
+use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 
 use crate::mount_providers::RelayFsMountProvider;
@@ -99,4 +101,14 @@ pub(crate) fn build_vfs_kernel(
         runtime_tool_provider,
         mcp_relay_provider,
     }
+}
+
+pub(crate) fn build_vfs_discovery_registry(
+    plugin_vfs_providers: Vec<Box<dyn VfsDiscoveryProvider>>,
+) -> VfsDiscoveryRegistry {
+    let mut vfs_registry = builtin_vfs_registry();
+    for provider in plugin_vfs_providers {
+        vfs_registry.register(provider);
+    }
+    vfs_registry
 }

@@ -33,6 +33,14 @@
 | `agentdash-local` | 本机后端 |
 | `agentdash-local-tauri` | Tauri 桌面托管壳 |
 
+Agent runtime module baseline：
+
+| Module | 当前职责 |
+| --- | --- |
+| `agentdash-agent/src/agent_loop.rs` | Agent turn loop、stream orchestration、tool execution orchestration |
+| `agentdash-agent/src/agent_loop/streaming.rs` | Assistant stream text/tool delta helper |
+| `agentdash-agent/src/agent_loop/tool_result.rs` | Tool execution error/approval result helper |
+
 ## AppState Bootstrap
 
 `agentdash-api/src/bootstrap/` 承载 API 宿主的装配切片。每个 bootstrap 模块接收启动期输入，返回后续装配真实需要的 output struct，让 `AppState::new_with_plugins` 表达高层构造顺序。

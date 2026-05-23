@@ -45,3 +45,8 @@ cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p a
   - 新增 `crates/agentdash-relay/src/protocol/handshake.rs` 承载 register、ping/pong、capabilities、agent/mcp info payload。
   - `protocol.rs` 保留顶层 `RelayMessage` 信封和公共 `pub use`，不改变 serde tag 或 wire format。
   - 已验证 `cargo check -p agentdash-relay -p agentdash-api -p agentdash-local`。
+- Stage 4 已拆分 Agent loop 纯 helper：
+  - 新增 `crates/agentdash-agent/src/agent_loop/streaming.rs` 承载 assistant stream suffix helper。
+  - 新增 `crates/agentdash-agent/src/agent_loop/tool_result.rs` 承载 tool error/approval result helper。
+  - `agent_loop.rs` 仍保留 turn loop 和 tool execution orchestration。
+  - 已验证 `cargo check -p agentdash-agent -p agentdash-executor -p agentdash-application`。

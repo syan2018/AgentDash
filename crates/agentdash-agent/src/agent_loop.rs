@@ -30,6 +30,12 @@ use crate::types::{
     TransformContextInput,
 };
 
+mod streaming;
+mod tool_result;
+
+use self::streaming::compute_suffix;
+use self::tool_result::{approval_rejected_tool_result, error_tool_result};
+
 // ─── 回调类型别名 ───────────────────────────────────────────
 
 /// 上下文变换回调：AgentMessage[] → AgentMessage[]
@@ -1064,22 +1070,6 @@ async fn ensure_tool_call_partial(
     (index, name)
 }
 
-fn compute_suffix(existing: &str, incoming: &str) -> String {
-    if incoming.is_empty() {
-        return String::new();
-    }
-    if existing.is_empty() {
-        return incoming.to_string();
-    }
-    if let Some(suffix) = incoming.strip_prefix(existing) {
-        suffix.to_string()
-    } else if existing == incoming || existing.ends_with(incoming) {
-        String::new()
-    } else {
-        incoming.to_string()
-    }
-}
-
 // ─── 工具执行 ───────────────────────────────────────────────
 
 /// 工具执行入口 — 对齐 Pi `executeToolCalls` (agent-loop.ts:336-348)
@@ -1742,14 +1732,6 @@ async fn emit_tool_result_message(
     tool_result_msg
 }
 
-fn error_tool_result(message: impl Into<String>) -> AgentToolResult {
-    AgentToolResult {
-        content: vec![ContentPart::text(message)],
-        is_error: true,
-        details: None,
-    }
-}
-
 enum ApprovalResolution {
     Approved,
     Rejected { result: AgentToolResult },
@@ -1825,22 +1807,6 @@ async fn await_tool_approval(
                 result: approval_rejected_tool_result(reason),
             }
         }
-    }
-}
-
-fn approval_rejected_tool_result(reason: Option<String>) -> AgentToolResult {
-    let message = reason
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| format!("工具执行未获批准：{value}"))
-        .unwrap_or_else(|| "工具执行未获批准".to_string());
-    AgentToolResult {
-        content: vec![ContentPart::text(message)],
-        is_error: true,
-        details: Some(serde_json::json!({
-            "approval_state": "rejected",
-            "reason": reason,
-        })),
     }
 }
 

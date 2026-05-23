@@ -37,8 +37,9 @@ Agent runtime module baseline：
 
 | Module | 当前职责 |
 | --- | --- |
-| `agentdash-agent/src/agent_loop.rs` | Agent turn loop、stream orchestration、tool execution orchestration |
-| `agentdash-agent/src/agent_loop/streaming.rs` | Assistant stream text/tool delta helper |
+| `agentdash-agent/src/agent_loop.rs` | Agent loop 入口、turn/follow-up orchestration、runtime delegate stop/after-turn 调度 |
+| `agentdash-agent/src/agent_loop/streaming.rs` | Assistant stream state machine、provider request delegate、message delta/event projection |
+| `agentdash-agent/src/agent_loop/tool_call.rs` | Tool call prepare / approval / execute / finalize / result event projection |
 | `agentdash-agent/src/agent_loop/tool_result.rs` | Tool execution error/approval result helper |
 
 ## AppState Bootstrap

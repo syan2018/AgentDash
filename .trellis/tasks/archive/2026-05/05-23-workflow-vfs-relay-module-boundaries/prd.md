@@ -23,10 +23,12 @@
 
 ## Acceptance Criteria
 
-- [x] 拆分顺序明确，避免在一个 PR 中同时移动所有大模块。
-- [x] 至少完成一个高收益模块的目录级拆分，或形成多个子任务。
-- [x] 拆分后 public import/re-export 关系清晰。
-- [x] 相关测试、typecheck 或 cargo check 通过。
+- [x] `workflow/value_objects.rs` 按 contract、lifecycle、activity、run state、capability、hook/mount directive 等语义边界拆分，`value_objects.rs` 只保留 facade/re-export 或极少量聚合入口。
+- [x] `vfs/tools/fs.rs` 按 read/list/search/write/patch/shell 等 agent-callable tool handler 拆分，并复用统一路径解析与 tool result helper。
+- [x] `agentdash-relay/src/protocol.rs` 保留顶层 `RelayMessage` 信封，prompt、workspace、tool、mcp、terminal、session event、capability 等 payload 迁入子模块；wire format 不变。
+- [x] `agentdash-agent/src/agent_loop.rs` 按 turn、tool call、event mapping、cancellation、prompt/output 等内部边界拆分，主文件只保留 loop orchestration。
+- [x] 拆分后 public import/re-export 关系清晰，调用方不需要感知内部物理文件迁移。
+- [x] 每批拆分后运行相关 cargo test/check，最终运行覆盖四个 crate 的 check。
 - [x] spec 或 review 文档记录新的模块边界原因。
 
 ## Out of Scope

@@ -30,7 +30,7 @@ cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p a
 ## Progress
 
 - 已确认第一批不直接混合 Workflow、VFS、Relay、Agent loop 四个区域。
-- 当前任务输出是分阶段提交顺序；后续直接在当前架构收敛父任务下按批次提交机械拆分。
+- 2026-05-23 review 复核后恢复任务：以下 Stage 1-4 只是首轮抽取，不代表拆分目标完成。
 - Stage 1 已拆分 Workflow validation 边界：
   - 新增 `crates/agentdash-domain/src/workflow/validation.rs` 承载 Workflow contract、Lifecycle DAG、Activity lifecycle 校验逻辑。
   - `workflow/value_objects.rs` 保留可序列化 value types、capability directive reduction、binding helper。
@@ -50,3 +50,18 @@ cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p a
   - 新增 `crates/agentdash-agent/src/agent_loop/tool_result.rs` 承载 tool error/approval result helper。
   - `agent_loop.rs` 仍保留 turn loop 和 tool execution orchestration。
   - 已验证 `cargo check -p agentdash-agent -p agentdash-executor -p agentdash-application`。
+
+## Recovery Plan
+
+1. Workflow value objects 深拆：保留 `value_objects.rs` facade，把 contract/lifecycle/activity/run state/capability/hook/mount directive 类型迁入子模块。
+2. VFS tools 深拆：把 `fs.rs` 中 read/list/search/write/patch/shell handler 拆成独立 tool module，共享 `common.rs` 的 runtime/path/result helper。
+3. Relay protocol 深拆：保留 `protocol.rs` 的顶层 envelope 与 re-export，把剩余 payload 按 prompt/workspace/tool/mcp/terminal/session_event/capabilities 迁入 `protocol/` 子模块。
+4. Agent loop 深拆：保留主 loop orchestration，把 turn helper、tool-call execution/result mapping、event output、cancellation/prompt 辅助逻辑迁入 `agent_loop/` 子模块。
+5. 每批完成后运行对应 crate check，最后运行 `cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p agentdash-agent`。
+
+## Recovery Progress
+
+- Workflow value objects 已深拆到 `workflow/value_objects/` 子模块，`value_objects.rs` 保留 facade 与测试入口；已验证 `cargo test -p agentdash-domain workflow::value_objects`。
+- VFS tools 已深拆到 `vfs/tools/fs/` 下的 `read`、`apply_patch`、`glob`、`grep`、`shell` handler，`fs.rs` 保留 public facade；已验证 `cargo check -p agentdash-application`。
+- Relay protocol payload 已深拆到 `protocol/` 下的 `prompt`、`discovery`、`workspace`、`tool`、`vfs_materialization`、`terminal`、`session_event`、`mcp`，`protocol.rs` 保留顶层信封；已验证 `cargo test -p agentdash-relay protocol`。
+- Agent loop 已拆出 assistant streaming state machine 与 tool-call execution pipeline，`agent_loop.rs` 保留入口与 turn orchestration；已验证 `cargo check -p agentdash-agent`。

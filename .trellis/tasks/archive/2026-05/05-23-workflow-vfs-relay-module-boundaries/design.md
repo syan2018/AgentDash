@@ -13,7 +13,7 @@
 3. Relay protocol payload；
 4. Agent loop internals。
 
-本任务只负责建立批次边界；具体代码移动按批次提交，避免一个提交同时改动 domain、application、relay 和 agent runtime。
+本任务已恢复为实现任务。先前归档只完成每个区域的最小抽取，未达到 review 中对巨型文件语义拆分的预期。后续继续按批次推进，每个批次仍保持单一 bounded context。
 
 ## Principles
 

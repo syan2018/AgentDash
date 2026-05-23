@@ -21,6 +21,6 @@
   "children": [],
   "parent": "05-23-architecture-review-convergence-roadmap",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "2026-05-23 review 复核后恢复：先前归档只完成了 validation/common/handshake/纯 helper 的首轮抽取，未达到 review 要求的 Workflow/VFS/Relay/Agent loop 大文件语义拆分目标。",
   "meta": {}
 }

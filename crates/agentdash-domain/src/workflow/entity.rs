@@ -5,14 +5,16 @@ use uuid::Uuid;
 use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
+use super::validation::{
+    node_deps_from_edges, validate_activity_lifecycle_definition, validate_lifecycle_definition,
+    validate_workflow_definition,
+};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleEdge,
     LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
     LifecycleStepExecutionStatus, LifecycleStepState, ValidationIssue, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinitionSource, node_deps_from_edges,
-    normalize_workflow_binding_kinds, validate_activity_lifecycle_definition,
-    validate_lifecycle_definition, validate_workflow_definition,
+    WorkflowContract, WorkflowDefinitionSource, normalize_workflow_binding_kinds,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,7 +18,7 @@ Rust contract type
 
 `agentdash-contracts` 是业务 DTO 的归属 crate。它承载 HTTP request/response DTO、NDJSON envelope、跨端共享 enum 和少量 wire value object。`agentdash-api` 使用 contract crate 作为 route 输入输出类型；前端只从 generated 文件消费这些类型。
 
-当前 `agentdash-agent-protocol` 继续承载 Backbone Protocol。它已经是独立 protocol crate，后续只负责 runtime event fact；业务 HTTP DTO 不继续塞入该 crate。
+当前 `agentdash-agent-protocol` 承载 Backbone Protocol 这类 runtime event fact；业务 HTTP DTO 归属 `agentdash-contracts`。
 
 ## Invariants
 
@@ -31,7 +31,7 @@ Rust contract type
 
 ## Contract Crate Shape
 
-当前结构从 MCP Preset 开始落地，后续 domain 按同一布局扩展：
+当前结构按业务域拆分：
 
 ```text
 crates/agentdash-contracts/
@@ -59,23 +59,28 @@ packages/app-web/src/generated/
   project-agent-contracts.ts
 ```
 
-## DTO Priority
+## Current Baseline
 
-| Priority | Domain | Why |
+`agentdash-contracts` 现在覆盖这些前端消费的业务 DTO：
+
+| Domain | Generated File | Contract Source |
 | --- | --- | --- |
-| P0 | Session stream envelope / Session context DTO | NDJSON reducer、runtime surface、Backbone fact 共同消费，漂移会直接影响会话 UI |
-| P0 | Workflow contract / lifecycle / activity DTO | 前端当前有大量 enum normalizer，后端模型变化频繁 |
-| P1 | VFS surface / mount DTO | Workspace panel、VFS browser、surface mutation 共用同一地址模型 |
-| P1 | MCP Preset DTO | CRUD、probe、publish 复用，适合作为首个小域迁移 |
-| P2 | Shared Library / ProjectAgent DTO | 涉及 marketplace、资产安装和 agent preset 配置，适合在 P0/P1 模式稳定后迁移 |
+| MCP Preset | `mcp-preset-contracts.ts` | `agentdash-contracts::mcp_preset` |
+| Session event stream | `session-contracts.ts` | `agentdash-contracts::session` |
+| Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
+| VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
+| Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
+| Project Agent | `project-agent-contracts.ts` | `agentdash-contracts::project_agent` |
 
-## Migration Plan
+API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
 
-1. 保持 `agentdash-agent-protocol` 的 Backbone generated file，并使用 `contracts:check` 做 drift gate。
-2. `agentdash-contracts` 先迁移 MCP Preset 与 Session stream envelope 这类边界清晰的 DTO。
-3. API route 改为使用 contract crate DTO；frontend service 改为 import generated type。
-4. Mapper 中保留运行时校验，但删除 enum/string 联合类型的手写重复定义。
-5. Workflow/VFS 这类大域按 value object 分批迁移，迁移一批就删除对应前端手写类型。
+Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields.
+
+## Local Decisions
+
+- Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.
+- VFS, Shared Library and Project Agent use narrow DTOs in `agentdash-contracts` because their API responses intentionally map application/domain internals into stable browser-facing shapes.
+- Generated request/response DTOs model serde wire fields. UI-level convenience such as nullable fields, normalized config objects or derived aliases belongs in frontend type entrypoints rather than in the generated file.
 
 ## Validation
 

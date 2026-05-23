@@ -7,6 +7,11 @@ use agentdash_contracts::mcp_preset::{
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
 };
+use agentdash_contracts::workflow::{
+    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
+    LifecycleEdge, LifecycleExecutionEntry, LifecycleStepDefinition, ValidationIssue,
+    WorkflowContract,
+};
 use ts_rs::TS;
 
 fn main() {
@@ -36,6 +41,23 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("workflow-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<WorkflowContract>(dir);
+            export_all::<ActivityDefinition>(dir);
+            export_all::<ActivityTransition>(dir);
+            export_all::<ActivityLifecycleRunState>(dir);
+            export_all::<LifecycleEdge>(dir);
+            export_all::<LifecycleStepDefinition>(dir);
+            export_all::<LifecycleExecutionEntry>(dir);
+            export_all::<EffectiveSessionContract>(dir);
+            export_all::<ValidationIssue>(dir);
         },
     );
 }

@@ -4,11 +4,12 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::common::{Mount, MountLink};
 use crate::session_binding::{ChildSessionId, SessionOwnerType};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 owner。
 /// 这里只描述绑定范围，不表达 workflow 自身的业务主语。
@@ -85,7 +86,7 @@ pub fn workflow_binding_kinds_cover(
     required.iter().all(|kind| available.contains(kind))
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowDefinitionSource {
     BuiltinSeed,
@@ -93,14 +94,14 @@ pub enum WorkflowDefinitionSource {
     Cloned,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationSeverity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct ValidationIssue {
     pub code: String,
     pub message: String,
@@ -136,7 +137,7 @@ impl ValidationIssue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct WorkflowContextBinding {
     pub locator: String,
     pub reason: String,
@@ -146,7 +147,7 @@ pub struct WorkflowContextBinding {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowInjectionSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guidance: Option<String>,
@@ -159,13 +160,14 @@ pub struct WorkflowInjectionSpec {
 /// 工具能力、资源挂载、上下文和策略都属于顶层 Capability Model 的不同维度。
 /// 当前已经落地 tool 与 mount 两个维度，后续 context overlay、permission policy、
 /// resource budget 等能力维度继续扩展在这里。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Default)]
 pub struct CapabilityConfig {
     /// 工具能力维度的声明式变更。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_directives: Vec<ToolCapabilityDirective>,
     /// VFS/mount 维度的声明式变更。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(type = "Array<unknown>")]
     pub mount_directives: Vec<MountDirective>,
 }
 
@@ -202,7 +204,7 @@ pub enum MountDirective {
 ///
 /// Lifecycle 内运行时由 edge wire 自动满足；standalone（如主 agent 给子 agent
 /// 分配 workflow）时由此字段指示调用方如何提供输入。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StandaloneFulfillment {
     /// 调用方必须在启动前通过 `lifecycle://artifacts/{key}` 写入
@@ -215,7 +217,7 @@ pub enum StandaloneFulfillment {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowHookTrigger {
     UserPromptSubmit,
@@ -232,7 +234,7 @@ pub enum WorkflowHookTrigger {
     BeforeProviderRequest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct WorkflowHookRuleSpec {
     pub key: String,
     pub trigger: WorkflowHookTrigger,
@@ -260,7 +262,8 @@ pub struct WorkflowHookRuleSpec {
 ///
 /// JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
 /// / `"workflow_management::upsert_workflow_tool"` / `"mcp:code_analyzer::scan"`。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema, TS)]
+#[ts(type = "string")]
 pub struct ToolCapabilityPath {
     pub capability: String,
     pub tool: Option<String>,
@@ -358,7 +361,7 @@ impl<'de> Deserialize<'de> for ToolCapabilityPath {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Default)]
 pub struct WorkflowContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
@@ -385,7 +388,7 @@ pub struct WorkflowContract {
     pub input_ports: Vec<InputPortDefinition>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowSessionTerminalState {
     Completed,
@@ -394,7 +397,7 @@ pub enum WorkflowSessionTerminalState {
 }
 
 /// Lifecycle node 类型：Agent Node 创建独立 session，Phase Node 在前一个 session 内切换 contract
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleNodeType {
     /// 创建独立 agent session 执行工作
@@ -406,7 +409,7 @@ pub enum LifecycleNodeType {
 
 /// 门禁策略：定义 output port 交付检查的严格程度。
 /// 实际检查逻辑由对应的 Rhai Hook Preset 实现。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GateStrategy {
     #[default]
@@ -416,7 +419,7 @@ pub enum GateStrategy {
 }
 
 /// Input port 上下文构建策略：控制前驱 output artifact 如何注入后继 session。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextStrategy {
     #[default]
@@ -426,7 +429,7 @@ pub enum ContextStrategy {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct OutputPortDefinition {
     pub key: String,
     pub description: String,
@@ -436,7 +439,7 @@ pub struct OutputPortDefinition {
     pub gate_params: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct InputPortDefinition {
     pub key: String,
     pub description: String,
@@ -453,7 +456,7 @@ pub struct InputPortDefinition {
 ///
 /// `Add(path)` 追加能力或启用工具，`Remove(path)` 屏蔽能力或屏蔽工具。
 /// `path` 为短 path 表示能力级操作；长 path 表示工具级操作。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCapabilityDirective {
     Add(ToolCapabilityPath),
@@ -604,7 +607,7 @@ pub fn reduce_tool_capability_directives(
 ///
 /// - `Flow`：无数据语义的顺序约束（前驱完成即激活后继）。
 /// - `Artifact`：端口级数据依赖；自动蕴含 Flow 约束（B 消费 A.port → B dep A）。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleEdgeKind {
     Flow,
@@ -621,7 +624,7 @@ fn default_edge_kind() -> LifecycleEdgeKind {
 /// `kind = Flow` 时 `from_port` / `to_port` 必须为 `None`；
 /// `kind = Artifact` 时两者必须为 `Some`。
 /// node 级别依赖通过 `node_deps_from_edges()` 从 flow/artifact 两类边统一计算。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleEdge {
     #[serde(default = "default_edge_kind")]
     pub kind: LifecycleEdgeKind,
@@ -670,7 +673,7 @@ impl LifecycleEdge {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct LifecycleStepDefinition {
     pub key: String,
     #[serde(default)]
@@ -700,7 +703,7 @@ impl LifecycleStepDefinition {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct ActivityDefinition {
     pub key: String,
     #[serde(default)]
@@ -718,7 +721,7 @@ pub struct ActivityDefinition {
     pub join_policy: ActivityJoinPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityExecutorSpec {
     Agent(AgentActivityExecutorSpec),
@@ -736,14 +739,14 @@ impl ActivityExecutorSpec {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct AgentActivityExecutorSpec {
     pub workflow_key: String,
     #[serde(default)]
     pub session_policy: AgentSessionPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSessionPolicy {
     #[default]
@@ -752,14 +755,14 @@ pub enum AgentSessionPolicy {
     AttachExisting,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FunctionActivityExecutorSpec {
     ApiRequest(ApiRequestExecutorSpec),
     BashExec(BashExecExecutorSpec),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct ApiRequestExecutorSpec {
     pub method: String,
     pub url_template: String,
@@ -767,7 +770,7 @@ pub struct ApiRequestExecutorSpec {
     pub body_template: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct BashExecExecutorSpec {
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -776,20 +779,20 @@ pub struct BashExecExecutorSpec {
     pub working_directory: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HumanActivityExecutorSpec {
     Approval(HumanApprovalExecutorSpec),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct HumanApprovalExecutorSpec {
     pub form_schema_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityCompletionPolicy {
     OutputPorts { required_ports: Vec<String> },
@@ -805,7 +808,7 @@ impl Default for ActivityCompletionPolicy {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct ActivityIterationPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_attempts: Option<u32>,
@@ -822,7 +825,7 @@ impl Default for ActivityIterationPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactAliasPolicy {
     #[default]
@@ -831,7 +834,7 @@ pub enum ArtifactAliasPolicy {
     LatestAndHistory,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityJoinPolicy {
     #[default]
@@ -843,7 +846,7 @@ pub enum ActivityJoinPolicy {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct ActivityTransition {
     pub from: String,
     pub to: String,
@@ -861,14 +864,14 @@ fn default_activity_transition_kind() -> ActivityTransitionKind {
     ActivityTransitionKind::Flow
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityTransitionKind {
     Flow,
     Artifact,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransitionCondition {
     Always,
@@ -896,7 +899,7 @@ impl Default for TransitionCondition {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 pub struct ArtifactBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_activity: Option<String>,
@@ -906,7 +909,7 @@ pub struct ArtifactBinding {
     pub alias: ArtifactAliasPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityAttemptStatus {
     Pending,
@@ -924,7 +927,7 @@ impl ActivityAttemptStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct ActivityAttemptState {
     pub activity_key: String,
     pub attempt: u32,
@@ -939,13 +942,13 @@ pub struct ActivityAttemptState {
     pub summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityPortValue {
     pub port_key: String,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityOutputArtifact {
     pub activity_key: String,
     pub attempt: u32,
@@ -954,7 +957,7 @@ pub struct ActivityOutputArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityInputArtifact {
     pub activity_key: String,
     pub attempt: u32,
@@ -966,7 +969,7 @@ pub struct ActivityInputArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct ActivityLifecycleRunState {
     pub status: ActivityRunStatus,
     pub attempts: Vec<ActivityAttemptState>,
@@ -974,7 +977,7 @@ pub struct ActivityLifecycleRunState {
     pub inputs: Vec<ActivityInputArtifact>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityRunStatus {
     Ready,
@@ -985,7 +988,7 @@ pub enum ActivityRunStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
     AgentSession { session_id: ChildSessionId },
@@ -993,7 +996,7 @@ pub enum ExecutorRunRef {
     HumanDecision { decision_id: String },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityExecutionClaimStatus {
     Claiming,
@@ -1040,7 +1043,7 @@ impl CapabilityConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunStatus {
     Draft,
@@ -1052,7 +1055,7 @@ pub enum LifecycleRunStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleStepExecutionStatus {
     Pending,
@@ -1063,7 +1066,7 @@ pub enum LifecycleStepExecutionStatus {
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct LifecycleStepState {
     pub step_key: String,
     pub status: LifecycleStepExecutionStatus,
@@ -1086,7 +1089,7 @@ pub struct LifecycleStepState {
     pub gate_collision_count: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleExecutionEventKind {
     StepActivated,
@@ -1097,7 +1100,7 @@ pub enum LifecycleExecutionEventKind {
     ContextInjected,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct LifecycleExecutionEntry {
     pub timestamp: DateTime<Utc>,
     pub step_key: String,
@@ -1107,7 +1110,7 @@ pub struct LifecycleExecutionEntry {
     pub detail: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,

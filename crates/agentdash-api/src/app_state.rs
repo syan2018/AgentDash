@@ -4,9 +4,7 @@ use anyhow::Result;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
 
-use crate::plugins::{
-    builtin_plugins, collect_plugin_registration, validate_connector_executor_ids,
-};
+use crate::plugins::{builtin_plugins, collect_plugin_registration};
 use crate::relay::registry::BackendRegistry;
 use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::context::{
@@ -24,20 +22,16 @@ use agentdash_application::runtime_gateway::{
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeBuilder,
-    SessionRuntimeService, SessionTitleService,
+    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
+    SessionTitleService,
 };
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::tools::provider::SessionToolServices;
 use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
-use agentdash_domain::llm_provider::LlmProviderRepository;
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
-use agentdash_executor::connectors::composite::CompositeConnector;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
 
@@ -168,103 +162,34 @@ impl AppState {
         let runtime_tool_provider = vfs_bootstrap.runtime_tool_provider;
         let mcp_relay_provider = vfs_bootstrap.mcp_relay_provider;
 
-        let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-        let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
-        let mut prompt_config: Option<(String, Vec<String>)> = None;
-
-        if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
-            settings_repo: repos.settings_repo.clone(),
-            llm_provider_repo: repos.llm_provider_repo.clone(),
-        })
-        .await
-        {
-            title_bridge = Some(result.connector.default_bridge());
-            prompt_config = Some((
-                result.connector.base_system_prompt().to_string(),
-                result.connector.user_preferences().to_vec(),
-            ));
-            sub_connectors.push(Arc::new(result.connector));
-        }
-        // relay connector — 将远程后端上报的执行器纳入统一路由
-        {
-            let relay_transport: Arc<
-                dyn agentdash_application::backend_transport::RelayPromptTransport,
-            > = backend_registry.clone();
-            sub_connectors.push(Arc::new(
-                agentdash_application::relay_connector::RelayAgentConnector::new(relay_transport),
-            ));
-        }
-
-        sub_connectors.extend(plugin_registration.connectors);
-        validate_connector_executor_ids(&sub_connectors)
-            .map_err(|err| anyhow::anyhow!("连接器注册失败: {err}"))?;
-
-        let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let hook_provider = Arc::new(AppExecutionHookProvider::new(
-            repos.project_repo.clone(),
-            repos.story_repo.clone(),
-            repos.session_binding_repo.clone(),
-            repos.workflow_definition_repo.clone(),
-            repos.activity_lifecycle_definition_repo.clone(),
-            repos.lifecycle_run_repo.clone(),
-            repos.inline_file_repo.clone(),
-        ));
-        let extra_skill_dirs = plugin_registration.extra_skill_dirs.clone();
-        let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
-            connector.clone(),
-            Some(hook_provider.clone()),
-            session_persistence.clone(),
+        let session_bootstrap = crate::bootstrap::session::build_session_runtime(
+            crate::bootstrap::session::SessionBootstrapInput {
+                repos: repos.clone(),
+                session_persistence: session_persistence.clone(),
+                backend_registry: backend_registry.clone(),
+                vfs_service: vfs_service.clone(),
+                session_services_handle,
+                runtime_tool_provider,
+                mcp_relay_provider,
+                platform_config: platform_config.clone(),
+                plugin_connectors: plugin_registration.connectors,
+                extra_skill_dirs: plugin_registration.extra_skill_dirs,
+            },
         )
-        .with_vfs_service(vfs_service.clone())
-        .with_extra_skill_dirs(plugin_registration.extra_skill_dirs)
-        .with_runtime_tool_provider(runtime_tool_provider)
-        .with_mcp_relay_provider(mcp_relay_provider);
-        if let Some((base_sp, user_prefs)) = prompt_config {
-            session_runtime_builder =
-                session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
-        }
-        if let Some(bridge) = title_bridge {
-            session_runtime_builder = session_runtime_builder.with_title_generator(Arc::new(
-                crate::title_generator::LlmTitleGenerator::new(bridge),
-            ));
-        }
-        let session_core = session_runtime_builder.core_service();
-        let session_eventing = session_runtime_builder.eventing_service();
-        let session_runtime = session_runtime_builder.runtime_service();
-        let session_control = session_runtime_builder.control_service();
-        let session_launch = session_runtime_builder.launch_service();
-        let session_hooks = session_runtime_builder.hook_service();
-        let session_capability = session_runtime_builder.capability_service();
-        let session_effects = session_runtime_builder.effects_service();
-        let session_title = session_runtime_builder.title_service();
-
-        // Lifecycle DAG Orchestrator — 在 session 终态后评估后继 node 并启动新 session
-        {
-            let orchestrator =
-                Arc::new(agentdash_application::workflow::LifecycleOrchestrator::new(
-                    session_core.clone(),
-                    session_launch.clone(),
-                    session_hooks.clone(),
-                    session_capability.clone(),
-                    repos.clone(),
-                    platform_config.clone(),
-                ));
-            session_runtime_builder
-                .set_terminal_callback(orchestrator)
-                .await;
-        }
-
-        session_services_handle
-            .set(SessionToolServices {
-                core: session_core.clone(),
-                eventing: session_eventing.clone(),
-                control: session_control.clone(),
-                launch: session_launch.clone(),
-                hooks: session_hooks.clone(),
-                capability: session_capability.clone(),
-                companion_wait_registry: session_runtime_builder.companion_wait_registry(),
-            })
-            .await;
+        .await?;
+        let session_runtime_builder = session_bootstrap.session_runtime_builder;
+        let session_core = session_bootstrap.session_core;
+        let session_eventing = session_bootstrap.session_eventing;
+        let session_runtime = session_bootstrap.session_runtime;
+        let session_control = session_bootstrap.session_control;
+        let session_launch = session_bootstrap.session_launch;
+        let session_hooks = session_bootstrap.session_hooks;
+        let session_capability = session_bootstrap.session_capability;
+        let session_effects = session_bootstrap.session_effects;
+        let session_title = session_bootstrap.session_title;
+        let connector = session_bootstrap.connector;
+        let hook_provider = session_bootstrap.hook_provider;
+        let extra_skill_dirs = session_bootstrap.extra_skill_dirs;
 
         let session_mcp_access: Arc<dyn RuntimeSessionMcpAccess> =
             Arc::new(session_capability.clone());
@@ -514,27 +439,4 @@ fn resolve_configured_auth_mode() -> Result<AuthMode> {
         Err(std::env::VarError::NotPresent) => Ok(AuthMode::Personal),
         Err(err) => Err(anyhow::anyhow!("读取 AGENTDASH_AUTH_MODE 失败: {err}")),
     }
-}
-
-struct PiAgentConnectorDeps {
-    settings_repo: Arc<dyn SettingsRepository>,
-    llm_provider_repo: Arc<dyn LlmProviderRepository>,
-}
-
-/// 构建结果：connector 本体 + 需要注入到 session runtime 的 provider
-struct PiAgentConnectorBuildResult {
-    connector: agentdash_executor::connectors::pi_agent::PiAgentConnector,
-}
-
-async fn build_pi_agent_connector(
-    deps: PiAgentConnectorDeps,
-) -> Option<PiAgentConnectorBuildResult> {
-    let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
-        deps.settings_repo.as_ref(),
-        deps.llm_provider_repo.as_ref(),
-    )
-    .await?;
-    connector.set_settings_repository(deps.settings_repo);
-    connector.set_llm_provider_repository(deps.llm_provider_repo);
-    Some(PiAgentConnectorBuildResult { connector })
 }

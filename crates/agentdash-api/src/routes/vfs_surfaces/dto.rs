@@ -1,182 +1,165 @@
-use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use agentdash_application::vfs::ResolvedVfsSurfaceSource;
+pub use agentdash_contracts::vfs::{
+    ResolveSurfaceRequest, ResolvedMountEditCapabilities, ResolvedMountPurpose,
+    ResolvedMountSummary, ResolvedVfsSurface, ResolvedVfsSurfaceSource, SurfaceApplyPatchRequest,
+    SurfaceApplyPatchResponse, SurfaceCreateFileRequest, SurfaceCreateFileResponse,
+    SurfaceDeleteFileRequest, SurfaceDeleteFileResponse, SurfaceEntriesQuery,
+    SurfaceEntriesResponse, SurfaceMountEntry, SurfaceReadBinaryFileRequest,
+    SurfaceReadFileRequest, SurfaceReadFileResponse, SurfaceRenameFileRequest,
+    SurfaceRenameFileResponse, SurfaceStatFileRequest, SurfaceStatFileResponse,
+    SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest, SurfaceWriteFileResponse,
+};
 
-#[derive(Debug, Deserialize)]
-pub struct ResolveSurfaceRequest {
-    pub source: ResolvedVfsSurfaceSource,
+pub fn surface_source_to_application(
+    source: &ResolvedVfsSurfaceSource,
+) -> Result<agentdash_application::vfs::ResolvedVfsSurfaceSource, String> {
+    use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppSource;
+
+    match source {
+        ResolvedVfsSurfaceSource::ProjectPreview { project_id } => Ok(AppSource::ProjectPreview {
+            project_id: parse_uuid(project_id, "project_id")?,
+        }),
+        ResolvedVfsSurfaceSource::StoryPreview {
+            project_id,
+            story_id,
+        } => Ok(AppSource::StoryPreview {
+            project_id: parse_uuid(project_id, "project_id")?,
+            story_id: parse_uuid(story_id, "story_id")?,
+        }),
+        ResolvedVfsSurfaceSource::TaskPreview {
+            project_id,
+            task_id,
+        } => Ok(AppSource::TaskPreview {
+            project_id: parse_uuid(project_id, "project_id")?,
+            task_id: parse_uuid(task_id, "task_id")?,
+        }),
+        ResolvedVfsSurfaceSource::SessionRuntime { session_id } => Ok(AppSource::SessionRuntime {
+            session_id: session_id.trim().to_string(),
+        }),
+        ResolvedVfsSurfaceSource::ProjectSkillAssets { project_id } => {
+            Ok(AppSource::ProjectSkillAssets {
+                project_id: parse_uuid(project_id, "project_id")?,
+            })
+        }
+        ResolvedVfsSurfaceSource::ProjectVfsMount {
+            project_id,
+            mount_id,
+        } => Ok(AppSource::ProjectVfsMount {
+            project_id: parse_uuid(project_id, "project_id")?,
+            mount_id: mount_id.trim().to_string(),
+        }),
+        ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
+            project_id,
+            project_agent_id,
+        } => Ok(AppSource::ProjectAgentKnowledge {
+            project_id: parse_uuid(project_id, "project_id")?,
+            project_agent_id: parse_uuid(project_agent_id, "project_agent_id")?,
+        }),
+    }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SurfaceEntriesQuery {
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub pattern: Option<String>,
-    #[serde(default)]
-    pub recursive: Option<bool>,
+pub fn surface_source_from_application(
+    source: agentdash_application::vfs::ResolvedVfsSurfaceSource,
+) -> ResolvedVfsSurfaceSource {
+    use agentdash_application::vfs::ResolvedVfsSurfaceSource as AppSource;
+
+    match source {
+        AppSource::ProjectPreview { project_id } => ResolvedVfsSurfaceSource::ProjectPreview {
+            project_id: project_id.to_string(),
+        },
+        AppSource::StoryPreview {
+            project_id,
+            story_id,
+        } => ResolvedVfsSurfaceSource::StoryPreview {
+            project_id: project_id.to_string(),
+            story_id: story_id.to_string(),
+        },
+        AppSource::TaskPreview {
+            project_id,
+            task_id,
+        } => ResolvedVfsSurfaceSource::TaskPreview {
+            project_id: project_id.to_string(),
+            task_id: task_id.to_string(),
+        },
+        AppSource::SessionRuntime { session_id } => {
+            ResolvedVfsSurfaceSource::SessionRuntime { session_id }
+        }
+        AppSource::ProjectSkillAssets { project_id } => {
+            ResolvedVfsSurfaceSource::ProjectSkillAssets {
+                project_id: project_id.to_string(),
+            }
+        }
+        AppSource::ProjectVfsMount {
+            project_id,
+            mount_id,
+        } => ResolvedVfsSurfaceSource::ProjectVfsMount {
+            project_id: project_id.to_string(),
+            mount_id,
+        },
+        AppSource::ProjectAgentKnowledge {
+            project_id,
+            project_agent_id,
+        } => ResolvedVfsSurfaceSource::ProjectAgentKnowledge {
+            project_id: project_id.to_string(),
+            project_agent_id: project_agent_id.to_string(),
+        },
+    }
 }
 
-#[derive(Debug, Serialize)]
-pub struct SurfaceMountEntry {
-    pub path: String,
-    pub entry_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    pub is_dir: bool,
+pub fn surface_from_application(
+    surface: agentdash_application::vfs::ResolvedVfsSurface,
+) -> ResolvedVfsSurface {
+    ResolvedVfsSurface {
+        surface_ref: surface.surface_ref,
+        source: surface_source_from_application(surface.source),
+        mounts: surface
+            .mounts
+            .into_iter()
+            .map(mount_summary_from_application)
+            .collect(),
+        default_mount_id: surface.default_mount_id,
+    }
 }
 
-#[derive(Debug, Serialize)]
-pub struct SurfaceEntriesResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub entries: Vec<SurfaceMountEntry>,
+fn mount_summary_from_application(
+    mount: agentdash_application::vfs::ResolvedMountSummary,
+) -> ResolvedMountSummary {
+    ResolvedMountSummary {
+        id: mount.id,
+        display_name: mount.display_name,
+        provider: mount.provider,
+        backend_id: mount.backend_id,
+        capabilities: mount.capabilities,
+        default_write: mount.default_write,
+        purpose: mount_purpose_from_application(mount.purpose),
+        backend_online: mount.backend_online,
+        file_count: mount.file_count,
+        edit_capabilities: ResolvedMountEditCapabilities {
+            create: mount.edit_capabilities.create,
+            delete: mount.edit_capabilities.delete,
+            rename: mount.edit_capabilities.rename,
+        },
+    }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct SurfaceReadFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
+fn mount_purpose_from_application(
+    purpose: agentdash_application::vfs::ResolvedMountPurpose,
+) -> ResolvedMountPurpose {
+    use agentdash_application::vfs::ResolvedMountPurpose as AppPurpose;
+
+    match purpose {
+        AppPurpose::Workspace => ResolvedMountPurpose::Workspace,
+        AppPurpose::ProjectContainer => ResolvedMountPurpose::ProjectContainer,
+        AppPurpose::VfsMount => ResolvedMountPurpose::VfsMount,
+        AppPurpose::StoryContainer => ResolvedMountPurpose::StoryContainer,
+        AppPurpose::AgentKnowledge => ResolvedMountPurpose::AgentKnowledge,
+        AppPurpose::Lifecycle => ResolvedMountPurpose::Lifecycle,
+        AppPurpose::Canvas => ResolvedMountPurpose::Canvas,
+        AppPurpose::ExternalService => ResolvedMountPurpose::ExternalService,
+    }
 }
 
-#[derive(Debug, Serialize)]
-pub struct SurfaceReadFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub content: String,
-    pub size: u64,
-    pub content_kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceWriteFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub content: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceWriteFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub size: u64,
-    pub persisted: bool,
-    pub content_kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceCreateFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub content: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceCreateFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub size: u64,
-    pub content_kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceDeleteFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceDeleteFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub deleted: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceRenameFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub from_path: String,
-    pub to_path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceRenameFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub from_path: String,
-    pub to_path: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceStatFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceStatFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub entry_type: String,
-    pub size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    pub modified_at: Option<i64>,
-    pub is_dir: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceApplyPatchRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub patch: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceApplyPatchResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub added: Vec<String>,
-    pub modified: Vec<String>,
-    pub deleted: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SurfaceReadBinaryFileRequest {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SurfaceUploadBinaryFileResponse {
-    pub surface_ref: String,
-    pub mount_id: String,
-    pub path: String,
-    pub size: u64,
-    pub content_kind: String,
-    pub mime_type: String,
+fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, String> {
+    Uuid::parse_str(raw).map_err(|_| format!("{field} 非法"))
 }

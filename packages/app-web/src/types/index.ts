@@ -4,7 +4,10 @@ import type {
   ContextContainerDefinition,
   SessionComposition,
 } from "./context";
-import type { InstalledAssetSourceDto } from "./shared-library";
+import type {
+  ProjectVfsMountContent,
+  ProjectVfsMountResponse,
+} from "../generated/vfs-contracts";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 
@@ -222,22 +225,8 @@ export interface AgentVfsAccessGrant {
   capabilities: Array<"read" | "write" | "list" | "search">;
 }
 
-export type ProjectVfsMountContent =
-  | { kind: "inline" }
-  | { kind: "external_service"; service_id: string; root_ref: string };
-
-export interface ProjectVfsMount {
-  project_id: string;
-  mount_id: string;
-  display_name: string;
-  description?: string | null;
-  capabilities: Array<"read" | "write" | "list" | "search">;
-  installed_source?: InstalledAssetSourceDto | null;
-  content: ProjectVfsMountContent;
-  surface_ref: string;
-  created_at: string;
-  updated_at: string;
-}
+export type { ProjectVfsMountContent };
+export type ProjectVfsMount = ProjectVfsMountResponse;
 
 // ─── Project Agent 项目实例 ───
 

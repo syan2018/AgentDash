@@ -1,4 +1,19 @@
 import type { ThinkingLevel } from "./index";
+import type {
+  ResolvedMountEditCapabilities,
+  ResolvedMountPurpose,
+  ResolvedMountSummary,
+  ResolvedVfsSurface,
+  ResolvedVfsSurfaceSource,
+} from "../generated/vfs-contracts";
+
+export type {
+  ResolvedMountEditCapabilities,
+  ResolvedMountPurpose,
+  ResolvedMountSummary,
+  ResolvedVfsSurface,
+  ResolvedVfsSurfaceSource,
+};
 
 // ─── VFS Mount 配置 / 会话编排 ──────────────────
 
@@ -50,51 +65,6 @@ export interface ExecutionMount {
 
 export interface ExecutionVfs {
   mounts: ExecutionMount[];
-  default_mount_id?: string | null;
-}
-
-export type ResolvedMountPurpose =
-  | "workspace"
-  | "project_container"
-  | "vfs_mount"
-  | "story_container"
-  | "agent_knowledge"
-  | "lifecycle"
-  | "canvas"
-  | "external_service";
-
-export interface ResolvedMountEditCapabilities {
-  create: boolean;
-  delete: boolean;
-  rename: boolean;
-}
-
-export type ResolvedVfsSurfaceSource =
-  | { source_type: "project_preview"; project_id: string }
-  | { source_type: "story_preview"; project_id: string; story_id: string }
-  | { source_type: "task_preview"; project_id: string; task_id: string }
-  | { source_type: "session_runtime"; session_id: string }
-  | { source_type: "project_skill_assets"; project_id: string }
-  | { source_type: "project_vfs_mount"; project_id: string; mount_id: string }
-  | { source_type: "project_agent_knowledge"; project_id: string; project_agent_id: string };
-
-export interface ResolvedMountSummary {
-  id: string;
-  display_name: string;
-  provider: string;
-  backend_id: string;
-  capabilities: ExecutionMountCapability[];
-  default_write: boolean;
-  purpose: ResolvedMountPurpose;
-  backend_online?: boolean | null;
-  file_count?: number | null;
-  edit_capabilities: ResolvedMountEditCapabilities;
-}
-
-export interface ResolvedVfsSurface {
-  surface_ref: string;
-  source: ResolvedVfsSurfaceSource;
-  mounts: ResolvedMountSummary[];
   default_mount_id?: string | null;
 }
 

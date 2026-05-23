@@ -7,6 +7,16 @@ use agentdash_contracts::mcp_preset::{
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
 };
+use agentdash_contracts::vfs::{
+    ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse,
+    ListVfssResponse, ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface,
+    SurfaceApplyPatchRequest, SurfaceApplyPatchResponse, SurfaceCreateFileRequest,
+    SurfaceCreateFileResponse, SurfaceDeleteFileRequest, SurfaceDeleteFileResponse,
+    SurfaceEntriesResponse, SurfaceReadBinaryFileRequest, SurfaceReadFileRequest,
+    SurfaceReadFileResponse, SurfaceRenameFileRequest, SurfaceRenameFileResponse,
+    SurfaceStatFileRequest, SurfaceStatFileResponse, SurfaceUploadBinaryFileResponse,
+    SurfaceWriteFileRequest, SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
+};
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
     LifecycleEdge, LifecycleExecutionEntry, LifecycleStepDefinition, ValidationIssue,
@@ -60,6 +70,34 @@ fn main() {
             export_all::<ValidationIssue>(dir);
         },
     );
+
+    write_domain(&generated_dir.join("vfs-contracts.ts"), &[], check, |dir| {
+        export_all::<ListVfssResponse>(dir);
+        export_all::<ListEntriesResponse>(dir);
+        export_all::<ConfigurableProviderInfo>(dir);
+        export_all::<ResolvedVfsSurface>(dir);
+        export_all::<ResolveSurfaceRequest>(dir);
+        export_all::<SurfaceEntriesResponse>(dir);
+        export_all::<SurfaceReadFileRequest>(dir);
+        export_all::<SurfaceReadFileResponse>(dir);
+        export_all::<SurfaceReadBinaryFileRequest>(dir);
+        export_all::<SurfaceWriteFileRequest>(dir);
+        export_all::<SurfaceWriteFileResponse>(dir);
+        export_all::<SurfaceCreateFileRequest>(dir);
+        export_all::<SurfaceCreateFileResponse>(dir);
+        export_all::<SurfaceDeleteFileRequest>(dir);
+        export_all::<SurfaceDeleteFileResponse>(dir);
+        export_all::<SurfaceRenameFileRequest>(dir);
+        export_all::<SurfaceRenameFileResponse>(dir);
+        export_all::<SurfaceStatFileRequest>(dir);
+        export_all::<SurfaceStatFileResponse>(dir);
+        export_all::<SurfaceApplyPatchRequest>(dir);
+        export_all::<SurfaceApplyPatchResponse>(dir);
+        export_all::<SurfaceUploadBinaryFileResponse>(dir);
+        export_all::<CreateProjectVfsMountRequest>(dir);
+        export_all::<UpdateProjectVfsMountRequest>(dir);
+        export_all::<ProjectVfsMountResponse>(dir);
+    });
 }
 
 fn write_domain(

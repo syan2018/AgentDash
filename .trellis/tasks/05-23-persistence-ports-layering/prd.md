@@ -14,11 +14,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 有依赖图和类型清单，说明哪些 application 类型被 infrastructure 使用。
-- [ ] 至少一个关键 persistence port 被下沉到稳定 contract 层，或形成经审阅的分批迁移设计。
-- [ ] `agentdash-infrastructure` 对 application orchestration 模块的依赖减少，并有测试/编译验证。
-- [ ] `.trellis/spec/backend/architecture.md` 和 `repository-pattern.md` 更新新的依赖边界。
-- [ ] 没有引入 API 层对具体 repository 实现的直接编排。
+- [x] 有依赖图和类型清单，说明哪些 application 类型被 infrastructure 使用。
+- [x] 至少一个关键 persistence port 被下沉到稳定 contract 层，或形成经审阅的分批迁移设计。
+- [x] `agentdash-infrastructure` 对 application orchestration 模块的依赖减少，并有测试/编译验证。
+- [x] `.trellis/spec/backend/architecture.md` 和 `repository-pattern.md` 更新新的依赖边界。
+- [x] 没有引入 API 层对具体 repository 实现的直接编排。
 
 ## Out of Scope
 

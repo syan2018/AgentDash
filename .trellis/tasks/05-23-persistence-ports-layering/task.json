@@ -3,7 +3,7 @@
   "name": "persistence-ports-layering",
   "title": "Persistence Ports 分层下沉",
   "description": "下沉持久化窄端口，降低 infrastructure 对 application orchestration 类型的依赖。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

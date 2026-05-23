@@ -17,6 +17,8 @@
 
 `RepositorySet` 定义在 `agentdash-application`，持有所有 Repository trait 对象。API 层通过 `AppState` 持有 `RepositorySet`，应用层优先接收 `&RepositorySet` 或具体 trait。
 
+Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
+
 ---
 
 ## 规则

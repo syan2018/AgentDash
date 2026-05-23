@@ -2,12 +2,12 @@ use std::io;
 
 use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
-use agentdash_application::session::{
+use agentdash_spi::session_persistence::{
     ExecutionStatus, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
     SessionBootstrapState, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
     TerminalEffectRecord, TerminalEffectStatus, TitleSource,
 };
-use agentdash_application::session::{
+use agentdash_spi::session_persistence::{
     NewTerminalEffectRecord, PendingCapabilityStateTransition, TerminalEffectType,
 };
 use sqlx::{PgPool, Row};

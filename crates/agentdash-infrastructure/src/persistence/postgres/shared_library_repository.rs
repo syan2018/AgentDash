@@ -243,7 +243,7 @@ async fn normalize_workflow_template_assets(pool: &PgPool) -> Result<(), DomainE
 
     for row in rows {
         let payload = normalize_workflow_template_payload_value(row.payload.0)?;
-        let payload_digest = agentdash_application::shared_library::seed_digest(&payload)?;
+        let payload_digest = agentdash_domain::shared_library::seed_digest(&payload)?;
         sqlx::query(
             "UPDATE library_assets SET payload=$1,payload_digest=$2,updated_at=$3 WHERE id=$4",
         )

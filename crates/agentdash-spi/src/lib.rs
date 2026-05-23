@@ -2,6 +2,7 @@ pub mod connector;
 pub mod context;
 pub mod hooks;
 pub mod platform;
+pub mod session_persistence;
 
 // ─── agent-types re-export（保持外部 API 不变）──────────────
 
@@ -84,4 +85,18 @@ pub use platform::tool_capability::{
     capability_to_platform_mcp_scope, capability_to_tool_clusters, default_visibility_rules,
     format_tool_for_prompt, is_capability_visible, platform_tool_descriptors,
     platform_tools_for_capability,
+};
+
+pub use session_persistence::{
+    ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
+    CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
+    CompanionSessionContext, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
+    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewTerminalEffectRecord,
+    PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCapabilityEffectRecord,
+    RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
+    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore,
+    SessionPersistence, SessionRuntimeCommandStore, SessionTerminalEffectStore,
+    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect,
+    TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType, TitleSource,
 };

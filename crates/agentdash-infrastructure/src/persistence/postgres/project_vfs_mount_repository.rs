@@ -153,10 +153,7 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
         row.map(ProjectVfsMount::try_from).transpose()
     }
 
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<ProjectVfsMount>, DomainError> {
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<ProjectVfsMount>, DomainError> {
         let sql = format!(
             "SELECT {MOUNT_COLUMNS} FROM project_vfs_mounts WHERE project_id = $1 ORDER BY created_at"
         );
@@ -206,7 +203,9 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
             .bind(mount_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(format!("删除 project_vfs_mounts 失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::InvalidConfig(format!("删除 project_vfs_mounts 失败: {e}"))
+            })?;
         Ok(())
     }
 }

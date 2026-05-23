@@ -18,6 +18,7 @@
 | --- | --- |
 | [architecture-review-synthesis.md](./2026-05-23-architecture-review-round/architecture-review-synthesis.md) | 两份架构 review 的异同、当前代码校准、后续重构优先级 |
 | [database-schema-source-decision.md](./2026-05-23-architecture-review-round/database-schema-source-decision.md) | PostgreSQL migrations 与 SQLite 本机缓存初始化的 schema 事实源决策 |
+| [module-boundary-split-plan.md](./2026-05-23-architecture-review-round/module-boundary-split-plan.md) | Workflow、VFS、Relay protocol、Agent loop 的分批拆分顺序 |
 | [runtime-control-plane-review.md](./2026-05-23-architecture-review-round/runtime-control-plane-review.md) | 偏 Runtime 控制平面、Session pipeline、Relay 时序和 crate 分层 |
 | [platform-boundary-governance-review.md](./2026-05-23-architecture-review-round/platform-boundary-governance-review.md) | 偏平台边界、工程治理、AppState、schema、Plugin API 和前端契约 |
 

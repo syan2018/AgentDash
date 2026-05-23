@@ -13,6 +13,8 @@
 3. Relay protocol payload；
 4. Agent loop internals。
 
+该总控任务只负责建立批次边界；具体代码移动进入独立子任务，避免一个提交同时改动 domain、application、relay 和 agent runtime。
+
 ## Principles
 
 - public re-export 保持调用方改动最小。
@@ -23,6 +25,15 @@
 ## Candidate First Batch
 
 Workflow value objects 适合作为第一批，因为它主要是领域类型与 validation 的文件级拆分，行为风险低，收益明显。
+
+## Created Follow-up Tasks
+
+| 子任务 | 边界 |
+| --- | --- |
+| `05-23-05-23-workflow-value-objects-boundary-split` | Workflow value objects / validation / activity state |
+| `05-23-05-23-vfs-provider-tools-boundary-split` | VFS core / providers / tools / mutation / materialization / surface |
+| `05-23-05-23-relay-protocol-payload-boundary-split` | Relay payload 子协议 |
+| `05-23-05-23-agent-loop-internals-boundary-split` | Agent loop turn/tool/event/cancel/prompt/output |
 
 ## Spec Update
 

@@ -23,11 +23,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 拆分顺序明确，避免在一个 PR 中同时移动所有大模块。
-- [ ] 至少完成一个高收益模块的目录级拆分，或形成多个子任务。
-- [ ] 拆分后 public import/re-export 关系清晰。
-- [ ] 相关测试、typecheck 或 cargo check 通过。
-- [ ] spec 或 review 文档记录新的模块边界原因。
+- [x] 拆分顺序明确，避免在一个 PR 中同时移动所有大模块。
+- [x] 至少完成一个高收益模块的目录级拆分，或形成多个子任务。
+- [x] 拆分后 public import/re-export 关系清晰。
+- [x] 相关测试、typecheck 或 cargo check 通过。
+- [x] spec 或 review 文档记录新的模块边界原因。
 
 ## Out of Scope
 

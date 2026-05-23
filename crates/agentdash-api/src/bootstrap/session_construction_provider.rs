@@ -18,8 +18,8 @@ use agentdash_application::session::{
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
-use crate::bootstrap::session_construction_bootstrap::build_session_construction_for_launch;
 use crate::rpc::ApiError;
+use crate::session_use_cases::construction::build_session_construction_for_launch;
 
 /// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后注入
 /// session runtime builder。

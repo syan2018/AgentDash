@@ -153,6 +153,19 @@ impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for Ap
     }
 }
 
+impl From<agentdash_application::task::execution::TaskExecutionError> for ApiError {
+    fn from(err: agentdash_application::task::execution::TaskExecutionError) -> Self {
+        use agentdash_application::task::execution::TaskExecutionError as E;
+        match err {
+            E::BadRequest(message) => ApiError::BadRequest(message),
+            E::NotFound(message) => ApiError::NotFound(message),
+            E::Conflict(message) => ApiError::Conflict(message),
+            E::UnprocessableEntity(message) => ApiError::UnprocessableEntity(message),
+            E::Internal(message) => ApiError::Internal(message),
+        }
+    }
+}
+
 /// 判断底层错误消息是否指向 `mcp_presets` 表的 unique 约束违反。
 ///
 /// 严格约束作用域为 mcp_presets 表本身，避免误伤其他表的 unique 违反：

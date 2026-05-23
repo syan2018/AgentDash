@@ -12,8 +12,8 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
-    bootstrap::session_context_query::build_session_context_plan,
     rpc::ApiError,
+    session_use_cases::context_query::build_session_context_plan,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 

@@ -19,11 +19,11 @@
 
 ## Acceptance Criteria
 
-- [ ] `AppState::new_with_plugins` 缩减为高层构造顺序，不再直接包含所有服务细节。
-- [ ] repository/plugin/vfs/relay/session/auth/routine/background worker 至少拆成独立装配函数或模块。
-- [ ] 新模块中的循环/延迟注入点有集中说明。
-- [ ] 现有启动、测试和路由行为不变。
-- [ ] 增加或更新 spec，记录 AppState 与 bootstrap/kernel 的职责边界。
+- [x] `AppState::new_with_plugins` 缩减为高层构造顺序，不再直接包含所有服务细节。
+- [x] repository/plugin/vfs/relay/session/auth/routine/background worker 至少拆成独立装配函数或模块。
+- [x] 新模块中的循环/延迟注入点有集中说明。
+- [x] 现有启动、测试和路由行为不变。
+- [x] 增加或更新 spec，记录 AppState 与 bootstrap/kernel 的职责边界。
 
 ## Out of Scope
 

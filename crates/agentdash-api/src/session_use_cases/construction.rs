@@ -14,6 +14,7 @@ use agentdash_application::session::construction::{
     ExtensionInstallationProjection, ExtensionMessageRendererProjection,
     ExtensionRuntimeProjection, SessionConstructionPlan, SessionConstructionTraceEntry,
 };
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::construction_provider::{
     CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase, TaskLaunchSource,
 };
@@ -40,11 +41,6 @@ use agentdash_domain::{
 use agentdash_spi::hooks::ContextFrame;
 
 use crate::app_state::AppState;
-use crate::routes::project_agents::{
-    parse_project_agent_session_label, resolve_project_agent_bridge_async,
-    resolve_project_workspace,
-};
-use crate::routes::task_execution;
 use crate::rpc::ApiError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +142,10 @@ pub(crate) async fn build_session_construction_for_launch(
                     .ok_or_else(|| {
                         ApiError::NotFound(format!("Project {} 不存在", story.project_id))
                     })?;
-                let workspace = resolve_project_workspace(state, &project).await?;
+                let workspace =
+                    SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                        .await
+                        .map_err(ApiError::Internal)?;
 
                 let plan = build_story_owner_prompt_request(
                     state,
@@ -623,13 +622,21 @@ async fn build_project_owner_prompt_request(
         .await;
     }
 
-    let agent_key = parse_project_agent_session_label(binding_label).ok_or_else(|| {
-        ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
-    })?;
-    let project_agent = resolve_project_agent_bridge_async(state, project.id, agent_key)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let workspace = resolve_project_workspace(state, project).await?;
+    let agent_key = SessionConstructionPlanner::parse_project_agent_session_label(binding_label)
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
+        })?;
+    let project_agent = SessionConstructionPlanner::resolve_project_agent_context(
+        &state.repos,
+        project.id,
+        agent_key,
+    )
+    .await
+    .map_err(ApiError::Internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+    let workspace = SessionConstructionPlanner::resolve_project_workspace(&state.repos, project)
+        .await
+        .map_err(ApiError::Internal)?;
 
     let effective_executor_config = match user_input.executor_config.clone() {
         Some(mut user_ec) => {
@@ -946,7 +953,7 @@ async fn build_task_owner_prompt_request(
         .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
-        .map_err(task_execution::map_task_execution_error)?;
+        .map_err(ApiError::from)?;
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),
@@ -1001,7 +1008,7 @@ async fn build_task_owner_prompt_request(
             },
         )
         .await
-        .map_err(task_execution::map_task_execution_error)?;
+        .map_err(ApiError::from)?;
 
     if let Some(space) = plan.surface.vfs.as_mut() {
         append_visible_canvas_mounts(

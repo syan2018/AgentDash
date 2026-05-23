@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
+use agentdash_application::session::construction_planner::{
+    ResolvedProjectAgentContext, SessionConstructionPlanner,
+};
 use agentdash_domain::{
     agent::ProjectAgent,
-    common::AgentPresetConfig,
     inline_file::InlineFileOwnerKind,
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
-    workspace::Workspace,
 };
-use agentdash_spi::AgentConfig;
-use agentdash_spi::SessionMcpServer;
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -22,19 +21,6 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
     rpc::ApiError,
 };
-
-#[derive(Debug, Clone)]
-pub(crate) struct ProjectAgentBridge {
-    pub key: String,
-    pub display_name: String,
-    pub description: String,
-    pub executor_config: AgentConfig,
-    pub preset_config: AgentPresetConfig,
-    pub preset_name: Option<String>,
-    pub source: String,
-    /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
-    pub preset_mcp_servers: Vec<SessionMcpServer>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,11 +101,17 @@ mod tests {
     #[test]
     fn parse_project_agent_session_label_requires_expected_prefix() {
         assert_eq!(
-            parse_project_agent_session_label("project_agent:agent-1"),
+            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:agent-1"),
             Some("agent-1")
         );
-        assert_eq!(parse_project_agent_session_label("agent-1"), None);
-        assert_eq!(parse_project_agent_session_label("project_agent:   "), None);
+        assert_eq!(
+            SessionConstructionPlanner::parse_project_agent_session_label("agent-1"),
+            None
+        );
+        assert_eq!(
+            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:   "),
+            None
+        );
     }
 }
 
@@ -146,7 +138,9 @@ pub async fn list_project_agents(
 
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = build_agent_bridge(state.as_ref(), agent).await?;
+        let bridge = SessionConstructionPlanner::build_project_agent_context(&state.repos, agent)
+            .await
+            .map_err(ApiError::Internal)?;
         let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
         response.push(build_project_agent_summary(&project, &bridge, session));
     }
@@ -184,9 +178,12 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let agent = build_agent_bridge(state.as_ref(), &project_agent).await?;
+    let agent =
+        SessionConstructionPlanner::build_project_agent_context(&state.repos, &project_agent)
+            .await
+            .map_err(ApiError::Internal)?;
 
-    let label = project_agent_session_label(&agent.key);
+    let label = SessionConstructionPlanner::project_agent_session_label(&agent.key);
 
     if !query.force_new {
         let existing_binding = state
@@ -315,62 +312,9 @@ pub async fn open_project_agent_session(
     }))
 }
 
-/// 从 agent_key（UUID 字符串）异步解析 ProjectAgentBridge
-pub(crate) async fn resolve_project_agent_bridge_async(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    agent_key: &str,
-) -> Result<Option<ProjectAgentBridge>, ApiError> {
-    let project_agent_id = match Uuid::parse_str(agent_key) {
-        Ok(project_agent_id) => project_agent_id,
-        Err(_) => return Ok(None),
-    };
-    let agent = state
-        .repos
-        .project_agent_repo
-        .get_by_project_and_id(project_id, project_agent_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let Some(agent) = agent else {
-        return Ok(None);
-    };
-    Ok(Some(build_agent_bridge(state.as_ref(), &agent).await?))
-}
-
-pub(crate) async fn resolve_project_workspace(
-    state: &Arc<AppState>,
-    project: &Project,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
-            .repos
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()));
-    }
-    Ok(None)
-}
-
-pub(crate) const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
-
-pub(crate) fn project_agent_session_label(agent_key: &str) -> String {
-    format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
-}
-
-pub(crate) fn parse_project_agent_session_label(label: &str) -> Option<&str> {
-    let agent_key = label
-        .trim()
-        .strip_prefix(PROJECT_AGENT_SESSION_LABEL_PREFIX)?;
-    if agent_key.trim().is_empty() {
-        return None;
-    }
-    Some(agent_key)
-}
-
 fn build_project_agent_summary(
     _project: &Project,
-    agent: &ProjectAgentBridge,
+    agent: &ResolvedProjectAgentContext,
     session: Option<ProjectAgentSessionResponse>,
 ) -> ProjectAgentSummaryResponse {
     ProjectAgentSummaryResponse {
@@ -402,7 +346,7 @@ async fn find_project_agent_session(
         .find_by_owner_and_label(
             SessionOwnerType::Project,
             project_id,
-            &project_agent_session_label(agent_key),
+            &SessionConstructionPlanner::project_agent_session_label(agent_key),
         )
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -440,7 +384,7 @@ pub async fn list_project_agent_sessions(
     )
     .await?;
 
-    let label = project_agent_session_label(&agent_key);
+    let label = SessionConstructionPlanner::project_agent_session_label(&agent_key);
     let bindings = state
         .repos
         .session_binding_repo
@@ -864,57 +808,6 @@ async fn resolve_lifecycle_key_for_project_agent(
     }
 
     Ok(None)
-}
-
-/// 从 ProjectAgent 构建 ProjectAgentBridge。
-pub(crate) async fn build_agent_bridge(
-    state: &AppState,
-    agent: &ProjectAgent,
-) -> Result<ProjectAgentBridge, ApiError> {
-    let preset = agent
-        .preset_config()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let executor_config = preset.to_agent_config(&agent.agent_type);
-
-    let display_name = preset
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(&agent.name)
-        .to_string();
-
-    let description = preset
-        .description
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
-
-    let preset_mcp_servers = agentdash_application::mcp_preset::resolve_preset_mcp_refs(
-        state.repos.mcp_preset_repo.as_ref(),
-        agent.project_id,
-        preset.mcp_preset_keys.as_deref().unwrap_or_default(),
-    )
-    .await
-    .map_err(|error| {
-        ApiError::Internal(format!(
-            "Project Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
-            agent.id
-        ))
-    })?;
-
-    Ok(ProjectAgentBridge {
-        key: agent.id.to_string(),
-        display_name,
-        description,
-        executor_config,
-        preset_config: preset,
-        preset_name: Some(agent.name.clone()),
-        source: format!("project_agents[{}]", agent.id),
-        preset_mcp_servers,
-    })
 }
 
 /// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）

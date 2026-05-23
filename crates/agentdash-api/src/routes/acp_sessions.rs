@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
-use crate::bootstrap::session_context_query::build_session_context_plan;
+use crate::session_use_cases::context_query::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;

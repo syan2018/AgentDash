@@ -23,8 +23,6 @@ mod dto;
 mod helpers;
 mod resolver;
 
-pub(crate) use resolver::build_surface_summary;
-
 pub use dto::*;
 use helpers::{
     api_error_from_vfs_mutation, check_mount_available, ensure_not_skill_asset_document_path,

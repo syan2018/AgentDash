@@ -45,6 +45,8 @@ Session bootstrap 负责组合 Pi / relay / plugin connectors，构建 `Composit
 
 Auth、runtime gateway 与 background worker bootstrap 分别负责认证模式校验、runtime action provider 组合、以及 AppState 构建完成后的 terminal effect replay、stall detector、routine scheduler 和 auth session cleanup。后台 worker 只在 AppState 已完成延迟绑定检查后启动。
 
+`bootstrap` 只承载宿主装配，不承载业务/查询 helper。Session construction、project-agent context、workspace resolution 等 session 运行上下文逻辑归 `agentdash-application::session`；VFS surface summary 归 `agentdash-application::vfs`，API 侧只实现 backend online / mount edit capability 等 runtime projection adapter。仍依赖 `AppState` / `ApiError` / 鉴权的 session adapter 放在 `agentdash-api/src/session_use_cases/`，不回流到 bootstrap。
+
 ## Local Decisions
 
 - Repository trait 按 aggregate 边界定义，原因是持久化接口应反映领域一致性边界，而不是表结构。

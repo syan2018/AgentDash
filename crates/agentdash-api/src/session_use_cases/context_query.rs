@@ -18,12 +18,11 @@ use crate::auth::{
     ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
     load_task_story_project_with_permission,
 };
-use crate::bootstrap::session_construction_bootstrap::{
+use crate::rpc::ApiError;
+use crate::session_use_cases::construction::{
     SessionConstructionProjectionMode, finalize_session_construction_projection,
 };
-use crate::routes::task_execution;
-use crate::routes::vfs_surfaces::build_surface_summary;
-use crate::rpc::ApiError;
+use crate::vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection;
 
 pub(crate) async fn build_session_context_plan(
     state: &Arc<AppState>,
@@ -57,7 +56,7 @@ pub(crate) async fn build_session_context_plan(
                 .story_step_activation_service
                 .get_task_session(task_id)
                 .await
-                .map_err(task_execution::map_task_execution_error)?;
+                .map_err(ApiError::from)?;
             let plan = SessionConstructionPlanner::plan_task_context_query(
                 &state.repos,
                 &state.services.vfs_service,
@@ -175,14 +174,19 @@ async fn attach_runtime_surface(
     let Some(vfs) = runtime_surface_vfs(plan) else {
         return Ok(());
     };
-    let runtime_surface = build_surface_summary(
-        state,
+    let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
+        state.services.backend_registry.clone(),
+        state.services.mount_provider_registry.clone(),
+    );
+    let runtime_surface = agentdash_application::vfs::build_surface_summary(
+        state.repos.inline_file_repo.as_ref(),
+        &runtime_projection,
         &agentdash_application::vfs::ResolvedVfsSurfaceSource::SessionRuntime {
             session_id: session_id.to_string(),
         },
         vfs,
     )
-    .await?;
+    .await;
     plan.context_projection.runtime_surface = Some(runtime_surface.clone());
     plan.projections.context.runtime_surface = Some(runtime_surface.clone());
     plan.surface.runtime_surface = Some(runtime_surface);

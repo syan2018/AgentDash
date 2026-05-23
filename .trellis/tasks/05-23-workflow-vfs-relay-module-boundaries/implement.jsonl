@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "crates/agentdash-domain/src/workflow/value_objects.rs", "reason": "Workflow value object 拆分候选"}
+{"file": "crates/agentdash-relay/src/protocol.rs", "reason": "Relay protocol 拆分候选"}

@@ -19,6 +19,7 @@
 | `types/index.ts` + 拆分文件 | 跨 Feature 共享的领域类型 |
 | `features/{name}/model/types.ts` | Feature 内部类型 |
 | `generated/backbone-protocol.ts` | 自动生成的协议类型，禁止手动修改 |
+| `generated/*-contracts.ts` | Rust contract crate 生成的 HTTP / NDJSON DTO，作为跨层 wire type 来源 |
 
 ---
 
@@ -26,12 +27,23 @@
 
 mapper 只负责：
 - `unknown → typed object` 转换
-- 状态值归一化（如多个旧状态名映射到新枚举值）
+- 状态值归一化到 generated union / enum
 - null / array / number 基础运行时校验
 
 mapper 不负责：
 - 同时兼容 `camelCase` + `snake_case`（出现 `fooBar ?? foo_bar` 时应修后端 DTO）
 - 猜测后端字段别名
+- 重新声明后端 enum/string union；跨层 DTO 的联合类型来自 `src/generated/*`
+
+## Generated Contract Boundary
+
+前端把 `src/generated/*` 当作 wire DTO 事实源。Feature 可以定义 view model，但 view model 必须由 generated DTO 显式转换而来，原因是 UI 形态与 transport 形态有不同变化节奏。
+
+新增或修改跨层 DTO 时同步运行：
+
+```powershell
+pnpm run contracts:check
+```
 
 ---
 

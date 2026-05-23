@@ -1,9 +1,10 @@
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use ts_rs::TS;
 
 fn main() {
+    let check = env::args().any(|arg| arg == "--check");
     let out: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../packages/app-web/src/generated/backbone-protocol.ts");
 
@@ -29,7 +30,29 @@ fn main() {
         lines.push(String::new());
     }
 
-    fs::write(&out, lines.join("\n")).expect("write generated TS");
+    let output = lines.join("\n");
+
+    if check {
+        match fs::read_to_string(&out) {
+            Ok(existing) if existing == output => {
+                eprintln!("{} is up to date", out.display());
+                return;
+            }
+            Ok(_) => {
+                eprintln!(
+                    "{} is out of date; run `cargo run -p agentdash-agent-protocol --bin generate_backbone_protocol_ts`",
+                    out.display()
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("failed to read {}: {error}", out.display());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    fs::write(&out, output).expect("write generated TS");
 
     eprintln!("Wrote {} ({} types)", out.display(), declarations.len());
 }

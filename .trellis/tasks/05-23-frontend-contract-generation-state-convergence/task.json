@@ -3,7 +3,7 @@
   "name": "frontend-contract-generation-state-convergence",
   "title": "前后端契约生成与前端状态收拢",
   "description": "扩展 TS DTO 生成，减少手写 normalizer，并收拢前端 stream/store feature 边界。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -15,12 +15,12 @@
 
 ## Acceptance Criteria
 
-- [ ] 有 DTO 生成范围清单和优先级。
-- [ ] 至少一组非 Backbone DTO 进入生成链路，或形成经审阅的生成方案。
-- [ ] 生成文件有 drift check。
-- [ ] 前端手写 normalizer 数量减少，或明确标注仍需手写的原因。
-- [ ] session stream 或 project stream 至少一个方向完成 transport/reducer/hook 边界收拢。
-- [ ] 前端 type-safety/state-management spec 更新。
+- [x] 有 DTO 生成范围清单和优先级。
+- [x] 至少一组非 Backbone DTO 进入生成链路，或形成经审阅的生成方案。
+- [x] 生成文件有 drift check。
+- [x] 前端手写 normalizer 数量减少，或明确标注仍需手写的原因。
+- [x] session stream 或 project stream 至少一个方向完成 transport/reducer/hook 边界收拢。
+- [x] 前端 type-safety/state-management spec 更新。
 
 ## Out of Scope
 

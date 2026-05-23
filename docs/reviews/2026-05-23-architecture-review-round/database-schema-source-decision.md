@@ -16,9 +16,9 @@ SQLite keeps its lightweight initialization path because it is a local runtime s
 
 ## Current Baseline
 
-The repository currently has 56 PostgreSQL migration files and broad repository-side PostgreSQL DDL. A static scan found schema statements in 23 PostgreSQL repository files, with the largest clusters in workflow, backend, session, MCP preset, skill asset, workspace, routine, and user directory repositories.
+The repository currently has 56 PostgreSQL migration files. PostgreSQL runtime DDL has been removed from repository implementations, and API repository bootstrap now verifies migrated schema readiness before constructing the repository set.
 
-This means the codebase is in a transitional hybrid state. The target contract is migrations-only for PostgreSQL, but removing the existing runtime DDL should be a dedicated cleanup task with integration checks rather than a side effect of unrelated repository work.
+This means PostgreSQL schema ownership is aligned with the target contract: migrations are the cloud business database source of truth, while repository code assumes migrated tables and indexes already exist.
 
 ## PostgreSQL Migration Rules
 
@@ -36,8 +36,7 @@ This means the codebase is in a transitional hybrid state. The target contract i
 
 ## Cleanup Checklist
 
-1. Add a PostgreSQL migration-runner readiness check to the API/bootstrap path if one is not already guaranteed before repository construction.
-2. Convert Postgres repository `initialize()` methods from schema creation to either no-op readiness hooks or remove them from startup wiring.
-3. Move any repository-only PostgreSQL DDL not represented in migrations into new migration files before deleting runtime DDL.
-4. Update integration tests that rely on repository `initialize()` to run migrations or use dedicated test fixtures.
-5. Consider migration squash only as a separate pre-release database-baseline task, after confirming no environment depends on the current migration chain.
+1. Keep PostgreSQL schema changes in new numbered migration files.
+2. Keep API/bootstrap schema checks as readiness validation, not schema mutation.
+3. Keep PostgreSQL integration tests on migration-initialized schema fixtures.
+4. Consider migration squash only as a separate pre-release database-baseline task, after confirming no environment depends on the current migration chain.

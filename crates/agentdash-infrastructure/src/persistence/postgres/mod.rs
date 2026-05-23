@@ -51,11 +51,16 @@ pub(crate) async fn test_pg_pool(suite: &str) -> Option<sqlx::PgPool> {
         return None;
     };
 
-    Some(
-        sqlx::PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL"),
-    )
+    let pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("应能连接测试 PostgreSQL");
+    crate::migration::run_postgres_migrations(&pool)
+        .await
+        .expect("测试 PostgreSQL 应能运行 migrations");
+    crate::migration::assert_postgres_schema_ready(&pool)
+        .await
+        .expect("测试 PostgreSQL schema 应已就绪");
+    Some(pool)
 }
 
 pub(crate) fn parse_pg_timestamp_checked(

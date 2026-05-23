@@ -19,97 +19,11 @@ impl PostgresWorkspaceRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        let ddl_statements: &[&str] = &[
-            r#"CREATE TABLE IF NOT EXISTS workspaces (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                name TEXT NOT NULL,
-                identity_kind TEXT NOT NULL DEFAULT 'local_dir',
-                identity_payload TEXT NOT NULL DEFAULT '{}',
-                resolution_policy TEXT NOT NULL DEFAULT 'prefer_online',
-                default_binding_id TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )"#,
-            "CREATE INDEX IF NOT EXISTS idx_workspaces_project ON workspaces(project_id)",
-            "CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)",
-            r#"CREATE TABLE IF NOT EXISTS workspace_bindings (
-                id TEXT PRIMARY KEY,
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                backend_id TEXT NOT NULL,
-                root_ref TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                detected_facts TEXT NOT NULL DEFAULT '{}',
-                last_verified_at TEXT,
-                priority INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )"#,
-            "CREATE INDEX IF NOT EXISTS idx_workspace_bindings_workspace ON workspace_bindings(workspace_id)",
-            "CREATE INDEX IF NOT EXISTS idx_workspace_bindings_backend ON workspace_bindings(backend_id)",
-        ];
-        for stmt in ddl_statements {
-            sqlx::query(stmt)
-                .execute(&self.pool)
-                .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        }
-
-        self.ensure_workspace_column("name", "TEXT NOT NULL DEFAULT ''")
-            .await?;
-        self.ensure_workspace_column("identity_kind", "TEXT NOT NULL DEFAULT 'local_dir'")
-            .await?;
-        self.ensure_workspace_column("identity_payload", "TEXT NOT NULL DEFAULT '{}'")
-            .await?;
-        self.ensure_workspace_column("resolution_policy", "TEXT NOT NULL DEFAULT 'prefer_online'")
-            .await?;
-        self.ensure_workspace_column("default_binding_id", "TEXT")
-            .await?;
-        self.ensure_workspace_column("status", "TEXT NOT NULL DEFAULT 'pending'")
-            .await?;
-        self.ensure_workspace_column("created_at", "TEXT").await?;
-        self.ensure_workspace_column("updated_at", "TEXT").await?;
-        self.ensure_workspace_column(
-            "mount_capabilities",
-            r#"TEXT NOT NULL DEFAULT '["read","write","list","search","exec"]'"#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["workspaces", "workspace_bindings"],
         )
-        .await?;
-
-        Ok(())
-    }
-
-    async fn ensure_workspace_column(
-        &self,
-        column_name: &str,
-        column_sql: &str,
-    ) -> Result<(), DomainError> {
-        let pragma = sqlx::query(
-            "SELECT column_name AS name
-             FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = 'workspaces'",
-        )
-        .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        let column_names = pragma
-            .iter()
-            .map(|row| {
-                row.try_get::<String, _>("name")
-                    .map_err(|e| DomainError::InvalidConfig(e.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let exists = column_names.iter().any(|value| value == column_name);
-        if exists {
-            return Ok(());
-        }
-
-        let query = format!("ALTER TABLE workspaces ADD COLUMN {column_name} {column_sql}");
-        sqlx::query(&query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(())
     }
 
     async fn save_bindings_in_tx(

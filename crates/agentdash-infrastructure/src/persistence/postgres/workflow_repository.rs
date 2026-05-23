@@ -21,82 +21,16 @@ impl PostgresWorkflowRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS workflow_definitions (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
-            name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-            binding_kinds TEXT NOT NULL DEFAULT '["story"]',
-            source TEXT NOT NULL, version INTEGER NOT NULL, contract TEXT NOT NULL,
-            library_asset_id TEXT, source_ref TEXT, source_version TEXT, source_digest TEXT, installed_at TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            UNIQUE(project_id, key)
-        )"#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &[
+                "workflow_definitions",
+                "lifecycle_definitions",
+                "lifecycle_runs",
+                "activity_execution_claims",
+            ],
         )
-        .execute(&self.pool)
         .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS lifecycle_definitions (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
-            name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-            binding_kinds TEXT NOT NULL DEFAULT '["story"]',
-            source TEXT NOT NULL, version INTEGER NOT NULL,
-            entry_step_key TEXT NOT NULL, steps TEXT NOT NULL, edges TEXT NOT NULL DEFAULT '[]',
-            entry_activity_key TEXT NOT NULL DEFAULT '', activities TEXT NOT NULL DEFAULT '[]',
-            transitions TEXT NOT NULL DEFAULT '[]',
-            library_asset_id TEXT, source_ref TEXT, source_version TEXT, source_digest TEXT, installed_at TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            UNIQUE(project_id, key)
-        )"#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS lifecycle_runs (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lifecycle_id TEXT NOT NULL,
-            session_id TEXT NOT NULL DEFAULT '', status TEXT NOT NULL,
-            step_states TEXT NOT NULL, record_artifacts TEXT NOT NULL DEFAULT '{}',
-            execution_log TEXT NOT NULL DEFAULT '[]',
-            activity_state TEXT,
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            last_activity_at TEXT NOT NULL
-        )"#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_lifecycle_runs_project_id ON lifecycle_runs(project_id)")
-            .execute(&self.pool).await.map_err(db_err)?;
-
-        sqlx::query(
-            r#"CREATE TABLE IF NOT EXISTS activity_execution_claims (
-            claim_id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            activity_key TEXT NOT NULL,
-            attempt INTEGER NOT NULL,
-            executor_kind TEXT NOT NULL,
-            status TEXT NOT NULL,
-            idempotency_key TEXT NOT NULL UNIQUE,
-            executor_run_ref TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )"#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        initialize_activity_execution_claims(&self.pool).await?;
-
-        add_installed_source_columns(&self.pool).await?;
-        add_lifecycle_run_columns(&self.pool).await?;
-        add_activity_lifecycle_columns(&self.pool).await?;
-        migrate_legacy_lifecycle_definitions_to_activity(&self.pool).await?;
-
-        Ok(())
     }
 }
 
@@ -839,108 +773,6 @@ fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
 }
 
-async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
-    for query in [
-        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
-        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_ref TEXT",
-        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_version TEXT",
-        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS source_digest TEXT",
-        "ALTER TABLE workflow_definitions ADD COLUMN IF NOT EXISTS installed_at TEXT",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_ref TEXT",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_version TEXT",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS source_digest TEXT",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS installed_at TEXT",
-        "CREATE INDEX IF NOT EXISTS idx_workflow_definitions_library_asset_id ON workflow_definitions(library_asset_id)",
-        "CREATE INDEX IF NOT EXISTS idx_lifecycle_definitions_library_asset_id ON lifecycle_definitions(library_asset_id)",
-    ] {
-        sqlx::query(query).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
-}
-
-async fn add_lifecycle_run_columns(pool: &PgPool) -> Result<(), DomainError> {
-    for query in [
-        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS record_artifacts TEXT NOT NULL DEFAULT '{}'",
-        "ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS activity_state TEXT",
-    ] {
-        sqlx::query(query).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
-}
-
-async fn add_activity_lifecycle_columns(pool: &PgPool) -> Result<(), DomainError> {
-    for query in [
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS entry_activity_key TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS activities TEXT NOT NULL DEFAULT '[]'",
-        "ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS transitions TEXT NOT NULL DEFAULT '[]'",
-    ] {
-        sqlx::query(query).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
-}
-
-async fn migrate_legacy_lifecycle_definitions_to_activity(
-    pool: &PgPool,
-) -> Result<(), DomainError> {
-    let rows = sqlx::query_as::<_, LegacyLifecyclePayloadRow>(
-        "SELECT id,entry_step_key,steps,edges FROM lifecycle_definitions WHERE entry_activity_key = '' AND steps <> '[]'",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
-
-    for row in rows {
-        let mut lifecycle = serde_json::json!({
-            "entry_step_key": row.entry_step_key,
-            "steps": parse_json_column::<serde_json::Value>(
-                &row.steps,
-                "lifecycle_definitions.steps",
-            )?,
-            "edges": parse_json_column::<serde_json::Value>(
-                &row.edges,
-                "lifecycle_definitions.edges",
-            )?,
-        });
-        agentdash_domain::shared_library::normalize_workflow_lifecycle_value(&mut lifecycle)?;
-        let entry_activity_key = lifecycle
-            .get("entry_activity_key")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                DomainError::InvalidConfig(
-                    "迁移 lifecycle_definitions.entry_activity_key 失败".to_string(),
-                )
-            })?
-            .to_string();
-        let activities = serde_json::to_string(&lifecycle["activities"])?;
-        let transitions = serde_json::to_string(&lifecycle["transitions"])?;
-        sqlx::query(
-            "UPDATE lifecycle_definitions SET entry_step_key=$1,steps='[]',edges='[]',entry_activity_key=$2,activities=$3,transitions=$4,updated_at=$5 WHERE id=$6",
-        )
-        .bind(&entry_activity_key)
-        .bind(&entry_activity_key)
-        .bind(activities)
-        .bind(transitions)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(row.id)
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
-    }
-
-    Ok(())
-}
-
-async fn initialize_activity_execution_claims(pool: &PgPool) -> Result<(), DomainError> {
-    for query in [
-        "CREATE INDEX IF NOT EXISTS idx_activity_execution_claims_run_id ON activity_execution_claims(run_id)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS ux_activity_execution_claims_active_attempt ON activity_execution_claims(run_id, activity_key, attempt) WHERE status IN ('claiming','running')",
-    ] {
-        sqlx::query(query).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
-}
-
 fn ensure_rows_affected(
     rows_affected: u64,
     entity: &'static str,
@@ -961,14 +793,6 @@ struct ExistingProjectResourceRow {
     id: String,
     version: i32,
     created_at: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct LegacyLifecyclePayloadRow {
-    id: String,
-    entry_step_key: String,
-    steps: String,
-    edges: String,
 }
 
 #[derive(sqlx::FromRow)]

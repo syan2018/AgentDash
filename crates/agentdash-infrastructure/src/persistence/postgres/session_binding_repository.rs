@@ -16,33 +16,7 @@ impl PostgresSessionBindingRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS session_bindings (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL DEFAULT '',
-                session_id TEXT NOT NULL,
-                owner_type TEXT NOT NULL,
-                owner_id TEXT NOT NULL,
-                label TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
-            );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_sb_unique
-                ON session_bindings(session_id, owner_type, owner_id);
-            CREATE INDEX IF NOT EXISTS idx_sb_project
-                ON session_bindings(project_id);
-            CREATE INDEX IF NOT EXISTS idx_sb_owner
-                ON session_bindings(owner_type, owner_id);
-            CREATE INDEX IF NOT EXISTS idx_sb_session
-                ON session_bindings(session_id);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["session_bindings"]).await
     }
 }
 

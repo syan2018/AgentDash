@@ -4,7 +4,7 @@ use sqlx::types::Json;
 use agentdash_domain::DomainError;
 use agentdash_domain::shared_library::{
     LibraryAsset, LibraryAssetListFilter, LibraryAssetRepository, LibraryAssetScope,
-    LibraryAssetSource, LibraryAssetType, normalize_workflow_template_payload_value,
+    LibraryAssetSource, LibraryAssetType,
 };
 
 pub struct PostgresSharedLibraryRepository {
@@ -17,71 +17,7 @@ impl PostgresSharedLibraryRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS library_assets (
-                id TEXT PRIMARY KEY,
-                asset_type TEXT NOT NULL,
-                scope TEXT NOT NULL,
-                owner_id TEXT,
-                key TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                description TEXT,
-                version TEXT NOT NULL,
-                source TEXT NOT NULL,
-                source_ref TEXT,
-                payload_digest TEXT NOT NULL,
-                deprecated BOOLEAN NOT NULL DEFAULT FALSE,
-                payload JSONB NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CONSTRAINT library_assets_type_check CHECK (
-                    asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template', 'filespace_template', 'extension_template')
-                ),
-                CONSTRAINT library_assets_scope_check CHECK (
-                    scope IN ('builtin', 'system', 'org', 'user')
-                ),
-                CONSTRAINT library_assets_source_check CHECK (
-                    source IN ('builtin', 'user_authored', 'remote_imported', 'plugin_embedded')
-                )
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_library_assets_identity ON library_assets(asset_type, scope, COALESCE(owner_id, ''), key)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_library_assets_asset_type ON library_assets(asset_type)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_library_assets_scope_owner ON library_assets(scope, owner_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_library_assets_source_ref ON library_assets(source_ref)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        normalize_workflow_template_assets(&self.pool).await?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["library_assets"]).await
     }
 }
 
@@ -231,38 +167,6 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(format!("library_assets: {error}"))
-}
-
-async fn normalize_workflow_template_assets(pool: &PgPool) -> Result<(), DomainError> {
-    let rows = sqlx::query_as::<_, WorkflowTemplatePayloadRow>(
-        "SELECT id,payload FROM library_assets WHERE asset_type = 'workflow_template' AND payload #> '{template,lifecycle,steps}' IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
-
-    for row in rows {
-        let payload = normalize_workflow_template_payload_value(row.payload.0)?;
-        let payload_digest = agentdash_domain::shared_library::seed_digest(&payload)?;
-        sqlx::query(
-            "UPDATE library_assets SET payload=$1,payload_digest=$2,updated_at=$3 WHERE id=$4",
-        )
-        .bind(Json(payload))
-        .bind(payload_digest)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .bind(row.id)
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
-    }
-
-    Ok(())
-}
-
-#[derive(sqlx::FromRow)]
-struct WorkflowTemplatePayloadRow {
-    id: String,
-    payload: Json<serde_json::Value>,
 }
 
 #[derive(sqlx::FromRow)]

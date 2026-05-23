@@ -29,15 +29,15 @@ pub(crate) async fn build_repositories(
     pool: PgPool,
     plugin_library_asset_seeds: Vec<PluginEmbeddedLibraryAssetSeed>,
 ) -> Result<RepositoryBootstrapOutput> {
+    agentdash_infrastructure::migration::assert_postgres_schema_ready(&pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
     let project_repo = Arc::new(PostgresProjectRepository::new(pool.clone()));
 
     let canvas_repo = Arc::new(PostgresCanvasRepository::new(pool.clone()));
 
     let workspace_repo = Arc::new(PostgresWorkspaceRepository::new(pool.clone()));
-    workspace_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("workspaces 表初始化失败: {e}"))?;
 
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
@@ -47,26 +47,14 @@ pub(crate) async fn build_repositories(
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
     let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
-    runtime_health_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("runtime_health 表初始化失败: {e}"))?;
     let project_backend_access_repo =
         Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
-    project_backend_access_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("project_backend_access 表初始化失败: {e}"))?;
 
     let user_directory_repo = Arc::new(PostgresUserDirectoryRepository::new(pool.clone()));
 
     let settings_repo = Arc::new(PostgresSettingsRepository::new(pool.clone()));
 
     let shared_library_repo = Arc::new(PostgresSharedLibraryRepository::new(pool.clone()));
-    shared_library_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("library_assets 表初始化失败: {e}"))?;
     {
         let service = SharedLibraryService::new(shared_library_repo.as_ref());
         let seeded = service
@@ -82,39 +70,15 @@ pub(crate) async fn build_repositories(
     let project_extension_installation_repo = Arc::new(
         PostgresProjectExtensionInstallationRepository::new(pool.clone()),
     );
-    project_extension_installation_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("project_extension_installations 表初始化失败: {e}"))?;
 
     let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
-    project_agent_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("project_agents 表初始化失败: {e}"))?;
 
     let project_vfs_mount_repo = Arc::new(PostgresProjectVfsMountRepository::new(pool.clone()));
-    project_vfs_mount_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("project_vfs_mounts 表初始化失败: {e}"))?;
 
     let routine_repo = Arc::new(PostgresRoutineRepository::new(pool.clone()));
-    routine_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("routines 表初始化失败: {e}"))?;
     let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
-    routine_execution_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("routine_executions 表初始化失败: {e}"))?;
 
     let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
-    llm_provider_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("llm_providers 表初始化失败: {e}"))?;
 
     let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
     let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
@@ -122,22 +86,10 @@ pub(crate) async fn build_repositories(
     let workflow_repo = Arc::new(PostgresWorkflowRepository::new(pool.clone()));
 
     let mcp_preset_repo = Arc::new(PostgresMcpPresetRepository::new(pool.clone()));
-    mcp_preset_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("mcp_presets 表初始化失败: {e}"))?;
 
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
-    skill_asset_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("skill_assets 表初始化失败: {e}"))?;
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
-    inline_file_repo
-        .initialize()
-        .await
-        .map_err(|e| anyhow::anyhow!("inline_fs_files 表初始化失败: {e}"))?;
 
     let repos = RepositorySet {
         project_repo: project_repo.clone(),

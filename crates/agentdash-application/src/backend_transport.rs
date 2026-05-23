@@ -67,8 +67,8 @@ pub trait RelayPromptTransport: BackendTransport {
     /// 取消远程会话。
     async fn relay_cancel(&self, backend_id: &str, session_id: &str) -> Result<(), TransportError>;
 
-    /// 列出所有在线后端上报的执行器信息。
-    async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
+    /// 列出所有在线后端上报的执行器快照。
+    fn list_online_executors(&self) -> Vec<RemoteExecutorInfo>;
 
     /// 根据 executor_id + 可选 backend 提示解析应使用的后端。
     /// 优先策略：若提供 `preferred_backend_id`，要求该后端在线且提供对应 executor；

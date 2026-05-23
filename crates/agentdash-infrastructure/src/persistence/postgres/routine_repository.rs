@@ -19,38 +19,7 @@ impl PostgresRoutineRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        // PostgreSQL 不允许一个 prepared statement 中放多条命令，逐条执行
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS routines (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                prompt_template TEXT NOT NULL,
-                project_agent_id TEXT NOT NULL,
-                trigger_config TEXT NOT NULL,
-                session_strategy TEXT NOT NULL,
-                enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_fired_at TEXT,
-                UNIQUE(project_id, name)
-            )",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routines_project ON routines(project_id)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routines_enabled ON routines(enabled)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["routines"]).await
     }
 }
 
@@ -227,43 +196,7 @@ impl PostgresRoutineExecutionRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS routine_executions (
-                id TEXT PRIMARY KEY,
-                routine_id TEXT NOT NULL,
-                trigger_source TEXT NOT NULL,
-                trigger_payload TEXT,
-                resolved_prompt TEXT,
-                session_id TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                error TEXT,
-                entity_key TEXT
-            )",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_routine_exec_routine ON routine_executions(routine_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_status ON routine_executions(routine_id, status)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_routine_exec_entity ON routine_executions(routine_id, entity_key)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["routine_executions"]).await
     }
 }
 

@@ -243,20 +243,8 @@ impl RelayPromptTransport for BackendRegistry {
         }
     }
 
-    async fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
-        let mut result = Vec::new();
-        for backend in self.list_online().await {
-            for ex in &backend.capabilities.executors {
-                result.push(RemoteExecutorInfo {
-                    backend_id: backend.backend_id.clone(),
-                    executor_id: ex.id.clone(),
-                    executor_name: ex.name.clone(),
-                    variants: ex.variants.clone(),
-                    available: ex.available,
-                });
-            }
-        }
-        result
+    fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
+        self.list_online_executors_snapshot()
     }
 
     fn register_session_sink(

@@ -117,6 +117,9 @@ pub async fn build_server(
     agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    agentdash_infrastructure::migration::assert_postgres_schema_ready(&db_runtime.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let state = AppState::new_with_plugins(db_runtime.pool.clone(), plugins).await?;
 

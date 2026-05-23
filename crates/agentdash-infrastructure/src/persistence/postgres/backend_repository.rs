@@ -16,78 +16,11 @@ impl PostgresBackendRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS backends (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                endpoint TEXT NOT NULL,
-                auth_token TEXT,
-                enabled INTEGER NOT NULL DEFAULT 1,
-                backend_type TEXT NOT NULL DEFAULT 'local',
-                owner_user_id TEXT,
-                profile_id TEXT,
-                device_id TEXT,
-                machine_id TEXT,
-                machine_label TEXT,
-                legacy_machine_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-                visibility TEXT NOT NULL DEFAULT 'private',
-                share_scope_kind TEXT NOT NULL DEFAULT 'user',
-                share_scope_id TEXT,
-                capability_slot TEXT NOT NULL DEFAULT 'default',
-                device JSONB NOT NULL DEFAULT '{}'::jsonb,
-                last_claimed_at TIMESTAMPTZ,
-                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
-            );
-
-            CREATE TABLE IF NOT EXISTS views (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                backend_ids TEXT NOT NULL DEFAULT '[]',
-                filters TEXT NOT NULL DEFAULT '{}',
-                sort_by TEXT,
-                created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
-            );
-
-            CREATE TABLE IF NOT EXISTS user_preferences (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS owner_user_id TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS profile_id TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device_id TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS machine_id TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS machine_label TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS legacy_machine_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS share_scope_kind TEXT NOT NULL DEFAULT 'user';
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS share_scope_id TEXT;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS capability_slot TEXT NOT NULL DEFAULT 'default';
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS device JSONB NOT NULL DEFAULT '{}'::jsonb;
-            ALTER TABLE backends ADD COLUMN IF NOT EXISTS last_claimed_at TIMESTAMPTZ;
-
-            DROP INDEX IF EXISTS idx_backends_local_owner_profile_device;
-
-            UPDATE backends
-               SET machine_id = COALESCE(machine_id, device_id),
-                   machine_label = COALESCE(machine_label, name),
-                   share_scope_id = COALESCE(share_scope_id, owner_user_id)
-             WHERE backend_type = 'local';
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_backends_local_machine_scope_slot
-                ON backends (machine_id, share_scope_kind, COALESCE(share_scope_id, ''), capability_slot)
-                WHERE backend_type = 'local'
-                  AND machine_id IS NOT NULL
-                  AND share_scope_kind IS NOT NULL
-                  AND capability_slot IS NOT NULL;
-            "#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["backends", "views", "user_preferences"],
         )
-        .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
     }
 }
 

@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
+use agentdash_application::backend_transport::RemoteExecutorInfo;
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
@@ -51,6 +52,7 @@ pub struct OnlineBackendInfo {
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
+    executor_snapshot: std::sync::RwLock<Vec<RemoteExecutorInfo>>,
     /// 等待本机响应的挂起请求（msg_id → pending request）
     pending: RwLock<HashMap<String, PendingRequest>>,
     /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
@@ -71,6 +73,7 @@ impl BackendRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             backends: RwLock::new(HashMap::new()),
+            executor_snapshot: std::sync::RwLock::new(Vec::new()),
             pending: RwLock::new(HashMap::new()),
             session_sinks: std::sync::RwLock::new(HashMap::new()),
         })
@@ -101,12 +104,17 @@ impl BackendRegistry {
             return Err(RegisterBackendError::AlreadyOnline { backend_id: id });
         }
         backends.insert(id.clone(), backend);
+        self.rebuild_executor_snapshot(&backends);
         tracing::info!(backend_id = %id, "本机后端已注册");
         Ok(())
     }
 
     pub async fn unregister(&self, backend_id: &str) {
-        self.backends.write().await.remove(backend_id);
+        {
+            let mut backends = self.backends.write().await;
+            backends.remove(backend_id);
+            self.rebuild_executor_snapshot(&backends);
+        }
         self.pending
             .write()
             .await
@@ -192,8 +200,29 @@ impl BackendRegistry {
         let mut backends = self.backends.write().await;
         if let Some(backend) = backends.get_mut(backend_id) {
             backend.capabilities = capabilities;
+            self.rebuild_executor_snapshot(&backends);
             tracing::info!(backend_id = %backend_id, "后端能力已更新");
         }
+    }
+
+    pub fn list_online_executors_snapshot(&self) -> Vec<RemoteExecutorInfo> {
+        self.executor_snapshot.read().unwrap().clone()
+    }
+
+    fn rebuild_executor_snapshot(&self, backends: &HashMap<String, ConnectedBackend>) {
+        let mut snapshot = Vec::new();
+        for backend in backends.values() {
+            for executor in &backend.capabilities.executors {
+                snapshot.push(RemoteExecutorInfo {
+                    backend_id: backend.backend_id.clone(),
+                    executor_id: executor.id.clone(),
+                    executor_name: executor.name.clone(),
+                    variants: executor.variants.clone(),
+                    available: executor.available,
+                });
+            }
+        }
+        *self.executor_snapshot.write().unwrap() = snapshot;
     }
 
     /// 查找提供指定 MCP server 的在线 backend
@@ -285,7 +314,7 @@ impl BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_relay::CommandBrowseDirectoryPayload;
+    use agentdash_relay::{AgentInfoRelay, CommandBrowseDirectoryPayload};
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
         let (sender, _rx) = mpsc::unbounded_channel();
@@ -306,6 +335,20 @@ mod tests {
             accessible_roots: Vec::new(),
             sender,
             connected_at: Utc::now(),
+        }
+    }
+
+    fn capabilities_with_executor(executor_id: &str) -> CapabilitiesPayload {
+        CapabilitiesPayload {
+            executors: vec![AgentInfoRelay {
+                id: executor_id.to_string(),
+                name: format!("{executor_id} executor"),
+                variants: vec!["default".to_string()],
+                available: true,
+            }],
+            supports_cancel: true,
+            supports_discover_options: true,
+            mcp_servers: Vec::new(),
         }
     }
 
@@ -335,6 +378,29 @@ mod tests {
                 backend_id: "local-a".to_string()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn executor_snapshot_tracks_register_update_and_unregister() {
+        let registry = BackendRegistry::new();
+        let mut backend = connected_backend("local-a");
+        backend.capabilities = capabilities_with_executor("executor-a");
+        registry.try_register(backend).await.expect("register");
+
+        let initial = registry.list_online_executors_snapshot();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].backend_id, "local-a");
+        assert_eq!(initial[0].executor_id, "executor-a");
+
+        registry
+            .update_capabilities("local-a", capabilities_with_executor("executor-b"))
+            .await;
+        let updated = registry.list_online_executors_snapshot();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].executor_id, "executor-b");
+
+        registry.unregister("local-a").await;
+        assert!(registry.list_online_executors_snapshot().is_empty());
     }
 
     #[tokio::test]

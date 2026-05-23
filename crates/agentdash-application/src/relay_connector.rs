@@ -57,20 +57,7 @@ impl AgentConnector for RelayAgentConnector {
     }
 
     fn list_executors(&self) -> Vec<AgentInfo> {
-        let transport = self.transport.clone();
-        let rt = tokio::runtime::Handle::try_current();
-        match rt {
-            Ok(handle) => {
-                // 在 async context 中用 block_in_place 同步获取
-                tokio::task::block_in_place(|| {
-                    handle.block_on(async {
-                        let remote = transport.list_online_executors().await;
-                        dedup_executors(remote)
-                    })
-                })
-            }
-            Err(_) => Vec::new(),
-        }
+        dedup_executors(self.transport.list_online_executors())
     }
 
     async fn discover_options_stream(
@@ -420,7 +407,7 @@ mod tests {
             Ok(())
         }
 
-        async fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
+        fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
             Vec::new()
         }
 

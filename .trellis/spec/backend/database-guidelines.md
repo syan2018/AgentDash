@@ -20,7 +20,7 @@
 - 复杂值对象以 JSON 文本存入 `TEXT`
 - 时间字段存 `TEXT`，读取时做健壮解析
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
-- Repository 初始化语句按单条 SQL 逐次执行；`sqlx::query` 会以 prepared statement 发送，PostgreSQL 不接受同一个 prepared statement 中包含多条命令，表、索引、约束补齐应拆开执行。
+- API 启动在 repository 装配前运行 PostgreSQL migrations，并执行 schema readiness 检查。
 
 ---
 
@@ -38,7 +38,7 @@
 
 云端业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。新增表、列、索引、约束、删除列和数据修正都通过递增编号 `.sql` 文件表达。已提交的 migration 文件保持稳定，原因是开发、测试、embedded Postgres 和部署环境需要观察同一条有序 schema 历史。
 
-Repository 启动逻辑默认观察已迁移 schema。它可以承载 wiring readiness、轻量 seed 或 schema 检查，但 PostgreSQL schema 演进不放在 repository `initialize()` 中新增。
+Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 PostgreSQL repository schema 初始化；需要直接构造 `AppState` 或 repository 的测试路径也先运行 migrations，再执行 readiness 检查。Repository 可以保留无 DDL 的 readiness helper，但不能创建表、补列、建索引或执行 schema 数据迁移。
 
 ### SQLite
 

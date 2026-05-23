@@ -16,7 +16,7 @@ Rust contract type
   -> frontend service mapper / reducer
 ```
 
-`agentdash-contracts` 是后续业务 DTO 的归属 crate。它承载 HTTP request/response DTO、NDJSON envelope、跨端共享 enum 和少量 wire value object。`agentdash-api` 使用 contract crate 作为 route 输入输出类型；前端只从 generated 文件消费这些类型。
+`agentdash-contracts` 是业务 DTO 的归属 crate。它承载 HTTP request/response DTO、NDJSON envelope、跨端共享 enum 和少量 wire value object。`agentdash-api` 使用 contract crate 作为 route 输入输出类型；前端只从 generated 文件消费这些类型。
 
 当前 `agentdash-agent-protocol` 继续承载 Backbone Protocol。它已经是独立 protocol crate，后续只负责 runtime event fact；业务 HTTP DTO 不继续塞入该 crate。
 
@@ -31,19 +31,18 @@ Rust contract type
 
 ## Contract Crate Shape
 
-目标结构：
+当前结构从 MCP Preset 开始落地，后续 domain 按同一布局扩展：
 
 ```text
 crates/agentdash-contracts/
   src/
     lib.rs
     generate_ts.rs
-    backbone.rs          # re-export agentdash-agent-protocol generated root if needed
+    mcp_preset.rs        # MCP preset CRUD/probe DTO
     session.rs           # Session DTO / NDJSON envelope / runtime projection
     workflow.rs          # WorkflowContract / lifecycle / activity DTO
     vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
     shared_library.rs    # Library asset install/publish DTO
-    mcp_preset.rs        # MCP preset CRUD/probe DTO
     project_agent.rs     # ProjectAgent config/session summary DTO
 ```
 

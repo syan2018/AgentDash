@@ -23,6 +23,30 @@ function normalizeRoutePolicy(value: unknown): McpRoutePolicy {
   return "auto";
 }
 
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function mapHeaderList(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const value = asRecord(item);
+      return value ? { name: readString(value.name), value: readString(value.value) } : null;
+    })
+    .filter((item) => item !== null);
+}
+
+function mapEnvList(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const value = asRecord(item);
+      return value ? { name: readString(value.name), value: readString(value.value) } : null;
+    })
+    .filter((item) => item !== null);
+}
+
 function mapMcpTransport(raw: unknown): McpTransportConfig {
   const value = asRecord(raw);
   if (!value) {
@@ -30,9 +54,24 @@ function mapMcpTransport(raw: unknown): McpTransportConfig {
   }
   switch (value.type) {
     case "http":
+      return {
+        type: "http",
+        url: readString(value.url),
+        headers: mapHeaderList(value.headers),
+      };
     case "sse":
+      return {
+        type: "sse",
+        url: readString(value.url),
+        headers: mapHeaderList(value.headers),
+      };
     case "stdio":
-      return value as unknown as McpTransportConfig;
+      return {
+        type: "stdio",
+        command: readString(value.command),
+        args: Array.isArray(value.args) ? value.args.map(readString) : [],
+        env: mapEnvList(value.env),
+      };
     default:
       throw new Error(`未知的 mcp preset transport.type: ${String(value.type)}`);
   }
@@ -46,14 +85,14 @@ export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
     display_name: String(raw.display_name ?? raw.key ?? ""),
     description:
       raw.description === null || raw.description === undefined
-        ? null
+        ? undefined
         : String(raw.description),
     transport: mapMcpTransport(raw.transport),
     route_policy: normalizeRoutePolicy(raw.route_policy),
     source: normalizeSource(raw.source),
     builtin_key:
       raw.builtin_key === null || raw.builtin_key === undefined
-        ? null
+        ? undefined
         : String(raw.builtin_key),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     created_at: String(raw.created_at ?? new Date().toISOString()),

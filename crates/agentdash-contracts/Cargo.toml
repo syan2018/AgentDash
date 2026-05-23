@@ -1,0 +1,20 @@
+[package]
+name = "agentdash-contracts"
+description = "AgentDash 前后端共享 wire DTO 与 TypeScript 生成"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "generate_contracts_ts"
+path = "src/generate_ts.rs"
+
+[dependencies]
+agentdash-domain = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = "3"
+ts-rs = { workspace = true }

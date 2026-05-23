@@ -193,14 +193,6 @@ export interface DirectoryGroup {
 
 // ─── Project ──────────────────────────────────────────
 
-export type {
-  McpHttpHeader,
-  McpEnvVar,
-  McpTransportConfig,
-} from '@agentdash/core/local-runtime'
-
-export type McpRoutePolicy = 'auto' | 'relay' | 'direct';
-
 export interface AgentPreset {
   name: string;
   agent_type: string;

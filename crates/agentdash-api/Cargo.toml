@@ -14,6 +14,7 @@ path = "src/lib.rs"
 
 [dependencies]
 agentdash-domain = { workspace = true }
+agentdash-contracts = { workspace = true }
 agentdash-spi = { workspace = true }
 agentdash-application = { workspace = true }
 agentdash-infrastructure = { workspace = true }

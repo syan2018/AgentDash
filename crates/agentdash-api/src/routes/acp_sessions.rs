@@ -21,6 +21,9 @@ use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     LaunchCommand, SessionExecutionState, SessionMeta, TitleSource, UserPromptInput,
 };
+use agentdash_contracts::session::{
+    SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
+};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use agentdash_plugin_api::AuthIdentity;
@@ -247,64 +250,16 @@ pub struct SessionExecutionStateResponse {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionEventResponse {
-    pub session_id: String,
-    pub event_seq: u64,
-    pub occurred_at_ms: i64,
-    pub committed_at_ms: i64,
-    pub session_update_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub turn_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entry_index: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    pub notification: agentdash_agent_protocol::BackboneEnvelope,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionEventsPageResponse {
-    pub snapshot_seq: u64,
-    pub events: Vec<SessionEventResponse>,
-    pub has_more: bool,
-    pub next_after_seq: u64,
-}
-
 fn map_session_event(
     event: agentdash_application::session::PersistedSessionEvent,
 ) -> SessionEventResponse {
-    SessionEventResponse {
-        session_id: event.session_id,
-        event_seq: event.event_seq,
-        occurred_at_ms: event.occurred_at_ms,
-        committed_at_ms: event.committed_at_ms,
-        session_update_type: event.session_update_type,
-        turn_id: event.turn_id,
-        entry_index: event.entry_index,
-        tool_call_id: event.tool_call_id,
-        notification: event.notification,
-    }
+    event.into()
 }
 
 fn stream_event_payload(
     event: agentdash_application::session::PersistedSessionEvent,
-) -> serde_json::Value {
-    let mapped = map_session_event(event);
-    serde_json::json!({
-        "type": "event",
-        "session_id": mapped.session_id,
-        "event_seq": mapped.event_seq,
-        "occurred_at_ms": mapped.occurred_at_ms,
-        "committed_at_ms": mapped.committed_at_ms,
-        "session_update_type": mapped.session_update_type,
-        "turn_id": mapped.turn_id,
-        "entry_index": mapped.entry_index,
-        "tool_call_id": mapped.tool_call_id,
-        "notification": mapped.notification,
-    })
+) -> SessionNdjsonEnvelope {
+    SessionNdjsonEnvelope::event(event)
 }
 
 pub async fn get_session_state(
@@ -1022,10 +977,7 @@ pub async fn acp_session_stream_ndjson(
             }
         }
 
-        if let Some(line) = to_ndjson_line(&serde_json::json!({
-            "type": "connected",
-            "last_event_id": seq,
-        })) {
+        if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::connected(seq)) {
             yield Ok::<Bytes, Infallible>(line);
         }
 
@@ -1065,10 +1017,7 @@ pub async fn acp_session_stream_ndjson(
                     }
                 }
                 _ = heartbeat_tick.tick() => {
-                    if let Some(line) = to_ndjson_line(&serde_json::json!({
-                        "type": "heartbeat",
-                        "timestamp": chrono::Utc::now().timestamp_millis(),
-                    })) {
+                    if let Some(line) = to_ndjson_line(&SessionNdjsonEnvelope::heartbeat_now()) {
                         yield Ok::<Bytes, Infallible>(line);
                     }
                 }
@@ -1109,7 +1058,7 @@ fn parse_resume_from_header(
     Ok(Some(parsed as u64))
 }
 
-fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
+fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
     match serde_json::to_vec(value) {
         Ok(mut bytes) => {
             bytes.push(b'\n');

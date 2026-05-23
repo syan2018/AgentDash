@@ -39,7 +39,7 @@ crates/agentdash-contracts/
     lib.rs
     generate_ts.rs
     mcp_preset.rs        # MCP preset CRUD/probe DTO
-    session.rs           # Session DTO / NDJSON envelope / runtime projection
+    session.rs           # Session event page DTO / NDJSON envelope / runtime projection
     workflow.rs          # WorkflowContract / lifecycle / activity DTO
     vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
     shared_library.rs    # Library asset install/publish DTO
@@ -72,7 +72,7 @@ packages/app-web/src/generated/
 ## Migration Plan
 
 1. 保持 `agentdash-agent-protocol` 的 Backbone generated file，并使用 `contracts:check` 做 drift gate。
-2. 新增 `agentdash-contracts` crate，先迁移 MCP Preset 或 Session stream envelope 这类边界清晰的 DTO。
+2. `agentdash-contracts` 先迁移 MCP Preset 与 Session stream envelope 这类边界清晰的 DTO。
 3. API route 改为使用 contract crate DTO；frontend service 改为 import generated type。
 4. Mapper 中保留运行时校验，但删除 enum/string 联合类型的手写重复定义。
 5. Workflow/VFS 这类大域按 value object 分批迁移，迁移一批就删除对应前端手写类型。

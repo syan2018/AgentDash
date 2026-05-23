@@ -34,3 +34,9 @@ pnpm run frontend:check
   - 前端生成 `packages/app-web/src/generated/mcp-preset-contracts.ts`，`types/mcp-preset.ts` 改为 re-export generated type。
   - `services/mcpPreset.ts` 保留 runtime mapper，但不再手写 MCP enum/union 事实源。
   - 已验证 `cargo test -p agentdash-contracts`、`cargo check -p agentdash-contracts -p agentdash-api`、`pnpm run contracts:check`、`pnpm run frontend:check`。
+- Batch 2 Session stream envelope 已完成：
+  - 新增 `agentdash-contracts::session`，承载 `SessionEventResponse`、`SessionEventsPageResponse`、`SessionNdjsonEnvelope`。
+  - `agentdash-api` 会话事件分页和 ACP NDJSON stream 改用 contract DTO / envelope。
+  - 生成 `packages/app-web/src/generated/session-contracts.ts`，并显式引用 `BackboneEnvelope`。
+  - 前端 `SessionEventEnvelope` 改为 generated `SessionEventResponse`，stream parser 只读取 snake_case contract 字段。
+  - 已验证 `cargo check -p agentdash-contracts -p agentdash-api`、`pnpm run contracts:check`、`pnpm run frontend:check`。

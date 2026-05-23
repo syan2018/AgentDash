@@ -4,22 +4,52 @@ use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
+use agentdash_contracts::session::{
+    SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
+};
 use ts_rs::TS;
 
 fn main() {
     let check = env::args().any(|arg| arg == "--check");
-    let out: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/app-web/src/generated/mcp-preset-contracts.ts");
+    let generated_dir: PathBuf =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/app-web/src/generated");
 
+    write_domain(
+        &generated_dir.join("mcp-preset-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<McpPresetResponse>(dir);
+            export_all::<CreateMcpPresetRequest>(dir);
+            export_all::<UpdateMcpPresetRequest>(dir);
+            export_all::<CloneMcpPresetRequest>(dir);
+            export_all::<ListMcpPresetQuery>(dir);
+            export_all::<ProbeMcpPresetResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("session-contracts.ts"),
+        &["import type { BackboneEnvelope } from \"./backbone-protocol\";"],
+        check,
+        |dir| {
+            export_all::<SessionEventResponse>(dir);
+            export_all::<SessionEventsPageResponse>(dir);
+            export_all::<SessionNdjsonEnvelope>(dir);
+        },
+    );
+}
+
+fn write_domain(
+    out: &std::path::Path,
+    imports: &[&str],
+    check: bool,
+    export: impl FnOnce(&std::path::Path),
+) {
     fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
 
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
-    export_all::<McpPresetResponse>(tmp_dir.path());
-    export_all::<CreateMcpPresetRequest>(tmp_dir.path());
-    export_all::<UpdateMcpPresetRequest>(tmp_dir.path());
-    export_all::<CloneMcpPresetRequest>(tmp_dir.path());
-    export_all::<ListMcpPresetQuery>(tmp_dir.path());
-    export_all::<ProbeMcpPresetResponse>(tmp_dir.path());
+    export(tmp_dir.path());
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
@@ -31,6 +61,13 @@ fn main() {
     );
     lines.push("// Do not edit manually.".to_string());
     lines.push(String::new());
+
+    for import in imports {
+        lines.push((*import).to_string());
+    }
+    if !imports.is_empty() {
+        lines.push(String::new());
+    }
 
     for decl in declarations.values() {
         lines.push(decl.clone());

@@ -57,6 +57,7 @@ import type {
   PlatformEvent,
   ThreadTokenUsage,
 } from "../../../generated/backbone-protocol";
+import type { SessionEventResponse } from "../../../generated/session-contracts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -220,17 +221,7 @@ export function extractTextFromContentBlock(content: ContentBlock | null | undef
 
 // ==================== 前端扩展类型 ====================
 
-export interface SessionEventEnvelope {
-  session_id: string;
-  event_seq: number;
-  notification: BackboneEnvelope;
-  occurred_at_ms?: number | null;
-  committed_at_ms?: number | null;
-  session_update_type?: string | null;
-  turn_id?: string | null;
-  entry_index?: number | null;
-  tool_call_id?: string | null;
-}
+export type SessionEventEnvelope = SessionEventResponse;
 
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =

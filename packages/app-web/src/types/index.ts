@@ -8,6 +8,13 @@ import type {
   ProjectVfsMountContent,
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
+import type {
+  OpenProjectAgentSessionResult as GeneratedOpenProjectAgentSessionResult,
+  ProjectAgent as GeneratedProjectAgent,
+  ProjectAgentExecutor as GeneratedProjectAgentExecutor,
+  ProjectAgentSession as GeneratedProjectAgentSession,
+  ProjectAgentSummary as GeneratedProjectAgentSummary,
+} from "../generated/project-agent-contracts";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 
@@ -230,19 +237,10 @@ export type ProjectVfsMount = ProjectVfsMountResponse;
 
 // ─── Project Agent 项目实例 ───
 
-export interface ProjectAgent {
-  id: string;
-  project_id: string;
-  name: string;
-  agent_type: string;
+export type ProjectAgent = Omit<GeneratedProjectAgent, "config" | "default_lifecycle_key"> & {
   config: AgentPresetConfig;
   default_lifecycle_key: string | null;
-  is_default_for_story: boolean;
-  is_default_for_task: boolean;
-  knowledge_enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
+};
 
 export interface ProjectConfig {
   default_agent_type?: string | null;
@@ -286,38 +284,40 @@ export interface ProjectSubjectGrant {
   updated_at: string;
 }
 
-export interface ProjectAgentExecutor {
-  executor: string;
+export type ProjectAgentExecutor = Omit<
+  GeneratedProjectAgentExecutor,
+  "provider_id" | "model_id" | "agent_id" | "thinking_level" | "permission_policy"
+> & {
   provider_id?: string | null;
   model_id?: string | null;
   agent_id?: string | null;
   thinking_level?: ThinkingLevel | null;
   permission_policy?: string | null;
-}
+};
 
-export interface ProjectAgentSession {
-  binding_id: string;
-  session_id: string;
+export type ProjectAgentSession = Omit<
+  GeneratedProjectAgentSession,
+  "session_title" | "last_activity"
+> & {
   session_title: string | null;
   last_activity: number | null;
-}
+};
 
-export interface ProjectAgentSummary {
-  key: string;
-  display_name: string;
-  description: string;
+export type ProjectAgentSummary = Omit<
+  GeneratedProjectAgentSummary,
+  "executor" | "preset_name" | "session"
+> & {
   executor: ProjectAgentExecutor;
   preset_name?: string | null;
-  source: string;
   session?: ProjectAgentSession | null;
-}
+};
 
-export interface OpenProjectAgentSessionResult {
-  created: boolean;
-  session_id: string;
-  binding_id: string;
+export type OpenProjectAgentSessionResult = Omit<
+  GeneratedOpenProjectAgentSessionResult,
+  "agent"
+> & {
   agent: ProjectAgentSummary;
-}
+};
 
 // ─── Workspace ────────────────────────────────────────
 

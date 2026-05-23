@@ -4,6 +4,10 @@ use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
+use agentdash_contracts::project_agent::{
+    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent,
+    ProjectAgentExecutor, ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
+};
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
 };
@@ -117,6 +121,21 @@ fn main() {
             export_all::<InstallLibraryAssetResponse>(dir);
             export_all::<PublishLibraryAssetRequest>(dir);
             export_all::<ProjectAssetSourceStatusDto>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("project-agent-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ProjectAgent>(dir);
+            export_all::<ProjectAgentExecutor>(dir);
+            export_all::<ProjectAgentSession>(dir);
+            export_all::<ProjectAgentSummary>(dir);
+            export_all::<OpenProjectAgentSessionResult>(dir);
+            export_all::<CreateProjectAgentRequest>(dir);
+            export_all::<UpdateProjectAgentRequest>(dir);
         },
     );
 }

@@ -21,7 +21,7 @@ LaunchCommand
 | Source adapter | HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 请求 | `LaunchCommand` | 保留来源身份、请求意图、source policy、prompt payload、executor override、follow-up hint |
 | Construction | `LaunchCommand` + session/domain/runtime facts | `SessionConstructionPlan` | 解析 owner、workspace、working dir、VFS、MCP、capability、context bundle/frame、identity、query/audit/inspector projection、resolution trace |
 | Launch planning | `LaunchCommand` + `SessionConstructionPlan` + runtime facts | `LaunchExecution` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
-| Execution | `LaunchExecution` | connector prompt + session events | claim/activate turn，写 start/user events，调用 connector，connector accepted 后提交 bootstrap/pending/title 成功副作用 |
+| Execution | `LaunchExecution` | connector prompt + session events | claim/activate turn，准备 connector context，调用 connector，connector accepted 后提交 user/start/context/capability/bootstrap/pending/title 副作用 |
 | Terminal | connector terminal / stream terminal | terminal event + outbox effect | 持久化终态，清理 active turn，把业务副作用写入 durable outbox |
 
 `Turn` 边界保持很薄：reservation、active、cancel、hook runtime handle、processor/adapter supervision、terminal release。
@@ -102,6 +102,8 @@ Contract:
 - launch trace
 
 Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 final construction 与 launch execution 投影生成。`prompt_pipeline` 执行计划，不重新解析 owner、context、VFS、MCP 或 capability。
+
+`connector.prompt` 返回 `ExecutionStream` 是 launch accepted 边界。accepted 之前允许做 turn claim、active runtime projection、hook `SessionStart` context preparation 和 connector context assembly；accepted 之后才提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation。connector setup 失败时只释放 turn runtime 并记录失败终态，不提交已开始事件或成功副作用。
 
 LaunchPlanner 只能处理 runtime-only planning：
 

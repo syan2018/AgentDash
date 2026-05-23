@@ -3,7 +3,7 @@
   "name": "session-launchplan-pipeline",
   "title": "Session LaunchPlan 阶段化",
   "description": "把 session 拉起链路收敛为可审计的 LaunchPlan/阶段化执行结构，统一主要启动入口。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -2217,6 +2217,22 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         .list_all_events(&session.id)
         .await
         .expect("history should load");
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
+        "connector 未接受前不应提交 turn_started"
+    );
+    assert!(
+        !history.iter().any(|event| {
+            matches!(
+                &event.notification.event,
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
+                    if key == "user_message_chunk"
+            )
+        }),
+        "connector 未接受前不应提交 user message"
+    );
     let terminal = history
         .iter()
         .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
@@ -2230,6 +2246,14 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         terminal.2.as_deref(),
         Some("执行器运行错误: connector setup failed")
     );
+
+    let is_running = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.is_some_and(|runtime| runtime.turn_state.is_running())
+        })
+        .await;
+    assert!(!is_running, "connector 初始化失败后不应留下 running turn");
 }
 
 #[tokio::test]

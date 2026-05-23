@@ -598,22 +598,6 @@ impl SessionLaunchExecutor {
             executor_id: Some(context.session.executor_config.executor.to_string()),
         };
 
-        // PR 4（04-30-session-pipeline-architecture-refactor）删除 `session-capabilities://`
-        // resource block 注入路径。动态能力面由独立 ContextFrame 投递，不再混入
-        // user_blocks 或 core system prompt。
-        let user_envelopes = build_user_message_envelopes(
-            session_id,
-            &source,
-            &turn_id,
-            &resolved_payload.user_blocks,
-        );
-        for envelope in user_envelopes {
-            let _ = deps.eventing.persist_notification(&sid, envelope).await;
-        }
-
-        let started = build_turn_started_envelope(session_id, &source, &turn_id);
-        let _ = deps.eventing.persist_notification(&sid, started).await;
-
         // SessionStart 只代表 owner 首轮 bootstrap，不再与“进程内第几轮”绑定。
         if is_owner_bootstrap {
             if let Some(hook_session) = hook_session.as_ref() {
@@ -736,6 +720,16 @@ impl SessionLaunchExecutor {
             }
         };
 
+        Self::commit_accepted_launch_events(
+            deps,
+            session_id,
+            &sid,
+            &source,
+            &turn_id,
+            &resolved_payload,
+        )
+        .await;
+
         for payload in &pending_transition_application.capability_events {
             let _ = deps
                 .eventing
@@ -824,6 +818,28 @@ impl SessionLaunchExecutor {
             .await;
 
         Ok(turn_id)
+    }
+
+    async fn commit_accepted_launch_events(
+        deps: &SessionLaunchDeps,
+        session_id: &str,
+        sid: &str,
+        source: &SourceInfo,
+        turn_id: &str,
+        resolved_payload: &ResolvedPromptPayload,
+    ) {
+        let user_envelopes = build_user_message_envelopes(
+            session_id,
+            source,
+            turn_id,
+            &resolved_payload.user_blocks,
+        );
+        for envelope in user_envelopes {
+            let _ = deps.eventing.persist_notification(sid, envelope).await;
+        }
+
+        let started = build_turn_started_envelope(session_id, source, turn_id);
+        let _ = deps.eventing.persist_notification(sid, started).await;
     }
 
     /// 将 connector stream 桥接到 processor channel 的后台任务。

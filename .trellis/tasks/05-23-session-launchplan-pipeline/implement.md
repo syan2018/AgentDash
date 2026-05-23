@@ -24,6 +24,13 @@
 6. 补测试矩阵。
 7. 更新 session spec。
 
+## Progress
+
+- 已把 `connector.prompt` 返回 `ExecutionStream` 明确为 launch accepted 边界。
+- 已将 user message、`TurnStarted`、context/capability projection、bootstrap meta、runtime command `applied` 与 title generation 收敛到 accepted 后提交。
+- 已保留 hook `SessionStart` 作为 connector context preparation，因为它会影响本轮传入 connector 的 hook trace 与 context frame。
+- 已补 connector setup failure 断言：失败时释放 running turn，不提交 `TurnStarted` / user message，不提交 bootstrap 或 requested runtime command 成功状态。
+
 ## Validation
 
 ```powershell

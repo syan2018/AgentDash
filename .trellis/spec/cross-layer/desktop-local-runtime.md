@@ -38,6 +38,12 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - 每次 profile load/save/start 都必须用 `agentdash-local` 机器身份覆盖 canonical machine id
 - `access_token` 可以为空，server 在无 token 时通过自身认证 provider 解析当前用户
 
+### Relay Prompt / Event Lifecycle
+
+- Cloud relay connector 在发送 `command.prompt` 前注册 session event sink，原因是 local runtime 可以在 `response.prompt` 前推送 session notification 或 terminal state。
+- Backend registry 的 pending command 归属到具体 `backend_id`；backend 断连时释放该 backend 的 pending sender，让调用方立即收到 response dropped，而不是等待 command timeout。
+- Local runtime 的 session notification forwarder 按 `session_id` 唯一运行；同一 relay session 的 follow-up prompt 复用现有 forwarder，保证同一条 session event 只有一个 relay 转发路径。
+
 ### 样式与依赖
 
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口

@@ -21,13 +21,13 @@
 
 ## Acceptance Criteria
 
-- [ ] `RelayAgentConnector::prompt` 在 `relay_prompt` 前完成 sink 注册，且错误路径会 unregister。
-- [ ] `BackendRegistry` pending map 能按 backend 清理，断连中的 `send_command` 不再等 30s timeout。
-- [ ] local prompt handler 对同一 session 的 notification forwarder 去重。
-- [ ] 测试覆盖：response.prompt 前 notification 不丢失。
-- [ ] 测试覆盖：backend disconnect 后 pending command 立即返回 dropped/offline 类错误。
-- [ ] 测试覆盖：同一 local relay session 多次 prompt 不重复转发同一 notification。
-- [ ] 相关 spec 记录 relay prompt/event 的注册与清理顺序。
+- [x] `RelayAgentConnector::prompt` 在 `relay_prompt` 前完成 sink 注册，且错误路径会 unregister。
+- [x] `BackendRegistry` pending map 能按 backend 清理，断连中的 `send_command` 不再等 30s timeout。
+- [x] local prompt handler 对同一 session 的 notification forwarder 去重。
+- [x] 测试覆盖：response.prompt 前 notification 不丢失。
+- [x] 测试覆盖：backend disconnect 后 pending command 立即返回 dropped/offline 类错误。
+- [x] 测试覆盖：同一 local relay session 多次 prompt 不重复转发同一 notification。
+- [x] 相关 spec 记录 relay prompt/event 的注册与清理顺序。
 
 ## Out of Scope
 

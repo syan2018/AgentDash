@@ -51,8 +51,8 @@ pub struct OnlineBackendInfo {
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
-    /// 等待本机响应的挂起请求（msg_id → oneshot sender）
-    pending: RwLock<HashMap<String, oneshot::Sender<RelayMessage>>>,
+    /// 等待本机响应的挂起请求（msg_id → pending request）
+    pending: RwLock<HashMap<String, PendingRequest>>,
     /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
     session_sinks: std::sync::RwLock<
         HashMap<
@@ -60,6 +60,11 @@ pub struct BackendRegistry {
             mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
         >,
     >,
+}
+
+struct PendingRequest {
+    backend_id: String,
+    tx: oneshot::Sender<RelayMessage>,
 }
 
 impl BackendRegistry {
@@ -102,7 +107,10 @@ impl BackendRegistry {
 
     pub async fn unregister(&self, backend_id: &str) {
         self.backends.write().await.remove(backend_id);
-        self.pending.write().await.retain(|_, _| true); // pending requests will fail naturally when sender drops
+        self.pending
+            .write()
+            .await
+            .retain(|_, pending| pending.backend_id != backend_id);
         tracing::info!(backend_id = %backend_id, "本机后端已断开");
     }
 
@@ -119,8 +127,8 @@ impl BackendRegistry {
     /// 匹配并分发一条响应消息到等待方
     pub async fn resolve_response(&self, msg: &RelayMessage) -> bool {
         let id = msg.id().to_string();
-        if let Some(tx) = self.pending.write().await.remove(&id) {
-            let _ = tx.send(msg.clone());
+        if let Some(pending) = self.pending.write().await.remove(&id) {
+            let _ = pending.tx.send(msg.clone());
             true
         } else {
             false
@@ -234,7 +242,13 @@ impl BackendRegistry {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.pending.write().await.insert(msg_id.clone(), tx);
+        self.pending.write().await.insert(
+            msg_id.clone(),
+            PendingRequest {
+                backend_id: backend_id.to_string(),
+                tx,
+            },
+        );
 
         if sender.send(msg).is_err() {
             self.pending.write().await.remove(&msg_id);
@@ -408,6 +422,37 @@ mod tests {
 
         let err = pending
             .await
+            .expect("join should succeed")
+            .expect_err("dropped pending sender should be classified");
+        assert_eq!(
+            err,
+            BackendCommandError::ResponseDropped {
+                backend_id: "local-a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn unregister_drops_pending_requests_for_that_backend() {
+        let registry = BackendRegistry::new();
+        let (sender, mut rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(connected_backend_with_sender("local-a", sender))
+            .await
+            .expect("backend should register");
+
+        let command = browse_command("disconnect-drops-pending");
+        let pending = {
+            let registry = Arc::clone(&registry);
+            tokio::spawn(async move { registry.send_command("local-a", command).await })
+        };
+
+        rx.recv().await.expect("command should be sent");
+        registry.unregister("local-a").await;
+
+        let err = tokio::time::timeout(std::time::Duration::from_millis(100), pending)
+            .await
+            .expect("pending command should not wait for command timeout")
             .expect("join should succeed")
             .expect_err("dropped pending sender should be classified");
         assert_eq!(

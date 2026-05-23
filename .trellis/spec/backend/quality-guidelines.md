@@ -81,7 +81,7 @@ pub struct StoryMcpServer {
 
 ---
 
-## Scenario: API JSON 字段命名统一
+## API JSON 字段命名统一
 
 ### Contracts
 
@@ -162,4 +162,3 @@ store.write_meta(&session_meta).await?;
 - [ ] 错误处理完善
 - [ ] 异步函数正确使用 `.await`
 - [ ] 业务 HTTP DTO 输出为 `snake_case`
-

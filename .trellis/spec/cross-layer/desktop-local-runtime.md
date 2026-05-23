@@ -29,7 +29,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - `backend_id`、`relay_ws_url` 和 relay token 必须来自 server ensure/claim 响应
 - server ensure API 使用 `machine_id + share_scope_kind + share_scope_id + capability_slot` 定位 local backend
 - server ensure API 只能使用稳定 `machine_id` 与显式 `legacy_machine_ids` 做身份匹配；`machine_label` / hostname 只用于展示
-- `device_id` 仅作为旧 profile 的 legacy merge 输入；新请求不得生成新的 `device_id`
+- profile merge 只使用稳定 `machine_id` 与显式 legacy ids；新请求不得生成新的 `device_id`
 - `scripts/dev-joint.js` 必须复用同一条 ensure/claim 协议，通过 `agentdash-local machine-identity` 读取身份
 
 ### Profile

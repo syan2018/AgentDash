@@ -1,0 +1,38 @@
+# Cross-layer Architecture
+
+## Role
+
+跨层规范定义前端、云端、本机、桌面壳和共享资产之间的协议、序列化、权限和状态传递边界。它约束的是多个 layer 共同消费的事实，不归属于单一端。
+
+## Invariants
+
+- AgentDash 业务 HTTP JSON 默认使用 `snake_case`。
+- 内部 session 事件流统一使用 Backbone Protocol。
+- 浏览器实时流统一使用 NDJSON over HTTP，并通过 `x-stream-since-id` 做增量恢复。
+- Shared Library / Marketplace / Project Asset 三层表达公共配置资产：运行路径只读取安装后的 Project 资源。
+- Dashboard 不直接访问 Tauri/Rust 内存态；Web Dashboard 仍通过 `agentdash-api` HTTP API 访问业务数据。
+- Workspace 物理目录识别和文件访问必须经 Runtime Gateway / Local backend，不由云端直接访问本机路径。
+
+## Current Baseline
+
+跨层协议文档：
+
+| 文档 | 当前职责 |
+| --- | --- |
+| `backbone-protocol.md` | BackboneEnvelope / BackboneEvent wire contract |
+| `desktop-local-runtime.md` | Tauri desktop、DashboardHost、LocalRuntimeClient 边界 |
+| `project-backend-workspace-routing.md` | Backend Access、workspace detect、inventory registration |
+| `shared-library-contract.md` | Shared Library / Marketplace / Project Asset 跨层契约 |
+
+## Local Decisions
+
+- Shared Library payload 在 API 展示层可保留 `unknown` / JSON，但安装和运行前必须由后端按 `asset_type` 类型化校验，原因是共享资产既需要可浏览，也不能让运行路径消费未验证 JSON。
+- Desktop Dashboard 等待 `/api/health` ready 后渲染 Web App，原因是 Web Dashboard 的权威接口仍是 HTTP API，而不是 Tauri invoke。
+
+## Contract Appendices
+
+- [Backbone Protocol](./backbone-protocol.md)
+- [Desktop Local Runtime](./desktop-local-runtime.md)
+- [Project Backend Workspace Routing](./project-backend-workspace-routing.md)
+- [Shared Library Contract](./shared-library-contract.md)
+

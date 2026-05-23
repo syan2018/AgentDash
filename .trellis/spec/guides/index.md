@@ -1,64 +1,29 @@
 # Thinking Guides
 
-> **Purpose**: Expand your thinking to catch things you might not have considered.
-
----
-
-## Why Thinking Guides?
-
-**Most bugs and tech debt come from "didn't think of that"**, not from lack of skill:
-
-- Didn't think about what happens at layer boundaries → cross-layer bugs
-- Didn't think about code patterns repeating → duplicated code everywhere
-- Didn't think about edge cases → runtime errors
-- Didn't think about future maintainers → unreadable code
-
-These guides help you **ask the right questions before coding**.
-
----
+Guides 是 thinking harness：它们提醒开发前要检查哪些问题，但不定义架构权威契约。具体不变量与执行契约应回到相关 `architecture.md` 或 appendix。
 
 ## Available Guides
 
 | Guide | Purpose | When to Use |
-|-------|---------|-------------|
-| [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
-| [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| --- | --- | --- |
+| [Cross-layer Thinking Guide](./cross-layer-thinking-guide.md) | 检查跨层数据流、权限、事实源和 runtime projection | 功能触及 API / backend / frontend / database / local runtime 中多个层 |
+| [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | 检查是否已有可复用模式，避免重复实现 | 新增 helper、常量、组件、mapper、service 或批量相似修改 |
 
----
+## Quick Triggers
 
-## Quick Reference: Thinking Triggers
+- Feature touches 3+ layers -> read cross-layer guide.
+- Data format changes between layers -> read cross-layer guide.
+- You are modifying a constant/config -> search first.
+- You are creating a helper/utility -> search first.
+- You are copying a pattern -> search first, then decide whether to extract.
 
-### When to Think About Cross-Layer Issues
+## Search First Rule
 
-- [ ] Feature touches 3+ layers (API, Service, Component, Database)
-- [ ] Data format changes between layers
-- [ ] Multiple consumers need the same data
-- [ ] You're not sure where to put some logic
+Before changing shared values, names, contracts, constants, or repeated patterns, search the repository:
 
-→ Read [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md)
-
-### When to Think About Code Reuse
-
-- [ ] You're writing similar code to something that exists
-- [ ] You see the same pattern repeated 3+ times
-- [ ] You're adding a new field to multiple places
-- [ ] **You're modifying any constant or config**
-- [ ] **You're creating a new utility/helper function** ← Search first!
-
-→ Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
-
----
-
-## Pre-Modification Rule (CRITICAL)
-
-> **Before changing ANY value, ALWAYS search first!**
-
-```bash
-# Search for the value you're about to change
-grep -r "value_to_change" .
+```powershell
+rg -n "value_or_name_to_change"
 ```
 
-This single habit prevents most "forgot to update X" bugs.
-
----
+Search results help decide whether the change belongs in code only, a contract appendix, or an architecture document.
 

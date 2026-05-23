@@ -50,7 +50,7 @@
 
 ## Session MCP Action
 
-当前已注册 Session Action：`mcp.list_tools`、`mcp.call_tool`
+Session Action baseline：`mcp.list_tools`、`mcp.call_tool`
 
 关键约束：
 - MCP surface 的唯一能力来源是 `CapabilityState`（空 CapabilityState 不暴露任何工具）
@@ -62,7 +62,7 @@
 
 ## Setup Action
 
-当前已注册：`mcp.probe_transport`、`workspace.detect`、`workspace.detect_git`、`workspace.browse_directory`
+Setup Action baseline：`mcp.probe_transport`、`workspace.detect`、`workspace.detect_git`、`workspace.browse_directory`
 
 关键约束：
 - API route 只做鉴权、请求解析、组装 `RuntimeInvocationRequest`，业务必须进入 provider
@@ -92,4 +92,3 @@ Canvas iframe 通过 Gateway 调用 Session Action 的约束：
 - iframe SDK 只发送 `action_key` + `input`，actor/context 由父页面/API route 组装
 - Canvas 专用 `/runtime-invoke` 不接受 iframe 传入的 actor/context/trace
 - API route 必须再次校验 Session 与 Canvas Project 绑定关系
-

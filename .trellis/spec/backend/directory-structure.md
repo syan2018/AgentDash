@@ -16,7 +16,7 @@ crates/
 ├── agentdash-spi/               # SPI — Connector/Hook trait + 能力协议
 ├── agentdash-agent/             # Agent Loop 引擎（纯 loop + bridge trait）
 ├── agentdash-agent-types/       # Agent 领域通用类型
-├── agentdash-agent-protocol/    # Backbone Protocol + ACP 兼容层
+├── agentdash-agent-protocol/    # Backbone Protocol + 外部协议 adapter
 ├── agentdash-mcp/               # MCP Server 实现
 ├── agentdash-relay/             # WebSocket Relay 协议
 ├── agentdash-local/             # 本机后端
@@ -78,9 +78,3 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 | Repository 实现 | `<Tech><Entity>Repository` | `PostgresStoryRepository` |
 | 值对象 | PascalCase 描述性 | `StoryStatus`, `TaskStatus` |
 | 目录 | 小写单数 | `agentdash-domain/src/story/` |
-
----
-
-### 架构演进记录
-
-> 详见 [architecture-evolution.md](./architecture-evolution.md)。

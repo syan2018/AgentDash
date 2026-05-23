@@ -1,67 +1,52 @@
-# Shared Library 公共资产规范
+# Backend Shared Library
 
-> Shared Library 是 AgentDash 公共配置资产的统一存储、权限、版本和安装入口。
+本文档只记录 Shared Library 后端专属基线：seed、validator、安装事务和 plugin embedded 资产。跨层权威契约见 [Shared Library Contract](../cross-layer/shared-library-contract.md)。
 
-## 核心命名
+## Backend Role
 
-| 名称 | 含义 |
-| --- | --- |
-| `SharedLibrary` | 后端领域/API 层公共资源库 |
-| `Marketplace` | 前端浏览、发现、安装 UI |
-| `LibraryAsset` | Shared Library 中的统一资产记录 |
-| `BuiltinSeed` | 代码内嵌的资产种子，只负责幂等 upsert 到 Shared Library |
-| `InstalledAssetSource` | Project 资源记录其来源资产、版本和 digest 的元数据 |
+后端负责把 `LibraryAsset` 的灵活 JSON payload 收束为类型化领域对象，并在安装、发布、更新、seed 阶段维护来源、版本和 digest 不变量。
 
-命名规则：
+## Invariants
 
-- Shared Library 中所有可分享、可安装的公共配置统一使用 `*Template` 后缀。
-- `Preset` 只表示 Project 内可运行/可引用配置，不表示跨 Project 公共资产。
-- `Connection` 只表示带 credential/env/local path/base URL 等连接材料的数据。
+- `LibraryAsset.payload` 只能在 Shared Library 边界保持 JSONB 灵活性。
+- 每个 `asset_type` 必须有类型化 mapper / validator。
+- 运行路径不得直接消费未校验的 `payload`，必须先安装成 Project 资源或转换成类型化领域对象。
+- Project 资源不会因 builtin seed 更新而静默变化。
+- `payload_digest` 由 canonical JSON sha256 规则自动计算，不手写。
+- payload digest 变化时 version 必须提升；version 提升时 payload digest 也必须变化。
+- version/digest 不变量破坏属于平台维护错误，必须 seed/startup fail-fast。
 
-## LibraryAsset
+## LibraryAsset Backend Baseline
 
 `LibraryAsset` 使用单表 JSONB payload：
 
-- `asset_type`: `agent_template` / `mcp_server_template` / `workflow_template` / `skill_template` / `extension_template`
-- `scope`: `builtin` / `system` / `org` / `user`
-- `owner_id`: scope owner，可为空
+- `asset_type`
+- `scope`
+- `owner_id`
 - `key`
 - `display_name`
 - `description`
 - `version`
-- `source`: `builtin` / `user_authored` / `remote_imported` / `plugin_embedded`
-- `source_ref`: builtin key、remote URL、digest 等来源引用
+- `source`
+- `source_ref`
 - `payload_digest`
 - `deprecated`
 - `payload`
 
-约束：
-
-- `asset_type + scope + owner_id + key` 必须唯一。
-- `payload` 只能在 Shared Library 边界保持 JSONB 灵活性。
-- 每个 `asset_type` 必须有类型化 mapper / validator。
-- 运行路径不得直接消费未校验的 `payload`，必须先安装成 Project 资源或转换成类型化领域对象。
+唯一身份：`asset_type + scope + owner_id + key`。
 
 ## BuiltinSeedRegistry
 
-Builtin 资产必须通过统一 seed registry 物化到 Shared Library，不再在各资源模块中单独实现 bootstrap。
+Builtin 资产通过统一 seed registry 物化到 Shared Library，不在各资源模块中单独 bootstrap。
 
 Registry 负责：
 
-- 收集 `AgentTemplate` / `McpServerTemplate` / `WorkflowTemplate` / `SkillTemplate` 内置定义。
+- 收集内置 `AgentTemplate` / `McpServerTemplate` / `WorkflowTemplate` / `SkillTemplate` 等定义。
 - 为每个 seed 提供稳定 `builtin_key`、`version`、`payload_digest`。
 - 幂等 upsert 到 `LibraryAsset`。
 - 对 registry 中删除的 builtin 默认标记 `deprecated`，避免已安装 Project 资源来源断链。
 
-Project 资源不会因 builtin seed 更新而静默变化。
-
-Builtin 版本治理：
-
-- `version` 是维护者声明的资产升级事实，粒度为 `asset_type + key`；不同 builtin asset 不共享全局版本常量。
-- `source_ref` 使用 `builtin:{asset_type}:{key}`，用于审计、Project installed source 和版本治理诊断。
-- `payload_digest` 由 seed 构造阶段按 canonical JSON sha256 自动计算，不在版本 manifest 中手写。
-- seed/startup 阶段必须校验 version/digest 不变量：payload digest 变化时 version 必须提升；version 提升时 payload digest 也必须变化。
-- 版本维护错误属于平台不变量破坏，必须 fail-fast，不作为 Marketplace 用户态 `source_status` 返回。
+`source_ref` 使用 `builtin:{asset_type}:{key}`。
 
 ## InstalledAssetSource
 
@@ -73,96 +58,35 @@ Builtin 版本治理：
 - `source_digest`
 - `installed_at`
 
-版本状态：
+Project 资源保留 `InstalledAssetSource`，用于审计、重装和版本提示。
 
-- `up_to_date`: 来源版本/digest 一致。
-- `update_available`: Shared Library 中来源版本或 digest 已更新。
-- `source_missing`: 来源资产不可见、被删除或 deprecated。
-
-`source_status` 只表达用户可操作状态。对于 builtin / plugin_embedded source，seed/startup 已保证 digest
-变化必然伴随 version 提升；如果这个不变量被破坏，服务应在 seed/startup 阶段失败，而不是把维护错误降级成前端状态。
-
-更新策略：
-
-- 不做静默同步。
-- 第一阶段只支持版本提示 + 用户手动重装/覆盖。
-- 字段级 diff 与三方合并是后续增强。
-
-## 资产类型边界
-
-### AgentTemplate
-
-可复用：
-
-- 角色 key / display name / description
-- base system prompt / persona
-- 默认 executor / provider / model / thinking / permission
-- 抽象能力需求
-- 抽象 MCP slots
-
-不可直接持有：
-
-- Project MCP preset key
-- Project SkillAsset key
-- Project VFS/root/container
-- knowledge/memory
-- default lifecycle/workflow
-- companion whitelist
-- story/task 默认标记
-
-### McpServerTemplate
-
-描述公共 MCP server 类型、参数 schema、默认 transport 模板和能力说明。
-
-真实 token、env、local command、base URL 等连接材料属于 `McpConnection`，不得进入 template。
-
-### WorkflowTemplate / SkillTemplate
-
-承接原 builtin workflow template 与 builtin skill seed。Project 中的 Workflow/SkillAsset 是安装后的 Project 资源副本。
-
-### ExtensionTemplate
-
-描述用户可动态安装的 runtime extension manifest。第一版支持声明式 slash command、runtime flag、schema-driven message renderer、capability directives 与资产引用占位。
-
-约束：
-
-- `extension_id` 与 `manifest_version` 必须非空。
-- command name 不带 `/`，handler 第一版只允许安全的声明式 `inject_message`。
-- flag type 只支持 `bool` / `string`，default 必须与 type 匹配。
-- message renderer 只允许平台内置 schema-driven renderer，不允许动态 React/TypeScript bundle。
-
-## Project 资源安装语义
+## Project Install Semantics
 
 - 从 Marketplace 安装默认创建可编辑 Project 副本。
-- Project 资源保留 `InstalledAssetSource`，用于审计、重装和版本提示。
 - Project 运行时只读取 Project 资源，不直接依赖 Shared Library。
-- `ProjectAgent` 属于 Project 资源，Marketplace 安装 `AgentTemplate` 时必须创建 ProjectAgent，并在 ProjectAgent 上写入 `InstalledAssetSource`。
-- 删除 Marketplace 安装的 Workflow/Lifecycle bundle 时，删除 Lifecycle 后必须清理同一 `library_asset_id` 来源的 workflow definitions；若这些 workflow 被其它 lifecycle 引用，则拒绝删除并返回明确错误。
+- `ProjectAgent` 属于 Project 资源，安装 `AgentTemplate` 时必须创建 ProjectAgent，并写入 `InstalledAssetSource`。
+- Workflow/Lifecycle bundle 安装和更新必须在一个数据库事务中提交 workflow definitions 与 activity lifecycle definition。
+- 失败的 workflow template update 必须保持 project resources 与 installed source metadata 不变。
 
-## Project 资源发布语义
+## Project Publish Semantics
 
-- 用户发布入口从 Project 资源出发：`POST /api/projects/{project_id}/shared-library/publish`。
-- 发布请求只提交资源类型、Project 资源 id、资产元数据和覆盖策略；前端不得直接拼装 `LibraryAsset.payload`。
-- 后端必须重新读取 Project 资源权威状态，并通过类型化 mapper 生成对应 `*Template` payload。
-- 第一阶段发布只支持 `scope = user` 与 `source = user_authored`，`owner_id` 使用当前用户身份。
-- 发布身份沿用 `asset_type + scope + owner_id + key`。同身份存在且 `overwrite=false` 时返回冲突；覆盖发布必须保留原 `LibraryAsset.id` 与 `created_at`，更新 payload、version、digest 与 metadata。
-- `payload_digest` 使用 builtin seed 相同的 JSON sha256 规则，避免 source-status 对同一 payload 产生两套版本判断。
-- MCP Preset 发布必须拒绝 credential、header、env、本机路径、localhost/private network URL 等连接材料；无法证明可共享的连接配置应明确报错。
-- Workflow 发布必须以 lifecycle bundle 为单位，校验 lifecycle 引用的 workflow definitions 都存在后再发布。
+- 发布入口从 Project 资源出发：`POST /api/projects/{project_id}/shared-library/publish`。
+- 发布请求只提交资源类型、Project 资源 id、资产元数据和覆盖策略。
+- 后端重新读取 Project 资源权威状态，并通过类型化 mapper 生成对应 `*Template` payload。
+- 发布身份沿用 `asset_type + scope + owner_id + key`。
+- `overwrite=false` 时同身份存在返回冲突。
+- 覆盖发布必须保留原 `LibraryAsset.id` 与 `created_at`，更新 payload、version、digest 与 metadata。
+- MCP Preset 发布必须拒绝 credential、header、env、本机路径、localhost/private network URL 等连接材料。
 
-## Plugin Embedded 资产语义
+## Plugin Embedded Assets
 
-- Native plugin 可在启动期通过 `AgentDashPlugin::library_asset_seeds()` 声明内嵌 Shared Library assets。
-- 宿主负责补齐 plugin 名称、计算 digest、校验 payload，并以 `scope=system`、`source=plugin_embedded` 写入 Shared Library。
-- `source_ref` 使用 `plugin:{plugin_name}:{asset_type}:{key}`，用于 source-status 与审计。
-- plugin seed 必须走与 builtin/user asset 相同的 `LibraryAssetPayload` typed validator。
-- 同一 `asset_type + scope + key` 被不同 plugin 或不同 source 占用时启动期 fail-fast，不做隐式覆盖。
+Native plugin 可在启动期通过 `AgentDashPlugin::library_asset_seeds()` 声明内嵌 Shared Library assets。
+
+Contract:
+
+- plugin 只声明 `PluginLibraryAssetSeed`，不直接写数据库，也不修改 Project 运行配置。
+- 宿主统一计算 digest、设置 `scope=system`、`source=plugin_embedded` 和 `source_ref=plugin:{plugin_name}:{asset_type}:{key}`。
+- seed payload 必须通过 Shared Library typed validator。
+- 同一 `asset_type + scope + key` 被不同 plugin 或不同 source 占用时启动期 fail-fast。
 - 同一 plugin 的同一 seed 可幂等更新，保留原 `LibraryAsset.id` 与 `created_at`。
-- plugin seed 的 `version` 是资产版本，不等同于 plugin 包版本；宿主计算 digest 后按同一套 version/digest 不变量校验。
-
-## 迁移原则
-
-- 现有 project-level builtin MCP/Skill/Workflow 视为“已安装副本”，不是公共 builtin 本体。
-- 旧资源专属 bootstrap API 在新 Marketplace install 路径可用后退役。
-- 现有 `AgentPresetConfig` 必须拆成 `AgentTemplateConfig` 与 `ProjectAgentConfigOverride` 等更窄类型。
-- 用户可见路径不提供“关联已有全局 Agent”；跨项目复用只发生在 `AgentTemplate`。
+- plugin seed 的 `version` 是资产版本，不等同于 plugin 包版本。

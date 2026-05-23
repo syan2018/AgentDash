@@ -146,8 +146,3 @@ Workflow 与 Lifecycle 编辑链路必须把能力配置当成结构化字段透
 - Workflow 级权威字段：`WorkflowDefinition.contract.capability_config.tool_directives`
 - Lifecycle step 级权威字段：`LifecycleStepDefinition.capability_config.tool_directives`
 - 前端 mapper / store / editor 必须在读取、保存和模板 bootstrap 后 roundtrip 不丢字段
-
----
-
-*创建：2026-04-19 — Phase 1 工具能力管线收口*
-*精简：2026-05-16 — 移除代码复述、PR 历史 changelog、callsite 代码片段；保留核心协议和规则*

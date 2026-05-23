@@ -42,7 +42,3 @@
 - [ ] 验证 StateChange 历史完整记录
 - [ ] 验证前端状态与后端状态一致
 - [ ] 若引入新 runtime policy/metadata，验证前端看到的是真实生效的 runtime surface
-
----
-
-*精简：2026-05-16 — 移除通用软件工程建议和冗长代码块示例，保留 AgentDash 特有边界和检查清单*

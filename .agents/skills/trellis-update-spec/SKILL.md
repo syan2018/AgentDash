@@ -1,356 +1,177 @@
 ---
 name: trellis-update-spec
-description: "Captures executable contracts and coding conventions into .trellis/spec/ documents. Use when learning something valuable from debugging, implementing, or discussion that should be preserved for future sessions."
+description: "Capture durable architecture invariants, current baselines, local decisions, and executable contracts into .trellis/spec/ without turning specs into task logs. Use after implementing, debugging, or discussing something that future sessions need for structural convergence."
 ---
 
-# Update Code-Spec - Capture Executable Contracts
+# Update Spec - Maintain Architecture Attractor
 
-When you learn something valuable (from debugging, implementing, or discussion), use this to update the relevant code-spec documents.
+Use this skill when a task reveals knowledge that future AI/developers need to keep AgentDash converging toward the right structure.
 
-**Timing**: After completing a task, fixing a bug, or discovering a new pattern
-
----
-
-## Code-Spec First Rule (CRITICAL)
-
-In this project, "spec" for implementation work means **code-spec**:
-- Executable contracts (not principle-only text)
-- Concrete signatures, payload fields, env keys, and boundary behavior
-- Testable validation/error behavior
-
-If the change touches infra or cross-layer contracts, code-spec depth is mandatory.
-
-### Mandatory Triggers
-
-Apply code-spec depth when the change includes any of:
-- New/changed command or API signature
-- Cross-layer request/response contract change
-- Database schema/migration change
-- Infra integration (storage, queue, cache, secrets, env wiring)
-
-### Mandatory Output (7 Sections)
-
-For triggered tasks, include all sections below:
-1. Scope / Trigger
-2. Signatures (command/API/DB)
-3. Contracts (request/response/env)
-4. Validation & Error Matrix
-5. Good/Base/Bad Cases
-6. Tests Required (with assertion points)
-7. Wrong vs Correct (at least one pair)
+`.trellis/spec/` is not a task log. It maintains the project architecture attractor and the current engineering projection of that attractor.
 
 ---
 
-## When to Update Code-Specs
+## Spec Maintenance Goal
 
-| Trigger | Example | Target Spec |
-|---------|---------|-------------|
-| **Implemented a feature** | Added a new integration or module | Relevant spec file |
-| **Made a design decision** | Chose extensibility pattern over simplicity | Relevant spec + "Design Decisions" section |
-| **Fixed a bug** | Found a subtle issue with error handling | Relevant spec (e.g., error-handling docs) |
-| **Discovered a pattern** | Found a better way to structure code | Relevant spec file |
-| **Hit a gotcha** | Learned that X must be done before Y | Relevant spec + "Common Mistakes" section |
-| **Established a convention** | Team agreed on naming pattern | Quality guidelines |
-| **New thinking trigger** | "Don't forget to check X before doing Y" | `guides/*.md` (as a checklist item) |
+Spec content belongs to one of four categories:
 
-**Key Insight**: Code-spec updates are NOT just for problems. Every feature implementation contains design decisions and contracts that future AI/developers need to execute safely.
+| Category | Meaning | Maintenance Rule |
+| --- | --- | --- |
+| `Invariants` | Long-term structural constraints: where the system should converge | Do not auto-edit. Propose changes and ask the user to confirm. |
+| `Current Baseline` | Current code projection of those invariants: crates, entry points, DTOs, registered providers, production paths | Auto-update when implementation facts change. Keep concise and factual. |
+| `Local Decisions` | Stable local design choices with rationale | Auto-update only when the decision was explicitly confirmed by the task. Record why, not history. |
+| `Contract Appendices` | Executable contracts: signatures, payload fields, state flows, validation/error semantics | Auto-update when contracts change. Avoid task-process material. |
 
----
+Default target shape for module architecture docs:
 
-## Spec Structure Overview
+```markdown
+# <Module> Architecture
 
-```
-.trellis/spec/
-├── <layer>/           # Per-layer coding standards (e.g., backend/, frontend/, api/)
-│   ├── index.md       # Overview and links
-│   └── *.md           # Topic-specific guidelines
-└── guides/            # Thinking checklists (NOT coding specs!)
-    ├── index.md       # Guide index
-    └── *.md           # Topic-specific guides
+## Role
+## Invariants
+## Current Baseline
+## Local Decisions
+## Contract Appendices
 ```
 
-### CRITICAL: Code-Spec vs Guide - Know the Difference
+---
 
-| Type | Location | Purpose | Content Style |
-|------|----------|---------|---------------|
-| **Code-Spec** | `<layer>/*.md` | Tell AI "how to implement safely" | Signatures, contracts, matrices, cases, test points |
-| **Guide** | `guides/*.md` | Help AI "what to think about" | Checklists, questions, pointers to specs |
+## Hard Boundary: Invariants
 
-**Decision Rule**: Ask yourself:
+Automatic spec maintenance must not rewrite `Invariants`.
 
-- "This is **how to write** the code" → Put in a spec layer directory
-- "This is **what to consider** before writing" → Put in `guides/`
+If a learned fact appears to change a long-term invariant, stop and record an architecture-change proposal in the active task instead of editing the invariant directly. Ask the user to confirm before changing:
 
-**Example**:
+- module responsibility boundaries
+- source-of-truth rules
+- Cloud/Local ownership
+- canonical state-flow or event authority
+- cross-layer protocol direction
+- dependency direction between layers/crates
+- the meaning of a core domain abstraction
 
-| Learning | Wrong Location | Correct Location |
-|----------|----------------|------------------|
-| "Use API X not API Y for this task" | ❌ `guides/` (too specific for a thinking guide) | ✅ Relevant spec file (concrete convention) |
-| "Remember to check X when doing Y" | ❌ Spec file (too abstract for a spec) | ✅ `guides/` (thinking checklist) |
+Small factual corrections in `Current Baseline` or contract appendices do not require this gate.
 
-**Guides should be short checklists that point to specs**, not duplicate the detailed rules.
+---
+
+## What Belongs Where
+
+| Learning | Target |
+| --- | --- |
+| "This module must converge around this source of truth" | module `architecture.md` / `Invariants` proposal |
+| "This crate/function/route is the current production entry" | `Current Baseline` |
+| "This DTO field / endpoint / DB column / env key changed" | contract appendix |
+| "We chose Rhai/OpenAI wire API/etc. for this reason" | `Local Decisions` |
+| "Run these tests for this task" | active task `implement.md` / closure, not spec |
+| "This PR failed because..." | task archive / workspace journal / bug note, not spec |
+| "This environment gotcha affects future agents" | `AGENTS.md` problem collection |
+
+Do not add task-process sections such as:
+
+- `Tests Required`
+- `Good/Base/Bad Cases`
+- `Wrong vs Correct`
+- `Command gate`
+- `Verification`
+- date-based changelog
+- one-off TODO / future enhancement notes
+
+If an old task-process section contains a real contract, rewrite only the contract into concise prose or tables.
 
 ---
 
 ## Update Process
 
-### Step 1: Identify What You Learned
+### Step 1: Identify the Durable Learning
 
-Answer these questions:
+Answer:
 
-1. **What did you learn?** (Be specific)
-2. **Why is it important?** (What problem does it prevent?)
-3. **Where does it belong?** (Which spec file?)
+1. What did we learn?
+2. Is it an invariant, current baseline, local decision, or contract?
+3. Which module owns it?
+4. Does it change an invariant?
 
-### Step 2: Classify the Update Type
+If the answer to question 4 is yes, do not edit the invariant automatically.
 
-| Type | Description | Action |
-|------|-------------|--------|
-| **Design Decision** | Why we chose approach X over Y | Add to "Design Decisions" section |
-| **Project Convention** | How we do X in this project | Add to relevant section with examples |
-| **New Pattern** | A reusable approach discovered | Add to "Patterns" section |
-| **Forbidden Pattern** | Something that causes problems | Add to "Anti-patterns" or "Don't" section |
-| **Common Mistake** | Easy-to-make error | Add to "Common Mistakes" section |
-| **Convention** | Agreed-upon standard | Add to relevant section |
-| **Gotcha** | Non-obvious behavior | Add warning callout |
+### Step 2: Read the Module Architecture
 
-### Step 3: Read the Target Code-Spec
+Start from the module's `architecture.md`. If it does not exist, read the closest layer index and relevant appendices.
 
-Before editing, read the current code-spec to:
-- Understand existing structure
-- Avoid duplicating content
-- Find the right section for your update
+Examples:
 
 ```bash
-cat .trellis/spec/<category>/<file>.md
+Get-Content -Raw .trellis/spec/backend/session/architecture.md
+Get-Content -Raw .trellis/spec/backend/session/session-startup-pipeline.md
 ```
 
-### Step 4: Make the Update
+### Step 3: Choose the Smallest Correct Edit
 
-Follow these principles:
+- Architecture docs should stay short and directional.
+- Appendices can hold executable details.
+- Current baseline entries should be factual and easy to check against code.
+- Local decisions should explain why the chosen shape keeps the system convergent.
 
-1. **Be Specific**: Include concrete examples, not just abstract rules
-2. **Explain Why**: State the problem this prevents
-3. **Show Contracts**: Add signatures, payload fields, and error behavior
-4. **Show Code**: Add code snippets for key patterns
-5. **Keep it Short**: One concept per section
+### Step 4: Update Indexes Only for Reading Order
 
-### Step 5: Update the Index (if needed)
+Update an index when:
 
-If you added a new section or the code-spec status changed, update the category's `index.md`.
+- a new architecture document was added
+- a document moved between architecture/appendix roles
+- reading order changed
+
+Do not maintain status columns such as "created", "updated", or checkmarks.
 
 ---
 
-## Update Templates
+## Optional Contract Appendix Template
 
-### Mandatory Template for Infra/Cross-Layer Work
-
-```markdown
-## Scenario: <name>
-
-### 1. Scope / Trigger
-- Trigger: <why this requires code-spec depth>
-
-### 2. Signatures
-- Backend command/API/DB signature(s)
-
-### 3. Contracts
-- Request fields (name, type, constraints)
-- Response fields (name, type, constraints)
-- Environment keys (required/optional)
-
-### 4. Validation & Error Matrix
-- <condition> -> <error>
-
-### 5. Good/Base/Bad Cases
-- Good: ...
-- Base: ...
-- Bad: ...
-
-### 6. Tests Required
-- Unit/Integration/E2E with assertion points
-
-### 7. Wrong vs Correct
-#### Wrong
-...
-#### Correct
-...
-```
-
-### Adding a Design Decision
+Use this only when a concrete cross-layer or infra contract genuinely needs structure. It is not mandatory.
 
 ```markdown
-### Design Decision: [Decision Name]
+## <Contract Name>
 
-**Context**: What problem were we solving?
+### Scope
 
-**Options Considered**:
-1. Option A - brief description
-2. Option B - brief description
+When this contract applies.
 
-**Decision**: We chose Option X because...
+### Signatures
 
-**Example**:
-\`\`\`typescript
-// How it's implemented
-code example
-\`\`\`
+Commands, routes, DTOs, DB fields, env keys, or trait methods.
 
-**Extensibility**: How to extend this in the future...
+### Contract
+
+Required fields, state transitions, ownership, and serialization rules.
+
+### Validation And Errors
+
+Condition -> user/system error semantics.
 ```
 
-### Adding a Project Convention
-
-```markdown
-### Convention: [Convention Name]
-
-**What**: Brief description of the convention.
-
-**Why**: Why we do it this way in this project.
-
-**Example**:
-\`\`\`typescript
-// How to follow this convention
-code example
-\`\`\`
-
-**Related**: Links to related conventions or specs.
-```
-
-### Adding a New Pattern
-
-```markdown
-### Pattern Name
-
-**Problem**: What problem does this solve?
-
-**Solution**: Brief description of the approach.
-
-**Example**:
-\`\`\`
-// Good
-code example
-
-// Bad
-code example
-\`\`\`
-
-**Why**: Explanation of why this works better.
-```
-
-### Adding a Forbidden Pattern
-
-```markdown
-### Don't: Pattern Name
-
-**Problem**:
-\`\`\`
-// Don't do this
-bad code example
-\`\`\`
-
-**Why it's bad**: Explanation of the issue.
-
-**Instead**:
-\`\`\`
-// Do this instead
-good code example
-\`\`\`
-```
-
-### Adding a Common Mistake
-
-```markdown
-### Common Mistake: Description
-
-**Symptom**: What goes wrong
-
-**Cause**: Why this happens
-
-**Fix**: How to correct it
-
-**Prevention**: How to avoid it in the future
-```
-
-### Adding a Gotcha
-
-```markdown
-> **Warning**: Brief description of the non-obvious behavior.
->
-> Details about when this happens and how to handle it.
-```
-
----
-
-## Interactive Mode
-
-If you're unsure what to update, answer these prompts:
-
-1. **What did you just finish?**
-   - [ ] Fixed a bug
-   - [ ] Implemented a feature
-   - [ ] Refactored code
-   - [ ] Had a discussion about approach
-
-2. **What did you learn or decide?**
-   - Design decision (why X over Y)
-   - Project convention (how we do X)
-   - Non-obvious behavior (gotcha)
-   - Better approach (pattern)
-
-3. **Would future AI/developers need to know this?**
-   - To understand how the code works → Yes, update spec
-   - To maintain or extend the feature → Yes, update spec
-   - To avoid repeating mistakes → Yes, update spec
-   - Purely one-off implementation detail → Maybe skip
-
-4. **Which area does it relate to?**
-   - [ ] Backend code
-   - [ ] Frontend code
-   - [ ] Cross-layer data flow
-   - [ ] Code organization/reuse
-   - [ ] Quality/testing
+Task-specific tests and closure evidence belong in the task, not here.
 
 ---
 
 ## Quality Checklist
 
-Before finishing your code-spec update:
+Before finishing a spec update:
 
-- [ ] Is the content specific and actionable?
-- [ ] Did you include a code example?
-- [ ] Did you explain WHY, not just WHAT?
-- [ ] Did you include executable signatures/contracts?
-- [ ] Did you include validation and error matrix?
-- [ ] Did you include Good/Base/Bad cases?
-- [ ] Did you include required tests with assertion points?
-- [ ] Is it in the right code-spec file?
-- [ ] Does it duplicate existing content?
-- [ ] Would a new team member understand it?
+- [ ] Did I classify the update as invariant, baseline, decision, or contract?
+- [ ] If it touches an invariant, did I ask for explicit confirmation instead of auto-editing?
+- [ ] Is the content owned by the right module architecture or appendix?
+- [ ] Did I remove task-process language?
+- [ ] Did I explain why for local decisions?
+- [ ] Is the resulting text useful to a future session judging structural convergence?
 
 ---
 
-## Relationship to Other Commands
+## Relationship To Finish Work
 
-```
-Development Flow:
-  Learn something → `update-spec` (Trellis command) → Knowledge captured
-       ↑                                  ↓
-  `break-loop` (Trellis command) ←──────────────────── Future sessions benefit
-  (deep bug analysis)
-```
+During finish-work, check whether the task changed:
 
-- ``break-loop` (Trellis command)` - Analyzes bugs deeply, often reveals spec updates needed
-- ``update-spec` (Trellis command)` - Actually makes the updates
-- ``finish-work` (Trellis command)` - Reminds you to check if specs need updates
+- architecture invariants
+- module ownership or dependency direction
+- cross-layer contracts
+- current production entry points
+- durable local design decisions
 
----
-
-## Core Philosophy
-
-> **Code-specs are living documents. Every debugging session, every "aha moment" is an opportunity to make the implementation contract clearer.**
-
-The goal is **institutional memory**:
-- What one person learns, everyone benefits from
-- What AI learns in one session, persists to future sessions
-- Mistakes become documented guardrails
+Only then update `.trellis/spec/`. Otherwise keep the learning in task closure, journal, or AGENTS problem collection.

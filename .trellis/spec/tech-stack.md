@@ -37,7 +37,7 @@
 - **React 19**（`^19.2.0`）+ **TypeScript**（`~5.9.3`）
 - **Vite 7**（`^7.3.1`）+ **Tailwind CSS v4**（`^4.2.1`）
 - **Zustand 5**（`^5.0.11`）+ **React Router 7**（`react-router-dom ^7.13.1`）
-- **ACP SDK**（`@agentclientprotocol/sdk ^0.14.1`）：仅 relay 兼容层，前端主路径消费 `generated/backbone-protocol.ts`
+- **ACP SDK**（`@agentclientprotocol/sdk ^0.14.1`）：仅 relay adapter 使用，前端主路径消费 `generated/backbone-protocol.ts`
 - **Vitest 4**（`^4.0.18`）、**@dnd-kit**（拖拽）、**react-markdown + remark-gfm**
 - UI 组件自研，参考 shadcn/ui 模式（组件代码放入 `components/ui/` 或 `@agentdash/ui` 包）
 
@@ -58,7 +58,7 @@
 
 ```
 crates/
-├── agentdash-agent-protocol/      # Backbone Protocol 事件流定义 + ACP 兼容层
+├── agentdash-agent-protocol/      # Backbone Protocol 事件流定义 + 外部协议 adapter
 ├── agentdash-domain/              # 领域层（实体、值对象、Repository trait）
 ├── agentdash-application/         # 应用层（用例编排、hooks、context、VFS）
 ├── agentdash-infrastructure/      # 基础设施层（PostgreSQL + SQLite 实现）

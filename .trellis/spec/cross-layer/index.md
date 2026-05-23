@@ -1,34 +1,26 @@
-# 跨层契约
+# 跨层契约索引
 
-> 前后端共享的协议与序列化契约。这些文档不属于单一 layer，而是约束前后端交互边界。
+跨层 spec 约束前端、云端、本机、桌面壳和共享资产之间共同消费的协议与事实。
 
----
+## Architecture Entry
 
-## 规范索引
+- [Cross-layer Architecture](./architecture.md)
 
-| 文档 | 说明 | 状态 |
-|------|------|------|
-| [Backbone Protocol](./backbone-protocol.md) | 平台内部事件流统一传输协议（BackboneEnvelope / BackboneEvent） | ✅ 已更新 |
-| [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面端托管 API、Local Runtime command、profile 与打包契约 | ✅ 已创建 |
-| [Project Backend Workspace Routing](./project-backend-workspace-routing.md) | Project backend access、workspace inventory、binding 自动路由契约 | ✅ 已创建 |
-| [Shared Library Contract](./shared-library-contract.md) | 公共资产、Marketplace 安装、Project 来源版本状态跨层契约 | ✅ 已创建 |
+## Contract Appendices
 
----
+| 文档 | 说明 |
+| --- | --- |
+| [Backbone Protocol](./backbone-protocol.md) | 内部 session 事件流协议 |
+| [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面壳、DashboardHost、LocalRuntimeClient 边界 |
+| [Project Backend Workspace Routing](./project-backend-workspace-routing.md) | Backend Access、workspace detect、inventory registration |
+| [Shared Library Contract](./shared-library-contract.md) | Shared Library / Marketplace / Project Asset 跨层契约 |
 
 ## 归属原则
 
-以下类型的文档应放在此目录：
+以下内容放在 cross-layer：
 
-- 前后端共享的 JSON 序列化契约（字段命名、结构定义）
-- 跨 binary（云端/本机）的通信协议
-- 前端消费后端事件流的格式约定
+- 前后端共享的 JSON / NDJSON 序列化契约。
+- 跨 cloud/local/desktop 的通信边界。
+- 多端共同消费的状态流、权限语义和来源元数据。
 
-如果一个文档**主要**服务于某一端的开发者（即使涉及另一端），应放在对应 layer 目录下。
-
----
-
-## 相关规范
-
-- [后端开发指南](../backend/index.md)
-- [前端开发指南](../frontend/index.md)
-- [前后端共享规范](../shared/index.md)
+如果文档主要服务于某一端，即使涉及另一端，也应放到对应 layer 的 architecture 或 appendix 下，并从这里链接。

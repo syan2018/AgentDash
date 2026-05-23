@@ -103,8 +103,3 @@ provider、mount_id、scope、access_mode、source_uri、readable_root、materia
 - 不自动把 public workdir 写回云端
 - 不做隐式实时同步
 - local store 不理解 provider 业务语义，只根据 policy 执行
-
----
-
-*创建：2026-04-21 — VFS 资源本机物化契约*
-*精简：2026-05-16 — 移除代码复述、测试列表、冗余示例*

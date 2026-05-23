@@ -62,7 +62,7 @@
 
 - `start_task` / `continue_task` / `cancel_task` 等 facade 名字保留
 - 内部统一委托 `StoryStepActivationService::activate_story_step(story_id, step_key, ...)`
-- **不允许**为新场景再开 Task-specific 装配分支（`compose_task_runtime` 已删除）
+- **不允许**为新场景再开 Task-specific 装配分支；Task runtime 进入统一 Story step activation 路径
 
 ---
 
@@ -76,8 +76,10 @@
 
 ---
 
-## 待演进
+## Open Architecture Questions
 
-1. **Story.status 定位**：当前为业务审计字段（非 runtime projection），可由 runtime 给出 suggested transition
-2. **Task 投影字段类型机制**：`TaskSpec + TaskView` 拆分或 setter 私有化，待实现阶段选择
-3. **`state_changes` 表去留**：若引入 `session_events.global_seq`，可进一步废弃
+以下问题不作为当前实现任务承诺，只作为后续 architecture review 的讨论入口：
+
+- Story.status 是否应继续作为业务审计字段，或由 runtime projection 给出 suggested transition。
+- Task durable spec 与只读 projection 字段是否需要更强类型边界。
+- `state_changes` 与 session event global cursor 的长期分工。

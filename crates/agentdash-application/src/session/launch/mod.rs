@@ -10,7 +10,7 @@ mod planner;
 mod preparation;
 mod service;
 
-pub(in crate::session) use planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
+pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};
 pub use service::SessionLaunchService;
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
@@ -44,17 +44,10 @@ pub enum LaunchSource {
     LocalRelayPrompt,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchStrictness {
-    Strict,
-    Relaxed,
-}
-
 #[derive(Clone)]
 pub struct LaunchCommand {
     user_input: UserPromptInput,
     source: LaunchSource,
-    strictness: LaunchStrictness,
     follow_up_session_id: Option<String>,
     identity: Option<agentdash_spi::AuthIdentity>,
     task: Option<TaskLaunchSource>,
@@ -70,15 +63,10 @@ pub struct LaunchCommandOutcome {
 }
 
 impl LaunchCommand {
-    fn new(
-        user_input: UserPromptInput,
-        source: LaunchSource,
-        strictness: LaunchStrictness,
-    ) -> Self {
+    fn new(user_input: UserPromptInput, source: LaunchSource) -> Self {
         Self {
             user_input,
             source,
-            strictness,
             follow_up_session_id: None,
             identity: None,
             task: None,
@@ -121,10 +109,6 @@ impl LaunchCommand {
         self.source
     }
 
-    pub fn strictness(&self) -> LaunchStrictness {
-        self.strictness
-    }
-
     pub fn follow_up_session_id(&self) -> Option<&str> {
         self.follow_up_session_id.as_deref()
     }
@@ -142,8 +126,8 @@ impl LaunchCommand {
         }
     }
 
-    fn strict_source_input(input: UserPromptInput, source: LaunchSource) -> Self {
-        Self::new(input, source, LaunchStrictness::Strict)
+    fn source_input(input: UserPromptInput, source: LaunchSource) -> Self {
+        Self::new(input, source)
     }
 
     fn command_with(
@@ -152,9 +136,8 @@ impl LaunchCommand {
         task: Option<TaskLaunchSource>,
         companion: Option<CompanionLaunchSource>,
         source: LaunchSource,
-        strictness: LaunchStrictness,
     ) -> Self {
-        let mut command = Self::new(input, source, strictness);
+        let mut command = Self::new(input, source);
         command.identity = identity;
         command.task = task;
         command.companion = companion;
@@ -165,22 +148,15 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            None,
-            None,
-            LaunchSource::HttpPrompt,
-            LaunchStrictness::Strict,
-        )
+        Self::command_with(input, identity, None, None, LaunchSource::HttpPrompt)
     }
 
     pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
-        Self::strict_source_input(input, LaunchSource::HookAutoResume)
+        Self::source_input(input, LaunchSource::HookAutoResume)
     }
 
     pub fn companion_parent_resume_input(input: UserPromptInput) -> Self {
-        Self::strict_source_input(input, LaunchSource::CompanionParentResume)
+        Self::source_input(input, LaunchSource::CompanionParentResume)
     }
 
     pub fn companion_dispatch_input(
@@ -193,26 +169,18 @@ impl LaunchCommand {
             None,
             Some(companion),
             LaunchSource::CompanionDispatch,
-            LaunchStrictness::Strict,
         )
     }
 
     pub fn workflow_orchestrator_input(input: UserPromptInput) -> Self {
-        Self::strict_source_input(input, LaunchSource::WorkflowOrchestrator)
+        Self::source_input(input, LaunchSource::WorkflowOrchestrator)
     }
 
     pub fn routine_executor_input(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::command_with(
-            input,
-            identity,
-            None,
-            None,
-            LaunchSource::RoutineExecutor,
-            LaunchStrictness::Strict,
-        )
+        Self::command_with(input, identity, None, None, LaunchSource::RoutineExecutor)
     }
 
     pub fn task_service_input(
@@ -232,7 +200,6 @@ impl LaunchCommand {
             }),
             None,
             LaunchSource::TaskService,
-            LaunchStrictness::Strict,
         )
     }
 
@@ -241,11 +208,7 @@ impl LaunchCommand {
         mcp_declarations: Vec<SessionMcpServer>,
         workspace_root: PathBuf,
     ) -> Self {
-        let mut command = Self::new(
-            input,
-            LaunchSource::LocalRelayPrompt,
-            LaunchStrictness::Relaxed,
-        );
+        let mut command = Self::new(input, LaunchSource::LocalRelayPrompt);
         command.local_relay_mcp_declarations = mcp_declarations;
         command.local_relay_workspace_root = Some(workspace_root);
         command
@@ -326,17 +289,17 @@ pub struct ConnectorInputPlan {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LaunchExecutionTrace {
-    pub entries: Vec<LaunchExecutionTraceEntry>,
+pub struct LaunchPlanTrace {
+    pub entries: Vec<LaunchPlanTraceEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchExecutionTraceEntry {
+pub struct LaunchPlanTraceEntry {
     pub stage: &'static str,
     pub source: String,
 }
 
-pub struct LaunchExecution {
+pub struct LaunchPlan {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
@@ -347,12 +310,12 @@ pub struct LaunchExecution {
     pub runtime_commands: RuntimeCommandLaunchPlan,
     pub terminal_effects: TerminalEffectPlan,
     pub connector_input: ConnectorInputPlan,
-    pub trace: LaunchExecutionTrace,
+    pub trace: LaunchPlanTrace,
     pub context: ExecutionContext,
     pub summary: LaunchSummary,
 }
 
-pub struct LaunchExecutionInput {
+pub struct LaunchPlanInput {
     pub resolved_payload: ResolvedPromptPayload,
     pub construction: SessionConstructionPlan,
     pub session_id: String,
@@ -374,8 +337,8 @@ pub struct LaunchExecutionInput {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
-impl LaunchExecution {
-    pub fn build(input: LaunchExecutionInput) -> Self {
+impl LaunchPlan {
+    pub fn build(input: LaunchPlanInput) -> Self {
         let working_directory = input
             .construction
             .workspace
@@ -453,13 +416,13 @@ impl LaunchExecution {
             mcp_servers: mcp_servers.clone(),
             has_vfs: vfs.is_some(),
         };
-        let trace = LaunchExecutionTrace {
+        let trace = LaunchPlanTrace {
             entries: vec![
-                LaunchExecutionTraceEntry {
+                LaunchPlanTraceEntry {
                     stage: "construction",
                     source: "SessionConstructionPlan".to_string(),
                 },
-                LaunchExecutionTraceEntry {
+                LaunchPlanTraceEntry {
                     stage: "runtime_command",
                     source: if pending_transition_count > 0 {
                         "pending_projection"
@@ -468,7 +431,7 @@ impl LaunchExecution {
                     }
                     .to_string(),
                 },
-                LaunchExecutionTraceEntry {
+                LaunchPlanTraceEntry {
                     stage: "terminal_effect",
                     source: "durable_outbox".to_string(),
                 },
@@ -522,7 +485,7 @@ mod tests {
     use super::super::types::{RuntimeCapabilityTransition, UserPromptInput};
     use super::*;
 
-    fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchExecutionInput {
+    fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchPlanInput {
         let binding = SessionBinding::new(
             uuid::Uuid::new_v4(),
             "sess-launch".to_string(),
@@ -570,7 +533,7 @@ mod tests {
         let resolved_payload = UserPromptInput::from_text("hello")
             .resolve_prompt_payload()
             .expect("resolved payload");
-        LaunchExecutionInput {
+        LaunchPlanInput {
             resolved_payload,
             construction,
             session_id: "sess-launch".to_string(),
@@ -615,11 +578,11 @@ mod tests {
     }
 
     #[test]
-    fn launch_execution_projects_connector_context_and_summary() {
+    fn launch_plan_projects_connector_context_and_summary() {
         let lifecycle = SessionPromptLifecycle::OwnerBootstrap;
         let input = input_for(lifecycle);
 
-        let execution = LaunchExecution::build(input);
+        let execution = LaunchPlan::build(input);
 
         assert_eq!(execution.context.session.turn_id, "t1");
         assert_eq!(execution.resolved_payload.text_prompt, "hello");
@@ -664,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_command_carries_source_policy_and_follow_up() {
+    fn launch_command_carries_source_intent_and_follow_up() {
         let command = LaunchCommand::local_relay_prompt_input(
             UserPromptInput::from_text("ping"),
             Vec::new(),
@@ -673,7 +636,10 @@ mod tests {
         .with_follow_up(Some("follow-up-1"));
 
         assert_eq!(command.source(), LaunchSource::LocalRelayPrompt);
-        assert_eq!(command.strictness(), LaunchStrictness::Relaxed);
+        assert_eq!(
+            command.local_relay_workspace_root(),
+            Some(Path::new("/workspace"))
+        );
         assert_eq!(command.follow_up_session_id(), Some("follow-up-1"));
         assert_eq!(command.reason_tag(), "local_relay_prompt");
     }
@@ -686,7 +652,7 @@ mod tests {
         input.restore_mode = LaunchRestoreMode::ExecutorState;
         input.restored_session_state = Some(RestoredSessionState::default());
 
-        let execution = LaunchExecution::build(input);
+        let execution = LaunchPlan::build(input);
 
         assert!(execution.summary.restored_executor_state);
         assert_eq!(
@@ -720,7 +686,7 @@ mod tests {
         input.construction.resolution.capability_source =
             Some("runtime_command.pending_transition".to_string());
 
-        let execution = LaunchExecution::build(input);
+        let execution = LaunchPlan::build(input);
 
         assert_eq!(
             execution.summary.follow_up_session_id.as_deref(),

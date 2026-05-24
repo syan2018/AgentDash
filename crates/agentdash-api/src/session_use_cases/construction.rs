@@ -222,7 +222,6 @@ pub(crate) async fn finalize_session_construction_projection(
     mode: SessionConstructionProjectionMode,
 ) -> Result<SessionConstructionPlan, ApiError> {
     plan.source.launch_source = Some(facts.command.reason_tag().to_string());
-    plan.source.strictness = Some(format!("{:?}", facts.command.strictness()).to_lowercase());
     if plan.identity.identity.is_none() {
         plan.identity.identity = facts.command.identity();
     }

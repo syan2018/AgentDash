@@ -25,8 +25,7 @@ use super::hub::{HookTriggerInput, build_initial_capability_state_frame};
 use super::hub_support::*;
 use super::identity_context_frame::{IdentityFrameInput, build_identity_context_frame};
 use super::launch::{
-    LaunchCommand, LaunchCommandOutcome, LaunchFollowUpSource, LaunchStrictness,
-    SessionLaunchPlanner, SessionLaunchPlannerInput,
+    LaunchCommand, LaunchCommandOutcome, LaunchFollowUpSource, LaunchPlanner, LaunchPlannerInput,
 };
 use super::pending_action_context_frame::build_pending_action_context_frame;
 use super::persistence::{SessionRuntimeCommandStore, SessionStoreSet};
@@ -207,23 +206,10 @@ impl SessionLaunchExecutor {
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
         let reason = command.reason_tag();
-        let provider = match command.strictness() {
-            LaunchStrictness::Strict => {
-                let Some(provider) = self.deps.current_session_construction_provider().await else {
-                    return Err(ConnectorError::Runtime(format!(
-                        "session_construction_provider 未注入，拒绝 strict launch: {reason}"
-                    )));
-                };
-                provider
-            }
-            LaunchStrictness::Relaxed => {
-                let Some(provider) = self.deps.current_session_construction_provider().await else {
-                    return Err(ConnectorError::Runtime(format!(
-                        "session_construction_provider 未注入，拒绝 relaxed launch: {reason}"
-                    )));
-                };
-                provider
-            }
+        let Some(provider) = self.deps.current_session_construction_provider().await else {
+            return Err(ConnectorError::Runtime(format!(
+                "session_construction_provider 未注入，拒绝 session launch: {reason}"
+            )));
         };
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
         let had_existing_runtime = self.deps.connector.has_live_session(session_id).await;
@@ -448,8 +434,8 @@ impl SessionLaunchExecutor {
         let meta_store = deps.stores.meta.clone();
         let runtime_command_store = deps.stores.runtime_commands.clone();
         let now = chrono::Utc::now().timestamp_millis();
-        let launch_execution = match SessionLaunchPlanner::new(deps.clone())
-            .plan(SessionLaunchPlannerInput {
+        let launch_plan = match LaunchPlanner::new(deps.clone())
+            .plan(LaunchPlannerInput {
                 session_id,
                 turn_id: &turn_id,
                 command,
@@ -460,44 +446,41 @@ impl SessionLaunchExecutor {
             })
             .await
         {
-            Ok(launch_execution) => launch_execution,
+            Ok(launch_plan) => launch_plan,
             Err(error) => {
                 deps.turn_supervisor.clear_turn_and_hook(session_id).await;
                 return Err(error);
             }
         };
-        let resolved_payload = launch_execution.resolved_payload.clone();
-        let title_hint = launch_execution.title_hint.clone();
-        let resolved_follow_up_session_id = launch_execution.summary.follow_up_session_id.clone();
-        let post_turn_handler = launch_execution.terminal_effects.post_turn_handler.clone();
-        let hook_session = launch_execution.context.turn.hook_session.clone();
-        let hook_snapshot_contribution = launch_execution.hooks.snapshot_contribution.clone();
-        let context_bundle = launch_execution.construction.context.bundle.clone();
-        let discovered_guidelines = launch_execution.discovered_guidelines.clone();
-        let base_capability_state = launch_execution
-            .runtime_commands
-            .base_capability_state
-            .clone();
-        let capability_state = launch_execution.context.turn.capability_state.clone();
+        let resolved_payload = launch_plan.resolved_payload.clone();
+        let title_hint = launch_plan.title_hint.clone();
+        let resolved_follow_up_session_id = launch_plan.summary.follow_up_session_id.clone();
+        let post_turn_handler = launch_plan.terminal_effects.post_turn_handler.clone();
+        let hook_session = launch_plan.context.turn.hook_session.clone();
+        let hook_snapshot_contribution = launch_plan.hooks.snapshot_contribution.clone();
+        let context_bundle = launch_plan.construction.context.bundle.clone();
+        let discovered_guidelines = launch_plan.discovered_guidelines.clone();
+        let base_capability_state = launch_plan.runtime_commands.base_capability_state.clone();
+        let capability_state = launch_plan.context.turn.capability_state.clone();
         let capability_keys = capability_state.capability_keys();
         let is_owner_bootstrap =
-            launch_execution.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
+            launch_plan.summary.hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
         tracing::debug!(
-            session_id = %launch_execution.summary.session_id,
-            turn_id = %launch_execution.summary.turn_id,
-            lifecycle = ?launch_execution.summary.lifecycle,
-            restore_mode = ?launch_execution.summary.restore_mode,
-            follow_up_source = ?launch_execution.summary.follow_up_source,
-            pending_transition_count = launch_execution.summary.pending_transition_count,
-            vfs_source = ?launch_execution.summary.vfs_source,
-            pending_vfs_overlay_applied = launch_execution.summary.pending_vfs_overlay_applied,
-            mcp_source = ?launch_execution.summary.mcp_source,
-            capability_source = ?launch_execution.summary.capability_source,
-            mcp_server_count = launch_execution.summary.mcp_server_count,
-            has_vfs = launch_execution.summary.has_vfs,
+            session_id = %launch_plan.summary.session_id,
+            turn_id = %launch_plan.summary.turn_id,
+            lifecycle = ?launch_plan.summary.lifecycle,
+            restore_mode = ?launch_plan.summary.restore_mode,
+            follow_up_source = ?launch_plan.summary.follow_up_source,
+            pending_transition_count = launch_plan.summary.pending_transition_count,
+            vfs_source = ?launch_plan.summary.vfs_source,
+            pending_vfs_overlay_applied = launch_plan.summary.pending_vfs_overlay_applied,
+            mcp_source = ?launch_plan.summary.mcp_source,
+            capability_source = ?launch_plan.summary.capability_source,
+            mcp_server_count = launch_plan.summary.mcp_server_count,
+            has_vfs = launch_plan.summary.has_vfs,
             "prepared session launch execution"
         );
-        let mut context = launch_execution.context;
+        let mut context = launch_plan.context;
 
         // pipeline 层预构建工具列表：runtime + direct MCP + relay MCP
         context.turn.assembled_tools = deps
@@ -509,9 +492,9 @@ impl SessionLaunchExecutor {
             .await;
 
         let include_connector_startup_context = should_include_connector_startup_context(
-            launch_execution.summary.lifecycle,
+            launch_plan.summary.lifecycle,
             had_existing_runtime,
-            &launch_execution.summary.follow_up_source,
+            &launch_plan.summary.follow_up_source,
         );
         let identity_frame = if include_connector_startup_context {
             build_identity_context_frame(&IdentityFrameInput {
@@ -562,13 +545,13 @@ impl SessionLaunchExecutor {
                 .await;
         }
 
-        let pending_command_ids = launch_execution
+        let pending_command_ids = launch_plan
             .runtime_commands
             .requested_commands
             .iter()
             .map(|command| command.id)
             .collect::<Vec<_>>();
-        let pending_transition_application = if !launch_execution
+        let pending_transition_application = if !launch_plan
             .runtime_commands
             .pending_capability_transitions
             .is_empty()
@@ -580,9 +563,7 @@ impl SessionLaunchExecutor {
                     hook_session.as_ref(),
                     base_capability_state,
                     &capability_state,
-                    &launch_execution
-                        .runtime_commands
-                        .pending_capability_transitions,
+                    &launch_plan.runtime_commands.pending_capability_transitions,
                     &context.turn.assembled_tools,
                 )
                 .await
@@ -658,7 +639,7 @@ impl SessionLaunchExecutor {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = launch_execution
+        if let Some(frame) = launch_plan
             .construction
             .context
             .continuation_context_frame

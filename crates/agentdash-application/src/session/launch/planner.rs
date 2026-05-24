@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use agentdash_spi::{ConnectorError, RestoredSessionState};
 
-use super::{
-    LaunchCommand, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource, LaunchRestoreMode,
-};
+use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -17,12 +15,12 @@ use crate::session::types::{
     resolve_session_prompt_lifecycle,
 };
 
-pub(in crate::session) struct SessionLaunchPlanner<'a> {
+pub(in crate::session) struct LaunchPlanner<'a> {
     deps: SessionLaunchDeps,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-pub(in crate::session) struct SessionLaunchPlannerInput<'a> {
+pub(in crate::session) struct LaunchPlannerInput<'a> {
     pub session_id: &'a str,
     pub turn_id: &'a str,
     pub command: &'a LaunchCommand,
@@ -32,7 +30,7 @@ pub(in crate::session) struct SessionLaunchPlannerInput<'a> {
     pub construction: SessionConstructionPlan,
 }
 
-impl<'a> SessionLaunchPlanner<'a> {
+impl<'a> LaunchPlanner<'a> {
     pub fn new(deps: SessionLaunchDeps) -> Self {
         Self {
             deps,
@@ -40,10 +38,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         }
     }
 
-    pub async fn plan(
-        &self,
-        input: SessionLaunchPlannerInput<'_>,
-    ) -> Result<LaunchExecution, ConnectorError> {
+    pub async fn plan(&self, input: LaunchPlannerInput<'_>) -> Result<LaunchPlan, ConnectorError> {
         let sid = input.session_id.to_string();
         let command = input.command;
         let mut construction = input.construction;
@@ -216,7 +211,7 @@ impl<'a> SessionLaunchPlanner<'a> {
         let post_turn_handler = self
             .resolve_terminal_hook_effect_handler(input.session_id, terminal_hook_effect_binding)
             .await?;
-        let launch_execution = LaunchExecution::build(LaunchExecutionInput {
+        let launch_plan = LaunchPlan::build(LaunchPlanInput {
             resolved_payload,
             construction,
             session_id: sid,
@@ -238,7 +233,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             post_turn_handler,
         });
 
-        Ok(launch_execution)
+        Ok(launch_plan)
     }
 
     async fn resolve_terminal_hook_effect_handler(

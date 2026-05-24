@@ -88,9 +88,7 @@ pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
-pub use launch::{
-    LaunchCommand, LaunchCommandOutcome, LaunchSource, LaunchStrictness, SessionLaunchService,
-};
+pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,

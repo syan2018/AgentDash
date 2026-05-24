@@ -47,7 +47,6 @@ pub struct SessionIdentityPlan {
 pub struct SourceContractPlan {
     pub launch_source: Option<String>,
     pub preparation: Option<String>,
-    pub strictness: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]

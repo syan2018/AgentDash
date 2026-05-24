@@ -55,11 +55,11 @@ cargo test -p agentdash-application relay_prompt_registers_sink_before_remote_pr
 
 目标：先确定最终语言，再搬代码。
 
-- [ ] 形成 rename map，并按必要性分类：
+- [x] 形成 rename map，并按必要性分类：
   - 必改：旧名会误导阶段职责。
   - 可保留：旧名准确，改名收益低。
   - 待观察：先拆阶段，后决定。
-- [ ] 推荐 rename map：
+- [x] 推荐 rename map：
 
 ```text
 prompt_pipeline.rs              -> launch/orchestrator.rs + stage modules
@@ -75,10 +75,20 @@ TerminalEffectPlan              -> TerminalEffectHandlingPlan
 execute_constructed_launch      -> removed; replaced by typed stage flow
 ```
 
-- [ ] 审计 `LaunchStrictness`：
+- [x] 审计 `LaunchStrictness`：
   - 如果 `Strict` / `Relaxed` 没有实际 launch 行为差异，删除或重命名。
   - 如果保留，必须写清它到底控制什么策略。
-- [ ] 决定是否保留 `LaunchCommandOutcome`；若重命名，推荐 `LaunchOutcome`。
+- [x] 决定是否保留 `LaunchCommandOutcome`；若重命名，推荐 `LaunchOutcome`。
+
+### Phase 2 Evidence
+
+命名审计结果：
+
+- 必改并已改：`LaunchExecution*` -> `LaunchPlan*`，`SessionLaunchPlanner*` -> `LaunchPlanner*`。
+- 必改但随阶段抽取推进：`prompt_pipeline.rs` / `SessionLaunchExecutor` / `execute_constructed_launch`，因为它们仍承载实际 orchestration，必须和 Phase 4/12 一起替换。
+- 待阶段类型稳定后改：`ConnectorInputPlan`、`RuntimeCommandLaunchPlan`、`TerminalEffectPlan`，它们会在 preparation / commit 抽取时更自然地落到窄类型。
+- 已删除：`LaunchStrictness`。`Strict` / `Relaxed` 只改变错误文案和 trace 字段，没有 launch 策略差异；source intent 已由 `LaunchSource` 表达。
+- 保留：`LaunchCommandOutcome`。它是 command facade 的返回结果，不混淆内部阶段职责。
 
 ## Phase 3: Module Skeleton Migration
 
@@ -103,6 +113,8 @@ execute_constructed_launch      -> removed; replaced by typed stage flow
 cargo test -p agentdash-application session::launch
   ok, 4 passed
 cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+cargo check -p agentdash-api -p agentdash-application
   ok
 ```
 
@@ -131,8 +143,8 @@ struct LaunchRuntimeFacts {
 
 目标：让 planning 阶段名实相符。
 
-- [ ] 将 `LaunchExecution` 系列重命名为 `LaunchPlan` 系列。
-- [ ] 确保 `LaunchPlanner::plan` 只产出决策，不做 accepted 后副作用。
+- [x] 将 `LaunchExecution` 系列重命名为 `LaunchPlan` 系列。
+- [x] 确保 `LaunchPlanner::plan` 只产出决策，不做 accepted 后副作用。
 - [ ] 将 `LaunchPlan` 中的 `context: ExecutionContext` 明确为 connector context seed；如果命名仍含糊，可拆成：
 
 ```rust
@@ -142,7 +154,20 @@ struct LaunchPlan {
 }
 ```
 
-- [ ] 更新 tests 中对 plan summary / trace / connector projection 的断言。
+- [x] 更新 tests 中对 plan summary / trace / connector projection 的断言。
+
+### Phase 5 Evidence
+
+```text
+rg -n "LaunchExecution|SessionLaunchPlanner|launch_execution|LaunchStrictness|strictness" crates/agentdash-application/src crates/agentdash-api/src
+  no matches
+cargo test -p agentdash-application session::launch
+  ok, 4 passed
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+```
+
+`LaunchPlan.context` 暂时保留原字段名，原因是 Phase 6 会引入 `PreparedTurn` 并消费/重组 connector context；到时再把字段收窄为 `connector_context` 可以减少中间态 churn。
 
 ## Phase 6: Turn Preparation Extraction
 

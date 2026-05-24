@@ -1,133 +1,41 @@
 import { api, authenticatedFetch } from "../api/client";
 import { buildApiPath } from "../api/origin";
-import type { ResolvedVfsSurface, ResolvedVfsSurfaceSource } from "../types/context";
+import type {
+  ListEntriesResponse,
+  ListVfssResponse,
+  ResolvedVfsSurface,
+  ResolvedVfsSurfaceSource,
+  SurfaceApplyPatchResponse,
+  SurfaceCreateFileResponse,
+  SurfaceDeleteFileResponse,
+  SurfaceEntriesResponse,
+  SurfaceMountEntry,
+  SurfaceReadFileResponse,
+  SurfaceRenameFileResponse,
+  SurfaceStatFileResponse,
+  SurfaceUploadBinaryFileResponse,
+  SurfaceWriteFileResponse,
+  VfsDescriptor,
+  VfsEntry,
+} from "../generated/vfs-contracts";
 import { vfsRoutes } from "./vfsRoutes";
 
-// ─── Descriptor（能力发现） ─────────────────────────────
-
-export interface SelectorHint {
-  trigger: string;
-  placeholder: string;
-  result_item_type: string;
-}
-
-export interface VfsDescriptor {
-  id: string;
-  label: string;
-  kind: string;
-  provider: string;
-  supports: string[];
-  root?: string | null;
-  workspace_id?: string | null;
-  selector?: SelectorHint | null;
-}
-
-export interface ListVfssResponse {
-  spaces: VfsDescriptor[];
-}
-
-// ─── Entry（条目搜索） ──────────────────────────────────
-
-export interface VfsEntry {
-  address: string;
-  label: string;
-  entry_type: string;
-  size?: number | null;
-  is_dir?: boolean | null;
-}
-
-export interface ListEntriesResponse {
-  entries: VfsEntry[];
-}
-
-// ─── Surface Mount Entry ───────────────────────────────
-
-export interface SurfaceMountEntry {
-  path: string;
-  entry_type: string;
-  size?: number | null;
-  content_kind?: string | null;
-  mime_type?: string | null;
-  is_dir: boolean;
-}
-
-export interface ListSurfaceMountEntriesResponse {
-  surface_ref: string;
-  mount_id: string;
-  entries: SurfaceMountEntry[];
-}
-
-export interface ReadSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  content: string;
-  size: number;
-  content_kind: string;
-  mime_type?: string | null;
-}
-
-export interface WriteSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  size: number;
-  persisted: boolean;
-  content_kind: string;
-  mime_type?: string | null;
-}
-
-export interface CreateSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  size: number;
-  content_kind: string;
-  mime_type?: string | null;
-}
-
-export interface DeleteSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  deleted: boolean;
-}
-
-export interface RenameSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  from_path: string;
-  to_path: string;
-}
-
-export interface StatSurfaceFileResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  entry_type: string;
-  size?: number | null;
-  content_kind?: string | null;
-  mime_type?: string | null;
-  modified_at?: number | null;
-  is_dir: boolean;
-}
-
-export interface ApplySurfacePatchResponse {
-  surface_ref: string;
-  mount_id: string;
-  added: string[];
-  modified: string[];
-  deleted: string[];
-}
-
-export interface UploadSurfaceFileBlobResponse {
-  surface_ref: string;
-  mount_id: string;
-  path: string;
-  size: number;
-  content_kind: string;
-  mime_type: string;
-}
+export type {
+  ListEntriesResponse,
+  ListVfssResponse,
+  SurfaceApplyPatchResponse as ApplySurfacePatchResponse,
+  SurfaceCreateFileResponse as CreateSurfaceFileResponse,
+  SurfaceDeleteFileResponse as DeleteSurfaceFileResponse,
+  SurfaceEntriesResponse as ListSurfaceMountEntriesResponse,
+  SurfaceMountEntry,
+  SurfaceReadFileResponse as ReadSurfaceFileResponse,
+  SurfaceRenameFileResponse as RenameSurfaceFileResponse,
+  SurfaceStatFileResponse as StatSurfaceFileResponse,
+  SurfaceUploadBinaryFileResponse as UploadSurfaceFileBlobResponse,
+  SurfaceWriteFileResponse as WriteSurfaceFileResponse,
+  VfsDescriptor,
+  VfsEntry,
+};
 
 export interface VfsQueryParams {
   workspaceId?: string | null;
@@ -181,13 +89,13 @@ export async function listSurfaceMountEntries(params: {
   path?: string;
   pattern?: string;
   recursive?: boolean;
-}): Promise<ListSurfaceMountEntriesResponse> {
+}): Promise<SurfaceEntriesResponse> {
   const sp = new URLSearchParams();
   if (params.path) sp.set("path", params.path);
   if (params.pattern) sp.set("pattern", params.pattern);
   if (params.recursive !== undefined) sp.set("recursive", String(params.recursive));
 
-  return api.get<ListSurfaceMountEntriesResponse>(
+  return api.get<SurfaceEntriesResponse>(
     vfsRoutes.surfaces.entries(params.surfaceRef, params.mountId, sp),
   );
 }
@@ -196,8 +104,8 @@ export async function readSurfaceFile(params: {
   surfaceRef: string;
   mountId: string;
   path: string;
-}): Promise<ReadSurfaceFileResponse> {
-  return api.post<ReadSurfaceFileResponse>(vfsRoutes.surfaces.readFile, {
+}): Promise<SurfaceReadFileResponse> {
+  return api.post<SurfaceReadFileResponse>(vfsRoutes.surfaces.readFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -232,8 +140,8 @@ export async function writeSurfaceFile(params: {
   mountId: string;
   path: string;
   content: string;
-}): Promise<WriteSurfaceFileResponse> {
-  return api.post<WriteSurfaceFileResponse>(vfsRoutes.surfaces.writeFile, {
+}): Promise<SurfaceWriteFileResponse> {
+  return api.post<SurfaceWriteFileResponse>(vfsRoutes.surfaces.writeFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -246,8 +154,8 @@ export async function createSurfaceFile(params: {
   mountId: string;
   path: string;
   content: string;
-}): Promise<CreateSurfaceFileResponse> {
-  return api.post<CreateSurfaceFileResponse>(vfsRoutes.surfaces.createFile, {
+}): Promise<SurfaceCreateFileResponse> {
+  return api.post<SurfaceCreateFileResponse>(vfsRoutes.surfaces.createFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -260,7 +168,7 @@ export async function uploadSurfaceFileBlob(params: {
   mountId: string;
   path?: string;
   file: File;
-}): Promise<UploadSurfaceFileBlobResponse> {
+}): Promise<SurfaceUploadBinaryFileResponse> {
   const form = new FormData();
   form.append("surface_ref", params.surfaceRef);
   form.append("mount_id", params.mountId);
@@ -282,8 +190,8 @@ export async function deleteSurfaceFile(params: {
   surfaceRef: string;
   mountId: string;
   path: string;
-}): Promise<DeleteSurfaceFileResponse> {
-  return api.post<DeleteSurfaceFileResponse>(vfsRoutes.surfaces.deleteFile, {
+}): Promise<SurfaceDeleteFileResponse> {
+  return api.post<SurfaceDeleteFileResponse>(vfsRoutes.surfaces.deleteFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -295,8 +203,8 @@ export async function renameSurfaceFile(params: {
   mountId: string;
   fromPath: string;
   toPath: string;
-}): Promise<RenameSurfaceFileResponse> {
-  return api.post<RenameSurfaceFileResponse>(vfsRoutes.surfaces.renameFile, {
+}): Promise<SurfaceRenameFileResponse> {
+  return api.post<SurfaceRenameFileResponse>(vfsRoutes.surfaces.renameFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     from_path: params.fromPath,
@@ -308,8 +216,8 @@ export async function statSurfaceFile(params: {
   surfaceRef: string;
   mountId: string;
   path: string;
-}): Promise<StatSurfaceFileResponse> {
-  return api.post<StatSurfaceFileResponse>(vfsRoutes.surfaces.statFile, {
+}): Promise<SurfaceStatFileResponse> {
+  return api.post<SurfaceStatFileResponse>(vfsRoutes.surfaces.statFile, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     path: params.path,
@@ -320,8 +228,8 @@ export async function applySurfacePatch(params: {
   surfaceRef: string;
   mountId: string;
   patch: string;
-}): Promise<ApplySurfacePatchResponse> {
-  return api.post<ApplySurfacePatchResponse>(vfsRoutes.surfaces.applyPatch, {
+}): Promise<SurfaceApplyPatchResponse> {
+  return api.post<SurfaceApplyPatchResponse>(vfsRoutes.surfaces.applyPatch, {
     surface_ref: params.surfaceRef,
     mount_id: params.mountId,
     patch: params.patch,

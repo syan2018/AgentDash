@@ -11,6 +11,7 @@
 | 文档 | 说明 |
 | --- | --- |
 | [Backbone Protocol](./backbone-protocol.md) | 内部 session 事件流协议 |
+| [Frontend / Backend Contracts](./frontend-backend-contracts.md) | Rust wire DTO、TS 生成与 drift check 契约 |
 | [Desktop Local Runtime](./desktop-local-runtime.md) | Tauri 桌面壳、DashboardHost、LocalRuntimeClient 边界 |
 | [Project Backend Workspace Routing](./project-backend-workspace-routing.md) | Backend Access、workspace detect、inventory registration |
 | [Shared Library Contract](./shared-library-contract.md) | Shared Library / Marketplace / Project Asset 跨层契约 |

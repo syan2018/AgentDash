@@ -1,5 +1,6 @@
 mod entity;
 mod repository;
+mod validation;
 mod value_objects;
 
 pub use entity::{
@@ -11,6 +12,10 @@ pub use repository::{
     LifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
     WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
+};
+pub use validation::{
+    node_deps_from_edges, validate_activity_lifecycle_definition, validate_lifecycle_definition,
+    validate_workflow_definition,
 };
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
@@ -27,8 +32,6 @@ pub use value_objects::{
     ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState, TransitionCondition,
     ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowContextBinding,
     WorkflowContract, WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec, WorkflowSessionTerminalState, node_deps_from_edges,
-    normalize_workflow_binding_kinds, reduce_tool_capability_directives,
-    validate_activity_lifecycle_definition, validate_lifecycle_definition,
-    validate_workflow_definition, workflow_binding_kinds_cover,
+    WorkflowInjectionSpec, WorkflowSessionTerminalState, normalize_workflow_binding_kinds,
+    reduce_tool_capability_directives, workflow_binding_kinds_cover,
 };

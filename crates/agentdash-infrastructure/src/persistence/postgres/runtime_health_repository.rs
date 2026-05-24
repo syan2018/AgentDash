@@ -18,54 +18,7 @@ impl PostgresRuntimeHealthRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS runtime_health (
-                backend_id TEXT PRIMARY KEY REFERENCES backends(id) ON DELETE CASCADE,
-                profile_id TEXT,
-                name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                version TEXT,
-                capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
-                accessible_roots JSONB NOT NULL DEFAULT '[]'::jsonb,
-                device JSONB NOT NULL DEFAULT '{}'::jsonb,
-                connected_at TEXT,
-                last_seen_at TEXT,
-                disconnected_at TEXT,
-                disconnect_reason TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT runtime_health_status_check CHECK (
-                    status IN ('online', 'offline', 'starting', 'degraded', 'stopping', 'error')
-                )
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_runtime_health_status
-                ON runtime_health(status)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_runtime_health_last_seen_at
-                ON runtime_health(last_seen_at)
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["runtime_health"]).await
     }
 }
 

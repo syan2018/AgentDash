@@ -149,7 +149,7 @@ store.write_meta(&session_meta).await?;
 |---|---|---|
 | 来源意图 | `LaunchCommand` source payload | source identity、parent/session 引用、override、follow-up hint |
 | 构建事实 | `SessionConstructionPlan` | owner、workspace、working directory、VFS、MCP、capability、context、identity |
-| 单轮执行策略 | `LaunchExecution` | resolved prompt payload、lifecycle、restore、hook、runtime command、terminal effect |
+| 单轮启动决策 | `LaunchPlan` | resolved prompt payload、lifecycle、restore、hook、runtime command、terminal effect |
 | Connector 投影 | `ExecutionContext` | session frame / turn frame 字段 |
 
 同步检查 HTTP、local relay、task、workflow、routine、companion、hook auto-resume 入口。

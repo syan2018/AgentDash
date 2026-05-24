@@ -17,7 +17,7 @@ use super::persistence::PersistedSessionEvent;
 //
 // 唯一公共入口：`build_projected_transcript_from_events`
 //   → 返回 `ProjectedTranscript`，消费者自选渲染方式：
-//     - `.into_messages()` → 执行器原生恢复（prompt_pipeline ExecutorState 分支）
+//     - `.into_messages()` → 执行器原生恢复（launch restore ExecutorState 分支）
 //     - `build_continuation_context_frame(&transcript, owner_context)` → ContextFrame 注入
 //       （acp_sessions route、routine executor）
 

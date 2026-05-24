@@ -13,7 +13,7 @@ use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hooks_service::SessionHookService;
 use super::hub::SessionRuntimeInner;
-use super::launch_service::SessionLaunchService;
+use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 use super::title_generator::SessionTitleGenerator;

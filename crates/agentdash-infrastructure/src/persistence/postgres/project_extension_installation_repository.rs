@@ -21,37 +21,11 @@ impl PostgresProjectExtensionInstallationRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS project_extension_installations (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                extension_key TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                config JSONB NOT NULL DEFAULT '{}',
-                manifest JSONB NOT NULL,
-                installed_library_asset_id TEXT NOT NULL,
-                installed_source_ref TEXT NOT NULL,
-                installed_source_version TEXT NOT NULL,
-                installed_source_digest TEXT NOT NULL,
-                installed_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CONSTRAINT project_extension_installations_unique_key UNIQUE (project_id, extension_key)
-            )",
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["project_extension_installations"],
         )
-        .execute(&self.pool)
         .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_project_extension_installations_project
-             ON project_extension_installations(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        Ok(())
     }
 }
 

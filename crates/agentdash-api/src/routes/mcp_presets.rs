@@ -17,14 +17,14 @@ use agentdash_application::runtime_gateway::{
     MCP_PROBE_TRANSPORT_ACTION, RuntimeActionKey, RuntimeActor, RuntimeContext,
     RuntimeInvocationRequest,
 };
+use agentdash_contracts::mcp_preset::{
+    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
+    McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+};
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::{
-    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
-    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
-};
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -60,15 +60,10 @@ pub async fn list_mcp_presets(
     let mut presets = service.list(project_id).await?;
 
     // source 过滤在 API 层做即可——服务层保留通用 list
-    match query.source.as_deref() {
-        Some("user") => presets.retain(|p| !p.is_builtin()),
-        Some("builtin") => presets.retain(|p| p.is_builtin()),
-        Some(other) if !other.is_empty() => {
-            return Err(ApiError::BadRequest(format!(
-                "无效的 source 过滤值: {other}（可选 user | builtin）"
-            )));
-        }
-        _ => {}
+    match query.source {
+        Some(McpPresetSourceTag::User) => presets.retain(|p| !p.is_builtin()),
+        Some(McpPresetSourceTag::Builtin) => presets.retain(|p| p.is_builtin()),
+        None => {}
     }
 
     Ok(Json(presets.into_iter().map(Into::into).collect()))
@@ -99,8 +94,8 @@ pub async fn create_mcp_preset(
             key: req.key,
             display_name: req.display_name,
             description: req.description,
-            transport: req.transport,
-            route_policy: req.route_policy,
+            transport: req.transport.into(),
+            route_policy: req.route_policy.into(),
         })
         .await?;
     Ok(Json(preset.into()))
@@ -148,8 +143,8 @@ pub async fn update_mcp_preset(
                 key: req.key,
                 display_name: req.display_name,
                 description: req.description,
-                transport: req.transport,
-                route_policy: req.route_policy,
+                transport: req.transport.map(Into::into),
+                route_policy: req.route_policy.map(Into::into),
             },
         )
         .await?;

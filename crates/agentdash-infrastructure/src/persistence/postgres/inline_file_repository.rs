@@ -16,44 +16,7 @@ impl PostgresInlineFileRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS inline_fs_files (
-                id              TEXT PRIMARY KEY,
-                owner_kind      TEXT NOT NULL,
-                owner_id        TEXT NOT NULL,
-                container_id    TEXT NOT NULL,
-                path            TEXT NOT NULL,
-                content_kind    TEXT NOT NULL,
-                mime_type       TEXT,
-                text_content    TEXT,
-                binary_content  BYTEA,
-                size_bytes      BIGINT NOT NULL,
-                updated_at      TEXT NOT NULL,
-                UNIQUE(owner_kind, owner_id, container_id, path),
-                CONSTRAINT chk_inline_fs_files_content_kind
-                    CHECK (content_kind IN ('text', 'binary')),
-                CONSTRAINT chk_inline_fs_files_content_payload
-                    CHECK (
-                        (content_kind = 'text' AND text_content IS NOT NULL AND binary_content IS NULL)
-                        OR
-                        (content_kind = 'binary' AND binary_content IS NOT NULL AND text_content IS NULL AND mime_type IS NOT NULL)
-                    )
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_inline_fs_files_owner ON inline_fs_files(owner_kind, owner_id, container_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["inline_fs_files"]).await
     }
 }
 

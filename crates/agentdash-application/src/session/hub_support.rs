@@ -250,7 +250,7 @@ pub(super) struct TurnExecution {
 }
 
 impl TurnExecution {
-    /// 新建一个 turn 执行态，其余字段由 `prompt_pipeline` 在组装完成后填入。
+    /// 新建一个 turn 执行态，其余字段由 launch preparation 在组装完成后填入。
     pub fn new(
         turn_id: String,
         session_frame: ExecutionSessionFrame,

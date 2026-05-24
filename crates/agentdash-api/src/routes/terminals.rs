@@ -11,8 +11,8 @@ use agentdash_relay::*;
 use agentdash_spi::Vfs;
 
 use crate::auth::{CurrentUser, ProjectPermission};
-use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::routes::acp_sessions::ensure_session_permission;
+use crate::session_use_cases::context_query::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 
 /// GET /api/sessions/:session_id/terminals

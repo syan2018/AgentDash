@@ -14,35 +14,7 @@ impl PostgresProjectVfsMountRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS project_vfs_mounts (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                mount_id TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                description TEXT,
-                capabilities TEXT NOT NULL DEFAULT '[]',
-                installed_source TEXT,
-                content TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(project_id, mount_id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_project_vfs_mounts_project ON project_vfs_mounts(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["project_vfs_mounts"]).await
     }
 }
 
@@ -153,10 +125,7 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
         row.map(ProjectVfsMount::try_from).transpose()
     }
 
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<ProjectVfsMount>, DomainError> {
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<ProjectVfsMount>, DomainError> {
         let sql = format!(
             "SELECT {MOUNT_COLUMNS} FROM project_vfs_mounts WHERE project_id = $1 ORDER BY created_at"
         );
@@ -206,7 +175,9 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
             .bind(mount_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(format!("删除 project_vfs_mounts 失败: {e}")))?;
+            .map_err(|e| {
+                DomainError::InvalidConfig(format!("删除 project_vfs_mounts 失败: {e}"))
+            })?;
         Ok(())
     }
 }

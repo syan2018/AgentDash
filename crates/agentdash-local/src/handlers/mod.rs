@@ -18,10 +18,11 @@ mod tool_calls;
 mod workspace;
 pub use workspace::browse_directory;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use agentdash_relay::*;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
@@ -42,6 +43,7 @@ pub struct CommandHandler {
     pub(crate) event_tx: mpsc::UnboundedSender<RelayMessage>,
     pub(crate) terminal_manager: Arc<TerminalManager>,
     pub(crate) materialization_store: Arc<MaterializationStore>,
+    pub(crate) session_forwarders: Arc<Mutex<HashSet<String>>>,
 }
 
 impl CommandHandler {
@@ -65,6 +67,7 @@ impl CommandHandler {
             event_tx,
             terminal_manager,
             materialization_store,
+            session_forwarders: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

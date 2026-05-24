@@ -53,8 +53,8 @@ impl SessionRuntimeInner {
         )
     }
 
-    pub fn launch_service(&self) -> super::super::launch_service::SessionLaunchService {
-        super::super::launch_service::SessionLaunchService::new(self.clone())
+    pub fn launch_service(&self) -> super::super::launch::SessionLaunchService {
+        super::super::launch::SessionLaunchService::new(self.clone())
     }
 
     pub fn hook_service(&self) -> super::super::hooks_service::SessionHookService {

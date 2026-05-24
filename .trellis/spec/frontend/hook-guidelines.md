@@ -42,6 +42,8 @@ useEffect(() => { connect(); return disconnect; }, [sessionId, endpoint, connect
 
 ### NDJSON Envelope 契约
 
+NDJSON envelope 属于 cross-layer contract，类型应由 Rust contract 生成。Hook 只消费解析后的 envelope，并把业务聚合交给 reducer。
+
 - `connected`：`last_event_id: number`
 - `event`：`session_id`, `event_seq`, `occurred_at_ms`, `committed_at_ms`, `session_update_type`, `turn_id?`, `entry_index?`, `tool_call_id?`, `notification`（`BackboneEnvelope`）
 - `heartbeat`：`timestamp: number`

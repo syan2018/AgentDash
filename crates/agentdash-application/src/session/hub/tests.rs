@@ -736,7 +736,8 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .await
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
-    hub.reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
 
@@ -1292,7 +1293,8 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
 
-    hub.reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
@@ -2217,6 +2219,22 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         .list_all_events(&session.id)
         .await
         .expect("history should load");
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
+        "connector 未接受前不应提交 turn_started"
+    );
+    assert!(
+        !history.iter().any(|event| {
+            matches!(
+                &event.notification.event,
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
+                    if key == "user_message_chunk"
+            )
+        }),
+        "connector 未接受前不应提交 user message"
+    );
     let terminal = history
         .iter()
         .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
@@ -2230,6 +2248,14 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         terminal.2.as_deref(),
         Some("执行器运行错误: connector setup failed")
     );
+
+    let is_running = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.is_some_and(|runtime| runtime.turn_state.is_running())
+        })
+        .await;
+    assert!(!is_running, "connector 初始化失败后不应留下 running turn");
 }
 
 #[tokio::test]
@@ -2488,7 +2514,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
 }
 
 #[tokio::test]
-async fn launch_prompt_relaxed_requires_session_construction_provider() {
+async fn local_relay_prompt_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -2505,13 +2531,14 @@ async fn launch_prompt_relaxed_requires_session_construction_provider() {
             ),
         )
         .await
-        .expect_err("relaxed launch 应在 provider 缺失时失败");
+        .expect_err("local relay prompt 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("拒绝 relaxed launch"),
-                "错误信息应提示 relaxed launch 被拒绝，实际为: {message}"
+                message.contains("session_construction_provider 未注入")
+                    && message.contains("local_relay_prompt"),
+                "错误信息应提示 local relay prompt 被拒绝，实际为: {message}"
             );
         }
         other => panic!("期望 Runtime 错误，实际为: {other}"),

@@ -19,9 +19,9 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::bootstrap::session_context_query::build_session_context_plan;
 use crate::dto::CanvasResponse;
 use crate::rpc::ApiError;
+use crate::session_use_cases::context_query::build_session_context_plan;
 
 #[derive(Debug, Deserialize)]
 pub struct ListProjectCanvasesPath {

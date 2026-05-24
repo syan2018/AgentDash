@@ -6,7 +6,7 @@ use agentdash_spi::hooks::ExecutionHookProvider;
 use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
 use super::hub::SessionRuntimeInner;
-use super::launch_service::SessionLaunchService;
+use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 

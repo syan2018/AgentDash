@@ -13,84 +13,11 @@ impl PostgresUserDirectoryRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS users (
-                user_id TEXT PRIMARY KEY,
-                subject TEXT NOT NULL,
-                auth_mode TEXT NOT NULL,
-                display_name TEXT,
-                email TEXT,
-                avatar_url TEXT,
-                is_admin INTEGER NOT NULL DEFAULT 0,
-                provider TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            "#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["users", "groups", "group_memberships"],
         )
-        .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS groups (
-                group_id TEXT PRIMARY KEY,
-                display_name TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS group_memberships (
-                user_id TEXT NOT NULL,
-                group_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (user_id, group_id),
-                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                FOREIGN KEY(group_id) REFERENCES groups(group_id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_users_subject_auth_mode ON users(auth_mode, subject)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_group_memberships_user_id ON group_memberships(user_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_group_memberships_group_id ON group_memberships(group_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
     }
 }
 

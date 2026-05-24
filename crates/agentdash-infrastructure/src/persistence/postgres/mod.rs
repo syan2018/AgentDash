@@ -7,8 +7,8 @@ mod llm_provider_repository;
 mod mcp_preset_repository;
 mod project_backend_access_repository;
 mod project_extension_installation_repository;
-mod project_vfs_mount_repository;
 mod project_repository;
+mod project_vfs_mount_repository;
 mod routine_repository;
 mod runtime_health_repository;
 mod session_binding_repository;
@@ -51,11 +51,16 @@ pub(crate) async fn test_pg_pool(suite: &str) -> Option<sqlx::PgPool> {
         return None;
     };
 
-    Some(
-        sqlx::PgPool::connect(&database_url)
-            .await
-            .expect("应能连接测试 PostgreSQL"),
-    )
+    let pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("应能连接测试 PostgreSQL");
+    crate::migration::run_postgres_migrations(&pool)
+        .await
+        .expect("测试 PostgreSQL 应能运行 migrations");
+    crate::migration::assert_postgres_schema_ready(&pool)
+        .await
+        .expect("测试 PostgreSQL schema 应已就绪");
+    Some(pool)
 }
 
 pub(crate) fn parse_pg_timestamp_checked(
@@ -109,8 +114,8 @@ pub use llm_provider_repository::PostgresLlmProviderRepository;
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
 pub use project_extension_installation_repository::PostgresProjectExtensionInstallationRepository;
-pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use project_repository::PostgresProjectRepository;
+pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_binding_repository::PostgresSessionBindingRepository;

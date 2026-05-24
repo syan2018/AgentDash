@@ -1,7 +1,7 @@
 # Execution Context Frames
 
 `agentdash-spi::ExecutionContext` 是 connector 边界的投影。Application 层事实来自
-`SessionConstructionPlan` 和 `LaunchExecution`；connector 只接收本次 prompt 所需的
+`SessionConstructionPlan` 和 `LaunchPlan`；connector 只接收本次 prompt 所需的
 `ExecutionSessionFrame` 与 `ExecutionTurnFrame`。
 
 ## Top-level Shape
@@ -18,7 +18,7 @@ pub struct ExecutionContext {
 生产构造路径：
 
 ```text
-LaunchExecution -> SessionLaunchExecutor -> ExecutionContext
+LaunchPlan -> TurnPreparer -> PreparedTurn.connector_context -> ConnectorStarter
 ```
 
 其它路径可以 clone/read active turn 的 frame 用于工具热更新，但不把该 projection 写回为
@@ -40,7 +40,7 @@ pub struct ExecutionSessionFrame {
 
 | 字段 | 来源 | 消费者 |
 |---|---|---|
-| `turn_id` | Launch execution claim/activation | connector trace、hook 审计 |
+| `turn_id` | Launch preparation claim/activation | connector trace、hook 审计 |
 | `working_directory` | `SessionConstructionPlan.workspace.working_directory` | Relay、vibe_kanban、PiAgent tools |
 | `environment_variables` | launch prompt payload / executor policy | Relay、vibe_kanban |
 | `executor_config` | construction execution profile + launch override | 所有 connector |
@@ -49,7 +49,7 @@ pub struct ExecutionSessionFrame {
 | `identity` | construction identity projection | Relay、审计、permission 决策 |
 
 一次 `connector.prompt(...)` 调用期间，session frame 不变；下一 turn 需要新的投影时由
-launch pipeline 重新生成。
+launch stages 重新生成。
 
 ## `ExecutionTurnFrame` — What + How
 
@@ -101,7 +101,7 @@ active TurnExecution
 ```
 
 该流程只服务 live connector 的工具集替换；下一轮 prompt 仍通过
-`LaunchCommand -> SessionConstructionPlan -> LaunchExecution` 重新投影完整
+`LaunchCommand -> SessionConstructionPlan -> LaunchPlan -> PreparedTurn` 重新投影完整
 `ExecutionContext`。
 
 ## PiAgent Bundle Handling

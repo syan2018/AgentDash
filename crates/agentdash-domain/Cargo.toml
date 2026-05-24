@@ -10,5 +10,7 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+ts-rs = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
+sha2 = "0.10"

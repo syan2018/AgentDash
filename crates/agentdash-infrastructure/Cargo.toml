@@ -6,7 +6,7 @@ edition.workspace = true
 
 [dependencies]
 agentdash-domain = { workspace = true }
-agentdash-application = { workspace = true }
+agentdash-spi = { workspace = true }
 agentdash-agent-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

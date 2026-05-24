@@ -20,7 +20,7 @@
 - 复杂值对象以 JSON 文本存入 `TEXT`
 - 时间字段存 `TEXT`，读取时做健壮解析
 - Repository 实现模式详见 [repository-pattern.md](./repository-pattern.md)
-- Repository 初始化语句按单条 SQL 逐次执行；`sqlx::query` 会以 prepared statement 发送，PostgreSQL 不接受同一个 prepared statement 中包含多条命令，表、索引、约束补齐应拆开执行。
+- API 启动在 repository 装配前运行 PostgreSQL migrations，并执行 schema readiness 检查。
 
 ---
 
@@ -32,23 +32,23 @@
 
 ---
 
-## Schema 变更与迁移（必读）
-
-**新增列不等于只改 `CREATE TABLE IF NOT EXISTS`** — 表已存在时新列不会自动添加。
+## Schema 事实源
 
 ### PostgreSQL
 
-在 `crates/agentdash-infrastructure/migrations/` 下新增递增编号 `.sql` 文件。已提交的 migration 文件不可修改（sqlx 校验和机制）。
+云端业务库的 schema 事实源是 `crates/agentdash-infrastructure/migrations/`。新增表、列、索引、约束、删除列和数据修正都通过递增编号 `.sql` 文件表达。已提交的 migration 文件保持稳定，原因是开发、测试、embedded Postgres 和部署环境需要观察同一条有序 schema 历史。
+
+Repository 启动逻辑只观察已迁移 schema。API bootstrap 不调用 PostgreSQL repository schema 初始化；需要直接构造 `AppState` 或 repository 的测试路径也先运行 migrations，再执行 readiness 检查。Repository 可以保留无 DDL 的 readiness helper，但不能创建表、补列、建索引或执行 schema 数据迁移。
 
 ### SQLite
 
-在 `initialize()` 中追加 `ALTER TABLE ADD COLUMN`，忽略 duplicate column 错误。
+本机会话缓存的 schema 事实源是 `SqliteSessionRepository::initialize()`。它服务本机 runtime 的 per-user cache 生命周期，和云端业务数据库迁移链不同。SQLite 初始化可以创建本机会话表，并以幂等方式补齐本机缓存字段。
 
 ### Checklist
 
-- [ ] 更新 `CREATE TABLE IF NOT EXISTS`（保证新建库完整）
 - [ ] PostgreSQL 新增 migration 文件（不修改已有的）
-- [ ] SQLite 在 `initialize()` 中追加 ALTER（忽略错误）
+- [ ] PostgreSQL integration / bootstrap 路径通过 migration runner 初始化真实 schema
+- [ ] SQLite 本机会话缓存字段在 `SqliteSessionRepository::initialize()` 中保持幂等初始化
 - [ ] 更新 INSERT/SELECT/UPSERT 语句和 `map_*_row` 函数
 - [ ] 更新测试代码
 

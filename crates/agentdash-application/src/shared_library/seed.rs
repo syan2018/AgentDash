@@ -1,10 +1,9 @@
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::json;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::embedded_skill::EmbeddedSkillFileKind;
 use agentdash_domain::shared_library::{
-    BuiltinSeed, LibraryAssetType, SkillTemplateFilePayload, SkillTemplatePayload,
+    BuiltinSeed, LibraryAssetType, SkillTemplateFilePayload, SkillTemplatePayload, seed_digest,
 };
 use agentdash_domain::skill_asset::SkillAssetFileKind;
 
@@ -59,13 +58,6 @@ pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
     seeds.extend(workflow_template_seeds()?);
     seeds.extend(skill_template_seeds()?);
     Ok(seeds)
-}
-
-pub fn seed_digest(payload: &Value) -> Result<String, DomainError> {
-    let bytes = serde_json::to_vec(payload).map_err(DomainError::Serialization)?;
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    Ok(format!("sha256:{:x}", hasher.finalize()))
 }
 
 pub fn builtin_source_ref(asset_type: LibraryAssetType, key: &str) -> String {

@@ -17,6 +17,8 @@
 
 `RepositorySet` 定义在 `agentdash-application`，持有所有 Repository trait 对象。API 层通过 `AppState` 持有 `RepositorySet`，应用层优先接收 `&RepositorySet` 或具体 trait。
 
+Session runtime persistence 不通过 `RepositorySet` 表达。`SessionPersistence`、session event record、terminal effect outbox record 与 runtime command record 定义在 `agentdash-spi::session_persistence`，由 application 组合成 runtime stores，由 infrastructure 提供 PostgreSQL / SQLite adapter。这样 session runtime 的持久化事实可以跨 cloud/local adapter 复用，而基础设施层不需要依赖 application 编排 crate。
+
 ---
 
 ## 规则
@@ -45,3 +47,9 @@
 
 - 云端业务仓储统一 PostgreSQL
 - SQLite 仅保留本机端 `SqliteSessionRepository`
+
+## Schema Ownership
+
+PostgreSQL repository 实现假设业务 schema 已由 migration runner 初始化。Repository 的职责是持久化聚合、维护事务边界和映射领域错误；schema 变更通过 `crates/agentdash-infrastructure/migrations/` 进入。API repository bootstrap 在构造 repository set 前统一执行 schema readiness 检查，原因是 schema 事实源应集中在 migration 链，而不是分散在每个 repository 的启动路径里。
+
+本机 SQLite session repository 是独立缓存存储，可以在 `initialize()` 中拥有本机缓存表结构。这个规则只适用于本机会话缓存，不扩展到云端 PostgreSQL repository。

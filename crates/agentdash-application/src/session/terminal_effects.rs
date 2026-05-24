@@ -5,108 +5,16 @@ use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::hooks::{
     HookEffect, HookSessionRuntimeAccess, HookTraceTrigger, HookTrigger, SharedHookSessionRuntime,
 };
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use super::hub_support::TurnTerminalKind;
 use super::persistence::SessionTerminalEffectStore;
 use super::post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalEffectType {
-    HookEffects,
-    SessionTerminalCallback,
-    HookAutoResume,
-}
-
-impl TerminalEffectType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::HookEffects => "hook_effects",
-            Self::SessionTerminalCallback => "session_terminal_callback",
-            Self::HookAutoResume => "hook_auto_resume",
-        }
-    }
-}
-
-impl TryFrom<&str> for TerminalEffectType {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "hook_effects" => Ok(Self::HookEffects),
-            "session_terminal_callback" => Ok(Self::SessionTerminalCallback),
-            "hook_auto_resume" => Ok(Self::HookAutoResume),
-            other => Err(format!("unknown terminal effect type: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalEffectStatus {
-    Pending,
-    Running,
-    Succeeded,
-    Failed,
-    DeadLetter,
-}
-
-impl TerminalEffectStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Running => "running",
-            Self::Succeeded => "succeeded",
-            Self::Failed => "failed",
-            Self::DeadLetter => "dead_letter",
-        }
-    }
-}
-
-impl TryFrom<&str> for TerminalEffectStatus {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "running" => Ok(Self::Running),
-            "succeeded" => Ok(Self::Succeeded),
-            "failed" => Ok(Self::Failed),
-            "dead_letter" => Ok(Self::DeadLetter),
-            other => Err(format!("unknown terminal effect status: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct TerminalEffectRecord {
-    pub id: Uuid,
-    pub session_id: String,
-    pub turn_id: String,
-    pub terminal_event_seq: u64,
-    pub effect_type: TerminalEffectType,
-    pub payload: serde_json::Value,
-    pub status: TerminalEffectStatus,
-    pub attempt_count: u32,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NewTerminalEffectRecord {
-    pub session_id: String,
-    pub turn_id: String,
-    pub terminal_event_seq: u64,
-    pub effect_type: TerminalEffectType,
-    pub payload: serde_json::Value,
-}
+pub use agentdash_spi::session_persistence::{
+    NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
+};
 
 #[derive(Clone)]
 enum TerminalEffectExecutor {

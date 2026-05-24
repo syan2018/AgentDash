@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::vfs::{
-    PROVIDER_INLINE_FS, ResolvedMountEditCapabilities, ResolvedMountSummary, ResolvedVfsSurface,
-    ResolvedVfsSurfaceSource, SessionMountTarget, build_project_agent_knowledge_vfs,
-    build_project_skill_asset_management_mount, build_project_vfs_mount_mount,
-    inline_storage_key_from_mount, mount_purpose,
+    ResolvedVfsSurface, ResolvedVfsSurfaceSource, SessionMountTarget,
+    build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
+    build_project_vfs_mount_mount,
 };
 use agentdash_spi::Vfs;
 
@@ -14,9 +14,10 @@ use crate::{
         ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
         load_task_story_project_with_permission,
     },
-    bootstrap::session_context_query::build_session_context_plan,
-    routes::{acp_sessions::ensure_session_permission, project_agents::resolve_project_workspace},
+    routes::acp_sessions::ensure_session_permission,
     rpc::ApiError,
+    session_use_cases::context_query::build_session_context_plan,
+    vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 
 pub(crate) async fn resolve_surface_from_source(
@@ -40,7 +41,10 @@ pub(crate) async fn resolve_surface_bundle(
             let project =
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
-            let workspace = resolve_project_workspace(state, &project).await?;
+            let workspace =
+                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                    .await
+                    .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -71,7 +75,10 @@ pub(crate) async fn resolve_surface_bundle(
                     "story_id 与 project_id 不属于同一 Project".into(),
                 ));
             }
-            let workspace = resolve_project_workspace(state, &project).await?;
+            let workspace =
+                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                    .await
+                    .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
                 .services
@@ -110,7 +117,9 @@ pub(crate) async fn resolve_surface_bundle(
                     .await
                     .map_err(|error| ApiError::Internal(error.to_string()))?
             } else {
-                resolve_project_workspace(state, &project).await?
+                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                    .await
+                    .map_err(ApiError::Internal)?
             };
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
             state
@@ -202,7 +211,7 @@ pub(crate) async fn resolve_surface_bundle(
         }
     };
 
-    let surface = build_surface_summary(state, source, &vfs).await?;
+    let surface = build_surface_summary(state, source, &vfs).await;
     Ok((surface, vfs))
 }
 
@@ -222,90 +231,16 @@ pub(crate) async fn build_surface_summary(
     state: &Arc<AppState>,
     source: &ResolvedVfsSurfaceSource,
     vfs: &Vfs,
-) -> Result<ResolvedVfsSurface, ApiError> {
-    let mut mounts = Vec::with_capacity(vfs.mounts.len());
-
-    for mount in &vfs.mounts {
-        let backend_online = if !mount.backend_id.is_empty() {
-            Some(
-                state
-                    .services
-                    .backend_registry
-                    .is_online(&mount.backend_id)
-                    .await,
-            )
-        } else {
-            None
-        };
-
-        let file_count = if mount.provider == PROVIDER_INLINE_FS {
-            if let Ok(storage_key) = inline_storage_key_from_mount(mount) {
-                state
-                    .repos
-                    .inline_file_repo
-                    .count_files(
-                        storage_key.owner_kind,
-                        storage_key.owner_id,
-                        &storage_key.container_id,
-                    )
-                    .await
-                    .ok()
-                    .map(|count| count as usize)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        mounts.push(ResolvedMountSummary {
-            id: mount.id.clone(),
-            display_name: mount.display_name.clone(),
-            provider: mount.provider.clone(),
-            backend_id: mount.backend_id.clone(),
-            capabilities: mount
-                .capabilities
-                .iter()
-                .map(|capability| format!("{capability:?}").to_lowercase())
-                .collect(),
-            default_write: mount.default_write,
-            purpose: mount_purpose(mount),
-            backend_online,
-            file_count,
-            edit_capabilities: resolved_edit_capabilities(state, mount),
-        });
-    }
-
-    Ok(ResolvedVfsSurface {
-        surface_ref: source.surface_ref(),
-        source: source.clone(),
-        mounts,
-        default_mount_id: vfs.default_mount_id.clone(),
-    })
-}
-
-fn resolved_edit_capabilities(
-    state: &Arc<AppState>,
-    mount: &agentdash_spi::Mount,
-) -> ResolvedMountEditCapabilities {
-    if mount.provider == PROVIDER_INLINE_FS && mount.supports(agentdash_spi::MountCapability::Write)
-    {
-        return ResolvedMountEditCapabilities {
-            create: true,
-            delete: true,
-            rename: true,
-        };
-    }
-
-    state
-        .services
-        .mount_provider_registry
-        .get(&mount.provider)
-        .map(|provider| provider.edit_capabilities(mount))
-        .map(|capabilities| ResolvedMountEditCapabilities {
-            create: capabilities.create,
-            delete: capabilities.delete,
-            rename: capabilities.rename,
-        })
-        .unwrap_or_default()
+) -> ResolvedVfsSurface {
+    let runtime_projection = ApiVfsSurfaceRuntimeProjection::new(
+        state.services.backend_registry.clone(),
+        state.services.mount_provider_registry.clone(),
+    );
+    agentdash_application::vfs::build_surface_summary(
+        state.repos.inline_file_repo.as_ref(),
+        &runtime_projection,
+        source,
+        vfs,
+    )
+    .await
 }

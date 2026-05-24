@@ -8,7 +8,7 @@ use agentdash_domain::story::{
 };
 use agentdash_domain::task::Task;
 
-use super::state_change_store::{append_state_change_in_tx, initialize_state_changes_schema};
+use super::state_change_store::append_state_change_in_tx;
 
 pub struct PostgresStoryRepository {
     pool: PgPool,
@@ -20,43 +20,8 @@ impl PostgresStoryRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS stories (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id),
-                default_workspace_id TEXT,
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'created',
-                priority TEXT NOT NULL DEFAULT 'p2',
-                story_type TEXT NOT NULL DEFAULT 'feature',
-                tags TEXT NOT NULL DEFAULT '[]',
-                task_count INTEGER NOT NULL DEFAULT 0,
-                context TEXT NOT NULL DEFAULT '{}',
-                tasks JSONB NOT NULL DEFAULT '[]'::jsonb,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_stories_project ON stories(project_id);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        // 防御性：即便老库已存在 stories 表且无 tasks 列，这里兜底补列
-        // （真正的数据迁移靠 migrations/0020_stories_tasks_jsonb.sql）
-        let _ = sqlx::query(
-            "ALTER TABLE stories ADD COLUMN IF NOT EXISTS tasks JSONB NOT NULL DEFAULT '[]'::jsonb",
-        )
-        .execute(&self.pool)
-        .await;
-
-        initialize_state_changes_schema(&self.pool).await?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["stories", "state_changes"])
+            .await
     }
 }
 

@@ -2,12 +2,12 @@ use std::io;
 
 use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
-use agentdash_application::session::{
+use agentdash_spi::session_persistence::{
     ExecutionStatus, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
     SessionBootstrapState, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
     TerminalEffectRecord, TerminalEffectStatus, TitleSource,
 };
-use agentdash_application::session::{
+use agentdash_spi::session_persistence::{
     NewTerminalEffectRecord, PendingCapabilityStateTransition, TerminalEffectType,
 };
 use sqlx::{PgPool, Row};
@@ -22,113 +22,17 @@ impl PostgresSessionRepository {
     }
 
     pub async fn initialize(&self) -> io::Result<()> {
-        for statement in [
-            r#"
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                title_source TEXT NOT NULL DEFAULT 'auto',
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL,
-                last_event_seq BIGINT NOT NULL DEFAULT 0,
-                last_execution_status TEXT NOT NULL DEFAULT 'idle',
-                last_turn_id TEXT,
-                last_terminal_message TEXT,
-                executor_config_json TEXT,
-                executor_session_id TEXT,
-                companion_context_json TEXT,
-                tab_layout_json TEXT,
-                visible_canvas_mount_ids_json TEXT NOT NULL DEFAULT '[]',
-                bootstrap_state TEXT NOT NULL DEFAULT 'plain'
-            )
-            "#,
-            r#"
-            CREATE TABLE IF NOT EXISTS session_events (
-                session_id TEXT NOT NULL,
-                event_seq BIGINT NOT NULL,
-                occurred_at_ms BIGINT NOT NULL,
-                committed_at_ms BIGINT NOT NULL,
-                session_update_type TEXT NOT NULL,
-                turn_id TEXT,
-                entry_index BIGINT,
-                tool_call_id TEXT,
-                notification_json TEXT NOT NULL,
-                PRIMARY KEY (session_id, event_seq),
-                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-            )
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_events_session_seq
-                ON session_events(session_id, event_seq)
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_events_session_turn
-                ON session_events(session_id, turn_id)
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_events_session_tool
-                ON session_events(session_id, tool_call_id)
-            "#,
-            r#"
-            CREATE TABLE IF NOT EXISTS session_terminal_effects (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                terminal_event_seq BIGINT NOT NULL,
-                effect_type TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                status TEXT NOT NULL,
-                attempt_count BIGINT NOT NULL DEFAULT 0,
-                created_at_ms BIGINT NOT NULL,
-                updated_at_ms BIGINT NOT NULL,
-                last_error TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-            )
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_status_updated
-                ON session_terminal_effects(status, updated_at_ms)
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_session_turn
-                ON session_terminal_effects(session_id, turn_id)
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_terminal_effects_terminal_event
-                ON session_terminal_effects(session_id, terminal_event_seq)
-            "#,
-            r#"
-            CREATE TABLE IF NOT EXISTS session_runtime_commands (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                transition_id TEXT NOT NULL,
-                phase_node TEXT NOT NULL,
-                status TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at_ms BIGINT NOT NULL,
-                updated_at_ms BIGINT NOT NULL,
-                applied_at_ms BIGINT,
-                failed_at_ms BIGINT,
-                last_error TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-            )
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_runtime_commands_status_updated
-                ON session_runtime_commands(status, updated_at_ms)
-            "#,
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_session_runtime_commands_session_status
-                ON session_runtime_commands(session_id, status)
-            "#,
-        ] {
-            sqlx::query(statement)
-                .execute(&self.pool)
-                .await
-                .map_err(sqlx_to_io)?;
-        }
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &[
+                "sessions",
+                "session_events",
+                "session_terminal_effects",
+                "session_runtime_commands",
+            ],
+        )
+        .await
+        .map_err(|err| io::Error::other(err.to_string()))
     }
 
     fn map_meta_row(row: &sqlx::postgres::PgRow) -> io::Result<SessionMeta> {

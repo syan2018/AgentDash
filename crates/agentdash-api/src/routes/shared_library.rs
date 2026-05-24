@@ -20,10 +20,10 @@ use agentdash_domain::shared_library::{
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceResponse,
-    LibraryAssetResponse, ListLibraryAssetsQuery, ProjectAssetSourceStatusItemResponse,
-    ProjectAssetSourceStatusResponse, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
-    parse_asset_scope, parse_asset_type, source_status_tag,
+    InstallLibraryAssetRequest, InstallLibraryAssetResponse, LibraryAssetDto,
+    ListLibraryAssetsQuery, ProjectAssetSourceStatusDto, ProjectAssetSourceStatusItemDto,
+    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest, library_asset_response,
+    parse_asset_scope, parse_asset_type,
 };
 use crate::rpc::ApiError;
 
@@ -42,7 +42,7 @@ pub async fn list_library_assets(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Query(query): Query<ListLibraryAssetsQuery>,
-) -> Result<Json<Vec<LibraryAssetResponse>>, ApiError> {
+) -> Result<Json<Vec<LibraryAssetDto>>, ApiError> {
     let filter = LibraryAssetListFilter {
         asset_type: parse_optional_asset_type(query.asset_type)?,
         scope: parse_optional_scope(query.scope)?,
@@ -51,7 +51,7 @@ pub async fn list_library_assets(
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.list(filter).await?;
-    Ok(Json(assets.into_iter().map(Into::into).collect()))
+    Ok(Json(assets.into_iter().map(library_asset_response).collect()))
 }
 
 /// GET `/api/shared-library/assets/:id`
@@ -59,10 +59,10 @@ pub async fn get_library_asset(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Path(path): Path<LibraryAssetPath>,
-) -> Result<Json<LibraryAssetResponse>, ApiError> {
+) -> Result<Json<LibraryAssetDto>, ApiError> {
     let id = parse_library_asset_id(&path.id)?;
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
-    Ok(Json(service.get(id).await?.into()))
+    Ok(Json(library_asset_response(service.get(id).await?)))
 }
 
 /// POST `/api/shared-library/assets/seed-builtin`
@@ -70,14 +70,14 @@ pub async fn seed_builtin_library_assets(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Json(req): Json<SeedBuiltinLibraryAssetsRequest>,
-) -> Result<Json<Vec<LibraryAssetResponse>>, ApiError> {
+) -> Result<Json<Vec<LibraryAssetDto>>, ApiError> {
     let input = SeedBuiltinLibraryAssetsInput {
         asset_type: parse_optional_asset_type(req.asset_type)?,
         key: req.key.filter(|value| !value.trim().is_empty()),
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.seed_builtin_assets(input).await?;
-    Ok(Json(assets.into_iter().map(Into::into).collect()))
+    Ok(Json(assets.into_iter().map(library_asset_response).collect()))
 }
 
 /// POST `/api/projects/:project_id/shared-library/install`
@@ -100,7 +100,7 @@ pub async fn install_library_asset(
         &state.repos,
         InstallLibraryAssetInput {
             project_id,
-            library_asset_id: req.library_asset_id,
+            library_asset_id: parse_library_asset_id(&req.library_asset_id)?,
             target_key: req.target_key,
             overwrite: req.overwrite,
         },
@@ -115,7 +115,7 @@ pub async fn publish_library_asset(
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSharedLibraryPath>,
     Json(req): Json<PublishLibraryAssetRequest>,
-) -> Result<Json<LibraryAssetResponse>, ApiError> {
+) -> Result<Json<LibraryAssetDto>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -141,7 +141,7 @@ pub async fn publish_library_asset(
         overwrite: req.overwrite,
     };
     let asset = publish_project_asset_to_library(&state.repos, input).await?;
-    Ok(Json(asset.into()))
+    Ok(Json(library_asset_response(asset)))
 }
 
 /// GET `/api/projects/:project_id/shared-library/source-status`
@@ -149,7 +149,7 @@ pub async fn get_project_asset_source_status(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<ProjectSharedLibraryPath>,
-) -> Result<Json<ProjectAssetSourceStatusResponse>, ApiError> {
+) -> Result<Json<ProjectAssetSourceStatusDto>, ApiError> {
     let project_id = parse_project_id(&path.project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -230,84 +230,89 @@ fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiErr
 fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryAssetResponse {
     match output {
         InstallLibraryAssetOutput::ProjectAgent { project_agent_id } => {
-            InstallLibraryAssetResponse::ProjectAgent { project_agent_id }
+            InstallLibraryAssetResponse::ProjectAgent {
+                project_agent_id: project_agent_id.to_string(),
+            }
         }
         InstallLibraryAssetOutput::McpPreset { id } => {
-            InstallLibraryAssetResponse::McpPreset { id }
+            InstallLibraryAssetResponse::McpPreset { id: id.to_string() }
         }
         InstallLibraryAssetOutput::WorkflowTemplate {
             workflow_ids,
             lifecycle_id,
         } => InstallLibraryAssetResponse::WorkflowTemplate {
-            workflow_ids,
-            lifecycle_id,
+            workflow_ids: workflow_ids.into_iter().map(|id| id.to_string()).collect(),
+            lifecycle_id: lifecycle_id.to_string(),
         },
         InstallLibraryAssetOutput::SkillAsset { id } => {
-            InstallLibraryAssetResponse::SkillAsset { id }
+            InstallLibraryAssetResponse::SkillAsset { id: id.to_string() }
         }
         InstallLibraryAssetOutput::VfsMount { id, mount_id } => {
-            InstallLibraryAssetResponse::VfsMount { id, mount_id }
+            InstallLibraryAssetResponse::VfsMount {
+                id: id.to_string(),
+                mount_id,
+            }
         }
         InstallLibraryAssetOutput::ExtensionInstallation { id } => {
-            InstallLibraryAssetResponse::ExtensionInstallation { id }
+            InstallLibraryAssetResponse::ExtensionInstallation { id: id.to_string() }
         }
     }
 }
 
 fn project_source_status_response(
     status: ProjectAssetSourceStatus,
-) -> ProjectAssetSourceStatusResponse {
-    ProjectAssetSourceStatusResponse {
-        project_agents: status
+) -> ProjectAssetSourceStatusDto {
+    crate::dto::project_source_status_response(
+        status
             .project_agents
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        mcp_presets: status
+        status
             .mcp_presets
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        skill_assets: status
+        status
             .skill_assets
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        vfs_mounts: status
+        status
             .vfs_mounts
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        workflow_definitions: status
+        status
             .workflow_definitions
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        activity_lifecycle_definitions: status
+        status
             .activity_lifecycle_definitions
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-        extension_installations: status
+        status
             .extension_installations
             .into_iter()
             .map(source_status_item_response)
             .collect(),
-    }
+    )
 }
 
 fn source_status_item_response(
     item: ProjectAssetSourceStatusItem,
-) -> ProjectAssetSourceStatusItemResponse {
-    ProjectAssetSourceStatusItemResponse {
-        asset_kind: item.asset_kind,
-        project_asset_id: item.project_asset_id,
-        project_asset_key: item.project_asset_key,
-        installed_source: InstalledAssetSourceResponse::from(item.installed_source),
-        source_status: source_status_tag(item.source_status),
-        current_source_version: item.current_source_version,
-        current_source_digest: item.current_source_digest,
-    }
+) -> ProjectAssetSourceStatusItemDto {
+    crate::dto::source_status_item_response(
+        item.asset_kind,
+        item.project_asset_id,
+        item.project_asset_key,
+        item.installed_source,
+        item.source_status,
+        item.current_source_version,
+        item.current_source_digest,
+    )
 }
 
 #[cfg(test)]

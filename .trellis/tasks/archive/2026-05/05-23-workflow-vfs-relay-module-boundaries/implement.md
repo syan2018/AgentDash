@@ -1,0 +1,67 @@
+# Workflow/VFS/Relay 模块边界拆分 Implement
+
+## Order
+
+1. 选择一个 area，不混合多个大模块。
+2. 阅读对应 spec：
+   - Workflow: `.trellis/spec/backend/workflow/architecture.md`
+   - VFS: `.trellis/spec/backend/vfs/architecture.md`
+   - Relay: `.trellis/spec/cross-layer/desktop-local-runtime.md` 和 docs relay 文档
+3. 创建子模块文件。
+4. 移动类型/helper，保留 `mod.rs` re-export。
+5. 运行 format/check。
+6. 更新 spec 或 review note。
+
+## Validation
+
+```powershell
+cargo fmt
+cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p agentdash-agent
+```
+
+按实际改动缩小 package 集合。
+
+## Review Focus
+
+- diff 应主要是 move/re-export。
+- serde tag、ts-rs/export、public enum variant 名称保持不变。
+- 拆分后搜索旧路径/旧模块名，确保没有孤立引用。
+
+## Progress
+
+- 已确认第一批不直接混合 Workflow、VFS、Relay、Agent loop 四个区域。
+- 2026-05-23 review 复核后恢复任务：以下 Stage 1-4 只是首轮抽取，不代表拆分目标完成。
+- Stage 1 已拆分 Workflow validation 边界：
+  - 新增 `crates/agentdash-domain/src/workflow/validation.rs` 承载 Workflow contract、Lifecycle DAG、Activity lifecycle 校验逻辑。
+  - `workflow/value_objects.rs` 保留可序列化 value types、capability directive reduction、binding helper。
+  - `workflow/mod.rs` 继续 re-export public validation API，调用方不需要改公开路径。
+  - 已验证 `cargo test -p agentdash-domain workflow::value_objects`、`cargo test -p agentdash-domain workflow::validation`、`cargo check -p agentdash-domain -p agentdash-application`。
+- Stage 2 已拆分 VFS tools 共享边界：
+  - 新增 `crates/agentdash-application/src/vfs/tools/common.rs` 承载 `SharedRuntimeVfs`、URI resolution、tool text result helper。
+  - 新增 `crates/agentdash-application/src/vfs/tools/mounts.rs` 承载 `mounts_list` discovery tool。
+  - `vfs/tools/fs.rs` 保留 file/search/patch/shell tools，并 re-export 旧路径上的 shared types，保持当前调用面稳定。
+  - 已验证 `cargo check -p agentdash-application`、`cargo check -p agentdash-api`。
+- Stage 3 已拆分 Relay protocol 握手 payload：
+  - 新增 `crates/agentdash-relay/src/protocol/handshake.rs` 承载 register、ping/pong、capabilities、agent/mcp info payload。
+  - `protocol.rs` 保留顶层 `RelayMessage` 信封和公共 `pub use`，不改变 serde tag 或 wire format。
+  - 已验证 `cargo check -p agentdash-relay -p agentdash-api -p agentdash-local`。
+- Stage 4 已拆分 Agent loop 纯 helper：
+  - 新增 `crates/agentdash-agent/src/agent_loop/streaming.rs` 承载 assistant stream suffix helper。
+  - 新增 `crates/agentdash-agent/src/agent_loop/tool_result.rs` 承载 tool error/approval result helper。
+  - `agent_loop.rs` 仍保留 turn loop 和 tool execution orchestration。
+  - 已验证 `cargo check -p agentdash-agent -p agentdash-executor -p agentdash-application`。
+
+## Recovery Plan
+
+1. Workflow value objects 深拆：保留 `value_objects.rs` facade，把 contract/lifecycle/activity/run state/capability/hook/mount directive 类型迁入子模块。
+2. VFS tools 深拆：把 `fs.rs` 中 read/list/search/write/patch/shell handler 拆成独立 tool module，共享 `common.rs` 的 runtime/path/result helper。
+3. Relay protocol 深拆：保留 `protocol.rs` 的顶层 envelope 与 re-export，把剩余 payload 按 prompt/workspace/tool/mcp/terminal/session_event/capabilities 迁入 `protocol/` 子模块。
+4. Agent loop 深拆：保留主 loop orchestration，把 turn helper、tool-call execution/result mapping、event output、cancellation/prompt 辅助逻辑迁入 `agent_loop/` 子模块。
+5. 每批完成后运行对应 crate check，最后运行 `cargo check -p agentdash-domain -p agentdash-application -p agentdash-relay -p agentdash-agent`。
+
+## Recovery Progress
+
+- Workflow value objects 已深拆到 `workflow/value_objects/` 子模块，`value_objects.rs` 保留 facade 与测试入口；已验证 `cargo test -p agentdash-domain workflow::value_objects`。
+- VFS tools 已深拆到 `vfs/tools/fs/` 下的 `read`、`apply_patch`、`glob`、`grep`、`shell` handler，`fs.rs` 保留 public facade；已验证 `cargo check -p agentdash-application`。
+- Relay protocol payload 已深拆到 `protocol/` 下的 `prompt`、`discovery`、`workspace`、`tool`、`vfs_materialization`、`terminal`、`session_event`、`mcp`，`protocol.rs` 保留顶层信封；已验证 `cargo test -p agentdash-relay protocol`。
+- Agent loop 已拆出 assistant streaming state machine 与 tool-call execution pipeline，`agent_loop.rs` 保留入口与 turn orchestration；已验证 `cargo check -p agentdash-agent`。

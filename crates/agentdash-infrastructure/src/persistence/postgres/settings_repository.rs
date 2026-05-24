@@ -13,8 +13,7 @@ impl PostgresSettingsRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        create_scoped_settings_table(&self.pool, "settings").await?;
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["settings"]).await
     }
 }
 
@@ -179,31 +178,6 @@ fn normalize_scope_id(
             }
         }
     }
-}
-
-async fn create_scoped_settings_table(pool: &PgPool, table: &str) -> Result<(), DomainError> {
-    sqlx::query(&format!(
-        "CREATE TABLE IF NOT EXISTS {table} (
-            scope_kind TEXT NOT NULL,
-            scope_id TEXT NOT NULL DEFAULT '',
-            key TEXT NOT NULL,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
-            PRIMARY KEY (scope_kind, scope_id, key)
-        )"
-    ))
-    .execute(pool)
-    .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-    sqlx::query(&format!(
-        "CREATE INDEX IF NOT EXISTS idx_{table}_scope_key ON {table}(scope_kind, scope_id, key)"
-    ))
-    .execute(pool)
-    .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-    Ok(())
 }
 
 #[cfg(test)]

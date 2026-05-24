@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::session::SessionExecutionState;
+use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::context::SessionContextSnapshot;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    bootstrap::session_context_query::build_session_context_plan,
-    routes::project_agents::parse_project_agent_session_label,
     rpc::ApiError,
+    session_use_cases::context_query::build_session_context_plan,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 #[derive(Debug, Serialize)]
@@ -327,7 +327,9 @@ fn resolve_agent_info(
     }
 
     if binding.owner_type == agentdash_domain::session_binding::SessionOwnerType::Project {
-        if let Some(agent_key) = parse_project_agent_session_label(&binding.label) {
+        if let Some(agent_key) =
+            SessionConstructionPlanner::parse_project_agent_session_label(&binding.label)
+        {
             let display_name = agent_display_map.get(agent_key).cloned();
             return (Some(agent_key.to_string()), display_name);
         }

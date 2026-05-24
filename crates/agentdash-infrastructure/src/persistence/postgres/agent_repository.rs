@@ -15,39 +15,7 @@ impl PostgresProjectAgentRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS project_agents (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                agent_type TEXT NOT NULL,
-                config TEXT NOT NULL DEFAULT '{}',
-                installed_library_asset_id TEXT,
-                installed_source_ref TEXT,
-                installed_source_version TEXT,
-                installed_source_digest TEXT,
-                installed_at TEXT,
-                default_lifecycle_key TEXT,
-                is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
-                is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
-                knowledge_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(project_id, name)
-            )",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_project_agents_project ON project_agents(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["project_agents"]).await
     }
 }
 

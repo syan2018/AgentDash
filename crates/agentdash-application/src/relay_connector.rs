@@ -57,20 +57,7 @@ impl AgentConnector for RelayAgentConnector {
     }
 
     fn list_executors(&self) -> Vec<AgentInfo> {
-        let transport = self.transport.clone();
-        let rt = tokio::runtime::Handle::try_current();
-        match rt {
-            Ok(handle) => {
-                // 在 async context 中用 block_in_place 同步获取
-                tokio::task::block_in_place(|| {
-                    handle.block_on(async {
-                        let remote = transport.list_online_executors().await;
-                        dedup_executors(remote)
-                    })
-                })
-            }
-            Err(_) => Vec::new(),
-        }
+        dedup_executors(self.transport.list_online_executors())
     }
 
     async fn discover_options_stream(
@@ -155,31 +142,51 @@ impl AgentConnector for RelayAgentConnector {
                 .collect(),
         };
 
-        let _turn_id = self
-            .transport
-            .relay_prompt(&backend_id, payload)
-            .await
-            .map_err(|e| ConnectorError::Runtime(format!("relay prompt 失败: {e}")))?;
-
         // 创建 notification channel 并注册到 transport sink map
         let (tx, rx) = mpsc::unbounded_channel::<RelaySessionEvent>();
         self.transport.register_session_sink(session_id, tx);
+        let sink_guard = RelaySessionSinkGuard {
+            transport: self.transport.clone(),
+            session_id: session_id.to_string(),
+        };
 
-        let stream: ExecutionStream = Box::pin(futures::stream::unfold(rx, |mut rx| async {
-            match rx.recv().await {
-                Some(RelaySessionEvent::Notification(n)) => Some((Ok(*n), rx)),
-                Some(RelaySessionEvent::Terminal {
-                    kind: RelayTerminalKind::Failed,
-                    message,
-                }) => Some((
-                    Err(ConnectorError::Runtime(
-                        message.unwrap_or_else(|| "远程执行失败".to_string()),
-                    )),
-                    rx,
-                )),
-                Some(RelaySessionEvent::Terminal { .. }) | None => None,
+        let _turn_id = match self.transport.relay_prompt(&backend_id, payload).await {
+            Ok(turn_id) => turn_id,
+            Err(e) => {
+                drop(sink_guard);
+                return Err(ConnectorError::Runtime(format!("relay prompt 失败: {e}")));
             }
-        }));
+        };
+
+        let stream: ExecutionStream = Box::pin(futures::stream::unfold(
+            (rx, Some(sink_guard), false),
+            |(mut rx, mut sink_guard, done)| async move {
+                if done {
+                    return None;
+                }
+                match rx.recv().await {
+                    Some(RelaySessionEvent::Notification(n)) => {
+                        Some((Ok(*n), (rx, sink_guard, false)))
+                    }
+                    Some(RelaySessionEvent::Terminal {
+                        kind: RelayTerminalKind::Failed,
+                        message,
+                    }) => {
+                        sink_guard.take();
+                        Some((
+                            Err(ConnectorError::Runtime(
+                                message.unwrap_or_else(|| "远程执行失败".to_string()),
+                            )),
+                            (rx, None, true),
+                        ))
+                    }
+                    Some(RelaySessionEvent::Terminal { .. }) | None => {
+                        sink_guard.take();
+                        None
+                    }
+                }
+            },
+        ));
 
         Ok(stream)
     }
@@ -233,6 +240,17 @@ impl AgentConnector for RelayAgentConnector {
         Err(ConnectorError::Runtime(
             "relay connector 暂不直接处理 reject_tool_call".to_string(),
         ))
+    }
+}
+
+struct RelaySessionSinkGuard {
+    transport: Arc<dyn RelayPromptTransport>,
+    session_id: String,
+}
+
+impl Drop for RelaySessionSinkGuard {
+    fn drop(&mut self) {
+        self.transport.unregister_session_sink(&self.session_id);
     }
 }
 
@@ -310,13 +328,17 @@ fn workspace_identity_payload_from_mount(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
 
+    use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
     use agentdash_spi::{AgentConfig, CapabilityState, PromptPayload};
+    use futures::StreamExt;
     use tokio::sync::Mutex;
 
     #[derive(Default)]
     struct CaptureTransport {
         payload: Mutex<Option<RelayPromptRequest>>,
+        sinks: StdMutex<HashMap<String, mpsc::UnboundedSender<RelaySessionEvent>>>,
     }
 
     #[async_trait]
@@ -357,7 +379,23 @@ mod tests {
             _backend_id: &str,
             payload: RelayPromptRequest,
         ) -> Result<String, crate::backend_transport::TransportError> {
+            let session_id = payload.session_id.clone();
             *self.payload.lock().await = Some(payload);
+            if let Some(tx) = self.sinks.lock().unwrap().get(&session_id) {
+                let envelope = BackboneEnvelope::new(
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                        key: "relay_test".to_string(),
+                        value: serde_json::json!({"ok": true}),
+                    }),
+                    &session_id,
+                    SourceInfo {
+                        connector_id: "relay-test".to_string(),
+                        connector_type: "remote_acp_backend".to_string(),
+                        executor_id: None,
+                    },
+                );
+                let _ = tx.send(RelaySessionEvent::Notification(Box::new(envelope)));
+            }
             Ok("turn-1".to_string())
         }
 
@@ -369,7 +407,7 @@ mod tests {
             Ok(())
         }
 
-        async fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
+        fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
             Vec::new()
         }
 
@@ -383,15 +421,21 @@ mod tests {
 
         fn register_session_sink(
             &self,
-            _session_id: &str,
-            _tx: mpsc::UnboundedSender<RelaySessionEvent>,
+            session_id: &str,
+            tx: mpsc::UnboundedSender<RelaySessionEvent>,
         ) {
+            self.sinks
+                .lock()
+                .unwrap()
+                .insert(session_id.to_string(), tx);
         }
 
-        fn unregister_session_sink(&self, _session_id: &str) {}
+        fn unregister_session_sink(&self, session_id: &str) {
+            self.sinks.lock().unwrap().remove(session_id);
+        }
 
-        fn has_session_sink(&self, _session_id: &str) -> bool {
-            false
+        fn has_session_sink(&self, session_id: &str) -> bool {
+            self.sinks.lock().unwrap().contains_key(session_id)
         }
     }
 
@@ -449,5 +493,48 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("third_party_mcp")
         );
+    }
+
+    #[tokio::test]
+    async fn relay_prompt_registers_sink_before_remote_prompt_can_emit_notification() {
+        let transport = Arc::new(CaptureTransport::default());
+        let connector = RelayAgentConnector::new(transport.clone());
+        let root = tempfile::tempdir().expect("workspace");
+        let context = ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: "turn-1".to_string(),
+                working_directory: root.path().to_path_buf(),
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
+                mcp_servers: Vec::new(),
+                vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame {
+                capability_state: CapabilityState::default(),
+                ..Default::default()
+            },
+        };
+
+        let mut stream = connector
+            .prompt(
+                "session-early-event",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                context,
+            )
+            .await
+            .expect("relay prompt should succeed");
+
+        let notification = stream
+            .next()
+            .await
+            .expect("notification emitted during relay_prompt should be buffered")
+            .expect("notification should be successful");
+
+        assert_eq!(notification.session_id, "session-early-event");
+        assert!(transport.has_session_sink("session-early-event"));
+        drop(stream);
+        assert!(!transport.has_session_sink("session-early-event"));
     }
 }

@@ -1,21 +1,26 @@
 use std::sync::Arc;
 
+use agentdash_application::session::construction_planner::{
+    ResolvedProjectAgentContext, SessionConstructionPlanner,
+};
 use agentdash_domain::{
     agent::ProjectAgent,
-    common::AgentPresetConfig,
     inline_file::InlineFileOwnerKind,
     project::Project,
     session_binding::{SessionBinding, SessionOwnerType},
-    workspace::Workspace,
 };
-use agentdash_spi::AgentConfig;
-use agentdash_spi::SessionMcpServer;
 use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
+
+use agentdash_contracts::project_agent::{
+    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent as ProjectAgentResponse,
+    ProjectAgentExecutor, ProjectAgentSession, ProjectAgentSummary, ThinkingLevel,
+    UpdateProjectAgentRequest,
+};
 
 use crate::{
     app_state::AppState,
@@ -23,71 +28,17 @@ use crate::{
     rpc::ApiError,
 };
 
-#[derive(Debug, Clone)]
-pub(crate) struct ProjectAgentBridge {
-    pub key: String,
-    pub display_name: String,
-    pub description: String,
-    pub executor_config: AgentConfig,
-    pub preset_config: AgentPresetConfig,
-    pub preset_name: Option<String>,
-    pub source: String,
-    /// MCP servers parsed from preset config — injected into ExecutionContext for project-agent sessions
-    pub preset_mcp_servers: Vec<SessionMcpServer>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentExecutorResponse {
-    pub executor: String,
-    pub provider_id: Option<String>,
-    pub model_id: Option<String>,
-    pub agent_id: Option<String>,
-    pub thinking_level: Option<agentdash_spi::ThinkingLevel>,
-    pub permission_policy: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentSessionResponse {
-    pub binding_id: String,
-    pub session_id: String,
-    pub session_title: Option<String>,
-    pub last_activity: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentSummaryResponse {
-    pub key: String,
-    pub display_name: String,
-    pub description: String,
-    pub executor: ProjectAgentExecutorResponse,
-    pub preset_name: Option<String>,
-    pub source: String,
-    pub session: Option<ProjectAgentSessionResponse>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct OpenProjectAgentSessionResponse {
-    pub created: bool,
-    pub session_id: String,
-    pub binding_id: String,
-    pub agent: ProjectAgentSummaryResponse,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn project_agent_summary_response_serializes_as_snake_case() {
-        let value = serde_json::to_value(ProjectAgentSummaryResponse {
+        let value = serde_json::to_value(ProjectAgentSummary {
             key: "default".to_string(),
             display_name: "项目默认 Agent".to_string(),
             description: "desc".to_string(),
-            executor: ProjectAgentExecutorResponse {
+            executor: ProjectAgentExecutor {
                 executor: "PI_AGENT".to_string(),
                 provider_id: Some("openai".to_string()),
                 model_id: Some("test-model".to_string()),
@@ -97,7 +48,7 @@ mod tests {
             },
             preset_name: None,
             source: "project.config.default_agent_type".to_string(),
-            session: Some(ProjectAgentSessionResponse {
+            session: Some(ProjectAgentSession {
                 binding_id: "binding-1".to_string(),
                 session_id: "sess-1".to_string(),
                 session_title: Some("title".to_string()),
@@ -115,11 +66,17 @@ mod tests {
     #[test]
     fn parse_project_agent_session_label_requires_expected_prefix() {
         assert_eq!(
-            parse_project_agent_session_label("project_agent:agent-1"),
+            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:agent-1"),
             Some("agent-1")
         );
-        assert_eq!(parse_project_agent_session_label("agent-1"), None);
-        assert_eq!(parse_project_agent_session_label("project_agent:   "), None);
+        assert_eq!(
+            SessionConstructionPlanner::parse_project_agent_session_label("agent-1"),
+            None
+        );
+        assert_eq!(
+            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:   "),
+            None
+        );
     }
 }
 
@@ -127,7 +84,7 @@ pub async fn list_project_agents(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(project_id): Path<String>,
-) -> Result<Json<Vec<ProjectAgentSummaryResponse>>, ApiError> {
+) -> Result<Json<Vec<ProjectAgentSummary>>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -146,7 +103,9 @@ pub async fn list_project_agents(
 
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = build_agent_bridge(state.as_ref(), agent).await?;
+        let bridge = SessionConstructionPlanner::build_project_agent_context(&state.repos, agent)
+            .await
+            .map_err(ApiError::Internal)?;
         let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
         response.push(build_project_agent_summary(&project, &bridge, session));
     }
@@ -166,7 +125,7 @@ pub async fn open_project_agent_session(
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
     Query(query): Query<OpenSessionQuery>,
-) -> Result<Json<OpenProjectAgentSessionResponse>, ApiError> {
+) -> Result<Json<OpenProjectAgentSessionResult>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -184,9 +143,12 @@ pub async fn open_project_agent_session(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let agent = build_agent_bridge(state.as_ref(), &project_agent).await?;
+    let agent =
+        SessionConstructionPlanner::build_project_agent_context(&state.repos, &project_agent)
+            .await
+            .map_err(ApiError::Internal)?;
 
-    let label = project_agent_session_label(&agent.key);
+    let label = SessionConstructionPlanner::project_agent_session_label(&agent.key);
 
     if !query.force_new {
         let existing_binding = state
@@ -206,14 +168,14 @@ pub async fn open_project_agent_session(
         {
             let session_id = binding.session_id.clone();
             let binding_id = binding.id.to_string();
-            let session = Some(ProjectAgentSessionResponse {
+            let session = Some(ProjectAgentSession {
                 binding_id: binding_id.clone(),
                 session_id: session_id.clone(),
                 session_title: Some(meta.title),
                 last_activity: Some(meta.updated_at),
             });
             let summary = build_project_agent_summary(&project, &agent, session);
-            return Ok(Json(OpenProjectAgentSessionResponse {
+            return Ok(Json(OpenProjectAgentSessionResult {
                 created: false,
                 session_id,
                 binding_id,
@@ -299,7 +261,7 @@ pub async fn open_project_agent_session(
         );
     }
 
-    let session = Some(ProjectAgentSessionResponse {
+    let session = Some(ProjectAgentSession {
         binding_id: binding.id.to_string(),
         session_id: meta.id.clone(),
         session_title: Some(meta.title),
@@ -307,7 +269,7 @@ pub async fn open_project_agent_session(
     });
     let summary = build_project_agent_summary(&project, &agent, session);
 
-    Ok(Json(OpenProjectAgentSessionResponse {
+    Ok(Json(OpenProjectAgentSessionResult {
         created: true,
         session_id: meta.id,
         binding_id: binding.id.to_string(),
@@ -315,74 +277,24 @@ pub async fn open_project_agent_session(
     }))
 }
 
-/// 从 agent_key（UUID 字符串）异步解析 ProjectAgentBridge
-pub(crate) async fn resolve_project_agent_bridge_async(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    agent_key: &str,
-) -> Result<Option<ProjectAgentBridge>, ApiError> {
-    let project_agent_id = match Uuid::parse_str(agent_key) {
-        Ok(project_agent_id) => project_agent_id,
-        Err(_) => return Ok(None),
-    };
-    let agent = state
-        .repos
-        .project_agent_repo
-        .get_by_project_and_id(project_id, project_agent_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    let Some(agent) = agent else {
-        return Ok(None);
-    };
-    Ok(Some(build_agent_bridge(state.as_ref(), &agent).await?))
-}
-
-pub(crate) async fn resolve_project_workspace(
-    state: &Arc<AppState>,
-    project: &Project,
-) -> Result<Option<Workspace>, ApiError> {
-    if let Some(workspace_id) = project.config.default_workspace_id {
-        return state
-            .repos
-            .workspace_repo
-            .get_by_id(workspace_id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()));
-    }
-    Ok(None)
-}
-
-pub(crate) const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
-
-pub(crate) fn project_agent_session_label(agent_key: &str) -> String {
-    format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
-}
-
-pub(crate) fn parse_project_agent_session_label(label: &str) -> Option<&str> {
-    let agent_key = label
-        .trim()
-        .strip_prefix(PROJECT_AGENT_SESSION_LABEL_PREFIX)?;
-    if agent_key.trim().is_empty() {
-        return None;
-    }
-    Some(agent_key)
-}
-
 fn build_project_agent_summary(
     _project: &Project,
-    agent: &ProjectAgentBridge,
-    session: Option<ProjectAgentSessionResponse>,
-) -> ProjectAgentSummaryResponse {
-    ProjectAgentSummaryResponse {
+    agent: &ResolvedProjectAgentContext,
+    session: Option<ProjectAgentSession>,
+) -> ProjectAgentSummary {
+    ProjectAgentSummary {
         key: agent.key.clone(),
         display_name: agent.display_name.clone(),
         description: agent.description.clone(),
-        executor: ProjectAgentExecutorResponse {
+        executor: ProjectAgentExecutor {
             executor: agent.executor_config.executor.clone(),
             provider_id: agent.executor_config.provider_id.clone(),
             model_id: agent.executor_config.model_id.clone(),
             agent_id: agent.executor_config.agent_id.clone(),
-            thinking_level: agent.executor_config.thinking_level,
+            thinking_level: agent
+                .executor_config
+                .thinking_level
+                .map(thinking_level_response),
             permission_policy: agent.executor_config.permission_policy.clone(),
         },
         preset_name: agent.preset_name.clone(),
@@ -391,18 +303,31 @@ fn build_project_agent_summary(
     }
 }
 
+fn thinking_level_response(level: agentdash_spi::ThinkingLevel) -> ThinkingLevel {
+    use agentdash_spi::ThinkingLevel as SpiThinkingLevel;
+
+    match level {
+        SpiThinkingLevel::Off => ThinkingLevel::Off,
+        SpiThinkingLevel::Minimal => ThinkingLevel::Minimal,
+        SpiThinkingLevel::Low => ThinkingLevel::Low,
+        SpiThinkingLevel::Medium => ThinkingLevel::Medium,
+        SpiThinkingLevel::High => ThinkingLevel::High,
+        SpiThinkingLevel::Xhigh => ThinkingLevel::Xhigh,
+    }
+}
+
 async fn find_project_agent_session(
     state: &Arc<AppState>,
     project_id: Uuid,
     agent_key: &str,
-) -> Result<Option<ProjectAgentSessionResponse>, ApiError> {
+) -> Result<Option<ProjectAgentSession>, ApiError> {
     let binding = state
         .repos
         .session_binding_repo
         .find_by_owner_and_label(
             SessionOwnerType::Project,
             project_id,
-            &project_agent_session_label(agent_key),
+            &SessionConstructionPlanner::project_agent_session_label(agent_key),
         )
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
@@ -418,7 +343,7 @@ async fn find_project_agent_session(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
-    Ok(Some(ProjectAgentSessionResponse {
+    Ok(Some(ProjectAgentSession {
         binding_id: binding.id.to_string(),
         session_id: binding.session_id,
         session_title: meta.as_ref().map(|item| item.title.clone()),
@@ -430,7 +355,7 @@ pub async fn list_project_agent_sessions(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
-) -> Result<Json<Vec<ProjectAgentSessionResponse>>, ApiError> {
+) -> Result<Json<Vec<ProjectAgentSession>>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -440,7 +365,7 @@ pub async fn list_project_agent_sessions(
     )
     .await?;
 
-    let label = project_agent_session_label(&agent_key);
+    let label = SessionConstructionPlanner::project_agent_session_label(&agent_key);
     let bindings = state
         .repos
         .session_binding_repo
@@ -459,7 +384,7 @@ pub async fn list_project_agent_sessions(
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?;
 
-        sessions.push(ProjectAgentSessionResponse {
+        sessions.push(ProjectAgentSession {
             binding_id: binding.id.to_string(),
             session_id: binding.session_id,
             session_title: meta.as_ref().map(|m| m.title.clone()),
@@ -488,31 +413,13 @@ fn parse_project_agent_id(project_agent_id: &str) -> Result<Uuid, ApiError> {
 
 // ─── Project Agent API ───
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectAgentResponse {
-    pub id: String,
-    pub project_id: String,
-    pub name: String,
-    pub agent_type: String,
-    pub config: agentdash_domain::common::AgentPresetConfig,
-    pub default_lifecycle_key: Option<String>,
-    pub is_default_for_story: bool,
-    pub is_default_for_task: bool,
-    pub knowledge_enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 fn build_project_agent_response(agent: &ProjectAgent) -> Result<ProjectAgentResponse, ApiError> {
     Ok(ProjectAgentResponse {
         id: agent.id.to_string(),
         project_id: agent.project_id.to_string(),
         name: agent.name.clone(),
         agent_type: agent.agent_type.clone(),
-        config: agent
-            .preset_config()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
+        config: agent.config.clone(),
         default_lifecycle_key: agent.default_lifecycle_key.clone(),
         is_default_for_story: agent.is_default_for_story,
         is_default_for_task: agent.is_default_for_task,
@@ -549,22 +456,6 @@ pub async fn list_project_agent_configs(
         .map(build_project_agent_response)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(response))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateProjectAgentRequest {
-    pub name: String,
-    pub agent_type: String,
-    #[serde(default)]
-    pub config: Option<serde_json::Value>,
-    #[serde(default)]
-    pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    pub default_workflow_key: Option<String>,
-    #[serde(default)]
-    pub is_default_for_story: bool,
-    #[serde(default)]
-    pub is_default_for_task: bool,
 }
 
 /// POST /projects/{id}/agents — 创建项目私有 Agent
@@ -628,26 +519,6 @@ pub async fn create_project_agent(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(build_project_agent_response(&agent)?))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateProjectAgentRequest {
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub agent_type: Option<String>,
-    #[serde(default)]
-    pub config: Option<serde_json::Value>,
-    #[serde(default)]
-    pub default_lifecycle_key: Option<String>,
-    #[serde(default)]
-    pub default_workflow_key: Option<String>,
-    #[serde(default)]
-    pub is_default_for_story: Option<bool>,
-    #[serde(default)]
-    pub is_default_for_task: Option<bool>,
-    #[serde(default)]
-    pub knowledge_enabled: Option<bool>,
 }
 
 /// PUT /projects/{id}/agents/{project_agent_id} — 更新 Project Agent
@@ -864,57 +735,6 @@ async fn resolve_lifecycle_key_for_project_agent(
     }
 
     Ok(None)
-}
-
-/// 从 ProjectAgent 构建 ProjectAgentBridge。
-pub(crate) async fn build_agent_bridge(
-    state: &AppState,
-    agent: &ProjectAgent,
-) -> Result<ProjectAgentBridge, ApiError> {
-    let preset = agent
-        .preset_config()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    let executor_config = preset.to_agent_config(&agent.agent_type);
-
-    let display_name = preset
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(&agent.name)
-        .to_string();
-
-    let description = preset
-        .description
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(String::from)
-        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
-
-    let preset_mcp_servers = agentdash_application::mcp_preset::resolve_preset_mcp_refs(
-        state.repos.mcp_preset_repo.as_ref(),
-        agent.project_id,
-        preset.mcp_preset_keys.as_deref().unwrap_or_default(),
-    )
-    .await
-    .map_err(|error| {
-        ApiError::Internal(format!(
-            "Project Agent `{}` 的 mcp_preset_keys 配置非法: {error}",
-            agent.id
-        ))
-    })?;
-
-    Ok(ProjectAgentBridge {
-        key: agent.id.to_string(),
-        display_name,
-        description,
-        executor_config,
-        preset_config: preset,
-        preset_name: Some(agent.name.clone()),
-        source: format!("project_agents[{}]", agent.id),
-        preset_mcp_servers,
-    })
 }
 
 /// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）

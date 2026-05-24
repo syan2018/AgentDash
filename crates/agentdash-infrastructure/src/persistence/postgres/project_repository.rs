@@ -16,54 +16,11 @@ impl PostgresProjectRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS projects (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                config TEXT NOT NULL DEFAULT '{}',
-                created_by_user_id TEXT NOT NULL DEFAULT 'system',
-                updated_by_user_id TEXT NOT NULL DEFAULT 'system',
-                visibility TEXT NOT NULL DEFAULT 'private',
-                is_template INTEGER NOT NULL DEFAULT 0,
-                cloned_from_project_id TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            "#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["projects", "project_subject_grants"],
         )
-        .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS project_subject_grants (
-                project_id TEXT NOT NULL,
-                subject_type TEXT NOT NULL,
-                subject_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                granted_by_user_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (project_id, subject_type, subject_id),
-                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_project_subject_grants_subject ON project_subject_grants(subject_type, subject_id)"
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
     }
 }
 

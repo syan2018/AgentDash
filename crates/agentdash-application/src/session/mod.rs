@@ -28,8 +28,6 @@ pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
-mod launch_planner;
-pub mod launch_service;
 mod memory_persistence;
 pub mod ownership;
 pub(crate) mod path_policy;
@@ -37,7 +35,6 @@ mod pending_action_context_frame;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;
-mod prompt_pipeline;
 mod prompt_vfs;
 pub mod runtime_builder;
 pub mod runtime_commands;
@@ -90,8 +87,7 @@ pub use hook_events::build_hook_trace_envelope;
 pub use hook_runtime::HookSessionRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
-pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, LaunchStrictness};
-pub use launch_service::SessionLaunchService;
+pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
     PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,

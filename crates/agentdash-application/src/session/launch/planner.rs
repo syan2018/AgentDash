@@ -2,27 +2,27 @@ use std::sync::Arc;
 
 use agentdash_spi::{ConnectorError, RestoredSessionState};
 
-use super::construction::SessionConstructionPlan;
-use super::hook_delegate::{
-    DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
-};
-use super::launch::{
+use super::{
     LaunchCommand, LaunchExecution, LaunchExecutionInput, LaunchFollowUpSource, LaunchRestoreMode,
 };
-use super::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
-use super::prompt_pipeline::SessionLaunchDeps;
-use super::runtime_commands::RuntimeCommandRecord;
-use super::types::{
+use crate::session::construction::SessionConstructionPlan;
+use crate::session::hook_delegate::{
+    DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
+};
+use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
+use crate::session::prompt_pipeline::SessionLaunchDeps;
+use crate::session::runtime_commands::RuntimeCommandRecord;
+use crate::session::types::{
     HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
     resolve_session_prompt_lifecycle,
 };
 
-pub(super) struct SessionLaunchPlanner<'a> {
+pub(in crate::session) struct SessionLaunchPlanner<'a> {
     deps: SessionLaunchDeps,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
-pub(super) struct SessionLaunchPlannerInput<'a> {
+pub(in crate::session) struct SessionLaunchPlannerInput<'a> {
     pub session_id: &'a str,
     pub turn_id: &'a str,
     pub command: &'a LaunchCommand,
@@ -82,7 +82,7 @@ impl<'a> SessionLaunchPlanner<'a> {
             .as_ref()
             .and_then(|vfs| vfs.default_mount())
             .map(|mount| {
-                super::path_policy::resolve_session_working_directory(&mount.root_ref)
+                crate::session::path_policy::resolve_session_working_directory(&mount.root_ref)
                     .map_err(ConnectorError::InvalidConfig)
             })
             .transpose()?

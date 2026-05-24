@@ -1,8 +1,8 @@
-﻿use agentdash_spi::ConnectorError;
+use agentdash_spi::ConnectorError;
 
-use super::hub::SessionRuntimeInner;
-use super::launch::{LaunchCommand, LaunchCommandOutcome};
-use super::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
+use super::{LaunchCommand, LaunchCommandOutcome};
+use crate::session::hub::SessionRuntimeInner;
+use crate::session::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
 
 #[derive(Clone)]
 pub struct SessionLaunchService {
@@ -34,7 +34,7 @@ impl SessionLaunchDeps {
 }
 
 impl SessionLaunchService {
-    pub(super) fn new(inner: SessionRuntimeInner) -> Self {
+    pub(in crate::session) fn new(inner: SessionRuntimeInner) -> Self {
         Self {
             deps: SessionLaunchDeps::from_inner(&inner),
         }

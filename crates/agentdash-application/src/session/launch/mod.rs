@@ -1,6 +1,18 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+mod commit;
+mod connector_start;
+mod deps;
+mod ingestion;
+mod orchestrator;
+mod planner;
+mod preparation;
+mod service;
+
+pub(in crate::session) use planner::{SessionLaunchPlanner, SessionLaunchPlannerInput};
+pub use service::SessionLaunchService;
+
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
@@ -9,11 +21,13 @@ use agentdash_spi::{
     ExecutionTurnFrame, RestoredSessionState, SessionMcpServer,
 };
 
-use super::construction::SessionConstructionPlan;
-use super::construction_provider::{CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource};
-use super::post_turn_handler::DynPostTurnHandler;
-use super::runtime_commands::RuntimeCommandRecord;
-use super::types::{
+use crate::session::construction::SessionConstructionPlan;
+use crate::session::construction_provider::{
+    CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource,
+};
+use crate::session::post_turn_handler::DynPostTurnHandler;
+use crate::session::runtime_commands::RuntimeCommandRecord;
+use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle, UserPromptInput,
 };

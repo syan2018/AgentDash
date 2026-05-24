@@ -84,18 +84,27 @@ execute_constructed_launch      -> removed; replaced by typed stage flow
 
 目标：建立 `session/launch/` 子域，不先改变行为。
 
-- [ ] 将 `session/launch.rs` 迁移为 `session/launch/mod.rs` + `command.rs` + `plan.rs`。
-- [ ] 将 `session/launch_planner.rs` 迁移为 `session/launch/planner.rs`。
-- [ ] 将 `session/launch_service.rs` 迁移为 `session/launch/service.rs`。
-- [ ] 创建空/薄模块：
+- [x] 将 `session/launch.rs` 迁移为 `session/launch/mod.rs`。`command.rs` / `plan.rs` 的真实拆分与 Phase 5 命名收敛一起完成，避免先机械拆分再重命名造成重复 churn。
+- [x] 将 `session/launch_planner.rs` 迁移为 `session/launch/planner.rs`。
+- [x] 将 `session/launch_service.rs` 迁移为 `session/launch/service.rs`。
+- [x] 创建空/薄模块：
   - `deps.rs`
   - `orchestrator.rs`
   - `preparation.rs`
   - `connector_start.rs`
   - `commit.rs`
   - `ingestion.rs`
-- [ ] 更新 `session/mod.rs` re-export。
-- [ ] 跑编译和相关测试，确保只是模块迁移。
+- [x] 更新 `session/mod.rs` re-export。
+- [x] 跑编译和相关测试，确保只是模块迁移。
+
+### Phase 3 Evidence
+
+```text
+cargo test -p agentdash-application session::launch
+  ok, 4 passed
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+```
 
 ## Phase 4: Orchestrator Extraction
 

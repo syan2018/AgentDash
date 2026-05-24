@@ -1,7 +1,7 @@
 # Session Runtime Execution State
 
 本 spec 定义 session 启动后的运行态边界。构建事实来自
-`SessionConstructionPlan`，单次执行策略来自 `LaunchExecution`，运行态只回答
+`SessionConstructionPlan`，单次启动决策来自 `LaunchPlan`，运行态只回答
 “当前这次 turn 是否被 claim、是否 active、如何取消、终态如何清理”。
 
 ## Runtime Boundaries
@@ -43,15 +43,12 @@ connector 的 `update_session_tools`。
 
 ## Turn Background Task Supervision
 
-`TurnSupervisor` 是 active turn 后台任务的唯一监督入口。prompt pipeline 可以创建
-processor / stream adapter，但一旦 adapter task 被 spawn，必须把 abort handle 登记到
-当前 `TurnExecution`：
+`TurnSupervisor` 是 active turn 后台任务的唯一监督入口。`StreamIngestionAttacher`
+创建 processor / stream adapter，并在 adapter task spawn 后把 abort handle 登记到当前
+`TurnExecution`：
 
 ```rust
-let stream_adapter = SessionLaunchExecutor::spawn_stream_adapter(...);
-turn_supervisor
-    .register_stream_adapter_handle(session_id, stream_adapter.abort_handle())
-    .await;
+let attached = stream_ingestion.attach(committed_turn).await;
 ```
 
 `clear_active_turn` 与 `clear_turn_and_hook` 在释放 active turn 前必须中止已登记的
@@ -79,7 +76,7 @@ persist terminal event -> clear_active_turn -> if persist failed: stop effects a
 Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：
 
 ```text
-LaunchCommand -> SessionConstructionPlan -> LaunchExecution
+LaunchCommand -> SessionConstructionPlan -> LaunchPlan
 ```
 
 follow-up 来源只表达 resume intent、parent/session 引用和 source policy。owner、

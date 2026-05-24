@@ -350,10 +350,25 @@ cargo test -p agentdash-application start_prompt_records_current_turn_state
 
 目标：删除旧边界。
 
-- [ ] 删除 `prompt_pipeline.rs`，或确认它只剩临时 facade 后继续删除。
-- [ ] 移除所有 `prompt_pipeline` import。
-- [ ] 更新注释和文档中仍指向 `prompt_pipeline` 的描述。
-- [ ] 若规范中仍使用旧名，更新为 `session launch` / `launch orchestrator` / `launch stages`。
+- [x] 删除 `prompt_pipeline.rs`，或确认它只剩临时 facade 后继续删除。
+- [x] 移除所有 `prompt_pipeline` import。
+- [x] 更新注释和文档中仍指向 `prompt_pipeline` 的描述。
+- [x] 若规范中仍使用旧名，更新为 `session launch` / `launch orchestrator` / `launch stages`。
+
+### Phase 12 Evidence
+
+`prompt_pipeline.rs` 已删除，没有保留兼容 facade；核心 launch 路径全部位于 `session/launch/`。`launch/mod.rs` 只负责模块声明和 re-export，来源意图与计划类型分别拆到 `command.rs` / `plan.rs`。
+
+`.trellis/spec/backend/session/` 已更新为 `LaunchPlan -> PreparedTurn -> ConnectorAcceptedTurn -> CommittedTurn -> AttachedTurn` 阶段语言。旧 `prompt_pipeline` / `LaunchExecution` 引用只保留在本任务 PRD/Design/Implement 的历史 before-state 与原始 review 资料中。
+
+```text
+cargo fmt --package agentdash-application
+  ok
+cargo check -p agentdash-application
+  ok
+cargo test -p agentdash-application session::launch
+  ok, 7 passed
+```
 
 ## Phase 13: Final Review Check
 

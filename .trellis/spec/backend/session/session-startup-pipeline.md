@@ -7,12 +7,14 @@
 ```text
 LaunchCommand
   -> SessionConstructionPlan
-  -> LaunchExecution
-  -> ExecutionContext
-  -> SessionEvent / TerminalEffectOutbox
+  -> LaunchPlan
+  -> PreparedTurn
+  -> ConnectorAcceptedTurn
+  -> CommittedTurn
+  -> AttachedTurn
 ```
 
-`LaunchCommand` 表达来源意图；`SessionConstructionPlan` 是构建事实源；`LaunchExecution` 是单轮执行计划；`ExecutionContext` 只在 connector 边界投影。
+`LaunchCommand` 表达来源意图；`SessionConstructionPlan` 是构建事实源；`LaunchPlan` 是单轮启动决策；后续 stage types 表达 accepted 前准备、connector accepted、accepted 后 commit 与 stream attach。`ExecutionContext` 只在 connector 边界投影。
 
 ## Stage Responsibilities
 
@@ -20,8 +22,11 @@ LaunchCommand
 | --- | --- | --- | --- |
 | Source adapter | HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 请求 | `LaunchCommand` | 保留来源身份、请求意图、source policy、prompt payload、executor override、follow-up hint |
 | Construction | `LaunchCommand` + session/domain/runtime facts | `SessionConstructionPlan` | 解析 owner、workspace、working dir、VFS、MCP、capability、context bundle/frame、identity、query/audit/inspector projection、resolution trace |
-| Launch planning | `LaunchCommand` + `SessionConstructionPlan` + runtime facts | `LaunchExecution` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
-| Execution | `LaunchExecution` | connector prompt + session events | claim/activate turn，准备 connector context，调用 connector，connector accepted 后提交 user/start/context/capability/bootstrap/pending/title 副作用 |
+| Launch planning | `LaunchCommand` + `SessionConstructionPlan` + runtime facts | `LaunchPlan` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
+| Turn preparation | `LaunchPlan` | `PreparedTurn` | claim/activate turn，准备 runtime tools、MCP tools、hook runtime、context frames、pending runtime context application 与 connector `ExecutionContext` |
+| Connector start | `PreparedTurn` | `ConnectorAcceptedTurn` | 调用 `connector.prompt`，以返回 `ExecutionStream` 作为 accepted 边界；setup 失败时释放 turn/hook 并记录 failed terminal |
+| Accepted commit | `ConnectorAcceptedTurn` | `CommittedTurn` | 提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation |
+| Stream ingestion | `CommittedTurn` | `AttachedTurn` | spawn `SessionTurnProcessor` 与 stream adapter，并登记 processor tx / adapter abort handle |
 | Terminal | connector terminal / stream terminal | terminal event + outbox effect | 持久化终态，清理 active turn，把业务副作用写入 durable outbox |
 
 `Turn` 边界保持很薄：reservation、active、cancel、hook runtime handle、processor/adapter supervision、terminal release。
@@ -87,11 +92,11 @@ Contract:
 - `CapabilityState.tool.mcp_servers` 必须等于 final `plan.projections.mcp_servers`。
 - `runtime_surface` 是 query DTO，只从 final `plan.surface.vfs` 生成。
 
-## LaunchExecution Contract
+## LaunchPlan And Stage Contracts
 
-`SessionLaunchPlanner::plan` 返回 `LaunchExecution`。planner 输入由 `SessionLaunchDeps`、`LaunchCommand`、`SessionConstructionPlan` 与 runtime facts 组成。
+`LaunchPlanner::plan` 返回 `LaunchPlan`。planner 输入由 `LaunchPlanningDeps`、`LaunchCommand`、`SessionConstructionPlan` 与 runtime facts 组成。
 
-`LaunchExecution` 承载或引用：
+`LaunchPlan` 承载或引用：
 
 - resolved prompt payload
 - `SessionConstructionPlan`
@@ -101,11 +106,15 @@ Contract:
 - connector input projection
 - launch trace
 
-Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 final construction 与 launch execution 投影生成。`prompt_pipeline` 执行计划，不重新解析 owner、context、VFS、MCP 或 capability。
+Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 final construction 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 construction 事实，保持 owner、context、VFS、MCP 与 capability 的单一来源。
 
-`connector.prompt` 返回 `ExecutionStream` 是 launch accepted 边界。accepted 之前允许做 turn claim、active runtime projection、hook `SessionStart` context preparation 和 connector context assembly；accepted 之后才提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation。connector setup 失败时只释放 turn runtime 并记录失败终态，不提交已开始事件或成功副作用。
+`PreparedTurn` 汇总 connector accepted 前的 turn runtime projection、tools、context frames、hook runtime handle 与 connector-facing `ExecutionContext`。
 
-LaunchPlanner 只能处理 runtime-only planning：
+`connector.prompt` 返回 `ExecutionStream` 是 launch accepted 边界。accepted 之前允许做 turn claim、active runtime projection、hook `SessionStart` context preparation 和 connector context assembly；accepted 之后才提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation。connector setup 失败时释放 turn runtime 并记录失败终态。
+
+`TurnCommitter::commit` 消费 `ConnectorAcceptedTurn`，原因是 accepted 后事实只有在 connector 已接收本轮 prompt 后才有业务意义。`StreamIngestionAttacher::attach` 消费 `CommittedTurn`，原因是 processor/adapter supervision 依赖 accepted 后事实已经落库。
+
+LaunchPlanner 处理 runtime-only planning：
 
 - resolved prompt payload
 - lifecycle / restore / hook / follow-up

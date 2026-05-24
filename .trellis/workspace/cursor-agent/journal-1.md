@@ -814,3 +814,47 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Prompt Pipeline 阶段边界收敛
+
+**Date**: 2026-05-24
+**Task**: Prompt Pipeline 阶段边界收敛
+**Branch**: `codex/prompt-pipeline-launch-stage-boundaries`
+
+### Summary
+
+完成 session prompt_pipeline 到 launch 子域的阶段化重构：建立 LaunchPlan/PreparedTurn/ConnectorAcceptedTurn/CommittedTurn/AttachedTurn 类型流，拆分 orchestrator/preparation/connector_start/commit/ingestion，收窄阶段依赖，下沉 hook runtime helper，同步 session spec，并完成最终 review check 与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1d1ace2` | (see git log) |
+| `3bc5e6b8` | (see git log) |
+| `554a78aa` | (see git log) |
+| `aa0b2ba0` | (see git log) |
+| `2249a645` | (see git log) |
+| `6ec532b8` | (see git log) |
+| `47e10a6e` | (see git log) |
+| `f2116c49` | (see git log) |
+| `7fa55c51` | (see git log) |
+| `08624df9` | (see git log) |
+| `f1b4bd9b` | (see git log) |
+| `47a1680d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

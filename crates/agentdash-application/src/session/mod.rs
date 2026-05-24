@@ -35,7 +35,6 @@ mod pending_action_context_frame;
 pub mod persistence;
 pub mod plan;
 pub mod post_turn_handler;
-mod prompt_pipeline;
 mod prompt_vfs;
 pub mod runtime_builder;
 pub mod runtime_commands;

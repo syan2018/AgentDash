@@ -2,7 +2,7 @@
 //!
 //! 集中：
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
-//!   的合并发现（由 prompt_pipeline 在 prompt 前预构建，或 replace_current_capability_state
+//!   的合并发现（由 launch preparation 在 prompt 前预构建，或 replace_current_capability_state
 //!   在运行中热更时重构）。
 //! - `get_runtime_mcp_servers` / `get_current_capability_state`：读取当前能力状态。
 //! - `replace_current_capability_state`：底层热更 primitive，仅供

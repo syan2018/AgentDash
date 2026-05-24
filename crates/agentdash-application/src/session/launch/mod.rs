@@ -10,6 +10,7 @@ mod planner;
 mod preparation;
 mod service;
 
+pub(in crate::session) use orchestrator::{SessionLaunchDeps, SessionLaunchOrchestrator};
 pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};
 pub use service::SessionLaunchService;
 

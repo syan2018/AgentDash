@@ -9,7 +9,7 @@ use std::io;
 #[cfg(test)]
 use super::super::construction::SessionConstructionPlan;
 #[cfg(test)]
-use super::super::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
+use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
 use super::super::types::*;
 use super::SessionRuntimeInner;
 use agentdash_agent_protocol::BackboneEnvelope;
@@ -117,7 +117,7 @@ impl SessionRuntimeInner {
             .await
     }
 
-    /// 测试专用入口：跳过 source provider，直接进入 prompt pipeline。
+    /// 测试专用入口：跳过 source provider，直接进入 launch stage runner。
     ///
     /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
     #[cfg(test)]
@@ -126,8 +126,8 @@ impl SessionRuntimeInner {
         session_id: &str,
         construction: SessionConstructionPlan,
     ) -> Result<String, ConnectorError> {
-        SessionLaunchExecutor::new(SessionLaunchDeps::from_inner(self))
-            .execute_constructed_launch_for_test(session_id, construction)
+        SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
+            .launch_with_construction_for_test(session_id, construction)
             .await
     }
 

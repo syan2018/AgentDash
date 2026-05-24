@@ -122,9 +122,9 @@ cargo check -p agentdash-api -p agentdash-application
 
 目标：把 `SessionLaunchExecutor` 改成清晰的总控入口。
 
-- [ ] 新建 `SessionLaunchOrchestrator`。
-- [ ] 将 provider 获取、turn id 生成、prompt claim、session meta 读取、requested runtime command 读取、construction provider 调用放入 orchestrator。
-- [ ] 用小结构表达 launch request runtime facts，例如：
+- [x] 新建 `SessionLaunchOrchestrator`。
+- [x] 将 provider 获取、turn id 生成、prompt claim、session meta 读取、requested runtime command 读取、construction provider 调用放入 orchestrator。
+- [x] 用小结构表达 launch request runtime facts，例如：
 
 ```rust
 struct LaunchRuntimeFacts {
@@ -137,7 +137,20 @@ struct LaunchRuntimeFacts {
 ```
 
 - [ ] 删除或替换 `execute_constructed_launch` 的总控职责。
-- [ ] 保持测试入口清晰：测试可以直接走 orchestrator 或专用 fixture，但不要恢复“已组装 prompt 旁路”。
+- [x] 保持测试入口清晰：测试可以直接走 orchestrator 或专用 fixture，但不要恢复“已组装 prompt 旁路”。
+
+### Phase 4 Evidence
+
+`prompt_pipeline.rs` 已移入 `session/launch/orchestrator.rs`，外部 facade 通过 `SessionLaunchService -> SessionLaunchOrchestrator::launch` 进入 launch 子域。原 `execute_constructed_launch` 名称已退出，当前仍有一个临时 `launch_with_construction` stage runner 承载未拆开的 prepare/start/commit/attach；该职责必须在 Phase 6-9 被阶段类型替换后才能勾掉。
+
+```text
+cargo check -p agentdash-application
+  ok
+cargo test -p agentdash-application session::launch
+  ok, 7 passed
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+```
 
 ## Phase 5: Plan Rename And Planner Cleanup
 

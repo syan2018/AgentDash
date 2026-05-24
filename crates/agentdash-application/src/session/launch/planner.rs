@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use agentdash_spi::{ConnectorError, RestoredSessionState};
 
+use super::SessionLaunchDeps;
 use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
 };
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
-use crate::session::prompt_pipeline::SessionLaunchDeps;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
     HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,

@@ -1,8 +1,7 @@
 use agentdash_spi::ConnectorError;
 
-use super::{LaunchCommand, LaunchCommandOutcome};
+use super::{LaunchCommand, LaunchCommandOutcome, SessionLaunchDeps, SessionLaunchOrchestrator};
 use crate::session::hub::SessionRuntimeInner;
-use crate::session::prompt_pipeline::{SessionLaunchDeps, SessionLaunchExecutor};
 
 #[derive(Clone)]
 pub struct SessionLaunchService {
@@ -56,8 +55,8 @@ impl SessionLaunchService {
         session_id: &str,
         command: LaunchCommand,
     ) -> Result<LaunchCommandOutcome, ConnectorError> {
-        SessionLaunchExecutor::new(self.deps.clone())
-            .execute_command(session_id, command)
+        SessionLaunchOrchestrator::new(self.deps.clone())
+            .launch(session_id, command)
             .await
     }
 }

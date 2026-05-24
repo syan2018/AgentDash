@@ -2514,7 +2514,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
 }
 
 #[tokio::test]
-async fn launch_prompt_relaxed_requires_session_construction_provider() {
+async fn local_relay_prompt_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -2531,13 +2531,14 @@ async fn launch_prompt_relaxed_requires_session_construction_provider() {
             ),
         )
         .await
-        .expect_err("relaxed launch 应在 provider 缺失时失败");
+        .expect_err("local relay prompt 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("拒绝 relaxed launch"),
-                "错误信息应提示 relaxed launch 被拒绝，实际为: {message}"
+                message.contains("session_construction_provider 未注入")
+                    && message.contains("local_relay_prompt"),
+                "错误信息应提示 local relay prompt 被拒绝，实际为: {message}"
             );
         }
         other => panic!("期望 Runtime 错误，实际为: {other}"),

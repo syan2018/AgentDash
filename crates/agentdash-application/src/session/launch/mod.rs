@@ -12,8 +12,9 @@ mod service;
 
 pub(in crate::session) use commit::TurnCommitter;
 pub(in crate::session) use connector_start::ConnectorStarter;
+pub(in crate::session) use deps::SessionLaunchDeps;
 pub(in crate::session) use ingestion::StreamIngestionAttacher;
-pub(in crate::session) use orchestrator::{SessionLaunchDeps, SessionLaunchOrchestrator};
+pub(in crate::session) use orchestrator::SessionLaunchOrchestrator;
 pub(in crate::session) use planner::{LaunchPlanner, LaunchPlannerInput};
 pub(in crate::session) use preparation::{TurnPreparationInput, TurnPreparer};
 pub use service::SessionLaunchService;

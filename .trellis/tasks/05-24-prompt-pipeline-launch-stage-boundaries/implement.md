@@ -309,8 +309,8 @@ cargo test -p agentdash-application runtime_context_update_injections_are_record
 
 目标：减少每个阶段看到的无关依赖。
 
-- [ ] 先保留 `SessionLaunchDeps` 作为总容器。
-- [ ] 稳定后按阶段拆窄：
+- [x] 先保留 `SessionLaunchDeps` 作为总容器。
+- [x] 稳定后按阶段拆窄：
 
 ```text
 LaunchPlanningDeps
@@ -320,8 +320,31 @@ TurnCommitDeps
 StreamIngestionDeps
 ```
 
-- [ ] 每个阶段只接收自己需要的 service/store/connector。
-- [ ] 避免为了抽依赖而引入新的循环注入。
+- [x] 每个阶段只接收自己需要的 service/store/connector。
+- [x] 避免为了抽依赖而引入新的循环注入。
+
+### Phase 11 Evidence
+
+`SessionLaunchDeps` 已移入 `launch/deps.rs` 作为总装配容器，并通过窄视图喂给各阶段：
+
+```text
+LaunchPlanningDeps
+TurnPreparationDeps
+ConnectorStartDeps
+TurnCommitDeps
+StreamIngestionDeps
+```
+
+`orchestrator.rs` 仍持有总容器用于入口事实加载，各 stage struct 只持有自己的窄 deps。验证：
+
+```text
+cargo check -p agentdash-application
+  ok
+cargo test -p agentdash-application session::launch
+  ok, 7 passed
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+```
 
 ## Phase 12: Prompt Pipeline Retirement
 

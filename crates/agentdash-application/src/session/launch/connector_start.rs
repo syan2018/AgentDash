@@ -1,6 +1,6 @@
 use agentdash_spi::{ConnectorError, ExecutionStream};
 
-use super::SessionLaunchDeps;
+use super::deps::ConnectorStartDeps;
 use super::preparation::PreparedTurn;
 use crate::session::hub_support::{TurnTerminalKind, build_turn_terminal_envelope};
 
@@ -10,11 +10,11 @@ pub(in crate::session) struct ConnectorAcceptedTurn {
 }
 
 pub(in crate::session) struct ConnectorStarter {
-    deps: SessionLaunchDeps,
+    deps: ConnectorStartDeps,
 }
 
 impl ConnectorStarter {
-    pub fn new(deps: SessionLaunchDeps) -> Self {
+    pub(super) fn new(deps: ConnectorStartDeps) -> Self {
         Self { deps }
     }
 

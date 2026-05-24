@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use agentdash_spi::{ConnectorError, RestoredSessionState};
 
-use super::SessionLaunchDeps;
+use super::deps::LaunchPlanningDeps;
 use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::hook_delegate::{
@@ -16,7 +16,7 @@ use crate::session::types::{
 };
 
 pub(in crate::session) struct LaunchPlanner<'a> {
-    deps: SessionLaunchDeps,
+    deps: LaunchPlanningDeps,
     _marker: std::marker::PhantomData<&'a ()>,
 }
 
@@ -31,7 +31,7 @@ pub(in crate::session) struct LaunchPlannerInput<'a> {
 }
 
 impl<'a> LaunchPlanner<'a> {
-    pub fn new(deps: SessionLaunchDeps) -> Self {
+    pub(super) fn new(deps: LaunchPlanningDeps) -> Self {
         Self {
             deps,
             _marker: std::marker::PhantomData,

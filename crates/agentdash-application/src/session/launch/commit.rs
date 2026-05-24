@@ -1,7 +1,7 @@
 use agentdash_spi::ConnectorError;
 
-use super::SessionLaunchDeps;
 use super::connector_start::ConnectorAcceptedTurn;
+use super::deps::TurnCommitDeps;
 use crate::session::hub_support::{
     TurnTerminalKind, build_turn_started_envelope, build_turn_terminal_envelope,
     build_user_message_envelopes,
@@ -16,11 +16,11 @@ pub(in crate::session) struct CommittedTurn {
 }
 
 pub(in crate::session) struct TurnCommitter {
-    deps: SessionLaunchDeps,
+    deps: TurnCommitDeps,
 }
 
 impl TurnCommitter {
-    pub fn new(deps: SessionLaunchDeps) -> Self {
+    pub(super) fn new(deps: TurnCommitDeps) -> Self {
         Self { deps }
     }
 

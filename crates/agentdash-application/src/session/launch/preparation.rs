@@ -5,7 +5,8 @@ use agentdash_spi::hooks::{
 };
 use agentdash_spi::{ConnectorError, ExecutionContext};
 
-use super::{LaunchFollowUpSource, LaunchPlan, SessionLaunchDeps};
+use super::deps::TurnPreparationDeps;
+use super::{LaunchFollowUpSource, LaunchPlan};
 use crate::session::assignment_context_frame::build_assignment_context_frame;
 use crate::session::hub::{
     HookTriggerInput, PendingRuntimeContextApplication, build_initial_capability_state_frame,
@@ -43,11 +44,11 @@ pub(in crate::session) struct PreparedTurn {
 }
 
 pub(in crate::session) struct TurnPreparer {
-    deps: SessionLaunchDeps,
+    deps: TurnPreparationDeps,
 }
 
 impl TurnPreparer {
-    pub fn new(deps: SessionLaunchDeps) -> Self {
+    pub(super) fn new(deps: TurnPreparationDeps) -> Self {
         Self { deps }
     }
 

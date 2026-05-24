@@ -1,7 +1,7 @@
 use agentdash_spi::ConnectorError;
 
-use super::SessionLaunchDeps;
 use super::commit::CommittedTurn;
+use super::deps::StreamIngestionDeps;
 use crate::session::hub_support::TurnTerminalKind;
 
 pub(in crate::session) struct AttachedTurn {
@@ -9,11 +9,11 @@ pub(in crate::session) struct AttachedTurn {
 }
 
 pub(in crate::session) struct StreamIngestionAttacher {
-    deps: SessionLaunchDeps,
+    deps: StreamIngestionDeps,
 }
 
 impl StreamIngestionAttacher {
-    pub fn new(deps: SessionLaunchDeps) -> Self {
+    pub(super) fn new(deps: StreamIngestionDeps) -> Self {
         Self { deps }
     }
 

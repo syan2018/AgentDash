@@ -858,3 +858,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Auth 身份与权限链路收口
+
+**Date**: 2026-05-24
+**Task**: Auth 身份与权限链路收口
+**Branch**: `main`
+
+### Summary
+
+收口 auth identity 从认证入口到 API/MCP/Terminal/Backend/VFS 的传递与授权链路；Project 授权统一到 domain，Backend 授权统一到 application，并完成 Rust 多包验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `33f1de73` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

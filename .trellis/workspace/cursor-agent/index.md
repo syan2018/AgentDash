@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-05-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~860 | Active |
+| `journal-1.md` | ~893 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-05-24 | Auth 身份与权限链路收口 | `33f1de73` | `main` |
 | 20 | 2026-05-24 | Prompt Pipeline 阶段边界收敛 | `c1d1ace2`, `3bc5e6b8`, `554a78aa`, `aa0b2ba0`, `2249a645`, `6ec532b8`, `47e10a6e`, `f2116c49`, `7fa55c51`, `08624df9`, `f1b4bd9b`, `47a1680d` | `codex/prompt-pipeline-launch-stage-boundaries` |
 | 19 | 2026-05-23 | 完成业务 Contract 生成迁移 | `8f4651fc`, `310cc877`, `9a60e942`, `8b914563`, `ca39cd4d`, `e9a5cf84`, `7b7b22f3` | `codex/architecture-review-convergence` |
 | 18 | 2026-05-21 | Lifecycle Activity 迁移收口 | `f4846b8f`, `954c8774`, `0a7ae7cc`, `3d1d6805`, `55479a80` | `codex/lifecycle-activity-executor-redesign` |

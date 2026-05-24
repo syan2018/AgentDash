@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"Session 子系统主线与事实源不变量。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"LaunchCommand / Construction / LaunchExecution / ExecutionContext 阶段契约。"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"connector-facing ExecutionContext 投影边界。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"turn supervisor、runtime command、terminal state 语义。"}
+{"file":".trellis/spec/backend/session/streaming-protocol.md","reason":"session stream 与 terminal event 消费契约。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"后端重构与测试质量约束。"}
+{"file":"docs/reviews/2026-05-23-architecture-review-round/runtime-control-plane-review.md","reason":"prompt_pipeline 阶段化拆分建议来源。"}
+{"file":"docs/reviews/2026-05-23-architecture-review-round/platform-boundary-governance-review.md","reason":"session 子域边界与 facade 建议来源。"}

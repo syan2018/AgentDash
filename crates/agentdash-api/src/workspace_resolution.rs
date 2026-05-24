@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
+use crate::app_state::AppState;
+use crate::relay::registry::{BackendCommandError, BackendRegistry};
+use crate::rpc::ApiError;
 use agentdash_application::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
-    RelayPromptRequest, RelayPromptTransport, RelaySessionEvent, RemoteExecutorInfo,
-    TransportError, WorkspaceProbeInfo,
+    RelayPromptRequest, RelayPromptTransport, RelaySessionRoute, RelaySessionRouteInfo,
+    RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
 };
 pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
 use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
@@ -13,11 +16,6 @@ use agentdash_relay::{
     CommandWorkspaceDetectPayload, RelayMessage, ResponsePromptPayload,
 };
 use async_trait::async_trait;
-use tokio::sync::mpsc;
-
-use crate::app_state::AppState;
-use crate::relay::registry::{BackendCommandError, BackendRegistry};
-use crate::rpc::ApiError;
 
 pub use agentdash_application::workspace::WorkspaceDetectionResult;
 pub use agentdash_application::workspace::resolve_workspace_binding_with_allowed_backends as resolve_workspace_binding_core;
@@ -247,12 +245,8 @@ impl RelayPromptTransport for BackendRegistry {
         self.list_online_executors_snapshot()
     }
 
-    fn register_session_sink(
-        &self,
-        session_id: &str,
-        tx: mpsc::UnboundedSender<RelaySessionEvent>,
-    ) {
-        BackendRegistry::register_session_sink(self, session_id, tx);
+    fn register_session_sink(&self, route: RelaySessionRoute) {
+        BackendRegistry::register_session_sink(self, route);
     }
 
     fn unregister_session_sink(&self, session_id: &str) {
@@ -261,6 +255,10 @@ impl RelayPromptTransport for BackendRegistry {
 
     fn has_session_sink(&self, session_id: &str) -> bool {
         BackendRegistry::has_session_sink(self, session_id)
+    }
+
+    fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo> {
+        BackendRegistry::session_route(self, session_id)
     }
 
     async fn resolve_backend(

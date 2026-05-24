@@ -401,6 +401,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(backends::list_runtime_health),
         )
         .route(
+            "/backends/runtime-summary",
+            get(backends::list_runtime_summary),
+        )
+        .route(
             "/backends/{id}",
             get(backends::get_backend).delete(backends::remove_backend),
         )

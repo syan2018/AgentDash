@@ -137,6 +137,7 @@ pub(crate) async fn build_session_context_plan(
         prompt_blocks: None,
         env: Default::default(),
         executor_config: session_meta.executor_config.clone(),
+        backend_selection: None,
     };
     let had_existing_runtime = state.services.connector.has_live_session(session_id).await;
     let requested_runtime_commands = state

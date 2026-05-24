@@ -32,11 +32,11 @@ pub use agentdash_domain::common::{
 
 pub use connector::{
     AgentConnector, AgentInfo, CapabilityState, CompanionDimension, ConnectorCapabilities,
-    ConnectorError, ConnectorType, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame,
-    ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
-    RestoredSessionState, SessionMcpServer, SkillDimension, ToolCapabilityFilter, ToolCluster,
-    ToolDimension, VfsDimension, content_block_to_text, partition_session_mcp_servers,
-    workspace_path_from_context,
+    ConnectorError, ConnectorType, DiscoveredGuideline, ExecutionBackendPlacement,
+    ExecutionContext, ExecutionSessionFrame, ExecutionStream, ExecutionTurnFrame, McpEnvVar,
+    McpHeader, McpTransportConfig, PromptPayload, RestoredSessionState, SessionMcpServer,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    content_block_to_text, partition_session_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use tokio::sync::mpsc;
 
+use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutionTerminalKind};
 use agentdash_spi::AgentConnector;
 use agentdash_spi::connector::{
     AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, ExecutionContext,
@@ -18,17 +19,24 @@ use agentdash_spi::connector::{
 
 use crate::backend_transport::{
     RelayExecutorConfig, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
-    RelayTerminalKind,
+    RelaySessionRoute, RelayTerminalKind,
 };
 use agentdash_domain::workspace::WorkspaceIdentityKind;
 
 pub struct RelayAgentConnector {
     transport: Arc<dyn RelayPromptTransport>,
+    lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
 }
 
 impl RelayAgentConnector {
-    pub fn new(transport: Arc<dyn RelayPromptTransport>) -> Self {
-        Self { transport }
+    pub fn new(
+        transport: Arc<dyn RelayPromptTransport>,
+        lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
+    ) -> Self {
+        Self {
+            transport,
+            lease_repo,
+        }
     }
 }
 
@@ -81,7 +89,6 @@ impl AgentConnector for RelayAgentConnector {
         prompt: &PromptPayload,
         context: ExecutionContext,
     ) -> Result<ExecutionStream, ConnectorError> {
-        let executor_id = &context.session.executor_config.executor;
         let default_mount = default_mount_from_context(&context)?;
         let mount_root_ref = default_mount.root_ref.trim();
         if mount_root_ref.is_empty() {
@@ -89,12 +96,13 @@ impl AgentConnector for RelayAgentConnector {
                 "vfs.default_mount.root_ref 为空".to_string(),
             ));
         }
-        let preferred_backend_id = preferred_backend_id_from_context(&context);
-        let backend_id = self
-            .transport
-            .resolve_backend(executor_id, preferred_backend_id.as_deref())
-            .await
-            .map_err(|e| ConnectorError::Runtime(format!("无法解析 relay 后端: {e}")))?;
+        let backend_execution = context.session.backend_execution.as_ref().ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "relay connector 缺少已解析的 backend execution placement".to_string(),
+            )
+        })?;
+        let backend_id = backend_execution.backend_id.clone();
+        let lease_id = backend_execution.lease_id;
 
         let prompt_blocks = match prompt {
             PromptPayload::Text(text) => Some(serde_json::json!([{"type": "text", "text": text}])),
@@ -144,43 +152,83 @@ impl AgentConnector for RelayAgentConnector {
 
         // 创建 notification channel 并注册到 transport sink map
         let (tx, rx) = mpsc::unbounded_channel::<RelaySessionEvent>();
-        self.transport.register_session_sink(session_id, tx);
+        self.transport.register_session_sink(RelaySessionRoute {
+            session_id: session_id.to_string(),
+            backend_id: backend_id.clone(),
+            lease_id,
+            tx,
+        });
         let sink_guard = RelaySessionSinkGuard {
             transport: self.transport.clone(),
             session_id: session_id.to_string(),
         };
 
         let _turn_id = match self.transport.relay_prompt(&backend_id, payload).await {
-            Ok(turn_id) => turn_id,
+            Ok(turn_id) => {
+                if let Err(error) = self.lease_repo.activate(lease_id, chrono::Utc::now()).await {
+                    drop(sink_guard);
+                    return Err(ConnectorError::Runtime(format!(
+                        "激活 backend execution lease 失败: {error}"
+                    )));
+                }
+                turn_id
+            }
             Err(e) => {
+                let _ = self
+                    .lease_repo
+                    .fail(lease_id, Some(e.to_string()), chrono::Utc::now())
+                    .await;
                 drop(sink_guard);
                 return Err(ConnectorError::Runtime(format!("relay prompt 失败: {e}")));
             }
         };
 
+        let lease_repo = self.lease_repo.clone();
         let stream: ExecutionStream = Box::pin(futures::stream::unfold(
-            (rx, Some(sink_guard), false),
-            |(mut rx, mut sink_guard, done)| async move {
+            (rx, Some(sink_guard), false, lease_repo, lease_id),
+            |(mut rx, mut sink_guard, done, lease_repo, lease_id)| async move {
                 if done {
                     return None;
                 }
                 match rx.recv().await {
                     Some(RelaySessionEvent::Notification(n)) => {
-                        Some((Ok(*n), (rx, sink_guard, false)))
+                        Some((Ok(*n), (rx, sink_guard, false, lease_repo, lease_id)))
                     }
                     Some(RelaySessionEvent::Terminal {
                         kind: RelayTerminalKind::Failed,
                         message,
                     }) => {
+                        let _ = lease_repo
+                            .release(
+                                lease_id,
+                                Some(BackendExecutionTerminalKind::Failed),
+                                message.clone(),
+                                chrono::Utc::now(),
+                            )
+                            .await;
                         sink_guard.take();
                         Some((
                             Err(ConnectorError::Runtime(
                                 message.unwrap_or_else(|| "远程执行失败".to_string()),
                             )),
-                            (rx, None, true),
+                            (rx, None, true, lease_repo, lease_id),
                         ))
                     }
-                    Some(RelaySessionEvent::Terminal { .. }) | None => {
+                    Some(RelaySessionEvent::Terminal { kind, message }) => {
+                        let terminal_kind = match kind {
+                            RelayTerminalKind::Completed => BackendExecutionTerminalKind::Completed,
+                            RelayTerminalKind::Interrupted => {
+                                BackendExecutionTerminalKind::Interrupted
+                            }
+                            RelayTerminalKind::Failed => unreachable!(),
+                        };
+                        let _ = lease_repo
+                            .release(lease_id, Some(terminal_kind), message, chrono::Utc::now())
+                            .await;
+                        sink_guard.take();
+                        None
+                    }
+                    None => {
                         sink_guard.take();
                         None
                     }
@@ -199,25 +247,24 @@ impl AgentConnector for RelayAgentConnector {
             )));
         }
 
-        // 需要 backend_id — 从 sink 关联查找或遍历在线后端。
-        // 向所有在线后端广播 cancel（relay cancel 是幂等的）。
-        let online_ids = self.transport.list_online_backend_ids().await;
-        let mut last_error = None;
-        for backend_id in &online_ids {
-            match self.transport.relay_cancel(backend_id, session_id).await {
-                Ok(()) => {
-                    self.transport.unregister_session_sink(session_id);
-                    return Ok(());
-                }
-                Err(e) => last_error = Some(e),
-            }
-        }
-        Err(ConnectorError::Runtime(format!(
-            "relay cancel 失败: {}",
-            last_error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "无在线后端".to_string())
-        )))
+        let route = self.transport.session_route(session_id).ok_or_else(|| {
+            ConnectorError::Runtime(format!("session `{session_id}` 缺少 relay backend route"))
+        })?;
+        self.transport
+            .relay_cancel(&route.backend_id, session_id)
+            .await
+            .map_err(|error| ConnectorError::Runtime(format!("relay cancel 失败: {error}")))?;
+        self.transport.unregister_session_sink(session_id);
+        let _ = self
+            .lease_repo
+            .release(
+                route.lease_id,
+                Some(BackendExecutionTerminalKind::Interrupted),
+                Some("cancelled".to_string()),
+                chrono::Utc::now(),
+            )
+            .await;
+        Ok(())
     }
 
     async fn approve_tool_call(
@@ -282,29 +329,6 @@ fn default_mount_from_context(
         .ok_or_else(|| ConnectorError::InvalidConfig("vfs 缺少 default_mount".to_string()))
 }
 
-fn preferred_backend_id_from_context(context: &ExecutionContext) -> Option<String> {
-    let vfs = context.session.vfs.as_ref()?;
-    if let Some(default_mount) = vfs.default_mount() {
-        let backend_id = default_mount.backend_id.trim();
-        if !backend_id.is_empty() {
-            return Some(backend_id.to_string());
-        }
-    }
-
-    let unique_backend_ids = vfs
-        .mounts
-        .iter()
-        .filter_map(|mount| {
-            let backend_id = mount.backend_id.trim();
-            (!backend_id.is_empty()).then_some(backend_id.to_string())
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-
-    (unique_backend_ids.len() == 1)
-        .then(|| unique_backend_ids.into_iter().next())
-        .flatten()
-}
-
 fn workspace_identity_kind_from_mount(
     mount: &agentdash_domain::common::Mount,
 ) -> Option<WorkspaceIdentityKind> {
@@ -328,17 +352,49 @@ fn workspace_identity_payload_from_mount(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::path::Path;
     use std::sync::Mutex as StdMutex;
 
+    use crate::backend_execution_placement::{
+        BackendSelectionRequest, resolve_backend_execution_placement,
+    };
     use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
-    use agentdash_spi::{AgentConfig, CapabilityState, PromptPayload};
+    use agentdash_domain::DomainError;
+    use agentdash_domain::backend::{BackendExecutionLease, BackendExecutionSelectionMode};
+    use agentdash_spi::{AgentConfig, CapabilityState, ExecutionBackendPlacement, PromptPayload};
     use futures::StreamExt;
     use tokio::sync::Mutex;
+    use uuid::Uuid;
 
     #[derive(Default)]
     struct CaptureTransport {
         payload: Mutex<Option<RelayPromptRequest>>,
-        sinks: StdMutex<HashMap<String, mpsc::UnboundedSender<RelaySessionEvent>>>,
+        sinks: StdMutex<HashMap<String, RelaySessionRoute>>,
+        executors: StdMutex<Vec<crate::backend_transport::RemoteExecutorInfo>>,
+        prompt_error: StdMutex<Option<crate::backend_transport::TransportError>>,
+        cancelled: StdMutex<Vec<(String, String)>>,
+    }
+
+    #[derive(Default)]
+    struct MemoryLeaseRepository {
+        active_counts: StdMutex<HashMap<String, i64>>,
+        claims: StdMutex<Vec<BackendExecutionLease>>,
+        activations: StdMutex<Vec<Uuid>>,
+        releases: StdMutex<Vec<RecordedRelease>>,
+        failures: StdMutex<Vec<RecordedFailure>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedRelease {
+        lease_id: Uuid,
+        terminal_kind: Option<BackendExecutionTerminalKind>,
+        reason: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedFailure {
+        lease_id: Uuid,
+        reason: Option<String>,
     }
 
     #[async_trait]
@@ -381,7 +437,10 @@ mod tests {
         ) -> Result<String, crate::backend_transport::TransportError> {
             let session_id = payload.session_id.clone();
             *self.payload.lock().await = Some(payload);
-            if let Some(tx) = self.sinks.lock().unwrap().get(&session_id) {
+            if let Some(error) = self.prompt_error.lock().unwrap().take() {
+                return Err(error);
+            }
+            if let Some(route) = self.sinks.lock().unwrap().get(&session_id) {
                 let envelope = BackboneEnvelope::new(
                     BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                         key: "relay_test".to_string(),
@@ -394,21 +453,27 @@ mod tests {
                         executor_id: None,
                     },
                 );
-                let _ = tx.send(RelaySessionEvent::Notification(Box::new(envelope)));
+                let _ = route
+                    .tx
+                    .send(RelaySessionEvent::Notification(Box::new(envelope)));
             }
             Ok("turn-1".to_string())
         }
 
         async fn relay_cancel(
             &self,
-            _backend_id: &str,
-            _session_id: &str,
+            backend_id: &str,
+            session_id: &str,
         ) -> Result<(), crate::backend_transport::TransportError> {
+            self.cancelled
+                .lock()
+                .unwrap()
+                .push((backend_id.to_string(), session_id.to_string()));
             Ok(())
         }
 
         fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
-            Vec::new()
+            self.executors.lock().unwrap().clone()
         }
 
         async fn resolve_backend(
@@ -419,15 +484,11 @@ mod tests {
             Ok("backend-1".to_string())
         }
 
-        fn register_session_sink(
-            &self,
-            session_id: &str,
-            tx: mpsc::UnboundedSender<RelaySessionEvent>,
-        ) {
+        fn register_session_sink(&self, route: RelaySessionRoute) {
             self.sinks
                 .lock()
                 .unwrap()
-                .insert(session_id.to_string(), tx);
+                .insert(route.session_id.clone(), route);
         }
 
         fn unregister_session_sink(&self, session_id: &str) {
@@ -437,12 +498,143 @@ mod tests {
         fn has_session_sink(&self, session_id: &str) -> bool {
             self.sinks.lock().unwrap().contains_key(session_id)
         }
+
+        fn session_route(
+            &self,
+            session_id: &str,
+        ) -> Option<crate::backend_transport::RelaySessionRouteInfo> {
+            self.sinks.lock().unwrap().get(session_id).map(|route| {
+                crate::backend_transport::RelaySessionRouteInfo {
+                    session_id: route.session_id.clone(),
+                    backend_id: route.backend_id.clone(),
+                    lease_id: route.lease_id,
+                }
+            })
+        }
+    }
+
+    #[async_trait]
+    impl BackendExecutionLeaseRepository for MemoryLeaseRepository {
+        async fn claim(&self, lease: &BackendExecutionLease) -> Result<(), DomainError> {
+            self.claims.lock().unwrap().push(lease.clone());
+            Ok(())
+        }
+
+        async fn activate(
+            &self,
+            lease_id: Uuid,
+            _activated_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), DomainError> {
+            self.activations.lock().unwrap().push(lease_id);
+            Ok(())
+        }
+
+        async fn release(
+            &self,
+            lease_id: Uuid,
+            terminal_kind: Option<BackendExecutionTerminalKind>,
+            reason: Option<String>,
+            _released_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), DomainError> {
+            self.releases.lock().unwrap().push(RecordedRelease {
+                lease_id,
+                terminal_kind,
+                reason,
+            });
+            Ok(())
+        }
+
+        async fn fail(
+            &self,
+            lease_id: Uuid,
+            reason: Option<String>,
+            _failed_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), DomainError> {
+            self.failures
+                .lock()
+                .unwrap()
+                .push(RecordedFailure { lease_id, reason });
+            Ok(())
+        }
+
+        async fn mark_lost_by_backend(
+            &self,
+            _backend_id: &str,
+            _reason: Option<String>,
+            _lost_at: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u64, DomainError> {
+            Ok(0)
+        }
+
+        async fn get_by_id(
+            &self,
+            _lease_id: Uuid,
+        ) -> Result<Option<BackendExecutionLease>, DomainError> {
+            Ok(None)
+        }
+
+        async fn list_active(&self) -> Result<Vec<BackendExecutionLease>, DomainError> {
+            Ok(Vec::new())
+        }
+
+        async fn count_active_by_backend(
+            &self,
+            backend_ids: &[String],
+        ) -> Result<HashMap<String, i64>, DomainError> {
+            let counts = self.active_counts.lock().unwrap();
+            Ok(backend_ids
+                .iter()
+                .map(|id| (id.clone(), counts.get(id).copied().unwrap_or_default()))
+                .collect())
+        }
+    }
+
+    fn memory_lease_repo() -> Arc<dyn BackendExecutionLeaseRepository> {
+        Arc::new(MemoryLeaseRepository::default())
+    }
+
+    fn register_executor(transport: &CaptureTransport, backend_id: &str, executor_id: &str) {
+        transport
+            .executors
+            .lock()
+            .unwrap()
+            .push(crate::backend_transport::RemoteExecutorInfo {
+                backend_id: backend_id.to_string(),
+                executor_id: executor_id.to_string(),
+                executor_name: executor_id.to_string(),
+                variants: Vec::new(),
+                available: true,
+            });
+    }
+
+    fn relay_context(root: &Path, turn_id: &str) -> ExecutionContext {
+        ExecutionContext {
+            session: agentdash_spi::ExecutionSessionFrame {
+                turn_id: turn_id.to_string(),
+                working_directory: root.to_path_buf(),
+                environment_variables: HashMap::new(),
+                executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
+                mcp_servers: Vec::new(),
+                vfs: Some(crate::session::local_workspace_vfs(root)),
+                backend_execution: Some(ExecutionBackendPlacement {
+                    backend_id: "local".to_string(),
+                    lease_id: Uuid::new_v4(),
+                    selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
+                }),
+                identity: None,
+            },
+            turn: agentdash_spi::ExecutionTurnFrame {
+                capability_state: CapabilityState::default(),
+                ..Default::default()
+            },
+        }
     }
 
     #[tokio::test]
     async fn relay_prompt_payload_passes_full_mcp_and_projects_working_dir() {
         let transport = Arc::new(CaptureTransport::default());
-        let connector = RelayAgentConnector::new(transport.clone());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
         let root = tempfile::tempdir().expect("workspace");
         let mcp_server = agentdash_spi::SessionMcpServer {
             name: "third_party_mcp".to_string(),
@@ -461,6 +653,11 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: vec![mcp_server],
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                backend_execution: Some(ExecutionBackendPlacement {
+                    backend_id: "local".to_string(),
+                    lease_id: Uuid::new_v4(),
+                    selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
+                }),
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -498,7 +695,8 @@ mod tests {
     #[tokio::test]
     async fn relay_prompt_registers_sink_before_remote_prompt_can_emit_notification() {
         let transport = Arc::new(CaptureTransport::default());
-        let connector = RelayAgentConnector::new(transport.clone());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let connector = RelayAgentConnector::new(transport.clone(), memory_lease_repo());
         let root = tempfile::tempdir().expect("workspace");
         let context = ExecutionContext {
             session: agentdash_spi::ExecutionSessionFrame {
@@ -508,6 +706,11 @@ mod tests {
                 executor_config: AgentConfig::new("REMOTE_EXECUTOR"),
                 mcp_servers: Vec::new(),
                 vfs: Some(crate::session::local_workspace_vfs(root.path())),
+                backend_execution: Some(ExecutionBackendPlacement {
+                    backend_id: "local".to_string(),
+                    lease_id: Uuid::new_v4(),
+                    selection_mode: BackendExecutionSelectionMode::WorkspaceBinding,
+                }),
                 identity: None,
             },
             turn: agentdash_spi::ExecutionTurnFrame {
@@ -536,5 +739,231 @@ mod tests {
         assert!(transport.has_session_sink("session-early-event"));
         drop(stream);
         assert!(!transport.has_session_sink("session-early-event"));
+    }
+
+    #[tokio::test]
+    async fn auto_idle_backend_selection_prefers_fewer_active_leases() {
+        let transport = CaptureTransport::default();
+        *transport.executors.lock().unwrap() = vec![
+            crate::backend_transport::RemoteExecutorInfo {
+                backend_id: "backend-busy".to_string(),
+                executor_id: "CODEX".to_string(),
+                executor_name: "Codex".to_string(),
+                variants: Vec::new(),
+                available: true,
+            },
+            crate::backend_transport::RemoteExecutorInfo {
+                backend_id: "backend-idle".to_string(),
+                executor_id: "CODEX".to_string(),
+                executor_name: "Codex".to_string(),
+                variants: Vec::new(),
+                available: true,
+            },
+        ];
+        let lease_repo = MemoryLeaseRepository::default();
+        lease_repo
+            .active_counts
+            .lock()
+            .unwrap()
+            .insert("backend-busy".to_string(), 2);
+
+        let plan = resolve_backend_execution_placement(
+            &transport,
+            &lease_repo,
+            &BackendSelectionRequest::auto_idle("CODEX", Some("test".to_string())),
+        )
+        .await
+        .expect("auto idle selection");
+
+        assert_eq!(plan.backend_id, "backend-idle");
+        assert_eq!(plan.selection_mode, BackendExecutionSelectionMode::AutoIdle);
+    }
+
+    #[tokio::test]
+    async fn relay_prompt_failure_marks_lease_failed_and_unregisters_route() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        *transport.prompt_error.lock().unwrap() = Some(
+            crate::backend_transport::TransportError::OperationFailed("boom".to_string()),
+        );
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+        let context = relay_context(root.path(), "turn-failed-prompt");
+        let lease_id = context.session.backend_execution.as_ref().unwrap().lease_id;
+
+        let error = match connector
+            .prompt(
+                "session-failed-prompt",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                context,
+            )
+            .await
+        {
+            Ok(_) => panic!("relay prompt should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("relay prompt 失败"));
+        let failures = lease_repo.failures.lock().unwrap();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].lease_id, lease_id);
+        assert!(
+            failures[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| { reason.contains("boom") })
+        );
+        assert!(!transport.has_session_sink("session-failed-prompt"));
+    }
+
+    #[tokio::test]
+    async fn terminal_completed_releases_lease_and_unregisters_route() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+
+        let mut stream = connector
+            .prompt(
+                "session-completed",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                relay_context(root.path(), "turn-completed"),
+            )
+            .await
+            .expect("relay prompt should succeed");
+        stream
+            .next()
+            .await
+            .expect("initial notification")
+            .expect("notification should be successful");
+        let route = transport
+            .sinks
+            .lock()
+            .unwrap()
+            .get("session-completed")
+            .expect("route should be registered")
+            .tx
+            .clone();
+        route
+            .send(RelaySessionEvent::Terminal {
+                kind: RelayTerminalKind::Completed,
+                message: Some("done".to_string()),
+            })
+            .expect("terminal should be delivered");
+
+        assert!(stream.next().await.is_none());
+        let releases = lease_repo.releases.lock().unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(
+            releases[0].terminal_kind,
+            Some(BackendExecutionTerminalKind::Completed)
+        );
+        assert_eq!(releases[0].reason.as_deref(), Some("done"));
+        assert!(!transport.has_session_sink("session-completed"));
+    }
+
+    #[tokio::test]
+    async fn terminal_failed_releases_lease_with_failed_kind() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "local", "REMOTE_EXECUTOR");
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+
+        let mut stream = connector
+            .prompt(
+                "session-terminal-failed",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                relay_context(root.path(), "turn-terminal-failed"),
+            )
+            .await
+            .expect("relay prompt should succeed");
+        stream
+            .next()
+            .await
+            .expect("initial notification")
+            .expect("notification should be successful");
+        let route = transport
+            .sinks
+            .lock()
+            .unwrap()
+            .get("session-terminal-failed")
+            .expect("route should be registered")
+            .tx
+            .clone();
+        route
+            .send(RelaySessionEvent::Terminal {
+                kind: RelayTerminalKind::Failed,
+                message: Some("remote failed".to_string()),
+            })
+            .expect("terminal should be delivered");
+
+        let error = stream
+            .next()
+            .await
+            .expect("failed terminal should emit an error")
+            .expect_err("terminal failed should surface as connector error");
+        assert!(error.to_string().contains("remote failed"));
+        let releases = lease_repo.releases.lock().unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(
+            releases[0].terminal_kind,
+            Some(BackendExecutionTerminalKind::Failed)
+        );
+        assert_eq!(releases[0].reason.as_deref(), Some("remote failed"));
+        assert!(!transport.has_session_sink("session-terminal-failed"));
+    }
+
+    #[tokio::test]
+    async fn cancel_uses_session_route_backend_and_releases_interrupted() {
+        let transport = Arc::new(CaptureTransport::default());
+        register_executor(&transport, "backend-route", "REMOTE_EXECUTOR");
+        let lease_repo = Arc::new(MemoryLeaseRepository::default());
+        let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());
+        let root = tempfile::tempdir().expect("workspace");
+        let mut context = relay_context(root.path(), "turn-cancel");
+        context.session.vfs.as_mut().unwrap().mounts[0].backend_id = "backend-route".to_string();
+        context
+            .session
+            .backend_execution
+            .as_mut()
+            .unwrap()
+            .backend_id = "backend-route".to_string();
+        let lease_id = context.session.backend_execution.as_ref().unwrap().lease_id;
+
+        let stream = connector
+            .prompt(
+                "session-cancel",
+                None,
+                &PromptPayload::Text("hello".to_string()),
+                context,
+            )
+            .await
+            .expect("relay prompt should succeed");
+
+        connector
+            .cancel("session-cancel")
+            .await
+            .expect("relay cancel should succeed");
+
+        assert_eq!(
+            transport.cancelled.lock().unwrap().as_slice(),
+            &[("backend-route".to_string(), "session-cancel".to_string())]
+        );
+        let releases = lease_repo.releases.lock().unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].lease_id, lease_id);
+        assert_eq!(
+            releases[0].terminal_kind,
+            Some(BackendExecutionTerminalKind::Interrupted)
+        );
+        assert_eq!(releases[0].reason.as_deref(), Some("cancelled"));
+        assert!(!transport.has_session_sink("session-cancel"));
+        drop(stream);
     }
 }

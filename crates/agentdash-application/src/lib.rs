@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod backend;
+pub mod backend_execution_placement;
 pub mod backend_transport;
 pub mod canvas;
 pub mod capability;

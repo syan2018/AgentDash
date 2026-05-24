@@ -2628,6 +2628,7 @@ mod tests {
                 prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
                 env,
                 executor_config: None,
+                backend_selection: None,
             };
             let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
             assert!(

@@ -4,6 +4,7 @@ use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_domain::workspace::WorkspaceIdentityKind;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 /// Application 层端口：后端在线探测 + workspace 检测
 ///
@@ -81,13 +82,16 @@ pub trait RelayPromptTransport: BackendTransport {
 
     /// 注册 per-session 通知接收端。
     /// WebSocket handler 收到 relay notification 时，通过此 channel 投递到 connector stream。
-    fn register_session_sink(&self, session_id: &str, tx: mpsc::UnboundedSender<RelaySessionEvent>);
+    fn register_session_sink(&self, route: RelaySessionRoute);
 
     /// 注销 per-session 通知接收端。
     fn unregister_session_sink(&self, session_id: &str);
 
     /// 检查指定 session 是否有已注册的通知接收端。
     fn has_session_sink(&self, session_id: &str) -> bool;
+
+    /// 查询 relay session 当前归属的 backend / lease。
+    fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo>;
 }
 
 /// relay prompt 命令 payload — application 层抽象，不依赖 relay 协议。
@@ -138,6 +142,20 @@ pub enum RelaySessionEvent {
         kind: RelayTerminalKind,
         message: Option<String>,
     },
+}
+
+pub struct RelaySessionRoute {
+    pub session_id: String,
+    pub backend_id: String,
+    pub lease_id: Uuid,
+    pub tx: mpsc::UnboundedSender<RelaySessionEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaySessionRouteInfo {
+    pub session_id: String,
+    pub backend_id: String,
+    pub lease_id: Uuid,
 }
 
 /// relay session 终态类型。

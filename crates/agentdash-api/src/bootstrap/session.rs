@@ -88,7 +88,10 @@ pub(crate) async fn build_session_runtime(
     let relay_transport: Arc<dyn agentdash_application::backend_transport::RelayPromptTransport> =
         backend_registry.clone();
     sub_connectors.push(Arc::new(
-        agentdash_application::relay_connector::RelayAgentConnector::new(relay_transport),
+        agentdash_application::relay_connector::RelayAgentConnector::new(
+            relay_transport.clone(),
+            repos.backend_execution_lease_repo.clone(),
+        ),
     ));
 
     sub_connectors.extend(plugin_connectors);
@@ -114,7 +117,8 @@ pub(crate) async fn build_session_runtime(
     .with_vfs_service(vfs_service.clone())
     .with_extra_skill_dirs(extra_skill_dirs.clone())
     .with_runtime_tool_provider(runtime_tool_provider)
-    .with_mcp_relay_provider(mcp_relay_provider);
+    .with_mcp_relay_provider(mcp_relay_provider)
+    .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone());
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);

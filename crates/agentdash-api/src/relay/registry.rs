@@ -6,6 +6,7 @@ use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
 use agentdash_application::backend_transport::RemoteExecutorInfo;
+use agentdash_application::backend_transport::{RelaySessionRoute, RelaySessionRouteInfo};
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
@@ -56,12 +57,7 @@ pub struct BackendRegistry {
     /// 等待本机响应的挂起请求（msg_id → pending request）
     pending: RwLock<HashMap<String, PendingRequest>>,
     /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
-    session_sinks: std::sync::RwLock<
-        HashMap<
-            String,
-            mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
-        >,
-    >,
+    session_sinks: std::sync::RwLock<HashMap<String, RelaySessionRoute>>,
 }
 
 struct PendingRequest {
@@ -88,7 +84,7 @@ impl BackendRegistry {
     ) -> bool {
         let sinks = self.session_sinks.read().unwrap();
         if let Some(tx) = sinks.get(session_id) {
-            tx.send(event).is_ok()
+            tx.tx.send(event).is_ok()
         } else {
             false
         }
@@ -119,6 +115,10 @@ impl BackendRegistry {
             .write()
             .await
             .retain(|_, pending| pending.backend_id != backend_id);
+        self.session_sinks
+            .write()
+            .unwrap()
+            .retain(|_, route| route.backend_id != backend_id);
         tracing::info!(backend_id = %backend_id, "本机后端已断开");
     }
 
@@ -172,15 +172,11 @@ impl BackendRegistry {
     }
 
     /// 注册 per-session 通知接收端。
-    pub fn register_session_sink(
-        &self,
-        session_id: &str,
-        tx: mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
-    ) {
+    pub fn register_session_sink(&self, route: RelaySessionRoute) {
         self.session_sinks
             .write()
             .unwrap()
-            .insert(session_id.to_string(), tx);
+            .insert(route.session_id.clone(), route);
     }
 
     /// 注销 per-session 通知接收端。
@@ -191,6 +187,18 @@ impl BackendRegistry {
     /// 检查指定 session 是否有已注册的通知接收端。
     pub fn has_session_sink(&self, session_id: &str) -> bool {
         self.session_sinks.read().unwrap().contains_key(session_id)
+    }
+
+    pub fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo> {
+        self.session_sinks
+            .read()
+            .unwrap()
+            .get(session_id)
+            .map(|route| RelaySessionRouteInfo {
+                session_id: route.session_id.clone(),
+                backend_id: route.backend_id.clone(),
+                lease_id: route.lease_id,
+            })
     }
 
     // ── MCP Relay 支持 ──
@@ -526,6 +534,39 @@ mod tests {
             BackendCommandError::ResponseDropped {
                 backend_id: "local-a".to_string()
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn unregister_drops_session_routes_for_that_backend_only() {
+        let registry = BackendRegistry::new();
+        let (tx_a, _rx_a) = mpsc::unbounded_channel();
+        let (tx_b, _rx_b) = mpsc::unbounded_channel();
+        let lease_a = uuid::Uuid::new_v4();
+        let lease_b = uuid::Uuid::new_v4();
+        registry.register_session_sink(RelaySessionRoute {
+            session_id: "session-a".to_string(),
+            backend_id: "local-a".to_string(),
+            lease_id: lease_a,
+            tx: tx_a,
+        });
+        registry.register_session_sink(RelaySessionRoute {
+            session_id: "session-b".to_string(),
+            backend_id: "local-b".to_string(),
+            lease_id: lease_b,
+            tx: tx_b,
+        });
+
+        registry.unregister("local-a").await;
+
+        assert!(registry.session_route("session-a").is_none());
+        assert_eq!(
+            registry.session_route("session-b"),
+            Some(RelaySessionRouteInfo {
+                session_id: "session-b".to_string(),
+                backend_id: "local-b".to_string(),
+                lease_id: lease_b,
+            })
         );
     }
 }

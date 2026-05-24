@@ -4,6 +4,7 @@ use sqlx::PgPool;
 const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "activity_execution_claims",
     "auth_sessions",
+    "backend_execution_leases",
     "backend_workspace_inventory",
     "backends",
     "canvas_bindings",

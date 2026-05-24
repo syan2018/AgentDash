@@ -26,6 +26,24 @@ pub struct UserPromptInput {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub executor_config: Option<agentdash_spi::AgentConfig>,
+    #[serde(default)]
+    pub backend_selection: Option<BackendSelectionInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendSelectionInput {
+    pub mode: BackendSelectionInputMode,
+    #[serde(default)]
+    pub backend_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendSelectionInputMode {
+    Explicit,
+    AutoIdle,
+    WorkspaceBinding,
 }
 
 pub const CAPABILITY_DIMENSION_TOOL: &str = "tool";
@@ -158,6 +176,7 @@ impl UserPromptInput {
             })]),
             env: HashMap::new(),
             executor_config: None,
+            backend_selection: None,
         }
     }
 }

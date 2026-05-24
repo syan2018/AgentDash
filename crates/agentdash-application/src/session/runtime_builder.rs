@@ -59,6 +59,17 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_backend_execution_placement(
+        mut self,
+        transport: Arc<dyn crate::backend_transport::RelayPromptTransport>,
+        lease_repo: Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .with_backend_execution_placement(transport, lease_repo);
+        self
+    }
+
     pub fn with_system_prompt_config(
         mut self,
         base_system_prompt: String,

@@ -230,6 +230,28 @@ async fn handle_backend_connection(
     }
 
     state.services.backend_registry.unregister(&bid).await;
+    match state
+        .repos
+        .backend_execution_lease_repo
+        .mark_lost_by_backend(
+            &bid,
+            Some("relay websocket disconnected".to_string()),
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(count) if count > 0 => {
+            tracing::warn!(
+                backend_id = %bid,
+                count,
+                "后端断连，已标记 active backend execution lease 为 lost"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(backend_id = %bid, error = %error, "标记 backend execution lease lost 失败");
+        }
+    }
     if let Err(error) = state
         .repos
         .runtime_health_repo

@@ -194,6 +194,123 @@ pub struct RuntimeHealthOnlineUpdate {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum BackendExecutionSelectionMode {
+    Explicit,
+    AutoIdle,
+    WorkspaceBinding,
+}
+
+impl BackendExecutionSelectionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::AutoIdle => "auto_idle",
+            Self::WorkspaceBinding => "workspace_binding",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendExecutionLeaseState {
+    Claimed,
+    Running,
+    Released,
+    Lost,
+    Failed,
+}
+
+impl BackendExecutionLeaseState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Claimed => "claimed",
+            Self::Running => "running",
+            Self::Released => "released",
+            Self::Lost => "lost",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Claimed | Self::Running)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendExecutionTerminalKind {
+    Completed,
+    Failed,
+    Interrupted,
+}
+
+impl BackendExecutionTerminalKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackendExecutionLease {
+    pub id: Uuid,
+    pub backend_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub executor_id: String,
+    pub workspace_id: Option<Uuid>,
+    pub root_ref: Option<String>,
+    pub selection_mode: BackendExecutionSelectionMode,
+    pub state: BackendExecutionLeaseState,
+    pub claim_reason: Option<String>,
+    pub terminal_kind: Option<BackendExecutionTerminalKind>,
+    pub release_reason: Option<String>,
+    pub claimed_at: chrono::DateTime<chrono::Utc>,
+    pub activated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub released_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_seen_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl BackendExecutionLease {
+    pub fn claimed(
+        backend_id: String,
+        session_id: String,
+        turn_id: String,
+        executor_id: String,
+        selection_mode: BackendExecutionSelectionMode,
+        claim_reason: Option<String>,
+    ) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            backend_id,
+            session_id,
+            turn_id,
+            executor_id,
+            workspace_id: None,
+            root_ref: None,
+            selection_mode,
+            state: BackendExecutionLeaseState::Claimed,
+            claim_reason,
+            terminal_kind: None,
+            release_reason: None,
+            claimed_at: now,
+            activated_at: None,
+            released_at: None,
+            last_seen_at: now,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectBackendAccessStatus {
     Active,
     Paused,

@@ -1,3 +1,4 @@
+use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::launch::{
@@ -137,6 +138,7 @@ impl SessionLaunchOrchestrator {
             prompt_blocks: construction.prompt.prompt_blocks.clone(),
             env: construction.prompt.environment_variables.clone(),
             executor_config: construction.execution_profile.executor_config.clone(),
+            backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
         let turn_id = format!("t{}", chrono::Utc::now().timestamp_millis());
@@ -278,17 +280,42 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let prepared = TurnPreparer::new(deps.preparation())
+        let backend_execution = launch_plan.backend_execution.clone();
+        let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {
                 launch_plan,
                 session_id: sid.clone(),
                 turn_id: turn_id.clone(),
                 had_existing_runtime,
             })
-            .await?;
-        let accepted = ConnectorStarter::new(deps.connector_start())
+            .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                fail_claimed_backend_execution(
+                    deps,
+                    backend_execution.as_ref(),
+                    format!("turn preparation failed: {error}"),
+                )
+                .await;
+                return Err(error);
+            }
+        };
+        let accepted = match ConnectorStarter::new(deps.connector_start())
             .start(prepared)
-            .await?;
+            .await
+        {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                fail_claimed_backend_execution(
+                    deps,
+                    backend_execution.as_ref(),
+                    format!("connector start failed: {error}"),
+                )
+                .await;
+                return Err(error);
+            }
+        };
         let committed = TurnCommitter::new(deps.commit())
             .commit(accepted, &mut session_meta, now)
             .await?;
@@ -297,6 +324,26 @@ impl SessionLaunchOrchestrator {
             .await;
 
         Ok(attached.turn_id)
+    }
+}
+
+async fn fail_claimed_backend_execution(
+    deps: &SessionLaunchDeps,
+    placement: Option<&ExecutionPlacementPlan>,
+    reason: String,
+) {
+    let Some(lease_id) = placement.and_then(|placement| placement.lease_id) else {
+        return;
+    };
+    let Some(repo) = deps.backend_execution_lease_repo.as_ref() else {
+        return;
+    };
+    if let Err(error) = repo.fail(lease_id, Some(reason), chrono::Utc::now()).await {
+        tracing::warn!(
+            lease_id = %lease_id,
+            error = %error,
+            "标记 backend execution lease failed 失败"
+        );
     }
 }
 

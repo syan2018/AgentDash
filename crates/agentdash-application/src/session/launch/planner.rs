@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
-use agentdash_spi::{ConnectorError, RestoredSessionState};
+use agentdash_domain::backend::BackendExecutionLease;
+use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
 
 use super::deps::LaunchPlanningDeps;
 use super::{LaunchCommand, LaunchFollowUpSource, LaunchPlan, LaunchPlanInput, LaunchRestoreMode};
+use crate::backend_execution_placement::{
+    BackendSelectionIntent, BackendSelectionRequest, ExecutionPlacementPlan,
+    has_available_relay_executor, resolve_backend_execution_placement,
+};
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::hook_delegate::{
     DynRuntimeHookInjectionSink, HookRuntimeDelegate, SessionRuntimeHookInjectionSink,
@@ -11,8 +16,8 @@ use crate::session::hook_delegate::{
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
-    HookSnapshotReloadTrigger, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
-    resolve_session_prompt_lifecycle,
+    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, SessionMeta,
+    SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
 };
 
 pub(in crate::session) struct LaunchPlanner<'a> {
@@ -211,6 +216,16 @@ impl<'a> LaunchPlanner<'a> {
         let post_turn_handler = self
             .resolve_terminal_hook_effect_handler(input.session_id, terminal_hook_effect_binding)
             .await?;
+        let backend_execution = self
+            .resolve_backend_execution_placement(
+                input.session_id,
+                input.turn_id,
+                &prompt_input,
+                &construction,
+                &executor_config.executor,
+                command.reason_tag(),
+            )
+            .await?;
         let launch_plan = LaunchPlan::build(LaunchPlanInput {
             resolved_payload,
             construction,
@@ -231,9 +246,83 @@ impl<'a> LaunchPlanner<'a> {
             runtime_delegate,
             restored_session_state,
             post_turn_handler,
+            backend_execution,
         });
 
         Ok(launch_plan)
+    }
+
+    async fn resolve_backend_execution_placement(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        prompt_input: &crate::session::types::UserPromptInput,
+        construction: &SessionConstructionPlan,
+        executor_id: &str,
+        reason_tag: &str,
+    ) -> Result<Option<ExecutionPlacementPlan>, ConnectorError> {
+        let Some(transport) = self.deps.backend_execution_transport.as_ref() else {
+            if prompt_input.backend_selection.is_some() {
+                return Err(ConnectorError::InvalidConfig(
+                    "backend selection 已指定，但 session runtime 未注入 backend execution placement transport"
+                        .to_string(),
+                ));
+            }
+            return Ok(None);
+        };
+        let Some(lease_repo) = self.deps.backend_execution_lease_repo.as_ref() else {
+            if prompt_input.backend_selection.is_some() {
+                return Err(ConnectorError::InvalidConfig(
+                    "backend selection 已指定，但 session runtime 未注入 backend execution lease repository"
+                        .to_string(),
+                ));
+            }
+            return Ok(None);
+        };
+
+        let request = match prompt_input.backend_selection.as_ref() {
+            Some(selection) => Some(selection_request_from_input(
+                executor_id,
+                selection,
+                reason_tag,
+            )?),
+            None if has_available_relay_executor(transport.as_ref(), executor_id) => {
+                Some(selection_request_from_vfs_hint(
+                    executor_id,
+                    construction.surface.vfs.as_ref(),
+                    reason_tag,
+                ))
+            }
+            None => None,
+        };
+        let Some(request) = request else {
+            return Ok(None);
+        };
+
+        let mut placement =
+            resolve_backend_execution_placement(transport.as_ref(), lease_repo.as_ref(), &request)
+                .await?;
+        let mut lease = BackendExecutionLease::claimed(
+            placement.backend_id.clone(),
+            session_id.to_string(),
+            turn_id.to_string(),
+            placement.executor_id.clone(),
+            placement.selection_mode,
+            placement.claim_reason.clone(),
+        );
+        lease.workspace_id = construction.workspace.workspace_id;
+        lease.root_ref = construction
+            .surface
+            .vfs
+            .as_ref()
+            .and_then(|vfs| vfs.default_mount())
+            .map(|mount| mount.root_ref.clone());
+        let lease_id = lease.id;
+        lease_repo.claim(&lease).await.map_err(|error| {
+            ConnectorError::Runtime(format!("创建 backend execution lease 失败: {error}"))
+        })?;
+        placement = placement.with_lease_id(lease_id);
+        Ok(Some(placement))
     }
 
     async fn resolve_terminal_hook_effect_handler(
@@ -260,4 +349,88 @@ impl<'a> LaunchPlanner<'a> {
                 ConnectorError::Runtime(format!("解析 terminal hook effect handler 失败: {error}"))
             })
     }
+}
+
+fn selection_request_from_input(
+    executor_id: &str,
+    selection: &BackendSelectionInput,
+    reason_tag: &str,
+) -> Result<BackendSelectionRequest, ConnectorError> {
+    let reason = Some(format!("session launch: {reason_tag}"));
+    match selection.mode {
+        BackendSelectionInputMode::Explicit => {
+            let backend_id = required_backend_id(selection, "explicit")?;
+            Ok(BackendSelectionRequest::explicit(
+                executor_id,
+                backend_id,
+                reason,
+            ))
+        }
+        BackendSelectionInputMode::AutoIdle => {
+            Ok(BackendSelectionRequest::auto_idle(executor_id, reason))
+        }
+        BackendSelectionInputMode::WorkspaceBinding => {
+            let backend_id = required_backend_id(selection, "workspace_binding")?;
+            Ok(BackendSelectionRequest::workspace_binding(
+                executor_id,
+                backend_id,
+                reason,
+            ))
+        }
+    }
+}
+
+fn selection_request_from_vfs_hint(
+    executor_id: &str,
+    vfs: Option<&Vfs>,
+    reason_tag: &str,
+) -> BackendSelectionRequest {
+    let reason = Some(format!("session launch: {reason_tag}"));
+    preferred_backend_id_from_vfs(vfs)
+        .map(|backend_id| BackendSelectionRequest {
+            executor_id: executor_id.to_string(),
+            intent: BackendSelectionIntent::WorkspaceBinding { backend_id },
+            reason: reason.clone(),
+        })
+        .unwrap_or_else(|| BackendSelectionRequest::auto_idle(executor_id, reason))
+}
+
+fn required_backend_id(
+    selection: &BackendSelectionInput,
+    mode: &str,
+) -> Result<String, ConnectorError> {
+    selection
+        .backend_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|backend_id| !backend_id.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "backend_selection.mode={mode} 时必须提供 backend_id"
+            ))
+        })
+}
+
+fn preferred_backend_id_from_vfs(vfs: Option<&Vfs>) -> Option<String> {
+    let vfs = vfs?;
+    if let Some(default_mount) = vfs.default_mount() {
+        let backend_id = default_mount.backend_id.trim();
+        if !backend_id.is_empty() {
+            return Some(backend_id.to_string());
+        }
+    }
+
+    let unique_backend_ids = vfs
+        .mounts
+        .iter()
+        .filter_map(|mount| {
+            let backend_id = mount.backend_id.trim();
+            (!backend_id.is_empty()).then_some(backend_id.to_string())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    (unique_backend_ids.len() == 1)
+        .then(|| unique_backend_ids.into_iter().next())
+        .flatten()
 }

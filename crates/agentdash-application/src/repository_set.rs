@@ -3,8 +3,8 @@ use std::sync::Arc;
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::auth_session::AuthSessionRepository;
 use agentdash_domain::backend::{
-    BackendRepository, BackendWorkspaceInventoryRepository, ProjectBackendAccessRepository,
-    RuntimeHealthRepository,
+    BackendExecutionLeaseRepository, BackendRepository, BackendWorkspaceInventoryRepository,
+    ProjectBackendAccessRepository, RuntimeHealthRepository,
 };
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
@@ -45,6 +45,7 @@ pub struct RepositorySet {
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub runtime_health_repo: Arc<dyn RuntimeHealthRepository>,
+    pub backend_execution_lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
     pub project_backend_access_repo: Arc<dyn ProjectBackendAccessRepository>,
     pub backend_workspace_inventory_repo: Arc<dyn BackendWorkspaceInventoryRepository>,
     pub auth_session_repo: Arc<dyn AuthSessionRepository>,

@@ -8,15 +8,16 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
 use agentdash_infrastructure::{
-    PostgresAuthSessionRepository, PostgresBackendRepository, PostgresCanvasRepository,
-    PostgresInlineFileRepository, PostgresLlmProviderRepository, PostgresMcpPresetRepository,
-    PostgresProjectAgentRepository, PostgresProjectBackendAccessRepository,
-    PostgresProjectExtensionInstallationRepository, PostgresProjectRepository,
-    PostgresProjectVfsMountRepository, PostgresRoutineExecutionRepository,
-    PostgresRoutineRepository, PostgresRuntimeHealthRepository, PostgresSessionBindingRepository,
-    PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
-    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
-    PostgresUserDirectoryRepository, PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
+    PostgresBackendRepository, PostgresCanvasRepository, PostgresInlineFileRepository,
+    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
+    PostgresProjectRepository, PostgresProjectVfsMountRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
+    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
+    PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
+    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 
 pub(crate) struct RepositoryBootstrapOutput {
@@ -47,6 +48,8 @@ pub(crate) async fn build_repositories(
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
     let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
+    let backend_execution_lease_repo =
+        Arc::new(PostgresBackendExecutionLeaseRepository::new(pool.clone()));
     let project_backend_access_repo =
         Arc::new(PostgresProjectBackendAccessRepository::new(pool.clone()));
 
@@ -100,6 +103,7 @@ pub(crate) async fn build_repositories(
         session_binding_repo: session_binding_repo.clone(),
         backend_repo: backend_repo.clone(),
         runtime_health_repo: runtime_health_repo.clone(),
+        backend_execution_lease_repo: backend_execution_lease_repo.clone(),
         project_backend_access_repo: project_backend_access_repo.clone(),
         backend_workspace_inventory_repo: project_backend_access_repo.clone(),
         auth_session_repo: auth_session_repo.clone(),

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
+use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, McpRelayProvider};
 
+use crate::backend_transport::RelayPromptTransport;
 use crate::context::SharedContextAuditBus;
 use crate::session::capability_service::SessionCapabilityService;
 use crate::session::construction_provider::SharedSessionConstructionProvider;
@@ -35,6 +37,8 @@ pub(in crate::session) struct SessionLaunchDeps {
     user_preferences: Vec<String>,
     runtime_tool_provider: Option<Arc<dyn RuntimeToolProvider>>,
     mcp_relay_provider: Option<Arc<dyn McpRelayProvider>>,
+    pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
+    pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
     eventing: SessionEventingService,
     core: SessionCoreService,
     hooks: SessionHookService,
@@ -57,6 +61,8 @@ impl SessionLaunchDeps {
             user_preferences: inner.user_preferences.clone(),
             runtime_tool_provider: inner.runtime_tool_provider.clone(),
             mcp_relay_provider: inner.mcp_relay_provider.clone(),
+            backend_execution_transport: inner.backend_execution_transport.clone(),
+            backend_execution_lease_repo: inner.backend_execution_lease_repo.clone(),
             eventing: inner.eventing_service(),
             core: inner.core_service(),
             hooks: inner.hook_service(),
@@ -79,6 +85,8 @@ impl SessionLaunchDeps {
             hooks: self.hooks.clone(),
             hook_effect_handler_registry: self.hook_effect_handler_registry.clone(),
             context_audit_bus: self.context_audit_bus.clone(),
+            backend_execution_transport: self.backend_execution_transport.clone(),
+            backend_execution_lease_repo: self.backend_execution_lease_repo.clone(),
         }
     }
 
@@ -131,6 +139,8 @@ pub(super) struct LaunchPlanningDeps {
     pub(super) hook_effect_handler_registry:
         Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
+    pub(super) backend_execution_transport: Option<Arc<dyn RelayPromptTransport>>,
+    pub(super) backend_execution_lease_repo: Option<Arc<dyn BackendExecutionLeaseRepository>>,
 }
 
 impl LaunchPlanningDeps {

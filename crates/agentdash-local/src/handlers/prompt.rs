@@ -114,6 +114,7 @@ impl CommandHandler {
                 }),
                 env: payload.env,
                 executor_config,
+                backend_selection: None,
             },
             parse_relay_mcp_servers(&payload.mcp_servers),
             workspace_root,

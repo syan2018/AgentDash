@@ -73,4 +73,9 @@ pub struct SessionRuntimeInner {
         Option<Arc<dyn agentdash_spi::connector::RuntimeToolProvider>>,
     /// MCP Relay 工具发现 provider（由 factory 注入，pipeline 在 prompt 前调用）。
     pub(super) mcp_relay_provider: Option<Arc<dyn agentdash_spi::McpRelayProvider>>,
+    /// Relay backend execution placement dependencies.
+    pub(super) backend_execution_transport:
+        Option<Arc<dyn crate::backend_transport::RelayPromptTransport>>,
+    pub(super) backend_execution_lease_repo:
+        Option<Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>>,
 }

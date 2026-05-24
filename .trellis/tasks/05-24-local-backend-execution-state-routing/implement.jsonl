@@ -1,0 +1,13 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认云端/本机职责边界与分层依赖方向"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "新增 PostgreSQL migration 与 repository 的 schema 事实源规则"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "区分 session active turn、connector live session 与新增 backend lease"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "relay prompt、session sink、backend disconnect 的跨层契约"}
+{"file": ".trellis/spec/cross-layer/project-backend-workspace-routing.md", "reason": "workspace binding / inventory 与 execution placement 的边界"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查跨 API、backend、frontend、local runtime 的状态事实源"}
+{"file": "crates/agentdash-application/src/backend_execution_placement.rs", "reason": "收口 BackendSelectionRequest / ExecutionPlacementPlan 与 auto idle 选择策略"}
+{"file": "crates/agentdash-application/src/relay_connector.rs", "reason": "接入 placement plan、lease claim/activate/release/fail 与 cancel 精确路由测试"}
+{"file": "crates/agentdash-api/src/relay/registry.rs", "reason": "验证 backend unregister 时 session route 只清理断连后端"}
+{"file": "crates/agentdash-spi/src/connector/mod.rs", "reason": "ExecutionContext.session 携带已 claim backend execution placement"}
+{"file": "crates/agentdash-application/src/session/launch/planner.rs", "reason": "session launch 解析 backend selection intent 并 claim lease"}
+{"file": "crates/agentdash-api/src/routes/backends.rs", "reason": "runtime summary 汇总 health、executor snapshot 与 active leases"}
+{"file": "packages/app-web/src/stores/coordinatorStore.ts", "reason": "前端通过 runtime summary service 消费 active count / allocatable 投影"}

@@ -1,5 +1,6 @@
 mod agent_repository;
 mod auth_session_repository;
+mod backend_execution_lease_repository;
 mod backend_repository;
 mod canvas_repository;
 mod inline_file_repository;
@@ -107,6 +108,7 @@ pub(crate) fn parse_pg_timestamp_checked(
 
 pub use agent_repository::PostgresProjectAgentRepository;
 pub use auth_session_repository::PostgresAuthSessionRepository;
+pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;

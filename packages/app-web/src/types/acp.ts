@@ -127,6 +127,44 @@ export interface RuntimeHealth {
   updated_at: string;
 }
 
+export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
+export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";
+
+export interface BackendActiveSession {
+  lease_id: string;
+  session_id: string;
+  turn_id: string;
+  executor_id: string;
+  workspace_id: string | null;
+  root_ref: string | null;
+  selection_mode: BackendExecutionSelectionMode;
+  state: BackendExecutionLeaseState;
+  claimed_at: string;
+  activated_at: string | null;
+  last_seen_at: string;
+}
+
+export interface BackendRuntimeExecutorSummary {
+  executor_id: string;
+  name: string;
+  variants: string[];
+  available: boolean;
+  active_session_count: number;
+  allocatable: boolean;
+}
+
+export interface BackendRuntimeSummary {
+  backend_id: string;
+  name: string;
+  enabled: boolean;
+  online: boolean;
+  runtime_health: RuntimeHealth | null;
+  executors: BackendRuntimeExecutorSummary[];
+  active_session_count: number;
+  active_sessions: BackendActiveSession[];
+  allocatable: boolean;
+}
+
 export interface ViewConfig {
   id: string;
   name: string;

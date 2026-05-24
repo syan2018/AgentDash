@@ -42,6 +42,8 @@ registerBackendWorkspaceInventory(
 - 该 API 不扩大 local runtime 的 `accessible_roots`；目录不可访问时由 detect 失败返回。
 - UI 登记成功后必须刷新 workspace candidates；如果 Backend Access 面板已有展开的 Inventory，也要重新拉取对应快照。
 - Workspace binding 维护不等于 backend inventory 登记；Advanced Maintenance 只改 Workspace 自身 bindings。
+- Workspace binding / inventory 只表达目录事实与可访问根，不表达执行空闲状态。session 执行 backend placement 由 backend execution lease / allocator 维护，原因是同一个可访问 workspace 的 backend 可能正在执行其它 session。
+- Frontend 展示 backend 是否可分配时读取 `/backends/runtime-summary` 的 `active_session_count`、executor `active_session_count` 与 `allocatable`，原因是该投影已经合并 runtime health、registry executor snapshot 与 active backend execution leases。
 
 ## Validation And Errors
 

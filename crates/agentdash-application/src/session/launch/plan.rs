@@ -5,10 +5,12 @@ use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{
-    CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionContext, ExecutionSessionFrame,
-    ExecutionTurnFrame, RestoredSessionState, SessionMcpServer,
+    CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
+    ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
+    SessionMcpServer,
 };
 
+use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::construction::SessionConstructionPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
@@ -46,6 +48,8 @@ pub struct LaunchSummary {
     pub capability_source: Option<String>,
     pub working_directory: PathBuf,
     pub has_vfs: bool,
+    pub backend_execution_backend_id: Option<String>,
+    pub backend_execution_lease_id: Option<uuid::Uuid>,
     pub mcp_server_count: usize,
     pub restored_executor_state: bool,
     pub capability_keys: Vec<String>,
@@ -111,6 +115,7 @@ pub struct LaunchPlan {
     pub runtime_commands: RuntimeCommandLaunchPlan,
     pub terminal_effects: TerminalEffectPlan,
     pub connector_input: ConnectorInputPlan,
+    pub backend_execution: Option<ExecutionPlacementPlan>,
     pub trace: LaunchPlanTrace,
     pub context: ExecutionContext,
     pub summary: LaunchSummary,
@@ -136,6 +141,7 @@ pub struct LaunchPlanInput {
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
+    pub backend_execution: Option<ExecutionPlacementPlan>,
 }
 
 impl LaunchPlan {
@@ -185,6 +191,14 @@ impl LaunchPlan {
             capability_source: input.construction.resolution.capability_source.clone(),
             working_directory: working_directory.clone(),
             has_vfs: vfs.is_some(),
+            backend_execution_backend_id: input
+                .backend_execution
+                .as_ref()
+                .map(|placement| placement.backend_id.clone()),
+            backend_execution_lease_id: input
+                .backend_execution
+                .as_ref()
+                .and_then(|placement| placement.lease_id),
             mcp_server_count: mcp_servers.len(),
             restored_executor_state,
             capability_keys,
@@ -245,6 +259,12 @@ impl LaunchPlan {
             executor_config,
             mcp_servers,
             vfs,
+            backend_execution: input
+                .backend_execution
+                .as_ref()
+                .map(execution_backend_placement_from_plan)
+                .transpose()
+                .expect("backend_execution placement 必须已 claim lease"),
             identity,
         };
         let turn = ExecutionTurnFrame {
@@ -266,11 +286,24 @@ impl LaunchPlan {
             runtime_commands,
             terminal_effects,
             connector_input,
+            backend_execution: input.backend_execution,
             trace,
             context: ExecutionContext { session, turn },
             summary,
         }
     }
+}
+
+fn execution_backend_placement_from_plan(
+    plan: &ExecutionPlacementPlan,
+) -> Result<ExecutionBackendPlacement, String> {
+    Ok(ExecutionBackendPlacement {
+        backend_id: plan.backend_id.clone(),
+        lease_id: plan
+            .lease_id
+            .ok_or_else(|| "ExecutionPlacementPlan 缺少已 claim 的 lease_id".to_string())?,
+        selection_mode: plan.selection_mode,
+    })
 }
 
 #[cfg(test)]
@@ -379,6 +412,7 @@ mod tests {
             runtime_delegate: None,
             restored_session_state: None,
             post_turn_handler: None,
+            backend_execution: None,
         }
     }
 

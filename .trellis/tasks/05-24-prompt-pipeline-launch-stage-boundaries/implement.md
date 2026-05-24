@@ -2,31 +2,54 @@
 
 ## Phase 0: Pre-Dev Context
 
-- [ ] 读取 Trellis 规范：
+- [x] 读取 Trellis 规范：
   - `.trellis/spec/backend/session/architecture.md`
   - `.trellis/spec/backend/session/session-startup-pipeline.md`
   - `.trellis/spec/backend/session/execution-context-frames.md`
   - `.trellis/spec/backend/session/runtime-execution-state.md`
   - `.trellis/spec/backend/session/streaming-protocol.md`
   - `.trellis/spec/backend/quality-guidelines.md`
-- [ ] 读取 review 来源：
+- [x] 读取 review 来源：
   - `docs/reviews/2026-05-23-architecture-review-round/runtime-control-plane-review.md`
   - `docs/reviews/2026-05-23-architecture-review-round/platform-boundary-governance-review.md`
-- [ ] 运行一次基线测试，记录失败/通过状态。
+- [x] 运行一次基线测试，记录失败/通过状态。
 
 ## Phase 1: Behavior Characterization
 
 目标：先锁住现有行为，再重构。
 
-- [ ] 盘点现有测试覆盖，确认是否已有以下行为测试：
+- [x] 盘点现有测试覆盖，确认是否已有以下行为测试：
   - connector setup failure 不提交 `TurnStarted`。
   - connector setup failure 不提交 bootstrap success。
   - connector setup failure 不提交 runtime command applied。
   - runtime command applied commit 失败会标记 failed。
   - active turn state 保存 mcp/vfs/capability/executor projection。
   - stream close/error/cancel terminal kind 不变。
-- [ ] 如缺测试，先补 characterization tests。
-- [ ] 新增或保留测试命名要描述业务语义，不描述旧实现文件名。
+- [x] 如缺测试，先补 characterization tests。
+- [x] 新增或保留测试命名要描述业务语义，不描述旧实现文件名。
+
+### Phase 0/1 Evidence
+
+当前代码已具备本轮重构所需的高价值 characterization tests，不需要先补测试。基线结果：
+
+```text
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+cargo test -p agentdash-application build_tools_filters_relay_mcp_with_initial_capability_state
+  ok
+cargo test -p agentdash-application start_prompt_records_failed_terminal_when_connector_setup_fails
+  ok
+cargo test -p agentdash-application connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
+  ok
+cargo test -p agentdash-application start_prompt_releases_claim_when_session_meta_is_missing
+  ok
+cargo test -p agentdash-application cancel_marks_running_turn_interrupted
+  ok
+cargo test -p agentdash-application runtime_command_apply_commit_failure_marks_failed_and_returns_error
+  ok
+cargo test -p agentdash-application relay_prompt_registers_sink_before_remote_prompt_can_emit_notification
+  ok
+```
 
 ## Phase 2: Naming Audit
 

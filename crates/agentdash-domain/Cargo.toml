@@ -14,3 +14,6 @@ ts-rs = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 sha2 = "0.10"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -46,7 +46,7 @@ mod tests {
                 thinking_level: None,
                 permission_policy: Some("AUTO".to_string()),
             },
-            preset_name: None,
+            preset_name: Some("preset".to_string()),
             source: "project.config.default_agent_type".to_string(),
             session: Some(ProjectAgentSession {
                 binding_id: "binding-1".to_string(),

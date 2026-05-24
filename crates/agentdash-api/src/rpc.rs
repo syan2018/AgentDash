@@ -153,6 +153,16 @@ impl From<agentdash_application::runtime_gateway::RuntimeInvocationError> for Ap
     }
 }
 
+impl From<agentdash_application::backend::BackendAuthorizationError> for ApiError {
+    fn from(err: agentdash_application::backend::BackendAuthorizationError) -> Self {
+        use agentdash_application::backend::BackendAuthorizationError as E;
+        match err {
+            E::Domain(error) => ApiError::from(error),
+            E::Forbidden { .. } => ApiError::Forbidden(err.to_string()),
+        }
+    }
+}
+
 impl From<agentdash_application::task::execution::TaskExecutionError> for ApiError {
     fn from(err: agentdash_application::task::execution::TaskExecutionError) -> Self {
         use agentdash_application::task::execution::TaskExecutionError as E;

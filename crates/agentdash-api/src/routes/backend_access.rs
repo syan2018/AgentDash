@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WorkspaceBrowseDirectoryInput,
@@ -141,7 +142,13 @@ pub async fn create_project_backend_access(
     )
     .await?;
     let backend_id = normalize_required("backend_id", &req.backend_id)?;
-    state.repos.backend_repo.get_backend(&backend_id).await?;
+    let backend = state.repos.backend_repo.get_backend(&backend_id).await?;
+    BackendAuthorizationService::new(
+        state.repos.backend_repo.as_ref(),
+        state.repos.project_repo.as_ref(),
+    )
+    .require_config(&current_user, &backend, BackendPermission::Manage)
+    .await?;
 
     let existing = state
         .repos

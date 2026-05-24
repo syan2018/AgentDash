@@ -17,6 +17,7 @@
 //! - `POST /mcp/story/{story_id}` → Story 工具
 //! - `POST /mcp/task/{task_id}` → Task 工具
 
+pub mod authz;
 pub mod error;
 pub mod injection;
 pub mod scope;

@@ -591,7 +591,9 @@ impl RelayVfsService {
                 .mount_provider_registry
                 .get(&mount.provider)
                 .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             if overlay.is_none() {
                 // 无 overlay 直接委托 provider
                 let opts = ListOptions {

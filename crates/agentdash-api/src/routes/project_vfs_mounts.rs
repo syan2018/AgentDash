@@ -8,8 +8,9 @@ use uuid::Uuid;
 
 use agentdash_contracts::vfs::{
     CreateProjectVfsMountRequest, InstalledAssetSourceResponse,
-    MountCapability as ContractMountCapability, ProjectVfsMountContent as ContractProjectVfsMountContent,
-    ProjectVfsMountResponse, UpdateProjectVfsMountRequest,
+    MountCapability as ContractMountCapability,
+    ProjectVfsMountContent as ContractProjectVfsMountContent, ProjectVfsMountResponse,
+    UpdateProjectVfsMountRequest,
 };
 use agentdash_domain::common::MountCapability as DomainMountCapability;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
@@ -296,7 +297,9 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-fn normalize_capabilities(capabilities: Vec<ContractMountCapability>) -> Vec<DomainMountCapability> {
+fn normalize_capabilities(
+    capabilities: Vec<ContractMountCapability>,
+) -> Vec<DomainMountCapability> {
     let mut normalized = Vec::new();
     for capability in capabilities {
         let capability = domain_capability_from_contract(capability);

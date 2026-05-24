@@ -1,0 +1,10 @@
+{"file":"docs/enterprise-auth-project-sharing.md","reason":"验收身份模式、Project sharing、Settings scope 是否与设计目标一致。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"验收测试、错误处理和后端质量门槛。"}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"如出现 migration 或 repository 查询调整，用于检查数据库变更质量。"}
+{"file":".trellis/spec/cross-layer/frontend-backend-contracts.md","reason":"如 DTO/API contract 变更，用于检查前后端类型同步。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"验收 VFS API 与 runtime VFS 身份透传行为。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"验收 Backend browse/runtime invocation actor identity。"}
+{"file":"cargo check -p agentdash-api -p agentdash-mcp -p agentdash-application","reason":"通过：验证 auth/Backend/VFS/MCP 跨 crate 类型与路由签名。"}
+{"file":"cargo test -p agentdash-api authorize_authenticated_request -- --nocapture","reason":"通过：覆盖 AuthProvider::authorize deny 与 provider error 映射。"}
+{"file":"cargo test -p agentdash-api resolve_backend_auth_token -- --nocapture","reason":"通过：确认 Backend token 既有行为未回归。"}
+{"file":"cargo test -p agentdash-mcp authz -- --nocapture","reason":"通过：覆盖 MCP Project view/edit 授权边界。"}

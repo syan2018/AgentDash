@@ -1,0 +1,18 @@
+{"file":"docs/enterprise-auth-project-sharing.md","reason":"定义 personal/enterprise 统一 AuthProvider、Project 权限锚点、Settings scope 与身份 claim 输出。"}
+{"file":".trellis/spec/backend/architecture.md","reason":"确认 API 层负责认证、DTO、错误映射与应用服务编排边界。"}
+{"file":".trellis/spec/cross-layer/project-backend-workspace-routing.md","reason":"确认 Project backend access、workspace detect 与 backend inventory 的跨层授权语义。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"确认 VFS 访问、mount 与 runtime surface 的后端约束。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"确认 Session launch 与 runtime projection 中 identity、VFS、MCP 的关系。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"确认 RuntimeInvocationRequest actor/context 的职责边界。"}
+{"file":"docs/relay-protocol.md","reason":"确认 cloud-local relay、backend token、terminal/VFS/runtime 命令的协议背景。"}
+{"file":"crates/agentdash-api/src/auth.rs","reason":"统一受保护请求的身份目录投影、provider authorize 与 request identity 注入。"}
+{"file":"crates/agentdash-api/src/routes/backends.rs","reason":"收口 Backend 全局入口的 CurrentUser、owner/scope/admin 过滤与 runtime actor user_id。"}
+{"file":"crates/agentdash-api/src/routes/terminals.rs","reason":"为 Terminal list/input/resize/kill 回溯 Session Project 权限。"}
+{"file":"crates/agentdash-api/src/routes/vfs_surfaces.rs","reason":"把 CurrentUser 透传到 VFS read/list/stat/mutation。"}
+{"file":"crates/agentdash-api/src/routes/file_picker.rs","reason":"把 CurrentUser 透传到 file-picker VFS 读列表路径。"}
+{"file":"crates/agentdash-mcp/src/authz.rs","reason":"新增 MCP Project view/edit 授权规则与测试。"}
+{"file":"crates/agentdash-mcp/src/transport.rs","reason":"MCP HTTP transport 从请求扩展读取身份，并按用户缓存服务实例。"}
+{"file":"crates/agentdash-mcp/src/servers/relay.rs","reason":"Relay MCP tools 按 Project 权限过滤列表与写操作。"}
+{"file":"crates/agentdash-mcp/src/servers/story.rs","reason":"Story MCP tools 按 Project view/edit 权限约束读写。"}
+{"file":"crates/agentdash-mcp/src/servers/task.rs","reason":"Task MCP tools 按 Project view/edit 权限约束状态、产物和描述更新。"}
+{"file":"crates/agentdash-mcp/src/servers/workflow.rs","reason":"Workflow MCP tools 按 Project view/edit 权限约束定义读写。"}

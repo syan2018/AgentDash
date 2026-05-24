@@ -57,7 +57,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         activity_lifecycle_definition_repo: state.repos.activity_lifecycle_definition_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
-    let mcp = McpRouterBuilder::new(mcp_services).build();
+    let mcp = McpRouterBuilder::new(mcp_services)
+        .build()
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::authenticate_request,
+        ));
 
     let secured_api = Router::new()
         .route("/me", get(me::get_current_user))

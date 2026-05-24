@@ -14,8 +14,8 @@ use agentdash_domain::shared_library::{
 };
 
 pub use agentdash_contracts::shared_library::{
-    LibraryAssetScope as ContractLibraryAssetScope, LibraryAssetSource as ContractLibraryAssetSource,
-    LibraryAssetType as ContractLibraryAssetType,
+    LibraryAssetScope as ContractLibraryAssetScope,
+    LibraryAssetSource as ContractLibraryAssetSource, LibraryAssetType as ContractLibraryAssetType,
 };
 
 #[derive(Debug, Serialize)]
@@ -168,6 +168,8 @@ pub fn contract_source_status(
         SharedLibrarySourceStatus::UpdateAvailable => {
             ContractSharedLibrarySourceStatus::UpdateAvailable
         }
-        SharedLibrarySourceStatus::SourceMissing => ContractSharedLibrarySourceStatus::SourceMissing,
+        SharedLibrarySourceStatus::SourceMissing => {
+            ContractSharedLibrarySourceStatus::SourceMissing
+        }
     }
 }

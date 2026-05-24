@@ -119,7 +119,7 @@ pub async fn list_address_entries(
                         recursive,
                     },
                     None,
-                    None,
+                    Some(&current_user),
                 )
                 .await
                 .map_err(ApiError::Internal)?;

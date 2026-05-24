@@ -153,15 +153,26 @@ fn default_user_scope() -> String {
 #[ts(export)]
 #[serde(tag = "asset_kind", rename_all = "snake_case")]
 pub enum InstallLibraryAssetResponse {
-    ProjectAgent { project_agent_id: String },
-    McpPreset { id: String },
+    ProjectAgent {
+        project_agent_id: String,
+    },
+    McpPreset {
+        id: String,
+    },
     WorkflowTemplate {
         workflow_ids: Vec<String>,
         lifecycle_id: String,
     },
-    SkillAsset { id: String },
-    VfsMount { id: String, mount_id: String },
-    ExtensionInstallation { id: String },
+    SkillAsset {
+        id: String,
+    },
+    VfsMount {
+        id: String,
+        mount_id: String,
+    },
+    ExtensionInstallation {
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

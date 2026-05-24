@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::Json;
@@ -12,17 +13,30 @@ use agentdash_domain::backend::{
     BackendConfig, BackendRepository, BackendShareScopeKind, BackendType, BackendVisibility,
     LocalBackendClaim, RuntimeHealth, RuntimeHealthStatus,
 };
+use agentdash_domain::project::ProjectRepository;
 
 use crate::app_state::AppState;
 use crate::auth::CurrentUser;
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
+use agentdash_application::backend::{
+    BackendAuthorizationService, BackendPermission, can_manage_global_backend_scope,
+};
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WorkspaceBrowseDirectoryInput,
     WorkspaceBrowseDirectoryOutput,
 };
 use agentdash_application::session::context::normalize_optional_string;
+
+fn backend_authz(
+    state: &AppState,
+) -> BackendAuthorizationService<'_, dyn BackendRepository, dyn ProjectRepository> {
+    BackendAuthorizationService::new(
+        state.repos.backend_repo.as_ref(),
+        state.repos.project_repo.as_ref(),
+    )
+}
 
 #[derive(Deserialize)]
 pub struct CreateBackendRequest {
@@ -111,8 +125,13 @@ pub struct RuntimeHealthResponse {
 
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<BackendWithStatus>>, ApiError> {
     let backends = state.repos.backend_repo.list_backends().await?;
+    let backend_authz = backend_authz(state.as_ref());
+    let backends = backend_authz
+        .filter_backends(&current_user, backends)
+        .await?;
     let online_list = state.services.backend_registry.list_online().await;
     let runtime_health = state
         .repos
@@ -122,10 +141,10 @@ pub async fn list_backends(
     let runtime_health_by_backend = runtime_health
         .into_iter()
         .map(|health| (health.backend_id.clone(), health))
-        .collect::<std::collections::HashMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     let mut result = Vec::with_capacity(backends.len() + online_list.len());
 
-    let mut seen_ids = std::collections::HashSet::new();
+    let mut seen_ids = HashSet::new();
 
     for b in backends {
         seen_ids.insert(b.id.clone());
@@ -145,6 +164,9 @@ pub async fn list_backends(
 
     for o in &online_list {
         if seen_ids.contains(&o.backend_id) {
+            continue;
+        }
+        if !can_manage_global_backend_scope(&current_user) {
             continue;
         }
         let runtime_health = runtime_health_by_backend
@@ -184,6 +206,7 @@ pub async fn list_backends(
 
 pub async fn list_runtime_health(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<RuntimeHealthResponse>>, ApiError> {
     let online_ids = state
         .services
@@ -191,13 +214,19 @@ pub async fn list_runtime_health(
         .list_online_ids()
         .await
         .into_iter()
-        .collect::<std::collections::HashSet<_>>();
+        .collect::<HashSet<_>>();
+    let backend_authz = backend_authz(state.as_ref());
+    let visible_backend_ids = backend_authz.visible_backend_ids(&current_user).await?;
     let items = state
         .repos
         .runtime_health_repo
         .list_runtime_health()
         .await?
         .into_iter()
+        .filter(|health| {
+            can_manage_global_backend_scope(&current_user)
+                || visible_backend_ids.contains(&health.backend_id)
+        })
         .map(|health| {
             let online = online_ids.contains(&health.backend_id);
             runtime_health_response(health, online)
@@ -208,8 +237,15 @@ pub async fn list_runtime_health(
 
 pub async fn get_runtime_health(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<RuntimeHealthResponse>, ApiError> {
+    if !can_manage_global_backend_scope(&current_user) {
+        let backend_authz = backend_authz(state.as_ref());
+        backend_authz
+            .require_backend(&current_user, &id, BackendPermission::View)
+            .await?;
+    }
     let health = state
         .repos
         .runtime_health_repo
@@ -226,8 +262,14 @@ pub async fn get_runtime_health(
 /// 列出通过 WebSocket 连接的在线后端
 pub async fn list_online_backends(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<OnlineBackendInfo>>, ApiError> {
-    let online = state.services.backend_registry.list_online().await;
+    let mut online = state.services.backend_registry.list_online().await;
+    if !can_manage_global_backend_scope(&current_user) {
+        let backend_authz = backend_authz(state.as_ref());
+        let visible_backend_ids = backend_authz.visible_backend_ids(&current_user).await?;
+        online.retain(|backend| visible_backend_ids.contains(&backend.backend_id));
+    }
     Ok(Json(online))
 }
 
@@ -253,14 +295,19 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
 
 pub async fn get_backend(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<BackendConfig>, ApiError> {
-    let backend = state.repos.backend_repo.get_backend(&id).await?;
+    let backend_authz = backend_authz(state.as_ref());
+    let backend = backend_authz
+        .require_backend(&current_user, &id, BackendPermission::View)
+        .await?;
     Ok(Json(backend))
 }
 
 pub async fn add_backend(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateBackendRequest>,
 ) -> Result<Json<BackendConfig>, ApiError> {
     let id = req.id.trim();
@@ -282,6 +329,12 @@ pub async fn add_backend(
             return Err(ApiError::Internal(format!("读取 Backend 配置失败: {err}")));
         }
     };
+    if let Some(config) = existing.as_ref() {
+        let backend_authz = backend_authz(state.as_ref());
+        backend_authz
+            .require_config(&current_user, config, BackendPermission::Manage)
+            .await?;
+    }
     let auth_token = resolve_backend_auth_token(
         state.repos.backend_repo.as_ref(),
         id,
@@ -300,7 +353,10 @@ pub async fn add_backend(
             Some("remote") => BackendType::Remote,
             _ => BackendType::Local,
         },
-        owner_user_id: None, // TODO: 从 CurrentUser 提取
+        owner_user_id: match existing.as_ref() {
+            Some(item) => item.owner_user_id.clone(),
+            None => Some(current_user.user_id.clone()),
+        },
         profile_id: existing.as_ref().and_then(|item| item.profile_id.clone()),
         device_id: existing.as_ref().and_then(|item| item.device_id.clone()),
         machine_id: existing.as_ref().and_then(|item| item.machine_id.clone()),
@@ -314,14 +370,15 @@ pub async fn add_backend(
         visibility: existing
             .as_ref()
             .map(|item| item.visibility)
-            .unwrap_or_default(),
+            .unwrap_or(BackendVisibility::Private),
         share_scope_kind: existing
             .as_ref()
             .map(|item| item.share_scope_kind)
-            .unwrap_or_default(),
-        share_scope_id: existing
-            .as_ref()
-            .and_then(|item| item.share_scope_id.clone()),
+            .unwrap_or(BackendShareScopeKind::User),
+        share_scope_id: match existing.as_ref() {
+            Some(item) => item.share_scope_id.clone(),
+            None => Some(current_user.user_id.clone()),
+        },
         capability_slot: existing
             .as_ref()
             .map(|item| item.capability_slot.clone())
@@ -790,8 +847,13 @@ mod tests {
 
 pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let backend_authz = backend_authz(state.as_ref());
+    backend_authz
+        .require_backend(&current_user, &id, BackendPermission::Manage)
+        .await?;
     state.repos.backend_repo.remove_backend(&id).await?;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -818,6 +880,7 @@ pub struct BrowseDirectoryEntryResponse {
 
 pub async fn browse_directory(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(backend_id): Path<String>,
     Json(req): Json<BrowseDirectoryRequest>,
 ) -> Result<Json<BrowseDirectoryResponse>, ApiError> {
@@ -825,9 +888,13 @@ pub async fn browse_directory(
     if backend_id.is_empty() {
         return Err(ApiError::BadRequest("backend_id 不能为空".into()));
     }
+    let backend_authz = backend_authz(state.as_ref());
+    let backend = backend_authz
+        .require_backend(&current_user, backend_id, BackendPermission::View)
+        .await?;
 
     let input = serde_json::to_value(WorkspaceBrowseDirectoryInput {
-        backend_id: backend_id.to_string(),
+        backend_id: backend.id.clone(),
         path: req.path,
     })
     .map_err(|error| {
@@ -837,11 +904,13 @@ pub async fn browse_directory(
         RuntimeActionKey::parse(WORKSPACE_BROWSE_DIRECTORY_ACTION).map_err(|error| {
             ApiError::Internal(format!("内置 Runtime Action Key 非法: {error}"))
         })?,
-        RuntimeActor::PlatformUser { user_id: None },
+        RuntimeActor::PlatformUser {
+            user_id: Some(current_user.user_id),
+        },
         RuntimeContext::Setup {
             project_id: None,
             workspace_id: None,
-            backend_id: Some(backend_id.to_string()),
+            backend_id: Some(backend.id),
             root_ref: None,
         },
         input,

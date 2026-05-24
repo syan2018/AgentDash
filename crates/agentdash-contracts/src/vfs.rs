@@ -64,12 +64,27 @@ pub struct ConfigurableProviderInfo {
 #[ts(export)]
 #[serde(tag = "source_type", rename_all = "snake_case")]
 pub enum ResolvedVfsSurfaceSource {
-    ProjectPreview { project_id: String },
-    StoryPreview { project_id: String, story_id: String },
-    TaskPreview { project_id: String, task_id: String },
-    SessionRuntime { session_id: String },
-    ProjectSkillAssets { project_id: String },
-    ProjectVfsMount { project_id: String, mount_id: String },
+    ProjectPreview {
+        project_id: String,
+    },
+    StoryPreview {
+        project_id: String,
+        story_id: String,
+    },
+    TaskPreview {
+        project_id: String,
+        task_id: String,
+    },
+    SessionRuntime {
+        session_id: String,
+    },
+    ProjectSkillAssets {
+        project_id: String,
+    },
+    ProjectVfsMount {
+        project_id: String,
+        mount_id: String,
+    },
     ProjectAgentKnowledge {
         project_id: String,
         project_agent_id: String,
@@ -365,7 +380,10 @@ pub enum MountCapability {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProjectVfsMountContent {
     Inline,
-    ExternalService { service_id: String, root_ref: String },
+    ExternalService {
+        service_id: String,
+        root_ref: String,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

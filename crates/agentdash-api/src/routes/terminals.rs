@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
+use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_application::vfs::PROVIDER_RELAY_FS;
 use agentdash_relay::*;
 use agentdash_spi::Vfs;
@@ -18,10 +19,18 @@ use crate::{app_state::AppState, rpc::ApiError};
 /// GET /api/sessions/:session_id/terminals
 pub async fn list_terminals(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-) -> impl IntoResponse {
+) -> Result<Json<Vec<TerminalState>>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let terminals = state.services.terminal_cache.list_terminals(&session_id);
-    Json(terminals)
+    Ok(Json(terminals))
 }
 
 /// POST /api/sessions/:session_id/terminals
@@ -117,19 +126,11 @@ pub struct TerminalInputBody {
 
 pub async fn terminal_input(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(terminal_id): Path<String>,
     Json(body): Json<TerminalInputBody>,
-) -> impl IntoResponse {
-    let term_state = match state.services.terminal_cache.get_terminal(&terminal_id) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "terminal not found" })),
-            )
-                .into_response();
-        }
-    };
+) -> Result<Response, ApiError> {
+    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
 
     let payload = TerminalInputPayload {
         terminal_id: terminal_id.clone(),
@@ -148,12 +149,8 @@ pub async fn terminal_input(
         )
         .await
     {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
     }
 }
 
@@ -166,19 +163,11 @@ pub struct TerminalResizeBody {
 
 pub async fn terminal_resize(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(terminal_id): Path<String>,
     Json(body): Json<TerminalResizeBody>,
-) -> impl IntoResponse {
-    let term_state = match state.services.terminal_cache.get_terminal(&terminal_id) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "terminal not found" })),
-            )
-                .into_response();
-        }
-    };
+) -> Result<Response, ApiError> {
+    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
 
     let payload = TerminalResizePayload {
         terminal_id: terminal_id.clone(),
@@ -198,30 +187,18 @@ pub async fn terminal_resize(
         )
         .await
     {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
     }
 }
 
 /// DELETE /api/terminals/:terminal_id
 pub async fn terminal_kill(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Path(terminal_id): Path<String>,
-) -> impl IntoResponse {
-    let term_state = match state.services.terminal_cache.get_terminal(&terminal_id) {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "terminal not found" })),
-            )
-                .into_response();
-        }
-    };
+) -> Result<Response, ApiError> {
+    let term_state = load_terminal_for_user(&state, &current_user, &terminal_id).await?;
 
     let payload = TerminalKillPayload {
         terminal_id: terminal_id.clone(),
@@ -240,12 +217,8 @@ pub async fn terminal_kill(
         )
         .await
     {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
     }
 }
 
@@ -253,6 +226,26 @@ pub async fn terminal_kill(
 struct TerminalLaunchTarget {
     backend_id: String,
     mount_root_ref: String,
+}
+
+async fn load_terminal_for_user(
+    state: &Arc<AppState>,
+    current_user: &agentdash_plugin_api::AuthIdentity,
+    terminal_id: &str,
+) -> Result<TerminalState, ApiError> {
+    let term_state = state
+        .services
+        .terminal_cache
+        .get_terminal(terminal_id)
+        .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
+    ensure_session_permission(
+        state.as_ref(),
+        current_user,
+        &term_state.session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+    Ok(term_state)
 }
 
 async fn resolve_terminal_launch_target(

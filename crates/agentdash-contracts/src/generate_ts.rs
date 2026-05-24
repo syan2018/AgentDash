@@ -5,8 +5,8 @@ use agentdash_contracts::mcp_preset::{
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent,
-    ProjectAgentExecutor, ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent, ProjectAgentExecutor,
+    ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
@@ -17,14 +17,14 @@ use agentdash_contracts::shared_library::{
     PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
-    ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse,
-    ListVfssResponse, ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface,
-    SurfaceApplyPatchRequest, SurfaceApplyPatchResponse, SurfaceCreateFileRequest,
-    SurfaceCreateFileResponse, SurfaceDeleteFileRequest, SurfaceDeleteFileResponse,
-    SurfaceEntriesResponse, SurfaceReadBinaryFileRequest, SurfaceReadFileRequest,
-    SurfaceReadFileResponse, SurfaceRenameFileRequest, SurfaceRenameFileResponse,
-    SurfaceStatFileRequest, SurfaceStatFileResponse, SurfaceUploadBinaryFileResponse,
-    SurfaceWriteFileRequest, SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
+    ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
+    ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface, SurfaceApplyPatchRequest,
+    SurfaceApplyPatchResponse, SurfaceCreateFileRequest, SurfaceCreateFileResponse,
+    SurfaceDeleteFileRequest, SurfaceDeleteFileResponse, SurfaceEntriesResponse,
+    SurfaceReadBinaryFileRequest, SurfaceReadFileRequest, SurfaceReadFileResponse,
+    SurfaceRenameFileRequest, SurfaceRenameFileResponse, SurfaceStatFileRequest,
+    SurfaceStatFileResponse, SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest,
+    SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,

@@ -51,7 +51,9 @@ pub async fn list_library_assets(
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.list(filter).await?;
-    Ok(Json(assets.into_iter().map(library_asset_response).collect()))
+    Ok(Json(
+        assets.into_iter().map(library_asset_response).collect(),
+    ))
 }
 
 /// GET `/api/shared-library/assets/:id`
@@ -77,7 +79,9 @@ pub async fn seed_builtin_library_assets(
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.seed_builtin_assets(input).await?;
-    Ok(Json(assets.into_iter().map(library_asset_response).collect()))
+    Ok(Json(
+        assets.into_iter().map(library_asset_response).collect(),
+    ))
 }
 
 /// POST `/api/projects/:project_id/shared-library/install`
@@ -259,9 +263,7 @@ fn install_output_response(output: InstallLibraryAssetOutput) -> InstallLibraryA
     }
 }
 
-fn project_source_status_response(
-    status: ProjectAssetSourceStatus,
-) -> ProjectAssetSourceStatusDto {
+fn project_source_status_response(status: ProjectAssetSourceStatus) -> ProjectAssetSourceStatusDto {
     crate::dto::project_source_status_response(
         status
             .project_agents

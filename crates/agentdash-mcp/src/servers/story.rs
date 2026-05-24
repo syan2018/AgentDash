@@ -13,6 +13,7 @@ use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::{
@@ -22,6 +23,7 @@ use agentdash_domain::context_source::{
     ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
 };
 use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
+use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -118,14 +120,21 @@ pub struct StoryMcpServer {
     services: Arc<McpServices>,
     story_id: Uuid,
     project_id: Uuid,
+    identity: AuthIdentity,
 }
 
 impl StoryMcpServer {
-    pub fn new(services: Arc<McpServices>, project_id: Uuid, story_id: Uuid) -> Self {
+    pub fn new(
+        services: Arc<McpServices>,
+        project_id: Uuid,
+        story_id: Uuid,
+        identity: AuthIdentity,
+    ) -> Self {
         Self {
             services,
             story_id,
             project_id,
+            identity,
         }
     }
 
@@ -138,13 +147,19 @@ impl StoryMcpServer {
             .ok_or_else(|| McpError::not_found("Story", self.story_id))
     }
 
-    async fn load_project(&self) -> Result<agentdash_domain::project::Project, McpError> {
+    async fn require_project(
+        &self,
+        permission: McpProjectPermission,
+    ) -> Result<agentdash_domain::project::Project, McpError> {
         self.services
-            .project_repo
-            .get_by_id(self.project_id)
+            .story_repo
+            .get_by_id(self.story_id)
             .await
             .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Project", self.project_id))
+            .filter(|story| story.project_id == self.project_id)
+            .ok_or_else(|| McpError::not_found("Story", self.story_id))?;
+        require_project_permission(&self.services, &self.identity, self.project_id, permission)
+            .await
     }
 
     fn into_context_source(source: ContextSourceRefInput) -> Result<ContextSourceRef, McpError> {
@@ -223,6 +238,7 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
 impl StoryMcpServer {
     #[tool(description = "获取当前 Story 的完整上下文信息（声明式来源与容器）")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let story = self.load_story().await?;
 
         let result = serde_json::json!({
@@ -248,8 +264,8 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<UpdateStoryContextParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let project = self.require_project(McpProjectPermission::Edit).await?;
         let mut story = self.load_story().await?;
-        let project = self.load_project().await?;
 
         if let Some(source_refs) = params.replace_source_refs {
             story.context.source_refs = source_refs
@@ -324,6 +340,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<UpdateStoryDetailsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let mut story = self.load_story().await?;
 
         if let Some(title) = params.title {
@@ -372,6 +389,7 @@ impl StoryMcpServer {
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         use agentdash_domain::task::{AgentBinding, Task};
 
+        self.require_project(McpProjectPermission::Edit).await?;
         let workspace_id = params
             .workspace_id
             .as_deref()
@@ -429,6 +447,7 @@ impl StoryMcpServer {
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         use agentdash_domain::task::{AgentBinding, Task};
 
+        self.require_project(McpProjectPermission::Edit).await?;
         let mut created_ids = Vec::new();
         let mut tasks_to_create = Vec::new();
 
@@ -487,6 +506,7 @@ impl StoryMcpServer {
 
     #[tool(description = "列出当前 Story 下的所有 Task 及其状态")]
     async fn list_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let story = self.load_story().await?;
         let tasks = &story.tasks;
 
@@ -517,6 +537,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<AdvanceStoryStatusParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let mut story = self.load_story().await?;
 
         let new_status: agentdash_domain::story::StoryStatus =

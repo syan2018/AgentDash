@@ -1,11 +1,7 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::connector::RuntimeToolProvider;
-use agentdash_spi::hooks::{
-    SessionHookSnapshot, SessionHookSnapshotQuery, SharedHookSessionRuntime,
-};
 use agentdash_spi::{AgentConnector, ConnectorError, McpRelayProvider};
 
 use crate::context::SharedContextAuditBus;
@@ -17,9 +13,7 @@ use crate::session::construction_provider::{
 use crate::session::core::SessionCoreService;
 use crate::session::effects_service::SessionEffectsService;
 use crate::session::eventing::SessionEventingService;
-use crate::session::hook_runtime::HookSessionRuntime;
 use crate::session::hooks_service::SessionHookService;
-use crate::session::hub::SessionRuntimeInner;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
     StreamIngestionAttacher, TurnCommitter, TurnPreparationInput, TurnPreparer,
@@ -475,127 +469,6 @@ impl SessionLaunchOrchestrator {
 
         Ok(attached.turn_id)
     }
-}
-
-impl SessionRuntimeInner {
-    /// 解析 hook runtime：决定 reload / refresh / skip。
-    ///
-    /// 三条路径：
-    /// - **reload**：owner bootstrap 首轮 或 进程内没有 runtime（冷启动恢复）
-    /// - **refresh**：已有 hook_session 且非 bootstrap → 只 refresh snapshot
-    /// - **skip**：无 hook provider → 返回 None
-    pub(in crate::session) async fn resolve_hook_session(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        executor_config: &agentdash_domain::common::AgentConfig,
-        working_directory: &Path,
-        is_owner_bootstrap: bool,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        let existing = self.runtime_registry.hook_session_runtime(session_id).await;
-
-        if is_owner_bootstrap || existing.is_none() {
-            return self
-                .reload_session_hook_runtime(
-                    session_id,
-                    turn_id,
-                    executor_config.executor.as_str(),
-                    executor_config.permission_policy.as_deref(),
-                    working_directory,
-                )
-                .await;
-        }
-
-        if let Some(ref hs) = existing {
-            let _ = hs
-                .refresh(agentdash_spi::hooks::SessionHookRefreshQuery {
-                    session_id: session_id.to_string(),
-                    turn_id: Some(turn_id.to_string()),
-                    reason: Some("subsequent_turn_refresh".to_string()),
-                })
-                .await;
-        }
-        Ok(existing)
-    }
-
-    /// 重载 session hook runtime 并写入 `SessionRuntime.hook_session` 单一权威字段。
-    ///
-    /// PR 7c：只有本函数（owner bootstrap 入口）以及 `ensure_hook_session_runtime`
-    /// （冷启动恢复入口）可以写 `SessionRuntime.hook_session`；其他调用方（包括
-    /// `SessionLaunchOrchestrator` 的 happy path）只读取不回写。
-    pub async fn reload_session_hook_runtime(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        executor: &str,
-        permission_policy: Option<&str>,
-        working_directory: &Path,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
-        let Some(provider) = self.hook_provider.as_ref() else {
-            // 无 hook provider 场景下清空 runtime 记录，保证"单一权威"不滞留旧值。
-            self.runtime_registry
-                .with_runtime_mut(session_id, |runtime| {
-                    if let Some(runtime) = runtime {
-                        runtime.hook_session = None;
-                    }
-                })
-                .await;
-            return Ok(None);
-        };
-
-        let mut snapshot = provider
-            .load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: session_id.to_string(),
-                turn_id: Some(turn_id.to_string()),
-            })
-            .await
-            .map_err(|error| {
-                ConnectorError::Runtime(format!("加载会话 Hook snapshot 失败: {error}"))
-            })?;
-        enrich_hook_snapshot_runtime_metadata(
-            &mut snapshot,
-            turn_id,
-            self.connector.connector_id(),
-            executor,
-            permission_policy,
-            working_directory,
-        );
-
-        let runtime = Arc::new(HookSessionRuntime::new(
-            session_id.to_string(),
-            provider.clone(),
-            snapshot,
-        ));
-
-        // 写回 SessionRuntime.hook_session —— 单一权威字段仅在此处写入。
-        self.runtime_registry
-            .with_runtime_mut(session_id, |session_runtime| {
-                if let Some(session_runtime) = session_runtime {
-                    session_runtime.hook_session = Some(runtime.clone());
-                }
-            })
-            .await;
-
-        Ok(Some(runtime))
-    }
-}
-
-fn enrich_hook_snapshot_runtime_metadata(
-    snapshot: &mut SessionHookSnapshot,
-    turn_id: &str,
-    connector_id: &str,
-    executor: &str,
-    permission_policy: Option<&str>,
-    working_directory: &Path,
-) {
-    let metadata = snapshot
-        .metadata
-        .get_or_insert_with(agentdash_spi::SessionSnapshotMetadata::default);
-    metadata.turn_id = Some(turn_id.to_string());
-    metadata.connector_id = Some(connector_id.to_string());
-    metadata.executor = Some(executor.to_string());
-    metadata.permission_policy = permission_policy.map(ToString::to_string);
-    metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
 }
 
 #[cfg(test)]

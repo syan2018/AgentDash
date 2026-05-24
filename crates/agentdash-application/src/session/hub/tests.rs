@@ -736,7 +736,8 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .await
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
-    hub.reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
 
@@ -1292,7 +1293,8 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
 
-    hub.reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();

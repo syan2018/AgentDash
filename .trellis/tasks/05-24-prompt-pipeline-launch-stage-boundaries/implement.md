@@ -286,11 +286,24 @@ cargo test -p agentdash-application session::launch
 
 目标：`prompt_pipeline` 不再给 `SessionRuntimeInner` 补 hook 方法。
 
-- [ ] 将 `resolve_hook_session` / `reload_session_hook_runtime` / `enrich_hook_snapshot_runtime_metadata` 移到更合适模块：
+- [x] 将 `resolve_hook_session` / `reload_session_hook_runtime` / `enrich_hook_snapshot_runtime_metadata` 移到更合适模块：
   - 优先 `hooks_service` / `hook_runtime`；
   - 或 launch preparation 专用 hook helper，但不能留在 prompt pipeline。
-- [ ] `LaunchPlanner` 或 `TurnPreparer` 通过 hook service 调用，不直接扩展 `SessionRuntimeInner`。
-- [ ] 确认 hook reload / refresh / skip 语义测试通过。
+- [x] `LaunchPlanner` 或 `TurnPreparer` 通过 hook service 调用，不直接扩展 `SessionRuntimeInner`。
+- [x] 确认 hook reload / refresh / skip 语义测试通过。
+
+### Phase 10 Evidence
+
+Hook reload/resolve 逻辑已收口到 `SessionHookService`。`launch/orchestrator.rs` 不再实现 `SessionRuntimeInner` hook helper，planner 继续通过 `self.deps.hooks.resolve_hook_session(...)` 调用 hooks 边界。
+
+```text
+rg -n "resolve_hook_session|reload_session_hook_runtime|enrich_hook_snapshot_runtime_metadata|impl SessionRuntimeInner" crates/agentdash-application/src/session/launch crates/agentdash-application/src/session/hooks_service.rs
+  only hooks_service.rs and planner hook-service call remain
+cargo test -p agentdash-application live_runtime_context_transition_derives_skill_dimension_from_active_vfs
+  ok
+cargo test -p agentdash-application runtime_context_update_injections_are_recorded_without_direct_notification
+  ok
+```
 
 ## Phase 11: Dependency Narrowing
 

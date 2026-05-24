@@ -136,12 +136,12 @@ struct LaunchRuntimeFacts {
 }
 ```
 
-- [ ] 删除或替换 `execute_constructed_launch` 的总控职责。
+- [x] 删除或替换 `execute_constructed_launch` 的总控职责。
 - [x] 保持测试入口清晰：测试可以直接走 orchestrator 或专用 fixture，但不要恢复“已组装 prompt 旁路”。
 
 ### Phase 4 Evidence
 
-`prompt_pipeline.rs` 已移入 `session/launch/orchestrator.rs`，外部 facade 通过 `SessionLaunchService -> SessionLaunchOrchestrator::launch` 进入 launch 子域。原 `execute_constructed_launch` 名称已退出，当前仍有一个临时 `launch_with_construction` stage runner 承载未拆开的 prepare/start/commit/attach；该职责必须在 Phase 6-9 被阶段类型替换后才能勾掉。
+`prompt_pipeline.rs` 已移入 `session/launch/orchestrator.rs`，外部 facade 通过 `SessionLaunchService -> SessionLaunchOrchestrator::launch` 进入 launch 子域。原 `execute_constructed_launch` 名称已退出；`launch_with_construction` 现在只编排 `TurnPreparer -> ConnectorStarter -> TurnCommitter -> StreamIngestionAttacher`。
 
 ```text
 cargo check -p agentdash-application
@@ -158,7 +158,7 @@ cargo test -p agentdash-application start_prompt_records_current_turn_state
 
 - [x] 将 `LaunchExecution` 系列重命名为 `LaunchPlan` 系列。
 - [x] 确保 `LaunchPlanner::plan` 只产出决策，不做 accepted 后副作用。
-- [ ] 将 `LaunchPlan` 中的 `context: ExecutionContext` 明确为 connector context seed；如果命名仍含糊，可拆成：
+- [x] 将 `LaunchPlan` 中的 `context: ExecutionContext` 明确为 connector context seed；如果命名仍含糊，可拆成：
 
 ```rust
 struct LaunchPlan {
@@ -180,14 +180,14 @@ cargo test -p agentdash-application start_prompt_records_current_turn_state
   ok
 ```
 
-`LaunchPlan.context` 暂时保留原字段名，原因是 Phase 6 会引入 `PreparedTurn` 并消费/重组 connector context；到时再把字段收窄为 `connector_context` 可以减少中间态 churn。
+`LaunchPlan.context` 在 preparation 阶段被消费并转为 `PreparedTurn.connector_context`。connector-facing 语义已经由 stage handoff 明确表达，后续若继续拆 plan 模块时可再把 `LaunchPlan` 字段本身改名。
 
 ## Phase 6: Turn Preparation Extraction
 
 目标：抽出 connector accepted 前的准备阶段。
 
-- [ ] 新建 `TurnPreparer` 与 `PreparedTurn`。
-- [ ] 从原 `execute_constructed_launch` 移入：
+- [x] 新建 `TurnPreparer` 与 `PreparedTurn`。
+- [x] 从原 `execute_constructed_launch` 移入：
   - runtime/direct MCP/relay MCP tools 构建。
   - identity frame 判断与构建。
   - context bundle / hook snapshot / assignment / continuation / pending action frames 组装。
@@ -197,33 +197,46 @@ cargo test -p agentdash-application start_prompt_records_current_turn_state
   - queued turn start notices 收集。
   - dedupe context frames。
   - transform_context enqueue。
-- [ ] 辅助函数迁移：
+- [x] 辅助函数迁移：
   - `should_include_connector_startup_context`
   - `collect_queued_turn_start_frames`
   - `notice_to_context_frame`
   - `dedupe_context_frames`
   - `enqueue_context_frames_for_transform_context`
-- [ ] 测试 `PreparedTurn` 不提交 accepted 后事件。
+- [x] 测试 `PreparedTurn` 不提交 accepted 后事件。
+
+### Phase 6 Evidence
+
+`preparation.rs` 现在只产出 `PreparedTurn`，并把 connector context 放在 `PreparedTurn.connector_context`。accepted 后事件仍由后续 commit 阶段消费 accepted type 后提交；connector setup failure 测试覆盖了 preparation 后、accepted 前失败不会提交 success side effects。
 
 ## Phase 7: Connector Start Extraction
 
 目标：把 accepted 边界变成类型。
 
-- [ ] 新建 `ConnectorStarter` 与 `ConnectorAcceptedTurn`。
-- [ ] 将 `connector.prompt` 调用迁入 `connector_start.rs`。
-- [ ] 失败路径保持：
+- [x] 新建 `ConnectorStarter` 与 `ConnectorAcceptedTurn`。
+- [x] 将 `connector.prompt` 调用迁入 `connector_start.rs`。
+- [x] 失败路径保持：
   - `turn_supervisor.clear_turn_and_hook(session_id)`。
   - 持久化 failed terminal envelope。
   - 返回 connector error。
-- [ ] 成功路径只返回 `ConnectorAcceptedTurn`，不提交 user/start/context/capability/meta/runtime-command。
-- [ ] 测试 connector setup failure 行为不变。
+- [x] 成功路径只返回 `ConnectorAcceptedTurn`，不提交 user/start/context/capability/meta/runtime-command。
+- [x] 测试 connector setup failure 行为不变。
+
+### Phase 7 Evidence
+
+```text
+cargo test -p agentdash-application start_prompt_records_failed_terminal_when_connector_setup_fails
+  ok
+cargo test -p agentdash-application connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
+  ok
+```
 
 ## Phase 8: Turn Commit Extraction
 
 目标：accepted 后 commit 集中化。
 
-- [ ] 新建 `TurnCommitter` 与 `CommittedTurn`。
-- [ ] 迁移：
+- [x] 新建 `TurnCommitter` 与 `CommittedTurn`。
+- [x] 迁移：
   - `commit_accepted_launch_events`
   - capability state changed emit
   - context frame emit
@@ -231,23 +244,43 @@ cargo test -p agentdash-application start_prompt_records_current_turn_state
   - session meta save
   - `commit_runtime_commands_applied`
   - title generation trigger
-- [ ] `TurnCommitter::commit` 必须消费 `ConnectorAcceptedTurn`。
-- [ ] runtime command applied commit failure 语义保持不变。
-- [ ] 测试 accepted 后事件/meta/runtime-command 顺序与语义。
+- [x] `TurnCommitter::commit` 必须消费 `ConnectorAcceptedTurn`。
+- [x] runtime command applied commit failure 语义保持不变。
+- [x] 测试 accepted 后事件/meta/runtime-command 顺序与语义。
+
+### Phase 8 Evidence
+
+```text
+cargo test -p agentdash-application runtime_command_apply_commit_failure_marks_failed_and_returns_error
+  ok
+cargo test -p agentdash-application start_prompt_records_current_turn_state
+  ok
+```
 
 ## Phase 9: Stream Ingestion Extraction
 
 目标：stream attach 不再混在 launch commit 中。
 
-- [ ] 新建 `StreamIngestionAttacher` 与 `AttachedTurn`。
-- [ ] 迁移：
+- [x] 新建 `StreamIngestionAttacher` 与 `AttachedTurn`。
+- [x] 迁移：
   - `SessionTurnProcessor::spawn`
   - processor tx registration
   - stream adapter spawn
   - stream adapter abort handle registration
   - `resolve_stream_terminal`
-- [ ] `spawn_stream_adapter` 移入 `ingestion.rs`。
-- [ ] 测试 cancel/failed/completed terminal kind 不变。
+- [x] `spawn_stream_adapter` 移入 `ingestion.rs`。
+- [x] 测试 cancel/failed/completed terminal kind 不变。
+
+### Phase 9 Evidence
+
+```text
+cargo test -p agentdash-application cancel_marks_running_turn_interrupted
+  ok
+cargo check -p agentdash-application
+  ok
+cargo test -p agentdash-application session::launch
+  ok, 7 passed
+```
 
 ## Phase 10: Hook Runtime Helper Relocation
 

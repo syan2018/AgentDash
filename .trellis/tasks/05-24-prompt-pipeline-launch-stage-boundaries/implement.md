@@ -374,44 +374,102 @@ cargo test -p agentdash-application session::launch
 
 目标：跨上下文压缩后也能重新对齐原始意图，防止任务结束在半吊子重构状态。
 
-- [ ] 重新读取本任务的 `prd.md`：
+- [x] 重新读取本任务的 `prd.md`：
   - `User Intent`
   - `Before State`
   - `Expected After State`
   - `Acceptance Criteria`
-- [ ] 重新读取两份原始 review 中和 session launch / prompt pipeline 相关的建议：
+- [x] 重新读取两份原始 review 中和 session launch / prompt pipeline 相关的建议：
   - `docs/reviews/2026-05-23-architecture-review-round/runtime-control-plane-review.md`
   - `docs/reviews/2026-05-23-architecture-review-round/platform-boundary-governance-review.md`
-- [ ] 对最终代码执行边界搜索，确认旧边界退场或只剩非实现性引用：
+- [x] 对最终代码执行边界搜索，确认旧边界退场或只剩非实现性引用：
 
 ```powershell
 rg -n "prompt_pipeline|execute_constructed_launch|LaunchExecution|SessionLaunchExecutor|SessionLaunchPlanner" crates/agentdash-application/src/session docs .trellis/spec
 ```
 
-- [ ] 检查最终 launch 子域结构是否符合预期：
+- [x] 检查最终 launch 子域结构是否符合预期：
 
 ```powershell
 Get-ChildItem -Recurse crates/agentdash-application/src/session/launch
 ```
 
-- [ ] 检查阶段类型是否真实存在并位于核心路径：
+- [x] 检查阶段类型是否真实存在并位于核心路径：
   - `LaunchPlan`
   - `PreparedTurn`
   - `ConnectorAcceptedTurn`
   - `CommittedTurn`
   - `AttachedTurn`
-- [ ] 检查 accepted 边界是否由类型流表达：
+- [x] 检查 accepted 边界是否由类型流表达：
   - `TurnCommitter::commit` 必须消费 `ConnectorAcceptedTurn` 或等价 accepted 类型。
   - connector setup failure 路径不能经过 commit 阶段。
-- [ ] 检查职责没有只是换文件名：
+- [x] 检查职责没有只是换文件名：
   - `preparation.rs` 不提交 accepted 后事件。
   - `connector_start.rs` 不提交 success side effects。
   - `commit.rs` 不启动 stream adapter。
   - `ingestion.rs` 不做 launch planning 或 runtime command applied。
-- [ ] 检查 `SessionRuntimeInner` 没有继续通过 launch/pipeline 文件扩展 hook runtime helper。
-- [ ] 跑完整验证命令，并记录任何非本任务失败。
-- [ ] 对照 PRD 的 `Before State`，逐条确认对应问题已被消除；对照 `Expected After State`，逐条确认目标形态已达成。
-- [ ] 若发现仍存在半吊子边界，回到对应 Phase 修正，不进入 Done Definition。
+- [x] 检查 `SessionRuntimeInner` 没有继续通过 launch/pipeline 文件扩展 hook runtime helper。
+- [x] 跑完整验证命令，并记录任何非本任务失败。
+- [x] 对照 PRD 的 `Before State`，逐条确认对应问题已被消除；对照 `Expected After State`，逐条确认目标形态已达成。
+- [x] 若发现仍存在半吊子边界，回到对应 Phase 修正，不进入 Done Definition。
+
+### Phase 13 Evidence
+
+已重新对照 PRD `User Intent` / `Before State` / `Expected After State` / `Acceptance Criteria`。原始 review 的核心要求分别是：`runtime-control-plane-review.md` 要求拆 `prompt_pipeline.rs` 的 `plan / prepare / start / commit / attach` 阶段；`platform-boundary-governance-review.md` 要求先在 `agentdash-application::session` 内建立 `launch` 等可见子域边界。
+
+最终代码结构符合目标：
+
+```text
+session/launch/
+  command.rs
+  plan.rs
+  planner.rs
+  deps.rs
+  orchestrator.rs
+  preparation.rs
+  connector_start.rs
+  commit.rs
+  ingestion.rs
+  service.rs
+```
+
+阶段类型与 accepted 边界检查结果：
+
+- `TurnPreparer::prepare` 产出 `PreparedTurn`，准备 connector context/tools/runtime projection。
+- `ConnectorStarter::start` 消费 `PreparedTurn`，成功才产出 `ConnectorAcceptedTurn`；失败路径释放 turn/hook 并记录 failed terminal。
+- `TurnCommitter::commit` 消费 `ConnectorAcceptedTurn`，提交 accepted 后事件、meta、runtime command applied 与 title generation。
+- `StreamIngestionAttacher::attach` 消费 `CommittedTurn`，只负责 processor / stream adapter attach。
+
+边界搜索结果：
+
+```text
+rg -n "prompt_pipeline|execute_constructed_launch|LaunchExecution|SessionLaunchExecutor|SessionLaunchPlanner|LaunchStrictness|relaxed launch|strictness" crates/agentdash-application/src/session .trellis/spec -S
+  no matches
+
+rg -n "prompt_pipeline|execute_constructed_launch|LaunchExecution|SessionLaunchExecutor|SessionLaunchPlanner" crates/agentdash-application/src/session docs .trellis/spec -S
+  only historical docs/reviews references remain
+```
+
+最终验证：
+
+```text
+cargo fmt --package agentdash-application
+  ok
+cargo check -p agentdash-application
+  ok
+cargo test -p agentdash-application session::launch
+  ok, 7 passed
+cargo test -p agentdash-application local_relay_prompt_requires_session_construction_provider
+  ok
+cargo test -p agentdash-application
+  ok, 509 passed
+cargo test -p agentdash-application session::
+  ok, 125 passed
+cargo test -p agentdash-application relay_connector
+  ok, 2 passed
+```
+
+全量测试曾暴露一个旧 `relaxed launch` 测试命名和断言残留；已更新为 `local_relay_prompt` 来源语义后重跑通过。
 
 ## Validation Commands
 

@@ -3,14 +3,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceDetectPayload {
     /// 待检测的 workspace 根目录。
-    /// 本机必须先校验它位于 accessible_roots 内，不能把它当任意文件系统路径使用。
+    /// 本机必须先校验它存在、是目录且可读取；该命令只做 workspace facts 探测。
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandWorkspaceDetectGitPayload {
     /// 待检测的 workspace 根目录。
-    /// 本机必须先校验它位于 accessible_roots 内，不能把它当任意文件系统路径使用。
+    /// 本机必须先校验它存在、是目录且可读取；该命令只做 workspace facts 探测。
     pub path: String,
 }
 

@@ -86,8 +86,8 @@ export interface BackendConfig {
   online?: boolean;
   /** 持久化 runtime health（cloud authority + registry online 合并） */
   runtime_health?: RuntimeHealth | null;
-  /** 在线后端的可访问根路径 */
-  accessible_roots?: string[];
+  /** 在线后端上报的已确认 workspace roots */
+  workspace_roots?: string[];
   /** 在线后端的执行器能力 */
   capabilities?: {
     executors: Array<{
@@ -117,7 +117,7 @@ export interface RuntimeHealth {
   online: boolean;
   version: string | null;
   capabilities: Record<string, unknown>;
-  accessible_roots: string[];
+  workspace_roots: string[];
   device: Record<string, unknown>;
   connected_at: string | null;
   last_seen_at: string | null;

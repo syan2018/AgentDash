@@ -170,7 +170,7 @@ pub struct RuntimeHealth {
     pub status: RuntimeHealthStatus,
     pub version: Option<String>,
     pub capabilities: serde_json::Value,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -187,7 +187,7 @@ pub struct RuntimeHealthOnlineUpdate {
     pub name: String,
     pub version: String,
     pub capabilities: serde_json::Value,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: chrono::DateTime<chrono::Utc>,
 }

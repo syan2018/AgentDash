@@ -19,9 +19,9 @@ struct Cli {
     #[arg(long)]
     token: Option<String>,
 
-    /// 本机可访问的工作空间目录（逗号分隔）
+    /// 已确认的工作空间目录（逗号分隔；不指定时按 session mount root 执行）
     #[arg(long, value_delimiter = ',')]
-    accessible_roots: Vec<PathBuf>,
+    workspace_roots: Vec<PathBuf>,
 
     /// 后端显示名称
     #[arg(long, default_value = "local-backend")]
@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         token,
         backend_id,
         cli.name,
-        cli.accessible_roots,
+        cli.workspace_roots,
         !cli.no_executor,
     );
 

@@ -69,7 +69,7 @@ async function loadOrCreateAutoStartProfile(
     machine_label: null,
     legacy_machine_ids: [],
     name: DEFAULT_LOCAL_RUNTIME_BACKEND_NAME,
-    accessible_roots: [],
+    workspace_roots: [],
     executor_enabled: true,
     auto_start: true,
     backend_id: null,

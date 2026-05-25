@@ -10,7 +10,7 @@ interface BackendConfig {
   name: string;
   endpoint?: string;
   backend_id?: string;
-  accessible_roots?: string[];
+  workspace_roots?: string[];
 }
 
 interface ProjectEntity {
@@ -52,7 +52,7 @@ async function ensureBackend(request: APIRequestContext, suffix: string): Promis
   return {
     id: PLAYWRIGHT_BACKEND_ID,
     name: backend?.name ?? PLAYWRIGHT_BACKEND_ID,
-    accessible_roots: backend?.accessible_roots ?? [],
+    workspace_roots: backend?.workspace_roots ?? [],
   };
 }
 

@@ -10,8 +10,23 @@ impl CommandHandler {
         id: String,
         payload: TerminalSpawnPayload,
     ) -> RelayMessage {
-        let workspace_root = &payload.mount_root_ref;
-        match self.terminal_manager.spawn(&payload, workspace_root) {
+        let workspace_root = match self
+            .tool_executor
+            .validate_workspace_root(&payload.mount_root_ref)
+        {
+            Ok(path) => path,
+            Err(error) => {
+                return RelayMessage::ResponseTerminalSpawn {
+                    id,
+                    payload: None,
+                    error: Some(RelayError::runtime_error(format!(
+                        "mount_root_ref 校验失败: {error}"
+                    ))),
+                };
+            }
+        };
+
+        match self.terminal_manager.spawn(&payload, &workspace_root) {
             Ok(resp) => RelayMessage::ResponseTerminalSpawn {
                 id,
                 payload: Some(resp),

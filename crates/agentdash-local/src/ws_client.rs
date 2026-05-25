@@ -24,7 +24,7 @@ pub struct Config {
     pub token: String,
     pub backend_id: String,
     pub name: String,
-    pub accessible_roots: Vec<PathBuf>,
+    pub workspace_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
     pub session_runtime: Option<SessionRuntimeServices>,
     pub connector: Option<Arc<dyn AgentConnector>>,
@@ -113,8 +113,8 @@ async fn run_session(
             name: config.name.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: build_capabilities(&handler, &config.mcp_manager),
-            accessible_roots: config
-                .accessible_roots
+            workspace_roots: config
+                .workspace_roots
                 .iter()
                 .map(|p| p.to_string_lossy().to_string())
                 .collect(),

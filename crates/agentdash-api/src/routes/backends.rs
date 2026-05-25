@@ -59,7 +59,7 @@ pub struct EnsureLocalRuntimeRequest {
     pub capability_slot: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     #[serde(default)]
     pub executor_enabled: bool,
     pub client_version: Option<String>,
@@ -99,7 +99,7 @@ pub struct BackendWithStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_health: Option<RuntimeHealthResponse>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub accessible_roots: Option<Vec<String>>,
+    pub workspace_roots: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<agentdash_relay::CapabilitiesPayload>,
 }
@@ -113,7 +113,7 @@ pub struct RuntimeHealthResponse {
     pub online: bool,
     pub version: Option<String>,
     pub capabilities: serde_json::Value,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub device: serde_json::Value,
     pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -194,7 +194,7 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: online_info.is_some(),
             runtime_health,
-            accessible_roots: online_info.map(|o| o.accessible_roots.clone()),
+            workspace_roots: online_info.map(|o| o.workspace_roots.clone()),
             capabilities: online_info.map(|o| o.capabilities.clone()),
             config: b,
         });
@@ -214,7 +214,7 @@ pub async fn list_backends(
         result.push(BackendWithStatus {
             online: true,
             runtime_health,
-            accessible_roots: Some(o.accessible_roots.clone()),
+            workspace_roots: Some(o.workspace_roots.clone()),
             capabilities: Some(o.capabilities.clone()),
             config: BackendConfig {
                 id: o.backend_id.clone(),
@@ -402,7 +402,7 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
         online,
         version: health.version,
         capabilities: health.capabilities,
-        accessible_roots: health.accessible_roots,
+        workspace_roots: health.workspace_roots,
         device: health.device,
         connected_at: health.connected_at,
         last_seen_at: health.last_seen_at,
@@ -624,8 +624,8 @@ pub async fn ensure_local_runtime(
         device["client_version"] = serde_json::Value::String(client_version);
     }
     device["executor_enabled"] = serde_json::Value::Bool(req.executor_enabled);
-    device["accessible_root_count"] =
-        serde_json::Value::Number(serde_json::Number::from(req.accessible_roots.len() as u64));
+    device["workspace_root_count"] =
+        serde_json::Value::Number(serde_json::Number::from(req.workspace_roots.len() as u64));
 
     let legacy_machine_ids = normalize_legacy_machine_ids(req.legacy_machine_ids, &machine_id);
 

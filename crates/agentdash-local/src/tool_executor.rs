@@ -2,7 +2,7 @@
 //!
 //! 处理来自云端 PiAgent AgentLoop 的工具调用请求，
 //! 在本机文件系统和 Shell 环境中执行。
-//! 所有操作都受 accessible_roots 安全边界约束。
+//! 所有执行类操作都受 session mount root 边界约束。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,7 +22,7 @@ pub(crate) struct SearchParams<'a> {
 
 #[derive(Debug, Clone)]
 pub struct ToolExecutor {
-    accessible_roots: Vec<PathBuf>,
+    workspace_roots: Vec<PathBuf>,
 }
 
 /// Shell 执行结果
@@ -40,7 +40,7 @@ pub struct BinaryFileResult {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
-    #[error("路径安全检查失败: {0} 不在 accessible_roots 内")]
+    #[error("路径安全检查失败: {0} 不在当前执行 workspace 边界内")]
     PathNotAccessible(String),
 
     #[error("IO 错误: {0}")]
@@ -57,21 +57,34 @@ pub enum ToolError {
 }
 
 impl ToolExecutor {
-    pub fn new(accessible_roots: Vec<PathBuf>) -> Self {
-        Self { accessible_roots }
+    pub fn new(workspace_roots: Vec<PathBuf>) -> Self {
+        Self { workspace_roots }
     }
 
-    /// 验证 workspace_root 在 accessible_roots 内
+    /// 验证执行类操作的 workspace root，并在配置了 workspace roots 时检查其归属。
     pub fn validate_workspace_root(&self, workspace_root: &str) -> Result<PathBuf, ToolError> {
-        let ws_path = PathBuf::from(workspace_root);
+        let trimmed = workspace_root.trim();
+        if trimmed.is_empty() {
+            return Err(ToolError::InvalidPath(
+                "workspace root 不能为空".to_string(),
+            ));
+        }
+
+        let ws_path = PathBuf::from(trimmed);
         let canonical = std::fs::canonicalize(&ws_path)
             .map_err(|_| ToolError::InvalidPath(workspace_root.to_string()))?;
 
-        if self.accessible_roots.is_empty() {
+        if !canonical.is_dir() {
+            return Err(ToolError::InvalidPath(format!(
+                "workspace root 不是目录: {workspace_root}"
+            )));
+        }
+
+        if self.workspace_roots.is_empty() {
             return Ok(canonical);
         }
 
-        for root in &self.accessible_roots {
+        for root in &self.workspace_roots {
             if let Ok(root_canonical) = std::fs::canonicalize(root)
                 && canonical.starts_with(&root_canonical)
             {
@@ -79,7 +92,9 @@ impl ToolExecutor {
             }
         }
 
-        Err(ToolError::PathNotAccessible(workspace_root.to_string()))
+        Err(ToolError::PathNotAccessible(format!(
+            "workspace root 未登记: {workspace_root}"
+        )))
     }
 
     pub fn resolve_existing_path(
@@ -390,6 +405,26 @@ impl ToolExecutor {
 
         fallback_search(&ws, &search_dir, params).await
     }
+}
+
+pub(crate) fn resolve_detect_workspace_root(workspace_root: &str) -> Result<PathBuf, ToolError> {
+    let trimmed = workspace_root.trim();
+    if trimmed.is_empty() {
+        return Err(ToolError::InvalidPath(
+            "workspace root 不能为空".to_string(),
+        ));
+    }
+
+    let canonical =
+        std::fs::canonicalize(trimmed).map_err(|_| ToolError::InvalidPath(trimmed.to_string()))?;
+    if !canonical.is_dir() {
+        return Err(ToolError::InvalidPath(format!(
+            "workspace root 不是目录: {trimmed}"
+        )));
+    }
+
+    std::fs::read_dir(&canonical).map_err(ToolError::Io)?;
+    Ok(canonical)
 }
 
 async fn detect_ripgrep() -> Option<PathBuf> {
@@ -891,6 +926,53 @@ mod tests {
             .resolve_path_for_write("../escape.txt", &root)
             .expect_err("escape should be rejected");
         assert!(matches!(error, ToolError::PathNotAccessible(_)));
+    }
+
+    #[test]
+    fn validate_workspace_root_allows_mount_root_when_workspace_roots_empty() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let executor = ToolExecutor::new(Vec::new());
+
+        let resolved = executor
+            .validate_workspace_root(workspace.path().to_string_lossy().as_ref())
+            .expect("empty workspace roots should not block explicit mount root");
+
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(workspace.path()).expect("canonical workspace")
+        );
+    }
+
+    #[test]
+    fn validate_workspace_root_rejects_unregistered_mount_root_when_roots_exist() {
+        let registered = tempfile::tempdir().expect("registered");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let executor = ToolExecutor::new(vec![registered.path().to_path_buf()]);
+
+        let error = executor
+            .validate_workspace_root(workspace.path().to_string_lossy().as_ref())
+            .expect_err("unregistered mount root should be rejected");
+
+        assert!(matches!(error, ToolError::PathNotAccessible(_)));
+    }
+
+    #[test]
+    fn detect_workspace_root_only_requires_readable_directory() {
+        let registered = tempfile::tempdir().expect("registered");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let executor = ToolExecutor::new(vec![registered.path().to_path_buf()]);
+
+        executor
+            .validate_workspace_root(workspace.path().to_string_lossy().as_ref())
+            .expect_err("execution boundary still rejects unregistered root");
+
+        let detected = resolve_detect_workspace_root(workspace.path().to_string_lossy().as_ref())
+            .expect("detect path should not require workspace roots registration");
+
+        assert_eq!(
+            detected,
+            std::fs::canonicalize(workspace.path()).expect("canonical workspace")
+        );
     }
 
     #[test]

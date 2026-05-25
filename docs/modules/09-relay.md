@@ -55,12 +55,13 @@
 
 ```
 本机后端（per-machine 进程）
-├── accessible_roots[0]: /home/alice/projects/frontend  → 云端 Workspace W1
-├── accessible_roots[1]: /home/alice/projects/backend   → 云端 Workspace W2
-└── accessible_roots[2]: /home/alice/projects/infra     → 云端 Workspace W3
+├── /home/alice/projects/frontend  → 云端 Workspace W1
+├── /home/alice/projects/backend   → 云端 Workspace W2
+└── /home/alice/projects/infra     → 云端 Workspace W3
 ```
 
-- 本机启动时通过 `register` 消息上报 `accessible_roots`（可访问的目录列表）
+- 本机启动时通过 `register` 消息上报显式登记的 `workspace_roots`
+- 未配置 `workspace_roots` 不影响本机目录浏览和 workspace detect；执行类命令以 session 的 `mount_root_ref` 作为路径边界
 - 云端 `Workspace` 实体需要 `backend_id` 字段，记录物理文件所在本机
 - 命令路由基于 `Workspace.backend_id`：云端通过 `Task.workspace_id → Workspace.backend_id` 找到目标本机
 - `Project.backend_id` / `Story.backend_id` 作为创建子实体时的默认偏好，不参与运行时路由
@@ -82,7 +83,7 @@ ConnectedBackend {
   backend_id: string
   ws_sender: WebSocketSender
   capabilities: Capabilities
-  accessible_roots: Vec<string>
+  workspace_roots: Vec<string>
   status: "online" | "offline"
   connected_at: timestamp
   last_heartbeat: timestamp
@@ -111,7 +112,7 @@ RelayClient {
   cloud_url: string
   token: string
   connection: WebSocketConnection
-  accessible_roots: Vec<PathBuf>
+  workspace_roots: Vec<PathBuf>
   executor_hub: ExecutorHub
   tool_executor: ToolExecutor
   reconnect_state: ReconnectState
@@ -131,7 +132,7 @@ RelayClient {
 
 ```
 ToolExecutor {
-  accessible_roots: Vec<PathBuf>
+  workspace_roots: Vec<PathBuf>
 
   fn file_read(path, workspace_root): Result<String>
   fn file_write(path, content, workspace_root): Result<()>
@@ -140,7 +141,7 @@ ToolExecutor {
 }
 ```
 
-每个方法接收 `workspace_root`（绝对路径），ToolExecutor 验证该路径在 `accessible_roots` 内后执行操作。
+每个方法接收 `workspace_root`（绝对路径），ToolExecutor 先 canonicalize 本次 session 的 `mount_root_ref`，再把文件、Shell 与搜索操作限制在该目录内。当本机显式配置了 `workspace_roots` 时，`mount_root_ref` 还需要属于其中一个已登记 root。
 
 ### 云端 RelayConnector（中继连接器）
 
@@ -417,7 +418,7 @@ RelayClient {
 - [ ] 断线恢复时的 session 状态同步细节
 - [ ] **消息背压/流控**：高频 `event.session_notification` 的缓冲堆积和背压策略
 - [ ] **tool call 超时与重试**：file_read/write/list 的超时定义；断线导致 response 丢失时 AgentLoop 的恢复策略
-- [ ] **accessible_roots 动态变更**：本机新增/移除工作空间目录时的通知机制
+- [ ] **workspace_roots 动态变更**：本机新增/移除工作空间目录时的通知机制
 
 ---
 

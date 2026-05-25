@@ -61,7 +61,7 @@ tracing::info!("session {} task {} status changed to {}", session_id, task_id, n
 | 会话启动 | `info` | `session_id`, `connector_id`, `model_id` |
 | 会话完成 | `info` | `session_id`, `terminal_kind`, `elapsed_ms` |
 | 执行流错误 | `error` | `session_id`, 错误详情 |
-| 后端连接建立 | `info` | `backend_id`, `accessible_roots` |
+| 后端连接建立 | `info` | `backend_id`, `workspace_roots` |
 | 后端连接断开 | `warn` | `backend_id`, 断开原因 |
 | Hook 触发 | `debug` | `session_id`, `trigger`, `decision` |
 | Relay 命令路由 | `debug` | `backend_id`, `command_type` |

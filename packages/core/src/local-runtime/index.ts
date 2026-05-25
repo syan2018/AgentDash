@@ -4,7 +4,7 @@ export interface LocalRuntimeStatus {
   state: LocalRuntimeState
   backend_id: string
   name: string
-  accessible_roots: string[]
+  workspace_roots: string[]
   executor_enabled: boolean
   mcp_server_count: number
   message: string | null
@@ -26,7 +26,7 @@ export interface RuntimeStartRequest {
   machine_label?: string | null
   legacy_machine_ids: string[]
   name?: string
-  accessible_roots: string[]
+  workspace_roots: string[]
   executor_enabled: boolean
 }
 

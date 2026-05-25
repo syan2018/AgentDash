@@ -1673,7 +1673,7 @@ function BackendSection({
           const executors = backend.capabilities?.executors ?? [];
           const availableExecs = executors.filter((e) => e.available);
           const runtimeHealth = backend.runtime_health;
-          const roots = backend.accessible_roots ?? runtimeHealth?.accessible_roots ?? [];
+          const roots = backend.workspace_roots ?? runtimeHealth?.workspace_roots ?? [];
           const machineLabel = backend.machine_label || machineLabelFromDevice(backend.device) || backend.name;
           const scopeLabel = formatBackendScope(backend);
 

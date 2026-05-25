@@ -328,7 +328,7 @@ pub async fn refresh_project_backend_inventory(
         .ok_or_else(|| ApiError::Conflict(format!("backend `{}` 当前不在线", access.backend_id)))?;
     let mut items = Vec::new();
     let mut warnings = Vec::new();
-    for root in online.accessible_roots {
+    for root in online.workspace_roots {
         match invoke_workspace_detect(
             &state,
             Some(current_user.user_id.as_str()),

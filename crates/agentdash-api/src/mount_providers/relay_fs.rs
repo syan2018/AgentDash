@@ -87,6 +87,8 @@ impl MountProvider for RelayFsMountProvider {
                 path,
                 content: payload.content,
                 attributes: None,
+                version_token: None,
+                modified_at: None,
             }),
             RelayMessage::ResponseToolFileRead {
                 error: Some(error), ..
@@ -400,7 +402,10 @@ impl MountProvider for RelayFsMountProvider {
                         content: hit.content,
                     })
                     .collect();
-                Ok(SearchResult { matches })
+                Ok(SearchResult {
+                    matches,
+                    truncated: false,
+                })
             }
             RelayMessage::ResponseToolSearch {
                 error: Some(error), ..

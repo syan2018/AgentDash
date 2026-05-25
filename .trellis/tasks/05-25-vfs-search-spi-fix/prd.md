@@ -2,6 +2,12 @@
 
 > **Parent task:** [05-25-fs-tools-optimization-review](../05-25-fs-tools-optimization-review/design.md)
 > 决策来源：parent 的 design.md §4 决策矩阵（F1 / F2 / F4 三条 SPI 修复）。
+>
+> **CC 对齐目标（SPI 层无直接对应；以三个工具的字段/输出语义为准）：**
+> - [GrepTool.ts](../../../references/claude-code/src/tools/GrepTool/GrepTool.ts)（驱动 SearchQuery 字段扩展）
+> - [GlobTool.ts](../../../references/claude-code/src/tools/GlobTool/GlobTool.ts)（驱动 RuntimeFileEntry / SearchResult.truncated）
+> - [FileReadTool.ts](../../../references/claude-code/src/tools/FileReadTool/FileReadTool.ts)（驱动 ReadResult 扩展 + read_text_range）
+> - [utils/fileStateCache.ts](../../../references/claude-code/src/utils/fileStateCache.ts)（version_token 设计参考；CC 用 mtime/size）
 
 ## Goal
 

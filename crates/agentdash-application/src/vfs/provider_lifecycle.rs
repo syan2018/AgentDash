@@ -755,7 +755,10 @@ impl MountProvider for LifecycleMountProvider {
             return search_projected_skill_files(self.skill_asset_repo.as_ref(), mount, query)
                 .await;
         }
-        Ok(SearchResult { matches: vec![] })
+        Ok(SearchResult {
+            matches: vec![],
+            truncated: false,
+        })
     }
 
     async fn exec(

@@ -67,17 +67,21 @@ impl MountProvider for InlineFsMountProvider {
             .inline_file_repo
             .get_file(owner_kind, owner_id, &container_id, &path)
             .await
-            .map_err(map_domain_err)?;
-        let content = file
-            .map(|f| match f.content {
-                InlineFileContent::Text { content } => Ok(content),
-                InlineFileContent::Binary { .. } => Err(MountError::NotSupported(format!(
-                    "文件是二进制内容，不能按文本读取: {path}"
-                ))),
-            })
-            .transpose()?
+            .map_err(map_domain_err)?
             .ok_or_else(|| MountError::NotFound(format!("文件不存在: {path}")))?;
-        Ok(ReadResult::new(path, content))
+        let updated_at_ms = file.updated_at.timestamp_millis();
+        let size_bytes = file.size_bytes;
+        let content = match file.content {
+            InlineFileContent::Text { content } => content,
+            InlineFileContent::Binary { .. } => {
+                return Err(MountError::NotSupported(format!(
+                    "文件是二进制内容，不能按文本读取: {path}"
+                )));
+            }
+        };
+        Ok(ReadResult::new(path, content)
+            .with_version_token(format!("ts:{}:{}", updated_at_ms, size_bytes))
+            .with_modified_at(updated_at_ms))
     }
 
     async fn read_binary(
@@ -177,13 +181,19 @@ impl MountProvider for InlineFsMountProvider {
                         content: line.trim().to_string(),
                     });
                     if matches.len() >= max_results {
-                        return Ok(SearchResult { matches });
+                        return Ok(SearchResult {
+                            matches,
+                            truncated: true,
+                        });
                     }
                 }
             }
         }
 
-        Ok(SearchResult { matches })
+        Ok(SearchResult {
+            matches,
+            truncated: false,
+        })
     }
 
     async fn stat(
@@ -491,9 +501,7 @@ mod tests {
                 &mount,
                 &SearchQuery {
                     pattern: "needle".to_string(),
-                    path: None,
-                    case_sensitive: true,
-                    max_results: None,
+                    ..Default::default()
                 },
                 &MountOperationContext::default(),
             )
@@ -538,5 +546,140 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("binary")
         );
+    }
+
+    // ─── vfs-search-spi-fix 集成测试 ────────────────────────────────────
+    // T3 truncated / T4 version_token / T5 read_text_range 默认实现。
+    // T1 (is_regex) 与 T2 (include_glob) 在 inline provider 上不直接生效（inline
+    // 当前是 substring 实现，新字段 warn-and-degrade）；这两项语义在
+    // fs-grep-rebuild 任务里随 inline 升级到 regex 时一并验收。
+
+    #[tokio::test]
+    async fn search_truncated_when_max_results_reached() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_files(&[
+            InlineFile::new_text(
+                InlineFileOwnerKind::Project,
+                owner_id,
+                "brief",
+                "a.md",
+                "needle\nneedle\nneedle\n",
+            ),
+        ])
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        let result = provider
+            .search_text(
+                &inline_mount(owner_id),
+                &SearchQuery {
+                    pattern: "needle".to_string(),
+                    max_results: Some(2),
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("search");
+        assert_eq!(result.matches.len(), 2);
+        assert!(result.truncated, "max_results 命中应触发 truncated=true");
+    }
+
+    #[tokio::test]
+    async fn read_text_returns_version_token_and_modified_at() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "hello",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        let result = provider
+            .read_text(
+                &inline_mount(owner_id),
+                "a.md",
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read");
+        assert!(
+            result.version_token.is_some(),
+            "inline provider 应填充 version_token"
+        );
+        assert!(
+            result.version_token.as_deref().unwrap().starts_with("ts:"),
+            "inline token 形如 ts:<ms>:<size>"
+        );
+        assert!(
+            result.modified_at.is_some(),
+            "inline provider 应填充 modified_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_text_range_default_impl_slices_lines() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "line1\nline2\nline3\nline4\nline5\n",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        // offset=2, limit=Some(2) ⇒ 取 line3 + line4
+        let result = provider
+            .read_text_range(
+                &inline_mount(owner_id),
+                "a.md",
+                2,
+                Some(2),
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read_text_range");
+        assert_eq!(result.content, "line3\nline4");
+        // 默认实现沿用全文 token
+        assert!(result.version_token.is_some());
+    }
+
+    #[tokio::test]
+    async fn read_text_range_default_impl_limit_none_reads_to_eof() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "line1\nline2\nline3\n",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        let result = provider
+            .read_text_range(
+                &inline_mount(owner_id),
+                "a.md",
+                1,
+                None,
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("read_text_range");
+        assert_eq!(result.content, "line2\nline3");
     }
 }

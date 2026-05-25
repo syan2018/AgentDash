@@ -2,6 +2,14 @@
 
 > **Parent task:** [05-25-fs-tools-optimization-review](../05-25-fs-tools-optimization-review/design.md)
 > 决策来源：parent 的 design.md §0 对齐 diff 表 + §1 P0#1/P0#2 + §3.1 P2#8。
+>
+> **CC 参考实现（对齐基线）：**
+> - [FileReadTool.ts](../../../references/claude-code/src/tools/FileReadTool/FileReadTool.ts) — 主体（offset/limit schema、ENOENT 分支、dedup 集成）
+> - [FileReadTool/prompt.ts](../../../references/claude-code/src/tools/FileReadTool/prompt.ts) — prompt 措辞参考
+> - [FileReadTool/limits.ts](../../../references/claude-code/src/tools/FileReadTool/limits.ts) — MAX_BYTES / MAX_LINES 常量来源
+> - [utils/fileRead.ts](../../../references/claude-code/src/utils/fileRead.ts) — `readFileInRange` 真按 range 读的实现样式
+> - [utils/fileStateCache.ts](../../../references/claude-code/src/utils/fileStateCache.ts) — readFileState dedup 的 LRU 设计
+> - [utils/file.ts](../../../references/claude-code/src/utils/file.ts) — `findSimilarFile` / `suggestPathUnderCwd` ENOENT 友好提示
 
 ## Goal
 

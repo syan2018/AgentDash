@@ -19,6 +19,16 @@ pub struct TextSearchParams<'a> {
     pub max_results: usize,
     pub context_lines: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
+    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 `true`（与历史行为一致）。
+    pub case_sensitive: bool,
+    /// `-B` 等价；与 `context_lines` 同时设置时取 `max(before_lines, context_lines)`。
+    pub before_lines: usize,
+    /// `-A` 等价；与 `context_lines` 同时设置时取 `max(after_lines, context_lines)`。
+    pub after_lines: usize,
+    /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep multiline）。
+    pub multiline: bool,
+    /// 输出形态。默认 `Content`。
+    pub output_mode: agentdash_spi::platform::mount::SearchOutputMode,
 }
 
 // ─── Service ────────────────────────────────────────────────
@@ -702,6 +712,11 @@ impl RelayVfsService {
                 max_results,
                 context_lines: 0,
                 overlay,
+                case_sensitive: true,
+                before_lines: 0,
+                after_lines: 0,
+                multiline: false,
+                output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
             },
         )
         .await
@@ -730,8 +745,15 @@ impl RelayVfsService {
                     Some(base_path)
                 },
                 pattern: params.query.to_string(),
-                case_sensitive: true,
+                case_sensitive: params.case_sensitive,
                 max_results: Some(params.max_results),
+                is_regex: params.is_regex,
+                include_glob: params.include_glob.map(|s| s.to_string()),
+                context_lines: params.context_lines,
+                before_lines: params.before_lines,
+                after_lines: params.after_lines,
+                multiline: params.multiline,
+                output_mode: params.output_mode,
             };
             let started_at = Instant::now();
             let result = provider.search_text(mount, &sq, &ctx).await;
@@ -743,6 +765,7 @@ impl RelayVfsService {
                 result.is_ok(),
             );
             let result = result.map_err(|e| e.to_string())?;
+            let truncated = result.truncated;
             let hits: Vec<String> = result
                 .matches
                 .iter()
@@ -754,7 +777,7 @@ impl RelayVfsService {
                     }
                 })
                 .collect();
-            return Ok((hits, false));
+            return Ok((hits, truncated));
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
@@ -804,6 +827,15 @@ impl RelayVfsService {
             None
         };
 
+        let glob_matcher = match params.include_glob {
+            Some(pat) => Some(
+                globset::Glob::new(pat)
+                    .map_err(|e| format!("无效 glob: {e}"))?
+                    .compile_matcher(),
+            ),
+            None => None,
+        };
+
         let mut hits = Vec::new();
         let mut truncated = false;
 
@@ -811,6 +843,11 @@ impl RelayVfsService {
             if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
                 && !base_path.is_empty()
                 && base_path != "."
+            {
+                continue;
+            }
+            if let Some(matcher) = &glob_matcher
+                && !matcher.is_match(file_path.as_str())
             {
                 continue;
             }

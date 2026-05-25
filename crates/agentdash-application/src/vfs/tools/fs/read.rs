@@ -334,7 +334,7 @@ mod fs_read_tests {
             _query: &SearchQuery,
             _ctx: &MountOperationContext,
         ) -> Result<SearchResult, MountError> {
-            Ok(SearchResult { matches: vec![] })
+            Ok(SearchResult::default())
         }
 
         async fn exec(

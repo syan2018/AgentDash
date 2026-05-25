@@ -2,6 +2,10 @@
 
 > **Parent task:** [05-25-fs-tools-optimization-review](../05-25-fs-tools-optimization-review/design.md)
 > 决策来源：parent 的 design.md §0 对齐 diff 表 + §1 P0#3 + §2 P1#4-#6 + §3.2 P2#10。
+>
+> **CC 参考实现（对齐基线）：**
+> - [GrepTool.ts](../../../references/claude-code/src/tools/GrepTool/GrepTool.ts) — 主体（pattern/glob/head_limit/output_mode/-A/-B/-C/-i/multiline/type 全部参数）
+> - [GrepTool/prompt.ts](../../../references/claude-code/src/tools/GrepTool/prompt.ts) — prompt 措辞参考；VCS 黑名单 + max_columns 500 都在这里
 
 ## Goal
 

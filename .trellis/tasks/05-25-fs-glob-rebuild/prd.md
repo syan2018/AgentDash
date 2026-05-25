@@ -2,6 +2,10 @@
 
 > **Parent task:** [05-25-fs-tools-optimization-review](../05-25-fs-tools-optimization-review/design.md)
 > 决策来源：parent 的 design.md §0 对齐 diff 表 + §2 P1#7 + §3 P2#9。
+>
+> **CC 参考实现（对齐基线）：**
+> - [GlobTool.ts](../../../references/claude-code/src/tools/GlobTool/GlobTool.ts) — 主体（pattern 必填、mtime desc 排序、默认 100 上限、trailing slash 输出）
+> - [GlobTool/prompt.ts](../../../references/claude-code/src/tools/GlobTool/prompt.ts) — prompt 措辞参考
 
 ## Goal
 

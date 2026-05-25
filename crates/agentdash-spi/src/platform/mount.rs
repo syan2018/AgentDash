@@ -41,11 +41,22 @@ impl std::error::Error for MountError {}
 /// `attributes` 是可选的扩展元数据（xattr 风格），由 provider 按需填充。
 /// 例如 KM 插件可以放 `author` / `tags` / `url`，relay_fs 可以放 `git_author`。
 /// Agent 工具侧负责与 `content` 分通道展示，避免污染文件正文。
+///
+/// `version_token` 是 dedup 缓存的 invalidation key：不透明字符串，调用方按
+/// `==` 比对，相同内容 ⇒ 相同 token；任何修改 ⇒ token 变化。`None` 表示
+/// provider 暂时无法生成（旧实现路径），调用方按"不命中"处理，**不引入
+/// 常量 fallback**（避免相同 fallback 值被误判为命中）。生成方式由各 provider
+/// 自定：lifecycle / relay_fs 用 `format!("{mtime}:{size}")`；inline 用
+/// inline_files 表 revision；canvas 用 page version_id；skill_asset 用 updated_at。
+///
+/// `modified_at` 是 Unix 毫秒时间戳；缺失填 `None`。
 #[derive(Debug, Clone, Default)]
 pub struct ReadResult {
     pub path: String,
     pub content: String,
     pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+    pub version_token: Option<String>,
+    pub modified_at: Option<i64>,
 }
 
 impl ReadResult {
@@ -54,11 +65,23 @@ impl ReadResult {
             path: path.into(),
             content: content.into(),
             attributes: None,
+            version_token: None,
+            modified_at: None,
         }
     }
 
     pub fn with_attributes(mut self, attrs: serde_json::Map<String, serde_json::Value>) -> Self {
         self.attributes = Some(attrs);
+        self
+    }
+
+    pub fn with_version_token(mut self, token: impl Into<String>) -> Self {
+        self.version_token = Some(token.into());
+        self
+    }
+
+    pub fn with_modified_at(mut self, mtime: i64) -> Self {
+        self.modified_at = Some(mtime);
         self
     }
 }
@@ -193,21 +216,82 @@ impl RuntimeFileEntry {
 // Search
 // ============================================================================
 
+/// 文本搜索查询参数。
+///
+/// **A7 决议**：`pattern` 始终视为正则表达式（与 Claude Code GrepTool 对齐）。
+/// `is_regex` 字段是过渡占位，service 层始终传 `true`；后续 [`vfs-grep-query-split`]
+/// follow-up 任务会拆出 `GrepQuery`，把 grep-specific 字段从 `SearchQuery` 移走。
+///
+/// 字段语义参考 ripgrep / GNU grep：
+/// - `case_sensitive = false` ⇒ provider 应启用 smart-case；`true` ⇒ 严格大小写。
+/// - `context_lines` 等价 `-C N`；`before_lines` / `after_lines` 等价 `-B` / `-A`。
+///   同时设置时，effective_before = `max(before_lines, context_lines)`，after 同理。
+/// - `multiline = true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep
+///   `--multiline --multiline-dotall`）。
+/// - `output_mode` 决定 provider 返回的命中粒度。
+///
+/// [`vfs-grep-query-split`]: ../../../.trellis/tasks/05-25-vfs-grep-query-split/prd.md
+#[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub pattern: String,
     pub path: Option<String>,
     pub case_sensitive: bool,
     pub max_results: Option<usize>,
+    pub is_regex: bool,
+    pub include_glob: Option<String>,
+    pub context_lines: usize,
+    pub before_lines: usize,
+    pub after_lines: usize,
+    pub multiline: bool,
+    pub output_mode: SearchOutputMode,
 }
 
+impl Default for SearchQuery {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            path: None,
+            case_sensitive: true,
+            max_results: None,
+            is_regex: true,
+            include_glob: None,
+            context_lines: 0,
+            before_lines: 0,
+            after_lines: 0,
+            multiline: false,
+            output_mode: SearchOutputMode::default(),
+        }
+    }
+}
+
+/// 搜索结果的输出形态（对齐 Claude Code GrepTool `output_mode`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchOutputMode {
+    /// 返回命中行（含上下文，如配置）。默认。
+    #[default]
+    Content,
+    /// 仅返回命中文件路径列表（按 path 去重）。
+    FilesWithMatches,
+    /// 仅返回总命中计数。
+    Count,
+}
+
+#[derive(Debug, Clone)]
 pub struct SearchMatch {
     pub path: String,
     pub line: Option<u32>,
     pub content: String,
 }
 
+/// `truncated = true` 表示 provider 主动截断了结果集，原因可能是：
+/// - 命中数达到 `SearchQuery::max_results`；
+/// - provider 自身的资源/超时保护性截断。
+///
+/// 调用方据此决定是否提示用户"refine pattern or raise max_results"。
+#[derive(Debug, Clone, Default)]
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
+    pub truncated: bool,
 }
 
 // ============================================================================
@@ -344,6 +428,78 @@ pub trait MountProvider: Send + Sync {
         path: &str,
         ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError>;
+
+    /// 按行号 range 读取文件内容。
+    ///
+    /// `offset` 是 0-based 行号（与 Claude Code FileReadTool 的 offset 对齐）。
+    /// `limit = None` 表示读到 EOF。
+    ///
+    /// 默认实现 = `read_text` 全文 + 切片（语义等价；不省内存）。
+    /// 实现真正按 range 读的 provider（lifecycle / relay_fs）应覆盖此方法，
+    /// 用 `tokio::io::AsyncBufReadExt::lines` + skip + take 避免大文件全量加载。
+    /// `version_token` 沿用全文 token（range 不影响版本）。
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        let full = self.read_text(mount, path, ctx).await?;
+        let mut iter = full.content.lines().skip(offset);
+        let take_n = limit.unwrap_or(usize::MAX);
+        let collected: Vec<&str> = (&mut iter).take(take_n).collect();
+        let sliced = collected.join("\n");
+        Ok(ReadResult {
+            path: full.path,
+            content: sliced,
+            attributes: full.attributes,
+            version_token: full.version_token,
+            modified_at: full.modified_at,
+        })
+    }
+
+    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
+    ///
+    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
+    ///
+    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
+    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
+    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
+    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        const MAX_SCAN_FILES: usize = 1000;
+        let listing = self
+            .list(
+                mount,
+                &ListOptions {
+                    path: String::new(),
+                    pattern: None,
+                    recursive: true,
+                },
+                ctx,
+            )
+            .await?;
+        let mut scored: Vec<(usize, String)> = listing
+            .entries
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .take(MAX_SCAN_FILES)
+            .map(|e| {
+                let dist = strsim::levenshtein(prefix, &e.path);
+                (dist, e.path)
+            })
+            .collect();
+        scored.sort_by_key(|(d, _)| *d);
+        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
+    }
 
     async fn read_binary(
         &self,

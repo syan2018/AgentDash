@@ -766,9 +766,7 @@ impl MountProvider for SkillFixtureMountProvider {
         _query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
-        Ok(SearchResult {
-            matches: Vec::new(),
-        })
+        Ok(SearchResult::default())
     }
 
     async fn exec(

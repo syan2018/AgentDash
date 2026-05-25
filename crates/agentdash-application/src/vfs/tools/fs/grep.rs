@@ -102,6 +102,11 @@ impl AgentTool for FsGrepTool {
                     max_results: params.max_results.unwrap_or(50).max(1),
                     context_lines: params.context_lines.unwrap_or(0),
                     overlay: self.overlay.as_ref().map(|arc| arc.as_ref()),
+                    case_sensitive: true,
+                    before_lines: 0,
+                    after_lines: 0,
+                    multiline: false,
+                    output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
                 },
             )
             .await

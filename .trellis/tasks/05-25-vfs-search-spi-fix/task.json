@@ -3,7 +3,7 @@
   "name": "vfs-search-spi-fix",
   "title": "VFS search SPI 修复（SearchQuery 字段补齐 + ReadResult 扩展 + read_text_range / suggest_paths）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

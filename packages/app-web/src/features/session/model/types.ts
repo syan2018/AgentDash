@@ -52,7 +52,6 @@ export type {
 
 import type {
   BackboneEvent,
-  BackboneEnvelope,
   ThreadItem,
   PlatformEvent,
   ThreadTokenUsage,
@@ -225,7 +224,7 @@ export type SessionEventEnvelope = SessionEventResponse;
 
 /** 聚合组子类型（工具调用聚合） */
 export type ToolAggregationType =
-  | "turn_fold"
+  | "tool_burst"
   | "file_read"
   | "search"
   | "web_fetch"

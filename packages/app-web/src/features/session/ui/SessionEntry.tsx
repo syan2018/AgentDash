@@ -324,6 +324,8 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   let mcp = 0;
   let dyn = 0;
   let search = 0;
+  let image = 0;
+  let collab = 0;
   let other = 0;
   let pending = 0;
   let failed = 0;
@@ -352,6 +354,13 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
       case "webSearch":
         search += 1;
         break;
+      case "imageView":
+      case "imageGeneration":
+        image += 1;
+        break;
+      case "collabAgentToolCall":
+        collab += 1;
+        break;
       default:
         other += 1;
         break;
@@ -364,6 +373,8 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
   if (mcp > 0) parts.push(`调用 ${mcp} 个 MCP 工具`);
   if (dyn > 0) parts.push(`调用 ${dyn} 个工具`);
   if (search > 0) parts.push(`搜索 ${search} 次`);
+  if (image > 0) parts.push(`图片 ${image} 项`);
+  if (collab > 0) parts.push(`协作 ${collab} 项`);
   if (other > 0) parts.push(`其他 ${other} 项`);
   if (pending > 0) parts.push(`${pending} 待审批`);
   if (failed > 0) parts.push(`${failed} 失败`);

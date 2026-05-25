@@ -101,6 +101,39 @@ function mkTurnCompleted(id = "tc"): SessionDisplayEntry {
   return asEntry(id, event);
 }
 
+function mkSilentHookTraceEntry(id: string): SessionDisplayEntry {
+  const event = {
+    type: "platform",
+    payload: {
+      kind: "hook_trace",
+      data: {
+        eventType: "hook:before_tool:allow",
+        message: null,
+        data: {
+          code: "hook:before_tool:allow",
+          diagnostics: [],
+          injections: [],
+        },
+      },
+    },
+  } as unknown as BackboneEvent;
+  return asEntry(id, event);
+}
+
+function mkSystemMessageEntry(id: string, message: string): SessionDisplayEntry {
+  const event = {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "system_message",
+        value: { message },
+      },
+    },
+  } as unknown as BackboneEvent;
+  return asEntry(id, event);
+}
+
 function mkReasoningEntry(id: string): SessionDisplayEntry {
   const event: BackboneEvent = {
     type: "reasoning_text_delta",
@@ -116,8 +149,8 @@ function isThinkingGroup(item: unknown): item is AggregatedThinkingGroup {
   return (item as AggregatedThinkingGroup)?.type === "aggregated_thinking";
 }
 
-describe("aggregateEntries — turn fold", () => {
-  it("T1: 5 connected commands fold into one turn_fold unit", () => {
+describe("aggregateEntries — tool burst", () => {
+  it("T1: 5 connected commands fold into one tool_burst unit", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkCmdEntry("c2", "pwd"),
@@ -129,7 +162,7 @@ describe("aggregateEntries — turn fold", () => {
     expect(result).toHaveLength(1);
     expect(isToolGroup(result[0])).toBe(true);
     const group = result[0] as AggregatedEntryGroup;
-    expect(group.aggregationType).toBe("turn_fold");
+    expect(group.aggregationType).toBe("tool_burst");
     expect(group.entries).toHaveLength(5);
   });
 
@@ -170,7 +203,7 @@ describe("aggregateEntries — turn fold", () => {
     expect((result[0] as SessionDisplayEntry).id).toBe("c1");
   });
 
-  it("T5: turn boundary splits units across turns", () => {
+  it("T5: turn boundaries are neutral, so tool bursts can span provider turns", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkCmdEntry("c2", "pwd"),
@@ -180,11 +213,14 @@ describe("aggregateEntries — turn fold", () => {
       mkCmdEntry("c4", "date"),
     ];
     const result = aggregateEntries(entries);
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(1);
     expect(isToolGroup(result[0])).toBe(true);
-    expect((result[1] as SessionDisplayEntry).event.type).toBe("turn_completed");
-    expect((result[2] as SessionDisplayEntry).event.type).toBe("turn_started");
-    expect(isToolGroup(result[3])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual([
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+    ]);
   });
 
   it("T6: mixed tool kinds fold together", () => {
@@ -239,17 +275,16 @@ describe("aggregateEntries — turn fold", () => {
     expect((result[2] as SessionDisplayEntry).id).toBe("r2");
   });
 
-  it("T10: turn boundary inside a flowing tool sequence flushes the unit", () => {
+  it("T10: turn boundary inside a flowing tool sequence does not flush the unit", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkTurnCompleted("tc"),
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    expect(result).toHaveLength(3);
-    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
-    expect((result[1] as SessionDisplayEntry).event.type).toBe("turn_completed");
-    expect((result[2] as SessionDisplayEntry).id).toBe("c2");
+    expect(result).toHaveLength(1);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
   });
 
   it("T11: empty entries array returns empty array", () => {
@@ -270,5 +305,30 @@ describe("aggregateEntries — turn fold", () => {
     expect((frame2[0] as SessionDisplayEntry).id).toBe("c1");
     expect((frame2[1] as SessionDisplayEntry).id).toBe("m1");
     expect((frame2[2] as SessionDisplayEntry).id).toBe("c2");
+  });
+
+  it("T13: silent platform lifecycle events do not split tool bursts", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkSilentHookTraceEntry("h1"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    expect(result).toHaveLength(1);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("T14: visible system events remain hard boundaries", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkSystemMessageEntry("s1", "需要用户确认"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    expect(result).toHaveLength(3);
+    expect((result[0] as SessionDisplayEntry).id).toBe("c1");
+    expect((result[1] as SessionDisplayEntry).id).toBe("s1");
+    expect((result[2] as SessionDisplayEntry).id).toBe("c2");
   });
 });

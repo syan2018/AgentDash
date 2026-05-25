@@ -56,6 +56,8 @@ Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Pla
 
 来源执行器提供会话标题时使用 `PlatformEvent::SourceSessionTitleUpdated`，字段为 `executor_session_id`、`title`、`preview`、`source`。应用层负责把该事件投影为统一的 `session_meta_updated`，并按 `user > source > auto` 的标题来源优先级写入 `SessionMeta`。
 
+上下文压缩使用 Codex `ThreadItem::contextCompaction` 作为 lifecycle item。平台自有 runtime 的成功 compact 通过 `context_compacted` platform payload 提供 checkpoint metadata，再发送 `ItemCompleted`；失败 compact 通过 `context_compaction_failed` platform payload 提供结构化 diagnostic，并同时发送标准 `Error` 事件。外部 runtime 的 legacy compact marker 只作为 lifecycle / audit fact，不在缺少 replacement provenance 时创建 AgentDash-owned checkpoint。
+
 ## TypeScript Binding
 
 生成命令：

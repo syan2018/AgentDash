@@ -66,7 +66,7 @@ packages/app-web/src/generated/
 | Domain | Generated File | Contract Source |
 | --- | --- | --- |
 | MCP Preset | `mcp-preset-contracts.ts` | `agentdash-contracts::mcp_preset` |
-| Session event stream | `session-contracts.ts` | `agentdash-contracts::session` |
+| Session event stream / projection view | `session-contracts.ts` | `agentdash-contracts::session` |
 | Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
 | VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
 | Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
@@ -75,6 +75,8 @@ packages/app-web/src/generated/
 API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
 
 Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields.
+
+Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service mappers may validate `unknown` payloads, but must not redefine this projection shape outside generated session contracts.
 
 ## Local Decisions
 

@@ -8,3 +8,13 @@ export type SessionEventResponse = { session_id: string, event_seq: number, occu
 export type SessionEventsPageResponse = { snapshot_seq: number, events: Array<SessionEventResponse>, has_more: boolean, next_after_seq: number, };
 
 export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
+
+export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
+
+export type SessionProjectionSegmentProvenanceResponse = { compaction_id?: string, projection_version?: number, segment_type?: string, strategy?: string, trigger?: string, phase?: string, };
+
+export type SessionProjectionSegmentViewResponse = { id: string, sort_order: number, segment_type: string, role: string, origin: string, synthetic: boolean, projection_kind: string, message_ref: SessionProjectionMessageRefResponse, source_event_seq?: number, source_range?: SessionProjectionSourceRangeResponse, projection_segment_id?: string, preview: string, provenance: SessionProjectionSegmentProvenanceResponse, };
+
+export type SessionProjectionSourceRangeResponse = { start_event_seq: number, end_event_seq: number, };
+
+export type SessionProjectionViewResponse = { session_id: string, branch_id?: string, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, token_estimate?: number, message_count: number, segments: Array<SessionProjectionSegmentViewResponse>, };

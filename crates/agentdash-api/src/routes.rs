@@ -479,6 +479,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(acp_sessions::get_session_context),
         )
         .route(
+            "/sessions/{id}/context/projection",
+            get(acp_sessions::get_session_context_projection),
+        )
+        .route(
             "/sessions/{id}/context/audit",
             get(acp_sessions::get_session_context_audit),
         )

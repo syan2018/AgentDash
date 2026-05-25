@@ -38,6 +38,7 @@ import {
   fetchSessionExecutionState,
 } from "../../../services/session";
 import type { SessionExecutionState } from "../../../types";
+import { SessionProjectionView } from "./SessionProjectionView";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -311,6 +312,7 @@ export function SessionChatView({
   const [stableActionRunning, setStableActionRunning] = useState(false);
   const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [showProjectionView, setShowProjectionView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
@@ -359,6 +361,10 @@ export function SessionChatView({
     if (!sessionId) return;
     void refreshExecutionState().catch(() => {});
   }, [sessionId, refreshExecutionState]);
+
+  useEffect(() => {
+    setShowProjectionView(false);
+  }, [sessionId]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -460,6 +466,10 @@ export function SessionChatView({
     streamingEntryId,
     tokenUsage,
   } = useSessionFeed({ sessionId: streamSessionId, enabled: hasSession });
+
+  const projectionRefreshKey = rawEvents.length > 0
+    ? rawEvents[rawEvents.length - 1]?.event_seq ?? 0
+    : 0;
 
   useEffect(() => {
     if (!hasSession || executionState?.status !== "running") return;
@@ -725,7 +735,27 @@ export function SessionChatView({
             </span>
           )}
           <ContextUsageRing usage={tokenUsage} />
+          {hasSession && sessionId && (
+            <button
+              type="button"
+              onClick={() => setShowProjectionView((value) => !value)}
+              className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+                showProjectionView
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+              }`}
+            >
+              模型上下文
+            </button>
+          )}
         </div>
+      )}
+
+      {showProjectionView && sessionId && (
+        <SessionProjectionView
+          sessionId={sessionId}
+          refreshKey={projectionRefreshKey}
+        />
       )}
 
       {/* headerSlot — 外部注入区（如 Task 执行控制栏） */}

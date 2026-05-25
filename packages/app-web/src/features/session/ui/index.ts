@@ -25,6 +25,12 @@ export {
   SessionUsageCard as SessionUsageCard,
   type SessionUsageCardProps as SessionUsageCardProps,
 } from "./SessionUsageCard";
+export {
+  SessionProjectionView,
+  SessionProjectionViewPanel,
+  type SessionProjectionViewPanelProps,
+  type SessionProjectionViewProps,
+} from "./SessionProjectionView";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
 export {
   SessionTaskContextCard as SessionTaskContextCard,

@@ -118,6 +118,16 @@ export function SingleEntry({
           />
         );
       }
+      if (threadItem.type === "contextCompaction") {
+        return (
+          <SessionToolCallCard
+            item={threadItem}
+            statusOverride={event.type === "item_started" ? "inProgress" : "completed"}
+            kindOverride="context"
+            titleOverride="上下文压缩"
+          />
+        );
+      }
       return (
         <SessionToolCallCard
           item={threadItem}

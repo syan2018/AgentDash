@@ -228,6 +228,12 @@ fn make_dynamic_tool_item(
     }
 }
 
+fn make_context_compaction_item(item_id: &str) -> codex::ThreadItem {
+    codex::ThreadItem::ContextCompaction {
+        id: item_id.to_string(),
+    }
+}
+
 pub(super) fn convert_event_to_envelopes(
     event: &AgentEvent,
     session_id: &str,
@@ -467,7 +473,35 @@ pub(super) fn convert_event_to_envelopes(
             Vec::new()
         }
 
+        AgentEvent::ContextCompactionStarted { item_id } => {
+            vec![wrap(
+                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                    item: make_context_compaction_item(item_id),
+                    thread_id: session_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                }),
+                *entry_index,
+            )]
+        }
+
+        AgentEvent::ContextCompactionFailed { item_id, error } => {
+            vec![wrap(
+                BackboneEvent::Error(codex::ErrorNotification {
+                    error: codex::TurnError {
+                        message: error.clone(),
+                        codex_error_info: None,
+                        additional_details: Some(format!("context_compaction_item_id={item_id}")),
+                    },
+                    will_retry: false,
+                    thread_id: session_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                }),
+                *entry_index,
+            )]
+        }
+
         AgentEvent::ContextCompacted {
+            item_id,
             messages,
             newly_compacted_messages,
         } => {
@@ -482,19 +516,30 @@ pub(super) fn convert_event_to_envelopes(
                 return Vec::new();
             };
 
-            vec![wrap(
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                    key: "context_compacted".to_string(),
-                    value: serde_json::json!({
-                        "summary": summary,
-                        "tokens_before": tokens_before,
-                        "messages_compacted": messages_compacted,
-                        "newly_compacted_messages": newly_compacted_messages,
-                        "compacted_until_ref": compacted_until_ref,
+            vec![
+                wrap(
+                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                        item: make_context_compaction_item(item_id),
+                        thread_id: session_id.to_string(),
+                        turn_id: turn_id.to_string(),
                     }),
-                }),
-                *entry_index,
-            )]
+                    *entry_index,
+                ),
+                wrap(
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                        key: "context_compacted".to_string(),
+                        value: serde_json::json!({
+                            "lifecycle_item_id": item_id,
+                            "summary": summary,
+                            "tokens_before": tokens_before,
+                            "messages_compacted": messages_compacted,
+                            "newly_compacted_messages": newly_compacted_messages,
+                            "compacted_until_ref": compacted_until_ref,
+                        }),
+                    }),
+                    *entry_index,
+                ),
+            ]
         }
 
         AgentEvent::ToolExecutionStart {

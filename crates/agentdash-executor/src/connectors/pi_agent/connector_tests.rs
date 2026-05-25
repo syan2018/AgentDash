@@ -368,6 +368,88 @@ fn thinking_delta_maps_to_agent_thought_chunk() {
 }
 
 #[test]
+fn context_compaction_started_maps_to_context_compaction_item() {
+    let event = AgentEvent::ContextCompactionStarted {
+        item_id: "compact-1".to_string(),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(started) => {
+            assert!(matches!(
+                &started.item,
+                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
+                    if id == "compact-1"
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn context_compaction_completed_maps_lifecycle_and_metadata() {
+    let event = AgentEvent::ContextCompacted {
+        item_id: "compact-1".to_string(),
+        messages: vec![agentdash_agent::AgentMessage::compaction_summary(
+            "summary body",
+            48_000,
+            8,
+        )],
+        newly_compacted_messages: 3,
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 2);
+    match &envelopes[0].event {
+        BackboneEvent::ItemCompleted(completed) => {
+            assert!(matches!(
+                &completed.item,
+                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
+                    if id == "compact-1"
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            value,
+        }) => {
+            assert_eq!(key, "context_compacted");
+            assert_eq!(value["lifecycle_item_id"], "compact-1");
+            assert_eq!(value["summary"], "summary body");
+            assert_eq!(value["newly_compacted_messages"], 3);
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
 fn tool_call_stream_events_map_to_pending_start_and_updates() {
     let start_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {

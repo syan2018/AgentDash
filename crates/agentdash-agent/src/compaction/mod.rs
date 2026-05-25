@@ -89,6 +89,11 @@ pub async fn execute_compaction(
     }))
 }
 
+pub fn should_execute_compaction(messages: &[AgentMessage], params: &CompactionParams) -> bool {
+    let start_index = first_uncompacted_message_index(messages);
+    find_cut_point(messages, start_index, params.keep_last_n as usize) > 0
+}
+
 /// 确定 cut point（保留最后 keep_last_n 条消息）。
 ///
 /// 规则：

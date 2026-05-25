@@ -381,6 +381,8 @@ export function getThreadItemTitle(item: ThreadItem): string {
       return item.path;
     case "userMessage":
       return "用户消息";
+    case "contextCompaction":
+      return "上下文压缩";
     default:
       return "未知";
   }
@@ -397,6 +399,8 @@ export function getThreadItemStatus(item: ThreadItem): string {
       return item.status;
     case "dynamicToolCall":
       return item.status;
+    case "contextCompaction":
+      return "completed";
     default:
       return "completed";
   }
@@ -421,6 +425,8 @@ export function getThreadItemKind(item: ThreadItem): string {
       return "image";
     case "collabAgentToolCall":
       return "collab";
+    case "contextCompaction":
+      return "context";
     default:
       return "other";
   }

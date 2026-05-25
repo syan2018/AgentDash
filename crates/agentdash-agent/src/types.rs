@@ -52,9 +52,17 @@ pub enum AgentEvent {
     MessageEnd {
         message: AgentMessage,
     },
+    ContextCompactionStarted {
+        item_id: String,
+    },
     ContextCompacted {
+        item_id: String,
         messages: Vec<AgentMessage>,
         newly_compacted_messages: u32,
+    },
+    ContextCompactionFailed {
+        item_id: String,
+        error: String,
     },
     ToolExecutionStart {
         tool_call_id: String,

@@ -409,7 +409,7 @@ async fn handle_server_notification(
                 let _ = tx.send(Ok(envelope)).await;
             }
         }
-        "context/compacted" => {
+        "thread/compacted" => {
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
@@ -892,6 +892,44 @@ mod tests {
                 assert_eq!(source, CODEX_SOURCE_TITLE);
             }
             event => panic!("expected source title event, got {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn thread_compacted_maps_to_context_compacted_event() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = SourceInfo {
+            connector_id: "codex-bridge".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("CODEX".to_string()),
+        };
+
+        handle_server_notification(
+            JSONRPCNotification {
+                method: "thread/compacted".to_string(),
+                params: Some(json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                })),
+            },
+            "sess-1",
+            &tx,
+            &source,
+            "turn-1",
+        )
+        .await;
+
+        let envelope = rx
+            .recv()
+            .await
+            .expect("notification should emit an event")
+            .expect("event should be ok");
+        match envelope.event {
+            BackboneEvent::ContextCompacted(payload) => {
+                assert_eq!(payload.thread_id, "thread-1");
+                assert_eq!(payload.turn_id, "turn-1");
+            }
+            event => panic!("expected context compacted event, got {event:?}"),
         }
     }
 }

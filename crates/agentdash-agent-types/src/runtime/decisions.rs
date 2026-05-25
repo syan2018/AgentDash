@@ -43,6 +43,12 @@ pub struct EvaluateCompactionInput {
 }
 
 #[derive(Debug, Clone)]
+pub struct CompactionFailureInput {
+    pub item_id: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct BeforeToolCallInput {
     pub assistant_message: AgentMessage,
     pub tool_call: ToolCallInfo,

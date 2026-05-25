@@ -485,19 +485,34 @@ pub(super) fn convert_event_to_envelopes(
         }
 
         AgentEvent::ContextCompactionFailed { item_id, error } => {
-            vec![wrap(
-                BackboneEvent::Error(codex::ErrorNotification {
-                    error: codex::TurnError {
-                        message: error.clone(),
-                        codex_error_info: None,
-                        additional_details: Some(format!("context_compaction_item_id={item_id}")),
-                    },
-                    will_retry: false,
-                    thread_id: session_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                }),
-                *entry_index,
-            )]
+            vec![
+                wrap(
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                        key: "context_compaction_failed".to_string(),
+                        value: serde_json::json!({
+                            "lifecycle_item_id": item_id.clone(),
+                            "status": "failed",
+                            "error": error.clone(),
+                        }),
+                    }),
+                    *entry_index,
+                ),
+                wrap(
+                    BackboneEvent::Error(codex::ErrorNotification {
+                        error: codex::TurnError {
+                            message: error.clone(),
+                            codex_error_info: None,
+                            additional_details: Some(format!(
+                                "context_compaction_item_id={item_id}"
+                            )),
+                        },
+                        will_retry: false,
+                        thread_id: session_id.to_string(),
+                        turn_id: turn_id.to_string(),
+                    }),
+                    *entry_index,
+                ),
+            ]
         }
 
         AgentEvent::ContextCompacted {

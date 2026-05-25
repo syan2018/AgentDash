@@ -6,8 +6,9 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk, ToolCallDeltaContent};
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
-    BeforeProviderRequestInput, ContentPart, DynAgentTool, EvaluateCompactionInput,
-    ProviderVisibleContextStats, ToolCallInfo, TransformContextInput, now_millis,
+    BeforeProviderRequestInput, CompactionFailureInput, ContentPart, DynAgentTool,
+    EvaluateCompactionInput, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
+    now_millis,
 };
 
 use super::tool_call::refresh_context_tools;
@@ -198,15 +199,29 @@ pub(super) async fn stream_assistant_response(
                 }
                 Ok(None) => {}
                 Err(error) => {
+                    let is_cancelled = matches!(error, AgentError::Cancelled);
+                    let error_message = error.to_string();
                     emit_event(
                         emit,
                         AgentEvent::ContextCompactionFailed {
-                            item_id,
-                            error: error.to_string(),
+                            item_id: item_id.clone(),
+                            error: error_message.clone(),
                         },
                     )
                     .await;
-                    if matches!(error, AgentError::Cancelled) {
+                    if !is_cancelled {
+                        delegate
+                            .after_compaction_failed(
+                                CompactionFailureInput {
+                                    item_id,
+                                    error: error_message,
+                                },
+                                cancel.clone(),
+                            )
+                            .await
+                            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+                    }
+                    if is_cancelled {
                         return Err(error);
                     }
                 }

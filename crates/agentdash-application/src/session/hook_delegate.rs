@@ -3,9 +3,9 @@ use std::sync::Arc;
 use agentdash_spi::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, AgentMessage, AgentRuntimeDelegate,
     AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallInput,
-    CompactionParams, CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate,
-    EvaluateCompactionInput, StopDecision, StopReason, ToolCallDecision, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    CompactionFailureInput, CompactionParams, CompactionResult, CompactionTriggerStats,
+    DynAgentRuntimeDelegate, EvaluateCompactionInput, StopDecision, StopReason, ToolCallDecision,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
@@ -19,10 +19,12 @@ use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, HookEvaluationQuery, HookInjection, HookSessionRuntimeSnapshot,
-    HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, SessionHookRefreshQuery,
-    SharedHookSessionRuntime,
+    ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
+    HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
+    SessionHookRefreshQuery, SharedHookSessionRuntime,
 };
+
+const COMPACTION_FAILURE_FUSE_LIMIT: u32 = 3;
 
 pub struct HookRuntimeDelegate {
     hook_session: SharedHookSessionRuntime,
@@ -358,6 +360,17 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             self.hook_session
                 .update_token_stats(live_token_stats.clone());
         }
+        let consecutive_failures = self.hook_session.compaction_failure_count();
+        if consecutive_failures >= COMPACTION_FAILURE_FUSE_LIMIT {
+            self.hook_session
+                .append_diagnostics_vec(vec![HookDiagnosticEntry {
+                    code: "context_compaction_fused".to_string(),
+                    message: format!(
+                        "上下文压缩连续失败 {consecutive_failures} 次，已暂时停止自动重试"
+                    ),
+                }]);
+            return Ok(None);
+        }
         let evaluated = self
             .evaluate(
                 HookTrigger::BeforeCompact,
@@ -430,6 +443,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         result: CompactionResult,
         _cancel: CancellationToken,
     ) -> Result<(), AgentRuntimeError> {
+        self.hook_session.reset_compaction_failures();
         let summary_length = match &result.summary_message {
             AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
             _ => 0,
@@ -467,6 +481,26 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             &evaluated,
         );
 
+        Ok(())
+    }
+
+    async fn after_compaction_failed(
+        &self,
+        input: CompactionFailureInput,
+        _cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        let failures = self.hook_session.record_compaction_failure(&input.error);
+        let mut diagnostics = vec![HookDiagnosticEntry {
+            code: "context_compaction_failed".to_string(),
+            message: format!("上下文压缩 {} 失败: {}", input.item_id, input.error),
+        }];
+        if failures >= COMPACTION_FAILURE_FUSE_LIMIT {
+            diagnostics.push(HookDiagnosticEntry {
+                code: "context_compaction_fused".to_string(),
+                message: format!("上下文压缩连续失败 {failures} 次，已停止自动重试"),
+            });
+        }
+        self.hook_session.append_diagnostics_vec(diagnostics);
         Ok(())
     }
 
@@ -956,7 +990,8 @@ mod tests {
     use std::sync::Mutex;
 
     use agentdash_spi::{
-        AgentContext, AgentMessage, CompactionResult, StopDecision, StopReason, TokenUsage,
+        AgentContext, AgentMessage, CompactionFailureInput, CompactionResult, StopDecision,
+        StopReason, TokenUsage,
     };
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
@@ -1508,6 +1543,93 @@ mod tests {
                 .and_then(serde_json::Value::as_bool),
             Some(true)
         );
+    }
+
+    #[tokio::test]
+    async fn repeated_compaction_failures_fuse_future_auto_compaction() {
+        let provider = RecordingCompactionProvider::default();
+        let hook_session = Arc::new(HookSessionRuntime::new(
+            "sess-hook".to_string(),
+            Arc::new(provider.clone()),
+            provider
+                .load_session_snapshot(SessionHookSnapshotQuery {
+                    session_id: "sess-hook".to_string(),
+                    turn_id: None,
+                })
+                .await
+                .expect("snapshot should load"),
+        ));
+        let delegate = HookRuntimeDelegate::new(hook_session.clone());
+
+        for index in 1..=3 {
+            delegate
+                .after_compaction_failed(
+                    CompactionFailureInput {
+                        item_id: format!("compact-{index}"),
+                        error: "summary_empty".to_string(),
+                    },
+                    CancellationToken::new(),
+                )
+                .await
+                .expect("failure should be recorded");
+        }
+
+        let decision = delegate
+            .evaluate_compaction(
+                agentdash_spi::EvaluateCompactionInput {
+                    context: AgentContext {
+                        system_prompt: "test".to_string(),
+                        messages: vec![AgentMessage::user("旧消息")],
+                        tools: vec![],
+                    },
+                    provider_visible: Some(agentdash_spi::ProviderVisibleContextStats {
+                        system_prompt_len: 4,
+                        message_count: 1,
+                        tool_count: 0,
+                        estimated_input_tokens: 50_000,
+                    }),
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("evaluate_compaction should succeed");
+
+        assert!(decision.is_none(), "连续失败后不应继续触发自动压缩");
+        assert_eq!(hook_session.compaction_failure_count(), 3);
+        assert!(
+            provider
+                .triggers
+                .lock()
+                .expect("triggers lock poisoned")
+                .is_empty(),
+            "熔断后不应继续执行 before_compact hook"
+        );
+        assert!(
+            hook_session
+                .diagnostics()
+                .iter()
+                .any(|entry| entry.code == "context_compaction_fused")
+        );
+
+        delegate
+            .after_compaction(
+                CompactionResult {
+                    messages: vec![AgentMessage::compaction_summary("summary body", 48_000, 6)],
+                    summary_message: AgentMessage::compaction_summary("summary body", 48_000, 6),
+                    trigger_stats: agentdash_spi::CompactionTriggerStats {
+                        input_tokens: 48_000,
+                        context_window: 64_000,
+                        reserve_tokens: 16_384,
+                    },
+                    newly_compacted_messages: 3,
+                    used_custom_summary: true,
+                },
+                CancellationToken::new(),
+            )
+            .await
+            .expect("success should reset failure fuse");
+
+        assert_eq!(hook_session.compaction_failure_count(), 0);
     }
 
     #[tokio::test]

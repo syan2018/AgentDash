@@ -450,6 +450,48 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
 }
 
 #[test]
+fn context_compaction_failure_maps_diagnostic_and_error() {
+    let event = AgentEvent::ContextCompactionFailed {
+        item_id: "compact-1".to_string(),
+        error: "summary_empty".to_string(),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 2);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            value,
+        }) => {
+            assert_eq!(key, "context_compaction_failed");
+            assert_eq!(value["lifecycle_item_id"], "compact-1");
+            assert_eq!(value["status"], "failed");
+            assert_eq!(value["error"], "summary_empty");
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
+        BackboneEvent::Error(error) => {
+            assert_eq!(error.error.message, "summary_empty");
+            assert!(!error.will_retry);
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
 fn tool_call_stream_events_map_to_pending_start_and_updates() {
     let start_event = AgentEvent::MessageUpdate {
         message: AgentMessage::Assistant {

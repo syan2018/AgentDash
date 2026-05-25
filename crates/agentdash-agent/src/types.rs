@@ -7,12 +7,13 @@ pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
     AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError, AgentTool,
     AgentToolError, AgentToolResult, BeforeProviderRequestInput, BeforeStopInput,
-    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionParams,
-    CompactionResult, CompactionTriggerStats, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
-    EvaluateCompactionInput, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
-    ProviderVisibleContextStats, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition, ToolUpdateCallback,
-    TransformContextInput, TransformContextOutput, TurnControlDecision, now_millis,
+    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
+    CompactionParams, CompactionResult, CompactionTriggerStats, ContentPart,
+    DynAgentRuntimeDelegate, DynAgentTool, EvaluateCompactionInput, MessageRef, ProjectedEntry,
+    ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats, StopDecision, StopReason,
+    TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo,
+    ToolDefinition, ToolUpdateCallback, TransformContextInput, TransformContextOutput,
+    TurnControlDecision, now_millis,
 };
 pub use agentdash_domain::common::ThinkingLevel;
 

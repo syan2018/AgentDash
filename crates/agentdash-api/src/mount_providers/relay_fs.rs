@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use agentdash_application::runtime::Mount;
 use agentdash_application::vfs::{
-    ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
-    ListResult, MountEditCapabilities, MountError, MountOperationContext, MountProvider,
-    PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
+    ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, GrepQuery,
+    ListOptions, ListResult, MountEditCapabilities, MountError, MountOperationContext,
+    MountProvider, PROVIDER_RELAY_FS, ReadResult, SearchMatch, SearchQuery, SearchResult,
     normalize_mount_relative_path,
 };
 use agentdash_relay::{
@@ -72,6 +72,8 @@ impl MountProvider for RelayFsMountProvider {
                         call_id: RelayMessage::new_id("call"),
                         path: path.clone(),
                         mount_root_ref: mount.root_ref.clone(),
+                        offset: None,
+                        limit: None,
                     },
                 },
             )
@@ -90,6 +92,76 @@ impl MountProvider for RelayFsMountProvider {
                 version_token: None,
                 modified_at: None,
             }),
+            RelayMessage::ResponseToolFileRead {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "file_read 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        _ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        let path =
+            normalize_mount_relative_path(path, false).map_err(MountError::OperationFailed)?;
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolFileRead {
+                    id: RelayMessage::new_id("mp-read-range"),
+                    payload: ToolFileReadPayload {
+                        call_id: RelayMessage::new_id("call"),
+                        path: path.clone(),
+                        mount_root_ref: mount.root_ref.clone(),
+                        offset: Some(offset as u64),
+                        limit: limit.map(|n| n as u64),
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        // 远端 backend 是否真按 offset/limit 切片由远端实现决定。如果远端忽略
+        // 这两个字段返回全文，本地按行号切片兜底，行为退化为 SPI 默认实现。
+        match response {
+            RelayMessage::ResponseToolFileRead {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => {
+                let content = payload.content;
+                // 启发式：如果远端返回的内容行数 > offset + limit，说明远端没切，
+                // 本地兜底切一刀；否则信任远端结果。
+                let line_count = content.lines().count();
+                let needs_local_slice = line_count > offset + limit.unwrap_or(0);
+                let sliced = if needs_local_slice {
+                    let take = limit.unwrap_or(usize::MAX);
+                    content
+                        .lines()
+                        .skip(offset)
+                        .take(take)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    content
+                };
+                Ok(ReadResult {
+                    path,
+                    content: sliced,
+                    attributes: None,
+                    version_token: None,
+                    modified_at: None,
+                })
+            }
             RelayMessage::ResponseToolFileRead {
                 error: Some(error), ..
             } => Err(MountError::OperationFailed(error.message)),
@@ -156,6 +228,8 @@ impl MountProvider for RelayFsMountProvider {
                         call_id: RelayMessage::new_id("call"),
                         path: path.clone(),
                         mount_root_ref: mount.root_ref.clone(),
+                        offset: None,
+                        limit: None,
                     },
                 },
             )
@@ -381,6 +455,10 @@ impl MountProvider for RelayFsMountProvider {
                         include_glob: None,
                         max_results,
                         context_lines: 0,
+                        case_sensitive: query.case_sensitive,
+                        multiline: false,
+                        before_lines: 0,
+                        after_lines: 0,
                     },
                 },
             )
@@ -412,6 +490,79 @@ impl MountProvider for RelayFsMountProvider {
             } => Err(MountError::OperationFailed(error.message)),
             other => Err(MountError::OperationFailed(format!(
                 "search 返回意外响应: {}",
+                other.id()
+            ))),
+        }
+    }
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        _ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        let base_path = match &query.base.path {
+            Some(p) => {
+                normalize_mount_relative_path(p, true).map_err(MountError::OperationFailed)?
+            }
+            None => String::new(),
+        };
+        let max_results = query.base.max_results.unwrap_or(50);
+        let response = self
+            .backends
+            .send_command(
+                &mount.backend_id,
+                RelayMessage::CommandToolSearch {
+                    id: RelayMessage::new_id("mp-grep"),
+                    payload: ToolSearchPayload {
+                        call_id: RelayMessage::new_id("call"),
+                        mount_root_ref: mount.root_ref.clone(),
+                        query: query.base.pattern.clone(),
+                        path: if base_path.is_empty() {
+                            None
+                        } else {
+                            Some(base_path)
+                        },
+                        // A7 决议：grep_text 的 pattern 始终视为正则。
+                        is_regex: true,
+                        include_glob: query.include_glob.clone(),
+                        max_results,
+                        context_lines: query.context_lines,
+                        case_sensitive: query.base.case_sensitive,
+                        multiline: query.multiline,
+                        before_lines: query.before_lines,
+                        after_lines: query.after_lines,
+                    },
+                },
+            )
+            .await
+            .map_err(map_relay_err)?;
+
+        match response {
+            RelayMessage::ResponseToolSearch {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => {
+                let matches = payload
+                    .hits
+                    .into_iter()
+                    .map(|hit| SearchMatch {
+                        path: hit.path,
+                        line: u32::try_from(hit.line_number).ok(),
+                        content: hit.content,
+                    })
+                    .collect();
+                Ok(SearchResult {
+                    matches,
+                    truncated: false,
+                })
+            }
+            RelayMessage::ResponseToolSearch {
+                error: Some(error), ..
+            } => Err(MountError::OperationFailed(error.message)),
+            other => Err(MountError::OperationFailed(format!(
+                "grep 返回意外响应: {}",
                 other.id()
             ))),
         }

@@ -746,6 +746,11 @@ impl MountProvider for LifecycleMountProvider {
         query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
+        // 仅 skills 子树上提供 native substring search（直接读 skill_asset 表）。
+        // virtual projection 路径（nodes/ session/ tool-calls/ records/ ...）通过
+        // SPI `grep_text` 默认实现的 list+read+regex 通用算法覆盖；
+        // 那条路径才是 agent 从 journey 中精确定位被截断信息的主战场，
+        // substring 通用搜索在 lifecycle 上不公开。
         if query
             .path
             .as_deref()
@@ -755,10 +760,11 @@ impl MountProvider for LifecycleMountProvider {
             return search_projected_skill_files(self.skill_asset_repo.as_ref(), mount, query)
                 .await;
         }
-        Ok(SearchResult {
-            matches: vec![],
-            truncated: false,
-        })
+        Err(MountError::NotSupported(
+            "lifecycle_vfs 仅在 skills 子树支持通用 substring search_text；\
+             virtual projection 请用 fs_grep（走 grep_text 路径）"
+                .to_string(),
+        ))
     }
 
     async fn exec(

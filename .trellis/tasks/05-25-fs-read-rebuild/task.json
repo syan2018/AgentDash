@@ -3,7 +3,7 @@
   "name": "fs-read-rebuild",
   "title": "fs_read 重做（schema 对齐 CC + range 读 + 上限 + dedup + ENOENT 友好提示）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

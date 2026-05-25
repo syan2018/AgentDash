@@ -75,6 +75,94 @@ impl RelayVfsService {
         vfs.mounts.clone()
     }
 
+    /// 按行号 range 读取文本文件。
+    ///
+    /// 与 `read_text` 的区别：
+    /// - `offset` 是 0-based 行号（与 SPI `read_text_range` 对齐；tool 层 1-based 自行转换）。
+    /// - `limit = None` 表示读到 EOF（受 SPI 默认实现的全文加载约束）。
+    /// - 错误类型保留 `MountError` 而非 String，方便调用方区分 NotFound 等场景
+    ///   （fs_read tool 用此区分 ENOENT 友好提示路径）。
+    pub async fn read_text_range(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        offset: usize,
+        limit: Option<usize>,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)
+            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
+        let path = normalize_mount_relative_path(&target.path, false)
+            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
+
+        if let Some(ov) = overlay
+            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+        {
+            return match override_state {
+                Some(content) => {
+                    let sliced = content
+                        .lines()
+                        .skip(offset)
+                        .take(limit.unwrap_or(usize::MAX))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(ReadResult::new(path, sliced))
+                }
+                None => Err(agentdash_spi::platform::mount::MountError::NotFound(
+                    target.path.clone(),
+                )),
+            };
+        }
+
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| {
+                agentdash_spi::platform::mount::MountError::ProviderNotRegistered(
+                    mount.provider.clone(),
+                )
+            })?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let started_at = Instant::now();
+        let result = provider
+            .read_text_range(mount, &path, offset, limit, &ctx)
+            .await;
+        log_vfs_operation_result(mount, "read_text_range", &path, started_at, result.is_ok());
+        result
+    }
+
+    /// 在 `target` 所属 mount 内按相似度查找候选路径。
+    /// fs_read 的 ENOENT 友好提示用此接口，传 `limit ≤ 5`。
+    pub async fn suggest_paths(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        limit: usize,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<Vec<String>, String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::List)?;
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| format!("unregistered mount provider: {}", mount.provider))?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let basename = std::path::Path::new(&target.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| target.path.clone());
+        provider
+            .suggest_paths(mount, &basename, limit, &ctx)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn read_text(
         &self,
         vfs: &Vfs,

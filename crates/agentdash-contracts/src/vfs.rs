@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SelectorHint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -12,7 +11,6 @@ pub struct SelectorHint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct VfsDescriptor {
     pub id: String,
     pub label: String,
@@ -25,13 +23,11 @@ pub struct VfsDescriptor {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ListVfssResponse {
     pub spaces: Vec<VfsDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct VfsEntry {
     pub address: String,
     pub label: String,
@@ -46,13 +42,11 @@ pub struct VfsEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ListEntriesResponse {
     pub entries: Vec<VfsEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ConfigurableProviderInfo {
     pub service_id: String,
     pub display_name: String,
@@ -61,7 +55,6 @@ pub struct ConfigurableProviderInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(tag = "source_type", rename_all = "snake_case")]
 pub enum ResolvedVfsSurfaceSource {
     ProjectPreview {
@@ -92,7 +85,6 @@ pub enum ResolvedVfsSurfaceSource {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ResolvedMountPurpose {
     Workspace,
@@ -106,7 +98,6 @@ pub enum ResolvedMountPurpose {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
-#[ts(export)]
 pub struct ResolvedMountEditCapabilities {
     pub create: bool,
     pub delete: bool,
@@ -114,7 +105,6 @@ pub struct ResolvedMountEditCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 pub struct ResolvedMountSummary {
     pub id: String,
     pub display_name: String,
@@ -134,7 +124,6 @@ pub struct ResolvedMountSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 pub struct ResolvedVfsSurface {
     pub surface_ref: String,
     pub source: ResolvedVfsSurfaceSource,
@@ -145,13 +134,11 @@ pub struct ResolvedVfsSurface {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ResolveSurfaceRequest {
     pub source: ResolvedVfsSurfaceSource,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceEntriesQuery {
     #[serde(default)]
     #[ts(optional)]
@@ -165,7 +152,6 @@ pub struct SurfaceEntriesQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceMountEntry {
     pub path: String,
     pub entry_type: String,
@@ -183,7 +169,6 @@ pub struct SurfaceMountEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceEntriesResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -191,7 +176,6 @@ pub struct SurfaceEntriesResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceReadFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -199,7 +183,6 @@ pub struct SurfaceReadFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceReadFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -214,7 +197,6 @@ pub struct SurfaceReadFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceWriteFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -223,7 +205,6 @@ pub struct SurfaceWriteFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceWriteFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -238,7 +219,6 @@ pub struct SurfaceWriteFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceCreateFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -247,7 +227,6 @@ pub struct SurfaceCreateFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceCreateFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -261,7 +240,6 @@ pub struct SurfaceCreateFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceDeleteFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -269,7 +247,6 @@ pub struct SurfaceDeleteFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceDeleteFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -278,7 +255,6 @@ pub struct SurfaceDeleteFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceRenameFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -287,7 +263,6 @@ pub struct SurfaceRenameFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceRenameFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -296,7 +271,6 @@ pub struct SurfaceRenameFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceStatFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -304,7 +278,6 @@ pub struct SurfaceStatFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceStatFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -328,7 +301,6 @@ pub struct SurfaceStatFileResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceApplyPatchRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -336,7 +308,6 @@ pub struct SurfaceApplyPatchRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceApplyPatchResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -346,7 +317,6 @@ pub struct SurfaceApplyPatchResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceReadBinaryFileRequest {
     pub surface_ref: String,
     pub mount_id: String,
@@ -354,7 +324,6 @@ pub struct SurfaceReadBinaryFileRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct SurfaceUploadBinaryFileResponse {
     pub surface_ref: String,
     pub mount_id: String,
@@ -366,7 +335,6 @@ pub struct SurfaceUploadBinaryFileResponse {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum MountCapability {
     Read,
@@ -376,7 +344,6 @@ pub enum MountCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProjectVfsMountContent {
     Inline,
@@ -387,7 +354,6 @@ pub enum ProjectVfsMountContent {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct CreateProjectVfsMountRequest {
     pub mount_id: String,
     pub display_name: String,
@@ -402,7 +368,6 @@ pub struct CreateProjectVfsMountRequest {
 pub type UpdateProjectVfsMountRequest = CreateProjectVfsMountRequest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ProjectVfsMountResponse {
     pub project_id: String,
     pub mount_id: String,

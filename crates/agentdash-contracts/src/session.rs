@@ -7,7 +7,6 @@ use agentdash_spi::session_persistence::PersistedSessionEvent;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
 pub struct SessionEventResponse {
     pub session_id: String,
     #[ts(type = "number")]
@@ -48,7 +47,6 @@ impl From<PersistedSessionEvent> for SessionEventResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-#[ts(export)]
 pub struct SessionEventsPageResponse {
     #[ts(type = "number")]
     pub snapshot_seq: u64,
@@ -60,7 +58,6 @@ pub struct SessionEventsPageResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[ts(export)]
 pub enum SessionNdjsonEnvelope {
     Connected {
         #[ts(type = "number")]

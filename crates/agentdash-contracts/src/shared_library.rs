@@ -3,7 +3,6 @@ use serde_json::Value;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryAssetType {
     AgentTemplate,
@@ -15,7 +14,6 @@ pub enum LibraryAssetType {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryAssetScope {
     Builtin,
@@ -25,7 +23,6 @@ pub enum LibraryAssetScope {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryAssetSource {
     Builtin,
@@ -35,7 +32,6 @@ pub enum LibraryAssetSource {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedLibrarySourceStatus {
     UpToDate,
@@ -44,7 +40,6 @@ pub enum SharedLibrarySourceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 pub struct InstalledAssetSourceDto {
     pub library_asset_id: String,
     pub source_ref: String,
@@ -54,7 +49,6 @@ pub struct InstalledAssetSourceDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct LibraryAssetDto {
     pub id: String,
     pub asset_type: LibraryAssetType,
@@ -80,7 +74,6 @@ pub struct LibraryAssetDto {
 }
 
 #[derive(Debug, Clone, Deserialize, TS, Default)]
-#[ts(export)]
 pub struct ListLibraryAssetsQuery {
     #[serde(default)]
     #[ts(optional)]
@@ -96,7 +89,6 @@ pub struct ListLibraryAssetsQuery {
 }
 
 #[derive(Debug, Clone, Deserialize, TS, Default)]
-#[ts(export)]
 pub struct SeedBuiltinLibraryAssetsRequest {
     #[serde(default)]
     #[ts(optional)]
@@ -107,7 +99,6 @@ pub struct SeedBuiltinLibraryAssetsRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct InstallLibraryAssetRequest {
     pub library_asset_id: String,
     #[serde(default)]
@@ -118,7 +109,6 @@ pub struct InstallLibraryAssetRequest {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum PublishLibraryAssetKind {
     ProjectAgent,
@@ -129,7 +119,6 @@ pub enum PublishLibraryAssetKind {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-#[ts(export)]
 pub struct PublishLibraryAssetRequest {
     pub asset_kind: String,
     pub project_asset_id: String,
@@ -150,7 +139,6 @@ fn default_user_scope() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 #[serde(tag = "asset_kind", rename_all = "snake_case")]
 pub enum InstallLibraryAssetResponse {
     ProjectAgent {
@@ -176,7 +164,6 @@ pub enum InstallLibraryAssetResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ProjectAssetSourceStatusItemDto {
     pub asset_kind: String,
     pub project_asset_id: String,
@@ -192,7 +179,6 @@ pub struct ProjectAssetSourceStatusItemDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
 pub struct ProjectAssetSourceStatusDto {
     pub project_agents: Vec<ProjectAssetSourceStatusItemDto>,
     pub mcp_presets: Vec<ProjectAssetSourceStatusItemDto>,

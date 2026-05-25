@@ -39,6 +39,7 @@ pub struct TransformContextOutput {
 #[derive(Debug, Clone)]
 pub struct EvaluateCompactionInput {
     pub context: AgentContext,
+    pub provider_visible: Option<ProviderVisibleContextStats>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +124,17 @@ pub struct BeforeProviderRequestInput {
     pub system_prompt_len: usize,
     pub message_count: usize,
     pub tool_count: usize,
+    pub estimated_input_tokens: u64,
+    pub context_window: u64,
+    pub reserve_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProviderVisibleContextStats {
+    pub system_prompt_len: usize,
+    pub message_count: usize,
+    pub tool_count: usize,
+    pub estimated_input_tokens: u64,
 }
 
 // ─── Compaction 参数 ──────────────────────────────────────

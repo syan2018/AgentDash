@@ -44,7 +44,7 @@ pub async fn execute_compaction(
     cancel: &CancellationToken,
 ) -> Result<Option<CompactionResult>, AgentError> {
     let start_index = first_uncompacted_message_index(messages);
-    let cut_index = find_cut_point(messages, start_index, params.keep_last_n as usize);
+    let cut_index = find_cut_point(messages, start_index, params);
     if cut_index == 0 {
         return Ok(None); // 没有可压缩的消息
     }
@@ -63,6 +63,9 @@ pub async fn execute_compaction(
         )
         .await?
     };
+    if summary.trim().is_empty() {
+        return Err(AgentError::InvalidState("summary_empty".to_string()));
+    }
     let used_custom_summary = params.custom_summary.is_some();
 
     let previously_compacted = previously_compacted_count(messages);
@@ -91,24 +94,30 @@ pub async fn execute_compaction(
 
 pub fn should_execute_compaction(messages: &[AgentMessage], params: &CompactionParams) -> bool {
     let start_index = first_uncompacted_message_index(messages);
-    find_cut_point(messages, start_index, params.keep_last_n as usize) > 0
+    find_cut_point(messages, start_index, params) > 0
 }
 
-/// 确定 cut point（保留最后 keep_last_n 条消息）。
+/// 确定 cut point（按 token budget 保留尾部，并用 keep_last_n 作为最低保护）。
 ///
 /// 规则：
-/// - 从末尾向前数 keep_last_n 条消息
+/// - 从末尾按估算 token 反推可保留尾部
+/// - 最少保留 keep_last_n 条消息
 /// - Cut point 必须在 tool_call / tool_result 对边界上
 /// - 如果第一条消息是 CompactionSummary，从它之后开始计数
 ///
 /// 返回：cut_index，即 messages[start_index..cut_index] 将被压缩。
-fn find_cut_point(messages: &[AgentMessage], start_index: usize, keep_last_n: usize) -> usize {
+fn find_cut_point(
+    messages: &[AgentMessage],
+    start_index: usize,
+    params: &CompactionParams,
+) -> usize {
+    let keep_last_n = params.keep_last_n as usize;
     if messages.len() <= keep_last_n {
         return 0;
     }
 
-    // 计算初始 cut point
-    let mut cut = messages.len().saturating_sub(keep_last_n);
+    let mut cut = token_budget_cut_point(messages, start_index, params)
+        .unwrap_or_else(|| messages.len().saturating_sub(keep_last_n));
     if cut <= start_index {
         return 0; // 没有足够的非摘要消息可压缩
     }
@@ -143,6 +152,39 @@ fn find_cut_point(messages: &[AgentMessage], start_index: usize, keep_last_n: us
     cut
 }
 
+fn token_budget_cut_point(
+    messages: &[AgentMessage],
+    start_index: usize,
+    params: &CompactionParams,
+) -> Option<usize> {
+    let target_tokens = params
+        .trigger_stats
+        .context_window
+        .saturating_sub(params.reserve_tokens)
+        .max(1);
+    if params.trigger_stats.context_window == 0 {
+        return None;
+    }
+
+    let keep_last_n = params.keep_last_n as usize;
+    let min_tail_start = messages.len().saturating_sub(keep_last_n);
+    let mut tail_tokens = 0_u64;
+    let mut cut = messages.len();
+
+    for idx in (start_index..messages.len()).rev() {
+        let message_tokens = estimate_message_tokens(&messages[idx]);
+        let must_keep = idx >= min_tail_start;
+        if must_keep || tail_tokens.saturating_add(message_tokens) <= target_tokens {
+            tail_tokens = tail_tokens.saturating_add(message_tokens);
+            cut = idx;
+        } else {
+            break;
+        }
+    }
+
+    if cut <= start_index { None } else { Some(cut) }
+}
+
 fn first_uncompacted_message_index(messages: &[AgentMessage]) -> usize {
     messages
         .iter()
@@ -167,6 +209,55 @@ fn previously_compacted_count(messages: &[AgentMessage]) -> u32 {
             _ => None,
         })
         .unwrap_or(0)
+}
+
+fn estimate_message_tokens(message: &AgentMessage) -> u64 {
+    let chars = match message {
+        AgentMessage::User { content, .. } => content_chars(content),
+        AgentMessage::Assistant {
+            content,
+            tool_calls,
+            ..
+        } => {
+            let tool_chars = tool_calls
+                .iter()
+                .map(|tool_call| tool_call.name.len() + tool_call.arguments.to_string().len())
+                .sum::<usize>();
+            content_chars(content) + tool_chars
+        }
+        AgentMessage::ToolResult {
+            tool_name,
+            content,
+            details,
+            ..
+        } => {
+            let details_chars = details
+                .as_ref()
+                .map(|value| value.to_string().len())
+                .unwrap_or_default();
+            tool_name.as_deref().unwrap_or_default().len() + content_chars(content) + details_chars
+        }
+        AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
+    };
+    chars_to_tokens(chars)
+}
+
+fn content_chars(content: &[crate::types::ContentPart]) -> usize {
+    content
+        .iter()
+        .map(|part| match part {
+            crate::types::ContentPart::Text { text } => text.chars().count(),
+            crate::types::ContentPart::Reasoning { text, .. } => text.chars().count(),
+            crate::types::ContentPart::Image { data, .. } => data.len() / 4,
+        })
+        .sum()
+}
+
+fn chars_to_tokens(chars: usize) -> u64 {
+    // 粗略估算：多数 provider 的自然语言 / JSON 输入约 3-4 chars/token。
+    // 向上取整并给每条消息一个最小结构成本。
+    let body = u64::try_from(chars).unwrap_or(u64::MAX);
+    body.saturating_add(3) / 4 + 4
 }
 
 /// 将消息序列化为文本，用于发给摘要 LLM
@@ -304,8 +395,8 @@ async fn generate_summary(
         }
     }
 
-    if result_text.is_empty() {
-        result_text = "[摘要生成失败 - 对话历史已被截断]".to_string();
+    if result_text.trim().is_empty() {
+        return Err(AgentError::InvalidState("summary_empty".to_string()));
     }
 
     Ok(result_text)
@@ -320,6 +411,7 @@ mod tests {
     use std::pin::Pin;
 
     struct RecordingBridge;
+    struct EmptySummaryBridge;
 
     #[async_trait]
     impl LlmBridge for RecordingBridge {
@@ -342,11 +434,42 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl LlmBridge for EmptySummaryBridge {
+        async fn stream_complete(
+            &self,
+            _request: BridgeRequest,
+        ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+            Box::pin(tokio_stream::once(StreamChunk::Done(BridgeResponse {
+                message: AgentMessage::Assistant {
+                    content: vec![ContentPart::text("   ")],
+                    tool_calls: vec![],
+                    stop_reason: None,
+                    error_message: None,
+                    usage: Some(TokenUsage::default()),
+                    timestamp: None,
+                },
+                raw_content: vec![ContentPart::text("   ")],
+                usage: TokenUsage::default(),
+            })))
+        }
+    }
+
     fn trigger_stats() -> crate::types::CompactionTriggerStats {
         crate::types::CompactionTriggerStats {
             input_tokens: 48_000,
             context_window: 64_000,
             reserve_tokens: 16_384,
+        }
+    }
+
+    fn compaction_params(keep_last_n: u32, reserve_tokens: u64) -> CompactionParams {
+        CompactionParams {
+            keep_last_n,
+            reserve_tokens,
+            custom_summary: Some("merged summary".to_string()),
+            custom_prompt: None,
+            trigger_stats: trigger_stats(),
         }
     }
 
@@ -362,13 +485,7 @@ mod tests {
 
         let result = execute_compaction(
             &messages,
-            &CompactionParams {
-                keep_last_n: 1,
-                reserve_tokens: 16_384,
-                custom_summary: Some("merged summary".to_string()),
-                custom_prompt: None,
-                trigger_stats: trigger_stats(),
-            },
+            &compaction_params(1, 16_384),
             &bridge,
             &CancellationToken::new(),
         )
@@ -399,6 +516,71 @@ mod tests {
         ];
 
         let start_index = first_uncompacted_message_index(&messages);
-        assert_eq!(find_cut_point(&messages, start_index, 2), 3);
+        assert_eq!(
+            find_cut_point(&messages, start_index, &compaction_params(2, 16_384)),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_compaction_rejects_empty_summary() {
+        let bridge = EmptySummaryBridge;
+        let messages = vec![
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+
+        let error = execute_compaction(
+            &messages,
+            &CompactionParams {
+                custom_summary: None,
+                ..compaction_params(1, 16_384)
+            },
+            &bridge,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect_err("empty summary should be a compaction failure");
+
+        assert!(error.to_string().contains("summary_empty"));
+    }
+
+    #[test]
+    fn reserve_tokens_changes_cut_point() {
+        let messages = vec![
+            AgentMessage::user("短"),
+            AgentMessage::assistant("旧回复 ".repeat(400)),
+            AgentMessage::user("中间"),
+            AgentMessage::assistant("近期回复 ".repeat(400)),
+            AgentMessage::user("最新"),
+        ];
+        let start_index = first_uncompacted_message_index(&messages);
+        let relaxed = find_cut_point(
+            &messages,
+            start_index,
+            &CompactionParams {
+                trigger_stats: crate::types::CompactionTriggerStats {
+                    input_tokens: 4_000,
+                    context_window: 4_000,
+                    reserve_tokens: 500,
+                },
+                ..compaction_params(1, 500)
+            },
+        );
+        let tight = find_cut_point(
+            &messages,
+            start_index,
+            &CompactionParams {
+                trigger_stats: crate::types::CompactionTriggerStats {
+                    input_tokens: 4_000,
+                    context_window: 4_000,
+                    reserve_tokens: 3_000,
+                },
+                ..compaction_params(1, 3_000)
+            },
+        );
+
+        assert!(tight >= relaxed);
     }
 }

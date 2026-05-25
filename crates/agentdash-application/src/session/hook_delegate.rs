@@ -176,6 +176,7 @@ impl HookRuntimeDelegate {
         tool_call_id: Option<String>,
         subagent_type: Option<String>,
         payload: Option<serde_json::Value>,
+        token_stats: Option<ContextTokenStats>,
     ) -> Result<EvaluatedResolution, AgentRuntimeError> {
         let snapshot = self.hook_session.snapshot();
         let resolution = self
@@ -189,7 +190,7 @@ impl HookRuntimeDelegate {
                 subagent_type,
                 snapshot: Some(snapshot.clone()),
                 payload,
-                token_stats: None,
+                token_stats,
             })
             .await
             .map_err(map_runtime_error)?;
@@ -336,6 +337,27 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
         let last_usage = self.hook_session.token_stats();
         let default_keep_last_n = 20_u32;
         let default_reserve_tokens = 16_384_u64;
+        let snapshot = self.hook_session.snapshot();
+        let context_window = snapshot
+            .metadata
+            .as_ref()
+            .and_then(|m| m.extra.get("model_context_window"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(last_usage.context_window);
+        let provider_estimate = input
+            .provider_visible
+            .as_ref()
+            .map(|stats| stats.estimated_input_tokens)
+            .filter(|value| *value > 0)
+            .unwrap_or(last_usage.last_input_tokens);
+        let live_token_stats = ContextTokenStats {
+            last_input_tokens: provider_estimate,
+            context_window,
+        };
+        if provider_estimate > 0 || context_window > 0 {
+            self.hook_session
+                .update_token_stats(live_token_stats.clone());
+        }
         let evaluated = self
             .evaluate(
                 HookTrigger::BeforeCompact,
@@ -350,16 +372,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                         "keep_last_n": default_keep_last_n,
                     },
                 })),
+                Some(live_token_stats.clone()),
             )
             .await?;
-
-        let snapshot = self.hook_session.snapshot();
-        let context_window = snapshot
-            .metadata
-            .as_ref()
-            .and_then(|m| m.extra.get("model_context_window"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(last_usage.context_window);
 
         let decision = match evaluated.resolution.compaction.as_ref() {
             Some(compaction) if compaction.cancel => {
@@ -388,7 +403,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     custom_summary: compaction.custom_summary.clone(),
                     custom_prompt: compaction.custom_prompt.clone(),
                     trigger_stats: CompactionTriggerStats {
-                        input_tokens: last_usage.last_input_tokens,
+                        input_tokens: live_token_stats.last_input_tokens,
                         context_window,
                         reserve_tokens: compaction.reserve_tokens.unwrap_or(default_reserve_tokens),
                     },
@@ -439,6 +454,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     "summary_length": summary_length,
                     "used_custom_summary": result.used_custom_summary,
                 })),
+                None,
             )
             .await?;
 
@@ -472,6 +488,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
                 })),
+                None,
             )
             .await?;
 
@@ -562,6 +579,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 Some(tool_call_id.clone()),
                 None,
                 Some(payload),
+                None,
             )
             .await?;
 
@@ -631,6 +649,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     "result": input.result,
                     "is_error": input.is_error,
                 })),
+                None,
             )
             .await?;
         self.record_trace(
@@ -673,6 +692,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     "assistant_message": input.message,
                     "tool_results": input.tool_results,
                 })),
+                None,
             )
             .await?;
         self.record_trace(HookTrigger::AfterTurn, "noop", None, None, None, &evaluated);
@@ -704,6 +724,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 Some(serde_json::json!({
                     "message_count": input.context.messages.len(),
                 })),
+                None,
             )
             .await?;
 
@@ -767,7 +788,14 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     "system_prompt_len": input.system_prompt_len,
                     "message_count": input.message_count,
                     "tool_count": input.tool_count,
+                    "estimated_input_tokens": input.estimated_input_tokens,
+                    "context_window": input.context_window,
+                    "reserve_tokens": input.reserve_tokens,
                 })),
+                Some(ContextTokenStats {
+                    last_input_tokens: input.estimated_input_tokens,
+                    context_window: input.context_window,
+                }),
             )
             .await?;
         self.record_trace(
@@ -1395,6 +1423,12 @@ mod tests {
                         ],
                         tools: vec![],
                     },
+                    provider_visible: Some(agentdash_spi::ProviderVisibleContextStats {
+                        system_prompt_len: 4,
+                        message_count: 2,
+                        tool_count: 0,
+                        estimated_input_tokens: 50_000,
+                    }),
                 },
                 CancellationToken::new(),
             )

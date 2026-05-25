@@ -16,8 +16,8 @@ pub use model::projection::{
 pub use runtime::decisions::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
     BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
-    CompactionTriggerStats, EvaluateCompactionInput, StopDecision, ToolCallDecision,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
+    CompactionTriggerStats, EvaluateCompactionInput, ProviderVisibleContextStats, StopDecision,
+    ToolCallDecision, TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 pub use runtime::delegate::{AgentRuntimeDelegate, AgentRuntimeError, DynAgentRuntimeDelegate};
 pub use runtime::hooks_io::{

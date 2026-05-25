@@ -3,7 +3,7 @@
   "name": "fs-grep-rebuild",
   "title": "fs_grep 重做（schema 对齐 CC + output_mode + -i/multiline/-A-B + VCS 黑名单 + 长行裁剪 + type 快捷键）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

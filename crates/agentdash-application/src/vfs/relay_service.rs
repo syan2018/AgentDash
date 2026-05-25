@@ -10,6 +10,28 @@ use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
 
+/// 与 CC GrepTool 一致的 VCS 黑名单（design.md A3：硬编码不可配置）。
+const VCS_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
+
+/// CC GrepTool 的 `--max-columns 500` 等价：超长 line trim 到 500 字符 + 后缀。
+const MAX_LINE_LEN: usize = 500;
+const TRUNCATE_SUFFIX: &str = "...(truncated)";
+
+/// 路径段（任一 `/` 分隔的中间段）命中 VCS 黑名单 ⇒ 返回 true。
+fn is_vcs_path(path: &str) -> bool {
+    path.split('/').any(|seg| VCS_EXCLUDE_DIRS.contains(&seg))
+}
+
+/// 超长 line（按 char 数）trim 到 `MAX_LINE_LEN` + 后缀；否则原样返回。
+fn trim_long_line(line: &str) -> String {
+    if line.chars().count() <= MAX_LINE_LEN {
+        line.to_string()
+    } else {
+        let head: String = line.chars().take(MAX_LINE_LEN).collect();
+        format!("{head}{TRUNCATE_SUFFIX}")
+    }
+}
+
 pub struct TextSearchParams<'a> {
     pub mount_id: &'a str,
     pub path: &'a str,
@@ -857,11 +879,13 @@ impl RelayVfsService {
             let hits: Vec<String> = result
                 .matches
                 .iter()
+                .filter(|m| !is_vcs_path(&m.path))
                 .map(|m| {
+                    let trimmed = trim_long_line(&m.content);
                     if let Some(line) = m.line {
-                        format!("{}:{}: {}", m.path, line, m.content)
+                        format!("{}:{}: {}", m.path, line, trimmed)
                     } else {
-                        format!("{}: {}", m.path, m.content)
+                        format!("{}: {}", m.path, trimmed)
                     }
                 })
                 .collect();
@@ -910,7 +934,16 @@ impl RelayVfsService {
         }
 
         let re = if params.is_regex {
-            Some(regex::Regex::new(params.query).map_err(|e| format!("无效正则: {e}"))?)
+            let mut builder = regex::RegexBuilder::new(params.query);
+            builder
+                .case_insensitive(!params.case_sensitive)
+                .multi_line(params.multiline)
+                .dot_matches_new_line(params.multiline);
+            Some(
+                builder
+                    .build()
+                    .map_err(|e| format!("无效正则: {e}"))?,
+            )
         } else {
             None
         };
@@ -924,10 +957,16 @@ impl RelayVfsService {
             None => None,
         };
 
+        let before = params.before_lines.max(params.context_lines);
+        let after = params.after_lines.max(params.context_lines);
+
         let mut hits = Vec::new();
         let mut truncated = false;
 
         for (file_path, content) in &files {
+            if is_vcs_path(file_path) {
+                continue;
+            }
             if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
                 && !base_path.is_empty()
                 && base_path != "."
@@ -943,24 +982,50 @@ impl RelayVfsService {
             for (idx, line) in lines.iter().enumerate() {
                 let matched = match &re {
                     Some(re) => re.is_match(line),
-                    None => line.contains(params.query),
+                    None => {
+                        if params.case_sensitive {
+                            line.contains(params.query)
+                        } else {
+                            line.to_lowercase().contains(&params.query.to_lowercase())
+                        }
+                    }
                 };
                 if matched {
-                    let mut formatted = format!("{}:{}: {}", file_path, idx + 1, line.trim());
-                    if params.context_lines > 0 {
-                        let start = idx.saturating_sub(params.context_lines);
-                        let end = (idx + 1 + params.context_lines).min(lines.len());
+                    let mut formatted = format!(
+                        "{}:{}: {}",
+                        file_path,
+                        idx + 1,
+                        trim_long_line(line.trim())
+                    );
+                    if before > 0 || after > 0 {
+                        let start = idx.saturating_sub(before);
+                        let end = (idx + 1 + after).min(lines.len());
                         if start < idx {
-                            let before: Vec<String> = (start..idx)
-                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                            let before_lines_fmt: Vec<String> = (start..idx)
+                                .map(|i| {
+                                    format!(
+                                        "{}:{}- {}",
+                                        file_path,
+                                        i + 1,
+                                        trim_long_line(lines[i].trim())
+                                    )
+                                })
                                 .collect();
-                            formatted = format!("{}\n{}", before.join("\n"), formatted);
+                            formatted =
+                                format!("{}\n{}", before_lines_fmt.join("\n"), formatted);
                         }
                         if idx + 1 < end {
-                            let after: Vec<String> = (idx + 1..end)
-                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                            let after_lines_fmt: Vec<String> = (idx + 1..end)
+                                .map(|i| {
+                                    format!(
+                                        "{}:{}- {}",
+                                        file_path,
+                                        i + 1,
+                                        trim_long_line(lines[i].trim())
+                                    )
+                                })
                                 .collect();
-                            formatted = format!("{}\n{}", formatted, after.join("\n"));
+                            formatted = format!("{}\n{}", formatted, after_lines_fmt.join("\n"));
                         }
                     }
                     hits.push(formatted);

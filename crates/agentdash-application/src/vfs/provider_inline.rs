@@ -156,6 +156,29 @@ impl MountProvider for InlineFsMountProvider {
         let max_results = query.max_results.unwrap_or(usize::MAX);
         let mut matches = Vec::new();
 
+        // A7: pattern 始终视为正则（与 CC GrepTool 一致）。
+        let mut builder = regex::RegexBuilder::new(&query.pattern);
+        builder
+            .case_insensitive(!query.case_sensitive)
+            .multi_line(query.multiline)
+            .dot_matches_new_line(query.multiline);
+        let re = builder
+            .build()
+            .map_err(|e| MountError::OperationFailed(format!("无效正则: {e}")))?;
+
+        // include_glob 过滤（None ⇒ 所有文件）。
+        let glob_matcher = match query.include_glob.as_deref() {
+            Some(pat) => Some(
+                globset::Glob::new(pat)
+                    .map_err(|e| MountError::OperationFailed(format!("无效 glob: {e}")))?
+                    .compile_matcher(),
+            ),
+            None => None,
+        };
+
+        let before = query.before_lines.max(query.context_lines);
+        let after = query.after_lines.max(query.context_lines);
+
         for file in &files {
             let InlineFileContent::Text { content } = &file.content else {
                 continue;
@@ -167,25 +190,43 @@ impl MountProvider for InlineFsMountProvider {
             {
                 continue;
             }
+            if let Some(matcher) = &glob_matcher
+                && !matcher.is_match(file_path.as_str())
+            {
+                continue;
+            }
             let lines: Vec<&str> = content.lines().collect();
             for (idx, line) in lines.iter().enumerate() {
-                let matched = if query.case_sensitive {
-                    line.contains(&query.pattern)
-                } else {
-                    line.to_lowercase().contains(&query.pattern.to_lowercase())
-                };
-                if matched {
+                if !re.is_match(line) {
+                    continue;
+                }
+                // 命中：先输出 before 行（追加到 matches 但不算入 max_results 的命中数）。
+                let start = idx.saturating_sub(before);
+                for ctx_idx in start..idx {
                     matches.push(SearchMatch {
                         path: file_path.clone(),
-                        line: Some((idx + 1) as u32),
-                        content: line.trim().to_string(),
+                        line: Some((ctx_idx + 1) as u32),
+                        content: lines[ctx_idx].trim().to_string(),
                     });
-                    if matches.len() >= max_results {
-                        return Ok(SearchResult {
-                            matches,
-                            truncated: true,
-                        });
-                    }
+                }
+                matches.push(SearchMatch {
+                    path: file_path.clone(),
+                    line: Some((idx + 1) as u32),
+                    content: line.trim().to_string(),
+                });
+                let end = (idx + 1 + after).min(lines.len());
+                for ctx_idx in (idx + 1)..end {
+                    matches.push(SearchMatch {
+                        path: file_path.clone(),
+                        line: Some((ctx_idx + 1) as u32),
+                        content: lines[ctx_idx].trim().to_string(),
+                    });
+                }
+                if matches.len() >= max_results {
+                    return Ok(SearchResult {
+                        matches,
+                        truncated: true,
+                    });
                 }
             }
         }

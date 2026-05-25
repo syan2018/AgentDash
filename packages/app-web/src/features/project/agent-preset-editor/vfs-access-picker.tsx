@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentVfsAccessGrant, ProjectVfsMount } from "../../../types";
 import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
 import { useProjectStore } from "../../../stores/projectStore";
+import { CapabilityPicker } from "./capability-picker";
 
 const VFS_CAPS = [
   { key: "read", label: "Read" },
@@ -51,12 +52,35 @@ export function VfsAccessPicker({
     return map;
   }, [grants]);
 
-  const setGrantCaps = (mountId: string, capabilities: VfsCap[]) => {
-    const next = grants.filter((grant) => grant.mount_id !== mountId);
-    if (capabilities.length > 0) {
-      next.push({ mount_id: mountId, capabilities });
+  const setGrantCaps = useCallback(
+    (mountId: string, capabilities: VfsCap[]) => {
+      const next = grants.filter((grant) => grant.mount_id !== mountId);
+      if (capabilities.length > 0) next.push({ mount_id: mountId, capabilities });
+      onChange(next);
+    },
+    [grants, onChange],
+  );
+
+  const sortedItems = useMemo(
+    () => items.slice().sort((a, b) => a.display_name.localeCompare(b.display_name, "zh-CN")),
+    [items],
+  );
+
+  const selectedKeys = useMemo(
+    () => sortedItems.filter((it) => (grantByMountId.get(it.mount_id)?.capabilities.length ?? 0) > 0).map((it) => it.mount_id),
+    [sortedItems, grantByMountId],
+  );
+
+  const toggleMount = (mountId: string) => {
+    const item = sortedItems.find((it) => it.mount_id === mountId);
+    if (!item) return;
+    const current = grantByMountId.get(mountId)?.capabilities ?? [];
+    if (current.length > 0) {
+      setGrantCaps(mountId, []);
+      return;
     }
-    onChange(next);
+    const allowed = VFS_CAPS.filter((cap) => item.capabilities.includes(cap.key)).map((cap) => cap.key);
+    setGrantCaps(mountId, allowed);
   };
 
   if (!projectId) {
@@ -64,39 +88,26 @@ export function VfsAccessPicker({
   }
 
   return (
-    <div className="space-y-2">
-      {isLoading && <p className="text-xs text-muted-foreground/70">正在加载 VFS Mount...</p>}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-      {!isLoading && items.length === 0 && (
-        <p className="text-xs text-muted-foreground/70">当前 Project 尚未创建 Filespace。</p>
-      )}
-      <div className="space-y-2">
-        {items.map((item) => {
-          const selected = grantByMountId.get(item.mount_id)?.capabilities ?? [];
-          const allowed = VFS_CAPS.filter((cap) => item.capabilities.includes(cap.key));
-          return (
-            <div key={item.mount_id} className="rounded-[8px] border border-border bg-card/40 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-foreground">{item.display_name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{item.mount_id}</div>
-                </div>
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={selected.length > 0}
-                    onChange={(event) => {
-                      setGrantCaps(
-                        item.mount_id,
-                        event.currentTarget.checked ? allowed.map((cap) => cap.key) : [],
-                      );
-                    }}
-                  />
-                  启用
-                </label>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {allowed.map((cap) => {
+    <CapabilityPicker
+      hint="给 Agent 分配项目 Filespace 的读写能力，下方按钮可精调每个 mount 的具体 cap。"
+      isLoading={isLoading}
+      error={error}
+      items={sortedItems}
+      selectedKeys={selectedKeys}
+      itemKey={(it) => it.mount_id}
+      itemToCardProps={(it) => {
+        const selected = grantByMountId.get(it.mount_id)?.capabilities ?? [];
+        const allowed = VFS_CAPS.filter((cap) => it.capabilities.includes(cap.key));
+        return {
+          reactKey: it.mount_id,
+          title: it.display_name,
+          subtitle: it.mount_id,
+          footer: (
+            <div className="flex flex-wrap gap-1.5">
+              {allowed.length === 0 ? (
+                <span className="text-[10px] text-muted-foreground/70">该 mount 未声明任何 cap</span>
+              ) : (
+                allowed.map((cap) => {
                   const active = selected.includes(cap.key);
                   return (
                     <button
@@ -104,11 +115,11 @@ export function VfsAccessPicker({
                       type="button"
                       onClick={() => {
                         const next = active
-                          ? selected.filter((item) => item !== cap.key)
+                          ? selected.filter((c) => c !== cap.key)
                           : [...selected, cap.key];
-                        setGrantCaps(item.mount_id, next as VfsCap[]);
+                        setGrantCaps(it.mount_id, next as VfsCap[]);
                       }}
-                      className={`rounded-[8px] border px-2 py-1 text-[11px] font-medium transition-colors ${
+                      className={`rounded-[6px] border px-2 py-0.5 text-[10px] font-medium transition-colors ${
                         active
                           ? "border-primary/30 bg-primary/10 text-foreground"
                           : "border-border bg-background text-muted-foreground hover:text-foreground"
@@ -117,12 +128,17 @@ export function VfsAccessPicker({
                       {cap.label}
                     </button>
                   );
-                })}
-              </div>
+                })
+              )}
             </div>
-          );
-        })}
-      </div>
-    </div>
+          ),
+        };
+      }}
+      onToggle={toggleMount}
+      loadingText="正在加载 VFS Mount…"
+      emptyAllText="当前 Project 尚未创建 Filespace。"
+      enabledEmptyText="尚未启用任何 Mount，从下方选取。"
+      availableEmptyText="所有 Mount 都已启用。"
+    />
   );
 }

@@ -48,6 +48,7 @@ LaunchCommand
 - Construction 阶段一次性产出 launch-ready final facts，原因是 context query、inspector、audit 和 connector launch 必须观察同一份事实。
 - runtime command replay 从 construction base projection 开始，原因是 pending transition、context query 和 next-turn launch 必须共享相同闭包逻辑。
 - terminal effect 使用 outbox，原因是业务副作用需要跨进程恢复，且不应影响 terminal event 的事实性。
+- 会话标题从首条用户消息本地派生，原因是标题属于会话列表元信息，不应消耗或依赖任一 connector/provider 的模型执行能力。
 
 ## Contract Appendices
 

@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
 
 use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
-use super::title_generator::SessionTitleGenerator;
 use super::types::{SessionMeta, TitleSource};
 
 #[derive(Clone)]
@@ -35,10 +32,6 @@ impl SessionTitleService {
             self.broadcast_session_meta_updated(session_id, meta).await;
         }
         Ok(updated)
-    }
-
-    pub fn with_title_generator(self, _generator: Arc<dyn SessionTitleGenerator>) -> Self {
-        self
     }
 
     async fn broadcast_session_meta_updated(&self, session_id: &str, meta: &SessionMeta) {

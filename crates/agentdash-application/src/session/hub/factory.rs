@@ -103,7 +103,6 @@ impl SessionRuntimeInner {
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
             companion_wait_registry: CompanionWaitRegistry::default(),
-            title_generator: None,
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
@@ -162,15 +161,6 @@ impl SessionRuntimeInner {
     /// 注入插件提供的额外 Skill 扫描目录
     pub fn with_extra_skill_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
         self.extra_skill_dirs = dirs;
-        self
-    }
-
-    /// 注入会话标题自动生成器（可选；未注入时不触发自动标题生成）
-    pub fn with_title_generator(
-        mut self,
-        generator: Arc<dyn super::super::title_generator::SessionTitleGenerator>,
-    ) -> Self {
-        self.title_generator = Some(generator);
         self
     }
 

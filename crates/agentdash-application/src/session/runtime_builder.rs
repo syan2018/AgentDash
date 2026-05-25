@@ -16,7 +16,6 @@ use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
-use super::title_generator::SessionTitleGenerator;
 use super::title_service::SessionTitleService;
 use crate::context::SharedContextAuditBus;
 
@@ -78,11 +77,6 @@ impl SessionRuntimeBuilder {
         self.inner = self
             .inner
             .with_system_prompt_config(base_system_prompt, user_preferences);
-        self
-    }
-
-    pub fn with_title_generator(mut self, generator: Arc<dyn SessionTitleGenerator>) -> Self {
-        self.inner = self.inner.with_title_generator(generator);
         self
     }
 

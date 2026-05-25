@@ -17,7 +17,7 @@ use crate::session::hub::SessionRuntimeInner;
 use crate::session::persistence::SessionStoreSet;
 use crate::session::post_turn_handler::DynTerminalHookEffectHandlerRegistry;
 use crate::session::runtime_registry::SessionRuntimeRegistry;
-use crate::session::title_generator::SessionTitleGenerator;
+use crate::session::title_generator::derive_session_title;
 use crate::session::turn_supervisor::TurnSupervisor;
 use crate::session::types::TitleSource;
 
@@ -29,7 +29,6 @@ pub(in crate::session) struct SessionLaunchDeps {
     pub(super) session_construction_provider:
         Arc<tokio::sync::RwLock<Option<SharedSessionConstructionProvider>>>,
     runtime_registry: SessionRuntimeRegistry,
-    title_generator: Option<Arc<dyn SessionTitleGenerator>>,
     hook_effect_handler_registry:
         Arc<tokio::sync::RwLock<Option<DynTerminalHookEffectHandlerRegistry>>>,
     context_audit_bus: Arc<tokio::sync::RwLock<Option<SharedContextAuditBus>>>,
@@ -53,7 +52,6 @@ impl SessionLaunchDeps {
             runtime_registry: inner.runtime_registry.clone(),
             turn_supervisor: inner.turn_supervisor.clone(),
             stores: inner.stores.clone(),
-            title_generator: inner.title_generator.clone(),
             session_construction_provider: inner.session_construction_provider.clone(),
             hook_effect_handler_registry: inner.hook_effect_handler_registry.clone(),
             context_audit_bus: inner.context_audit_bus.clone(),
@@ -114,7 +112,6 @@ impl SessionLaunchDeps {
     pub(super) fn commit(&self) -> TurnCommitDeps {
         TurnCommitDeps {
             stores: self.stores.clone(),
-            title_generator: self.title_generator.clone(),
             eventing: self.eventing.clone(),
             core: self.core.clone(),
             turn_supervisor: self.turn_supervisor.clone(),
@@ -226,78 +223,61 @@ pub(super) struct ConnectorStartDeps {
 #[derive(Clone)]
 pub(super) struct TurnCommitDeps {
     pub(super) stores: SessionStoreSet,
-    pub(super) title_generator: Option<Arc<dyn SessionTitleGenerator>>,
     pub(super) eventing: SessionEventingService,
     pub(super) turn_supervisor: TurnSupervisor,
     core: SessionCoreService,
 }
 
 impl TurnCommitDeps {
-    pub(super) fn spawn_title_generation(&self, session_id: String, user_prompt: String) {
-        let Some(generator) = self.title_generator.clone() else {
+    pub(super) async fn apply_auto_title(&self, session_id: &str, user_prompt: &str) {
+        let Some(title) = derive_session_title(user_prompt) else {
             return;
         };
-        let eventing = self.eventing.clone();
-        let core = self.core.clone();
 
-        tokio::spawn(async move {
-            let result = generator.generate_title(&user_prompt).await;
-            match result {
-                Ok(title) if !title.trim().is_empty() => {
-                    let title = title.trim().to_string();
-                    let updated = core
-                        .update_session_meta(&session_id, |meta| {
-                            if meta.title_source == TitleSource::User {
-                                return;
-                            }
-                            meta.title = title;
-                            meta.title_source = TitleSource::Auto;
-                        })
-                        .await;
-                    match updated {
-                        Ok(Some(meta)) => {
-                            let source = SourceInfo {
-                                connector_id: "agentdash-server".to_string(),
-                                connector_type: "system".to_string(),
-                                executor_id: None,
-                            };
-                            let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
-                                agentdash_agent_protocol::BackboneEvent::Platform(
-                                    agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
-                                        key: "session_meta_updated".to_string(),
-                                        value: serde_json::json!({
-                                            "title": meta.title,
-                                            "title_source": meta.title_source,
-                                        }),
-                                    },
-                                ),
-                                &session_id,
-                                source,
-                            );
-                            let _ = eventing.persist_notification(&session_id, envelope).await;
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            tracing::warn!(
-                                session_id = %session_id,
-                                error = %error,
-                                "自动标题写入失败"
-                            );
-                        }
-                    }
+        let updated = self
+            .core
+            .update_session_meta(session_id, |meta| {
+                if meta.title_source == TitleSource::User {
+                    return;
                 }
-                Ok(_) => {
-                    tracing::warn!(session_id = %session_id, "LLM 返回了空标题，保留原标题");
-                }
-                Err(reason) => {
-                    tracing::warn!(
-                        session_id = %session_id,
-                        reason = %reason,
-                        "自动标题生成失败，保留原标题"
-                    );
-                }
+                meta.title = title;
+                meta.title_source = TitleSource::Auto;
+            })
+            .await;
+        match updated {
+            Ok(Some(meta)) => {
+                let source = SourceInfo {
+                    connector_id: "agentdash-server".to_string(),
+                    connector_type: "system".to_string(),
+                    executor_id: None,
+                };
+                let envelope = agentdash_agent_protocol::BackboneEnvelope::new(
+                    agentdash_agent_protocol::BackboneEvent::Platform(
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+                            key: "session_meta_updated".to_string(),
+                            value: serde_json::json!({
+                                "title": meta.title,
+                                "title_source": meta.title_source,
+                            }),
+                        },
+                    ),
+                    session_id,
+                    source,
+                );
+                let _ = self
+                    .eventing
+                    .persist_notification(session_id, envelope)
+                    .await;
             }
-        });
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "自动标题写入失败"
+                );
+            }
+        }
     }
 }
 

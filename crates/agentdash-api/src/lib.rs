@@ -12,7 +12,6 @@ pub mod runtime_bridge;
 pub mod session_use_cases;
 pub mod stream;
 pub mod task_agent_context;
-pub mod title_generator;
 #[cfg(test)]
 mod vfs_access;
 pub mod vfs_materialization;

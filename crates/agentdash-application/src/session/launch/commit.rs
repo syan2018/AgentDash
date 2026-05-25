@@ -94,14 +94,10 @@ impl TurnCommitter {
         }
 
         let is_first_turn = session_meta.last_event_seq <= 1;
-        if is_first_turn
-            && session_meta.title_source != TitleSource::User
-            && self.deps.title_generator.is_some()
-        {
-            self.deps.spawn_title_generation(
-                session_id.to_string(),
-                prepared.resolved_payload.text_prompt.clone(),
-            );
+        if is_first_turn && session_meta.title_source != TitleSource::User {
+            self.deps
+                .apply_auto_title(session_id, &prepared.resolved_payload.text_prompt)
+                .await;
         }
 
         Ok(CommittedTurn { accepted })

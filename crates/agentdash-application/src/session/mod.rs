@@ -105,7 +105,6 @@ pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
-pub use title_generator::SessionTitleGenerator;
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

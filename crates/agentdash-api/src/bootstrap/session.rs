@@ -68,7 +68,6 @@ pub(crate) async fn build_session_runtime(
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-    let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
     let mut prompt_config: Option<(String, Vec<String>)> = None;
 
     if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
@@ -77,7 +76,6 @@ pub(crate) async fn build_session_runtime(
     })
     .await
     {
-        title_bridge = Some(result.connector.default_bridge());
         prompt_config = Some((
             result.connector.base_system_prompt().to_string(),
             result.connector.user_preferences().to_vec(),
@@ -122,11 +120,6 @@ pub(crate) async fn build_session_runtime(
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
-    }
-    if let Some(bridge) = title_bridge {
-        session_runtime_builder = session_runtime_builder.with_title_generator(Arc::new(
-            crate::title_generator::LlmTitleGenerator::new(bridge),
-        ));
     }
 
     let session_core = session_runtime_builder.core_service();

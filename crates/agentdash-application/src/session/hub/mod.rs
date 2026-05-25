@@ -50,7 +50,6 @@ pub struct SessionRuntimeInner {
     pub(crate) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
-    pub(super) title_generator: Option<Arc<dyn super::title_generator::SessionTitleGenerator>>,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
     pub(super) hook_effect_handler_registry: Arc<

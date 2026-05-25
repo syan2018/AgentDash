@@ -141,7 +141,11 @@ impl AgentTool for FsGlobTool {
                 .iter()
                 .map(|e| {
                     let path = e.path.replace('\\', "/");
-                    if e.is_dir { format!("{path}/") } else { path }
+                    if e.is_dir {
+                        format!("{path}/")
+                    } else {
+                        path
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -163,7 +167,9 @@ mod fs_glob_tests {
     use crate::vfs::mount::PROVIDER_INLINE_FS;
     use crate::vfs::provider_inline::InlineFsMountProvider;
     use agentdash_domain::common::error::DomainError;
-    use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
+    use agentdash_domain::inline_file::{
+        InlineFile, InlineFileOwnerKind, InlineFileRepository,
+    };
     use agentdash_spi::{Mount, MountCapability, Vfs};
     use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
@@ -373,8 +379,10 @@ mod fs_glob_tests {
 
     #[tokio::test]
     async fn fs_glob_recursive_inferred_from_double_star() {
-        let tool =
-            make_tool_with_files(vec![("foo.rs", "x", at(0)), ("nested/bar.rs", "x", at(-1))]);
+        let tool = make_tool_with_files(vec![
+            ("foo.rs", "x", at(0)),
+            ("nested/bar.rs", "x", at(-1)),
+        ]);
         // 仅根：`*.rs` 不应该匹配 nested/
         let res = tool
             .execute(
@@ -387,10 +395,7 @@ mod fs_glob_tests {
             .expect("execute");
         let text = res.content[0].extract_text().expect("text");
         assert!(text.contains("foo.rs"));
-        assert!(
-            !text.contains("nested/"),
-            "non-recursive should skip subdirs: {text}"
-        );
+        assert!(!text.contains("nested/"), "non-recursive should skip subdirs: {text}");
 
         // 递归：`**/*.rs` 应该都匹配
         let res = tool
@@ -404,10 +409,7 @@ mod fs_glob_tests {
             .expect("execute");
         let text = res.content[0].extract_text().expect("text");
         assert!(text.contains("foo.rs"));
-        assert!(
-            text.contains("nested/bar.rs"),
-            "recursive should include subdirs: {text}"
-        );
+        assert!(text.contains("nested/bar.rs"), "recursive should include subdirs: {text}");
     }
 
     #[tokio::test]
@@ -468,8 +470,10 @@ mod fs_glob_tests {
 
     #[tokio::test]
     async fn fs_glob_directory_has_trailing_slash() {
-        let tool =
-            make_tool_with_files(vec![("README.md", "x", at(0)), ("src/lib.rs", "x", at(-1))]);
+        let tool = make_tool_with_files(vec![
+            ("README.md", "x", at(0)),
+            ("src/lib.rs", "x", at(-1)),
+        ]);
         let res = tool
             .execute(
                 "c",
@@ -484,14 +488,8 @@ mod fs_glob_tests {
         // 是否会输出 src/ 这个目录条目，取决于 list_inline_entries 实现）。
         // 至少 README.md 不应有 [file] 前缀。
         assert!(text.contains("README.md"));
-        assert!(
-            !text.contains("[file]"),
-            "should not have [file] prefix: {text}"
-        );
-        assert!(
-            !text.contains("[dir]"),
-            "should not have [dir] prefix: {text}"
-        );
+        assert!(!text.contains("[file]"), "should not have [file] prefix: {text}");
+        assert!(!text.contains("[dir]"), "should not have [dir] prefix: {text}");
     }
 
     #[tokio::test]
@@ -511,9 +509,6 @@ mod fs_glob_tests {
             .expect("execute");
         let text = res.content[0].extract_text().expect("text");
         assert!(text.contains("src/main.rs"));
-        assert!(
-            !text.contains(".git"),
-            "VCS dirs should be excluded: {text}"
-        );
+        assert!(!text.contains(".git"), "VCS dirs should be excluded: {text}");
     }
 }

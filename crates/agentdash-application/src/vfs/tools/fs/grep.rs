@@ -295,7 +295,10 @@ fn translate_type_to_glob(name: &str) -> Result<String, String> {
         .find(|(key, _)| *key == name)
         .ok_or_else(|| {
             let supported: Vec<&str> = LANG_EXTENSIONS.iter().map(|(k, _)| *k).collect();
-            format!("unknown type `{name}`; supported: {}", supported.join(", "))
+            format!(
+                "unknown type `{name}`; supported: {}",
+                supported.join(", ")
+            )
         })?;
     let exts: Vec<&str> = entry.1.iter().copied().collect();
     Ok(if exts.len() == 1 {
@@ -466,11 +469,7 @@ mod fs_grep_tests {
             provider: PROVIDER_INLINE_FS.to_string(),
             backend_id: String::new(),
             root_ref: "context://inline/brief".to_string(),
-            capabilities: vec![
-                MountCapability::Read,
-                MountCapability::List,
-                MountCapability::Search,
-            ],
+            capabilities: vec![MountCapability::Read, MountCapability::List, MountCapability::Search],
             default_write: false,
             display_name: "Memory".to_string(),
             metadata: serde_json::json!({
@@ -720,9 +719,6 @@ mod fs_grep_tests {
             .expect("execute");
         let text = res.content[0].extract_text().expect("text");
         assert!(text.contains("src/main.rs"));
-        assert!(
-            !text.contains(".git/HEAD"),
-            "VCS path should be filtered: {text}"
-        );
+        assert!(!text.contains(".git/HEAD"), "VCS path should be filtered: {text}");
     }
 }

@@ -1004,7 +1004,11 @@ impl RelayVfsService {
                 .case_insensitive(!params.case_sensitive)
                 .multi_line(params.multiline)
                 .dot_matches_new_line(params.multiline);
-            Some(builder.build().map_err(|e| format!("无效正则: {e}"))?)
+            Some(
+                builder
+                    .build()
+                    .map_err(|e| format!("无效正则: {e}"))?,
+            )
         } else {
             None
         };
@@ -1052,8 +1056,12 @@ impl RelayVfsService {
                     }
                 };
                 if matched {
-                    let mut formatted =
-                        format!("{}:{}: {}", file_path, idx + 1, trim_long_line(line.trim()));
+                    let mut formatted = format!(
+                        "{}:{}: {}",
+                        file_path,
+                        idx + 1,
+                        trim_long_line(line.trim())
+                    );
                     if before > 0 || after > 0 {
                         let start = idx.saturating_sub(before);
                         let end = (idx + 1 + after).min(lines.len());
@@ -1068,7 +1076,8 @@ impl RelayVfsService {
                                     )
                                 })
                                 .collect();
-                            formatted = format!("{}\n{}", before_lines_fmt.join("\n"), formatted);
+                            formatted =
+                                format!("{}\n{}", before_lines_fmt.join("\n"), formatted);
                         }
                         if idx + 1 < end {
                             let after_lines_fmt: Vec<String> = (idx + 1..end)

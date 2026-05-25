@@ -231,7 +231,8 @@ mod tests {
         let json_value = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json_value["offset"], 10);
         assert_eq!(json_value["limit"], 50);
-        let decoded: ToolFileReadPayload = serde_json::from_value(json_value).expect("deserialize");
+        let decoded: ToolFileReadPayload =
+            serde_json::from_value(json_value).expect("deserialize");
         assert_eq!(decoded.offset, Some(10));
         assert_eq!(decoded.limit, Some(50));
     }

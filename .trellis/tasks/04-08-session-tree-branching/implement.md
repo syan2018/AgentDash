@@ -71,7 +71,7 @@ cargo test -p agentdash-application continuation -- --nocapture
 
 - [x] 新增 branch / lineage API。
 - [x] 前端 session list 改用 lineage grouping。
-- [ ] Session detail 增加 fork source / branch status 展示。
+- [x] Session detail 增加 fork source / branch status 展示。
 - [x] 增加前端测试。
 
 Validation:

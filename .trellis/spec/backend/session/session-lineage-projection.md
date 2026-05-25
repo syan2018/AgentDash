@@ -32,6 +32,8 @@ The HTTP surface is exposed through ACP session routes:
 
 DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Project session list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from `session_lineage` first, with companion context as the narrow companion fallback.
 
+Session detail surfaces lineage through the same generated DTO. The chat view branch panel reads `GET /sessions/{id}/lineage` and displays parent source, relation status, fork point and direct children beside the model context projection view.
+
 ## Ownership Boundary
 
 `session_lineage` explains branch topology and restore provenance. Business visibility and project/story/task ownership remain in `session_bindings`. API fork routes copy the parent owner bindings to the child after the runtime branch commit so the new session is immediately visible under the same owner surface.

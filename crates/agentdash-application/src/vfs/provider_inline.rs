@@ -286,6 +286,7 @@ fn list_inline_file_entries(
         }
         if let Some(file) = files.iter().find(|file| file.path == entry.path) {
             entry.size = Some(file.size_bytes);
+            entry.modified_at = Some(file.updated_at.timestamp_millis());
             entry.attributes = Some(inline_file_attributes(file));
         }
     }

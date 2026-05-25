@@ -18,7 +18,7 @@ const MAX_LINE_LEN: usize = 500;
 const TRUNCATE_SUFFIX: &str = "...(truncated)";
 
 /// 路径段（任一 `/` 分隔的中间段）命中 VCS 黑名单 ⇒ 返回 true。
-fn is_vcs_path(path: &str) -> bool {
+pub(crate) fn is_vcs_path(path: &str) -> bool {
     path.split('/').any(|seg| VCS_EXCLUDE_DIRS.contains(&seg))
 }
 

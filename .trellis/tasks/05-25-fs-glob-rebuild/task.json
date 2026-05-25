@@ -3,7 +3,7 @@
   "name": "fs-glob-rebuild",
   "title": "fs_glob 重做（schema 对齐 CC + max_results + mtime 排序 + trailing slash 输出）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

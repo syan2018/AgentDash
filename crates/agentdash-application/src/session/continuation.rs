@@ -231,13 +231,34 @@ enum RestoredMessageEnvelope {
     },
 }
 
-/// 从持久化事件重建投影 transcript — 唯一公共入口。
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_events(
+    events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_filtered_events(events.iter())
+}
+
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_filtered_events<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_iter(events)
+}
+
+/// 从持久化事件重建投影 transcript — legacy 公共入口。
 ///
 /// 消费者根据需要自选渲染方式：
 /// - `.into_messages()` → 执行器原生 session restore
 /// - `build_continuation_context_frame(&transcript, owner_context)` → continuation frame 注入
 pub(super) fn build_projected_transcript_from_events(
     events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
+    let raw_entries = build_raw_projected_transcript_from_events(events).entries;
+    apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
+}
+
+fn build_raw_projected_transcript_from_iter<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
 ) -> ProjectedTranscript {
     let mut user_messages: HashMap<String, RestoredUserMessageState> = HashMap::new();
     let mut assistant_messages: HashMap<String, RestoredAssistantMessageState> = HashMap::new();
@@ -415,11 +436,11 @@ pub(super) fn build_projected_transcript_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    let raw_entries: Vec<ProjectedEntry> = envelopes
+    let entries: Vec<ProjectedEntry> = envelopes
         .into_iter()
         .map(restored_envelope_to_projected_entry)
         .collect();
-    apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
+    ProjectedTranscript { entries }
 }
 
 // ─── Private helpers ────────────────────────────────────────
@@ -552,24 +573,25 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
         RestoredMessageEnvelope::User {
             message_ref,
             content,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::User {
+            ProjectionKind::Transcript,
+            AgentMessage::User {
                 content,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::Assistant {
             message_ref,
             content,
             tool_calls,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::Assistant {
+            ProjectionKind::Transcript,
+            AgentMessage::Assistant {
                 content,
                 tool_calls: tool_calls.clone(),
                 stop_reason: Some(if tool_calls.is_empty() {
@@ -581,7 +603,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 usage: None,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::ToolResult {
             message_ref,
             tool_call_id,
@@ -590,11 +613,11 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
             content,
             details,
             is_error,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::ToolResult {
+            ProjectionKind::Transcript,
+            AgentMessage::ToolResult {
                 tool_call_id,
                 call_id,
                 tool_name,
@@ -603,7 +626,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 is_error,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
     }
 }
 
@@ -685,17 +709,19 @@ fn apply_compaction_checkpoint_projected(
         turn_id: "_compaction_summary".to_string(),
         entry_index: 0,
     };
-    let summary_entry = ProjectedEntry {
-        message_ref: summary_ref,
-        projection_kind: ProjectionKind::CompactionSummary,
-        message: AgentMessage::CompactionSummary {
+    let summary_entry = ProjectedEntry::projection(
+        summary_ref,
+        ProjectionKind::CompactionSummary,
+        AgentMessage::CompactionSummary {
             summary: checkpoint.summary,
             tokens_before: checkpoint.tokens_before,
             messages_compacted: checkpoint.messages_compacted,
             compacted_until_ref: derived_ref,
             timestamp: checkpoint.timestamp_ms,
         },
-    };
+        None,
+        None,
+    );
 
     let mut entries = vec![summary_entry];
     entries.extend(raw_entries.into_iter().skip(cut));

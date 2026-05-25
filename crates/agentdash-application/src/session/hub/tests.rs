@@ -20,7 +20,9 @@ use agentdash_spi::hooks::{
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, ConnectorError, ExecutionSessionFrame,
-    PromptPayload, StopReason,
+    NewCompactionProjectionCommit, ProjectionOrigin, PromptPayload,
+    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, StopReason,
 };
 use futures::stream;
 use serde_json::json;
@@ -2234,6 +2236,119 @@ fn inject_compaction_envelope(
     .with_turn_id(turn_id)
 }
 
+fn context_compaction_completed_envelope(
+    session_id: &str,
+    turn_id: &str,
+    item_id: &str,
+) -> BackboneEnvelope {
+    let source = SourceInfo {
+        connector_id: "test".to_string(),
+        connector_type: "unit".to_string(),
+        executor_id: None,
+    };
+    BackboneEnvelope::new(
+        BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+            item: codex::ThreadItem::ContextCompaction {
+                id: item_id.to_string(),
+            },
+            thread_id: session_id.to_string(),
+            turn_id: turn_id.to_string(),
+        }),
+        session_id,
+        source,
+    )
+    .with_trace(TraceInfo {
+        turn_id: Some(turn_id.to_string()),
+        entry_index: None,
+    })
+}
+
+async fn commit_test_compaction_projection(
+    hub: &SessionRuntimeInner,
+    session_id: &str,
+    summary: &str,
+    tokens_before: u64,
+) {
+    let now = 1_710_000_000_000_i64;
+    hub.persistence
+        .commit_compaction_projection(
+            session_id,
+            NewCompactionProjectionCommit {
+                completed_event: context_compaction_completed_envelope(
+                    session_id,
+                    "t-3",
+                    "compact-item-1",
+                ),
+                compaction: SessionCompactionRecord {
+                    id: "compaction-1".to_string(),
+                    session_id: session_id.to_string(),
+                    branch_id: None,
+                    projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                    projection_version: 1,
+                    lifecycle_item_id: "compact-item-1".to_string(),
+                    start_event_seq: 1,
+                    completed_event_seq: None,
+                    failed_event_seq: None,
+                    status: SessionCompactionStatus::ProjectionCommitted,
+                    trigger: "auto".to_string(),
+                    reason: Some("token_pressure".to_string()),
+                    phase: Some("pre_provider".to_string()),
+                    strategy: "summary_prefix".to_string(),
+                    budget_scope: Some("model_context".to_string()),
+                    base_head_event_seq: Some(3),
+                    source_start_event_seq: Some(1),
+                    source_end_event_seq: Some(2),
+                    first_kept_event_seq: Some(3),
+                    summary: summary.to_string(),
+                    replacement_projection_json: serde_json::json!({
+                        "segments": ["projection-segment-1"]
+                    }),
+                    token_stats_json: serde_json::json!({
+                        "before": tokens_before,
+                        "after": 12000
+                    }),
+                    diagnostics_json: serde_json::json!({}),
+                    created_by: Some("agent".to_string()),
+                    created_at_ms: now,
+                    completed_at_ms: None,
+                },
+                segments: vec![SessionProjectionSegmentRecord {
+                    id: "projection-segment-1".to_string(),
+                    session_id: session_id.to_string(),
+                    branch_id: None,
+                    projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                    projection_version: 1,
+                    sort_order: 0,
+                    segment_type: "summary_chunk".to_string(),
+                    origin: "projection".to_string(),
+                    synthetic: true,
+                    source_start_event_seq: Some(1),
+                    source_end_event_seq: Some(2),
+                    source_refs_json: serde_json::json!([]),
+                    generated_by_compaction_id: Some("compaction-1".to_string()),
+                    content_json: serde_json::json!({
+                        "role": "system",
+                        "content": summary
+                    }),
+                    token_estimate: Some(256),
+                    created_at_ms: now,
+                }],
+                head: SessionProjectionHeadRecord {
+                    session_id: session_id.to_string(),
+                    branch_id: None,
+                    projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                    projection_version: 1,
+                    head_event_seq: 3,
+                    active_compaction_id: Some("compaction-1".to_string()),
+                    updated_by_event_seq: None,
+                    updated_at_ms: 0,
+                },
+            },
+        )
+        .await
+        .expect("commit compaction projection");
+}
+
 #[tokio::test]
 async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
     let persistence = Arc::new(MemorySessionPersistence::default());
@@ -2257,6 +2372,9 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
         .expect("inject user notification");
     }
 
+    commit_test_compaction_projection(&hub, &session.id, "## 历史摘要\n- 已完成旧分析", 42_000)
+        .await;
+
     hub.inject_notification(
         &session.id,
         inject_compaction_envelope(
@@ -2272,7 +2390,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
         ),
     )
     .await
-    .expect("inject compaction checkpoint");
+    .expect("inject compaction frame metadata");
 
     let events = hub
         .persistence
@@ -2300,6 +2418,15 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
         .build_projected_transcript(&session.id)
         .await
         .expect("transcript should build");
+    assert_eq!(transcript.entries[0].origin, ProjectionOrigin::Projection);
+    assert!(transcript.entries[0].synthetic);
+    assert_eq!(
+        transcript.entries[0]
+            .source_range
+            .as_ref()
+            .map(|range| (range.start_event_seq, range.end_event_seq)),
+        Some((1, 2))
+    );
     let restored = transcript.into_messages();
 
     assert_eq!(restored.len(), 2);
@@ -2314,12 +2441,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
             assert!(summary.contains("历史摘要"));
             assert_eq!(*tokens_before, 42_000);
             assert_eq!(*messages_compacted, 2);
-            assert_eq!(
-                compacted_until_ref
-                    .as_ref()
-                    .map(|message_ref| (message_ref.turn_id.as_str(), message_ref.entry_index)),
-                Some(("t-2", 0))
-            );
+            assert!(compacted_until_ref.is_none());
         }
         other => panic!("unexpected first message: {other:?}"),
     }
@@ -2349,22 +2471,7 @@ async fn continuation_context_frame_uses_compacted_projection() {
         .expect("inject user notification");
     }
 
-    hub.inject_notification(
-        &session.id,
-        inject_compaction_envelope(
-            &session.id,
-            "t-3",
-            serde_json::json!({
-                "summary": "压缩后的历史摘要",
-                "tokens_before": 38000,
-                "messages_compacted": 2,
-                "newly_compacted_messages": 2,
-                "timestamp_ms": 1710000000000_u64,
-            }),
-        ),
-    )
-    .await
-    .expect("inject compaction checkpoint");
+    commit_test_compaction_projection(&hub, &session.id, "压缩后的历史摘要", 38_000).await;
 
     let transcript = hub
         .build_projected_transcript(&session.id)

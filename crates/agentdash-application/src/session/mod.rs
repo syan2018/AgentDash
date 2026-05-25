@@ -13,6 +13,7 @@ pub mod construction_planner;
 pub mod construction_provider;
 pub mod context;
 mod context_frame;
+mod context_projector;
 pub mod continuation;
 pub mod control;
 pub mod core;
@@ -78,6 +79,7 @@ pub use construction_provider::{
     TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
+pub use context_projector::ContextProjector;
 pub use control::SessionControlService;
 pub use core::SessionCoreService;
 pub use effects_service::SessionEffectsService;

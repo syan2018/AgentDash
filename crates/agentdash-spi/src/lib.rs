@@ -8,11 +8,12 @@ pub mod session_persistence;
 
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
-    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
-    BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
-    BeforeToolCallResult, CompactionParams, CompactionResult, CompactionTriggerStats,
-    DynAgentRuntimeDelegate, EvaluateCompactionInput, MessageRef, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
+    AfterTurnInput, AgentContext, AgentContextEnvelope, AgentInputMessage, AgentMessage,
+    AgentRuntimeDelegate, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
+    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionParams,
+    CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate, EvaluateCompactionInput,
+    MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind, ProjectionOrigin,
+    ProjectionSourceRange, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
     ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
     TransformContextOutput, TurnControlDecision, now_millis,
 };

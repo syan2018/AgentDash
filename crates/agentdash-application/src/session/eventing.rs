@@ -4,10 +4,12 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
+use super::context_projector::ContextProjector;
 use super::continuation::build_projected_transcript_from_events;
 use super::hub_support::SessionEventSubscription;
 use super::persistence::{PersistedSessionEvent, SessionEventPage, SessionStoreSet};
@@ -103,6 +105,8 @@ impl SessionEventingService {
             .stores
             .events
             .append_event(session_id, &envelope)
+            .await?;
+        self.advance_model_projection_head(session_id, &persisted)
             .await?;
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(persisted.clone());
@@ -248,8 +252,18 @@ impl SessionEventingService {
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::ProjectedTranscript> {
-        let events = self.stores.events.list_all_events(session_id).await?;
-        Ok(build_projected_transcript_from_events(&events))
+        ContextProjector::new(self.stores.clone())
+            .build_projected_transcript(session_id, None)
+            .await
+    }
+
+    pub async fn build_agent_context_envelope(
+        &self,
+        session_id: &str,
+    ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
+        ContextProjector::new(self.stores.clone())
+            .build_model_context(session_id, None)
+            .await
     }
 
     async fn maybe_enrich_compaction_notification(
@@ -346,9 +360,33 @@ impl SessionEventingService {
             .events
             .append_event(session_id, envelope)
             .await?;
+        self.advance_model_projection_head(session_id, &persisted)
+            .await?;
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(persisted.clone());
         Ok(persisted)
+    }
+
+    async fn advance_model_projection_head(
+        &self,
+        session_id: &str,
+        persisted: &PersistedSessionEvent,
+    ) -> io::Result<()> {
+        let Some(mut head) = self
+            .stores
+            .projections
+            .read_projection_head(session_id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await?
+        else {
+            return Ok(());
+        };
+        if persisted.event_seq <= head.head_event_seq {
+            return Ok(());
+        }
+        head.head_event_seq = persisted.event_seq;
+        head.updated_by_event_seq = Some(persisted.event_seq);
+        head.updated_at_ms = persisted.committed_at_ms;
+        self.stores.projections.upsert_projection_head(head).await
     }
 
     fn connector_source(&self, executor_id: Option<String>) -> SourceInfo {

@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    SessionCompactionRecord, SessionEventBacklog, SessionEventPage, SessionPersistence,
+    SessionCompactionRecord, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
@@ -33,6 +34,7 @@ struct MemorySessionPersistenceState {
     compactions: Vec<SessionCompactionRecord>,
     projection_segments: Vec<SessionProjectionSegmentRecord>,
     projection_heads: HashMap<(String, String, String), SessionProjectionHeadRecord>,
+    lineage: Vec<SessionLineageRecord>,
 }
 
 #[async_trait::async_trait]
@@ -87,6 +89,9 @@ impl SessionPersistence for MemorySessionPersistence {
         guard
             .projection_heads
             .retain(|(id, _, _), _| id != session_id);
+        guard.lineage.retain(|edge| {
+            edge.child_session_id != session_id && edge.parent_session_id != session_id
+        });
         Ok(())
     }
 
@@ -590,6 +595,156 @@ impl SessionPersistence for MemorySessionPersistence {
             head,
         })
     }
+
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        if record.child_session_id == record.parent_session_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "session lineage 不能指向自身",
+            ));
+        }
+        if !guard.metas.contains_key(&record.child_session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("child session {} 不存在", record.child_session_id),
+            ));
+        }
+        if !guard.metas.contains_key(&record.parent_session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("parent session {} 不存在", record.parent_session_id),
+            ));
+        }
+        let mut current = Some(record.parent_session_id.clone());
+        while let Some(session_id) = current {
+            if session_id == record.child_session_id {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "session lineage 不能形成环",
+                ));
+            }
+            current = guard
+                .lineage
+                .iter()
+                .find(|edge| {
+                    edge.child_session_id == session_id
+                        && edge.child_session_id != record.child_session_id
+                })
+                .map(|edge| edge.parent_session_id.clone());
+        }
+        match guard
+            .lineage
+            .iter_mut()
+            .find(|edge| edge.child_session_id == record.child_session_id)
+        {
+            Some(existing) => *existing = record,
+            None => guard.lineage.push(record),
+        }
+        Ok(())
+    }
+
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .lineage
+            .iter()
+            .find(|edge| edge.child_session_id == child_session_id)
+            .cloned())
+    }
+
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut children = guard
+            .lineage
+            .iter()
+            .filter(|edge| {
+                edge.parent_session_id == parent_session_id
+                    && lineage_matches(edge, relation_kind, status)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_lineage_edges(&mut children);
+        Ok(children)
+    }
+
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut ancestors = Vec::new();
+        let mut current = child_session_id.to_string();
+        while let Some(edge) = guard
+            .lineage
+            .iter()
+            .find(|edge| edge.child_session_id == current)
+        {
+            ancestors.push(edge.clone());
+            current = edge.parent_session_id.clone();
+        }
+        Ok(ancestors)
+    }
+
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut result = Vec::new();
+        let mut frontier = vec![root_session_id.to_string()];
+        while !frontier.is_empty() {
+            let mut next = Vec::new();
+            for parent_id in frontier {
+                let mut children = guard
+                    .lineage
+                    .iter()
+                    .filter(|edge| {
+                        edge.parent_session_id == parent_id
+                            && lineage_matches(edge, relation_kind, status)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                sort_lineage_edges(&mut children);
+                next.extend(children.iter().map(|edge| edge.child_session_id.clone()));
+                result.extend(children);
+            }
+            frontier = next;
+        }
+        Ok(result)
+    }
+
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        let edge = guard
+            .lineage
+            .iter_mut()
+            .find(|edge| edge.child_session_id == child_session_id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session lineage child {child_session_id} 不存在"),
+                )
+            })?;
+        edge.status = status;
+        edge.updated_at_ms = updated_at_ms;
+        Ok(())
+    }
 }
 
 impl MemorySessionPersistence {
@@ -672,6 +827,34 @@ fn build_persisted_event(
 
 fn branch_key(branch_id: Option<&str>) -> &str {
     branch_id.unwrap_or("")
+}
+
+fn lineage_matches(
+    edge: &SessionLineageRecord,
+    relation_kind: Option<SessionLineageRelationKind>,
+    status: Option<SessionLineageStatus>,
+) -> bool {
+    relation_kind
+        .map(|kind| edge.relation_kind == kind)
+        .unwrap_or(true)
+        && status
+            .map(|expected| edge.status == expected)
+            .unwrap_or(true)
+}
+
+fn sort_lineage_edges(edges: &mut [SessionLineageRecord]) {
+    edges.sort_by(|left, right| {
+        (
+            left.created_at_ms,
+            left.updated_at_ms,
+            left.child_session_id.as_str(),
+        )
+            .cmp(&(
+                right.created_at_ms,
+                right.updated_at_ms,
+                right.child_session_id.as_str(),
+            ))
+    });
 }
 
 fn projection_head_key(
@@ -778,8 +961,8 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
 #[cfg(test)]
 mod tests {
-    use super::super::TerminalEffectType;
     use super::super::types::{RuntimeCapabilityTransition, TitleSource};
+    use super::super::TerminalEffectType;
     use super::*;
     use agentdash_agent_protocol::{
         BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -812,6 +995,47 @@ mod tests {
             turn_id: Some(turn_id.to_string()),
             entry_index: None,
         })
+    }
+
+    fn memory_session_meta(id: &str) -> SessionMeta {
+        SessionMeta {
+            id: id.to_string(),
+            title: "测试".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        }
+    }
+
+    fn lineage_record(
+        child: &str,
+        parent: &str,
+        relation_kind: SessionLineageRelationKind,
+        status: SessionLineageStatus,
+        created_at_ms: i64,
+    ) -> SessionLineageRecord {
+        SessionLineageRecord {
+            child_session_id: child.to_string(),
+            parent_session_id: parent.to_string(),
+            relation_kind,
+            fork_point_event_seq: Some(7),
+            fork_point_ref_json: serde_json::json!({ "turn_id": "turn-1", "entry_index": 0 }),
+            fork_point_compaction_id: None,
+            status,
+            created_at_ms,
+            updated_at_ms: created_at_ms,
+            metadata_json: serde_json::json!({}),
+        }
     }
 
     #[tokio::test]
@@ -1030,6 +1254,111 @@ mod tests {
             .expect("应能查询 applied command");
         assert_eq!(applied.len(), 1);
         assert_eq!(applied[0].transition_id, "cmd-2");
+    }
+
+    #[tokio::test]
+    async fn session_lineage_queries_are_stable_and_filterable() {
+        let persistence = MemorySessionPersistence::default();
+        for id in ["root", "child-a", "child-b", "grand"] {
+            persistence
+                .create_session(&memory_session_meta(id))
+                .await
+                .expect("应能创建 session");
+        }
+
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "child-a",
+                "root",
+                SessionLineageRelationKind::Fork,
+                SessionLineageStatus::Open,
+                20,
+            ))
+            .await
+            .expect("应能写入 fork edge");
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "child-b",
+                "root",
+                SessionLineageRelationKind::Companion,
+                SessionLineageStatus::Open,
+                10,
+            ))
+            .await
+            .expect("应能写入 companion edge");
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "grand",
+                "child-b",
+                SessionLineageRelationKind::Fork,
+                SessionLineageStatus::Open,
+                30,
+            ))
+            .await
+            .expect("应能写入 grand edge");
+
+        let children = persistence
+            .list_session_children("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 direct children");
+        assert_eq!(
+            children
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a"]
+        );
+
+        let fork_children = persistence
+            .list_session_children(
+                "root",
+                Some(SessionLineageRelationKind::Fork),
+                Some(SessionLineageStatus::Open),
+            )
+            .await
+            .expect("应能按 relation 查询 children");
+        assert_eq!(fork_children.len(), 1);
+        assert_eq!(fork_children[0].child_session_id, "child-a");
+
+        let ancestors = persistence
+            .list_session_ancestors("grand")
+            .await
+            .expect("应能查询 ancestors");
+        assert_eq!(
+            ancestors
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["grand", "child-b"]
+        );
+
+        let descendants = persistence
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 descendants");
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a", "grand"]
+        );
+
+        persistence
+            .set_session_lineage_status("child-b", SessionLineageStatus::Closed, 40)
+            .await
+            .expect("应能关闭 lineage edge");
+        let open_descendants = persistence
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 open descendants");
+        assert_eq!(
+            open_descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-a"]
+        );
     }
 }
 

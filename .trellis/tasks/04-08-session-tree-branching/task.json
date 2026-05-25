@@ -3,7 +3,7 @@
   "name": "session-tree-branching",
   "title": "会话分支与状态投影管理",
   "description": "基于 session_compactions、session_lineage 和 active projection cursor 建立平台自有 Agent runtime 的 fork / rollback / branch restore 能力",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "priority": "P3",

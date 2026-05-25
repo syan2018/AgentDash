@@ -2,22 +2,22 @@
 
 ## Phase 0. Dependency Gate
 
-- [ ] 确认父任务 `.trellis/tasks/archive/2026-05/05-25-context-compaction-architecture-enhancement` 已交付 `session_compactions`、`session_projection_segments`、`session_projection_heads`。
-- [ ] 确认 `ContextProjector` restore 路径支持 active compaction + segments + suffix。
+- [x] 确认父任务 `.trellis/tasks/archive/2026-05/05-25-context-compaction-architecture-enhancement` 已交付 `session_compactions`、`session_projection_segments`、`session_projection_heads`。
+- [x] 确认 `ContextProjector` restore 路径支持 active compaction + segments + suffix。
 - [ ] 确认 fork child initial projection 需要的 segment / replacement envelope 表达方式。
 
 ## Phase 1. Repository And Migration
 
-- [ ] 新增 `session_lineage` schema。
-- [ ] 复用已存在的 `session_projection_heads` schema，并补齐 branch/fork 读写场景。
-- [ ] 扩展 SPI repository trait：
-  - [ ] upsert / insert lineage edge。
-  - [ ] list direct children。
-  - [ ] list ancestors。
-  - [ ] list descendants with stable ordering。
-  - [ ] read / update projection head。
-- [ ] 同步 PostgreSQL repository。
-- [ ] 同步 SQLite repository。
+- [x] 新增 `session_lineage` schema。
+- [x] 复用已存在的 `session_projection_heads` schema，并补齐 branch/fork 读写场景。
+- [x] 扩展 SPI repository trait：
+  - [x] upsert / insert lineage edge。
+  - [x] list direct children。
+  - [x] list ancestors。
+  - [x] list descendants with stable ordering。
+  - [x] read / update projection head。
+- [x] 同步 PostgreSQL repository。
+- [x] 同步 SQLite repository。
 
 Validation:
 

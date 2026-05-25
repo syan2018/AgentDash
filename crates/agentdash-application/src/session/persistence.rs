@@ -8,10 +8,11 @@ pub use agentdash_spi::session_persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, NewTerminalEffectRecord,
     PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCommandRecord,
     RuntimeCommandStatus, SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore,
-    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore,
-    SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
-    TerminalEffectRecord, TerminalEffectStatus,
+    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
+    SessionMetaStore, SessionPersistence, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
 };
 
 #[derive(Clone)]
@@ -22,6 +23,7 @@ pub struct SessionStoreSet {
     pub runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
     pub compactions: Arc<dyn SessionCompactionStore>,
     pub projections: Arc<dyn SessionProjectionStore>,
+    pub lineage: Arc<dyn SessionLineageStore>,
 }
 
 impl SessionStoreSet {
@@ -33,7 +35,8 @@ impl SessionStoreSet {
             terminal_effects: Arc::new(adapter.clone()),
             runtime_commands: Arc::new(adapter.clone()),
             compactions: Arc::new(adapter.clone()),
-            projections: Arc::new(adapter),
+            projections: Arc::new(adapter.clone()),
+            lineage: Arc::new(adapter),
         }
     }
 }
@@ -256,6 +259,62 @@ impl SessionProjectionStore for SessionPersistenceStoreAdapter {
     ) -> io::Result<CompactionProjectionCommitResult> {
         self.persistence
             .commit_compaction_projection(session_id, commit)
+            .await
+    }
+}
+
+#[async_trait]
+impl SessionLineageStore for SessionPersistenceStoreAdapter {
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+        self.persistence.upsert_session_lineage(record).await
+    }
+
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>> {
+        self.persistence.get_session_lineage(child_session_id).await
+    }
+
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        self.persistence
+            .list_session_children(parent_session_id, relation_kind, status)
+            .await
+    }
+
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        self.persistence
+            .list_session_ancestors(child_session_id)
+            .await
+    }
+
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        self.persistence
+            .list_session_descendants(root_session_id, relation_kind, status)
+            .await
+    }
+
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()> {
+        self.persistence
+            .set_session_lineage_status(child_session_id, status, updated_at_ms)
             .await
     }
 }

@@ -3,8 +3,10 @@ use std::io;
 use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
 use agentdash_spi::session_persistence::{
-    ExecutionStatus, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
-    SessionBootstrapState, SessionEventBacklog, SessionEventPage, SessionMeta, SessionPersistence,
+    CompactionProjectionCommitResult, ExecutionStatus, NewCompactionProjectionCommit,
+    PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
+    SessionCompactionRecord, SessionCompactionStatus, SessionEventBacklog, SessionEventPage,
+    SessionMeta, SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
     TerminalEffectRecord, TerminalEffectStatus, TitleSource,
 };
 use agentdash_spi::session_persistence::{
@@ -104,6 +106,87 @@ impl SqliteSessionRepository {
                 ON session_runtime_commands(status, updated_at_ms);
             CREATE INDEX IF NOT EXISTS idx_session_runtime_commands_session_status
                 ON session_runtime_commands(session_id, status);
+
+            CREATE TABLE IF NOT EXISTS session_compactions (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                branch_id TEXT NOT NULL DEFAULT '',
+                projection_kind TEXT NOT NULL,
+                projection_version INTEGER NOT NULL,
+                lifecycle_item_id TEXT NOT NULL,
+                start_event_seq INTEGER NOT NULL,
+                completed_event_seq INTEGER,
+                failed_event_seq INTEGER,
+                status TEXT NOT NULL,
+                trigger TEXT NOT NULL,
+                reason TEXT,
+                phase TEXT,
+                strategy TEXT NOT NULL,
+                budget_scope TEXT,
+                base_head_event_seq INTEGER,
+                source_start_event_seq INTEGER,
+                source_end_event_seq INTEGER,
+                first_kept_event_seq INTEGER,
+                summary TEXT NOT NULL DEFAULT '',
+                replacement_projection_json TEXT NOT NULL DEFAULT '{}',
+                token_stats_json TEXT NOT NULL DEFAULT '{}',
+                diagnostics_json TEXT NOT NULL DEFAULT '{}',
+                created_by TEXT,
+                created_at_ms INTEGER NOT NULL,
+                completed_at_ms INTEGER,
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_compactions_session_branch_kind_status
+                ON session_compactions(session_id, branch_id, projection_kind, status, projection_version);
+            CREATE INDEX IF NOT EXISTS idx_session_compactions_lifecycle_item
+                ON session_compactions(session_id, lifecycle_item_id);
+            CREATE INDEX IF NOT EXISTS idx_session_compactions_source_range
+                ON session_compactions(session_id, branch_id, source_start_event_seq, source_end_event_seq);
+
+            CREATE TABLE IF NOT EXISTS session_projection_segments (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                branch_id TEXT NOT NULL DEFAULT '',
+                projection_kind TEXT NOT NULL,
+                projection_version INTEGER NOT NULL,
+                sort_order INTEGER NOT NULL,
+                segment_type TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                synthetic INTEGER NOT NULL DEFAULT 0,
+                source_start_event_seq INTEGER,
+                source_end_event_seq INTEGER,
+                source_refs_json TEXT NOT NULL DEFAULT '[]',
+                generated_by_compaction_id TEXT,
+                content_json TEXT NOT NULL,
+                token_estimate INTEGER,
+                created_at_ms INTEGER NOT NULL,
+                UNIQUE(session_id, branch_id, projection_kind, projection_version, sort_order),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (generated_by_compaction_id) REFERENCES session_compactions(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_projection_segments_projection
+                ON session_projection_segments(session_id, branch_id, projection_kind, projection_version, sort_order);
+            CREATE INDEX IF NOT EXISTS idx_session_projection_segments_source_range
+                ON session_projection_segments(session_id, branch_id, source_start_event_seq, source_end_event_seq);
+
+            CREATE TABLE IF NOT EXISTS session_projection_heads (
+                session_id TEXT NOT NULL,
+                branch_id TEXT NOT NULL DEFAULT '',
+                projection_kind TEXT NOT NULL,
+                projection_version INTEGER NOT NULL,
+                head_event_seq INTEGER NOT NULL,
+                active_compaction_id TEXT,
+                updated_by_event_seq INTEGER,
+                updated_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (session_id, branch_id, projection_kind),
+                FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (active_compaction_id) REFERENCES session_compactions(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_projection_heads_active_compaction
+                ON session_projection_heads(session_id, active_compaction_id);
             "#,
         )
         .execute(&self.pool)
@@ -300,6 +383,141 @@ impl SqliteSessionRepository {
             applied_at_ms: row.get::<Option<i64>, _>("applied_at_ms"),
             failed_at_ms: row.get::<Option<i64>, _>("failed_at_ms"),
             last_error: row.get::<Option<String>, _>("last_error"),
+        })
+    }
+
+    fn compaction_from_row(row: &sqlx::sqlite::SqliteRow) -> io::Result<SessionCompactionRecord> {
+        Ok(SessionCompactionRecord {
+            id: row.get::<String, _>("id"),
+            session_id: row.get::<String, _>("session_id"),
+            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
+            projection_kind: row.get::<String, _>("projection_kind"),
+            projection_version: parse_non_negative_u64(
+                row.get::<i64, _>("projection_version"),
+                "session_compactions.projection_version",
+            )?,
+            lifecycle_item_id: row.get::<String, _>("lifecycle_item_id"),
+            start_event_seq: parse_non_negative_u64(
+                row.get::<i64, _>("start_event_seq"),
+                "session_compactions.start_event_seq",
+            )?,
+            completed_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("completed_event_seq"),
+                "session_compactions.completed_event_seq",
+            )?,
+            failed_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("failed_event_seq"),
+                "session_compactions.failed_event_seq",
+            )?,
+            status: parse_compaction_status(
+                row.get::<String, _>("status"),
+                "session_compactions.status",
+            )?,
+            trigger: row.get::<String, _>("trigger"),
+            reason: row.get::<Option<String>, _>("reason"),
+            phase: row.get::<Option<String>, _>("phase"),
+            strategy: row.get::<String, _>("strategy"),
+            budget_scope: row.get::<Option<String>, _>("budget_scope"),
+            base_head_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("base_head_event_seq"),
+                "session_compactions.base_head_event_seq",
+            )?,
+            source_start_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("source_start_event_seq"),
+                "session_compactions.source_start_event_seq",
+            )?,
+            source_end_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("source_end_event_seq"),
+                "session_compactions.source_end_event_seq",
+            )?,
+            first_kept_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("first_kept_event_seq"),
+                "session_compactions.first_kept_event_seq",
+            )?,
+            summary: row.get::<String, _>("summary"),
+            replacement_projection_json: parse_json_column(
+                row.get::<String, _>("replacement_projection_json"),
+                "session_compactions.replacement_projection_json",
+            )?,
+            token_stats_json: parse_json_column(
+                row.get::<String, _>("token_stats_json"),
+                "session_compactions.token_stats_json",
+            )?,
+            diagnostics_json: parse_json_column(
+                row.get::<String, _>("diagnostics_json"),
+                "session_compactions.diagnostics_json",
+            )?,
+            created_by: row.get::<Option<String>, _>("created_by"),
+            created_at_ms: row.get::<i64, _>("created_at_ms"),
+            completed_at_ms: row.get::<Option<i64>, _>("completed_at_ms"),
+        })
+    }
+
+    fn projection_segment_from_row(
+        row: &sqlx::sqlite::SqliteRow,
+    ) -> io::Result<SessionProjectionSegmentRecord> {
+        Ok(SessionProjectionSegmentRecord {
+            id: row.get::<String, _>("id"),
+            session_id: row.get::<String, _>("session_id"),
+            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
+            projection_kind: row.get::<String, _>("projection_kind"),
+            projection_version: parse_non_negative_u64(
+                row.get::<i64, _>("projection_version"),
+                "session_projection_segments.projection_version",
+            )?,
+            sort_order: parse_non_negative_u64(
+                row.get::<i64, _>("sort_order"),
+                "session_projection_segments.sort_order",
+            )?,
+            segment_type: row.get::<String, _>("segment_type"),
+            origin: row.get::<String, _>("origin"),
+            synthetic: row.get::<i64, _>("synthetic") != 0,
+            source_start_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("source_start_event_seq"),
+                "session_projection_segments.source_start_event_seq",
+            )?,
+            source_end_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("source_end_event_seq"),
+                "session_projection_segments.source_end_event_seq",
+            )?,
+            source_refs_json: parse_json_column(
+                row.get::<String, _>("source_refs_json"),
+                "session_projection_segments.source_refs_json",
+            )?,
+            generated_by_compaction_id: row.get::<Option<String>, _>("generated_by_compaction_id"),
+            content_json: parse_json_column(
+                row.get::<String, _>("content_json"),
+                "session_projection_segments.content_json",
+            )?,
+            token_estimate: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("token_estimate"),
+                "session_projection_segments.token_estimate",
+            )?,
+            created_at_ms: row.get::<i64, _>("created_at_ms"),
+        })
+    }
+
+    fn projection_head_from_row(
+        row: &sqlx::sqlite::SqliteRow,
+    ) -> io::Result<SessionProjectionHeadRecord> {
+        Ok(SessionProjectionHeadRecord {
+            session_id: row.get::<String, _>("session_id"),
+            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
+            projection_kind: row.get::<String, _>("projection_kind"),
+            projection_version: parse_non_negative_u64(
+                row.get::<i64, _>("projection_version"),
+                "session_projection_heads.projection_version",
+            )?,
+            head_event_seq: parse_non_negative_u64(
+                row.get::<i64, _>("head_event_seq"),
+                "session_projection_heads.head_event_seq",
+            )?,
+            active_compaction_id: row.get::<Option<String>, _>("active_compaction_id"),
+            updated_by_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("updated_by_event_seq"),
+                "session_projection_heads.updated_by_event_seq",
+            )?,
+            updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         })
     }
 
@@ -527,6 +745,21 @@ impl SessionPersistence for SqliteSessionRepository {
             .await
             .map_err(sqlx_to_io)?;
         sqlx::query("DELETE FROM session_runtime_commands WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        sqlx::query("DELETE FROM session_projection_heads WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        sqlx::query("DELETE FROM session_projection_segments WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        sqlx::query("DELETE FROM session_compactions WHERE session_id = ?")
             .bind(session_id)
             .execute(&mut *tx)
             .await
@@ -1010,6 +1243,278 @@ impl SessionPersistence for SqliteSessionRepository {
         }
         Ok(records)
     }
+
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, session_id, branch_id, projection_kind, projection_version,
+                   lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
+                   status, trigger, reason, phase, strategy, budget_scope,
+                   base_head_event_seq, source_start_event_seq, source_end_event_seq,
+                   first_kept_event_seq, summary, replacement_projection_json,
+                   token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
+            FROM session_compactions
+            WHERE session_id = ? AND id = ?
+            "#,
+        )
+        .bind(session_id)
+        .bind(compaction_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        row.as_ref().map(Self::compaction_from_row).transpose()
+    }
+
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, session_id, branch_id, projection_kind, projection_version,
+                   lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
+                   status, trigger, reason, phase, strategy, budget_scope,
+                   base_head_event_seq, source_start_event_seq, source_end_event_seq,
+                   first_kept_event_seq, summary, replacement_projection_json,
+                   token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
+            FROM session_compactions
+            WHERE session_id = ? AND branch_id = ? AND projection_kind = ?
+            ORDER BY projection_version ASC, created_at_ms ASC
+            "#,
+        )
+        .bind(session_id)
+        .bind(encode_branch_id(branch_id))
+        .bind(projection_kind)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::compaction_from_row).collect()
+    }
+
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+        let projection_version = encode_u64_as_i64(
+            projection_version,
+            "session_projection_segments.projection_version",
+        )?;
+        let rows = sqlx::query(
+            r#"
+            SELECT id, session_id, branch_id, projection_kind, projection_version, sort_order,
+                   segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
+                   source_refs_json, generated_by_compaction_id, content_json, token_estimate,
+                   created_at_ms
+            FROM session_projection_segments
+            WHERE session_id = ? AND branch_id = ? AND projection_kind = ? AND projection_version = ?
+            ORDER BY sort_order ASC
+            "#,
+        )
+        .bind(session_id)
+        .bind(encode_branch_id(branch_id))
+        .bind(projection_kind)
+        .bind(projection_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::projection_segment_from_row).collect()
+    }
+
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+        let row = sqlx::query(
+            r#"
+            SELECT session_id, branch_id, projection_kind, projection_version, head_event_seq,
+                   active_compaction_id, updated_by_event_seq, updated_at_ms
+            FROM session_projection_heads
+            WHERE session_id = ? AND branch_id = ? AND projection_kind = ?
+            "#,
+        )
+        .bind(session_id)
+        .bind(encode_branch_id(branch_id))
+        .bind(projection_kind)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        row.as_ref().map(Self::projection_head_from_row).transpose()
+    }
+
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+        let projection_version = encode_u64_as_i64(
+            head.projection_version,
+            "session_projection_heads.projection_version",
+        )?;
+        let head_event_seq = encode_u64_as_i64(
+            head.head_event_seq,
+            "session_projection_heads.head_event_seq",
+        )?;
+        let updated_by_event_seq = encode_optional_u64_as_i64(
+            head.updated_by_event_seq,
+            "session_projection_heads.updated_by_event_seq",
+        )?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_projection_heads (
+                session_id, branch_id, projection_kind, projection_version, head_event_seq,
+                active_compaction_id, updated_by_event_seq, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, branch_id, projection_kind) DO UPDATE SET
+                projection_version = excluded.projection_version,
+                head_event_seq = excluded.head_event_seq,
+                active_compaction_id = excluded.active_compaction_id,
+                updated_by_event_seq = excluded.updated_by_event_seq,
+                updated_at_ms = excluded.updated_at_ms
+            "#,
+        )
+        .bind(&head.session_id)
+        .bind(encode_branch_id(head.branch_id.as_deref()))
+        .bind(&head.projection_kind)
+        .bind(projection_version)
+        .bind(head_event_seq)
+        .bind(&head.active_compaction_id)
+        .bind(updated_by_event_seq)
+        .bind(head.updated_at_ms)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        Ok(())
+    }
+
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult> {
+        validate_commit_session(session_id, &commit)?;
+        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+        let seq_update = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET last_event_seq = last_event_seq + 1
+            WHERE id = ?
+            "#,
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
+        if seq_update.rows_affected() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            ));
+        }
+        let seq_row = sqlx::query("SELECT last_event_seq FROM sessions WHERE id = ?")
+            .bind(session_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(sqlx_to_io)?;
+        let committed_at_ms = chrono::Utc::now().timestamp_millis();
+        let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
+        let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
+        let projection = projection_from_envelope(&commit.completed_event);
+        let persisted = PersistedSessionEvent {
+            session_id: session_id.to_string(),
+            event_seq,
+            occurred_at_ms: committed_at_ms,
+            committed_at_ms,
+            session_update_type: backbone_event_type_name(&commit.completed_event.event)
+                .to_string(),
+            turn_id: projection.turn_id.clone(),
+            entry_index: projection.entry_index,
+            tool_call_id: projection.tool_call_id.clone(),
+            notification: commit.completed_event.clone(),
+        };
+        let notification_json = json_string(&persisted.notification, "notification_json")?;
+        let event_seq_db = encode_u64_as_i64(event_seq, "session_events.event_seq")?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_events (
+                session_id, event_seq, occurred_at_ms, committed_at_ms,
+                session_update_type, turn_id, entry_index, tool_call_id, notification_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(event_seq_db)
+        .bind(persisted.occurred_at_ms)
+        .bind(persisted.committed_at_ms)
+        .bind(&persisted.session_update_type)
+        .bind(&persisted.turn_id)
+        .bind(persisted.entry_index.map(i64::from))
+        .bind(&persisted.tool_call_id)
+        .bind(notification_json)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
+
+        sqlx::query(
+            r#"
+            UPDATE sessions
+            SET
+                updated_at = ?,
+                last_execution_status = COALESCE(?, last_execution_status),
+                last_turn_id = COALESCE(?, last_turn_id),
+                last_terminal_message = CASE
+                    WHEN ? THEN NULL
+                    WHEN ? IS NOT NULL THEN ?
+                    ELSE last_terminal_message
+                END,
+                executor_session_id = COALESCE(?, executor_session_id)
+            WHERE id = ?
+            "#,
+        )
+        .bind(committed_at_ms)
+        .bind(&projection.last_execution_status)
+        .bind(&projection.turn_id)
+        .bind(projection.clear_terminal_message)
+        .bind(&projection.last_terminal_message)
+        .bind(&projection.last_terminal_message)
+        .bind(&projection.executor_session_id)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
+
+        let mut compaction = commit.compaction;
+        compaction.completed_event_seq = Some(event_seq);
+        compaction.completed_at_ms = compaction.completed_at_ms.or(Some(committed_at_ms));
+        insert_compaction_row(&mut tx, &compaction).await?;
+
+        for segment in &commit.segments {
+            insert_projection_segment_row(&mut tx, segment).await?;
+        }
+
+        let mut head = commit.head;
+        head.updated_by_event_seq = head.updated_by_event_seq.or(Some(event_seq));
+        head.updated_at_ms = if head.updated_at_ms == 0 {
+            committed_at_ms
+        } else {
+            head.updated_at_ms
+        };
+        upsert_projection_head_row(&mut tx, &head).await?;
+
+        tx.commit().await.map_err(sqlx_to_io)?;
+        Ok(CompactionProjectionCommitResult {
+            event: persisted,
+            compaction,
+            segments: commit.segments,
+            head,
+        })
+    }
 }
 
 fn json_string<T: serde::Serialize>(value: &T, column: &str) -> io::Result<String> {
@@ -1026,6 +1531,216 @@ fn optional_json_string<T: serde::Serialize>(
     column: &str,
 ) -> io::Result<Option<String>> {
     value.map(|inner| json_string(inner, column)).transpose()
+}
+
+async fn insert_compaction_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    record: &SessionCompactionRecord,
+) -> io::Result<()> {
+    let projection_version = encode_u64_as_i64(
+        record.projection_version,
+        "session_compactions.projection_version",
+    )?;
+    let start_event_seq = encode_u64_as_i64(
+        record.start_event_seq,
+        "session_compactions.start_event_seq",
+    )?;
+    let completed_event_seq = encode_optional_u64_as_i64(
+        record.completed_event_seq,
+        "session_compactions.completed_event_seq",
+    )?;
+    let failed_event_seq = encode_optional_u64_as_i64(
+        record.failed_event_seq,
+        "session_compactions.failed_event_seq",
+    )?;
+    let base_head_event_seq = encode_optional_u64_as_i64(
+        record.base_head_event_seq,
+        "session_compactions.base_head_event_seq",
+    )?;
+    let source_start_event_seq = encode_optional_u64_as_i64(
+        record.source_start_event_seq,
+        "session_compactions.source_start_event_seq",
+    )?;
+    let source_end_event_seq = encode_optional_u64_as_i64(
+        record.source_end_event_seq,
+        "session_compactions.source_end_event_seq",
+    )?;
+    let first_kept_event_seq = encode_optional_u64_as_i64(
+        record.first_kept_event_seq,
+        "session_compactions.first_kept_event_seq",
+    )?;
+    let replacement_projection_json = json_string(
+        &record.replacement_projection_json,
+        "session_compactions.replacement_projection_json",
+    )?;
+    let token_stats_json = json_string(
+        &record.token_stats_json,
+        "session_compactions.token_stats_json",
+    )?;
+    let diagnostics_json = json_string(
+        &record.diagnostics_json,
+        "session_compactions.diagnostics_json",
+    )?;
+    sqlx::query(
+        r#"
+        INSERT INTO session_compactions (
+            id, session_id, branch_id, projection_kind, projection_version,
+            lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
+            status, trigger, reason, phase, strategy, budget_scope,
+            base_head_event_seq, source_start_event_seq, source_end_event_seq,
+            first_kept_event_seq, summary, replacement_projection_json,
+            token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
+        ) VALUES (
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?, ?, ?
+        )
+        "#,
+    )
+    .bind(&record.id)
+    .bind(&record.session_id)
+    .bind(encode_branch_id(record.branch_id.as_deref()))
+    .bind(&record.projection_kind)
+    .bind(projection_version)
+    .bind(&record.lifecycle_item_id)
+    .bind(start_event_seq)
+    .bind(completed_event_seq)
+    .bind(failed_event_seq)
+    .bind(record.status.as_str())
+    .bind(&record.trigger)
+    .bind(&record.reason)
+    .bind(&record.phase)
+    .bind(&record.strategy)
+    .bind(&record.budget_scope)
+    .bind(base_head_event_seq)
+    .bind(source_start_event_seq)
+    .bind(source_end_event_seq)
+    .bind(first_kept_event_seq)
+    .bind(&record.summary)
+    .bind(replacement_projection_json)
+    .bind(token_stats_json)
+    .bind(diagnostics_json)
+    .bind(&record.created_by)
+    .bind(record.created_at_ms)
+    .bind(record.completed_at_ms)
+    .execute(&mut **tx)
+    .await
+    .map_err(sqlx_to_io)?;
+    Ok(())
+}
+
+async fn insert_projection_segment_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    segment: &SessionProjectionSegmentRecord,
+) -> io::Result<()> {
+    let projection_version = encode_u64_as_i64(
+        segment.projection_version,
+        "session_projection_segments.projection_version",
+    )?;
+    let sort_order =
+        encode_u64_as_i64(segment.sort_order, "session_projection_segments.sort_order")?;
+    let source_start_event_seq = encode_optional_u64_as_i64(
+        segment.source_start_event_seq,
+        "session_projection_segments.source_start_event_seq",
+    )?;
+    let source_end_event_seq = encode_optional_u64_as_i64(
+        segment.source_end_event_seq,
+        "session_projection_segments.source_end_event_seq",
+    )?;
+    let token_estimate = encode_optional_u64_as_i64(
+        segment.token_estimate,
+        "session_projection_segments.token_estimate",
+    )?;
+    let source_refs_json = json_string(
+        &segment.source_refs_json,
+        "session_projection_segments.source_refs_json",
+    )?;
+    let content_json = json_string(
+        &segment.content_json,
+        "session_projection_segments.content_json",
+    )?;
+    sqlx::query(
+        r#"
+        INSERT INTO session_projection_segments (
+            id, session_id, branch_id, projection_kind, projection_version, sort_order,
+            segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
+            source_refs_json, generated_by_compaction_id, content_json, token_estimate,
+            created_at_ms
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?
+        )
+        "#,
+    )
+    .bind(&segment.id)
+    .bind(&segment.session_id)
+    .bind(encode_branch_id(segment.branch_id.as_deref()))
+    .bind(&segment.projection_kind)
+    .bind(projection_version)
+    .bind(sort_order)
+    .bind(&segment.segment_type)
+    .bind(&segment.origin)
+    .bind(if segment.synthetic { 1_i64 } else { 0_i64 })
+    .bind(source_start_event_seq)
+    .bind(source_end_event_seq)
+    .bind(source_refs_json)
+    .bind(&segment.generated_by_compaction_id)
+    .bind(content_json)
+    .bind(token_estimate)
+    .bind(segment.created_at_ms)
+    .execute(&mut **tx)
+    .await
+    .map_err(sqlx_to_io)?;
+    Ok(())
+}
+
+async fn upsert_projection_head_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    head: &SessionProjectionHeadRecord,
+) -> io::Result<()> {
+    let projection_version = encode_u64_as_i64(
+        head.projection_version,
+        "session_projection_heads.projection_version",
+    )?;
+    let head_event_seq = encode_u64_as_i64(
+        head.head_event_seq,
+        "session_projection_heads.head_event_seq",
+    )?;
+    let updated_by_event_seq = encode_optional_u64_as_i64(
+        head.updated_by_event_seq,
+        "session_projection_heads.updated_by_event_seq",
+    )?;
+    sqlx::query(
+        r#"
+        INSERT INTO session_projection_heads (
+            session_id, branch_id, projection_kind, projection_version, head_event_seq,
+            active_compaction_id, updated_by_event_seq, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id, branch_id, projection_kind) DO UPDATE SET
+            projection_version = excluded.projection_version,
+            head_event_seq = excluded.head_event_seq,
+            active_compaction_id = excluded.active_compaction_id,
+            updated_by_event_seq = excluded.updated_by_event_seq,
+            updated_at_ms = excluded.updated_at_ms
+        "#,
+    )
+    .bind(&head.session_id)
+    .bind(encode_branch_id(head.branch_id.as_deref()))
+    .bind(&head.projection_kind)
+    .bind(projection_version)
+    .bind(head_event_seq)
+    .bind(&head.active_compaction_id)
+    .bind(updated_by_event_seq)
+    .bind(head.updated_at_ms)
+    .execute(&mut **tx)
+    .await
+    .map_err(sqlx_to_io)?;
+    Ok(())
 }
 
 fn title_source_to_str(source: TitleSource) -> &'static str {
@@ -1062,6 +1777,11 @@ fn parse_terminal_effect_status(value: String, field: &str) -> io::Result<Termin
 
 fn parse_runtime_command_status(value: String, field: &str) -> io::Result<RuntimeCommandStatus> {
     RuntimeCommandStatus::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+}
+
+fn parse_compaction_status(value: String, field: &str) -> io::Result<SessionCompactionStatus> {
+    SessionCompactionStatus::try_from(value.as_str())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
 }
 
@@ -1106,6 +1826,12 @@ fn encode_u64_as_i64(value: u64, field: &str) -> io::Result<i64> {
     })
 }
 
+fn encode_optional_u64_as_i64(value: Option<u64>, field: &str) -> io::Result<Option<i64>> {
+    value
+        .map(|inner| encode_u64_as_i64(inner, field))
+        .transpose()
+}
+
 fn parse_non_negative_u64(value: i64, field: &str) -> io::Result<u64> {
     u64::try_from(value).map_err(|_| {
         io::Error::new(
@@ -1113,6 +1839,12 @@ fn parse_non_negative_u64(value: i64, field: &str) -> io::Result<u64> {
             format!("{field} 不能为负数: {value}"),
         )
     })
+}
+
+fn parse_optional_non_negative_u64(value: Option<i64>, field: &str) -> io::Result<Option<u64>> {
+    value
+        .map(|inner| parse_non_negative_u64(inner, field))
+        .transpose()
 }
 
 fn parse_non_negative_u32(value: i64, field: &str) -> io::Result<u32> {
@@ -1137,6 +1869,46 @@ fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
         }),
         None => Ok(None),
     }
+}
+
+fn parse_json_column(raw: String, column: &str) -> io::Result<serde_json::Value> {
+    serde_json::from_str(&raw).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("解析 {column} 失败: {error}"),
+        )
+    })
+}
+
+fn encode_branch_id(branch_id: Option<&str>) -> &str {
+    branch_id.unwrap_or("")
+}
+
+fn decode_branch_id(value: String) -> Option<String> {
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn validate_commit_session(
+    session_id: &str,
+    commit: &NewCompactionProjectionCommit,
+) -> io::Result<()> {
+    if commit.compaction.session_id != session_id || commit.head.session_id != session_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("compaction projection commit session_id 不一致: {session_id}"),
+        ));
+    }
+    if commit
+        .segments
+        .iter()
+        .any(|segment| segment.session_id != session_id)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("projection segment session_id 不一致: {session_id}"),
+        ));
+    }
+    Ok(())
 }
 
 fn sqlx_to_io(error: sqlx::Error) -> io::Error {
@@ -1312,6 +2084,133 @@ mod tests {
                 entry_index: None,
             },
             observed_at: Utc::now(),
+        }
+    }
+
+    fn session_meta(id: &str) -> SessionMeta {
+        SessionMeta {
+            id: id.to_string(),
+            title: "测试".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        }
+    }
+
+    fn context_compaction_completed_envelope(
+        session_id: &str,
+        turn_id: &str,
+        item_id: &str,
+    ) -> BackboneEnvelope {
+        use agentdash_agent_protocol::codex_app_server_protocol as codex;
+        BackboneEnvelope::new(
+            BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                item: codex::ThreadItem::ContextCompaction {
+                    id: item_id.to_string(),
+                },
+                thread_id: session_id.to_string(),
+                turn_id: turn_id.to_string(),
+            }),
+            session_id,
+            SourceInfo {
+                connector_id: "test".to_string(),
+                connector_type: "test".to_string(),
+                executor_id: None,
+            },
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some(turn_id.to_string()),
+            entry_index: None,
+        })
+    }
+
+    fn compaction_commit(
+        session_id: &str,
+        compaction_id: &str,
+        segment_id: &str,
+        projection_version: u64,
+    ) -> NewCompactionProjectionCommit {
+        let now = Utc::now().timestamp_millis();
+        NewCompactionProjectionCommit {
+            completed_event: context_compaction_completed_envelope(
+                session_id,
+                "turn-compact",
+                "compact-item-1",
+            ),
+            compaction: SessionCompactionRecord {
+                id: compaction_id.to_string(),
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: "model_context".to_string(),
+                projection_version,
+                lifecycle_item_id: "compact-item-1".to_string(),
+                start_event_seq: 1,
+                completed_event_seq: None,
+                failed_event_seq: None,
+                status: SessionCompactionStatus::ProjectionCommitted,
+                trigger: "auto".to_string(),
+                reason: Some("token_pressure".to_string()),
+                phase: Some("pre_provider".to_string()),
+                strategy: "summary_prefix".to_string(),
+                budget_scope: Some("model_context".to_string()),
+                base_head_event_seq: Some(0),
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(8),
+                first_kept_event_seq: Some(9),
+                summary: "压缩摘要".to_string(),
+                replacement_projection_json: serde_json::json!({
+                    "segments": [segment_id]
+                }),
+                token_stats_json: serde_json::json!({
+                    "before": 48000,
+                    "after": 12000
+                }),
+                diagnostics_json: serde_json::json!({}),
+                created_by: Some("agent".to_string()),
+                created_at_ms: now,
+                completed_at_ms: None,
+            },
+            segments: vec![SessionProjectionSegmentRecord {
+                id: segment_id.to_string(),
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: "model_context".to_string(),
+                projection_version,
+                sort_order: 0,
+                segment_type: "summary_chunk".to_string(),
+                origin: "projection".to_string(),
+                synthetic: true,
+                source_start_event_seq: Some(1),
+                source_end_event_seq: Some(8),
+                source_refs_json: serde_json::json!([]),
+                generated_by_compaction_id: Some(compaction_id.to_string()),
+                content_json: serde_json::json!({
+                    "role": "system",
+                    "content": "压缩摘要"
+                }),
+                token_estimate: Some(256),
+                created_at_ms: now,
+            }],
+            head: SessionProjectionHeadRecord {
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: "model_context".to_string(),
+                projection_version,
+                head_event_seq: 9,
+                active_compaction_id: Some(compaction_id.to_string()),
+                updated_by_event_seq: None,
+                updated_at_ms: 0,
+            },
         }
     }
 
@@ -1505,5 +2404,100 @@ mod tests {
             .expect("应能查询 succeeded");
         assert_eq!(succeeded.len(), 1);
         assert_eq!(succeeded[0].last_error, None);
+    }
+
+    #[tokio::test]
+    async fn compaction_projection_commit_persists_checkpoint_segments_and_head() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSessionRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 session 表");
+        repo.create_session(&session_meta("sess-compact"))
+            .await
+            .expect("应能创建 session");
+
+        let result = repo
+            .commit_compaction_projection(
+                "sess-compact",
+                compaction_commit("sess-compact", "compaction-1", "segment-1", 1),
+            )
+            .await
+            .expect("应能原子提交 compaction projection");
+
+        assert_eq!(result.event.event_seq, 1);
+        assert_eq!(result.compaction.completed_event_seq, Some(1));
+        assert_eq!(result.head.updated_by_event_seq, Some(1));
+
+        let stored = repo
+            .get_compaction("sess-compact", "compaction-1")
+            .await
+            .expect("应能查询 compaction")
+            .expect("compaction 应存在");
+        assert_eq!(stored.summary, "压缩摘要");
+        assert_eq!(stored.status, SessionCompactionStatus::ProjectionCommitted);
+
+        let segments = repo
+            .list_projection_segments("sess-compact", None, "model_context", 1)
+            .await
+            .expect("应能查询 projection segments");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].segment_type, "summary_chunk");
+
+        let head = repo
+            .read_projection_head("sess-compact", None, "model_context")
+            .await
+            .expect("应能查询 projection head")
+            .expect("projection head 应存在");
+        assert_eq!(head.active_compaction_id.as_deref(), Some("compaction-1"));
+        assert_eq!(head.projection_version, 1);
+    }
+
+    #[tokio::test]
+    async fn failed_compaction_projection_commit_keeps_active_head_unchanged() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSessionRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 session 表");
+        repo.create_session(&session_meta("sess-atomic"))
+            .await
+            .expect("应能创建 session");
+
+        repo.commit_compaction_projection(
+            "sess-atomic",
+            compaction_commit("sess-atomic", "compaction-ok", "segment-dup", 1),
+        )
+        .await
+        .expect("初次 compaction 应成功");
+
+        let failed = repo
+            .commit_compaction_projection(
+                "sess-atomic",
+                compaction_commit("sess-atomic", "compaction-failed", "segment-dup", 2),
+            )
+            .await;
+        assert!(failed.is_err());
+
+        let meta = repo
+            .get_session_meta("sess-atomic")
+            .await
+            .expect("应能读取 meta")
+            .expect("session 应存在");
+        assert_eq!(meta.last_event_seq, 1);
+
+        let head = repo
+            .read_projection_head("sess-atomic", None, "model_context")
+            .await
+            .expect("应能读取 projection head")
+            .expect("projection head 应存在");
+        assert_eq!(head.active_compaction_id.as_deref(), Some("compaction-ok"));
+        assert_eq!(head.projection_version, 1);
+
+        let missing = repo
+            .get_compaction("sess-atomic", "compaction-failed")
+            .await
+            .expect("应能查询失败 compaction");
+        assert!(missing.is_none());
     }
 }

@@ -5,11 +5,13 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 pub use agentdash_spi::session_persistence::{
-    NewTerminalEffectRecord, PendingCapabilityStateTransition, PersistedSessionEvent,
-    RuntimeCommandRecord, RuntimeCommandStatus, SessionEventBacklog, SessionEventPage,
-    SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
-    SessionRuntimeCommandStore, SessionTerminalEffectStore, TerminalEffectRecord,
-    TerminalEffectStatus,
+    CompactionProjectionCommitResult, NewCompactionProjectionCommit, NewTerminalEffectRecord,
+    PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCommandRecord,
+    RuntimeCommandStatus, SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore,
+    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore,
+    SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
+    TerminalEffectRecord, TerminalEffectStatus,
 };
 
 #[derive(Clone)]
@@ -18,6 +20,8 @@ pub struct SessionStoreSet {
     pub events: Arc<dyn SessionEventStore>,
     pub terminal_effects: Arc<dyn SessionTerminalEffectStore>,
     pub runtime_commands: Arc<dyn SessionRuntimeCommandStore>,
+    pub compactions: Arc<dyn SessionCompactionStore>,
+    pub projections: Arc<dyn SessionProjectionStore>,
 }
 
 impl SessionStoreSet {
@@ -27,7 +31,9 @@ impl SessionStoreSet {
             meta: Arc::new(adapter.clone()),
             events: Arc::new(adapter.clone()),
             terminal_effects: Arc::new(adapter.clone()),
-            runtime_commands: Arc::new(adapter),
+            runtime_commands: Arc::new(adapter.clone()),
+            compactions: Arc::new(adapter.clone()),
+            projections: Arc::new(adapter),
         }
     }
 }
@@ -186,6 +192,70 @@ impl SessionRuntimeCommandStore for SessionPersistenceStoreAdapter {
     ) -> io::Result<Vec<RuntimeCommandRecord>> {
         self.persistence
             .list_runtime_commands_by_status(statuses, limit)
+            .await
+    }
+}
+
+#[async_trait]
+impl SessionCompactionStore for SessionPersistenceStoreAdapter {
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>> {
+        self.persistence
+            .get_compaction(session_id, compaction_id)
+            .await
+    }
+
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>> {
+        self.persistence
+            .list_compactions(session_id, branch_id, projection_kind)
+            .await
+    }
+}
+
+#[async_trait]
+impl SessionProjectionStore for SessionPersistenceStoreAdapter {
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+        self.persistence
+            .list_projection_segments(session_id, branch_id, projection_kind, projection_version)
+            .await
+    }
+
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+        self.persistence
+            .read_projection_head(session_id, branch_id, projection_kind)
+            .await
+    }
+
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+        self.persistence.upsert_projection_head(head).await
+    }
+
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult> {
+        self.persistence
+            .commit_compaction_projection(session_id, commit)
             .await
     }
 }

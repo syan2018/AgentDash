@@ -34,7 +34,7 @@
     }
   ],
   "commit": null,
-  "pr_url": null,
+  "pr_url": "https://github.com/syan2018/AgentDash/pull/33",
   "subtasks": [],
   "relatedFiles": [],
   "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 已交付的 session_compactions、projection segments、projection heads 和 ContextProjector 基座，继续补齐 lineage、fork、rollback 与 branch-aware restore。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",

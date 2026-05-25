@@ -51,9 +51,9 @@ pub use path::{
     validate_vfs,
 };
 pub use provider::{
-    ConfigurableProviderInfo, MountEditCapabilities, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery,
-    SearchResult,
+    ConfigurableProviderInfo, GrepQuery, MountEditCapabilities, MountError, MountOperationContext,
+    MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch,
+    SearchOutputMode, SearchQuery, SearchResult,
 };
 pub use provider_canvas::CanvasFsMountProvider;
 pub use provider_inline::InlineFsMountProvider;

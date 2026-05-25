@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-05-24
+- **Total Sessions**: 22
+- **Last Active**: 2026-05-26
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~893 | Active |
+| `journal-1.md` | ~936 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-05-26 | 上下文压缩基建落地 | `1d36cbe1`, `ff6ac916`, `aadb7db9`, `596a8d1d`, `894f766c`, `0c31e8cd`, `cdc2ef05`, `cd6472e3`, `f89746ea`, `baabaa72`, `600db8f6` | `main` |
 | 21 | 2026-05-24 | Auth 身份与权限链路收口 | `33f1de73` | `main` |
 | 20 | 2026-05-24 | Prompt Pipeline 阶段边界收敛 | `c1d1ace2`, `3bc5e6b8`, `554a78aa`, `aa0b2ba0`, `2249a645`, `6ec532b8`, `47e10a6e`, `f2116c49`, `7fa55c51`, `08624df9`, `f1b4bd9b`, `47a1680d` | `codex/prompt-pipeline-launch-stage-boundaries` |
 | 19 | 2026-05-23 | 完成业务 Contract 生成迁移 | `8f4651fc`, `310cc877`, `9a60e942`, `8b914563`, `ca39cd4d`, `e9a5cf84`, `7b7b22f3` | `codex/architecture-review-convergence` |

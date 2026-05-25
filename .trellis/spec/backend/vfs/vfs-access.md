@@ -49,7 +49,7 @@ Provider 返回的 `RuntimeFileEntry.attributes` 是结构化 metadata 通道，
 Contract:
 
 - 云端 `RelayFsMountProvider::read_binary` 必须 normalize mount-relative path，再下发 `command.tool.file_read_binary`。
-- 本机 `ToolExecutor::file_read_binary` 只在 `mount_root_ref` 对应 workspace root 和 accessible roots 内解析路径，读取原始 bytes，并按文件资产类型返回 MIME。
+- 本机 `ToolExecutor::file_read_binary` 只在 `mount_root_ref` 对应的当前 workspace root 边界内解析路径，读取原始 bytes，并按文件资产类型返回 MIME。
 - HTTP `/vfs-surfaces/read-file-blob` 直接返回 provider bytes 和 `Content-Type: result.mime_type`。
 - Canvas asset URL 读取到非 `image/*` MIME 时，前端 runtime asset cache 必须拒绝资源。
 

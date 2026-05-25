@@ -1,4 +1,4 @@
-﻿use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::workspace::FileEntryRelay;
 
@@ -58,7 +58,7 @@ pub struct ToolShellExecPayload {
     /// 当前约定：
     /// - 允许为空，此时回退到 `mount_root_ref`
     /// - 相对路径相对于 `mount_root_ref` 解析
-    /// - 绝对路径必须仍位于 `mount_root_ref` / accessible_roots 边界内
+    /// - 执行目录必须仍位于 `mount_root_ref` 表达的当前 workspace root 边界内
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

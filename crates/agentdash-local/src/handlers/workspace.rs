@@ -10,18 +10,19 @@ impl CommandHandler {
         id: String,
         payload: CommandWorkspaceDetectPayload,
     ) -> RelayMessage {
-        let workspace_root = match self.tool_executor.validate_workspace_root(&payload.path) {
-            Ok(path) => path,
-            Err(error) => {
-                return RelayMessage::ResponseWorkspaceDetect {
-                    id,
-                    payload: None,
-                    error: Some(RelayError::runtime_error(format!(
-                        "workspace_detect 路径校验失败: {error}"
-                    ))),
-                };
-            }
-        };
+        let workspace_root =
+            match crate::tool_executor::resolve_detect_workspace_root(&payload.path) {
+                Ok(path) => path,
+                Err(error) => {
+                    return RelayMessage::ResponseWorkspaceDetect {
+                        id,
+                        payload: None,
+                        error: Some(RelayError::runtime_error(format!(
+                            "workspace_detect 路径校验失败: {error}"
+                        ))),
+                    };
+                }
+            };
 
         tracing::debug!(path = %workspace_root.display(), "workspace_detect");
         let detected = match tokio::task::spawn_blocking(move || {

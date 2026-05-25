@@ -59,7 +59,7 @@ export function LocalRuntimeView({
   const [machineId, setMachineId] = useState('')
   const [machineLabel, setMachineLabel] = useState('')
   const [backendName, setBackendName] = useState(defaultBackendName)
-  const [accessibleRoots, setAccessibleRoots] = useState<string[]>([])
+  const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([])
   const [executorEnabled, setExecutorEnabled] = useState(true)
   const [autoStart, setAutoStart] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -139,7 +139,7 @@ export function LocalRuntimeView({
         machineId,
         machineLabel,
         backendName,
-        accessibleRoots,
+        workspaceRoots,
         executorEnabled,
       )
       setSnapshot(await client.runtimeStart(request))
@@ -169,7 +169,7 @@ export function LocalRuntimeView({
     setMachineId(profile.machine_id || '')
     setMachineLabel(profile.machine_label ?? '')
     setBackendName(profile.name ?? defaultBackendName)
-    setAccessibleRoots(profile.accessible_roots)
+    setWorkspaceRoots(profile.workspace_roots)
     setExecutorEnabled(profile.executor_enabled)
     setAutoStart(profile.auto_start)
   }
@@ -183,7 +183,7 @@ export function LocalRuntimeView({
         machineId,
         machineLabel,
         backendName,
-        accessibleRoots,
+        workspaceRoots,
         executorEnabled,
       ),
       legacy_machine_ids: [],
@@ -409,63 +409,62 @@ export function LocalRuntimeView({
             </Field>
           </div>
 
-          <Field label="可访问根目录">
-            <div className="space-y-1.5">
-              {accessibleRoots.map((root, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <TextInput
-                    className="flex-1"
-                    value={root}
-                    onChange={(e) => {
-                      const next = [...accessibleRoots]
-                      next[i] = e.target.value
-                      setAccessibleRoots(next)
+          {(isEditing || workspaceRoots.length > 0) && (
+            <Field label="Workspace roots">
+              <div className="space-y-1.5">
+                {workspaceRoots.map((root, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <TextInput
+                      className="flex-1"
+                      value={root}
+                      onChange={(e) => {
+                        const next = [...workspaceRoots]
+                        next[i] = e.target.value
+                        setWorkspaceRoots(next)
+                      }}
+                      placeholder="绝对路径"
+                      readOnly={!isEditing}
+                    />
+                    {isEditing && onBrowseDirectory && (
+                      <Button
+                        size="sm"
+                        type="button"
+                        onClick={() => { setBrowseTargetIndex(i); setBrowseDialogOpen(true) }}
+                      >
+                        浏览
+                      </Button>
+                    )}
+                    {isEditing && (
+                      <Button
+                        size="sm"
+                        type="button"
+                        onClick={() => setWorkspaceRoots(workspaceRoots.filter((_, j) => j !== i))}
+                      >
+                        ×
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {isEditing && (
+                  <Button
+                    size="sm"
+                    type="button"
+                    onClick={() => {
+                      if (onBrowseDirectory) {
+                        setBrowseTargetIndex(workspaceRoots.length)
+                        setWorkspaceRoots([...workspaceRoots, ''])
+                        setBrowseDialogOpen(true)
+                      } else {
+                        setWorkspaceRoots([...workspaceRoots, ''])
+                      }
                     }}
-                    placeholder="绝对路径"
-                    readOnly={!isEditing}
-                  />
-                  {isEditing && onBrowseDirectory && (
-                    <Button
-                      size="sm"
-                      type="button"
-                      onClick={() => { setBrowseTargetIndex(i); setBrowseDialogOpen(true) }}
-                    >
-                      浏览
-                    </Button>
-                  )}
-                  {isEditing && (
-                    <Button
-                      size="sm"
-                      type="button"
-                      onClick={() => setAccessibleRoots(accessibleRoots.filter((_, j) => j !== i))}
-                    >
-                      ×
-                    </Button>
-                  )}
-                </div>
-              ))}
-              {isEditing && (
-                <Button
-                  size="sm"
-                  type="button"
-                  onClick={() => {
-                    if (onBrowseDirectory) {
-                      setBrowseTargetIndex(accessibleRoots.length)
-                      setAccessibleRoots([...accessibleRoots, ''])
-                      setBrowseDialogOpen(true)
-                    } else {
-                      setAccessibleRoots([...accessibleRoots, ''])
-                    }
-                  }}
-                >
-                  添加目录
-                </Button>
-              )}
-              {accessibleRoots.length === 0 && !isEditing && (
-                <p className="text-xs text-muted-foreground">（未配置）</p>
-              )}
-            </div>
-          </Field>
+                  >
+                    添加目录
+                  </Button>
+                )}
+              </div>
+            </Field>
+          )}
 
           <div className="flex items-center gap-4">
             <CheckboxField
@@ -593,13 +592,13 @@ export function LocalRuntimeView({
           onBrowse={onBrowseDirectory}
           onSelect={(path) => {
             if (browseTargetIndex !== null) {
-              const next = [...accessibleRoots]
+              const next = [...workspaceRoots]
               if (browseTargetIndex < next.length) {
                 next[browseTargetIndex] = path
               } else {
                 next.push(path)
               }
-              setAccessibleRoots(next)
+              setWorkspaceRoots(next)
             }
             setBrowseTargetIndex(null)
           }}
@@ -717,7 +716,7 @@ function buildStartRequest(
     machine_label: machineLabel.trim() || null,
     legacy_machine_ids: [],
     name: backendName.trim() || undefined,
-    accessible_roots: roots,
+    workspace_roots: roots.map((root) => root.trim()).filter(Boolean),
     executor_enabled: executorEnabled,
   }
 }

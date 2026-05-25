@@ -35,7 +35,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
                 status,
                 version,
                 capabilities,
-                accessible_roots,
+                workspace_roots,
                 device,
                 connected_at,
                 last_seen_at,
@@ -51,7 +51,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
                 status = 'online',
                 version = EXCLUDED.version,
                 capabilities = EXCLUDED.capabilities,
-                accessible_roots = EXCLUDED.accessible_roots,
+                workspace_roots = EXCLUDED.workspace_roots,
                 device = EXCLUDED.device,
                 connected_at = EXCLUDED.connected_at,
                 last_seen_at = EXCLUDED.last_seen_at,
@@ -65,7 +65,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(&update.name)
         .bind(&update.version)
         .bind(sqlx::types::Json(&update.capabilities))
-        .bind(sqlx::types::Json(&update.accessible_roots))
+        .bind(sqlx::types::Json(&update.workspace_roots))
         .bind(sqlx::types::Json(&update.device))
         .bind(update.connected_at.to_rfc3339())
         .bind(now.to_rfc3339())
@@ -155,7 +155,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
                 status,
                 version,
                 capabilities,
-                accessible_roots,
+                workspace_roots,
                 device,
                 connected_at,
                 last_seen_at,
@@ -185,7 +185,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
                 status,
                 version,
                 capabilities,
-                accessible_roots,
+                workspace_roots,
                 device,
                 connected_at,
                 last_seen_at,
@@ -213,7 +213,7 @@ struct RuntimeHealthRow {
     status: String,
     version: Option<String>,
     capabilities: sqlx::types::Json<serde_json::Value>,
-    accessible_roots: sqlx::types::Json<serde_json::Value>,
+    workspace_roots: sqlx::types::Json<serde_json::Value>,
     device: sqlx::types::Json<serde_json::Value>,
     connected_at: Option<String>,
     last_seen_at: Option<String>,
@@ -227,8 +227,8 @@ impl TryFrom<RuntimeHealthRow> for RuntimeHealth {
     type Error = DomainError;
 
     fn try_from(row: RuntimeHealthRow) -> Result<Self, Self::Error> {
-        let accessible_roots = serde_json::from_value(row.accessible_roots.0).map_err(|e| {
-            DomainError::InvalidConfig(format!("runtime_health.accessible_roots: {e}"))
+        let workspace_roots = serde_json::from_value(row.workspace_roots.0).map_err(|e| {
+            DomainError::InvalidConfig(format!("runtime_health.workspace_roots: {e}"))
         })?;
         Ok(Self {
             backend_id: row.backend_id,
@@ -237,7 +237,7 @@ impl TryFrom<RuntimeHealthRow> for RuntimeHealth {
             status: parse_runtime_health_status(&row.status)?,
             version: row.version,
             capabilities: row.capabilities.0,
-            accessible_roots,
+            workspace_roots,
             device: row.device.0,
             connected_at: parse_optional_timestamp(
                 row.connected_at,
@@ -312,7 +312,7 @@ mod tests {
             name: "Desktop Runtime".to_string(),
             version: "0.1.0".to_string(),
             capabilities: serde_json::json!({ "supports_cancel": true }),
-            accessible_roots: vec!["F:/Projects/AgentDash".to_string()],
+            workspace_roots: vec!["F:/Projects/AgentDash".to_string()],
             device: serde_json::json!({ "os": "windows" }),
             connected_at,
         })
@@ -325,7 +325,7 @@ mod tests {
             .expect("get health")
             .expect("health exists");
         assert_eq!(online.status, RuntimeHealthStatus::Online);
-        assert_eq!(online.accessible_roots, vec!["F:/Projects/AgentDash"]);
+        assert_eq!(online.workspace_roots, vec!["F:/Projects/AgentDash"]);
         assert_eq!(online.profile_id.as_deref(), Some("desktop"));
 
         repo.update_capabilities(&backend_id, serde_json::json!({ "mcp_servers": [] }))

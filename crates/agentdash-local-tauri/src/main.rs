@@ -83,7 +83,8 @@ struct RuntimeStartRequest {
     #[serde(default)]
     legacy_machine_ids: Vec<String>,
     name: Option<String>,
-    accessible_roots: Vec<PathBuf>,
+    #[serde(default)]
+    workspace_roots: Vec<PathBuf>,
     executor_enabled: bool,
 }
 
@@ -110,7 +111,7 @@ struct LocalRuntimeProfile {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
-    accessible_roots: Vec<PathBuf>,
+    workspace_roots: Vec<PathBuf>,
     #[serde(default = "default_executor_enabled")]
     executor_enabled: bool,
     #[serde(default)]
@@ -135,7 +136,7 @@ impl From<LocalRuntimeProfile> for RuntimeStartRequest {
             machine_label: profile.machine_label,
             legacy_machine_ids: profile.legacy_machine_ids,
             name: profile.name,
-            accessible_roots: profile.accessible_roots,
+            workspace_roots: profile.workspace_roots,
             executor_enabled: profile.executor_enabled,
         }
     }
@@ -336,7 +337,7 @@ struct EnsureLocalRuntimePayload {
     scope: LocalRuntimeScopePayload,
     capability_slot: String,
     name: Option<String>,
-    accessible_roots: Vec<String>,
+    workspace_roots: Vec<String>,
     executor_enabled: bool,
     client_version: Option<String>,
     device: serde_json::Value,
@@ -427,7 +428,7 @@ async fn start_runtime_from_request(
         claim.auth_token,
         claim.backend_id,
         claim.name,
-        request.accessible_roots,
+        request.workspace_roots,
         request.executor_enabled,
     );
 
@@ -451,8 +452,8 @@ async fn claim_local_runtime(
         },
         capability_slot: "default".to_string(),
         name: request.name.clone(),
-        accessible_roots: request
-            .accessible_roots
+        workspace_roots: request
+            .workspace_roots
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
@@ -572,7 +573,7 @@ fn normalize_profile(profile: LocalRuntimeProfile) -> Result<LocalRuntimeProfile
         legacy_machine_ids,
         legacy_device_id: String::new(),
         name: profile.name.and_then(normalize_optional_text),
-        accessible_roots: profile.accessible_roots,
+        workspace_roots: profile.workspace_roots,
         executor_enabled: profile.executor_enabled,
         auto_start: profile.auto_start,
         backend_id: profile.backend_id.and_then(normalize_optional_text),
@@ -604,7 +605,7 @@ fn normalize_start_request(request: RuntimeStartRequest) -> Result<RuntimeStartR
         machine_label: Some(machine_label),
         legacy_machine_ids,
         name: request.name.and_then(normalize_optional_text),
-        accessible_roots: request.accessible_roots,
+        workspace_roots: request.workspace_roots,
         executor_enabled: request.executor_enabled,
     })
 }

@@ -4,7 +4,7 @@
 
 ## Backend Inventory Registration
 
-用户在 Project 设置页选择已授权 backend 和本机目录后，后端通过 Runtime Gateway 调用 `workspace.detect`，再把结果登记为 backend inventory。
+用户在 Project 设置页选择已授权 backend 和本机目录后，后端通过 Runtime Gateway 调用 `workspace.detect`，再把结果登记为 backend inventory。目录浏览和 detect/register 是 setup 能力：本机默认允许用户浏览本机目录来选择候选 workspace，detect 只校验目标目录存在、是目录且可读取。
 
 ## Signatures
 
@@ -39,10 +39,11 @@ registerBackendWorkspaceInventory(
 - `root_ref` 会 trim，不能为空。
 - 后端必须通过 Runtime Gateway 调用 `workspace.detect`，不得由云端直接访问本机文件系统。
 - detect 成功后 upsert `BackendWorkspaceInventory`，`source` 使用 `capability_expansion_ack`。
-- 该 API 不扩大 local runtime 的 `accessible_roots`；目录不可访问时由 detect 失败返回。
+- detect 成功登记的 `root_ref` 是后续 Workspace Inventory / Workspace Binding 的目录事实；目录不可访问时由 detect 失败返回。
 - UI 登记成功后必须刷新 workspace candidates；如果 Backend Access 面板已有展开的 Inventory，也要重新拉取对应快照。
 - Workspace binding 维护不等于 backend inventory 登记；Advanced Maintenance 只改 Workspace 自身 bindings。
-- Workspace binding / inventory 只表达目录事实与可访问根，不表达执行空闲状态。session 执行 backend placement 由 backend execution lease / allocator 维护，原因是同一个可访问 workspace 的 backend 可能正在执行其它 session。
+- Workspace binding / inventory 只表达目录事实与已确认 workspace root，不表达执行空闲状态。session 执行 backend placement 由 backend execution lease / allocator 维护，原因是同一个 workspace root 的 backend 可能正在执行其它 session。
+- `workspace_roots` 为空不表示本机不能浏览或不能 detect；空集合表示本机没有显式预登记 roots，执行类能力以 session `mount_root_ref` 自身作为当前 workspace 边界。
 - Frontend 展示 backend 是否可分配时读取 `/backends/runtime-summary` 的 `active_session_count`、executor `active_session_count` 与 `allocatable`，原因是该投影已经合并 runtime health、registry executor snapshot 与 active backend execution leases。
 
 ## Validation And Errors

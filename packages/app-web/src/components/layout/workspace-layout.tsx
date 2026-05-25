@@ -979,7 +979,7 @@ function BackendPanel({
             const isExpanded = expandedId === backend.id;
             const executors = backend.capabilities?.executors ?? [];
             const availableCount = executors.filter((e) => e.available).length;
-            const roots = backend.accessible_roots ?? [];
+            const roots = backend.workspace_roots ?? [];
             return (
               <div key={backend.id}>
                 <button

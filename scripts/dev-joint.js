@@ -97,10 +97,13 @@ async function main() {
     const localArgs = [
       '--cloud-url', backend.relay_ws_url,
       '--token', backend.auth_token,
-      '--accessible-roots', config.accessibleRoots,
       '--name', backend.name || config.backendName,
       '--backend-id', backend.backend_id
     ];
+    const workspaceRoots = splitWorkspaceRoots(config.workspaceRoots);
+    if (workspaceRoots.length > 0) {
+      localArgs.push('--workspace-roots', workspaceRoots.join(','));
+    }
     if (config.noExecutor) {
       localArgs.push('--no-executor');
     }
@@ -139,7 +142,7 @@ async function main() {
 
 function parseArgs(args) {
   const result = {
-    accessibleRoots: root,
+    workspaceRoots: '',
     backendName: 'dev-local',
     databaseUrl: process.env.DATABASE_URL || null,
     frontendMode: 'dev',
@@ -199,12 +202,12 @@ function parseArgs(args) {
       result.sccacheDir = readNextValue(args, ++index, arg);
       continue;
     }
-    if (arg.startsWith('--accessible-roots=')) {
-      result.accessibleRoots = arg.slice('--accessible-roots='.length);
+    if (arg.startsWith('--workspace-roots=')) {
+      result.workspaceRoots = arg.slice('--workspace-roots='.length);
       continue;
     }
-    if (arg === '--accessible-roots') {
-      result.accessibleRoots = readNextValue(args, ++index, arg);
+    if (arg === '--workspace-roots') {
+      result.workspaceRoots = readNextValue(args, ++index, arg);
       continue;
     }
     if (arg.startsWith('--backend-name=')) {
@@ -307,7 +310,7 @@ function printHelp() {
   console.log('  --sccache                 强制使用 sccache，未安装时报错');
   console.log('  --no-sccache              关闭自动 sccache 检测');
   console.log('  --sccache-dir <path>      指定 SCCACHE_DIR');
-  console.log('  --accessible-roots <val>  指定 accessible roots');
+  console.log('  --workspace-roots <val>  指定 workspace roots');
   console.log('  --backend-name <val>      指定本机运行时展示名称');
   console.log('  --database-url <val>      指定 DATABASE_URL');
   console.log('  --server-host <val>       指定后端绑定 host');
@@ -323,7 +326,7 @@ function printBanner() {
   console.log('  ║   AgentDash 联合启动（保序模式）     ║');
   console.log('  ╚══════════════════════════════════════╝');
   console.log(`  root:       ${root}`);
-  console.log(`  roots:      ${config.accessibleRoots}`);
+  console.log(`  roots:      ${config.workspaceRoots || '(未显式配置)'}`);
   console.log(`  runtime:    ${config.backendName}`);
   console.log(`  frontend:   ${config.frontendMode}`);
   console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
@@ -661,7 +664,7 @@ async function ensureDevLocalRuntimeClaim(port, options) {
     scope: { kind: 'user' },
     capability_slot: 'default',
     name: options.backendName,
-    accessible_roots: splitAccessibleRoots(options.accessibleRoots),
+    workspace_roots: splitWorkspaceRoots(options.workspaceRoots),
     executor_enabled: !options.noExecutor,
     client_version: 'dev-joint',
     device: {
@@ -735,11 +738,15 @@ function devMachineLegacyIds(profile) {
   return profile.legacy_machine_ids.filter((value) => value !== profile.machine_id);
 }
 
-function splitAccessibleRoots(value) {
+function splitWorkspaceRoots(value) {
   return String(value || '')
-    .split(path.delimiter)
+    .split(new RegExp(`[${escapeRegExp(path.delimiter)},]`))
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function formatDevRuntimeProfileId(options) {

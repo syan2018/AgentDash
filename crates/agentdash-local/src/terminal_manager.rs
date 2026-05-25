@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read as IoRead, Write as IoWrite};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use agentdash_relay::*;
@@ -35,7 +36,7 @@ impl TerminalManager {
     pub fn spawn(
         &self,
         payload: &TerminalSpawnPayload,
-        workspace_root: &str,
+        workspace_root: &Path,
     ) -> Result<TerminalSpawnResponse, String> {
         let pty_system = NativePtySystem::default();
         let size = PtySize {
@@ -57,14 +58,9 @@ impl TerminalManager {
             }
         });
 
-        let raw_cwd = payload
-            .cwd
-            .as_ref()
-            .map(|c| {
-                let p = std::path::Path::new(workspace_root).join(c);
-                p.to_string_lossy().to_string()
-            })
-            .unwrap_or_else(|| workspace_root.to_string());
+        let raw_cwd = resolve_terminal_cwd(workspace_root, payload.cwd.as_deref())?
+            .to_string_lossy()
+            .to_string();
 
         // Windows canonicalize 会加 \\?\ 前缀，PowerShell 会原样显示导致提示符难看
         let cwd = strip_extended_length_prefix(&raw_cwd);
@@ -237,5 +233,73 @@ fn strip_extended_length_prefix(path: &str) -> String {
         path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
     } else {
         path.to_string()
+    }
+}
+
+fn resolve_terminal_cwd(workspace_root: &Path, cwd: Option<&str>) -> Result<PathBuf, String> {
+    let candidate = cwd
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let path = Path::new(value);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                workspace_root.join(path)
+            }
+        })
+        .unwrap_or_else(|| workspace_root.to_path_buf());
+
+    let canonical = std::fs::canonicalize(&candidate).map_err(|e| {
+        format!(
+            "terminal cwd 不存在或不可访问: {} ({e})",
+            candidate.display()
+        )
+    })?;
+    if !canonical.is_dir() {
+        return Err(format!("terminal cwd 不是目录: {}", candidate.display()));
+    }
+    if !canonical.starts_with(workspace_root) {
+        return Err(format!(
+            "terminal cwd 越过 workspace 边界: {}",
+            candidate.display()
+        ));
+    }
+
+    Ok(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_terminal_cwd_allows_relative_directory_inside_workspace() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let nested = workspace.path().join("nested");
+        std::fs::create_dir(&nested).expect("nested");
+        let workspace_root = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+
+        let resolved = resolve_terminal_cwd(&workspace_root, Some("nested")).expect("relative cwd");
+
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(nested).expect("canonical nested")
+        );
+    }
+
+    #[test]
+    fn resolve_terminal_cwd_rejects_directory_outside_workspace() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let outside = tempfile::tempdir().expect("outside");
+        let workspace_root = std::fs::canonicalize(workspace.path()).expect("canonical workspace");
+
+        let error = resolve_terminal_cwd(
+            &workspace_root,
+            Some(outside.path().to_string_lossy().as_ref()),
+        )
+        .expect_err("outside cwd should be rejected");
+
+        assert!(error.contains("workspace 边界"));
     }
 }

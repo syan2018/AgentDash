@@ -591,7 +591,7 @@ mod tests {
                     supports_discover_options: true,
                     mcp_servers: Vec::new(),
                 },
-                accessible_roots: vec!["/workspace".to_string()],
+                workspace_roots: vec!["/workspace".to_string()],
                 sender,
                 connected_at: Utc::now(),
             })
@@ -667,7 +667,7 @@ mod tests {
                     supports_discover_options: true,
                     mcp_servers: Vec::new(),
                 },
-                accessible_roots: vec!["/workspace".to_string()],
+                workspace_roots: vec!["/workspace".to_string()],
                 sender,
                 connected_at: Utc::now(),
             })

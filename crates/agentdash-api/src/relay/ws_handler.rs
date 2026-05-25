@@ -98,7 +98,7 @@ async fn handle_backend_connection(
     tracing::info!(
         backend_id = %bid,
         name = %payload.name,
-        accessible_roots = ?payload.accessible_roots,
+        workspace_roots = ?payload.workspace_roots,
         "收到本机后端注册"
     );
 
@@ -110,7 +110,7 @@ async fn handle_backend_connection(
         name: payload.name.clone(),
         version: payload.version.clone(),
         capabilities: payload.capabilities.clone(),
-        accessible_roots: payload.accessible_roots.clone(),
+        workspace_roots: payload.workspace_roots.clone(),
         sender: cmd_tx,
         connected_at: chrono::Utc::now(),
     };
@@ -146,7 +146,7 @@ async fn handle_backend_connection(
             name: payload.name.clone(),
             version: payload.version.clone(),
             capabilities: serde_json::to_value(&payload.capabilities).unwrap_or_default(),
-            accessible_roots: payload.accessible_roots.clone(),
+            workspace_roots: payload.workspace_roots.clone(),
             device: authorized_backend.device.clone(),
             connected_at,
         })
@@ -795,7 +795,7 @@ mod tests {
                 supports_discover_options: true,
                 mcp_servers: Vec::new(),
             },
-            accessible_roots: vec!["/tmp/project".to_string()],
+            workspace_roots: vec!["/tmp/project".to_string()],
         }
     }
 

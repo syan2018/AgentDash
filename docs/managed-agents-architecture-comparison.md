@@ -152,7 +152,7 @@ AgentDashboard 的 context 模型比文章描述的更精细。文章中 Session
 |---|---|
 | Cloud 不直接访问 Local 文件 | 所有文件操作通过 relay 路由 |
 | Local 不写业务数据库 | 执行状态与业务状态严格分离 |
-| Path Safety Contract | `accessible_roots` 白名单 + `..` 路径逃逸拒绝 |
+| Path Safety Contract | session `mount_root_ref` 执行边界 + `..` 路径逃逸拒绝；显式 `workspace_roots` 用于确认 mount root 来源 |
 
 **差距**：当前模型假设 Local Backend 是受信任的。随着未来引入更多外部集成（Git push、API 调用、第三方服务），需要考虑文章中的 **credential vault + proxy** 模式，避免凭据泄漏到执行沙箱。
 

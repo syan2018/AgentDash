@@ -37,6 +37,8 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - `LocalRuntimeProfile` 持久化在 Tauri app config dir 下的 `desktop-runtime-profile.json`（snake_case）
 - 每次 profile load/save/start 都必须用 `agentdash-local` 机器身份覆盖 canonical machine id
 - `access_token` 可以为空，server 在无 token 时通过自身认证 provider 解析当前用户
+- `workspace_roots` 表达显式登记的 workspace root 集合；为空时不构成异常，也不限制本机目录浏览。执行类能力仍以 session `mount_root_ref` 为当前 workspace root 边界。
+- 本机目录浏览是 setup 选择器能力，默认允许全盘浏览；workspace detect/register 成功后产生目录事实，session prompt / file tool / shell 才进入执行边界。
 
 ### Relay Prompt / Event Lifecycle
 

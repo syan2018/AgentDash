@@ -27,7 +27,7 @@ pub struct LocalRuntimeConfig {
     pub token: String,
     pub backend_id: String,
     pub name: String,
-    pub accessible_roots: Vec<PathBuf>,
+    pub workspace_roots: Vec<PathBuf>,
     pub executor_enabled: bool,
 }
 
@@ -37,7 +37,7 @@ impl LocalRuntimeConfig {
         token: String,
         backend_id: String,
         name: String,
-        accessible_roots: Vec<PathBuf>,
+        workspace_roots: Vec<PathBuf>,
         executor_enabled: bool,
     ) -> Self {
         Self {
@@ -45,7 +45,7 @@ impl LocalRuntimeConfig {
             token,
             backend_id,
             name,
-            accessible_roots: canonicalize_accessible_roots(accessible_roots),
+            workspace_roots: canonicalize_workspace_roots(workspace_roots),
             executor_enabled,
         }
     }
@@ -69,7 +69,7 @@ pub struct LocalRuntimeStatus {
     pub state: LocalRuntimeState,
     pub backend_id: String,
     pub name: String,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub executor_enabled: bool,
     pub mcp_server_count: usize,
     pub message: Option<String>,
@@ -152,7 +152,7 @@ impl LocalRuntimeManager {
             format!(
                 "准备启动 runtime: backend={}, roots={}",
                 config.backend_id,
-                config.accessible_roots.len()
+                config.workspace_roots.len()
             ),
         )
         .await;
@@ -369,7 +369,7 @@ pub async fn run_standalone(config: LocalRuntimeConfig) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("standalone runtime task join 失败: {error}"))?
 }
 
-pub fn canonicalize_accessible_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+pub fn canonicalize_workspace_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     roots
         .into_iter()
         .map(|path| {
@@ -428,22 +428,18 @@ pub async fn probe_mcp_server(server: McpLocalServerEntry) -> McpProbeResult {
 }
 
 async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_client::Config> {
-    if config.accessible_roots.is_empty() {
-        tracing::warn!("未指定 accessible_roots，将使用当前目录作为 session runtime 工作目录兜底");
-    }
-
     tracing::info!(
         backend_id = %config.backend_id,
         name = %config.name,
         cloud_url = %config.cloud_url,
-        accessible_roots = ?config.accessible_roots,
+        workspace_roots = ?config.workspace_roots,
         executor_enabled = config.executor_enabled,
         "启动 AgentDash 本机 runtime"
     );
 
-    let tool_executor = ToolExecutor::new(config.accessible_roots.clone());
+    let tool_executor = ToolExecutor::new(config.workspace_roots.clone());
     let local_backend_config =
-        local_backend_config::load_local_backend_config(&config.accessible_roots);
+        local_backend_config::load_local_backend_config(&config.workspace_roots);
 
     let mcp_manager = if local_backend_config.mcp_servers.is_empty() {
         None
@@ -455,7 +451,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
 
     let (session_runtime, connector) = if config.executor_enabled {
         let workspace_root = config
-            .accessible_roots
+            .workspace_roots
             .first()
             .cloned()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -468,7 +464,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
             Arc::new(CodexBridgeConnector::new(workspace_root.clone())),
         ];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let db_path = workspace_root.join(".agentdash").join("agentdash-local.db");
+        let db_path = local_runtime_session_db_path(&config.backend_id)?;
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -502,7 +498,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         token: config.token.clone(),
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
-        accessible_roots: config.accessible_roots.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         tool_executor,
         session_runtime,
         connector,
@@ -513,11 +509,65 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
 
 fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
     let root = std::fs::canonicalize(&root)
-        .with_context(|| format!("accessible root 不存在或不可访问: {}", root.display()))?;
+        .with_context(|| format!("workspace root 不存在或不可访问: {}", root.display()))?;
     if !root.is_dir() {
-        anyhow::bail!("accessible root 不是目录: {}", root.display());
+        anyhow::bail!("workspace root 不是目录: {}", root.display());
     }
     Ok(root)
+}
+
+fn local_runtime_session_db_path(backend_id: &str) -> anyhow::Result<PathBuf> {
+    let backend_key = backend_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Ok(local_runtime_data_dir()?
+        .join(backend_key)
+        .join("agentdash-local.db"))
+}
+
+fn local_runtime_data_dir() -> anyhow::Result<PathBuf> {
+    if cfg!(windows) {
+        if let Some(value) = non_empty_env("APPDATA").or_else(|| non_empty_env("LOCALAPPDATA")) {
+            return Ok(PathBuf::from(value).join("AgentDash").join("local-runtime"));
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        if let Some(home) = non_empty_env("HOME") {
+            return Ok(PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("AgentDash")
+                .join("local-runtime"));
+        }
+    }
+
+    if let Some(value) = non_empty_env("XDG_DATA_HOME") {
+        return Ok(PathBuf::from(value).join("agentdash").join("local-runtime"));
+    }
+    if let Some(home) = non_empty_env("HOME") {
+        return Ok(PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("agentdash")
+            .join("local-runtime"));
+    }
+
+    anyhow::bail!("无法定位本机 runtime 数据目录")
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn redact_log_message(message: &str) -> String {
@@ -557,8 +607,8 @@ fn status_from_config(
         state,
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
-        accessible_roots: config
-            .accessible_roots
+        workspace_roots: config
+            .workspace_roots
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
@@ -604,8 +654,8 @@ fn status_from_ws_config(
         state,
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
-        accessible_roots: config
-            .accessible_roots
+        workspace_roots: config
+            .workspace_roots
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),

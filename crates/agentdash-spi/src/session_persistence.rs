@@ -190,6 +190,7 @@ impl RuntimeCapabilityEffectRecord {
 pub enum TitleSource {
     #[default]
     Auto,
+    Source,
     User,
 }
 

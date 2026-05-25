@@ -12,6 +12,7 @@ use super::continuation::build_projected_transcript_from_events;
 use super::hub_support::SessionEventSubscription;
 use super::persistence::{PersistedSessionEvent, SessionEventPage, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
+use super::types::TitleSource;
 
 #[derive(Clone)]
 pub struct SessionEventingService {
@@ -77,6 +78,10 @@ impl SessionEventingService {
             .await
     }
 
+    pub(crate) fn supports_source_session_title(&self) -> bool {
+        self.connector.capabilities().supports_source_session_title
+    }
+
     pub async fn inject_notification(
         &self,
         session_id: &str,
@@ -110,7 +115,83 @@ impl SessionEventingService {
                 .persist_context_frame_direct(session_id, persisted.turn_id.as_deref(), &frame)
                 .await;
         }
+        self.project_source_session_title(session_id, &persisted)
+            .await?;
         Ok(persisted)
+    }
+
+    async fn project_source_session_title(
+        &self,
+        session_id: &str,
+        persisted: &PersistedSessionEvent,
+    ) -> io::Result<()> {
+        let BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+            executor_session_id,
+            title,
+            preview,
+            source,
+        }) = &persisted.notification.event
+        else {
+            return Ok(());
+        };
+
+        let title = title.trim();
+        if title.is_empty()
+            || preview
+                .as_deref()
+                .is_some_and(|value| value.trim() == title)
+        {
+            return Ok(());
+        }
+
+        let Some(mut meta) = self.stores.meta.get_session_meta(session_id).await? else {
+            return Ok(());
+        };
+        if meta.title_source == TitleSource::User {
+            return Ok(());
+        }
+        if let (Some(expected), Some(actual)) = (
+            meta.executor_session_id.as_deref(),
+            executor_session_id.as_deref(),
+        ) && expected != actual
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                source = %source,
+                expected_executor_session_id = %expected,
+                actual_executor_session_id = %actual,
+                "忽略不属于当前 executor session 的来源标题"
+            );
+            return Ok(());
+        }
+        if meta.title_source == TitleSource::Source && meta.title == title {
+            return Ok(());
+        }
+
+        meta.title = title.to_string();
+        meta.title_source = TitleSource::Source;
+        meta.updated_at = chrono::Utc::now().timestamp_millis();
+        self.stores.meta.save_session_meta(&meta).await?;
+
+        let envelope = BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "session_meta_updated".to_string(),
+                value: serde_json::json!({
+                    "title": meta.title,
+                    "title_source": meta.title_source,
+                }),
+            }),
+            session_id,
+            self.connector_source(None),
+        )
+        .with_trace(TraceInfo {
+            turn_id: persisted.turn_id.clone(),
+            entry_index: persisted.entry_index,
+        });
+        let _ = self
+            .persist_platform_event_direct(session_id, &envelope)
+            .await?;
+        Ok(())
     }
 
     pub(crate) async fn emit_capability_state_changed(
@@ -251,10 +332,19 @@ impl SessionEventingService {
             entry_index: None,
         });
 
+        self.persist_platform_event_direct(session_id, &envelope)
+            .await
+    }
+
+    async fn persist_platform_event_direct(
+        &self,
+        session_id: &str,
+        envelope: &BackboneEnvelope,
+    ) -> io::Result<PersistedSessionEvent> {
         let persisted = self
             .stores
             .events
-            .append_event(session_id, &envelope)
+            .append_event(session_id, envelope)
             .await?;
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(persisted.clone());
@@ -310,4 +400,242 @@ pub(crate) fn derive_compaction_boundary_ref_from_events(
         .entries
         .get(cut.checked_sub(1)?)
         .map(|entry| entry.message_ref.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+
+    use agentdash_spi::{
+        AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+        ExecutionContext, ExecutionStream, PromptPayload,
+    };
+    use tokio::sync::Mutex;
+    use tokio_stream::wrappers::ReceiverStream;
+
+    use super::*;
+    use crate::session::{
+        MemorySessionPersistence,
+        persistence::SessionStoreSet,
+        types::{ExecutionStatus, SessionBootstrapState, SessionMeta},
+    };
+
+    fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
+        SessionEventingService::new(
+            stores,
+            SessionRuntimeRegistry::new(Arc::new(Mutex::new(HashMap::new()))),
+            Arc::new(NoopConnector),
+        )
+    }
+
+    fn test_meta(session_id: &str, title_source: TitleSource) -> SessionMeta {
+        SessionMeta {
+            id: session_id.to_string(),
+            title: "New session".to_string(),
+            title_source,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: Some("thread-1".to_string()),
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        }
+    }
+
+    fn source_title_envelope(session_id: &str, title: &str) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+                executor_session_id: Some("thread-1".to_string()),
+                title: title.to_string(),
+                preview: Some("first user prompt".to_string()),
+                source: "codex".to_string(),
+            }),
+            session_id,
+            SourceInfo {
+                connector_id: "codex-bridge".to_string(),
+                connector_type: "local_executor".to_string(),
+                executor_id: Some("CODEX".to_string()),
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn source_session_title_projects_to_session_meta() {
+        let session_id = "sess-source-title";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+
+        service
+            .persist_notification(
+                session_id,
+                source_title_envelope(session_id, "  Codex Title  "),
+            )
+            .await
+            .expect("persist source title");
+
+        let meta = stores
+            .meta
+            .get_session_meta(session_id)
+            .await
+            .expect("read session meta")
+            .expect("session meta exists");
+        assert_eq!(meta.title, "Codex Title");
+        assert_eq!(meta.title_source, TitleSource::Source);
+
+        let events = stores
+            .events
+            .list_all_events(session_id)
+            .await
+            .expect("read events");
+        assert_eq!(events.len(), 2);
+        match &events[1].notification.event {
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) => {
+                assert_eq!(key, "session_meta_updated");
+                assert_eq!(
+                    value.get("title").and_then(serde_json::Value::as_str),
+                    Some("Codex Title")
+                );
+                assert_eq!(
+                    value
+                        .get("title_source")
+                        .and_then(serde_json::Value::as_str),
+                    Some("source")
+                );
+            }
+            event => panic!("expected session_meta_updated event, got {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn source_session_title_does_not_overwrite_user_title() {
+        let session_id = "sess-user-title";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        let mut meta = test_meta(session_id, TitleSource::User);
+        meta.title = "Pinned title".to_string();
+        stores
+            .meta
+            .create_session(&meta)
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+
+        service
+            .persist_notification(session_id, source_title_envelope(session_id, "Codex Title"))
+            .await
+            .expect("persist source title");
+
+        let meta = stores
+            .meta
+            .get_session_meta(session_id)
+            .await
+            .expect("read session meta")
+            .expect("session meta exists");
+        assert_eq!(meta.title, "Pinned title");
+        assert_eq!(meta.title_source, TitleSource::User);
+    }
+
+    #[tokio::test]
+    async fn source_session_title_ignores_preview_title() {
+        let session_id = "sess-preview-title";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+
+        service
+            .persist_notification(
+                session_id,
+                source_title_envelope(session_id, " first user prompt "),
+            )
+            .await
+            .expect("persist source title");
+
+        let meta = stores
+            .meta
+            .get_session_meta(session_id)
+            .await
+            .expect("read session meta")
+            .expect("session meta exists");
+        assert_eq!(meta.title, "New session");
+        assert_eq!(meta.title_source, TitleSource::Auto);
+    }
+
+    struct NoopConnector;
+
+    #[async_trait::async_trait]
+    impl AgentConnector for NoopConnector {
+        fn connector_id(&self) -> &'static str {
+            "noop"
+        }
+
+        fn connector_type(&self) -> ConnectorType {
+            ConnectorType::LocalExecutor
+        }
+
+        fn capabilities(&self) -> ConnectorCapabilities {
+            ConnectorCapabilities::default()
+        }
+
+        fn list_executors(&self) -> Vec<AgentInfo> {
+            Vec::new()
+        }
+
+        async fn discover_options_stream(
+            &self,
+            _executor: &str,
+            _working_dir: Option<PathBuf>,
+        ) -> Result<futures::stream::BoxStream<'static, json_patch::Patch>, ConnectorError>
+        {
+            Ok(Box::pin(futures::stream::empty()))
+        }
+
+        async fn prompt(
+            &self,
+            _session_id: &str,
+            _follow_up_session_id: Option<&str>,
+            _prompt: &PromptPayload,
+            _context: ExecutionContext,
+        ) -> Result<ExecutionStream, ConnectorError> {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(Box::pin(ReceiverStream::new(rx)))
+        }
+
+        async fn cancel(&self, _session_id: &str) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn approve_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn reject_tool_call(
+            &self,
+            _session_id: &str,
+            _tool_call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
 }

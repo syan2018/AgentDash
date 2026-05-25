@@ -8,6 +8,16 @@ pub enum PlatformEvent {
     /// Connector 绑定了底层执行器 session（用于 follow-up / resume）。
     ExecutorSessionBound { executor_session_id: String },
 
+    /// 来源执行器提供了已有会话标题（如 Codex `Thread.name`）。
+    SourceSessionTitleUpdated {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        executor_session_id: Option<String>,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        preview: Option<String>,
+        source: String,
+    },
+
     /// Hook 运行时追踪条目。
     HookTrace(Box<HookTracePayload>),
 

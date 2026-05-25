@@ -241,6 +241,7 @@ impl AgentConnector for PiAgentConnector {
             supports_variants: false,
             supports_model_override: true,
             supports_permission_policy: false,
+            supports_source_session_title: false,
         }
     }
 

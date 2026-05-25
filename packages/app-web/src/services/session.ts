@@ -53,7 +53,7 @@ function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwn
   };
 }
 
-export type TitleSource = "auto" | "user";
+export type TitleSource = "auto" | "source" | "user";
 
 export interface SessionMeta {
   id: string;

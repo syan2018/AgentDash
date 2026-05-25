@@ -37,6 +37,7 @@ pub struct ConnectorCapabilities {
     pub supports_variants: bool,
     pub supports_model_override: bool,
     pub supports_permission_policy: bool,
+    pub supports_source_session_title: bool,
 }
 
 /// 连接器对外暴露的执行器选项（用于前端选择器渲染）

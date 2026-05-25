@@ -247,6 +247,8 @@ impl AgentConnector for CompositeConnector {
                 caps.supports_model_override || sub.supports_model_override;
             caps.supports_permission_policy =
                 caps.supports_permission_policy || sub.supports_permission_policy;
+            caps.supports_source_session_title =
+                caps.supports_source_session_title || sub.supports_source_session_title;
         }
         caps
     }

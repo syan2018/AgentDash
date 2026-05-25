@@ -237,7 +237,7 @@ impl TurnCommitDeps {
         let updated = self
             .core
             .update_session_meta(session_id, |meta| {
-                if meta.title_source == TitleSource::User {
+                if meta.title_source != TitleSource::Auto {
                     return;
                 }
                 meta.title = title;

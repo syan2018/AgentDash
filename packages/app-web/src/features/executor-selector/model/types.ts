@@ -12,6 +12,7 @@ export interface ConnectorCapabilities {
   supports_variants: boolean;
   supports_model_override: boolean;
   supports_permission_policy: boolean;
+  supports_source_session_title: boolean;
 }
 
 /** 连接器信息 */

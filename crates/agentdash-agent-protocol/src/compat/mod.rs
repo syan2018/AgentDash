@@ -84,6 +84,23 @@ pub fn envelope_to_session_notification(
             Some(executor_session_id.clone()),
             Some(json!({ "executor_session_id": executor_session_id })),
         )),
+        BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+            executor_session_id,
+            title,
+            preview,
+            source,
+        }) => Some(wrap_session_info_update(
+            session_id,
+            envelope,
+            "source_session_title_updated",
+            Some(title.clone()),
+            Some(json!({
+                "executor_session_id": executor_session_id,
+                "title": title,
+                "preview": preview,
+                "source": source,
+            })),
+        )),
         BackboneEvent::Platform(PlatformEvent::HookTrace(payload)) => {
             let hook_data = payload
                 .data

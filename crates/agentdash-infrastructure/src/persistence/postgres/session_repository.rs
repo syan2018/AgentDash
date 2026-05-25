@@ -931,6 +931,7 @@ fn optional_json_string<T: serde::Serialize>(
 fn title_source_to_str(source: TitleSource) -> &'static str {
     match source {
         TitleSource::Auto => "auto",
+        TitleSource::Source => "source",
         TitleSource::User => "user",
     }
 }
@@ -967,6 +968,7 @@ fn parse_runtime_command_status(value: String, field: &str) -> io::Result<Runtim
 fn parse_title_source(value: String, field: &str) -> io::Result<TitleSource> {
     match value.as_str() {
         "auto" => Ok(TitleSource::Auto),
+        "source" => Ok(TitleSource::Source),
         "user" => Ok(TitleSource::User),
         other => Err(io::Error::new(
             io::ErrorKind::InvalidData,

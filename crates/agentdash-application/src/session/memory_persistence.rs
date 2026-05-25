@@ -475,6 +475,7 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     let incoming_event_seq = incoming.last_event_seq;
 
     current.title = incoming.title.clone();
+    current.title_source = incoming.title_source;
     current.created_at = incoming.created_at;
     current.updated_at = current.updated_at.max(incoming.updated_at);
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);

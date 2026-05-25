@@ -331,7 +331,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           setSessionTitle(newTitle);
           patchSessionLocally(currentSessionId, {
             title: newTitle,
-            title_source: newTitleSource === "auto" || newTitleSource === "user" ? newTitleSource : undefined,
+            title_source:
+              newTitleSource === "auto" || newTitleSource === "source" || newTitleSource === "user"
+                ? newTitleSource
+                : undefined,
           });
         }
         break;

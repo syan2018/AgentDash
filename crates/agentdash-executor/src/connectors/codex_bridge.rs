@@ -18,8 +18,8 @@ use codex_app_server_protocol::{
     AskForApproval, ClientInfo, ClientNotification, ClientRequest, GetAccountParams,
     GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
     JSONRPCMessage, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, RequestId, SandboxMode,
-    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams,
-    TurnStartResponse, UserInput,
+    Thread, ThreadForkParams, ThreadForkResponse, ThreadNameUpdatedNotification, ThreadStartParams,
+    ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
 use executors::{
     executors::{BaseCodingAgent, StandardCodingAgentExecutor as _},
@@ -41,6 +41,7 @@ use crate::adapters::codex_config::to_codex_config;
 use crate::connectors::context_frame_render::compose_prompt_text;
 
 const CODEX_EXECUTOR_ID: &str = "CODEX";
+const CODEX_SOURCE_TITLE: &str = "codex";
 
 fn normalize_executor_id(executor: &str) -> String {
     executor.trim().replace('-', "_").to_ascii_uppercase()
@@ -86,6 +87,52 @@ fn make_envelope(
         turn_id: Some(turn_id.to_string()),
         entry_index: None,
     })
+}
+
+fn make_source_session_title_envelope(
+    session_id: &str,
+    source_info: &SourceInfo,
+    turn_id: &str,
+    executor_session_id: String,
+    title: String,
+    preview: Option<String>,
+) -> Option<BackboneEnvelope> {
+    let title = title.trim();
+    if title.is_empty()
+        || preview
+            .as_deref()
+            .is_some_and(|value| value.trim() == title)
+    {
+        return None;
+    }
+
+    Some(make_envelope(
+        BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+            executor_session_id: Some(executor_session_id),
+            title: title.to_string(),
+            preview,
+            source: CODEX_SOURCE_TITLE.to_string(),
+        }),
+        session_id,
+        source_info,
+        turn_id,
+    ))
+}
+
+fn make_thread_source_title_envelope(
+    session_id: &str,
+    source_info: &SourceInfo,
+    turn_id: &str,
+    thread: &Thread,
+) -> Option<BackboneEnvelope> {
+    make_source_session_title_envelope(
+        session_id,
+        source_info,
+        turn_id,
+        thread.id.clone(),
+        thread.name.clone()?,
+        Some(thread.preview.clone()),
+    )
 }
 
 fn build_prompt_text(
@@ -346,6 +393,22 @@ async fn handle_server_notification(
                     .await;
             }
         }
+        "thread/name/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value::<ThreadNameUpdatedNotification>(params)
+                && let Some(thread_name) = p.thread_name
+                && let Some(envelope) = make_source_session_title_envelope(
+                    session_id,
+                    source,
+                    turn_id,
+                    p.thread_id,
+                    thread_name,
+                    None,
+                )
+            {
+                let _ = tx.send(Ok(envelope)).await;
+            }
+        }
         "context/compacted" => {
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
@@ -401,6 +464,7 @@ impl AgentConnector for CodexBridgeConnector {
             supports_variants: true,
             supports_model_override: true,
             supports_permission_policy: true,
+            supports_source_session_title: true,
         }
     }
 
@@ -679,26 +743,39 @@ impl AgentConnector for CodexBridgeConnector {
 
             let thread_start =
                 build_thread_start_params(&codex_config, &context.session.working_directory);
-            let thread_id = if let Some(follow_up_session_id) = follow_up_session_id {
-                let fork_request = ClientRequest::ThreadFork {
-                    request_id: next_request_id(&request_counter),
-                    params: build_thread_fork_params(
-                        follow_up_session_id.to_string(),
-                        &thread_start,
-                    ),
+            let (thread_id, source_title_envelope) =
+                if let Some(follow_up_session_id) = follow_up_session_id {
+                    let fork_request = ClientRequest::ThreadFork {
+                        request_id: next_request_id(&request_counter),
+                        params: build_thread_fork_params(
+                            follow_up_session_id.to_string(),
+                            &thread_start,
+                        ),
+                    };
+                    let response: ThreadForkResponse =
+                        send_rpc_request(&out_tx, &pending, fork_request).await?;
+                    let source_title_envelope = make_thread_source_title_envelope(
+                        session_id,
+                        &source,
+                        &turn_id,
+                        &response.thread,
+                    );
+                    (response.thread.id, source_title_envelope)
+                } else {
+                    let start_request = ClientRequest::ThreadStart {
+                        request_id: next_request_id(&request_counter),
+                        params: thread_start,
+                    };
+                    let response: ThreadStartResponse =
+                        send_rpc_request(&out_tx, &pending, start_request).await?;
+                    let source_title_envelope = make_thread_source_title_envelope(
+                        session_id,
+                        &source,
+                        &turn_id,
+                        &response.thread,
+                    );
+                    (response.thread.id, source_title_envelope)
                 };
-                let response: ThreadForkResponse =
-                    send_rpc_request(&out_tx, &pending, fork_request).await?;
-                response.thread.id
-            } else {
-                let start_request = ClientRequest::ThreadStart {
-                    request_id: next_request_id(&request_counter),
-                    params: thread_start,
-                };
-                let response: ThreadStartResponse =
-                    send_rpc_request(&out_tx, &pending, start_request).await?;
-                response.thread.id
-            };
 
             let _ = tx
                 .send(Ok(make_envelope(
@@ -710,6 +787,9 @@ impl AgentConnector for CodexBridgeConnector {
                     &turn_id,
                 )))
                 .await;
+            if let Some(envelope) = source_title_envelope {
+                let _ = tx.send(Ok(envelope)).await;
+            }
 
             let turn_start_request = ClientRequest::TurnStart {
                 request_id: next_request_id(&request_counter),
@@ -763,5 +843,55 @@ impl AgentConnector for CodexBridgeConnector {
         Err(ConnectorError::Runtime(
             "当前 Codex bridge 尚未接入正式审批恢复链路".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn thread_name_updated_maps_to_source_session_title_event() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = SourceInfo {
+            connector_id: "codex-bridge".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("CODEX".to_string()),
+        };
+
+        handle_server_notification(
+            JSONRPCNotification {
+                method: "thread/name/updated".to_string(),
+                params: Some(json!({
+                    "threadId": "thread-1",
+                    "threadName": "Codex Title",
+                })),
+            },
+            "sess-1",
+            &tx,
+            &source,
+            "turn-1",
+        )
+        .await;
+
+        let envelope = rx
+            .recv()
+            .await
+            .expect("notification should emit an event")
+            .expect("event should be ok");
+        match envelope.event {
+            BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+                executor_session_id,
+                title,
+                preview,
+                source,
+            }) => {
+                assert_eq!(executor_session_id.as_deref(), Some("thread-1"));
+                assert_eq!(title, "Codex Title");
+                assert_eq!(preview, None);
+                assert_eq!(source, CODEX_SOURCE_TITLE);
+            }
+            event => panic!("expected source title event, got {event:?}"),
+        }
     }
 }

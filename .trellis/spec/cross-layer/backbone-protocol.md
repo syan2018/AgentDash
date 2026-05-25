@@ -54,6 +54,8 @@ pub enum BackboneEvent {
 
 Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Platform event 必须保持结构化 payload，不把业务语义塞入自由文本。
 
+来源执行器提供会话标题时使用 `PlatformEvent::SourceSessionTitleUpdated`，字段为 `executor_session_id`、`title`、`preview`、`source`。应用层负责把该事件投影为统一的 `session_meta_updated`，并按 `user > source > auto` 的标题来源优先级写入 `SessionMeta`。
+
 ## TypeScript Binding
 
 生成命令：

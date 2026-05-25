@@ -44,6 +44,7 @@ function makeSession(overrides: Partial<ProjectSessionEntry> = {}): ProjectSessi
     agent_key: null,
     agent_display_name: null,
     parent_session_id: null,
+    parent_relation_kind: null,
     ...overrides,
   };
 }

@@ -483,6 +483,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(acp_sessions::get_session_context_projection),
         )
         .route(
+            "/sessions/{id}/lineage",
+            get(acp_sessions::get_session_lineage),
+        )
+        .route("/sessions/{id}/fork", post(acp_sessions::fork_session))
+        .route(
+            "/sessions/{id}/projection/rollback",
+            post(acp_sessions::rollback_session_projection),
+        )
+        .route(
             "/sessions/{id}/context/audit",
             get(acp_sessions::get_session_context_audit),
         )

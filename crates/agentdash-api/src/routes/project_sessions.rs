@@ -134,6 +134,8 @@ pub struct ProjectSessionEntry {
 
     /// 非 null 表示这是 Companion 子会话
     pub parent_session_id: Option<String>,
+    /// 父子关系类型：fork / companion / spawned_agent / rollback_branch
+    pub parent_relation_kind: Option<String>,
 }
 
 /// GET /api/projects/{project_id}/sessions 查询参数
@@ -229,6 +231,21 @@ pub async fn list_project_sessions(
         .inspect_execution_states_bulk(&session_ids)
         .await
         .map_err(|e| ApiError::Internal(format!("批量读取 session 执行状态失败: {e}")))?;
+    let lineage_pairs = futures::future::join_all(session_ids.iter().map(|session_id| {
+        let session_id = session_id.clone();
+        let branching = state.services.session_branching.clone();
+        async move {
+            let lineage = branching
+                .lineage_view(&session_id)
+                .await
+                .ok()
+                .and_then(|view| view.lineage);
+            (session_id, lineage)
+        }
+    }))
+    .await;
+    let lineage_map: HashMap<String, Option<agentdash_application::session::SessionLineageRecord>> =
+        lineage_pairs.into_iter().collect();
 
     // ── Step 4: 组装结果 ─────────────────────────────────────────────────────
     let limit = query.limit.unwrap_or(50).clamp(1, 500) as usize;
@@ -254,10 +271,23 @@ pub async fn list_project_sessions(
                 return None;
             }
 
-            let parent_session_id = meta
+            let lineage = lineage_map
+                .get(&pb.binding.session_id)
+                .and_then(|record| record.as_ref());
+            let companion_parent_session_id = meta
                 .companion_context
                 .as_ref()
                 .map(|c| c.parent_session_id.clone());
+            let (parent_session_id, parent_relation_kind) = if let Some(lineage) = lineage {
+                (
+                    Some(lineage.parent_session_id.clone()),
+                    Some(lineage.relation_kind.as_str().to_string()),
+                )
+            } else if let Some(parent_session_id) = companion_parent_session_id {
+                (Some(parent_session_id), Some("companion".to_string()))
+            } else {
+                (None, None)
+            };
 
             let (agent_key, agent_display_name) =
                 resolve_agent_info(&pb.binding, meta, &agent_display_map);
@@ -277,6 +307,7 @@ pub async fn list_project_sessions(
                 agent_key,
                 agent_display_name,
                 parent_session_id,
+                parent_relation_kind,
             })
         })
         .collect();
@@ -401,6 +432,7 @@ mod list_project_sessions_tests {
             agent_key: Some("claude-code".to_string()),
             agent_display_name: None,
             parent_session_id: None,
+            parent_relation_kind: None,
         })
         .expect("serialize ProjectSessionEntry");
 
@@ -410,6 +442,7 @@ mod list_project_sessions_tests {
         assert!(value.get("story_id").is_some());
         assert!(value.get("agent_key").is_some());
         assert!(value.get("parent_session_id").is_some());
+        assert!(value.get("parent_relation_kind").is_some());
         // 确保没有 camelCase 字段
         assert!(value.get("sessionId").is_none());
         assert!(value.get("executionStatus").is_none());
@@ -417,6 +450,7 @@ mod list_project_sessions_tests {
         assert!(value.get("storyId").is_none());
         assert!(value.get("agentKey").is_none());
         assert!(value.get("parentSessionId").is_none());
+        assert!(value.get("parentRelationKind").is_none());
     }
 
     #[test]

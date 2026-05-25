@@ -9,10 +9,13 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
-    SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
-    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
-    SessionProjectionViewResponse,
+    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
+    SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
+    SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+    SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
+    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
@@ -68,6 +71,16 @@ fn main() {
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
             export_all::<SessionProjectionSegmentViewResponse>(dir);
             export_all::<SessionProjectionViewResponse>(dir);
+            export_all::<SessionLineageRelationKindDto>(dir);
+            export_all::<SessionLineageStatusDto>(dir);
+            export_all::<SessionMessageRefDto>(dir);
+            export_all::<CreateSessionForkRequest>(dir);
+            export_all::<RollbackSessionProjectionRequest>(dir);
+            export_all::<SessionLineageRecordResponse>(dir);
+            export_all::<SessionForkChildSessionResponse>(dir);
+            export_all::<SessionForkResponse>(dir);
+            export_all::<SessionLineageViewResponse>(dir);
+            export_all::<SessionProjectionRollbackResponse>(dir);
         },
     );
 

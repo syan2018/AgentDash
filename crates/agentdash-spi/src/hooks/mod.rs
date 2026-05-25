@@ -355,6 +355,22 @@ pub enum ContextFrameSection {
         tokens_before: u64,
         messages_compacted: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        compaction_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projection_version: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strategy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_start_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_end_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_kept_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compacted_until_ref: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,

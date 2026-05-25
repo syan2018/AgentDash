@@ -2372,9 +2372,6 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
         .expect("inject user notification");
     }
 
-    commit_test_compaction_projection(&hub, &session.id, "## 历史摘要\n- 已完成旧分析", 42_000)
-        .await;
-
     hub.inject_notification(
         &session.id,
         inject_compaction_envelope(
@@ -2413,6 +2410,26 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
         compaction_frame["sections"][0]["messages_compacted"],
         serde_json::json!(2)
     );
+    assert_eq!(
+        compaction_frame["sections"][0]["projection_version"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        compaction_frame["sections"][0]["source_end_event_seq"],
+        serde_json::json!(2)
+    );
+
+    let compactions = hub
+        .persistence
+        .list_compactions(&session.id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+        .await
+        .expect("compactions should load");
+    assert_eq!(compactions.len(), 1);
+    assert_eq!(
+        compactions[0].status,
+        SessionCompactionStatus::ProjectionCommitted
+    );
+    assert_eq!(compactions[0].source_end_event_seq, Some(2));
 
     let transcript = hub
         .build_projected_transcript(&session.id)

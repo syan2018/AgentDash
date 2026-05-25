@@ -510,6 +510,7 @@ pub(super) fn convert_event_to_envelopes(
                 tokens_before,
                 messages_compacted,
                 compacted_until_ref,
+                timestamp,
                 ..
             }) = messages.first()
             else {
@@ -517,14 +518,6 @@ pub(super) fn convert_event_to_envelopes(
             };
 
             vec![
-                wrap(
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: make_context_compaction_item(item_id),
-                        thread_id: session_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                    }),
-                    *entry_index,
-                ),
                 wrap(
                     BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
                         key: "context_compacted".to_string(),
@@ -535,7 +528,16 @@ pub(super) fn convert_event_to_envelopes(
                             "messages_compacted": messages_compacted,
                             "newly_compacted_messages": newly_compacted_messages,
                             "compacted_until_ref": compacted_until_ref,
+                            "timestamp_ms": timestamp,
                         }),
+                    }),
+                    *entry_index,
+                ),
+                wrap(
+                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                        item: make_context_compaction_item(item_id),
+                        thread_id: session_id.to_string(),
+                        turn_id: turn_id.to_string(),
                     }),
                     *entry_index,
                 ),

@@ -426,16 +426,6 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
 
     assert_eq!(envelopes.len(), 2);
     match &envelopes[0].event {
-        BackboneEvent::ItemCompleted(completed) => {
-            assert!(matches!(
-                &completed.item,
-                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
-                    if id == "compact-1"
-            ));
-        }
-        other => panic!("unexpected backbone event: {other:?}"),
-    }
-    match &envelopes[1].event {
         BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
             key,
             value,
@@ -444,6 +434,16 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
             assert_eq!(value["lifecycle_item_id"], "compact-1");
             assert_eq!(value["summary"], "summary body");
             assert_eq!(value["newly_compacted_messages"], 3);
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
+        BackboneEvent::ItemCompleted(completed) => {
+            assert!(matches!(
+                &completed.item,
+                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
+                    if id == "compact-1"
+            ));
         }
         other => panic!("unexpected backbone event: {other:?}"),
     }

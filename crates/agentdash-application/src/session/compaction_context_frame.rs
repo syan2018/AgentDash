@@ -7,6 +7,14 @@ struct CompactionSummaryFrame {
     summary: String,
     tokens_before: u64,
     messages_compacted: u32,
+    compaction_id: Option<String>,
+    projection_version: Option<u64>,
+    strategy: Option<String>,
+    trigger: Option<String>,
+    phase: Option<String>,
+    source_start_event_seq: Option<u64>,
+    source_end_event_seq: Option<u64>,
+    first_kept_event_seq: Option<u64>,
     compacted_until_ref: Option<serde_json::Value>,
     timestamp_ms: Option<u64>,
 }
@@ -29,6 +37,22 @@ impl CompactionSummaryFrame {
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or_default(),
             messages_compacted,
+            compaction_id: string_field(value, "compaction_id"),
+            projection_version: value
+                .get("projection_version")
+                .and_then(serde_json::Value::as_u64),
+            strategy: string_field(value, "strategy"),
+            trigger: string_field(value, "trigger"),
+            phase: string_field(value, "phase"),
+            source_start_event_seq: value
+                .get("source_start_event_seq")
+                .and_then(serde_json::Value::as_u64),
+            source_end_event_seq: value
+                .get("source_end_event_seq")
+                .and_then(serde_json::Value::as_u64),
+            first_kept_event_seq: value
+                .get("first_kept_event_seq")
+                .and_then(serde_json::Value::as_u64),
             compacted_until_ref: value.get("compacted_until_ref").cloned(),
             timestamp_ms: value
                 .get("timestamp_ms")
@@ -68,6 +92,14 @@ impl ContextFramePayload for CompactionSummaryFrame {
             summary: self.summary.clone(),
             tokens_before: self.tokens_before,
             messages_compacted: self.messages_compacted,
+            compaction_id: self.compaction_id.clone(),
+            projection_version: self.projection_version,
+            strategy: self.strategy.clone(),
+            trigger: self.trigger.clone(),
+            phase: self.phase.clone(),
+            source_start_event_seq: self.source_start_event_seq,
+            source_end_event_seq: self.source_end_event_seq,
+            first_kept_event_seq: self.first_kept_event_seq,
             compacted_until_ref: self.compacted_until_ref.clone(),
             timestamp_ms: self.timestamp_ms,
         }]
@@ -82,6 +114,30 @@ impl ContextFramePayload for CompactionSummaryFrame {
         if let Some(timestamp_ms) = self.timestamp_ms {
             lines.push(format!("timestamp_ms: {timestamp_ms}"));
         }
+        if let Some(compaction_id) = self.compaction_id.as_ref() {
+            lines.push(format!("compaction_id: {compaction_id}"));
+        }
+        if let Some(projection_version) = self.projection_version {
+            lines.push(format!("projection_version: {projection_version}"));
+        }
+        if let Some(strategy) = self.strategy.as_ref() {
+            lines.push(format!("strategy: {strategy}"));
+        }
+        if let Some(trigger) = self.trigger.as_ref() {
+            lines.push(format!("trigger: {trigger}"));
+        }
+        if let Some(phase) = self.phase.as_ref() {
+            lines.push(format!("phase: {phase}"));
+        }
+        if let Some(source_start_event_seq) = self.source_start_event_seq {
+            lines.push(format!("source_start_event_seq: {source_start_event_seq}"));
+        }
+        if let Some(source_end_event_seq) = self.source_end_event_seq {
+            lines.push(format!("source_end_event_seq: {source_end_event_seq}"));
+        }
+        if let Some(first_kept_event_seq) = self.first_kept_event_seq {
+            lines.push(format!("first_kept_event_seq: {first_kept_event_seq}"));
+        }
         if let Some(compacted_until_ref) = self.compacted_until_ref.as_ref() {
             lines.push(format!("compacted_until_ref: {}", compacted_until_ref));
         }
@@ -94,6 +150,14 @@ impl ContextFramePayload for CompactionSummaryFrame {
 pub(crate) fn build_compaction_context_frame(value: &serde_json::Value) -> Option<ContextFrame> {
     let metadata = CompactionSummaryFrame::from_event_value(value)?;
     Some(context_frame::build_context_frame(&metadata))
+}
+
+fn string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToString::to_string)
 }
 
 #[cfg(test)]

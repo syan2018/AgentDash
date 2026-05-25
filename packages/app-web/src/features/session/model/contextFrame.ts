@@ -167,6 +167,14 @@ export interface CompactionSummarySection {
   summary: string;
   tokens_before: number;
   messages_compacted: number;
+  compaction_id?: string;
+  projection_version?: number;
+  strategy?: string;
+  trigger?: string;
+  phase?: string;
+  source_start_event_seq?: number;
+  source_end_event_seq?: number;
+  first_kept_event_seq?: number;
   compacted_until_ref?: unknown;
   timestamp_ms?: number;
 }
@@ -346,6 +354,14 @@ function parseSection(value: unknown): ContextFrameSection | null {
       summary: readString(value.summary) ?? "",
       tokens_before: readNumber(value.tokens_before) ?? 0,
       messages_compacted: readNumber(value.messages_compacted) ?? 0,
+      compaction_id: readString(value.compaction_id) ?? undefined,
+      projection_version: readNumber(value.projection_version) ?? undefined,
+      strategy: readString(value.strategy) ?? undefined,
+      trigger: readString(value.trigger) ?? undefined,
+      phase: readString(value.phase) ?? undefined,
+      source_start_event_seq: readNumber(value.source_start_event_seq) ?? undefined,
+      source_end_event_seq: readNumber(value.source_end_event_seq) ?? undefined,
+      first_kept_event_seq: readNumber(value.first_kept_event_seq) ?? undefined,
       compacted_until_ref: value.compacted_until_ref,
       timestamp_ms: readNumber(value.timestamp_ms) ?? undefined,
     };

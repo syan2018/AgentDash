@@ -1,198 +1,90 @@
-# Session Tree & Branching
+# 会话分支与状态投影管理
 
-> 状态：planning（大型架构任务）
-> 前置：`04-08-context-compaction`（已完成）、`04-09-agentmessage-identity-projection`（P1/P2 已完成）
-> 参考：`references/pi-mono/packages/coding-agent/src/core/session-manager.ts`
+## Goal
 
-## 背景
+在上下文压缩 checkpoint 基建稳定后，为 AgentDash 平台自有 Agent runtime 建立完整的 session branch / fork / rollback 能力。新系统需要把会话树、模型可见投影、UI 审计历史和业务 owner binding 分开建模，使用户可以从稳定分叉点创建新会话分支、回退模型可见状态，并在前端理解当前会话与其它分支的关系。
 
-当前 session 的消息历史是线性的。一旦做出某个决策（如 agent 走了错误的路径），用户只能继续向前或从头开始，无法回溯到分叉点重试。
+## Parent And Dependency
 
-pi-coding-agent 实现了树形 session 结构：
-- 每条消息/工具调用/模型变更都是一个有 id 的树节点
-- 用户可以从任意节点"fork"出一个新分支
-- 可以在不同分支间切换导航
-- compaction 也以分支为粒度操作
+本任务是 `.trellis/tasks/05-25-context-compaction-architecture-enhancement` 的后续子任务。
 
-## 已有基建（来自 identity-projection 任务）
+依赖父任务先交付以下最小基建：
 
-`04-09-agentmessage-identity-projection` P1/P2 已落地的基础设施可直接复用：
+- `session_checkpoints`：可查询的模型恢复 checkpoint，含 `created_event_seq`、`covered_until_event_seq`、`covered_until_ref`、`base_checkpoint_id`、`lineage_node_id`、`status`、`replacement_projection_json`。
+- `session_lineage`：表达 parent/child、relation kind、fork point、edge status 的会话拓扑索引。
+- active projection cursor：表达当前模型可见 head，rollback 后 restore 不会越过 active head。
+- continuation / restore 路径支持 `active projection cursor -> latest valid checkpoint -> suffix`。
 
-| 类型 | 位置 | 与 branching 的关系 |
-|------|------|-------------------|
-| `MessageRef { turn_id, entry_index }` | `agentdash-agent-types/src/message.rs` | **fork 锚点** — fork 操作可引用 `MessageRef` 指定分叉点，无需独立 entry ID |
-| `ProjectedTranscript` / `ProjectedEntry` | `agentdash-agent-types/src/projection.rs` | **分支路径投影** — `path_to(entry_id)` 的输出可直接复用 `ProjectedTranscript` |
-| `ProjectionKind` | 同上 | 可扩展 `BranchSummary` variant，标记分支摘要消息 |
-| `CompactionSummary.compacted_until_ref` | `message.rs` | **分支感知压缩** — compaction 按 ref 而非计数切割，分支间不串扰 |
-| `build_projected_transcript_from_events` | `continuation.rs` | **分支重建** — 从事件流重建某条分支的投影 transcript |
+本任务不重新设计压缩策略；它消费父任务提供的 checkpoint 和 projection 契约。
 
-### 关键设计衔接
+## User Value
 
-1. **SessionEntry.id vs MessageRef**：原 PRD 设计了独立的 `SessionEntry.id: String (UUID)`。可以考虑复用 `MessageRef` 作为节点引用，避免两套 ID 体系。`MessageRef { turn_id, entry_index }` 已在 persistence 层天然稳定，且 continuation.rs 已为每条恢复消息分配 ref。
+- 用户可以从某个历史状态继续探索替代路径，而不需要复制整段对话或从头重开。
+- 用户可以把模型可见状态回退到某个明确边界，同时保留完整审计历史和 UI feed。
+- 分支关系、companion 子会话和业务 owner binding 不再混在一个字段里，后续能稳定支持 tree UI、branch 列表、fork 来源展示和分支状态管理。
+- 长会话压缩后的 fork / rollback 能基于 checkpoint 恢复，而不是重新 replay 全量历史或复制大段事件。
 
-2. **BranchSummaryMessage → ProjectionKind 扩展**：原 PRD 的 `BranchSummaryMessage` 可以作为 `AgentMessage` 的新 variant（类似 `CompactionSummary`），同时在 `ProjectionKind` 中增加 `BranchSummary` 变体标记其投影来源。
+## Confirmed Facts
 
-3. **P3 runtime 携带 ref**：branching 的 `fork` / `switch_to` 操作需要 runtime 内部的消息有稳定引用。这正是 identity-projection P3 的驱动场景。建议 branching 实施时优先推进 P3（`AgentState.messages` 升级为 `Vec<ProjectedEntry>`），使 fork 点定位和分支路径重建能直接在 runtime 完成。
+- AgentDash 已有 `sessions`、`session_events`、`SessionMeta.last_event_seq` 和 session repository abstraction。
+- 当前前端/接口里已有 `parent_session_id` 概念，但主要来自 `companion_context`，它表达 companion 父子关系，不足以承载通用 session branch lineage。
+- `MessageRef { turn_id, entry_index }` 和 `ProjectedTranscript` 已存在，用于 compaction cut boundary、restore 对齐和 branch lineage。
+- Codex 的 branch/fork/rollback 以 rollout JSONL replay 为核心；AgentDash 采用数据库仓储，更适合用 event log、checkpoint table、lineage table 和 projection head 表达同类语义。
+- 父任务决定 Codex Bridge 保留自身内部压缩和 session state；本任务只管理平台自有 Agent runtime 的 session branch。
 
-## 核心设计
+## Requirements
 
-### 1. Session Entry（树节点）
+### R1. 分支拓扑必须进入独立 lineage 模型
 
-```rust
-/// 树节点 — 每条消息/事件对应一个节点
-pub struct SessionEntry {
-    /// 节点引用 — 复用 MessageRef 而非独立 UUID
-    pub ref_id: MessageRef,
-    /// 父节点（根节点为 None）
-    pub parent_ref: Option<MessageRef>,
-    pub timestamp: i64,
-    pub entry_type: SessionEntryType,
-    /// 节点对应的投影消息
-    pub projected: ProjectedEntry,
-}
+- `session_lineage` 必须表达 `parent_session_id`、`child_session_id`、`relation_kind`、`fork_point_event_seq`、`fork_point_ref`、`fork_point_checkpoint_id`、`status`。
+- `relation_kind` 至少覆盖 `fork`、`companion`、`spawned_agent`，并预留 rollback branch / future branch 类型。
+- 同一个 child session 只能有一个 primary parent，便于 tree UI 和恢复基线推导。
+- `session_lineage` 不替代 `session_bindings`；业务归属仍由 project/story/task owner binding 表达。
 
-pub enum SessionEntryType {
-    UserMessage,
-    AssistantMessage,
-    ToolCall,
-    ToolResult,
-    ModelChange,
-    CompactionSummary,
-    BranchSummary,
-}
-```
+### R2. fork 必须以稳定 projection 为基线
 
-### 2. Session Tree 操作
+- fork 创建 child session 时必须记录 fork point。
+- fork point 可以是 `event_seq`、`MessageRef`、或 checkpoint id；实现必须能恢复出 fork 时的 parent projection。
+- 推荐默认在 fork 时 materialize child initial checkpoint，把 parent fork projection 固化到 child session，换取 child 独立恢复能力。
+- fork 后 parent 的继续压缩、rollback、archive 不应改变 child 的初始可见状态。
 
-```rust
-pub trait SessionTree {
-    /// 在指定节点追加子节点（正常对话流）
-    fn append(&mut self, parent_ref: &MessageRef, entry: SessionEntry) -> MessageRef;
+### R3. rollback 必须保留审计历史
 
-    /// 从指定节点 fork（创建同级新分支）
-    fn fork(&mut self, from_ref: &MessageRef) -> ForkResult;
+- rollback 不删除 `session_events`。
+- rollback 写入结构化 platform event，并更新 active projection cursor。
+- 模型 restore、continuation、executor restore 使用 active projection cursor 判断当前模型可见历史。
+- UI feed 可以展示 rollback 发生过，但不会把 rollback 后的旧 checkpoint 当成 active restore source。
 
-    /// 获取从根到指定节点的完整路径（用于重建 AgentContext）
-    fn path_to(&self, ref_id: &MessageRef) -> ProjectedTranscript;
+### R4. branch-aware restore 必须可测试
 
-    /// 切换当前激活分支
-    fn switch_to(&mut self, ref_id: &MessageRef) -> Result<(), SessionTreeError>;
+- 从 root session fork 出 child 后，child restore 使用 fork point 之前的 projection 和 child suffix。
+- parent fork 后继续产生事件，不影响 child restore。
+- rollback 到 checkpoint 之前后，后续 checkpoint 不再被选为 active checkpoint。
+- 多级分支按 lineage 查询能够稳定返回 parent/child 路径。
 
-    /// 获取当前激活节点
-    fn current_head(&self) -> &SessionEntry;
-}
+### R5. 前端展示要从仓储契约消费数据
 
-pub struct ForkResult {
-    pub new_branch_root: MessageRef,
-    pub summary: Option<String>,
-}
-```
+- 前端 session list / tree 不从 `companion_context.parent_session_id` 推断通用 branch。
+- API 返回明确 lineage relation、status、fork point 和 branch display metadata。
+- 初版 UI 可以先做 branch list / parent-child grouping；完整树形可视化可作为后续增强。
 
-### 3. BranchSummaryMessage
+## Acceptance Criteria
 
-当导航切换到历史节点时，注入分支摘要让模型了解"这条分支做过什么"：
+- [ ] 新增或扩展 repository 能查询 session lineage 的 direct children、ancestors、descendants，并保持稳定排序。
+- [ ] fork API 能创建 child session、记录 lineage edge、固化 fork projection，并返回 child session meta。
+- [ ] rollback API 能追加 rollback event、更新 active projection cursor，并让 restore 使用 rollback 后的模型可见 head。
+- [ ] continuation / executor restore 在 branch 和 rollback 场景下通过测试。
+- [ ] API / 前端消费 `session_lineage`，不把 companion parent 误当作通用 branch。
+- [ ] PostgreSQL / SQLite migration 同步，相关 Rust repository tests 通过。
+- [ ] 前端至少覆盖 branch 列表或 parent-child grouping 的单元测试。
 
-```rust
-// AgentMessage 新增 variant
-BranchSummary {
-    summary: String,
-    from_ref: MessageRef,       // 分支起点
-    branch_label: Option<String>,
-    timestamp: Option<u64>,
-}
-```
+## Out Of Scope
 
-对应 `ProjectionKind` 扩展：
+- 不改变父任务的压缩策略选择、token budget cut 或 summarizer 实现。
+- 不接管 Codex Bridge 内部 session tree / rollout / compaction 逻辑。
+- 不做旧 JSON tree 形态兼容。
+- 不在第一阶段实现复杂图形化 branch canvas；初版以可查询、可恢复、可展示为目标。
 
-```rust
-pub enum ProjectionKind {
-    Transcript,
-    CompactionSummary,
-    BranchSummary,  // 新增
-}
-```
+## Open Question
 
-### 4. 新增 HookTrigger
-
-```rust
-pub enum HookTrigger {
-    // ...已有...
-
-    /// 即将 fork，可取消，可自定义摘要
-    BeforeFork,
-
-    /// fork 完成后通知
-    AfterFork,
-
-    /// 即将导航到历史节点，可取消
-    BeforeTreeNavigation,
-
-    /// 导航完成后通知
-    AfterTreeNavigation,
-}
-```
-
-### 5. 用户触发
-
-- `/fork` slash command：从当前节点 fork 出新分支
-- `/branches` slash command：列出所有分支
-- 前端：消息历史旁显示分支树可视化，支持点击切换
-
-### 6. 持久化
-
-Session tree 序列化到 session 存储，结构为 JSON 树。每次 append/fork/switch 操作后持久化。
-
----
-
-## 实施路径（建议）
-
-### Phase A：P3 Runtime 携带 ref
-
-- `AgentState.messages` 从 `Vec<AgentMessage>` 升级为 `Vec<ProjectedEntry>`
-- `AgentContext.messages` 同步升级
-- Bridge 边界做 `map(|e| &e.message)` 降级
-- Compaction 引擎改为操作 `&[ProjectedEntry]`，原生产出 `compacted_until_ref`
-- 影响文件：`agent.rs`、`agent_loop.rs`、`context.rs`、`decisions.rs`、`compaction/mod.rs`、`rig_bridge.rs`
-
-### Phase B：树结构 + fork/switch
-
-- 定义 `SessionEntry`、`SessionTree` trait
-- 实现内存树结构
-- `path_to` 返回 `ProjectedTranscript`
-- fork 和 switch 操作
-
-### Phase C：持久化 + 事件集成
-
-- Session tree 持久化到 DB
-- fork/switch 产出 `SessionNotification` 事件
-- Hook trigger 集成
-
-### Phase D：前端 UI
-
-- 分支树可视化
-- fork/switch 交互
-
-## 前置依赖
-
-- ~~`04-08-context-compaction`~~：已完成
-- ~~`04-09-agentmessage-identity-projection` P1/P2~~：已完成
-- `04-09-agentmessage-identity-projection` P3：runtime 携带 ref（建议作为 Phase A）
-
-## 规模评估
-
-**XL 级任务**。涉及：
-1. ~~消息身份模型~~ → 已有 `MessageRef` + `ProjectedTranscript`
-2. Runtime 消息升级（Phase A，中等规模）
-3. 树结构数据模型和操作（Phase B，中等规模）
-4. 持久化层适配（Phase C，中等规模）
-5. 前端分支树 UI（Phase D，大规模）
-
-建议按 Phase A → B → C → D 顺序实施，每个 Phase 独立可交付。
-
-## 待讨论
-
-- [ ] 是否支持分支命名？（用户为每个 fork 起名，便于管理）
-- [ ] 分支历史的 retention policy？（无限保留 vs 自动清理 N 天前的死分支）
-- [ ] 前端 UI 是否做树形可视化，还是简化为"分支列表"？
-- [ ] fork 时是否自动生成分支摘要（需额外 LLM 调用），还是懒加载？
-- [ ] `SessionEntry.ref_id` 直接复用 `MessageRef` 还是包装一层 `EntryId` 预留扩展空间？
+- fork 时是否总是 materialize child initial checkpoint？推荐答案是“是”：写入更重，但 child session 可以脱离 parent retention 独立恢复。

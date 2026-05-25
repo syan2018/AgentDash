@@ -1,8 +1,8 @@
 {
   "id": "session-tree-branching",
   "name": "session-tree-branching",
-  "title": "Session Tree & Branching",
-  "description": "参考 pi-coding-agent session 树系统，将线性消息历史升级为带 id+parent 的树形结构，支持 Fork 和历史节点回溯",
+  "title": "会话分支与状态投影管理",
+  "description": "基于 session_checkpoints、session_lineage 和 active projection cursor 建立平台自有 Agent runtime 的 fork / rollback / branch restore 能力",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -37,5 +37,6 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": "大型架构任务，建议排期前先做 context-compaction。参考来源：references/pi-mono/packages/coding-agent/src/core/session-manager.ts, agent-session.ts"
+  "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 交付 branch-aware checkpoint、lineage 和 projection head 基建。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",
+  "parent": "05-25-context-compaction-architecture-enhancement"
 }

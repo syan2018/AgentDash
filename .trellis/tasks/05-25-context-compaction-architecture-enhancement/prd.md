@@ -1,106 +1,211 @@
-# 上下文压缩系统架构增强
+# 上下文压缩系统实践 PRD
 
 ## Goal
 
-将当前 AgentDash 上下文压缩从“触发后生成摘要并替换内存消息”的最小链路，增强为可审计、可恢复、可扩展的上下文管理系统。新系统需要吸收 Codex checkpoint 恢复模型、Claude Code 分层压缩与失败保护的优点，同时保持 AgentDash 既有 Session / Bundle / Hook / Backbone 主线清晰。
+将 AgentDash 的上下文压缩升级为一套 **对齐 Codex app protocol、适配云端协作与 PostgreSQL 持久化的上下文 checkpoint / projection 基础设施**。
+
+本任务不是给现有压缩链路打补丁，而是确立 AgentDash 后续长会话、resume、branch、rollback、handoff、多端同步和团队协作的模型上下文基准。
+
+核心目标：
+
+- 运行时协议以 Codex app protocol 的 compaction lifecycle 为基准。
+- 存储与恢复以 AgentDash 自有的 PostgreSQL durable log、checkpoint、projection 为基准。
+- 模型输入永远由后端 ContextProjector / ContextMaterializer 从 durable facts 构建。
+- UI timeline、ContextFrame、agent input、audit view 可以共享事实源，但使用不同 projection。
+
+## Product Intent
+
+AgentDash 原则上沿用 Codex app protocol，因此压缩流程的产品语义需要优先向 Codex 对齐：
+
+- compact 是一个可观察的 lifecycle，而不是静默裁剪。
+- UI / SDK / runtime 应能感知 `contextCompaction` started / completed。
+- 压缩结果应形成可恢复 checkpoint，后续 resume 以 checkpoint 为基线重放 suffix。
+- manual、auto、pre-turn、mid-turn、model downshift 等阶段语义应进入统一模型。
+
+但 AgentDash 不是本地单人 agent。它是云端协作产品，仓储依赖 PostgreSQL，面向团队共同使用开发。因此实现形态需要比 Codex 的本地 rollout 更结构化：
+
+- `session_events` 保存真实发生过的事实。
+- checkpoint / compaction record 保存可恢复的模型上下文基线。
+- projection segments 保存 ContextProjector 产出的模型视图。
+- branch / lineage / projection head 保存团队协作下的模型可见状态。
+
+这两层判断必须同时成立：**协议基准对齐 Codex，实现基准云端化、数据库化、团队化。**
 
 ## User Value
 
-- 长会话在接近模型上下文窗口时能继续运行，不因一次超窗或摘要失败丢失关键历史。
-- 压缩后的继续执行、冷启动恢复、fork / rollback / continuation 都能基于稳定 checkpoint，而不是依赖脆弱的消息计数推断。
-- 后续可以继续引入 microcompact、context collapse、provider remote compact、不同模型窗口策略等能力，而不需要重写 agent loop。
-- 用户和开发者都能看到压缩发生了什么：压缩原因、覆盖边界、摘要、保留上下文和失败原因都有结构化事件与 ContextFrame。
+- 长会话可以持续运行，压缩不会让用户失去对历史、决策、工具结果和当前状态的信任。
+- 用户恢复会话、跨设备接手、从分支继续、回退模型可见状态时，看到的是稳定 projection，而不是临时拼出来的消息数组。
+- 团队成员可以审计压缩覆盖了哪些历史、生成了什么摘要、保留了哪些尾部上下文、模型实际看到了什么。
+- 后续引入 tool result pruning、provider-native compaction、session memory、branch/handoff summary 时，不需要重写 agent loop 和 session 仓储。
 
 ## Confirmed Facts
 
-- 当前核心压缩入口在 `crates/agentdash-agent/src/agent_loop/streaming.rs`，每次 provider request 前调用 `AgentRuntimeDelegate::evaluate_compaction`，随后执行 `agentdash-agent/src/compaction/mod.rs::execute_compaction`。
-- 当前触发策略由 `crates/agentdash-application/scripts/hook-presets/context_compaction_trigger.rhai` 提供，主要依据最近 assistant usage 的 `last_input_tokens` 与 `context_window - reserve_tokens`。
-- 当前压缩 cut 以 `keep_last_n` 消息数为主，`reserve_tokens` 只进入触发统计，没有实际控制压缩后 token budget。
-- 当前摘要生成空结果时会写入占位文本并继续完成压缩，存在“压缩成功但历史细节丢失”的风险。
-- 当前 `context_compacted` 事件会在 application eventing 落库前补 `compacted_until_ref`，并生成 `ContextFrame(kind="compaction_summary")`；恢复投影在 `session/continuation.rs` 使用最新 checkpoint 生成 `CompactionSummary + suffix`。
-- Session spec 要求 `SessionContextBundle` 是业务上下文主数据面，Hook 输出分 Bundle 改写、per-turn steering、控制流副作用三类；压缩设计不能把静态上下文重复塞进任意 user message。
-- Codex Bridge 自身有内部上下文压缩和恢复策略，AgentDash 平台压缩不应接管它的私有 transcript；平台侧只维护自己拥有的 Agent runtime 历史、事件和可视化契约。
-- Codex 参考实现强调 pre-turn / mid-turn / model downshift 压缩、`Total` / `BodyAfterPrefix` budget、replacement history checkpoint 和 resume replay suffix。
-- Codex 的 session tree / branch 相关逻辑以 rollout JSONL 为事实日志：fork 会读取源 rollout history 并创建新 thread；rollback 不删除历史，而是追加 `ThreadRolledBack` event 后 replay 出逻辑状态；`rollout_reconstruction` 从最新 surviving replacement-history checkpoint 开始 replay suffix。
-- Codex 的 `AgentGraphStore` 只维护 spawned thread parent/child topology：child 最多一个 parent，edge 有 `open` / `closed` 状态，children/descendants 列表要求稳定排序。
-- Claude Code 参考实现强调 snip / microcompact / context collapse / autocompact / reactive compact 分层、输出预算预留、prompt-too-long retry、失败熔断和空摘要失败不落地。
-- AgentDash 采用数据库仓储，已有 `sessions`、`session_events`、`SessionMeta.last_event_seq` 和 session repository abstraction；比 Codex 的文本 rollout 更适合用“不可变事件日志 + checkpoint 表 + lineage 索引”维护状态。
-- checkpoint 持久化形态已确认采用 `event + repository` 双写：`context_compacted` / `ContextFrame` 作为 UI 审计事实，`session_checkpoints` 作为 restore / fork / rollback 查询事实源。
+- 当前任务已有研究材料：
+  - `research/context-compaction-infrastructure.md` 对比了 Codex、Claude Code、pi-mono 的 compact 策略。
+  - `research-codex-session-tree.md` 梳理了 Codex rollout、fork、rollback、replacement history 与 AgentDash 数据库仓储的对应关系。
+- Codex 的关键启发是：
+  - `contextCompaction` 是运行时协议的一等 item lifecycle。
+  - `CompactedItem.replacement_history` 是 resume 的 canonical checkpoint。
+  - rollout reconstruction 从最新 replacement history 开始，再 replay 后续 suffix。
+- Claude Code 的关键启发是：
+  - compact 需要多层策略：microcompact、summary、reactive recovery、post cleanup。
+  - boundary / preserved segment 对恢复和 partial compact 很重要。
+- pi-mono 的关键启发是：
+  - compaction 是 append-only session tree entry。
+  - `firstKeptEntryId` 明确描述 summary 后尾部上下文从哪里开始。
+  - 模型上下文由 branch path projection 构建。
+- 当前项目已有若干基础种子：
+  - `ProjectedTranscript`、`ProjectionKind`、`MessageRef` 已存在。
+  - `ContextFrame(kind="compaction_summary")` 已进入前后端展示链路。
+  - Backbone/generated protocol 已存在 `context_compacted` / `contextCompaction` 相关类型。
+  - `session_events`、session repository abstraction、PostgreSQL / SQLite migration 体系已经存在。
+- 现有规划中的 `04-08-session-tree-branching` 是本任务的后续分支能力任务；本任务需要先把 checkpoint / projection 基线定稳。
 
 ## Requirements
 
-### R1. 压缩结果必须是可靠 checkpoint
+### R1. Codex App Protocol 是压缩 lifecycle 基准
 
-- 压缩成功后必须持久化结构化 checkpoint，至少包含摘要、覆盖边界、replacement projection 或等价可恢复数据、token 统计、触发原因、阶段与版本。
-- 冷启动 continuation / executor restore 必须优先从最新有效 checkpoint 恢复，再 replay checkpoint 之后的 suffix。
-- checkpoint 必须能表达“压缩摘要 + 保留尾部 + 当前 canonical context 重新投影”的结果，不能只依赖 `messages_compacted` 计数。
+- AgentDash 的压缩过程必须表达为 app protocol 可观察 lifecycle。
+- 成功压缩至少产生 `contextCompaction` started / completed 语义，并能映射到 Backbone / frontend feed。
+- manual compact、auto compact、pre-turn compact、mid-turn compact、model downshift compact 应共享同一事件模型。
+- 协议层事件表达“压缩正在发生 / 已完成 / 失败”，存储层记录“压缩结果如何恢复”。
 
-### R2. 压缩策略必须可扩展
+### R2. Durable Log 是事实源
 
-- 需要引入清晰的策略层，支持至少以下类别：
-  - lightweight cleanup：工具结果瘦身、旧文件读取摘要化、媒体占位、重复 context frame 折叠。
-  - summary compaction：对历史前缀生成 handoff summary。
-  - checkpoint projection：生成可恢复 replacement projection。
-  - reactive recovery：真实 provider overflow 后尝试恢复。
-- 策略选择必须由模型窗口、当前请求估算、session 阶段、connector 能力、hook policy 共同决定，而不是写死在一个 hook preset 中。
-- 策略接口需要允许后续接入 provider remote compact，但本任务不要求接入具体远端 compact API。
-- 策略执行范围必须受 agent ownership 约束：只有平台维护 canonical transcript 的 AgentDash native / Pi Agent runtime 使用平台压缩；Codex Bridge 等自带 runtime 的 connector 保留自身压缩逻辑，平台只消费其对外事件和最终展示数据。
+- UI message array 不能成为模型上下文裁剪的事实源。
+- `session_events` 记录真实历史、工具调用、ContextFrame、状态迁移、压缩 lifecycle 和后续 branch/rollback 事件。
+- 压缩不改写真实历史；压缩只改变模型上下文 projection。
+- 所有 resume、branch、handoff、audit 都应能从 durable facts + projection metadata 解释出来。
 
-### R3. 触发判断必须面向“即将发送”的请求
+### R3. ContextProjector 独立于 UI Timeline
 
-- provider request 发出前，必须估算 `system_prompt + messages_for_llm + tools + runtime context` 的有效 token 使用。
-- 自动压缩阈值必须预留输出空间和工具调用空间；`reserve_tokens` 必须参与实际 cut / projection。
-- 需要支持 `Total` 与 `BodyAfterPrefix` 两种预算口径，避免稳定 bootstrap context 反复触发压缩。
-- 需要覆盖 pre-turn、mid-turn 和 model downshift 三类触发语义。
+- Agent input 必须由 `ContextProjector` 从 durable log / checkpoint / projection segments 构建。
+- 前端 timeline 默认展示真实历史；Context panel 展示模型当前可见 projection。
+- Agent input message 必须能区分真实事件与派生 projection：
+  - `origin: event | projection`
+  - `synthetic`
+  - `source_event_id`
+  - `projection_segment_id`
+  - `source_range`
+- ContextMaterializer 负责把 AgentDash 内部 projection 转成 OpenAI / Anthropic / Gemini 等 provider-specific message shape。
 
-### R4. 失败必须可恢复、可观察
+### R4. Checkpoint 必须保存可恢复的 Replacement Projection
 
-- 摘要为空、API error、cancel、stream closed、checkpoint 写入失败时，不得替换当前有效历史。
-- 压缩失败必须产生结构化事件或 hook trace，包含失败阶段和原因。
-- 自动压缩需要连续失败熔断，避免每轮重复消耗 provider 调用。
-- prompt-too-long 发生在压缩请求自身时，需要有有限次数的 head truncation / group retry 方案，失败后明确保留原历史。
+- 每次成功结构性 compact 必须持久化 checkpoint。
+- checkpoint 至少包含：
+  - `session_id`
+  - `branch_id` 或 lineage 关联
+  - `base_head_event_id`
+  - `source_start_event_id`
+  - `source_end_event_id`
+  - `first_kept_event_id`
+  - `replacement_projection`
+  - `summary`
+  - `strategy`
+  - `trigger`
+  - `phase`
+  - `tokens_before`
+  - `tokens_after`
+  - `projection_version`
+  - provenance / diagnostics
+- resume 路径必须优先读取最新有效 checkpoint，再 replay checkpoint 后的 suffix。
+- checkpoint 是模型恢复事实，不是单纯 UI 文本。
 
-### R5. ContextFrame 与 Backbone 契约保持一等可视化
+### R5. PostgreSQL Projection Store 是云端实现基准
 
-- 成功压缩必须继续生成 `ContextFrame(kind="compaction_summary")`，并扩展到能展示 checkpoint id、strategy、trigger phase、tokens before / after、covered boundary、retained tail 信息。
-- 失败或熔断需要可审计，但不应伪装成成功的 compaction summary。
-- Backbone / NDJSON / 前端 feed 必须消费结构化 payload，不把业务语义塞入自由文本。
+AgentDash 应收敛到三层仓储形态：
 
-### R6. 不引入兼容性包袱
+1. **事实层。** `session_events`、`session_branches` / `session_lineage`、artifacts。
+2. **投影层。** `session_compactions` / `session_checkpoints`、`session_projection_segments`、`session_projection_snapshots`。
+3. **消费层。** `AgentContextEnvelope`、frontend `TimelineItem`、frontend `ProjectionView`。
 
-- 项目仍处于预研阶段，不需要支持旧 checkpoint 形态或双字段兼容。
-- 如果需要数据库或持久化 schema 调整，直接通过 migration 收正到目标模型。
-- 文档只记录目标架构为什么这样设计，不记录过去错误实现的形状。
+命名可以在 design 阶段最终收口，但职责必须清晰：
 
-### R7. checkpoint 必须支持会话分支和 rollback 语义
+- compaction / checkpoint record 记录 lifecycle、覆盖范围、策略、token、状态。
+- projection segments 记录 summary chunk、pruned message、tool result digest、artifact reference、kept tail 等派生内容。
+- snapshot 只作为 materialized cache，不替代事实源。
 
-- checkpoint 边界必须绑定 `session_id + event_seq/ref`，能够判断某个 checkpoint 是否仍属于当前 active projection。
-- session fork / branch 后，child session 可以继承 parent fork point 之前的 checkpoint，但必须把 fork point 固定下来，避免 parent 后续压缩或 rollback 改变 child 的基线。
-- rollback 不应通过删除 `session_events` 实现；应通过 rollback transition 和 active projection cursor 表达当前模型可见状态。
-- branch topology 应进入独立 lineage 索引，表达 parent/child、fork point、relation kind 和 edge status，不与 project/story/task owner binding 混在一起。
+### R6. Branch-aware By Default
+
+- checkpoint 和 projection 必须绑定 session / branch / head event。
+- fork 时 child session 需要固定 fork point 对应的 projection。
+- rollback 通过事件和 active projection head 表达当前模型可见状态。
+- parent 后续 compact / rollback 不应改变 child 已固定的初始 projection。
+- 完整 branch UI / API 可以由 `04-08-session-tree-branching` 承接，但本任务必须提供足够字段和恢复路径。
+
+### R7. Strategy Pipeline 分层落地
+
+压缩策略应逐步扩展为 pipeline，而不是单个 summarizer：
+
+1. `ToolResultPruning`
+   - 将大型 tool output 转为 digest + artifact reference。
+   - 保留工具调用因果和关键 metadata。
+2. `RollingSummary`
+   - 将早期历史压成 summary chunk。
+   - 明确 source range 和 first kept pointer。
+3. `ReactiveEmergencyCompact`
+   - provider overflow 后执行有限恢复。
+4. `BranchHandoffSummary`
+   - branch / handoff 场景生成面向接手者的 summary。
+5. `ProviderNativeCompaction`
+   - provider 支持原生 compact 时，输出仍归一化为 AgentDash projection。
+
+MVP 不需要一次实现全部策略，但架构必须允许这些策略共用 checkpoint / projection store。
+
+### R8. 失败不污染有效上下文
+
+- 摘要为空、provider error、cancel、stream closed、checkpoint 写入失败时，不生成成功 checkpoint。
+- 失败必须产生结构化 diagnostic / event。
+- 自动压缩需要失败熔断，避免每轮重复触发。
+- 压缩请求自身超窗时允许有限 retry；最终失败时保留原 projection。
+
+### R9. ContextFrame 保持一等可视化
+
+- 成功 compact 继续生成 `ContextFrame(kind="compaction_summary")`。
+- Compaction summary section 应展示 checkpoint id、strategy、trigger、phase、source range、retained tail、tokens before / after。
+- ContextFrame 是用户可见解释层；checkpoint / projection store 是恢复事实层。
+
+## MVP Scope
+
+第一版实践落地以“Codex-aligned checkpoint + projection 基础”作为 MVP：
+
+- 对齐 `contextCompaction` lifecycle 的事件语义。
+- 定义并落地 compaction checkpoint / projection segment 的仓储模型。
+- 让 resume 使用 checkpoint + suffix，而不是从 UI message array 或单个 summary payload 推断。
+- 保留现有 ContextFrame 能力，并扩展结构化 metadata。
+- 为 branch/fork/rollback 保留 projection head 与 lineage 字段。
+
+第一版可以只实现最小 summary compaction；tool pruning、provider-native compact、branch UI 可以后续展开。
 
 ## Acceptance Criteria
 
-- [ ] 规划产物明确当前实现差距、目标架构、实施顺序与验证方式。
-- [ ] 代码实现后，空摘要 / API error / cancel 不会写入成功 checkpoint，也不会覆盖 runtime history。
-- [ ] 代码实现后，自动压缩的 cut / projection 由 token budget 驱动，`reserve_tokens` 会影响保留尾部大小。
-- [ ] 代码实现后，pre-provider 估算覆盖最终 `BridgeRequest` 的 system/messages/tools 主要输入。
-- [ ] 代码实现后，成功压缩会持久化一等 checkpoint，并且 continuation / executor restore 使用 checkpoint + suffix 恢复。
-- [ ] 代码实现后，`context_compacted` / `compaction_summary` payload 含有结构化边界、策略、阶段、token 与 checkpoint 元数据。
-- [ ] 代码实现后，checkpoint 查询会尊重 active projection cursor；rollback 后不会继续使用已越过 rollback 目标的 checkpoint。
-- [ ] 规划产物说明 session lineage / fork point / checkpoint 的数据库仓储关系，并明确哪些能力留给后续 session branch 任务。
-- [ ] 代码实现后，至少有单元测试覆盖：成功 checkpoint、空摘要失败、压缩请求超窗重试、token budget cut、checkpoint 恢复、失败不污染历史。
-- [ ] 代码实现后，相关 Rust 检查通过，跨层 DTO 如有变化则同步 TS 生成与前端消费。
+- [ ] PRD / design 明确 Codex app protocol 是 compact lifecycle 基准。
+- [ ] 规划产物明确 durable log、checkpoint、projection、snapshot、timeline 的职责边界。
+- [ ] 规划产物明确 Agent input 由 ContextProjector / ContextMaterializer 构建。
+- [ ] 规划产物明确 checkpoint + suffix 的 resume 路径。
+- [ ] 规划产物明确 branch-aware checkpoint / active projection head 的最低要求。
+- [ ] 实现后，成功 compact 会产生 app protocol lifecycle、Backbone event、ContextFrame 和 durable checkpoint。
+- [ ] 实现后，失败 compact 不会替换当前有效 projection。
+- [ ] 实现后，resume 从最新有效 checkpoint replay suffix。
+- [ ] 实现后，前端可以区分真实 timeline 与模型 projection view。
+- [ ] 实现后，PostgreSQL / SQLite migration、Rust tests、TS protocol 生成与前端解析同步通过。
 
-## Out Of Scope
+## Follow-up Design Questions
 
-- 不接入具体第三方 remote compact endpoint。
-- 不让平台压缩系统接管 Codex Bridge 的内部上下文窗口、历史裁剪或恢复 projection。
-- 完整 session tree UI、branch 管理 API、用户可操作的 fork/rollback 产品流程由子任务 `.trellis/tasks/04-08-session-tree-branching` 承接；本任务只定义并落地 checkpoint 需要依赖的最小 lineage / projection 契约。
-- 不实现完整 Claude Code context collapse 存储系统；本任务只预留策略接口与 lightweight cleanup 扩展点。
-- 不做旧 checkpoint / 旧事件 payload 的长期兼容。
-- 不改变 AGENTS / Trellis / workflow lifecycle 的既有协作规则。
+这些问题不阻塞 PRD 意图，但会影响 design.md 与 implement.md 的下一轮收口：
 
-## Open Question
+1. `session_compactions` 与 `session_checkpoints` 是否合并为一张表，还是前者记录 lifecycle、后者记录 projection checkpoint？
+   - 推荐：先合并为一个 checkpoint-oriented compaction record，再用 `session_projection_segments` 承载细粒度投影。
+2. fork 时是否默认 materialize child initial checkpoint？
+   - 推荐：默认 materialize，换取 child session 的独立恢复能力。
+3. MVP 是否先实现 summary checkpoint，再实现 tool result pruning？
+   - 推荐：先实现 summary checkpoint 和恢复链路；tool pruning 作为第二阶段策略接入。
 
-- 无。已确认本任务实现后先用 `trellis-update-spec` 固化 session checkpoint / lineage / projection head 基础契约；完整 fork / rollback 产品语义等子任务完成后再补充。
+## Out Of Scope For MVP
+
+- 完整 branch tree UI。
+- 完整 provider-native compact adapter。
+- 完整 session memory / context collapse 系统。
+- 对旧压缩 payload 的长期兼容层。
+
+这些能力依赖同一套 checkpoint / projection 基础设施，后续以独立阶段补齐。

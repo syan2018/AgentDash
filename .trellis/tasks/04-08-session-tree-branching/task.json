@@ -2,7 +2,7 @@
   "id": "session-tree-branching",
   "name": "session-tree-branching",
   "title": "会话分支与状态投影管理",
-  "description": "基于 session_checkpoints、session_lineage 和 active projection cursor 建立平台自有 Agent runtime 的 fork / rollback / branch restore 能力",
+  "description": "基于 session_compactions、session_lineage 和 active projection cursor 建立平台自有 Agent runtime 的 fork / rollback / branch restore 能力",
   "status": "planning",
   "dev_type": null,
   "scope": null,
@@ -11,8 +11,8 @@
   "assignee": "-",
   "createdAt": "2026-04-08",
   "completedAt": null,
-  "branch": null,
-  "base_branch": "main",
+  "branch": "codex/session-tree-branching",
+  "base_branch": "codex/context-compaction-infrastructure",
   "worktree_path": null,
   "current_phase": 0,
   "next_action": [
@@ -37,6 +37,6 @@
   "pr_url": null,
   "subtasks": [],
   "relatedFiles": [],
-  "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 交付 branch-aware checkpoint、lineage 和 projection head 基建。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",
+  "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 已交付的 session_compactions、projection segments、projection heads 和 ContextProjector 基座，继续补齐 lineage、fork、rollback 与 branch-aware restore。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",
   "parent": null
 }

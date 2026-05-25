@@ -2,14 +2,14 @@
 
 ## Phase 0. Dependency Gate
 
-- [ ] 确认父任务 `.trellis/tasks/05-25-context-compaction-architecture-enhancement` 已交付 `session_checkpoints`。
-- [ ] 确认 active projection cursor 已存在，或在本任务第一阶段补齐。
-- [ ] 确认 `ProjectedTranscript` restore 路径支持 checkpoint + suffix。
+- [ ] 确认父任务 `.trellis/tasks/archive/2026-05/05-25-context-compaction-architecture-enhancement` 已交付 `session_compactions`、`session_projection_segments`、`session_projection_heads`。
+- [ ] 确认 `ContextProjector` restore 路径支持 active compaction + segments + suffix。
+- [ ] 确认 fork child initial projection 需要的 segment / replacement envelope 表达方式。
 
 ## Phase 1. Repository And Migration
 
 - [ ] 新增 `session_lineage` schema。
-- [ ] 新增或补齐 `session_projection_heads` schema。
+- [ ] 复用已存在的 `session_projection_heads` schema，并补齐 branch/fork 读写场景。
 - [ ] 扩展 SPI repository trait：
   - [ ] upsert / insert lineage edge。
   - [ ] list direct children。
@@ -30,7 +30,7 @@ cargo test -p agentdash-infrastructure session_repository -- --nocapture
 - [ ] 实现 fork point resolver：支持 `event_seq` / `MessageRef` / checkpoint id。
 - [ ] 创建 child session meta。
 - [ ] 写入 `session_lineage` edge。
-- [ ] materialize child initial checkpoint。
+- [ ] materialize child initial compaction checkpoint。
 - [ ] 初始化 child projection head。
 - [ ] 写入 `session_branch_forked` platform event。
 
@@ -45,7 +45,7 @@ cargo test -p agentdash-application session fork -- --nocapture
 - [ ] 实现 rollback target resolver。
 - [ ] 追加 rollback platform event。
 - [ ] 更新 `session_projection_heads.model_visible`。
-- [ ] 确保 active checkpoint 查询不会返回 rollback head 之后的 checkpoint。
+- [ ] 确保 active compaction / suffix 查询不会越过 rollback 后的 projection head。
 - [ ] 保持 UI event backlog 完整，不删除 `session_events`。
 
 Validation:
@@ -56,7 +56,7 @@ cargo test -p agentdash-application session rollback continuation -- --nocapture
 
 ## Phase 4. Branch-aware Restore
 
-- [ ] 更新 continuation / executor restore 入口，统一通过 projection head 找 checkpoint。
+- [ ] 更新 continuation / executor restore 入口，统一通过 projection head 找 active compaction。
 - [ ] 覆盖 fork child restore。
 - [ ] 覆盖 parent fork 后继续追加事件不影响 child restore。
 - [ ] 覆盖 rollback 后 restore。

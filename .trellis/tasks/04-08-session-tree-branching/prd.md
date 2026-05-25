@@ -2,20 +2,20 @@
 
 ## Goal
 
-在上下文压缩 checkpoint 基建稳定后，为 AgentDash 平台自有 Agent runtime 建立完整的 session branch / fork / rollback 能力。新系统需要把会话树、模型可见投影、UI 审计历史和业务 owner binding 分开建模，使用户可以从稳定分叉点创建新会话分支、回退模型可见状态，并在前端理解当前会话与其它分支的关系。
+在上下文压缩 projection 基建稳定后，为 AgentDash 平台自有 Agent runtime 建立完整的 session branch / fork / rollback 能力。新系统需要把会话树、模型可见投影、UI 审计历史和业务 owner binding 分开建模，使用户可以从稳定分叉点创建新会话分支、回退模型可见状态，并在前端理解当前会话与其它分支的关系。
 
 ## Parent And Dependency
 
 本任务是 `.trellis/tasks/05-25-context-compaction-architecture-enhancement` 的后续子任务。
 
-依赖父任务先交付以下最小基建：
+父任务已交付以下最小基建，本任务在此之上推进：
 
-- `session_checkpoints`：可查询的模型恢复 checkpoint，含 `created_event_seq`、`covered_until_event_seq`、`covered_until_ref`、`base_checkpoint_id`、`lineage_node_id`、`status`、`replacement_projection_json`。
-- `session_lineage`：表达 parent/child、relation kind、fork point、edge status 的会话拓扑索引。
-- active projection cursor：表达当前模型可见 head，rollback 后 restore 不会越过 active head。
-- continuation / restore 路径支持 `active projection cursor -> latest valid checkpoint -> suffix`。
+- `session_compactions`：可查询的模型恢复 checkpoint 表面，含 lifecycle、source range、`first_kept_event_seq`、token stats、`replacement_projection_json`。
+- `session_projection_segments`：表达 summary chunk、kept tail、pruned source、artifact reference 等模型可见片段。
+- `session_projection_heads`：表达当前模型可见 active cursor，rollback 后 restore 不会越过 active head。
+- `ContextProjector`：以 `projection head -> active compaction -> segments -> suffix events` 构建模型输入。
 
-本任务不重新设计压缩策略；它消费父任务提供的 checkpoint 和 projection 契约。
+本任务不重新设计压缩策略；它消费父任务提供的 compaction-as-checkpoint 和 projection 契约，并补齐 session tree 所需的 durable lineage 与投影移动能力。
 
 ## User Value
 
@@ -36,7 +36,7 @@
 
 ### R1. 分支拓扑必须进入独立 lineage 模型
 
-- `session_lineage` 必须表达 `parent_session_id`、`child_session_id`、`relation_kind`、`fork_point_event_seq`、`fork_point_ref`、`fork_point_checkpoint_id`、`status`。
+- `session_lineage` 必须表达 `parent_session_id`、`child_session_id`、`relation_kind`、`fork_point_event_seq`、`fork_point_ref`、`fork_point_compaction_id`、`status`。
 - `relation_kind` 至少覆盖 `fork`、`companion`、`spawned_agent`，并预留 rollback branch / future branch 类型。
 - 同一个 child session 只能有一个 primary parent，便于 tree UI 和恢复基线推导。
 - `session_lineage` 不替代 `session_bindings`；业务归属仍由 project/story/task owner binding 表达。
@@ -44,8 +44,8 @@
 ### R2. fork 必须以稳定 projection 为基线
 
 - fork 创建 child session 时必须记录 fork point。
-- fork point 可以是 `event_seq`、`MessageRef`、或 checkpoint id；实现必须能恢复出 fork 时的 parent projection。
-- 推荐默认在 fork 时 materialize child initial checkpoint，把 parent fork projection 固化到 child session，换取 child 独立恢复能力。
+- fork point 可以是 `event_seq`、`MessageRef`、或 compaction id；实现必须能恢复出 fork 时的 parent projection。
+- 默认在 fork 时 materialize child initial compaction checkpoint，把 parent fork projection 固化到 child session，换取 child 独立恢复能力。
 - fork 后 parent 的继续压缩、rollback、archive 不应改变 child 的初始可见状态。
 
 ### R3. rollback 必须保留审计历史
@@ -71,7 +71,7 @@
 ## Acceptance Criteria
 
 - [ ] 新增或扩展 repository 能查询 session lineage 的 direct children、ancestors、descendants，并保持稳定排序。
-- [ ] fork API 能创建 child session、记录 lineage edge、固化 fork projection，并返回 child session meta。
+- [ ] fork API 能创建 child session、记录 lineage edge、固化 fork projection 为 child initial compaction，并返回 child session meta。
 - [ ] rollback API 能追加 rollback event、更新 active projection cursor，并让 restore 使用 rollback 后的模型可见 head。
 - [ ] continuation / executor restore 在 branch 和 rollback 场景下通过测试。
 - [ ] API / 前端消费 `session_lineage`，不把 companion parent 误当作通用 branch。
@@ -87,4 +87,4 @@
 
 ## Open Question
 
-- fork 时是否总是 materialize child initial checkpoint？推荐答案是“是”：写入更重，但 child session 可以脱离 parent retention 独立恢复。
+- fork 时 materialize child initial checkpoint 的默认策略已确认：写入更重，但 child session 可以脱离 parent retention 独立恢复，也能让后续团队协作、审计和 rollback 都只依赖 child 自己的 projection head。

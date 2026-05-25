@@ -1,4 +1,4 @@
-﻿//! `SessionRequestAssembler` — 统一 session 启动请求组装。
+//! `SessionRequestAssembler` — 统一 session 启动请求组装。
 //!
 //! ## 设计
 //!
@@ -24,7 +24,7 @@
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
 //! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
-//! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchExecution` / outbox。
+//! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchPlan` / outbox。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -2628,6 +2628,7 @@ mod tests {
                 prompt_blocks: Some(vec![serde_json::json!({ "type": "text", "text": "hi" })]),
                 env,
                 executor_config: None,
+                backend_selection: None,
             };
             let prepared = SessionAssemblyBuilder::new().with_user_input(input).build();
             assert!(

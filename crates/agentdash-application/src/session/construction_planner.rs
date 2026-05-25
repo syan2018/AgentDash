@@ -49,6 +49,7 @@ pub const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
 pub struct ResolvedProjectAgentContext {
     pub key: String,
     pub display_name: String,
+    pub description: String,
     pub executor_config: agentdash_spi::AgentConfig,
     pub preset_config: AgentPresetConfig,
     pub preset_name: Option<String>,
@@ -66,6 +67,32 @@ impl SessionConstructionPlanner {
             return None;
         }
         Some(agent_key)
+    }
+
+    pub fn project_agent_session_label(agent_key: &str) -> String {
+        format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
+    }
+
+    pub async fn resolve_project_workspace(
+        repos: &RepositorySet,
+        project: &Project,
+    ) -> Result<Option<Workspace>, String> {
+        resolve_project_workspace(repos, project).await
+    }
+
+    pub async fn resolve_project_agent_context(
+        repos: &RepositorySet,
+        project_id: Uuid,
+        agent_key: &str,
+    ) -> Result<Option<ResolvedProjectAgentContext>, String> {
+        resolve_project_agent_context(repos, project_id, agent_key).await
+    }
+
+    pub async fn build_project_agent_context(
+        repos: &RepositorySet,
+        agent: &ProjectAgent,
+    ) -> Result<ResolvedProjectAgentContext, String> {
+        build_project_agent_context(repos, agent).await
     }
 
     pub async fn build_session_capabilities(
@@ -524,6 +551,13 @@ async fn build_project_agent_context(
         .filter(|value| !value.is_empty())
         .unwrap_or(&agent.name)
         .to_string();
+    let description = preset
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+        .unwrap_or_else(|| format!("Agent `{}`，执行器 {}。", agent.name, agent.agent_type));
     let preset_mcp_servers = resolve_preset_mcp_refs(
         repos.mcp_preset_repo.as_ref(),
         agent.project_id,
@@ -540,6 +574,7 @@ async fn build_project_agent_context(
     Ok(ResolvedProjectAgentContext {
         key: agent.id.to_string(),
         display_name,
+        description,
         executor_config,
         preset_config: preset,
         preset_name: Some(agent.name.clone()),

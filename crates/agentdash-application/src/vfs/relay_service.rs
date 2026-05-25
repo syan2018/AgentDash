@@ -10,6 +10,28 @@ use async_trait::async_trait;
 
 use super::inline_persistence::InlineContentOverlay;
 
+/// 与 CC GrepTool 一致的 VCS 黑名单（design.md A3：硬编码不可配置）。
+const VCS_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
+
+/// CC GrepTool 的 `--max-columns 500` 等价：超长 line trim 到 500 字符 + 后缀。
+const MAX_LINE_LEN: usize = 500;
+const TRUNCATE_SUFFIX: &str = "...(truncated)";
+
+/// 路径段（任一 `/` 分隔的中间段）命中 VCS 黑名单 ⇒ 返回 true。
+pub(crate) fn is_vcs_path(path: &str) -> bool {
+    path.split('/').any(|seg| VCS_EXCLUDE_DIRS.contains(&seg))
+}
+
+/// 超长 line（按 char 数）trim 到 `MAX_LINE_LEN` + 后缀；否则原样返回。
+fn trim_long_line(line: &str) -> String {
+    if line.chars().count() <= MAX_LINE_LEN {
+        line.to_string()
+    } else {
+        let head: String = line.chars().take(MAX_LINE_LEN).collect();
+        format!("{head}{TRUNCATE_SUFFIX}")
+    }
+}
+
 pub struct TextSearchParams<'a> {
     pub mount_id: &'a str,
     pub path: &'a str,
@@ -19,6 +41,16 @@ pub struct TextSearchParams<'a> {
     pub max_results: usize,
     pub context_lines: usize,
     pub overlay: Option<&'a InlineContentOverlay>,
+    /// `false` ⇒ smart-case；`true` ⇒ 严格大小写。默认 `true`（与历史行为一致）。
+    pub case_sensitive: bool,
+    /// `-B` 等价；与 `context_lines` 同时设置时取 `max(before_lines, context_lines)`。
+    pub before_lines: usize,
+    /// `-A` 等价；与 `context_lines` 同时设置时取 `max(after_lines, context_lines)`。
+    pub after_lines: usize,
+    /// `true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep multiline）。
+    pub multiline: bool,
+    /// 输出形态。默认 `Content`。
+    pub output_mode: agentdash_spi::platform::mount::SearchOutputMode,
 }
 
 // ─── Service ────────────────────────────────────────────────
@@ -63,6 +95,94 @@ impl RelayVfsService {
 
     pub fn list_mounts(&self, vfs: &Vfs) -> Vec<agentdash_spi::Mount> {
         vfs.mounts.clone()
+    }
+
+    /// 按行号 range 读取文本文件。
+    ///
+    /// 与 `read_text` 的区别：
+    /// - `offset` 是 0-based 行号（与 SPI `read_text_range` 对齐；tool 层 1-based 自行转换）。
+    /// - `limit = None` 表示读到 EOF（受 SPI 默认实现的全文加载约束）。
+    /// - 错误类型保留 `MountError` 而非 String，方便调用方区分 NotFound 等场景
+    ///   （fs_read tool 用此区分 ENOENT 友好提示路径）。
+    pub async fn read_text_range(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        offset: usize,
+        limit: Option<usize>,
+        overlay: Option<&InlineContentOverlay>,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)
+            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
+        let path = normalize_mount_relative_path(&target.path, false)
+            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
+
+        if let Some(ov) = overlay
+            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+        {
+            return match override_state {
+                Some(content) => {
+                    let sliced = content
+                        .lines()
+                        .skip(offset)
+                        .take(limit.unwrap_or(usize::MAX))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(ReadResult::new(path, sliced))
+                }
+                None => Err(agentdash_spi::platform::mount::MountError::NotFound(
+                    target.path.clone(),
+                )),
+            };
+        }
+
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| {
+                agentdash_spi::platform::mount::MountError::ProviderNotRegistered(
+                    mount.provider.clone(),
+                )
+            })?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let started_at = Instant::now();
+        let result = provider
+            .read_text_range(mount, &path, offset, limit, &ctx)
+            .await;
+        log_vfs_operation_result(mount, "read_text_range", &path, started_at, result.is_ok());
+        result
+    }
+
+    /// 在 `target` 所属 mount 内按相似度查找候选路径。
+    /// fs_read 的 ENOENT 友好提示用此接口，传 `limit ≤ 5`。
+    pub async fn suggest_paths(
+        &self,
+        vfs: &Vfs,
+        target: &ResourceRef,
+        limit: usize,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<Vec<String>, String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::List)?;
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| format!("unregistered mount provider: {}", mount.provider))?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let basename = std::path::Path::new(&target.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| target.path.clone());
+        provider
+            .suggest_paths(mount, &basename, limit, &ctx)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     pub async fn read_text(
@@ -591,7 +711,9 @@ impl RelayVfsService {
                 .mount_provider_registry
                 .get(&mount.provider)
                 .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
-            let ctx = MountOperationContext::default();
+            let ctx = MountOperationContext {
+                identity: identity.cloned(),
+            };
             if overlay.is_none() {
                 // 无 overlay 直接委托 provider
                 let opts = ListOptions {
@@ -700,6 +822,11 @@ impl RelayVfsService {
                 max_results,
                 context_lines: 0,
                 overlay,
+                case_sensitive: true,
+                before_lines: 0,
+                after_lines: 0,
+                multiline: false,
+                output_mode: agentdash_spi::platform::mount::SearchOutputMode::Content,
             },
         )
         .await
@@ -716,11 +843,16 @@ impl RelayVfsService {
         let base_path = normalize_mount_relative_path(params.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
-            return self.search_inline(mount, &base_path, params).await;
+            // 通用 inline 搜索复用 grep_inline；当 params 的 grep 字段为空时
+            // 行为与 substring 等价（is_regex=false → substring，include_glob/
+            // context_lines/multiline 都默认零值）。
+            return self.grep_inline(mount, &base_path, params).await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
             let ctx = MountOperationContext::default();
+            // search_text_extended 仅承载通用搜索语义（substring）；grep 字段在
+            // grep_text_extended 路径处理。这里只填 SearchQuery 的 4 个通用字段。
             let sq = SearchQuery {
                 path: if base_path.is_empty() {
                     None
@@ -728,7 +860,7 @@ impl RelayVfsService {
                     Some(base_path)
                 },
                 pattern: params.query.to_string(),
-                case_sensitive: true,
+                case_sensitive: params.case_sensitive,
                 max_results: Some(params.max_results),
             };
             let started_at = Instant::now();
@@ -741,24 +873,94 @@ impl RelayVfsService {
                 result.is_ok(),
             );
             let result = result.map_err(|e| e.to_string())?;
+            let truncated = result.truncated;
             let hits: Vec<String> = result
                 .matches
                 .iter()
+                .filter(|m| !is_vcs_path(&m.path))
                 .map(|m| {
+                    let trimmed = trim_long_line(&m.content);
                     if let Some(line) = m.line {
-                        format!("{}:{}: {}", m.path, line, m.content)
+                        format!("{}:{}: {}", m.path, line, trimmed)
                     } else {
-                        format!("{}: {}", m.path, m.content)
+                        format!("{}: {}", m.path, trimmed)
                     }
                 })
                 .collect();
-            return Ok((hits, false));
+            return Ok((hits, truncated));
         }
 
         Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
-    async fn search_inline(
+    /// grep 风格搜索（pattern 始终正则；支持 include_glob / context / multiline /
+    /// output_mode）。fs_grep tool 调用此方法；通用搜索请用 [`search_text_extended`]。
+    pub async fn grep_text_extended(
+        &self,
+        vfs: &Vfs,
+        params: &TextSearchParams<'_>,
+    ) -> Result<(Vec<String>, bool), String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, params.mount_id, MountCapability::Search)?;
+        let base_path = normalize_mount_relative_path(params.path, true)?;
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            return self.grep_inline(mount, &base_path, params).await;
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            let gq = GrepQuery {
+                base: SearchQuery {
+                    path: if base_path.is_empty() {
+                        None
+                    } else {
+                        Some(base_path)
+                    },
+                    pattern: params.query.to_string(),
+                    case_sensitive: params.case_sensitive,
+                    max_results: Some(params.max_results),
+                },
+                include_glob: params.include_glob.map(|s| s.to_string()),
+                context_lines: params.context_lines,
+                before_lines: params.before_lines,
+                after_lines: params.after_lines,
+                multiline: params.multiline,
+                output_mode: params.output_mode,
+            };
+            let started_at = Instant::now();
+            let result = provider.grep_text(mount, &gq, &ctx).await;
+            log_vfs_operation_result(
+                mount,
+                "grep_text",
+                gq.base.path.as_deref().unwrap_or("."),
+                started_at,
+                result.is_ok(),
+            );
+            let result = result.map_err(|e| e.to_string())?;
+            let truncated = result.truncated;
+            let hits: Vec<String> = result
+                .matches
+                .iter()
+                .filter(|m| !is_vcs_path(&m.path))
+                .map(|m| {
+                    let trimmed = trim_long_line(&m.content);
+                    if let Some(line) = m.line {
+                        format!("{}:{}: {}", m.path, line, trimmed)
+                    } else {
+                        format!("{}: {}", m.path, trimmed)
+                    }
+                })
+                .collect();
+            return Ok((hits, truncated));
+        }
+
+        Err(format!("unregistered mount provider: {}", mount.provider))
+    }
+
+    /// inline mount 的 grep 实现（含 overlay）。当 params.grep 字段全为零时
+    /// 行为退化为 substring，可被 search_text_extended 复用。
+    async fn grep_inline(
         &self,
         mount: &Mount,
         base_path: &str,
@@ -797,18 +999,43 @@ impl RelayVfsService {
         }
 
         let re = if params.is_regex {
-            Some(regex::Regex::new(params.query).map_err(|e| format!("无效正则: {e}"))?)
+            let mut builder = regex::RegexBuilder::new(params.query);
+            builder
+                .case_insensitive(!params.case_sensitive)
+                .multi_line(params.multiline)
+                .dot_matches_new_line(params.multiline);
+            Some(builder.build().map_err(|e| format!("无效正则: {e}"))?)
         } else {
             None
         };
+
+        let glob_matcher = match params.include_glob {
+            Some(pat) => Some(
+                globset::Glob::new(pat)
+                    .map_err(|e| format!("无效 glob: {e}"))?
+                    .compile_matcher(),
+            ),
+            None => None,
+        };
+
+        let before = params.before_lines.max(params.context_lines);
+        let after = params.after_lines.max(params.context_lines);
 
         let mut hits = Vec::new();
         let mut truncated = false;
 
         for (file_path, content) in &files {
+            if is_vcs_path(file_path) {
+                continue;
+            }
             if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
                 && !base_path.is_empty()
                 && base_path != "."
+            {
+                continue;
+            }
+            if let Some(matcher) = &glob_matcher
+                && !matcher.is_match(file_path.as_str())
             {
                 continue;
             }
@@ -816,24 +1043,45 @@ impl RelayVfsService {
             for (idx, line) in lines.iter().enumerate() {
                 let matched = match &re {
                     Some(re) => re.is_match(line),
-                    None => line.contains(params.query),
+                    None => {
+                        if params.case_sensitive {
+                            line.contains(params.query)
+                        } else {
+                            line.to_lowercase().contains(&params.query.to_lowercase())
+                        }
+                    }
                 };
                 if matched {
-                    let mut formatted = format!("{}:{}: {}", file_path, idx + 1, line.trim());
-                    if params.context_lines > 0 {
-                        let start = idx.saturating_sub(params.context_lines);
-                        let end = (idx + 1 + params.context_lines).min(lines.len());
+                    let mut formatted =
+                        format!("{}:{}: {}", file_path, idx + 1, trim_long_line(line.trim()));
+                    if before > 0 || after > 0 {
+                        let start = idx.saturating_sub(before);
+                        let end = (idx + 1 + after).min(lines.len());
                         if start < idx {
-                            let before: Vec<String> = (start..idx)
-                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                            let before_lines_fmt: Vec<String> = (start..idx)
+                                .map(|i| {
+                                    format!(
+                                        "{}:{}- {}",
+                                        file_path,
+                                        i + 1,
+                                        trim_long_line(lines[i].trim())
+                                    )
+                                })
                                 .collect();
-                            formatted = format!("{}\n{}", before.join("\n"), formatted);
+                            formatted = format!("{}\n{}", before_lines_fmt.join("\n"), formatted);
                         }
                         if idx + 1 < end {
-                            let after: Vec<String> = (idx + 1..end)
-                                .map(|i| format!("{}:{}- {}", file_path, i + 1, lines[i].trim()))
+                            let after_lines_fmt: Vec<String> = (idx + 1..end)
+                                .map(|i| {
+                                    format!(
+                                        "{}:{}- {}",
+                                        file_path,
+                                        i + 1,
+                                        trim_long_line(lines[i].trim())
+                                    )
+                                })
                                 .collect();
-                            formatted = format!("{}\n{}", formatted, after.join("\n"));
+                            formatted = format!("{}\n{}", formatted, after_lines_fmt.join("\n"));
                         }
                     }
                     hits.push(formatted);

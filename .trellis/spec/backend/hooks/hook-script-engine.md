@@ -96,7 +96,7 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 3. 无需修改 `rules.rs`——引擎自动编译并注册
 4. 在 workflow definition 的 `hook_rules` 中引用 `preset: "my_new_preset"`
 
-## 当前 Builtin Preset 清单
+## Builtin Preset Baseline
 
 | Key | Trigger | 功能 |
 | --- | --- | --- |
@@ -116,8 +116,3 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 ## 为什么选择 Rhai
 
 与 Rust 类型系统天然互操作（`rhai::serde`），内建沙箱限制，语法对前后端开发者友好，编译后 AST 可缓存复用。备选项 Lua（FFI 复杂）、WASM（调试门槛高）、JSON DSL（表达力不足）均不如 Rhai 适合短小规则脚本场景。
-
----
-
-*创建：2026-03-30 — Hook Script Engine Rhai 脚本支持方案*
-*精简：2026-05-16 — 移除代码复述、测试列表、脚本示例模板（实际 .rhai 文件即参考）*

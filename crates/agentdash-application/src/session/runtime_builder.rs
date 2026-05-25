@@ -13,7 +13,7 @@ use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
 use super::hooks_service::SessionHookService;
 use super::hub::SessionRuntimeInner;
-use super::launch_service::SessionLaunchService;
+use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
 use super::title_generator::SessionTitleGenerator;
@@ -56,6 +56,17 @@ impl SessionRuntimeBuilder {
 
     pub fn with_mcp_relay_provider(mut self, provider: Arc<dyn McpRelayProvider>) -> Self {
         self.inner = self.inner.with_mcp_relay_provider(provider);
+        self
+    }
+
+    pub fn with_backend_execution_placement(
+        mut self,
+        transport: Arc<dyn crate::backend_transport::RelayPromptTransport>,
+        lease_repo: Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>,
+    ) -> Self {
+        self.inner = self
+            .inner
+            .with_backend_execution_placement(transport, lease_repo);
         self
     }
 

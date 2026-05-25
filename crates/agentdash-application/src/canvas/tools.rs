@@ -1088,7 +1088,8 @@ mod tests {
             )
             .await
             .expect("prompt 应能启动");
-        hub.reload_session_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+        hub.hook_service()
+            .reload_session_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
             .await
             .expect("hook runtime 应能刷新");
 

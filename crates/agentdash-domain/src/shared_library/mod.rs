@@ -17,3 +17,12 @@ pub use value_objects::{
     VfsMountTemplatePayload, WorkflowTemplatePayload, normalize_workflow_lifecycle_value,
     normalize_workflow_template_payload_value, normalize_workflow_template_value,
 };
+
+pub fn seed_digest(payload: &serde_json::Value) -> Result<String, crate::DomainError> {
+    use sha2::{Digest, Sha256};
+
+    let bytes = serde_json::to_vec(payload).map_err(crate::DomainError::Serialization)?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}

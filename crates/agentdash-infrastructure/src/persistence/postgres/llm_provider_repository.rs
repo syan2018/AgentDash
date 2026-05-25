@@ -14,33 +14,7 @@ impl PostgresLlmProviderRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS llm_providers (
-                id             TEXT PRIMARY KEY,
-                name           TEXT NOT NULL,
-                slug           TEXT NOT NULL UNIQUE,
-                protocol       TEXT NOT NULL,
-                api_key        TEXT NOT NULL DEFAULT '',
-                base_url       TEXT NOT NULL DEFAULT '',
-                wire_api       TEXT NOT NULL DEFAULT '',
-                default_model  TEXT NOT NULL DEFAULT '',
-                models         TEXT NOT NULL DEFAULT '[]',
-                blocked_models TEXT NOT NULL DEFAULT '[]',
-                env_api_key    TEXT NOT NULL DEFAULT '',
-                discovery_url  TEXT NOT NULL DEFAULT '',
-                sort_order     INTEGER NOT NULL DEFAULT 0,
-                enabled        BOOLEAN NOT NULL DEFAULT TRUE,
-                created_at     TEXT NOT NULL,
-                updated_at     TEXT NOT NULL
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["llm_providers"]).await
     }
 }
 

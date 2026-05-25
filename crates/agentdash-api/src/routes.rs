@@ -12,8 +12,8 @@ pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
-pub mod project_vfs_mounts;
 pub mod project_sessions;
+pub mod project_vfs_mounts;
 pub mod projects;
 pub mod routines;
 pub mod settings;
@@ -57,7 +57,12 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         activity_lifecycle_definition_repo: state.repos.activity_lifecycle_definition_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
-    let mcp = McpRouterBuilder::new(mcp_services).build();
+    let mcp = McpRouterBuilder::new(mcp_services)
+        .build()
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::authenticate_request,
+        ));
 
     let secured_api = Router::new()
         .route("/me", get(me::get_current_user))
@@ -394,6 +399,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/backends/runtime-health",
             get(backends::list_runtime_health),
+        )
+        .route(
+            "/backends/runtime-summary",
+            get(backends::list_runtime_summary),
         )
         .route(
             "/backends/{id}",

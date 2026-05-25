@@ -1,15 +1,8 @@
 import type { StreamEvent } from '../types';
 import { buildApiPath } from './origin';
-import { authenticatedFetch } from './client';
+import { FetchNdjsonStream, type NdjsonStreamLifecycle } from "./ndjsonStream";
 
-const RETRY_BASE_MS = 800;
-const RETRY_MAX_MS = 8000;
-
-export type ProjectEventStreamLifecycle =
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'closed';
+export type ProjectEventStreamLifecycle = NdjsonStreamLifecycle;
 
 export interface ProjectEventStreamConnection {
   close: () => void;
@@ -21,15 +14,6 @@ export interface ProjectEventStreamOptions {
   onEvent: (event: StreamEvent) => void;
   onLifecycleChange: (lifecycle: ProjectEventStreamLifecycle) => void;
   onError: (error: Error) => void;
-}
-
-function normalizeError(error: unknown, fallbackMessage: string): Error {
-  if (error instanceof Error) return error;
-  return new Error(fallbackMessage);
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,146 +74,19 @@ function parseStreamEvent(value: unknown): StreamEvent | null {
   }
 }
 
-class FetchNdjsonProjectEventStream implements ProjectEventStreamConnection {
-  private closed = false;
-  private controller: AbortController | null = null;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private reconnectAttempt = 0;
-  private hadConnected = false;
-  private sinceId: number;
-  private readonly options: ProjectEventStreamOptions;
-
-  constructor(options: ProjectEventStreamOptions) {
-    this.options = options;
-    this.sinceId = options.sinceId ?? 0;
-    queueMicrotask(() => {
-      void this.connect();
-    });
-  }
-
-  private async connect(): Promise<void> {
-    if (this.closed) return;
-
-    this.controller = new AbortController();
-    this.options.onLifecycleChange(this.hadConnected ? "reconnecting" : "connecting");
-
-    const params = new URLSearchParams({ project_id: this.options.projectId });
-    const headers: Record<string, string> = {
-      Accept: "application/x-ndjson",
-      "Cache-Control": "no-cache",
-      "x-stream-since-id": String(this.sinceId),
-    };
-
-    try {
-      const response = await authenticatedFetch(
-        buildApiPath(`/events/stream/ndjson?${params.toString()}`),
-        {
-          method: "GET",
-          headers,
-          signal: this.controller.signal,
-          cache: "no-store",
-        },
-      );
-
-      if (!response.ok || !response.body) {
-        this.options.onError(new Error(`项目事件流连接失败: HTTP ${response.status}`));
-        this.scheduleReconnect();
-        return;
-      }
-
-      this.hadConnected = true;
-      this.reconnectAttempt = 0;
-      this.options.onLifecycleChange("connected");
-      await this.consumeStream(response.body.getReader());
-    } catch (error) {
-      if (this.closed || isAbortError(error)) return;
-      this.options.onError(normalizeError(error, "项目事件流连接异常"));
-    }
-
-    if (!this.closed) {
-      this.scheduleReconnect();
-    }
-  }
-
-  private async consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (!this.closed) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      let lineBreakIndex = buffer.indexOf("\n");
-
-      while (lineBreakIndex >= 0) {
-        const line = buffer.slice(0, lineBreakIndex).trim();
-        buffer = buffer.slice(lineBreakIndex + 1);
-        if (line) {
-          this.handleLine(line);
-        }
-        lineBreakIndex = buffer.indexOf("\n");
-      }
-    }
-
-    const trailing = buffer.trim();
-    if (trailing) {
-      this.handleLine(trailing);
-    }
-  }
-
-  private handleLine(line: string): void {
-    let payload: unknown;
-    try {
-      payload = JSON.parse(line);
-    } catch (error) {
-      this.options.onError(normalizeError(error, "解析项目事件流消息失败"));
-      return;
-    }
-
-    const event = parseStreamEvent(payload);
-    if (!event) return;
-
-    const cursor = readEventCursor(event);
-    if (cursor !== null && cursor > this.sinceId) {
-      this.sinceId = cursor;
-    }
-    this.options.onEvent(event);
-  }
-
-  private scheduleReconnect(): void {
-    if (this.closed || this.reconnectTimer) return;
-
-    this.options.onLifecycleChange(this.hadConnected ? "reconnecting" : "connecting");
-    const delay = Math.min(RETRY_BASE_MS * 2 ** this.reconnectAttempt, RETRY_MAX_MS);
-    this.reconnectAttempt += 1;
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      void this.connect();
-    }, delay);
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-
-    if (this.controller) {
-      this.controller.abort();
-      this.controller = null;
-    }
-
-    this.options.onLifecycleChange("closed");
-  }
-}
-
 export function connectProjectEventStream(
   options: ProjectEventStreamOptions,
 ): ProjectEventStreamConnection {
-  return new FetchNdjsonProjectEventStream(options);
+  const params = new URLSearchParams({ project_id: options.projectId });
+  return new FetchNdjsonStream<StreamEvent>({
+    url: buildApiPath(`/events/stream/ndjson?${params.toString()}`),
+    sinceId: options.sinceId,
+    parsePayload: parseStreamEvent,
+    readCursor: readEventCursor,
+    onEvent: options.onEvent,
+    onLifecycleChange: options.onLifecycleChange,
+    onError: options.onError,
+    connectionErrorMessage: "项目事件流连接失败",
+    parseErrorMessage: "解析项目事件流消息失败",
+  });
 }

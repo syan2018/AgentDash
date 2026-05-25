@@ -86,8 +86,8 @@ export interface BackendConfig {
   online?: boolean;
   /** 持久化 runtime health（cloud authority + registry online 合并） */
   runtime_health?: RuntimeHealth | null;
-  /** 在线后端的可访问根路径 */
-  accessible_roots?: string[];
+  /** 在线后端上报的已确认 workspace roots */
+  workspace_roots?: string[];
   /** 在线后端的执行器能力 */
   capabilities?: {
     executors: Array<{
@@ -117,7 +117,7 @@ export interface RuntimeHealth {
   online: boolean;
   version: string | null;
   capabilities: Record<string, unknown>;
-  accessible_roots: string[];
+  workspace_roots: string[];
   device: Record<string, unknown>;
   connected_at: string | null;
   last_seen_at: string | null;
@@ -125,6 +125,44 @@ export interface RuntimeHealth {
   disconnect_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
+export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";
+
+export interface BackendActiveSession {
+  lease_id: string;
+  session_id: string;
+  turn_id: string;
+  executor_id: string;
+  workspace_id: string | null;
+  root_ref: string | null;
+  selection_mode: BackendExecutionSelectionMode;
+  state: BackendExecutionLeaseState;
+  claimed_at: string;
+  activated_at: string | null;
+  last_seen_at: string;
+}
+
+export interface BackendRuntimeExecutorSummary {
+  executor_id: string;
+  name: string;
+  variants: string[];
+  available: boolean;
+  active_session_count: number;
+  allocatable: boolean;
+}
+
+export interface BackendRuntimeSummary {
+  backend_id: string;
+  name: string;
+  enabled: boolean;
+  online: boolean;
+  runtime_health: RuntimeHealth | null;
+  executors: BackendRuntimeExecutorSummary[];
+  active_session_count: number;
+  active_sessions: BackendActiveSession[];
+  allocatable: boolean;
 }
 
 export interface ViewConfig {

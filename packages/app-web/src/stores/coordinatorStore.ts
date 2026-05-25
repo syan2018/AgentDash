@@ -1,20 +1,23 @@
 import { create } from 'zustand';
-import type { BackendConfig, ViewConfig } from '../types';
+import type { BackendConfig, BackendRuntimeSummary, ViewConfig } from '../types';
 import { api } from '../api/client';
 
 interface CoordinatorState {
   backends: BackendConfig[];
+  backendRuntimeSummaries: BackendRuntimeSummary[];
   views: ViewConfig[];
   isLoading: boolean;
   error: string | null;
 
   fetchBackends: () => Promise<void>;
+  fetchBackendRuntimeSummaries: () => Promise<void>;
   addBackend: (config: Omit<BackendConfig, 'enabled'>) => Promise<void>;
   removeBackend: (id: string) => Promise<void>;
 }
 
 export const useCoordinatorStore = create<CoordinatorState>((set) => ({
   backends: [],
+  backendRuntimeSummaries: [],
   views: [],
   isLoading: false,
   error: null,
@@ -26,6 +29,15 @@ export const useCoordinatorStore = create<CoordinatorState>((set) => ({
       set({ backends, isLoading: false });
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
+    }
+  },
+
+  fetchBackendRuntimeSummaries: async () => {
+    try {
+      const backendRuntimeSummaries = await api.get<BackendRuntimeSummary[]>('/backends/runtime-summary');
+      set({ backendRuntimeSummaries });
+    } catch (e) {
+      set({ error: (e as Error).message });
     }
   },
 

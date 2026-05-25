@@ -1,7 +1,7 @@
 # Session Runtime Execution State
 
 本 spec 定义 session 启动后的运行态边界。构建事实来自
-`SessionConstructionPlan`，单次执行策略来自 `LaunchExecution`，运行态只回答
+`SessionConstructionPlan`，单次启动决策来自 `LaunchPlan`，运行态只回答
 “当前这次 turn 是否被 claim、是否 active、如何取消、终态如何清理”。
 
 ## Runtime Boundaries
@@ -12,12 +12,14 @@
 | Turn lifecycle | `TurnSupervisor` | claim / activate / cancel / cleanup / stalled scan |
 | Connector live session | connector gateway | 远端或内嵌 connector 是否仍持有 live executor session |
 | Active turn | `TurnState::Active(TurnExecution)` | 当前进程内是否有正在执行的 turn |
+| Backend execution lease | `BackendExecutionLeaseRepository` | relay turn 对本机 backend 的执行占用与释放事实 |
 
 三个查询语义保持分离：
 
 - `has_live_executor_session(session_id)`：connector 层是否持有 live executor session。
 - `has_runtime_entry(session_id)`：本进程是否有 runtime entry。
 - `has_active_turn(session_id)`：当前是否存在 active turn。
+- `backend_execution_leases` active rows：本机 backend 是否被 relay turn 占用，用于 backend placement / runtime summary，不替代 session active turn。
 
 ## Connector Projection
 
@@ -29,8 +31,14 @@ MCP discovery、VFS resolution 和 capability resolution 属于 construction/lau
 职责。
 
 Relay connector 是远端执行器 transport bridge。Cloud 侧把完整 `mcp_servers`、
-VFS、working directory、env、executor config、identity 与 context projection
-下发给远端；relay 侧按原样透传给第三方 agent。
+VFS、working directory、env、executor config、identity、context projection 与
+已解析的 backend execution placement 下发给远端；relay 侧按原样透传给第三方 agent。
+
+Session launch 在 construction 完成后解析 `BackendSelectionRequest`，claim backend
+execution lease，并把 `backend_id + lease_id + selection_mode` 投影到
+`ExecutionContext.session.backend_execution`。Relay connector 只消费该 placement；prompt
+accepted 后 activate，terminal/cancel/prompt failure 后 release 或 fail。lease 只描述
+backend 占用，不替代 session event terminal 持久化。
 
 ## Tool And Context Hot Update
 
@@ -43,15 +51,12 @@ connector 的 `update_session_tools`。
 
 ## Turn Background Task Supervision
 
-`TurnSupervisor` 是 active turn 后台任务的唯一监督入口。prompt pipeline 可以创建
-processor / stream adapter，但一旦 adapter task 被 spawn，必须把 abort handle 登记到
-当前 `TurnExecution`：
+`TurnSupervisor` 是 active turn 后台任务的唯一监督入口。`StreamIngestionAttacher`
+创建 processor / stream adapter，并在 adapter task spawn 后把 abort handle 登记到当前
+`TurnExecution`：
 
 ```rust
-let stream_adapter = SessionLaunchExecutor::spawn_stream_adapter(...);
-turn_supervisor
-    .register_stream_adapter_handle(session_id, stream_adapter.abort_handle())
-    .await;
+let attached = stream_ingestion.attach(committed_turn).await;
 ```
 
 `clear_active_turn` 与 `clear_turn_and_hook` 在释放 active turn 前必须中止已登记的
@@ -79,7 +84,7 @@ persist terminal event -> clear_active_turn -> if persist failed: stop effects a
 Hook auto-resume、companion parent resume 等内部 follow-up 仍从主数据流进入：
 
 ```text
-LaunchCommand -> SessionConstructionPlan -> LaunchExecution
+LaunchCommand -> SessionConstructionPlan -> LaunchPlan
 ```
 
 follow-up 来源只表达 resume intent、parent/session 引用和 source policy。owner、

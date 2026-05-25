@@ -5,15 +5,9 @@ import type {
   SessionComposition,
   SessionRequiredContextBlock,
 } from "../types";
+import type { ConfigurableProviderInfo } from "../generated/vfs-contracts";
 import { api } from "../api/client";
 import { CONTEXT_CAPABILITY_OPTIONS } from "./context-config-defaults";
-
-interface ConfigurableProviderInfo {
-  service_id: string;
-  display_name: string;
-  root_ref_hint: string;
-  supported_capabilities: string[];
-}
 
 function useMountProviders() {
   const [providers, setProviders] = useState<ConfigurableProviderInfo[]>([]);

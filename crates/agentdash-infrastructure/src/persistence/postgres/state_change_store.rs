@@ -3,31 +3,6 @@ use sqlx::{PgPool, Postgres, Transaction};
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::story::{ChangeKind, StateChange};
 
-pub async fn initialize_state_changes_schema(pool: &PgPool) -> Result<(), DomainError> {
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS state_changes (
-            id BIGSERIAL PRIMARY KEY,
-            project_id TEXT NOT NULL DEFAULT '',
-            entity_id TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            payload TEXT NOT NULL DEFAULT '{}',
-            backend_id TEXT,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_state_changes_entity ON state_changes(entity_id);
-        CREATE INDEX IF NOT EXISTS idx_state_changes_backend ON state_changes(backend_id);
-        CREATE INDEX IF NOT EXISTS idx_state_changes_project ON state_changes(project_id);
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-    Ok(())
-}
-
 pub async fn append_state_change(
     pool: &PgPool,
     project_id: uuid::Uuid,

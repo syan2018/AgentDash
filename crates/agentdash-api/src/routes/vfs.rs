@@ -4,11 +4,15 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::vfs::{ListOptions, selected_workspace_binding};
-use agentdash_spi::{VfsContext, VfsDescriptor};
+use agentdash_contracts::vfs::{
+    ConfigurableProviderInfo, ListEntriesResponse, ListVfssResponse, SelectorHint, VfsDescriptor,
+    VfsEntry,
+};
+use agentdash_spi::VfsContext;
 
 use crate::{
     app_state::AppState,
@@ -25,17 +29,12 @@ pub struct VfssQuery {
     pub workspace_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct VfssResponse {
-    pub spaces: Vec<VfsDescriptor>,
-}
-
 /// `GET /api/vfs` — 能力发现端点
 pub async fn list_vfs(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<VfssQuery>,
-) -> Result<Json<VfssResponse>, ApiError> {
+) -> Result<Json<ListVfssResponse>, ApiError> {
     let workspace_available = if let Some(ws_id_str) = &query.workspace_id {
         let ws_id = Uuid::parse_str(ws_id_str)
             .map_err(|_| ApiError::BadRequest("无效的 workspace_id".into()))?;
@@ -58,8 +57,14 @@ pub async fn list_vfs(
         has_mcp,
     };
 
-    let spaces = state.services.vfs_registry.available_spaces(&ctx);
-    Ok(Json(VfssResponse { spaces }))
+    let spaces = state
+        .services
+        .vfs_registry
+        .available_spaces(&ctx)
+        .into_iter()
+        .map(vfs_descriptor_from_spi)
+        .collect();
+    Ok(Json(ListVfssResponse { spaces }))
 }
 
 // ─── 条目检索 ──────────────────────────────────────────────
@@ -73,22 +78,6 @@ pub struct ListEntriesQuery {
     pub path: Option<String>,
     #[serde(default)]
     pub recursive: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct VfsEntry {
-    pub address: String,
-    pub label: String,
-    pub entry_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_dir: Option<bool>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ListEntriesResponse {
-    pub entries: Vec<VfsEntry>,
 }
 
 /// `GET /api/vfs/{space_id}/entries` — 条目搜索端点
@@ -130,7 +119,7 @@ pub async fn list_address_entries(
                         recursive,
                     },
                     None,
-                    None,
+                    Some(&current_user),
                 )
                 .await
                 .map_err(ApiError::Internal)?;
@@ -208,11 +197,37 @@ async fn require_backend_online(
 /// 数据直接来自 MountProviderRegistry 中各 provider 自身声明的元信息。
 pub async fn list_configurable_mount_providers(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<agentdash_application::vfs::ConfigurableProviderInfo>> {
+) -> Json<Vec<ConfigurableProviderInfo>> {
     Json(
         state
             .services
             .mount_provider_registry
-            .user_configurable_providers(),
+            .user_configurable_providers()
+            .into_iter()
+            .map(|provider| ConfigurableProviderInfo {
+                service_id: provider.service_id,
+                display_name: provider.display_name,
+                root_ref_hint: provider.root_ref_hint,
+                supported_capabilities: provider.supported_capabilities,
+            })
+            .collect(),
     )
+}
+
+fn vfs_descriptor_from_spi(descriptor: agentdash_spi::VfsDescriptor) -> VfsDescriptor {
+    VfsDescriptor {
+        id: descriptor.id,
+        label: descriptor.label,
+        kind: serde_json::to_value(descriptor.kind)
+            .ok()
+            .and_then(|value| value.as_str().map(ToString::to_string))
+            .unwrap_or_else(|| "file".to_string()),
+        provider: descriptor.provider,
+        supports: descriptor.supports,
+        selector: descriptor.selector.map(|selector| SelectorHint {
+            trigger: selector.trigger,
+            placeholder: selector.placeholder,
+            result_item_type: selector.result_item_type,
+        }),
+    }
 }

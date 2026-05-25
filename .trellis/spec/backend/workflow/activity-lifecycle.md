@@ -1,16 +1,18 @@
-# Activity Lifecycle 后端契约
+# Activity Lifecycle Backend Contract
 
-> Activity lifecycle 的运行核心是 `ActivityLifecycleRunState`。Scheduler 负责 durable claim 与 executor 启动，executor 只能通过事件把结果交还给 `LifecycleEngine`。
+Activity lifecycle 的运行核心是 `ActivityLifecycleRunState`。Scheduler 负责 durable claim 与 executor 启动，executor 只能通过事件把结果交还给 `LifecycleEngine`。模块不变量见 [Workflow Architecture](./architecture.md)。
 
-## Scenario: Function Executor Immediate Completion
+## Core Runtime Contract
 
-### 1. Scope / Trigger
+- `/lifecycle-runs` resolves `ActivityLifecycleDefinition` by project-scoped id/key。
+- run 初始化通过 `LifecycleEngine::initialize`。
+- 持久化使用 `LifecycleRun::new_activity`。
+- 启动 ready attempts 由 `ActivityLifecycleRunService::launch_ready_attempts` 负责。
+- Agent session terminal callbacks 只解析 Activity session bindings。
+- Successor activation 委托给 Activity scheduler。
+- Hook evaluation 可以报告 completion metadata，但 durable state advancement 仍由 ActivityEvent application 拥有。
 
-- Trigger: `ActivityExecutorSpec::Function::{ApiRequest,BashExec}` 接入 Activity scheduler。
-- Scope: `agentdash-application/src/workflow/{scheduler.rs,agent_executor.rs,engine.rs}`。
-- Why: Function Activity 没有 Agent session terminal，因此启动后必须在同一次 scheduler pass 内把 completed/failed event 交给状态机。
-
-### 2. Signatures
+## Executor Launcher
 
 Trait contract:
 
@@ -31,6 +33,10 @@ pub struct ActivityExecutorStartResult {
 }
 ```
 
+## Function Executor
+
+Function Activity 没有 Agent session terminal，因此启动后必须在同一次 scheduler pass 内把 terminal event 交给状态机。
+
 Function execution port:
 
 ```rust
@@ -43,16 +49,17 @@ async fn execute_function_activity(
 ) -> Result<FunctionExecutionResult, String>;
 ```
 
-### 3. Contracts
+Contract:
 
-- Scheduler still records `ExecutorStarted` before applying any `immediate_events`.
-- Agent/Human executors return `ActivityExecutorStartResult::started(...)` with no immediate events.
-- Function executors return `ExecutorRunRef::FunctionRun { run_id }` plus exactly one terminal event for the attempt:
-  - success -> `ActivityEvent::ActivityCompleted`
-  - failure -> `ActivityEvent::ActivityFailed`
-- Function output values are mapped to declared `activity.output_ports`; completion policy validation remains owned by `LifecycleEngine`.
+- Scheduler 先记录 `ExecutorStarted`，再应用 `immediate_events`。
+- Agent/Human executors 返回 started result，不带 immediate events。
+- Function executors 返回 `ExecutorRunRef::FunctionRun { run_id }` plus exactly one terminal event。
+- success -> `ActivityEvent::ActivityCompleted`。
+- failure -> `ActivityEvent::ActivityFailed`。
+- Function output values 映射到 declared `activity.output_ports`。
+- completion policy validation 由 `LifecycleEngine` 拥有。
 
-Template context for Function specs:
+Template context:
 
 ```json
 {
@@ -64,86 +71,32 @@ Template context for Function specs:
 }
 ```
 
-### 4. Validation & Error Matrix
+## Activity Session Binding
 
-- Unknown activity in claim -> scheduler returns bad request before executor start.
-- Function template render failure -> `ActivityFailed`.
-- API request transport/read failure -> `ActivityFailed`.
-- API non-2xx status -> `ActivityFailed`.
-- Bash process spawn failure -> `ActivityFailed`.
-- Bash non-zero exit -> `ActivityFailed`.
-- Missing required output port -> `LifecycleEngine::CompletionPolicyRejected`.
+`complete_lifecycle_node` 通过如下 session binding 定位当前 work：
 
-### 5. Good/Base/Bad Cases
-
-- Good: Function `ApiRequest` returns 2xx, output artifact is written, successor Agent activates by artifact transition.
-- Base: Function `BashExec` exits 0 and maps stdout/stderr/exit_code JSON to declared output ports.
-- Bad: Function `BashExec` exits 7; attempt becomes failed and successor is not activated.
-
-### 6. Tests Required
-
-- `workflow::agent_executor`: API request success/failure and Bash success/failure produce immediate terminal events.
-- `workflow::scheduler`: immediate completion event is applied after executor started.
-- `workflow`: Function -> successor activation remains covered through engine/scheduler workflow tests.
-- Gate: `cargo test -p agentdash-application workflow`, `cargo check -p agentdash-api`.
-
-### 7. Correct Contrast
-
-Function executor completion should be represented as Activity events:
-
-```rust
-ActivityExecutorStartResult::with_events(
-    ExecutorRunRef::FunctionRun { run_id },
-    vec![ActivityEvent::ActivityCompleted { activity_key, attempt, outputs, summary }],
-)
+```text
+lifecycle_activity:{run_id}:{activity_key}#{attempt}
 ```
 
-This preserves one state transition path through `LifecycleEngine`; Function execution does not mutate `LifecycleRun.activity_state` directly.
+找到绑定后提交 `ActivityCompleted` 或 `ActivityFailed`。
 
-## Scenario: Activity Run Startup And Advancement
+## ProjectAgent Default Lifecycle
 
-### 1. Scope / Trigger
+ProjectAgent single-workflow defaults create a one-activity lifecycle:
 
-- Trigger: explicit `/lifecycle-runs` creation, ProjectAgent default lifecycle startup, Agent child session terminal, and `complete_lifecycle_node`.
-- Scope: `agentdash-api/src/routes/workflows.rs`, `agentdash-api/src/routes/project_agents.rs`, `agentdash-application/src/workflow/{activity_run.rs,orchestrator.rs,tools/advance_node.rs}`.
-- Why: Runtime progression must have one authority. LifecycleRun creation initializes `ActivityLifecycleRunState`; all later progression enters `LifecycleEngine` through ActivityEvent.
+- executor: `ActivityExecutorSpec::Agent`
+- session policy: `AgentSessionPolicy::ContinueRoot`
 
-### 2. Contracts
+## Workflow Template Asset Contract
 
-- `/lifecycle-runs` resolves `ActivityLifecycleDefinition` by project-scoped id/key, initializes the run through `LifecycleEngine::initialize`, persists with `LifecycleRun::new_activity`, then invokes `ActivityLifecycleRunService::launch_ready_attempts`.
-- ProjectAgent single-workflow defaults create a one-activity lifecycle with `ActivityExecutorSpec::Agent` and `AgentSessionPolicy::ContinueRoot`.
-- `complete_lifecycle_node` locates the current work by `lifecycle_activity:{run_id}:{activity_key}#{attempt}` session binding and submits `ActivityCompleted` or `ActivityFailed`.
-- Agent session terminal callbacks only resolve Activity session bindings. Successor activation is delegated to the Activity scheduler; orchestrator code does not branch on `LifecycleNodeType`.
-- Hook evaluation can still report completion metadata, while durable state advancement remains owned by ActivityEvent application.
+Workflow template assets 进入 Shared Library 或从 Marketplace 安装/更新时，必须使用 normalized Activity payload。
 
-### 3. Tests Required
+Contract:
 
-- `cargo test -p agentdash-application workflow`
-- `cargo check -p agentdash-api`
-- `pnpm --filter app-web test workflow`
-- `pnpm --filter app-web typecheck`
-
-## Scenario: Workflow Template Asset Migration And Install
-
-### 1. Scope / Trigger
-
-- Trigger: builtin/plugin/user workflow template assets entering Shared Library, and project install/update from Marketplace.
-- Scope: `agentdash-domain/src/shared_library`, `agentdash-application/src/shared_library`, `agentdash-infrastructure/src/persistence/postgres/{shared_library_repository,workflow_repository}.rs`.
-- Why: Workflow template assets are part of the Activity lifecycle contract. Marketplace status, installed source, and project definitions must compare the normalized Activity payload, not a stale pre-Activity shape.
-
-### 2. Contracts
-
-- Workflow template payloads are normalized to `template.lifecycle.entry_activity_key`, `activities`, and `transitions` before deserialization or persistence repair.
-- Shared Library startup repair rewrites builtin workflow template assets to the normalized shape and recomputes `payload_digest` from that shape.
-- Project install/update commits workflow definitions and the activity lifecycle definition in one database transaction.
-- Overwrite install preserves project resource ids and `created_at`, increments `version`, and updates installed source metadata for every workflow definition and the activity lifecycle definition together.
-- A failed workflow template update must leave project resources and installed source metadata unchanged.
-- Runtime active workflow projection resolves from `lifecycle_activity:{run_id}:{activity_key}#{attempt}` session bindings and Activity lifecycle definitions. Missing Activity binding means no active workflow projection.
-- Frontend Marketplace workflow drawers consume only the Activity lifecycle shape; unexpected old shape means the repository normalization did not run.
-
-### 3. Tests Required
-
-- Domain payload normalization test for legacy workflow template lifecycle JSON.
-- Infrastructure transaction test: conflict without overwrite leaves versions/source unchanged; overwrite bumps workflow and lifecycle versions.
-- Frontend typecheck/workflow tests after removing old payload UI parsing.
-- Browser smoke: resource market renders workflow template details, update action does not emit constraint errors, project definitions report `source_status = up_to_date`.
+- Workflow template payloads normalized to `template.lifecycle.entry_activity_key`、`activities`、`transitions` before deserialization or persistence repair。
+- Shared Library startup repair rewrites builtin workflow template assets to normalized shape and recomputes `payload_digest`。
+- Project install/update commits workflow definitions and activity lifecycle definition in one database transaction。
+- Overwrite install preserves project resource ids and `created_at`，increments `version`，updates installed source metadata together。
+- Runtime active workflow projection resolves from Activity session bindings and Activity lifecycle definitions。
+- Missing Activity binding means no active workflow projection。

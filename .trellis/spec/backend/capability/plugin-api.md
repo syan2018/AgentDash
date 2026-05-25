@@ -53,7 +53,7 @@
 
 ## First-Party Plugin 策略
 
-开源仓必须用 first-party plugins 先验证插件合同的合理性，防止企业仓成为第一个消费者。当前 first-party 包括默认认证插件和默认连接器插件。
+开源仓必须用 first-party plugins 验证插件合同的合理性，防止企业仓成为第一个消费者。First-party baseline 包括默认认证插件和默认连接器插件。
 
 ## Plugin Embedded Shared Library Assets
 

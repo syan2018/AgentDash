@@ -7,6 +7,11 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
+use agentdash_domain::DomainError;
+use agentdash_domain::backend::{
+    BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionSelectionMode,
+    BackendExecutionTerminalKind,
+};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, ExecutionHookProvider, HookEvaluationQuery, HookInjection,
@@ -37,6 +42,11 @@ use super::super::types::{
 };
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
+};
+use crate::backend_transport::{
+    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
+    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
+    WorkspaceProbeInfo,
 };
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
@@ -335,6 +345,7 @@ async fn build_tools_filters_relay_mcp_with_initial_capability_state() {
             executor_config: AgentConfig::new("PI_AGENT"),
             mcp_servers: vec![workflow_server.clone()],
             vfs: Some(local_workspace_vfs(base.path())),
+            backend_execution: None,
             identity: None,
         },
         turn: agentdash_spi::ExecutionTurnFrame {
@@ -461,6 +472,8 @@ struct CapturedPromptSurface {
     tool_clusters: std::collections::BTreeSet<agentdash_spi::ToolCluster>,
     mount_ids: Vec<String>,
     default_mount_id: Option<String>,
+    backend_execution_backend_id: Option<String>,
+    backend_execution_lease_id: Option<uuid::Uuid>,
 }
 
 #[async_trait::async_trait]
@@ -505,6 +518,16 @@ impl AgentConnector for CapturingConnector {
                 .map(|vfs| vfs.mounts.iter().map(|mount| mount.id.clone()).collect())
                 .unwrap_or_default(),
             default_mount_id: vfs.and_then(|vfs| vfs.default_mount_id),
+            backend_execution_backend_id: context
+                .session
+                .backend_execution
+                .as_ref()
+                .map(|placement| placement.backend_id.clone()),
+            backend_execution_lease_id: context
+                .session
+                .backend_execution
+                .as_ref()
+                .map(|placement| placement.lease_id),
         });
         Ok(Box::pin(stream::empty()))
     }
@@ -525,6 +548,165 @@ impl AgentConnector for CapturingConnector {
         _reason: Option<String>,
     ) -> Result<(), ConnectorError> {
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct PlacementTransport {
+    executors: Vec<RemoteExecutorInfo>,
+}
+
+#[async_trait::async_trait]
+impl BackendTransport for PlacementTransport {
+    async fn is_online(&self, backend_id: &str) -> bool {
+        self.executors
+            .iter()
+            .any(|executor| executor.backend_id == backend_id)
+    }
+
+    async fn list_online_backend_ids(&self) -> Vec<String> {
+        self.executors
+            .iter()
+            .map(|executor| executor.backend_id.clone())
+            .collect()
+    }
+
+    async fn detect_workspace(
+        &self,
+        _backend_id: &str,
+        _root: &str,
+    ) -> Result<WorkspaceProbeInfo, TransportError> {
+        Ok(WorkspaceProbeInfo::default())
+    }
+
+    async fn detect_git_repo(
+        &self,
+        _backend_id: &str,
+        _root: &str,
+    ) -> Result<GitRepoInfo, TransportError> {
+        Ok(GitRepoInfo::default())
+    }
+
+    async fn browse_directory(
+        &self,
+        _backend_id: &str,
+        _path: Option<&str>,
+    ) -> Result<DirectoryBrowseInfo, TransportError> {
+        Ok(DirectoryBrowseInfo::default())
+    }
+}
+
+#[async_trait::async_trait]
+impl RelayPromptTransport for PlacementTransport {
+    async fn relay_prompt(
+        &self,
+        _backend_id: &str,
+        _payload: RelayPromptRequest,
+    ) -> Result<String, TransportError> {
+        Ok("turn".to_string())
+    }
+
+    async fn relay_cancel(
+        &self,
+        _backend_id: &str,
+        _session_id: &str,
+    ) -> Result<(), TransportError> {
+        Ok(())
+    }
+
+    fn list_online_executors(&self) -> Vec<RemoteExecutorInfo> {
+        self.executors.clone()
+    }
+
+    async fn resolve_backend(
+        &self,
+        _executor_id: &str,
+        _preferred_backend_id: Option<&str>,
+    ) -> Result<String, TransportError> {
+        Ok(self
+            .executors
+            .first()
+            .map(|executor| executor.backend_id.clone())
+            .unwrap_or_default())
+    }
+
+    fn register_session_sink(&self, _route: RelaySessionRoute) {}
+
+    fn unregister_session_sink(&self, _session_id: &str) {}
+
+    fn has_session_sink(&self, _session_id: &str) -> bool {
+        false
+    }
+
+    fn session_route(&self, _session_id: &str) -> Option<RelaySessionRouteInfo> {
+        None
+    }
+}
+
+#[derive(Default)]
+struct PlacementLeaseRepository {
+    claims: std::sync::Mutex<Vec<BackendExecutionLease>>,
+}
+
+#[async_trait::async_trait]
+impl BackendExecutionLeaseRepository for PlacementLeaseRepository {
+    async fn claim(&self, lease: &BackendExecutionLease) -> Result<(), DomainError> {
+        self.claims.lock().unwrap().push(lease.clone());
+        Ok(())
+    }
+
+    async fn activate(
+        &self,
+        _lease_id: uuid::Uuid,
+        _activated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn release(
+        &self,
+        _lease_id: uuid::Uuid,
+        _terminal_kind: Option<BackendExecutionTerminalKind>,
+        _reason: Option<String>,
+        _released_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn fail(
+        &self,
+        _lease_id: uuid::Uuid,
+        _reason: Option<String>,
+        _failed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn mark_lost_by_backend(
+        &self,
+        _backend_id: &str,
+        _reason: Option<String>,
+        _lost_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, DomainError> {
+        Ok(0)
+    }
+
+    async fn get_by_id(
+        &self,
+        _lease_id: uuid::Uuid,
+    ) -> Result<Option<BackendExecutionLease>, DomainError> {
+        Ok(None)
+    }
+
+    async fn list_active(&self) -> Result<Vec<BackendExecutionLease>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn count_active_by_backend(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<HashMap<String, i64>, DomainError> {
+        Ok(backend_ids.iter().map(|id| (id.clone(), 0)).collect())
     }
 }
 
@@ -584,9 +766,7 @@ impl MountProvider for SkillFixtureMountProvider {
         _query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
-        Ok(SearchResult {
-            matches: Vec::new(),
-        })
+        Ok(SearchResult::default())
     }
 
     async fn exec(
@@ -736,7 +916,8 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .await
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
-    hub.reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
 
@@ -766,6 +947,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
                     executor_config: AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     vfs: before_state.vfs.active.clone(),
+                    backend_execution: None,
                     identity: None,
                 },
                 before_state.clone(),
@@ -1071,6 +1253,54 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     }));
 }
 
+#[tokio::test]
+async fn relay_backend_execution_placement_is_claimed_during_launch() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let captures = Arc::new(TokioMutex::new(Vec::new()));
+    let placement_transport = Arc::new(PlacementTransport {
+        executors: vec![RemoteExecutorInfo {
+            backend_id: "local".to_string(),
+            executor_id: "PI_AGENT".to_string(),
+            executor_name: "Pi".to_string(),
+            variants: Vec::new(),
+            available: true,
+        }],
+    });
+    let lease_repo = Arc::new(PlacementLeaseRepository::default());
+    let hub = test_hub(
+        base.path().to_path_buf(),
+        Arc::new(CapturingConnector {
+            captures: captures.clone(),
+        }),
+        None,
+    )
+    .with_backend_execution_placement(placement_transport, lease_repo.clone());
+    let session = hub
+        .create_session("launch-backend-placement")
+        .await
+        .expect("create");
+
+    hub.start_prompt(&session.id, simple_prompt_request("hello"))
+        .await
+        .expect("prompt should start");
+
+    let claims = lease_repo.claims.lock().unwrap();
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].backend_id, "local");
+    assert_eq!(claims[0].executor_id, "PI_AGENT");
+    assert_eq!(
+        claims[0].selection_mode,
+        BackendExecutionSelectionMode::WorkspaceBinding
+    );
+    let captured = captures.lock().await;
+    let surface = captured.first().expect("connector should be called");
+    assert_eq!(
+        surface.backend_execution_backend_id.as_deref(),
+        Some("local")
+    );
+    assert_eq!(surface.backend_execution_lease_id, Some(claims[0].id));
+}
+
 #[derive(Default)]
 struct SessionStartAwareConnector {
     session_start_seen: Arc<TokioMutex<Vec<bool>>>,
@@ -1292,7 +1522,8 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
 
-    hub.reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+    hub.hook_service()
+        .reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
@@ -1308,6 +1539,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
                     executor_config: AgentConfig::new("PI_AGENT"),
                     mcp_servers: vec![],
                     vfs: Some(local_workspace_vfs(base.path())),
+                    backend_execution: None,
                     identity: None,
                 },
                 CapabilityState::default(),
@@ -1398,6 +1630,7 @@ fn resolve_prompt_payload_supports_multiple_block_types() {
         ]),
         env: std::collections::HashMap::new(),
         executor_config: None,
+        backend_selection: None,
     };
 
     let payload = input
@@ -2217,6 +2450,22 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         .list_all_events(&session.id)
         .await
         .expect("history should load");
+    assert!(
+        !history
+            .iter()
+            .any(|event| matches!(event.notification.event, BackboneEvent::TurnStarted(_))),
+        "connector 未接受前不应提交 turn_started"
+    );
+    assert!(
+        !history.iter().any(|event| {
+            matches!(
+                &event.notification.event,
+                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, .. })
+                    if key == "user_message_chunk"
+            )
+        }),
+        "connector 未接受前不应提交 user message"
+    );
     let terminal = history
         .iter()
         .filter_map(|event| parse_turn_terminal_event_from_envelope(&event.notification))
@@ -2230,6 +2479,14 @@ async fn start_prompt_records_failed_terminal_when_connector_setup_fails() {
         terminal.2.as_deref(),
         Some("执行器运行错误: connector setup failed")
     );
+
+    let is_running = hub
+        .runtime_registry
+        .with_runtime(&session.id, |runtime| {
+            runtime.is_some_and(|runtime| runtime.turn_state.is_running())
+        })
+        .await;
+    assert!(!is_running, "connector 初始化失败后不应留下 running turn");
 }
 
 #[tokio::test]
@@ -2488,7 +2745,7 @@ async fn launch_prompt_strict_requires_session_construction_provider() {
 }
 
 #[tokio::test]
-async fn launch_prompt_relaxed_requires_session_construction_provider() {
+async fn local_relay_prompt_requires_session_construction_provider() {
     let base = tempfile::tempdir().expect("tempdir");
     let workspace = tempfile::tempdir().expect("workspace");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
@@ -2505,13 +2762,14 @@ async fn launch_prompt_relaxed_requires_session_construction_provider() {
             ),
         )
         .await
-        .expect_err("relaxed launch 应在 provider 缺失时失败");
+        .expect_err("local relay prompt 应在 provider 缺失时失败");
 
     match error {
         ConnectorError::Runtime(message) => {
             assert!(
-                message.contains("拒绝 relaxed launch"),
-                "错误信息应提示 relaxed launch 被拒绝，实际为: {message}"
+                message.contains("session_construction_provider 未注入")
+                    && message.contains("local_relay_prompt"),
+                "错误信息应提示 local relay prompt 被拒绝，实际为: {message}"
             );
         }
         other => panic!("期望 Runtime 错误，实际为: {other}"),

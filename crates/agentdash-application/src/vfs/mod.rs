@@ -15,6 +15,7 @@ pub mod provider_skill_asset;
 pub mod relay_service;
 pub mod rewrite;
 pub mod surface;
+pub mod surface_query;
 pub mod tools;
 pub mod types;
 
@@ -50,9 +51,9 @@ pub use path::{
     validate_vfs,
 };
 pub use provider::{
-    ConfigurableProviderInfo, MountEditCapabilities, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch, SearchQuery,
-    SearchResult,
+    ConfigurableProviderInfo, GrepQuery, MountEditCapabilities, MountError, MountOperationContext,
+    MountProvider, MountProviderRegistry, MountProviderRegistryBuilder, SearchMatch,
+    SearchOutputMode, SearchQuery, SearchResult,
 };
 pub use provider_canvas::CanvasFsMountProvider;
 pub use provider_inline::InlineFsMountProvider;
@@ -63,6 +64,7 @@ pub use surface::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource,
 };
+pub use surface_query::{VfsSurfaceRuntimeProjection, build_surface_summary};
 pub use types::{
     ApplyPatchRequest, ApplyPatchResult, BinaryReadResult, ExecRequest, ExecResult, ListOptions,
     ListResult, MultiMountPatchResult, PatchEntryError, ReadResult, ResourceRef, RuntimeFileEntry,

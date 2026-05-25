@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     WORKSPACE_BROWSE_DIRECTORY_ACTION, WORKSPACE_DETECT_ACTION, WorkspaceBrowseDirectoryInput,
@@ -141,7 +142,13 @@ pub async fn create_project_backend_access(
     )
     .await?;
     let backend_id = normalize_required("backend_id", &req.backend_id)?;
-    state.repos.backend_repo.get_backend(&backend_id).await?;
+    let backend = state.repos.backend_repo.get_backend(&backend_id).await?;
+    BackendAuthorizationService::new(
+        state.repos.backend_repo.as_ref(),
+        state.repos.project_repo.as_ref(),
+    )
+    .require_config(&current_user, &backend, BackendPermission::Manage)
+    .await?;
 
     let existing = state
         .repos
@@ -321,7 +328,7 @@ pub async fn refresh_project_backend_inventory(
         .ok_or_else(|| ApiError::Conflict(format!("backend `{}` 当前不在线", access.backend_id)))?;
     let mut items = Vec::new();
     let mut warnings = Vec::new();
-    for root in online.accessible_roots {
+    for root in online.workspace_roots {
         match invoke_workspace_detect(
             &state,
             Some(current_user.user_id.as_str()),

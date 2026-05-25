@@ -17,54 +17,7 @@ impl PostgresSkillAssetRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS skill_assets (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                key TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                description TEXT NOT NULL,
-                source TEXT NOT NULL,
-                builtin_key TEXT,
-                remote_source_url TEXT,
-                remote_imported_at TEXT,
-                remote_digest TEXT,
-                library_asset_id TEXT,
-                source_ref TEXT,
-                source_version TEXT,
-                source_digest TEXT,
-                installed_at TEXT,
-                disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CONSTRAINT skill_assets_source_check CHECK (source IN ('builtin_seed', 'user', 'github')),
-                CONSTRAINT skill_assets_builtin_key_consistency CHECK (
-                    (source = 'builtin_seed' AND builtin_key IS NOT NULL)
-                    OR (source <> 'builtin_seed' AND builtin_key IS NULL)
-                )
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_assets_project_key ON skill_assets(project_id, key)")
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_assets_project_builtin_key ON skill_assets(project_id, builtin_key) WHERE builtin_key IS NOT NULL")
-            .execute(&self.pool)
-            .await
-            .map_err(db_err)?;
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_skill_assets_project_id ON skill_assets(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-        add_installed_source_columns(&self.pool).await?;
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["skill_assets"]).await
     }
 }
 
@@ -563,20 +516,6 @@ fn remote_digest(source: &SkillAssetSource) -> Option<&str> {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
-}
-
-async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
-    for query in [
-        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
-        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_ref TEXT",
-        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_version TEXT",
-        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS source_digest TEXT",
-        "ALTER TABLE skill_assets ADD COLUMN IF NOT EXISTS installed_at TEXT",
-        "CREATE INDEX IF NOT EXISTS idx_skill_assets_library_asset_id ON skill_assets(library_asset_id)",
-    ] {
-        sqlx::query(query).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
 }
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {

@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/reviews/2026-05-23-architecture-review-round/architecture-review-synthesis.md", "reason": "Relay correctness 问题来源"}
+{"file": "crates/agentdash-application/src/relay_connector.rs", "reason": "cloud relay connector prompt/sink lifecycle"}
+{"file": "crates/agentdash-api/src/relay/registry.rs", "reason": "backend registry pending 与 session sink"}
+{"file": "crates/agentdash-local/src/handlers/prompt.rs", "reason": "local prompt handler 与 notification forwarder"}

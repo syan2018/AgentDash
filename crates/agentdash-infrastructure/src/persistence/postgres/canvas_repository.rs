@@ -17,94 +17,11 @@ impl PostgresCanvasRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS canvases (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                mount_id TEXT NOT NULL DEFAULT '',
-                title TEXT NOT NULL,
-                description TEXT NOT NULL DEFAULT '',
-                entry_file TEXT NOT NULL,
-                sandbox_config TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            "#,
+        crate::migration::assert_postgres_tables_ready(
+            &self.pool,
+            &["canvases", "canvas_files", "canvas_bindings"],
         )
-        .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        self.ensure_mount_id_column().await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS canvas_files (
-                canvas_id TEXT NOT NULL,
-                path TEXT NOT NULL,
-                content TEXT NOT NULL DEFAULT '',
-                PRIMARY KEY (canvas_id, path),
-                FOREIGN KEY(canvas_id) REFERENCES canvases(id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS canvas_bindings (
-                canvas_id TEXT NOT NULL,
-                alias TEXT NOT NULL,
-                source_uri TEXT NOT NULL,
-                content_type TEXT NOT NULL DEFAULT 'application/json',
-                PRIMARY KEY (canvas_id, alias),
-                FOREIGN KEY(canvas_id) REFERENCES canvases(id) ON DELETE CASCADE
-            );
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_canvases_project_id ON canvases(project_id)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_canvases_project_mount_id ON canvases(project_id, mount_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn ensure_mount_id_column(&self) -> Result<(), DomainError> {
-        let columns = sqlx::query_scalar::<_, String>(
-            "SELECT column_name
-             FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = 'canvases'",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        if columns.iter().any(|column| column == "mount_id") {
-            return Ok(());
-        }
-
-        sqlx::query("ALTER TABLE canvases ADD COLUMN mount_id TEXT NOT NULL DEFAULT ''")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        sqlx::query("UPDATE canvases SET mount_id = id WHERE mount_id = ''")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
-        Ok(())
     }
 
     async fn load_files(

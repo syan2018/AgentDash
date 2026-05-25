@@ -9,12 +9,14 @@ pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
+pub mod session_use_cases;
 pub mod stream;
 pub mod task_agent_context;
 pub mod title_generator;
 #[cfg(test)]
 mod vfs_access;
 pub mod vfs_materialization;
+mod vfs_surface_runtime;
 pub mod workspace_resolution;
 
 use anyhow::Result;
@@ -113,6 +115,9 @@ pub async fn build_server(
     .await?;
     tracing::info!(database_url = %db_runtime.connection_url, "数据库已就绪");
     agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    agentdash_infrastructure::migration::assert_postgres_schema_ready(&db_runtime.pool)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 

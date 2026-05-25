@@ -367,6 +367,7 @@ impl CompanionRequestTool {
             prompt_blocks: None,
             env: std::collections::HashMap::new(),
             executor_config: None,
+            backend_selection: None,
         };
 
         let workflow = if let Some(wf_key) = workflow_key {
@@ -1502,6 +1503,7 @@ impl CompanionRespondTool {
                         })]),
                         env: std::collections::HashMap::new(),
                         executor_config: Some(resume_config),
+                        backend_selection: None,
                     });
                     if let Err(error) = hub_clone.launch.launch_command(&parent_sid, command).await
                     {

@@ -15,64 +15,8 @@ impl PostgresMcpPresetRepository {
         Self { pool }
     }
 
-    /// 幂等建表——首次启动时 `CREATE TABLE IF NOT EXISTS`；
-    /// 已通过 `migrations/0015_mcp_presets.sql` 在生产库初始化，这里主要给集成测试用。
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS mcp_presets (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                key TEXT NOT NULL,
-                display_name TEXT NOT NULL,
-                description TEXT,
-                transport TEXT NOT NULL,
-                route_policy TEXT NOT NULL,
-                source TEXT NOT NULL,
-                builtin_key TEXT,
-                library_asset_id TEXT,
-                source_ref TEXT,
-                source_version TEXT,
-                source_digest TEXT,
-                installed_at TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                CONSTRAINT mcp_presets_source_check CHECK (source IN ('builtin', 'user')),
-                CONSTRAINT mcp_presets_builtin_key_consistency CHECK (
-                    (source = 'builtin' AND builtin_key IS NOT NULL)
-                    OR (source = 'user' AND builtin_key IS NULL)
-                )
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_presets_project_key ON mcp_presets(project_id, key)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_mcp_presets_project_id ON mcp_presets(project_id)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_presets_project_builtin_key ON mcp_presets(project_id, builtin_key) WHERE builtin_key IS NOT NULL",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
-
-        add_installed_source_columns(&self.pool).await?;
-
-        Ok(())
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["mcp_presets"]).await
     }
 }
 
@@ -230,20 +174,6 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
 
 fn db_err(error: sqlx::Error) -> DomainError {
     DomainError::InvalidConfig(error.to_string())
-}
-
-async fn add_installed_source_columns(pool: &PgPool) -> Result<(), DomainError> {
-    for column in [
-        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS library_asset_id TEXT",
-        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_ref TEXT",
-        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_version TEXT",
-        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS source_digest TEXT",
-        "ALTER TABLE mcp_presets ADD COLUMN IF NOT EXISTS installed_at TEXT",
-        "CREATE INDEX IF NOT EXISTS idx_mcp_presets_library_asset_id ON mcp_presets(library_asset_id)",
-    ] {
-        sqlx::query(column).execute(pool).await.map_err(db_err)?;
-    }
-    Ok(())
 }
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {

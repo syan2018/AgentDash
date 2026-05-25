@@ -1,8 +1,8 @@
 # Session Context Bundle 主数据面
 
 `SessionContextBundle` 是 session 业务上下文的主数据面。Construction 负责产出
-Bundle，LaunchExecution 把它投影到 connector `ExecutionContext`，Hook runtime 只通过
-约定入口追加 per-turn 增量。
+Bundle，`LaunchPlan` 与 `TurnPreparer` 把它投影到 connector `ExecutionContext`，
+Hook runtime 只通过约定入口追加 per-turn 增量。
 
 ## Bundle Shape
 
@@ -86,12 +86,13 @@ flowchart LR
     Source["LaunchCommand"]
     Construction["SessionConstructionPlan"]
     Bundle["SessionContextBundle"]
-    Launch["LaunchExecution"]
+    Launch["LaunchPlan"]
+    Prepared["PreparedTurn"]
     Context["ExecutionContext"]
     Audit["ContextAuditBus"]
     Hook["HookRuntimeDelegate"]
 
-    Source --> Construction --> Bundle --> Launch --> Context
+    Source --> Construction --> Bundle --> Launch --> Prepared --> Context
     Construction --> Audit
     Hook --> Bundle
     Hook --> Audit

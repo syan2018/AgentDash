@@ -7,6 +7,7 @@ use std::{
 
 use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
 use agentdash_agent_types::AgentMessage;
+use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
 use futures::Stream;
@@ -64,8 +65,20 @@ pub struct ExecutionSessionFrame {
     /// 远端 agent，由远端 agent 自行建联。
     pub mcp_servers: Vec<SessionMcpServer>,
     pub vfs: Option<Vfs>,
+    /// Relay/backend execution placement resolved during session launch.
+    ///
+    /// This field is set only for remote backend executions. It is the connector-facing
+    /// projection of the already claimed backend execution lease.
+    pub backend_execution: Option<ExecutionBackendPlacement>,
     /// 发起本次执行的用户身份（由 HTTP 层注入）。
     pub identity: Option<crate::platform::auth::AuthIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionBackendPlacement {
+    pub backend_id: String,
+    pub lease_id: uuid::Uuid,
+    pub selection_mode: BackendExecutionSelectionMode,
 }
 
 /// Turn 级执行上下文（How + 运行时控制面）。

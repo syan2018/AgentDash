@@ -98,7 +98,7 @@ async fn handle_backend_connection(
     tracing::info!(
         backend_id = %bid,
         name = %payload.name,
-        accessible_roots = ?payload.accessible_roots,
+        workspace_roots = ?payload.workspace_roots,
         "收到本机后端注册"
     );
 
@@ -110,7 +110,7 @@ async fn handle_backend_connection(
         name: payload.name.clone(),
         version: payload.version.clone(),
         capabilities: payload.capabilities.clone(),
-        accessible_roots: payload.accessible_roots.clone(),
+        workspace_roots: payload.workspace_roots.clone(),
         sender: cmd_tx,
         connected_at: chrono::Utc::now(),
     };
@@ -146,7 +146,7 @@ async fn handle_backend_connection(
             name: payload.name.clone(),
             version: payload.version.clone(),
             capabilities: serde_json::to_value(&payload.capabilities).unwrap_or_default(),
-            accessible_roots: payload.accessible_roots.clone(),
+            workspace_roots: payload.workspace_roots.clone(),
             device: authorized_backend.device.clone(),
             connected_at,
         })
@@ -230,6 +230,28 @@ async fn handle_backend_connection(
     }
 
     state.services.backend_registry.unregister(&bid).await;
+    match state
+        .repos
+        .backend_execution_lease_repo
+        .mark_lost_by_backend(
+            &bid,
+            Some("relay websocket disconnected".to_string()),
+            chrono::Utc::now(),
+        )
+        .await
+    {
+        Ok(count) if count > 0 => {
+            tracing::warn!(
+                backend_id = %bid,
+                count,
+                "后端断连，已标记 active backend execution lease 为 lost"
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(backend_id = %bid, error = %error, "标记 backend execution lease lost 失败");
+        }
+    }
     if let Err(error) = state
         .repos
         .runtime_health_repo
@@ -773,7 +795,7 @@ mod tests {
                 supports_discover_options: true,
                 mcp_servers: Vec::new(),
             },
-            accessible_roots: vec!["/tmp/project".to_string()],
+            workspace_roots: vec!["/tmp/project".to_string()],
         }
     }
 

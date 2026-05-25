@@ -101,7 +101,7 @@ pub async fn list_files(
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;
-    relay_list_files(&state, backend_id, &workspace, &pattern).await
+    relay_list_files(&state, backend_id, &workspace, &pattern, &current_user).await
 }
 
 /// POST /api/file-picker/read
@@ -121,7 +121,7 @@ pub async fn read_file(
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;
-    relay_read_file(&state, backend_id, &workspace, &rel).await
+    relay_read_file(&state, backend_id, &workspace, &rel, &current_user).await
 }
 
 /// POST /api/file-picker/batch-read
@@ -146,7 +146,7 @@ pub async fn batch_read_files(
     )
     .await?;
     let backend_id = require_online_backend(&state, &workspace).await?;
-    relay_batch_read_files(&state, backend_id, &workspace, &req.paths).await
+    relay_batch_read_files(&state, backend_id, &workspace, &req.paths, &current_user).await
 }
 
 pub(crate) fn validate_path_safe(rel_path: &str) -> Result<(), ApiError> {
@@ -279,6 +279,7 @@ async fn relay_list_files(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     pattern: &str,
+    current_user: &agentdash_plugin_api::AuthIdentity,
 ) -> Result<Json<ListFilesResponse>, ApiError> {
     let session = state
         .services
@@ -301,7 +302,7 @@ async fn relay_list_files(
                 recursive: true,
             },
             None,
-            None,
+            Some(current_user),
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -329,6 +330,7 @@ async fn relay_read_file(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     rel_path: &str,
+    current_user: &agentdash_plugin_api::AuthIdentity,
 ) -> Result<Json<ReadFileResponse>, ApiError> {
     let session = state
         .services
@@ -345,7 +347,7 @@ async fn relay_read_file(
                 path: rel_path.to_string(),
             },
             None,
-            None,
+            Some(current_user),
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -365,6 +367,7 @@ async fn relay_batch_read_files(
     _backend_id: &str,
     workspace: &agentdash_domain::workspace::Workspace,
     paths: &[String],
+    current_user: &agentdash_plugin_api::AuthIdentity,
 ) -> Result<Json<BatchReadFilesResponse>, ApiError> {
     let session = state
         .services
@@ -398,7 +401,7 @@ async fn relay_batch_read_files(
                     path: rel.clone(),
                 },
                 None,
-                None,
+                Some(current_user),
             )
             .await
         {

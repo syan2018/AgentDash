@@ -51,8 +51,8 @@ pub struct McpLocalServerEntry {
     pub transport: McpTransportConfig,
 }
 
-pub fn load_local_backend_config(accessible_roots: &[PathBuf]) -> LocalBackendConfigFile {
-    let Some(root) = accessible_roots.first() else {
+pub fn load_local_backend_config(workspace_roots: &[PathBuf]) -> LocalBackendConfigFile {
+    let Some(root) = workspace_roots.first() else {
         return LocalBackendConfigFile::default();
     };
 

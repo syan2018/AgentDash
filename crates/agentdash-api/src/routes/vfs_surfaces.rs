@@ -9,9 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use agentdash_application::vfs::{
-    ListOptions, ReadResult, ResolvedVfsSurface, ResolvedVfsSurfaceSource, ResourceRef,
-};
+use agentdash_application::vfs::{ListOptions, ReadResult, ResourceRef};
 
 use crate::{
     app_state::AppState,
@@ -22,8 +20,6 @@ use crate::{
 mod dto;
 mod helpers;
 mod resolver;
-
-pub(crate) use resolver::build_surface_summary;
 
 pub use dto::*;
 use helpers::{
@@ -39,8 +35,9 @@ pub async fn resolve_surface(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<ResolveSurfaceRequest>,
 ) -> Result<Json<ResolvedVfsSurface>, ApiError> {
-    let surface = resolve_surface_from_source(&state, &current_user, &req.source).await?;
-    Ok(Json(surface))
+    let source = dto::surface_source_to_application(&req.source).map_err(ApiError::BadRequest)?;
+    let surface = resolve_surface_from_source(&state, &current_user, &source).await?;
+    Ok(Json(dto::surface_from_application(surface)))
 }
 
 pub async fn get_surface(
@@ -49,9 +46,10 @@ pub async fn get_surface(
     Path(surface_ref): Path<String>,
 ) -> Result<Json<ResolvedVfsSurface>, ApiError> {
     let source =
-        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let surface = resolve_surface_from_source(&state, &current_user, &source).await?;
-    Ok(Json(surface))
+    Ok(Json(dto::surface_from_application(surface)))
 }
 
 pub async fn list_surface_mount_entries(
@@ -61,7 +59,8 @@ pub async fn list_surface_mount_entries(
     Query(query): Query<SurfaceEntriesQuery>,
 ) -> Result<Json<SurfaceEntriesResponse>, ApiError> {
     let source =
-        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
 
@@ -79,7 +78,7 @@ pub async fn list_surface_mount_entries(
                 recursive: query.recursive.unwrap_or(false),
             },
             None,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -112,8 +111,9 @@ pub async fn read_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceReadFileRequest>,
 ) -> Result<Json<SurfaceReadFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
 
@@ -129,7 +129,7 @@ pub async fn read_surface_file(
                 path: req.path.clone(),
             },
             None,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -150,8 +150,9 @@ pub async fn read_surface_file_blob(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceReadBinaryFileRequest>,
 ) -> Result<Response, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
@@ -166,7 +167,7 @@ pub async fn read_surface_file_blob(
                 path: req.path.clone(),
             },
             None,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(ApiError::BadRequest)?;
@@ -241,7 +242,8 @@ pub async fn upload_surface_file_blob(
     }
 
     let source =
-        ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref).map_err(ApiError::BadRequest)?;
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
     let raw_path = target_path.unwrap_or_else(|| format!("assets/{filename}"));
@@ -256,6 +258,7 @@ pub async fn upload_surface_file_blob(
             },
             bytes,
             mime_type,
+            Some(&current_user),
         )
         .await
         .map_err(api_error_from_vfs_mutation)?;
@@ -275,8 +278,9 @@ pub async fn write_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceWriteFileRequest>,
 ) -> Result<Json<SurfaceWriteFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
 
@@ -291,7 +295,7 @@ pub async fn write_surface_file(
                 path: req.path.clone(),
             },
             &req.content,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(api_error_from_vfs_mutation)?;
@@ -312,8 +316,9 @@ pub async fn create_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceCreateFileRequest>,
 ) -> Result<Json<SurfaceCreateFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
@@ -327,7 +332,7 @@ pub async fn create_surface_file(
                 path: req.path.clone(),
             },
             &req.content,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(api_error_from_vfs_mutation)?;
@@ -347,8 +352,9 @@ pub async fn delete_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceDeleteFileRequest>,
 ) -> Result<Json<SurfaceDeleteFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
     let normalized_path =
@@ -365,7 +371,7 @@ pub async fn delete_surface_file(
                 mount_id: req.mount_id.clone(),
                 path: normalized_path.clone(),
             },
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(api_error_from_vfs_mutation)?;
@@ -383,8 +389,9 @@ pub async fn rename_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceRenameFileRequest>,
 ) -> Result<Json<SurfaceRenameFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
     let from_path =
@@ -406,7 +413,13 @@ pub async fn rename_surface_file(
     let (from_path, to_path) = state
         .services
         .vfs_mutation_dispatcher
-        .rename_text(&vfs, &req.mount_id, &from_path, &to_path, None)
+        .rename_text(
+            &vfs,
+            &req.mount_id,
+            &from_path,
+            &to_path,
+            Some(&current_user),
+        )
         .await
         .map_err(api_error_from_vfs_mutation)?;
 
@@ -423,8 +436,9 @@ pub async fn stat_surface_file(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceStatFileRequest>,
 ) -> Result<Json<SurfaceStatFileResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::View).await?;
     check_mount_available(&state, &vfs, &req.mount_id).await?;
@@ -439,7 +453,7 @@ pub async fn stat_surface_file(
                 path: req.path,
             },
             None,
-            None,
+            Some(&current_user),
         )
         .await
         .map_err(ApiError::Internal)?;
@@ -456,8 +470,9 @@ pub async fn apply_surface_patch(
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<SurfaceApplyPatchRequest>,
 ) -> Result<Json<SurfaceApplyPatchResponse>, ApiError> {
-    let source = ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
-        .map_err(ApiError::BadRequest)?;
+    let source =
+        agentdash_application::vfs::ResolvedVfsSurfaceSource::parse_surface_ref(&req.surface_ref)
+            .map_err(ApiError::BadRequest)?;
     let (_surface, vfs) =
         resolve_surface_bundle(&state, &current_user, &source, ProjectPermission::Edit).await?;
 
@@ -465,7 +480,7 @@ pub async fn apply_surface_patch(
     let result = state
         .services
         .vfs_mutation_dispatcher
-        .apply_patch(&vfs, &req.mount_id, &req.patch, None)
+        .apply_patch(&vfs, &req.mount_id, &req.patch, Some(&current_user))
         .await
         .map_err(api_error_from_vfs_mutation)?;
 

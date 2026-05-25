@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/session/architecture.md","reason":"检查实现是否保持 Session 主链路不变量。"}
+{"file":".trellis/spec/backend/session/session-startup-pipeline.md","reason":"检查 accepted 前后副作用边界与 runtime command 状态语义。"}
+{"file":".trellis/spec/backend/session/execution-context-frames.md","reason":"检查 ExecutionContext 仍只是 connector 投影。"}
+{"file":".trellis/spec/backend/session/runtime-execution-state.md","reason":"检查 turn state、terminal、runtime command replay 语义未漂移。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查后端代码结构、测试和错误处理质量。"}
+{"file":"docs/reviews/2026-05-23-architecture-review-round/runtime-control-plane-review.md","reason":"复核实现是否回应 review 中 prompt_pipeline 阶段化建议。"}
+{"file":"docs/reviews/2026-05-23-architecture-review-round/platform-boundary-governance-review.md","reason":"复核实现是否朝 session 子域边界收敛。"}

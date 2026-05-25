@@ -16,6 +16,10 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
+strsim = "0.11"
+tracing = { workspace = true }
+regex = "1"
+globset = "0.4"
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 agentdash-agent-protocol = { workspace = true }
@@ -23,4 +27,4 @@ schemars = { workspace = true }
 json-patch = "2.0"
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -114,6 +114,7 @@ impl CommandHandler {
                 }),
                 env: payload.env,
                 executor_config,
+                backend_selection: None,
             },
             parse_relay_mcp_servers(&payload.mcp_servers),
             workspace_root,
@@ -137,10 +138,19 @@ impl CommandHandler {
                 let session_runtime = session_runtime.clone();
                 let sid = session_id.clone();
                 let tid = turn_id.clone();
+                let session_forwarders = self.session_forwarders.clone();
 
-                tokio::spawn(async move {
-                    forward_session_notifications(session_runtime, &sid, &tid, event_tx).await;
-                });
+                if claim_session_forwarder(&session_forwarders, &sid).await {
+                    tokio::spawn(async move {
+                        forward_session_notifications(session_runtime, &sid, &tid, event_tx).await;
+                        release_session_forwarder(&session_forwarders, &sid).await;
+                    });
+                } else {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        "relay session notification forwarder 已存在，复用现有转发任务"
+                    );
+                }
 
                 RelayMessage::ResponsePrompt {
                     id,
@@ -222,6 +232,23 @@ impl CommandHandler {
     }
 }
 
+async fn claim_session_forwarder(
+    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_id: &str,
+) -> bool {
+    session_forwarders
+        .lock()
+        .await
+        .insert(session_id.to_string())
+}
+
+async fn release_session_forwarder(
+    session_forwarders: &std::sync::Arc<tokio::sync::Mutex<std::collections::HashSet<String>>>,
+    session_id: &str,
+) {
+    session_forwarders.lock().await.remove(session_id);
+}
+
 /// 订阅 session 通知流并通过事件通道转发到 WebSocket
 async fn forward_session_notifications(
     session_runtime: SessionRuntimeServices,
@@ -265,5 +292,29 @@ async fn forward_session_notifications(
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex;
+
+    use super::{claim_session_forwarder, release_session_forwarder};
+
+    #[tokio::test]
+    async fn session_forwarder_claim_is_unique_until_released() {
+        let active = Arc::new(Mutex::new(HashSet::new()));
+
+        assert!(claim_session_forwarder(&active, "session-1").await);
+        assert!(
+            !claim_session_forwarder(&active, "session-1").await,
+            "同一 session 已有 forwarder 时不应重复启动"
+        );
+
+        release_session_forwarder(&active, "session-1").await;
+        assert!(claim_session_forwarder(&active, "session-1").await);
     }
 }

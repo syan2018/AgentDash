@@ -11,11 +11,13 @@ use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::authz::{McpProjectPermission, list_accessible_projects, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
 use agentdash_domain::context_container::{
     ContextContainerDefinition, validate_context_containers,
 };
+use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -86,15 +88,24 @@ pub struct UpdateProjectContextConfigParams {
 #[derive(Clone)]
 pub struct RelayMcpServer {
     services: Arc<McpServices>,
+    identity: AuthIdentity,
 }
 
 impl RelayMcpServer {
-    pub fn new(services: Arc<McpServices>) -> Self {
-        Self { services }
+    pub fn new(services: Arc<McpServices>, identity: AuthIdentity) -> Self {
+        Self { services, identity }
     }
 
     fn parse_uuid(s: &str, field: &'static str) -> Result<Uuid, McpError> {
         Uuid::parse_str(s).map_err(|_| McpError::invalid_param(field, format!("无效的 UUID: {s}")))
+    }
+
+    async fn require_project(
+        &self,
+        project_id: Uuid,
+        permission: McpProjectPermission,
+    ) -> Result<agentdash_domain::project::Project, McpError> {
+        require_project_permission(&self.services, &self.identity, project_id, permission).await
     }
 }
 
@@ -107,12 +118,7 @@ impl RelayMcpServer {
         &self,
         Parameters(params): Parameters<ListProjectsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let projects = self
-            .services
-            .project_repo
-            .list_all()
-            .await
-            .map_err(McpError::from)?;
+        let projects = list_accessible_projects(&self.services, &self.identity).await?;
 
         let filtered: Vec<_> = match &params.keyword {
             Some(kw) => projects
@@ -144,13 +150,7 @@ impl RelayMcpServer {
         Parameters(params): Parameters<GetProjectParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let id = Self::parse_uuid(&params.project_id, "project_id")?;
-        let project = self
-            .services
-            .project_repo
-            .get_by_id(id)
-            .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
+        let project = self.require_project(id, McpProjectPermission::View).await?;
 
         let stories = self
             .services
@@ -197,15 +197,8 @@ impl RelayMcpServer {
         use agentdash_domain::story::Story;
 
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
-
-        // Verify the project exists before creating the story
-        let _project = self
-            .services
-            .project_repo
-            .get_by_id(project_id)
-            .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
+        self.require_project(project_id, McpProjectPermission::Edit)
+            .await?;
 
         let story = Story::new(project_id, params.title, params.description);
 
@@ -233,6 +226,8 @@ impl RelayMcpServer {
         Parameters(params): Parameters<ListStoriesParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
+        self.require_project(project_id, McpProjectPermission::View)
+            .await?;
 
         let stories = self
             .services
@@ -275,6 +270,8 @@ impl RelayMcpServer {
             .await
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", &params.story_id))?;
+        self.require_project(story.project_id, McpProjectPermission::View)
+            .await?;
 
         // M1-b：Story aggregate 已持有 tasks；直接从 story.tasks 读取
         let tasks = story.tasks.clone();
@@ -319,6 +316,8 @@ impl RelayMcpServer {
             .await
             .map_err(McpError::from)?
             .ok_or_else(|| McpError::not_found("Story", &params.story_id))?;
+        self.require_project(story.project_id, McpProjectPermission::Edit)
+            .await?;
 
         let new_status: agentdash_domain::story::StoryStatus =
             serde_json::from_value(serde_json::Value::String(params.status.clone())).map_err(
@@ -348,12 +347,8 @@ impl RelayMcpServer {
         let project_id = Self::parse_uuid(&params.project_id, "project_id")?;
 
         let mut project = self
-            .services
-            .project_repo
-            .get_by_id(project_id)
-            .await
-            .map_err(McpError::from)?
-            .ok_or_else(|| McpError::not_found("Project", &params.project_id))?;
+            .require_project(project_id, McpProjectPermission::Edit)
+            .await?;
 
         if let Some(context_containers) = params.context_containers {
             project.config.context_containers = context_containers;

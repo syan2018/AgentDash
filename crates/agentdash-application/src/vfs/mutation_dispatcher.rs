@@ -309,6 +309,7 @@ impl VfsMutationDispatcher {
         target: ResourceRef,
         bytes: Vec<u8>,
         mime_type: String,
+        _identity: Option<&AuthIdentity>,
     ) -> Result<BinaryMutationResult, VfsMutationError> {
         let mount = resolve_mount(vfs, &target.mount_id, MountCapability::Write)
             .map_err(VfsMutationError::BadRequest)?;

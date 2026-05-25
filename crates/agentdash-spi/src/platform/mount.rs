@@ -41,11 +41,22 @@ impl std::error::Error for MountError {}
 /// `attributes` 是可选的扩展元数据（xattr 风格），由 provider 按需填充。
 /// 例如 KM 插件可以放 `author` / `tags` / `url`，relay_fs 可以放 `git_author`。
 /// Agent 工具侧负责与 `content` 分通道展示，避免污染文件正文。
+///
+/// `version_token` 是 dedup 缓存的 invalidation key：不透明字符串，调用方按
+/// `==` 比对，相同内容 ⇒ 相同 token；任何修改 ⇒ token 变化。`None` 表示
+/// provider 暂时无法生成（旧实现路径），调用方按"不命中"处理，**不引入
+/// 常量 fallback**（避免相同 fallback 值被误判为命中）。生成方式由各 provider
+/// 自定：lifecycle / relay_fs 用 `format!("{mtime}:{size}")`；inline 用
+/// inline_files 表 revision；canvas 用 page version_id；skill_asset 用 updated_at。
+///
+/// `modified_at` 是 Unix 毫秒时间戳；缺失填 `None`。
 #[derive(Debug, Clone, Default)]
 pub struct ReadResult {
     pub path: String,
     pub content: String,
     pub attributes: Option<serde_json::Map<String, serde_json::Value>>,
+    pub version_token: Option<String>,
+    pub modified_at: Option<i64>,
 }
 
 impl ReadResult {
@@ -54,11 +65,23 @@ impl ReadResult {
             path: path.into(),
             content: content.into(),
             attributes: None,
+            version_token: None,
+            modified_at: None,
         }
     }
 
     pub fn with_attributes(mut self, attrs: serde_json::Map<String, serde_json::Value>) -> Self {
         self.attributes = Some(attrs);
+        self
+    }
+
+    pub fn with_version_token(mut self, token: impl Into<String>) -> Self {
+        self.version_token = Some(token.into());
+        self
+    }
+
+    pub fn with_modified_at(mut self, mtime: i64) -> Self {
+        self.modified_at = Some(mtime);
         self
     }
 }
@@ -189,10 +212,27 @@ impl RuntimeFileEntry {
     }
 }
 
+/// 判断一个 `RuntimeFileEntry` 是否表示二进制内容（用于 grep 默认实现跳过）。
+/// 约定：`attributes.content_kind == "binary"`。
+pub(crate) fn entry_is_binary(entry: &RuntimeFileEntry) -> bool {
+    entry
+        .attributes
+        .as_ref()
+        .and_then(|attrs| attrs.get("content_kind"))
+        .and_then(|v| v.as_str())
+        == Some("binary")
+}
+
 // ============================================================================
 // Search
 // ============================================================================
 
+/// 通用文本搜索查询参数。
+///
+/// 仅承载与"通用搜索"语义相关的字段（substring / 简单匹配）；grep 风格的
+/// 字段（regex / context / multiline / output_mode 等）已移到 [`GrepQuery`]，
+/// 调用方应根据语义需要选择 `MountProvider::search_text` 或 `grep_text`。
+#[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub pattern: String,
     pub path: Option<String>,
@@ -200,14 +240,82 @@ pub struct SearchQuery {
     pub max_results: Option<usize>,
 }
 
+impl Default for SearchQuery {
+    fn default() -> Self {
+        Self {
+            pattern: String::new(),
+            path: None,
+            case_sensitive: true,
+            max_results: None,
+        }
+    }
+}
+
+/// grep 风格搜索查询参数。
+///
+/// **A7 决议**：`base.pattern` 始终视为正则表达式（与 Claude Code GrepTool 对齐）。
+///
+/// 字段语义参考 ripgrep / GNU grep：
+/// - `base.case_sensitive = false` ⇒ provider 应启用 smart-case；`true` ⇒ 严格大小写。
+/// - `context_lines` 等价 `-C N`；`before_lines` / `after_lines` 等价 `-B` / `-A`。
+///   同时设置时，effective_before = `max(before_lines, context_lines)`，after 同理。
+/// - `multiline = true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep
+///   `--multiline --multiline-dotall`）。
+/// - `include_glob` 限定 grep 仅扫描匹配该 glob 的文件。
+/// - `output_mode` 决定 provider 返回的命中粒度。
+#[derive(Debug, Clone)]
+pub struct GrepQuery {
+    pub base: SearchQuery,
+    pub include_glob: Option<String>,
+    pub context_lines: usize,
+    pub before_lines: usize,
+    pub after_lines: usize,
+    pub multiline: bool,
+    pub output_mode: SearchOutputMode,
+}
+
+impl Default for GrepQuery {
+    fn default() -> Self {
+        Self {
+            base: SearchQuery::default(),
+            include_glob: None,
+            context_lines: 0,
+            before_lines: 0,
+            after_lines: 0,
+            multiline: false,
+            output_mode: SearchOutputMode::default(),
+        }
+    }
+}
+
+/// 搜索结果的输出形态（对齐 Claude Code GrepTool `output_mode`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchOutputMode {
+    /// 返回命中行（含上下文，如配置）。默认。
+    #[default]
+    Content,
+    /// 仅返回命中文件路径列表（按 path 去重）。
+    FilesWithMatches,
+    /// 仅返回总命中计数。
+    Count,
+}
+
+#[derive(Debug, Clone)]
 pub struct SearchMatch {
     pub path: String,
     pub line: Option<u32>,
     pub content: String,
 }
 
+/// `truncated = true` 表示 provider 主动截断了结果集，原因可能是：
+/// - 命中数达到 `SearchQuery::max_results`；
+/// - provider 自身的资源/超时保护性截断。
+///
+/// 调用方据此决定是否提示用户"refine pattern or raise max_results"。
+#[derive(Debug, Clone, Default)]
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
+    pub truncated: bool,
 }
 
 // ============================================================================
@@ -345,6 +453,78 @@ pub trait MountProvider: Send + Sync {
         ctx: &MountOperationContext,
     ) -> Result<ReadResult, MountError>;
 
+    /// 按行号 range 读取文件内容。
+    ///
+    /// `offset` 是 0-based 行号（与 Claude Code FileReadTool 的 offset 对齐）。
+    /// `limit = None` 表示读到 EOF。
+    ///
+    /// 默认实现 = `read_text` 全文 + 切片（语义等价；不省内存）。
+    /// 实现真正按 range 读的 provider（lifecycle / relay_fs）应覆盖此方法，
+    /// 用 `tokio::io::AsyncBufReadExt::lines` + skip + take 避免大文件全量加载。
+    /// `version_token` 沿用全文 token（range 不影响版本）。
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        let full = self.read_text(mount, path, ctx).await?;
+        let mut iter = full.content.lines().skip(offset);
+        let take_n = limit.unwrap_or(usize::MAX);
+        let collected: Vec<&str> = (&mut iter).take(take_n).collect();
+        let sliced = collected.join("\n");
+        Ok(ReadResult {
+            path: full.path,
+            content: sliced,
+            attributes: full.attributes,
+            version_token: full.version_token,
+            modified_at: full.modified_at,
+        })
+    }
+
+    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
+    ///
+    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
+    ///
+    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
+    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
+    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
+    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        const MAX_SCAN_FILES: usize = 1000;
+        let listing = self
+            .list(
+                mount,
+                &ListOptions {
+                    path: String::new(),
+                    pattern: None,
+                    recursive: true,
+                },
+                ctx,
+            )
+            .await?;
+        let mut scored: Vec<(usize, String)> = listing
+            .entries
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .take(MAX_SCAN_FILES)
+            .map(|e| {
+                let dist = strsim::levenshtein(prefix, &e.path);
+                (dist, e.path)
+            })
+            .collect();
+        scored.sort_by_key(|(d, _)| *d);
+        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
+    }
+
     async fn read_binary(
         &self,
         mount: &Mount,
@@ -425,6 +605,132 @@ pub trait MountProvider: Send + Sync {
         ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError>;
 
+    /// grep 风格搜索：`base.pattern` 始终正则，支持 include_glob / context /
+    /// multiline / output_mode。
+    ///
+    /// 默认实现使用通用的 `list + read_text + regex` 算法，让所有 provider
+    /// （含 lifecycle virtual projection、canvas、skill_asset）自动获得完整的
+    /// grep 能力。能在协议层原生支持 grep（如 inline_fs 直接读 in-memory 表 /
+    /// relay_fs 把字段透传给远端）的 provider 可以覆盖此方法做性能优化。
+    ///
+    /// 算法：
+    /// 1. `list` 全 mount（recursive）拿到所有可读文件；
+    /// 2. 二进制条目（`attributes.content_kind == "binary"`）跳过；
+    /// 3. include_glob 过滤；
+    /// 4. 对每个剩余条目 `read_text` 拿全文，`read_text` 失败的条目跳过（容错，
+    ///    `tracing::warn!` 一次）；
+    /// 5. 在内存里跑 regex（`case_sensitive` / `multiline` 走 RegexBuilder
+    ///    设置，`multiline` 同时打开 `dot_matches_new_line`）；
+    /// 6. `before_lines` / `after_lines` 在命中后追加上下文行；与 `context_lines`
+    ///    同时设置时取 max。
+    /// 7. `max_results` 命中即短路返回 `truncated = true`。
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        let listing = self
+            .list(
+                mount,
+                &ListOptions {
+                    path: query.base.path.clone().unwrap_or_default(),
+                    pattern: None,
+                    recursive: true,
+                },
+                ctx,
+            )
+            .await?;
+
+        let mut builder = regex::RegexBuilder::new(&query.base.pattern);
+        builder
+            .case_insensitive(!query.base.case_sensitive)
+            .multi_line(query.multiline)
+            .dot_matches_new_line(query.multiline);
+        let re = builder
+            .build()
+            .map_err(|e| MountError::OperationFailed(format!("invalid regex: {e}")))?;
+
+        let glob_matcher = match query.include_glob.as_deref() {
+            Some(pat) => Some(
+                globset::Glob::new(pat)
+                    .map_err(|e| MountError::OperationFailed(format!("invalid glob: {e}")))?
+                    .compile_matcher(),
+            ),
+            None => None,
+        };
+
+        let before = query.before_lines.max(query.context_lines);
+        let after = query.after_lines.max(query.context_lines);
+        let max_results = query.base.max_results.unwrap_or(usize::MAX);
+
+        let mut matches: Vec<SearchMatch> = Vec::new();
+
+        for entry in listing.entries {
+            if entry.is_dir {
+                continue;
+            }
+            if entry_is_binary(&entry) {
+                continue;
+            }
+            if let Some(matcher) = &glob_matcher
+                && !matcher.is_match(entry.path.as_str())
+            {
+                continue;
+            }
+            let read = match self.read_text(mount, &entry.path, ctx).await {
+                Ok(r) => r,
+                Err(MountError::NotFound(_)) | Err(MountError::NotSupported(_)) => {
+                    tracing::warn!(
+                        provider = self.provider_id(),
+                        path = %entry.path,
+                        "grep_text: skipping unreadable entry"
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            let lines: Vec<&str> = read.content.lines().collect();
+            for (idx, line) in lines.iter().enumerate() {
+                if !re.is_match(line) {
+                    continue;
+                }
+                let start = idx.saturating_sub(before);
+                for ctx_idx in start..idx {
+                    matches.push(SearchMatch {
+                        path: entry.path.clone(),
+                        line: Some((ctx_idx + 1) as u32),
+                        content: lines[ctx_idx].trim().to_string(),
+                    });
+                }
+                matches.push(SearchMatch {
+                    path: entry.path.clone(),
+                    line: Some((idx + 1) as u32),
+                    content: line.trim().to_string(),
+                });
+                let end = (idx + 1 + after).min(lines.len());
+                for ctx_idx in (idx + 1)..end {
+                    matches.push(SearchMatch {
+                        path: entry.path.clone(),
+                        line: Some((ctx_idx + 1) as u32),
+                        content: lines[ctx_idx].trim().to_string(),
+                    });
+                }
+                if matches.len() >= max_results {
+                    return Ok(SearchResult {
+                        matches,
+                        truncated: true,
+                    });
+                }
+            }
+        }
+
+        Ok(SearchResult {
+            matches,
+            truncated: false,
+        })
+    }
+
     async fn exec(
         &self,
         mount: &Mount,
@@ -479,5 +785,280 @@ pub trait MountProvider: Send + Sync {
     /// Whether this mount can be used right now (e.g. relay backend connected).
     async fn is_available(&self, _mount: &Mount) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! 验证 `MountProvider::grep_text` 默认实现的通用 list+read+regex 算法。
+    //! 这是 vfs-grep-query-split + virtual-projection-coverage 的核心契约：
+    //! 任何 provider（lifecycle / canvas / skill_asset / 第三方）都通过此默认
+    //! 实现自动获得完整 grep 能力，不需要单独适配。
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// 极简 in-memory mock provider，只实现 list / read_text，让 grep_text 走默认。
+    struct MockProvider {
+        files: Mutex<HashMap<String, FileFixture>>,
+    }
+
+    struct FileFixture {
+        content: String,
+        is_binary: bool,
+    }
+
+    impl MockProvider {
+        fn new(files: &[(&str, &str)]) -> Self {
+            let mut map = HashMap::new();
+            for (path, content) in files {
+                map.insert(
+                    (*path).to_string(),
+                    FileFixture {
+                        content: (*content).to_string(),
+                        is_binary: false,
+                    },
+                );
+            }
+            Self {
+                files: Mutex::new(map),
+            }
+        }
+
+        fn add_binary(&self, path: &str) {
+            self.files.lock().unwrap().insert(
+                path.to_string(),
+                FileFixture {
+                    content: String::new(),
+                    is_binary: true,
+                },
+            );
+        }
+    }
+
+    #[async_trait]
+    impl MountProvider for MockProvider {
+        fn provider_id(&self) -> &str {
+            "mock_grep"
+        }
+
+        async fn read_text(
+            &self,
+            _mount: &Mount,
+            path: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<ReadResult, MountError> {
+            let files = self.files.lock().unwrap();
+            let f = files
+                .get(path)
+                .ok_or_else(|| MountError::NotFound(path.to_string()))?;
+            if f.is_binary {
+                return Err(MountError::NotSupported("binary".to_string()));
+            }
+            Ok(ReadResult::new(path, f.content.clone()))
+        }
+
+        async fn write_text(
+            &self,
+            _mount: &Mount,
+            _path: &str,
+            _content: &str,
+            _ctx: &MountOperationContext,
+        ) -> Result<(), MountError> {
+            Err(MountError::NotSupported("read only".to_string()))
+        }
+
+        async fn list(
+            &self,
+            _mount: &Mount,
+            _options: &ListOptions,
+            _ctx: &MountOperationContext,
+        ) -> Result<ListResult, MountError> {
+            let files = self.files.lock().unwrap();
+            let entries = files
+                .iter()
+                .map(|(path, f)| {
+                    let mut entry = RuntimeFileEntry::file(path.clone());
+                    if f.is_binary {
+                        let mut attrs = serde_json::Map::new();
+                        attrs.insert(
+                            "content_kind".to_string(),
+                            serde_json::Value::String("binary".to_string()),
+                        );
+                        entry = entry.with_attributes(attrs);
+                    }
+                    entry
+                })
+                .collect();
+            Ok(ListResult { entries })
+        }
+
+        async fn search_text(
+            &self,
+            _mount: &Mount,
+            _query: &SearchQuery,
+            _ctx: &MountOperationContext,
+        ) -> Result<SearchResult, MountError> {
+            // 默认 grep_text 不再 forward 到 search_text，所以这里返回空也无妨。
+            Ok(SearchResult::default())
+        }
+    }
+
+    fn fake_mount() -> Mount {
+        Mount {
+            id: "mock".to_string(),
+            provider: "mock_grep".to_string(),
+            backend_id: String::new(),
+            root_ref: "memory://mock".to_string(),
+            capabilities: vec![],
+            default_write: false,
+            display_name: "Mock".to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_finds_regex_matches_across_files() {
+        let provider = MockProvider::new(&[
+            ("a.rs", "fn foo() {}\nfn bar() {}"),
+            ("b.rs", "fn baz() {}"),
+            ("README.md", "no functions here"),
+        ]);
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: r"fn \w+".to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        // 命中 a.rs 两行 + b.rs 一行 = 3 个 match
+        assert_eq!(result.matches.len(), 3);
+        assert!(result.matches.iter().any(|m| m.path == "a.rs"));
+        assert!(result.matches.iter().any(|m| m.path == "b.rs"));
+        assert!(!result.matches.iter().any(|m| m.path == "README.md"));
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_respects_include_glob() {
+        let provider =
+            MockProvider::new(&[("src/main.rs", "fn x() {}"), ("docs/notes.md", "fn x() {}")]);
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: r"fn \w+".to_string(),
+                        ..Default::default()
+                    },
+                    include_glob: Some("**/*.rs".to_string()),
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].path, "src/main.rs");
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_provides_before_after_context() {
+        let provider = MockProvider::new(&[("log.txt", "L1\nL2\nNEEDLE\nL4\nL5")]);
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: "NEEDLE".to_string(),
+                        ..Default::default()
+                    },
+                    before_lines: 1,
+                    after_lines: 1,
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        let contents: Vec<&str> = result.matches.iter().map(|m| m.content.as_str()).collect();
+        assert!(contents.contains(&"L2"));
+        assert!(contents.contains(&"NEEDLE"));
+        assert!(contents.contains(&"L4"));
+        assert!(!contents.contains(&"L1"));
+        assert!(!contents.contains(&"L5"));
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_skips_binary_entries() {
+        let provider = MockProvider::new(&[("text.md", "needle in text")]);
+        provider.add_binary("image.png");
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: "needle".to_string(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        // binary 条目跳过，只命中 text.md
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].path, "text.md");
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_case_insensitive() {
+        let provider = MockProvider::new(&[("a.rs", "Hello WORLD")]);
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: "world".to_string(),
+                        case_sensitive: false,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        assert_eq!(result.matches.len(), 1);
+        assert!(result.matches[0].content.contains("WORLD"));
+    }
+
+    #[tokio::test]
+    async fn grep_text_default_truncates_at_max_results() {
+        let provider = MockProvider::new(&[("a.rs", "x\nx\nx\nx\nx")]);
+        let result = provider
+            .grep_text(
+                &fake_mount(),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: "x".to_string(),
+                        max_results: Some(2),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        assert_eq!(result.matches.len(), 2);
+        assert!(result.truncated);
     }
 }

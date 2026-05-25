@@ -3,12 +3,20 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::common::MountCapability;
+use agentdash_contracts::vfs::{
+    CreateProjectVfsMountRequest, InstalledAssetSourceResponse,
+    MountCapability as ContractMountCapability,
+    ProjectVfsMountContent as ContractProjectVfsMountContent, ProjectVfsMountResponse,
+    UpdateProjectVfsMountRequest,
+};
+use agentdash_domain::common::MountCapability as DomainMountCapability;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
-use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
+use agentdash_domain::project_vfs_mount::{
+    ProjectVfsMount, ProjectVfsMountContent as DomainProjectVfsMountContent,
+};
 use agentdash_domain::shared_library::InstalledAssetSource;
 
 use crate::app_state::AppState;
@@ -24,43 +32,6 @@ pub struct ProjectPath {
 pub struct VfsMountPath {
     pub project_id: String,
     pub mount_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateProjectVfsMountRequest {
-    pub mount_id: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub capabilities: Vec<MountCapability>,
-    pub content: ProjectVfsMountContent,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateProjectVfsMountRequest {
-    pub mount_id: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub capabilities: Vec<MountCapability>,
-    pub content: ProjectVfsMountContent,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectVfsMountResponse {
-    pub project_id: Uuid,
-    pub mount_id: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub capabilities: Vec<MountCapability>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub installed_source: Option<InstalledAssetSource>,
-    pub content: ProjectVfsMountContent,
-    pub surface_ref: String,
-    pub created_at: chrono::DateTime<Utc>,
-    pub updated_at: chrono::DateTime<Utc>,
 }
 
 pub async fn list_vfs_mounts(
@@ -83,7 +54,9 @@ pub async fn list_vfs_mounts(
         .list_by_project(project_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(Json(mounts.into_iter().map(Into::into).collect()))
+    Ok(Json(
+        mounts.into_iter().map(project_vfs_mount_response).collect(),
+    ))
 }
 
 pub async fn create_vfs_mount(
@@ -139,7 +112,7 @@ pub async fn create_vfs_mount(
         .create(&mount)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(Json(mount.into()))
+    Ok(Json(project_vfs_mount_response(mount)))
 }
 
 pub async fn get_vfs_mount(
@@ -163,7 +136,7 @@ pub async fn get_vfs_mount(
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
-    Ok(Json(mount.into()))
+    Ok(Json(project_vfs_mount_response(mount)))
 }
 
 pub async fn update_vfs_mount(
@@ -223,7 +196,7 @@ pub async fn update_vfs_mount(
         .update(&mount)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(Json(mount.into()))
+    Ok(Json(project_vfs_mount_response(mount)))
 }
 
 pub async fn delete_vfs_mount(
@@ -262,21 +235,23 @@ pub async fn delete_vfs_mount(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-impl From<ProjectVfsMount> for ProjectVfsMountResponse {
-    fn from(mount: ProjectVfsMount) -> Self {
-        let surface_ref = format!("project-vfs-mount:{}:{}", mount.project_id, mount.mount_id);
-        Self {
-            project_id: mount.project_id,
-            mount_id: mount.mount_id,
-            display_name: mount.display_name,
-            description: mount.description,
-            capabilities: mount.capabilities,
-            installed_source: mount.installed_source,
-            content: mount.content,
-            surface_ref,
-            created_at: mount.created_at,
-            updated_at: mount.updated_at,
-        }
+fn project_vfs_mount_response(mount: ProjectVfsMount) -> ProjectVfsMountResponse {
+    let surface_ref = format!("project-vfs-mount:{}:{}", mount.project_id, mount.mount_id);
+    ProjectVfsMountResponse {
+        project_id: mount.project_id.to_string(),
+        mount_id: mount.mount_id,
+        display_name: mount.display_name,
+        description: mount.description,
+        capabilities: mount
+            .capabilities
+            .into_iter()
+            .filter_map(contract_capability_from_domain)
+            .collect(),
+        installed_source: mount.installed_source.map(installed_source_response),
+        content: contract_content_from_domain(mount.content),
+        surface_ref,
+        created_at: mount.created_at.to_rfc3339(),
+        updated_at: mount.updated_at.to_rfc3339(),
     }
 }
 
@@ -322,30 +297,32 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     })
 }
 
-fn normalize_capabilities(capabilities: Vec<MountCapability>) -> Vec<MountCapability> {
+fn normalize_capabilities(
+    capabilities: Vec<ContractMountCapability>,
+) -> Vec<DomainMountCapability> {
     let mut normalized = Vec::new();
     for capability in capabilities {
-        if capability == MountCapability::Exec {
-            continue;
-        }
+        let capability = domain_capability_from_contract(capability);
         if !normalized.contains(&capability) {
             normalized.push(capability);
         }
     }
     if normalized.is_empty() {
         normalized.extend([
-            MountCapability::Read,
-            MountCapability::List,
-            MountCapability::Search,
+            DomainMountCapability::Read,
+            DomainMountCapability::List,
+            DomainMountCapability::Search,
         ]);
     }
     normalized
 }
 
-fn normalize_content(content: ProjectVfsMountContent) -> Result<ProjectVfsMountContent, ApiError> {
+fn normalize_content(
+    content: ContractProjectVfsMountContent,
+) -> Result<DomainProjectVfsMountContent, ApiError> {
     match content {
-        ProjectVfsMountContent::Inline => Ok(ProjectVfsMountContent::Inline),
-        ProjectVfsMountContent::ExternalService {
+        ContractProjectVfsMountContent::Inline => Ok(DomainProjectVfsMountContent::Inline),
+        ContractProjectVfsMountContent::ExternalService {
             service_id,
             root_ref,
         } => {
@@ -357,10 +334,57 @@ fn normalize_content(content: ProjectVfsMountContent) -> Result<ProjectVfsMountC
             if root_ref.is_empty() {
                 return Err(ApiError::BadRequest("root_ref 不能为空".into()));
             }
-            Ok(ProjectVfsMountContent::ExternalService {
+            Ok(DomainProjectVfsMountContent::ExternalService {
                 service_id: service_id.to_string(),
                 root_ref: root_ref.to_string(),
             })
         }
+    }
+}
+
+fn domain_capability_from_contract(capability: ContractMountCapability) -> DomainMountCapability {
+    match capability {
+        ContractMountCapability::Read => DomainMountCapability::Read,
+        ContractMountCapability::Write => DomainMountCapability::Write,
+        ContractMountCapability::List => DomainMountCapability::List,
+        ContractMountCapability::Search => DomainMountCapability::Search,
+    }
+}
+
+fn contract_capability_from_domain(
+    capability: DomainMountCapability,
+) -> Option<ContractMountCapability> {
+    match capability {
+        DomainMountCapability::Read => Some(ContractMountCapability::Read),
+        DomainMountCapability::Write => Some(ContractMountCapability::Write),
+        DomainMountCapability::List => Some(ContractMountCapability::List),
+        DomainMountCapability::Search => Some(ContractMountCapability::Search),
+        DomainMountCapability::Watch => None,
+        DomainMountCapability::Exec => None,
+    }
+}
+
+fn contract_content_from_domain(
+    content: DomainProjectVfsMountContent,
+) -> ContractProjectVfsMountContent {
+    match content {
+        DomainProjectVfsMountContent::Inline => ContractProjectVfsMountContent::Inline,
+        DomainProjectVfsMountContent::ExternalService {
+            service_id,
+            root_ref,
+        } => ContractProjectVfsMountContent::ExternalService {
+            service_id,
+            root_ref,
+        },
+    }
+}
+
+fn installed_source_response(source: InstalledAssetSource) -> InstalledAssetSourceResponse {
+    InstalledAssetSourceResponse {
+        library_asset_id: source.library_asset_id.to_string(),
+        source_ref: source.source_ref,
+        source_version: source.source_version,
+        source_digest: source.source_digest,
+        installed_at: source.installed_at.to_rfc3339(),
     }
 }

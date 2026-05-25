@@ -13,8 +13,10 @@ use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
+use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
 
@@ -58,7 +60,8 @@ pub struct TaskMcpServer {
     services: Arc<McpServices>,
     task_id: Uuid,
     story_id: Uuid,
-    _project_id: Uuid,
+    project_id: Uuid,
+    identity: AuthIdentity,
 }
 
 impl TaskMcpServer {
@@ -67,13 +70,23 @@ impl TaskMcpServer {
         project_id: Uuid,
         story_id: Uuid,
         task_id: Uuid,
+        identity: AuthIdentity,
     ) -> Self {
         Self {
             services,
             task_id,
             story_id,
-            _project_id: project_id,
+            project_id,
+            identity,
         }
+    }
+
+    async fn require_project(
+        &self,
+        permission: McpProjectPermission,
+    ) -> Result<agentdash_domain::project::Project, McpError> {
+        require_project_permission(&self.services, &self.identity, self.project_id, permission)
+            .await
     }
 
     async fn load_task(&self) -> Result<agentdash_domain::task::Task, McpError> {
@@ -115,6 +128,7 @@ impl TaskMcpServer {
 impl TaskMcpServer {
     #[tool(description = "获取当前绑定 Task 的完整信息")]
     async fn get_task_info(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let task = self.load_task().await?;
 
         let result = serde_json::json!({
@@ -142,6 +156,7 @@ impl TaskMcpServer {
         &self,
         Parameters(params): Parameters<UpdateTaskStatusParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let new_status: agentdash_domain::task::TaskStatus =
             serde_json::from_value(serde_json::Value::String(params.status.clone())).map_err(
                 |_| McpError::invalid_param("status", format!("无效的状态值: {}", params.status)),
@@ -208,6 +223,7 @@ impl TaskMcpServer {
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         use agentdash_domain::task::{Artifact, ArtifactType};
 
+        self.require_project(McpProjectPermission::Edit).await?;
         let artifact_type: ArtifactType =
             serde_json::from_value(serde_json::Value::String(params.artifact_type.clone()))
                 .map_err(|_| {
@@ -243,6 +259,7 @@ impl TaskMcpServer {
 
     #[tool(description = "查看同一 Story 下的其它 Task 及其状态（只读，用于协调）")]
     async fn get_sibling_tasks(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let story = self
             .services
             .story_repo
@@ -271,6 +288,7 @@ impl TaskMcpServer {
 
     #[tool(description = "获取所属 Story 的上下文信息（PRD、规范引用），用于理解任务背景")]
     async fn get_story_context(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let story = self
             .services
             .story_repo
@@ -298,6 +316,7 @@ impl TaskMcpServer {
         &self,
         Parameters(params): Parameters<AppendTaskDescriptionParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let (mut story, task) = self.load_story_with_task().await?;
         let new_description = format!("{}\n\n---\n{}", task.description, params.append_text);
 

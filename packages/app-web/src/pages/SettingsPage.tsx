@@ -13,7 +13,7 @@ import { getStoredToken } from "../api/client";
 import { API_ORIGIN } from "../api/origin";
 import { llmProvidersApi } from "../api/llmProviders";
 import type { LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../api/llmProviders";
-import type { BackendConfig } from "../types";
+import type { BackendConfig, BackendRuntimeSummary } from "../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
 import { ConfirmDialog } from "@agentdash/ui";
 import { getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../desktop/localRuntimeBridge";
@@ -1636,11 +1636,23 @@ function ExecutorSectionForm({
   );
 }
 
-function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onRemove: (id: string) => void }) {
+function BackendSection({
+  backends,
+  runtimeSummaries,
+  onRemove,
+}: {
+  backends: BackendConfig[];
+  runtimeSummaries: BackendRuntimeSummary[];
+  onRemove: (id: string) => void;
+}) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const toggle = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
   const onlineCount = backends.filter((b) => b.online).length;
+  const summaryByBackend = useMemo(
+    () => new Map(runtimeSummaries.map((summary) => [summary.backend_id, summary])),
+    [runtimeSummaries],
+  );
 
   return (
     <SectionCard title="后端管理">
@@ -1657,10 +1669,11 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
       <div className="space-y-2">
         {backends.map((backend) => {
           const isExpanded = expandedId === backend.id;
+          const runtimeSummary = summaryByBackend.get(backend.id);
           const executors = backend.capabilities?.executors ?? [];
           const availableExecs = executors.filter((e) => e.available);
           const runtimeHealth = backend.runtime_health;
-          const roots = backend.accessible_roots ?? runtimeHealth?.accessible_roots ?? [];
+          const roots = backend.workspace_roots ?? runtimeHealth?.workspace_roots ?? [];
           const machineLabel = backend.machine_label || machineLabelFromDevice(backend.device) || backend.name;
           const scopeLabel = formatBackendScope(backend);
 
@@ -1679,8 +1692,10 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                   <p className="text-xs text-muted-foreground">
                     {backend.backend_type === "local"
                       ? `${machineLabel} · ${scopeLabel}`
-                      : backend.online
-                        ? `${availableExecs.length} 个执行器可用`
+                      : runtimeSummary
+                        ? `${runtimeSummary.active_session_count} 个活跃会话 · ${runtimeSummary.allocatable ? "可分配" : "不可分配"}`
+                        : backend.online
+                          ? `${availableExecs.length} 个执行器可用`
                         : "远程 · 离线"}
                   </p>
                 </div>
@@ -1716,6 +1731,16 @@ function BackendSection({ backends, onRemove }: { backends: BackendConfig[]; onR
                     </span>
                     <span className="text-muted-foreground">类型</span>
                     <span className="text-foreground">{backend.backend_type === "local" ? "本机" : "远程"}</span>
+                    {runtimeSummary && (
+                      <>
+                        <span className="text-muted-foreground">执行占用</span>
+                        <span className="text-foreground">{runtimeSummary.active_session_count} 个活跃会话</span>
+                        <span className="text-muted-foreground">自动分配</span>
+                        <span className={runtimeSummary.allocatable ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                          {runtimeSummary.allocatable ? "可分配" : "不可分配"}
+                        </span>
+                      </>
+                    )}
                     {backend.backend_type === "local" && (
                       <>
                         <span className="text-muted-foreground">机器</span>
@@ -1907,7 +1932,13 @@ export function SettingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { settings, loading, saving, error, fetchSettings, updateSettings } = useSettingsStore();
-  const { backends, fetchBackends, removeBackend } = useCoordinatorStore();
+  const {
+    backends,
+    backendRuntimeSummaries,
+    fetchBackends,
+    fetchBackendRuntimeSummaries,
+    removeBackend,
+  } = useCoordinatorStore();
   const { currentUser } = useCurrentUserStore();
   const { currentProjectId, projects } = useProjectStore();
   const [activePanel, setActivePanel] = useState<SettingsPanel>("system");
@@ -1937,7 +1968,8 @@ export function SettingsPage() {
 
   useEffect(() => {
     void fetchBackends();
-  }, [fetchBackends]);
+    void fetchBackendRuntimeSummaries();
+  }, [fetchBackends, fetchBackendRuntimeSummaries]);
 
   useEffect(() => {
     if (!scopeRequest) return;
@@ -2044,7 +2076,11 @@ export function SettingsPage() {
 
         {activePanel === "system" && canManageSystemScope && (
           <>
-            <BackendSection backends={backends} onRemove={(id) => void removeBackend(id)} />
+            <BackendSection
+              backends={backends}
+              runtimeSummaries={backendRuntimeSummaries}
+              onRemove={(id) => void removeBackend(id)}
+            />
             <LlmProvidersSection
               discoveryRefreshKey={llmDiscoveryRefreshKey}
               onRefreshModels={() => setLlmDiscoveryRefreshKey((k) => k + 1)}

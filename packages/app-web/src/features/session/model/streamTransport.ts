@@ -2,6 +2,7 @@ import { resolveApiUrl } from "../../../api/origin";
 import { authenticatedFetch } from "../../../api/client";
 import { registerStreamConnection } from "../../../api/streamRegistry";
 import type { BackboneEnvelope } from "../../../generated/backbone-protocol";
+import type { SessionNdjsonEnvelope } from "../../../generated/session-contracts";
 import type { SessionEventEnvelope } from "./types";
 
 const RETRY_BASE_MS = 800;
@@ -93,19 +94,17 @@ export function parseSessionEventEnvelopePayload(
     : "unknown";
 
   return {
-    session_id: readOptionalString(record.session_id ?? record.sessionId) ?? notification.sessionId,
+    session_id: readOptionalString(record.session_id) ?? notification.sessionId,
     event_seq: eventSeq,
     notification,
-    occurred_at_ms: readOptionalNumber(record.occurred_at_ms ?? record.occurredAtMs),
-    committed_at_ms: readOptionalNumber(record.committed_at_ms ?? record.committedAtMs),
+    occurred_at_ms: readOptionalNumber(record.occurred_at_ms) ?? 0,
+    committed_at_ms: readOptionalNumber(record.committed_at_ms) ?? 0,
     session_update_type:
-      readOptionalString(record.session_update_type ?? record.sessionUpdateType) ??
+      readOptionalString(record.session_update_type) ??
       eventType,
-    turn_id: readOptionalString(record.turn_id ?? record.turnId) ??
-      (notification.trace?.turnId ?? null),
-    entry_index: readOptionalNumber(record.entry_index ?? record.entryIndex) ??
-      (notification.trace?.entryIndex ?? null),
-    tool_call_id: readOptionalString(record.tool_call_id ?? record.toolCallId),
+    turn_id: readOptionalString(record.turn_id) ?? undefined,
+    entry_index: readOptionalNumber(record.entry_index) ?? undefined,
+    tool_call_id: readOptionalString(record.tool_call_id) ?? undefined,
   };
 }
 
@@ -210,11 +209,11 @@ class FetchNdjsonTransport implements SessionStreamTransport {
     }
 
     if (!payload || typeof payload !== "object") return;
-    const record = payload as Record<string, unknown>;
+    const record = payload as SessionNdjsonEnvelope;
     const eventType = String(record.type ?? "");
 
     if (eventType === "connected") {
-      const lastEventIdRaw = record.last_event_id ?? record.lastEventId;
+      const lastEventIdRaw = record.last_event_id;
       const lastEventId = Number(lastEventIdRaw);
       if (Number.isFinite(lastEventId) && lastEventId > this.sinceId) {
         this.sinceId = lastEventId;

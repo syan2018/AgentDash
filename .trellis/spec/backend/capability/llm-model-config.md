@@ -33,7 +33,7 @@ Agent 运转只需要三个业务参数：
 定义在 `agentdash-domain/src/common/agent_config.rs`：
 `executor`、`provider_id`、`model_id`、`agent_id`、`thinking_level`、`permission_policy`、`system_prompt`、`system_prompt_mode`
 
-注意：旧 `tool_clusters` 已删除，由 `AgentPresetConfig.capability_directives` 替代。
+能力配置由 `AgentPresetConfig.capability_directives` 表达。
 
 ---
 
@@ -56,7 +56,7 @@ Agent 运转只需要三个业务参数：
 
 ## PiAgent Provider Registry
 
-### 已支持的 Provider
+### Provider Baseline
 
 | provider_id | 服务商 | API Key 设置 key | 备注 |
 |-------------|--------|-----------------|------|
@@ -123,7 +123,7 @@ connector 边界显式投影到 Agent bridge。
   `provider_id` 与 `model_id`，空白值按 `None` 处理。
 - live runtime 记录上一次已绑定 bridge 的模型选择。
 - 如果当前模型选择与 live runtime 记录不同，connector 必须用新 bridge 重建 Agent，并把
-  旧 Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
+  existing Agent 的消息历史、当前工具列表和已应用的 identity prompt 带入新 Agent。
 - `thinking_level` 不要求重建 Agent；每轮 prompt 前调用 `agent.set_thinking_level(...)`
   即可生效。
 - `SessionMeta.executor_config` 只记录会话生效配置；真正发往 LLM 的模型由 connector

@@ -5,7 +5,7 @@ use agentdash_domain::story::{ChangeKind, StateChange, StateChangeRepository};
 
 use super::state_change_store::{
     append_state_change, get_state_changes_since, get_state_changes_since_by_project,
-    initialize_state_changes_schema, latest_state_change_id, latest_state_change_id_by_project,
+    latest_state_change_id, latest_state_change_id_by_project,
 };
 
 pub struct PostgresStateChangeRepository {
@@ -18,7 +18,7 @@ impl PostgresStateChangeRepository {
     }
 
     pub async fn initialize(&self) -> Result<(), DomainError> {
-        initialize_state_changes_schema(&self.pool).await
+        crate::migration::assert_postgres_tables_ready(&self.pool, &["state_changes"]).await
     }
 }
 

@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
+use agentdash_application::backend_transport::RemoteExecutorInfo;
+use agentdash_application::backend_transport::{RelaySessionRoute, RelaySessionRouteInfo};
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
@@ -32,7 +34,7 @@ pub struct ConnectedBackend {
     pub name: String,
     pub version: String,
     pub capabilities: CapabilitiesPayload,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub sender: BackendSender,
     pub connected_at: DateTime<Utc>,
 }
@@ -44,28 +46,30 @@ pub struct OnlineBackendInfo {
     pub name: String,
     pub version: String,
     pub capabilities: CapabilitiesPayload,
-    pub accessible_roots: Vec<String>,
+    pub workspace_roots: Vec<String>,
     pub connected_at: DateTime<Utc>,
 }
 
 /// 中继后端注册表 — 跟踪所有通过 WebSocket 连接的本机后端
 pub struct BackendRegistry {
     backends: RwLock<HashMap<String, ConnectedBackend>>,
-    /// 等待本机响应的挂起请求（msg_id → oneshot sender）
-    pending: RwLock<HashMap<String, oneshot::Sender<RelayMessage>>>,
+    executor_snapshot: std::sync::RwLock<Vec<RemoteExecutorInfo>>,
+    /// 等待本机响应的挂起请求（msg_id → pending request）
+    pending: RwLock<HashMap<String, PendingRequest>>,
     /// per-session relay 通知接收端（由 RelayAgentConnector 注册，WebSocket handler 投递）
-    session_sinks: std::sync::RwLock<
-        HashMap<
-            String,
-            mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
-        >,
-    >,
+    session_sinks: std::sync::RwLock<HashMap<String, RelaySessionRoute>>,
+}
+
+struct PendingRequest {
+    backend_id: String,
+    tx: oneshot::Sender<RelayMessage>,
 }
 
 impl BackendRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             backends: RwLock::new(HashMap::new()),
+            executor_snapshot: std::sync::RwLock::new(Vec::new()),
             pending: RwLock::new(HashMap::new()),
             session_sinks: std::sync::RwLock::new(HashMap::new()),
         })
@@ -80,7 +84,7 @@ impl BackendRegistry {
     ) -> bool {
         let sinks = self.session_sinks.read().unwrap();
         if let Some(tx) = sinks.get(session_id) {
-            tx.send(event).is_ok()
+            tx.tx.send(event).is_ok()
         } else {
             false
         }
@@ -96,13 +100,25 @@ impl BackendRegistry {
             return Err(RegisterBackendError::AlreadyOnline { backend_id: id });
         }
         backends.insert(id.clone(), backend);
+        self.rebuild_executor_snapshot(&backends);
         tracing::info!(backend_id = %id, "本机后端已注册");
         Ok(())
     }
 
     pub async fn unregister(&self, backend_id: &str) {
-        self.backends.write().await.remove(backend_id);
-        self.pending.write().await.retain(|_, _| true); // pending requests will fail naturally when sender drops
+        {
+            let mut backends = self.backends.write().await;
+            backends.remove(backend_id);
+            self.rebuild_executor_snapshot(&backends);
+        }
+        self.pending
+            .write()
+            .await
+            .retain(|_, pending| pending.backend_id != backend_id);
+        self.session_sinks
+            .write()
+            .unwrap()
+            .retain(|_, route| route.backend_id != backend_id);
         tracing::info!(backend_id = %backend_id, "本机后端已断开");
     }
 
@@ -119,8 +135,8 @@ impl BackendRegistry {
     /// 匹配并分发一条响应消息到等待方
     pub async fn resolve_response(&self, msg: &RelayMessage) -> bool {
         let id = msg.id().to_string();
-        if let Some(tx) = self.pending.write().await.remove(&id) {
-            let _ = tx.send(msg.clone());
+        if let Some(pending) = self.pending.write().await.remove(&id) {
+            let _ = pending.tx.send(msg.clone());
             true
         } else {
             false
@@ -136,7 +152,7 @@ impl BackendRegistry {
                 name: b.name.clone(),
                 version: b.version.clone(),
                 capabilities: b.capabilities.clone(),
-                accessible_roots: b.accessible_roots.clone(),
+                workspace_roots: b.workspace_roots.clone(),
                 connected_at: b.connected_at,
             })
             .collect()
@@ -156,15 +172,11 @@ impl BackendRegistry {
     }
 
     /// 注册 per-session 通知接收端。
-    pub fn register_session_sink(
-        &self,
-        session_id: &str,
-        tx: mpsc::UnboundedSender<agentdash_application::backend_transport::RelaySessionEvent>,
-    ) {
+    pub fn register_session_sink(&self, route: RelaySessionRoute) {
         self.session_sinks
             .write()
             .unwrap()
-            .insert(session_id.to_string(), tx);
+            .insert(route.session_id.clone(), route);
     }
 
     /// 注销 per-session 通知接收端。
@@ -177,6 +189,18 @@ impl BackendRegistry {
         self.session_sinks.read().unwrap().contains_key(session_id)
     }
 
+    pub fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo> {
+        self.session_sinks
+            .read()
+            .unwrap()
+            .get(session_id)
+            .map(|route| RelaySessionRouteInfo {
+                session_id: route.session_id.clone(),
+                backend_id: route.backend_id.clone(),
+                lease_id: route.lease_id,
+            })
+    }
+
     // ── MCP Relay 支持 ──
 
     /// 更新指定 backend 的能力信息（含 MCP server 列表）
@@ -184,8 +208,29 @@ impl BackendRegistry {
         let mut backends = self.backends.write().await;
         if let Some(backend) = backends.get_mut(backend_id) {
             backend.capabilities = capabilities;
+            self.rebuild_executor_snapshot(&backends);
             tracing::info!(backend_id = %backend_id, "后端能力已更新");
         }
+    }
+
+    pub fn list_online_executors_snapshot(&self) -> Vec<RemoteExecutorInfo> {
+        self.executor_snapshot.read().unwrap().clone()
+    }
+
+    fn rebuild_executor_snapshot(&self, backends: &HashMap<String, ConnectedBackend>) {
+        let mut snapshot = Vec::new();
+        for backend in backends.values() {
+            for executor in &backend.capabilities.executors {
+                snapshot.push(RemoteExecutorInfo {
+                    backend_id: backend.backend_id.clone(),
+                    executor_id: executor.id.clone(),
+                    executor_name: executor.name.clone(),
+                    variants: executor.variants.clone(),
+                    available: executor.available,
+                });
+            }
+        }
+        *self.executor_snapshot.write().unwrap() = snapshot;
     }
 
     /// 查找提供指定 MCP server 的在线 backend
@@ -234,7 +279,13 @@ impl BackendRegistry {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.pending.write().await.insert(msg_id.clone(), tx);
+        self.pending.write().await.insert(
+            msg_id.clone(),
+            PendingRequest {
+                backend_id: backend_id.to_string(),
+                tx,
+            },
+        );
 
         if sender.send(msg).is_err() {
             self.pending.write().await.remove(&msg_id);
@@ -271,7 +322,7 @@ impl BackendRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_relay::CommandBrowseDirectoryPayload;
+    use agentdash_relay::{AgentInfoRelay, CommandBrowseDirectoryPayload};
 
     fn connected_backend(backend_id: &str) -> ConnectedBackend {
         let (sender, _rx) = mpsc::unbounded_channel();
@@ -289,9 +340,23 @@ mod tests {
                 supports_discover_options: true,
                 mcp_servers: Vec::new(),
             },
-            accessible_roots: Vec::new(),
+            workspace_roots: Vec::new(),
             sender,
             connected_at: Utc::now(),
+        }
+    }
+
+    fn capabilities_with_executor(executor_id: &str) -> CapabilitiesPayload {
+        CapabilitiesPayload {
+            executors: vec![AgentInfoRelay {
+                id: executor_id.to_string(),
+                name: format!("{executor_id} executor"),
+                variants: vec!["default".to_string()],
+                available: true,
+            }],
+            supports_cancel: true,
+            supports_discover_options: true,
+            mcp_servers: Vec::new(),
         }
     }
 
@@ -321,6 +386,29 @@ mod tests {
                 backend_id: "local-a".to_string()
             }
         );
+    }
+
+    #[tokio::test]
+    async fn executor_snapshot_tracks_register_update_and_unregister() {
+        let registry = BackendRegistry::new();
+        let mut backend = connected_backend("local-a");
+        backend.capabilities = capabilities_with_executor("executor-a");
+        registry.try_register(backend).await.expect("register");
+
+        let initial = registry.list_online_executors_snapshot();
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].backend_id, "local-a");
+        assert_eq!(initial[0].executor_id, "executor-a");
+
+        registry
+            .update_capabilities("local-a", capabilities_with_executor("executor-b"))
+            .await;
+        let updated = registry.list_online_executors_snapshot();
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].executor_id, "executor-b");
+
+        registry.unregister("local-a").await;
+        assert!(registry.list_online_executors_snapshot().is_empty());
     }
 
     #[tokio::test]
@@ -415,6 +503,70 @@ mod tests {
             BackendCommandError::ResponseDropped {
                 backend_id: "local-a".to_string()
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn unregister_drops_pending_requests_for_that_backend() {
+        let registry = BackendRegistry::new();
+        let (sender, mut rx) = mpsc::unbounded_channel();
+        registry
+            .try_register(connected_backend_with_sender("local-a", sender))
+            .await
+            .expect("backend should register");
+
+        let command = browse_command("disconnect-drops-pending");
+        let pending = {
+            let registry = Arc::clone(&registry);
+            tokio::spawn(async move { registry.send_command("local-a", command).await })
+        };
+
+        rx.recv().await.expect("command should be sent");
+        registry.unregister("local-a").await;
+
+        let err = tokio::time::timeout(std::time::Duration::from_millis(100), pending)
+            .await
+            .expect("pending command should not wait for command timeout")
+            .expect("join should succeed")
+            .expect_err("dropped pending sender should be classified");
+        assert_eq!(
+            err,
+            BackendCommandError::ResponseDropped {
+                backend_id: "local-a".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn unregister_drops_session_routes_for_that_backend_only() {
+        let registry = BackendRegistry::new();
+        let (tx_a, _rx_a) = mpsc::unbounded_channel();
+        let (tx_b, _rx_b) = mpsc::unbounded_channel();
+        let lease_a = uuid::Uuid::new_v4();
+        let lease_b = uuid::Uuid::new_v4();
+        registry.register_session_sink(RelaySessionRoute {
+            session_id: "session-a".to_string(),
+            backend_id: "local-a".to_string(),
+            lease_id: lease_a,
+            tx: tx_a,
+        });
+        registry.register_session_sink(RelaySessionRoute {
+            session_id: "session-b".to_string(),
+            backend_id: "local-b".to_string(),
+            lease_id: lease_b,
+            tx: tx_b,
+        });
+
+        registry.unregister("local-a").await;
+
+        assert!(registry.session_route("session-a").is_none());
+        assert_eq!(
+            registry.session_route("session-b"),
+            Some(RelaySessionRouteInfo {
+                session_id: "session-b".to_string(),
+                backend_id: "local-b".to_string(),
+                lease_id: lease_b,
+            })
         );
     }
 }

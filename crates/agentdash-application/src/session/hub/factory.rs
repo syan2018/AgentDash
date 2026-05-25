@@ -53,8 +53,8 @@ impl SessionRuntimeInner {
         )
     }
 
-    pub fn launch_service(&self) -> super::super::launch_service::SessionLaunchService {
-        super::super::launch_service::SessionLaunchService::new(self.clone())
+    pub fn launch_service(&self) -> super::super::launch::SessionLaunchService {
+        super::super::launch::SessionLaunchService::new(self.clone())
     }
 
     pub fn hook_service(&self) -> super::super::hooks_service::SessionHookService {
@@ -112,6 +112,8 @@ impl SessionRuntimeInner {
             user_preferences: Vec::new(),
             runtime_tool_provider: None,
             mcp_relay_provider: None,
+            backend_execution_transport: None,
+            backend_execution_lease_repo: None,
         }
     }
 
@@ -138,6 +140,16 @@ impl SessionRuntimeInner {
         provider: Arc<dyn agentdash_spi::McpRelayProvider>,
     ) -> Self {
         self.mcp_relay_provider = Some(provider);
+        self
+    }
+
+    pub fn with_backend_execution_placement(
+        mut self,
+        transport: Arc<dyn crate::backend_transport::RelayPromptTransport>,
+        lease_repo: Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>,
+    ) -> Self {
+        self.backend_execution_transport = Some(transport);
+        self.backend_execution_lease_repo = Some(lease_repo);
         self
     }
 
@@ -226,6 +238,12 @@ impl SessionRuntimeInner {
         }
         if self.context_audit_bus.read().await.is_none() {
             return Err("SessionRuntimeInner 缺少 context_audit_bus".to_string());
+        }
+        if self.backend_execution_transport.is_none() {
+            return Err("SessionRuntimeInner 缺少 backend_execution_transport".to_string());
+        }
+        if self.backend_execution_lease_repo.is_none() {
+            return Err("SessionRuntimeInner 缺少 backend_execution_lease_repo".to_string());
         }
         Ok(())
     }

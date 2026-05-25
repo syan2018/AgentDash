@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use agentdash_application::project::{ProjectAuthorizationContext, ProjectAuthorizationService};
+use agentdash_application::project::{
+    ProjectAuthorizationContext, ProjectAuthorizationService,
+    project_authorization_context_from_identity,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User};
 use agentdash_domain::project::Project;
@@ -94,12 +97,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ProjectPermission {
-    View,
-    Edit,
-    ManageSharing,
-}
+pub use agentdash_application::project::ProjectPermission;
 
 /// 对业务 API 请求执行统一认证，并把身份注入 request extensions。
 pub async fn authenticate_request(
@@ -158,6 +156,10 @@ pub async fn authenticate_request(
         }
     };
 
+    persist_identity_snapshot_or_service_unavailable(state.as_ref(), &identity).await?;
+    authorize_authenticated_request(provider.as_ref(), &identity, &auth_request).await?;
+
+    request.extensions_mut().insert(identity.clone());
     request.extensions_mut().insert(RequestIdentity(identity));
     Ok(next.run(request).await)
 }
@@ -222,16 +224,43 @@ pub(crate) fn map_auth_error(err: AuthError) -> ApiError {
     }
 }
 
+async fn authorize_authenticated_request(
+    provider: &dyn agentdash_plugin_api::AuthProvider,
+    identity: &AuthIdentity,
+    request: &AuthRequest,
+) -> Result<(), ApiError> {
+    match provider
+        .authorize(identity, request.path.as_str(), request.method.as_str())
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ApiError::Forbidden("认证提供者拒绝访问该资源".to_string())),
+        Err(err) => {
+            log_auth_failure(request, &err);
+            Err(map_auth_error(err))
+        }
+    }
+}
+
+pub async fn persist_identity_snapshot_or_service_unavailable(
+    state: &AppState,
+    identity: &AuthIdentity,
+) -> Result<(), ApiError> {
+    persist_identity_snapshot(state, identity)
+        .await
+        .map_err(|err| {
+            tracing::error!(
+                user_id = %identity.user_id,
+                auth_mode = %identity.auth_mode,
+                error = %err,
+                "写入用户身份投影失败"
+            );
+            ApiError::ServiceUnavailable("用户身份目录不可用".to_string())
+        })
+}
+
 pub fn project_authorization_context(current_user: &AuthIdentity) -> ProjectAuthorizationContext {
-    ProjectAuthorizationContext::new(
-        current_user.user_id.clone(),
-        current_user
-            .groups
-            .iter()
-            .map(|group| group.group_id.clone())
-            .collect(),
-        current_user.is_admin,
-    )
+    project_authorization_context_from_identity(current_user)
 }
 
 pub async fn require_project_permission(
@@ -241,15 +270,13 @@ pub async fn require_project_permission(
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
     let authz = ProjectAuthorizationService::new(state.repos.project_repo.as_ref());
-    let access = authz
-        .resolve_project_access(&project_authorization_context(current_user), project)
+    let allowed = authz
+        .can_access_project(
+            &project_authorization_context(current_user),
+            project,
+            permission,
+        )
         .await?;
-
-    let allowed = match permission {
-        ProjectPermission::View => access.can_view_project(),
-        ProjectPermission::Edit => access.can_edit_project(),
-        ProjectPermission::ManageSharing => access.can_manage_project_sharing(),
-    };
 
     if allowed {
         return Ok(());
@@ -397,4 +424,85 @@ pub async fn persist_identity_snapshot(
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agentdash_plugin_api::{AuthError, AuthProvider};
+    use agentdash_spi::platform::auth::AuthMode;
+
+    struct StaticAuthorizeProvider {
+        result: Result<bool, AuthError>,
+    }
+
+    #[async_trait::async_trait]
+    impl AuthProvider for StaticAuthorizeProvider {
+        async fn authenticate(&self, _req: &AuthRequest) -> Result<AuthIdentity, AuthError> {
+            Ok(identity())
+        }
+
+        async fn authorize(
+            &self,
+            _identity: &AuthIdentity,
+            _resource: &str,
+            _action: &str,
+        ) -> Result<bool, AuthError> {
+            match &self.result {
+                Ok(value) => Ok(*value),
+                Err(AuthError::Forbidden(message)) => Err(AuthError::Forbidden(message.clone())),
+                Err(AuthError::ServiceUnavailable(message)) => {
+                    Err(AuthError::ServiceUnavailable(message.clone()))
+                }
+                Err(AuthError::BadRequest(message)) => Err(AuthError::BadRequest(message.clone())),
+                Err(AuthError::InvalidCredentials) => Err(AuthError::InvalidCredentials),
+            }
+        }
+    }
+
+    fn identity() -> AuthIdentity {
+        AuthIdentity {
+            auth_mode: AuthMode::Enterprise,
+            user_id: "alice".to_string(),
+            subject: "alice".to_string(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            groups: Vec::new(),
+            is_admin: false,
+            provider: Some("test".to_string()),
+            extra: serde_json::Value::Null,
+        }
+    }
+
+    fn auth_request() -> AuthRequest {
+        AuthRequest {
+            headers: HashMap::new(),
+            query_params: HashMap::new(),
+            path: "/api/projects".to_string(),
+            method: "GET".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_authenticated_request_maps_false_to_forbidden() {
+        let provider = StaticAuthorizeProvider { result: Ok(false) };
+        let err = authorize_authenticated_request(&provider, &identity(), &auth_request())
+            .await
+            .expect_err("provider deny should become forbidden");
+
+        assert!(matches!(err, ApiError::Forbidden(_)));
+    }
+
+    #[tokio::test]
+    async fn authorize_authenticated_request_preserves_auth_error_mapping() {
+        let provider = StaticAuthorizeProvider {
+            result: Err(AuthError::ServiceUnavailable("down".to_string())),
+        };
+        let err = authorize_authenticated_request(&provider, &identity(), &auth_request())
+            .await
+            .expect_err("provider error should be mapped");
+
+        assert!(matches!(err, ApiError::ServiceUnavailable(_)));
+    }
 }

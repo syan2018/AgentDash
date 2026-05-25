@@ -1,268 +1,130 @@
 # Session Startup Pipeline
 
-本 spec 定义 session 构建与 prompt launch 的生产主线。长期目标只认一条数据流：
+本 appendix 定义 session 构建与 prompt launch 的生产主线。模块不变量见 [Session Architecture](./architecture.md)。
+
+## Pipeline
 
 ```text
 LaunchCommand
   -> SessionConstructionPlan
-  -> LaunchExecution
-  -> ExecutionContext connector projection
-  -> SessionEvent / TerminalEffectOutbox
+  -> LaunchPlan
+  -> PreparedTurn
+  -> ConnectorAcceptedTurn
+  -> CommittedTurn
+  -> AttachedTurn
 ```
 
-`LaunchCommand` 表达来源意图；`SessionConstructionPlan` 是构建事实源；
-`LaunchExecution` 是单次 launch 的执行计划；`ExecutionContext` 只在 connector
-边界投影。
+`LaunchCommand` 表达来源意图；`SessionConstructionPlan` 是构建事实源；`LaunchPlan` 是单轮启动决策；后续 stage types 表达 accepted 前准备、connector accepted、accepted 后 commit 与 stream attach。`ExecutionContext` 只在 connector 边界投影。
 
 ## Stage Responsibilities
 
 | 阶段 | 输入 | 输出 | 职责 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Source adapter | HTTP / Task / Workflow / Routine / Companion / Hook / Local relay 请求 | `LaunchCommand` | 保留来源身份、请求意图、source policy、prompt payload、executor override、follow-up hint |
 | Construction | `LaunchCommand` + session/domain/runtime facts | `SessionConstructionPlan` | 解析 owner、workspace、working dir、VFS、MCP、capability、context bundle/frame、identity、query/audit/inspector projection、resolution trace |
-| Launch planning | `LaunchCommand` + `SessionConstructionPlan` + runtime facts | `LaunchExecution` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
-| Execution | `LaunchExecution` | connector prompt + session events | claim/activate turn，写 start/user events，调用 connector，connector accepted 后提交 bootstrap/pending/title 成功副作用 |
-| Terminal | connector terminal / stream terminal | terminal event + outbox effect | 持久化终态，清理 active turn，把后续业务副作用写入 durable outbox |
+| Launch planning | `LaunchCommand` + `SessionConstructionPlan` + runtime facts | `LaunchPlan` | 解析 resolved prompt payload、lifecycle、restore、hook、follow-up、runtime command、terminal effect、connector input |
+| Turn preparation | `LaunchPlan` | `PreparedTurn` | claim/activate turn，准备 runtime tools、MCP tools、hook runtime、context frames、pending runtime context application 与 connector `ExecutionContext` |
+| Connector start | `PreparedTurn` | `ConnectorAcceptedTurn` | 调用 `connector.prompt`，以返回 `ExecutionStream` 作为 accepted 边界；setup 失败时释放 turn/hook 并记录 failed terminal |
+| Accepted commit | `ConnectorAcceptedTurn` | `CommittedTurn` | 提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation |
+| Stream ingestion | `CommittedTurn` | `AttachedTurn` | spawn `SessionTurnProcessor` 与 stream adapter，并登记 processor tx / adapter abort handle |
+| Terminal | connector terminal / stream terminal | terminal event + outbox effect | 持久化终态，清理 active turn，把业务副作用写入 durable outbox |
 
-`Turn` 边界保持很薄：reservation、active、cancel、hook runtime handle、
-processor/adapter supervision、terminal release。
+`Turn` 边界保持很薄：reservation、active、cancel、hook runtime handle、processor/adapter supervision、terminal release。
 
 ## Source Adapter Contract
 
 Source adapter 只做来源语义转换，不能预先组装最终运行事实。
 
 | 来源 | `LaunchCommand` 应携带 |
-|---|---|
+| --- | --- |
 | HTTP prompt | request DTO、auth identity、prompt payload、executor override |
 | Task service | task id、phase/override/additional prompt source hint、task source identity |
-| Workflow orchestrator | workflow/lifecycle source identity、step activation intent |
+| Workflow orchestrator | workflow/lifecycle source identity、activity activation intent |
 | Routine executor | routine source identity，系统身份来自 `AuthIdentity::system_routine(routine.id)` |
 | Companion dispatch / parent resume | parent session id、dispatch/slice/target binding/source policy |
 | Hook auto-resume | hook trigger identity、resume intent、follow-up hint |
 | Local relay | workspace root、原始 MCP declaration、relay source identity |
 
-`working_dir` 是 construction 解析结果，不属于用户 prompt input。Local relay 的
-workspace root 是来源事实；resolved VFS、resolved MCP、capability state、
-context bundle 和 connector input 都由 construction/launch 产出。
+`working_dir` 是 construction 解析结果，不属于用户 prompt input。resolved VFS、resolved MCP、capability state、context bundle 和 connector input 都由 construction/launch 产出。
 
-Task terminal effect 使用 durable binding 描述，由 construction/effects 解析。
-command 边界不传内存 `post_turn_handler` 或其它 trait object。
+Task terminal effect 使用 durable binding 描述，由 construction/effects 解析。command 边界不传内存 `post_turn_handler` 或其它 trait object。
 
 ## Construction Contract
 
-`SessionConstructionProvider::build_construction` 直接输出 `SessionConstructionPlan`。
-输出必须是 launch-ready final facts，不是 seed、partial plan 或等待 LaunchPlanner 补齐的
-中间形态。
+`SessionConstructionProvider::build_construction` 直接输出 launch-ready `SessionConstructionPlan`，不是 seed、partial plan 或等待 planner 补齐的中间形态。
 
 `SessionConstructionPlan` 至少覆盖：
 
 - `ResolvedSessionOwner`，owner 解析顺序统一为 `Task -> Story -> Project`。
-- workspace 与 typed working directory。`workspace.working_directory` 必须在进入
-  `SessionLaunchPlanner` 前为 `Some`。
-- VFS、MCP declaration resolution、capability state。`surface.vfs`、
-  `projections.mcp_servers` 与 `projections.capability_state` 必须已经完成最终裁决。
+- workspace 与 typed working directory。`workspace.working_directory` 必须在进入 launch planner 前为 `Some`。
+- final VFS、MCP declaration resolution、capability state。
 - `SessionContextBundle` 与 continuation/context frames。
 - identity、source contract、query/audit/inspector projections。
 - resolution trace，用于审计为什么选择某个 owner/workspace/context。
 
 Launch 前必须调用 `SessionConstructionPlan::validate_for_launch()` 或等价 gate：
 
-- 缺少 `workspace.working_directory`、`execution_profile.executor_config`、
-  `surface.vfs`、`projections.capability_state` 时拒绝 launch。
+- 缺少 `workspace.working_directory`、`execution_profile.executor_config`、`surface.vfs`、`projections.capability_state` 时拒绝 launch。
 - `projections.capability_state.vfs.active` 必须等于 `surface.vfs`。
-- `projections.capability_state.tool.mcp_servers` 必须等于
-  `projections.mcp_servers`。
-- pending runtime command 的 overlay 由 Construction 阶段形成 final
-  `capability_state`，但 command store 的 `requested -> applied` 副作用仍只能在
-  connector prompt accepted 后提交。
+- `projections.capability_state.tool.mcp_servers` 必须等于 `projections.mcp_servers`。
+- pending runtime command 的 overlay 由 Construction 阶段形成 final capability projection；`requested -> applied` 副作用只能在 connector prompt accepted 后提交。
 
-Construction 可以消费 runtime facts（session meta、requested runtime commands），
-但这些 facts 一旦进入 `SessionConstructionPlan` 就必须体现在 `resolution` trace 中。
-`SessionProfile` / `TurnExecution` 中的 capability state 是 projection cache，不进入
-construction fact input。LaunchPlanner 不允许再读取 cached profile、hub default VFS、
-local relay workspace root 或 source MCP declaration 来补齐 VFS/MCP/capability/executor facts。
+Construction 可以消费 runtime facts，但这些 facts 一旦进入 `SessionConstructionPlan` 就必须体现在 `resolution` trace 中。LaunchPlanner 不允许再读取 cached profile、hub default VFS、local relay workspace root 或 source MCP declaration 来补齐 VFS/MCP/capability/executor facts。
 
-Context endpoint、权限展示、audit 和 inspector 都投影同一份
-`SessionConstructionPlan`。API route 的职责是 auth/permission、DTO 转换、
-调用 use case、映射 response DTO。
+Context endpoint、权限展示、audit 和 inspector 都投影同一份 `SessionConstructionPlan`。API route 的职责是 auth/permission、DTO 转换、调用 use case、映射 response DTO。
 
-Companion parent facts 由 construction/assembler 根据 parent session id 解析；
-API/bootstrap 只传 parent 引用与 dispatch policy。
+## Capability Projection Normalization
 
-## Scenario: Capability Projection Normalization
+Session runtime surface、VFS、MCP、Skill baseline 与 `CapabilityState` 是同一份 construction projection 的不同维度。
 
-### 1. Scope / Trigger
+Core entries:
 
-- Trigger: Session runtime surface、VFS、MCP、Skill baseline 与 `CapabilityState` 是同一份 construction projection 的不同维度，需要在 launch、context inspect 与 runtime transition 中保持一致。
+- `derive_session_capability_projection(SessionCapabilityProjectionInput) -> SessionCapabilityProjection`
+- `normalize_capability_state_dimensions(&mut CapabilityState, Option<Vfs>, Vec<SessionMcpServer>, &SessionBaselineCapabilities)`
+- `build_session_context_plan(...) -> SessionConstructionPlan`
 
-### 2. Signatures
+Contract:
 
-- Application entry: `derive_session_capability_projection(SessionCapabilityProjectionInput) -> SessionCapabilityProjection`
-- Application entry: `normalize_capability_state_dimensions(&mut CapabilityState, Option<Vfs>, Vec<SessionMcpServer>, &SessionBaselineCapabilities)`
-- Context query: `build_session_context_plan(...) -> SessionConstructionPlan`，并在 construction finalize 后生成 query-only `runtime_surface`
-
-### 3. Contracts
-
-- `CapabilityResolver` 继续只解析 tool / MCP / companion 维度。
+- `CapabilityResolver` 只解析 tool / MCP / companion 维度。
 - Effective VFS 由 construction finalize 合并 owner/session/runtime-command facts 后确定。
-- Skill baseline 与 guidelines 从 effective VFS 派生；local extra skills 以 VFS skill name map 作为冲突基线。
+- Skill baseline 与 guidelines 从 effective VFS 派生。
 - `CapabilityState.vfs.active` 必须等于 final `plan.surface.vfs`。
 - `CapabilityState.tool.mcp_servers` 必须等于 final `plan.projections.mcp_servers`。
 - `runtime_surface` 是 query DTO，只从 final `plan.surface.vfs` 生成。
 
-### 4. Validation & Error Matrix
+## LaunchPlan And Stage Contracts
 
-- final VFS 缺失且无可解析 workspace root -> `BadRequest`
-- final VFS 缺少 default mount 或 default mount root 无效 -> `BadRequest`
-- `CapabilityState.vfs.active != plan.surface.vfs` -> launch validation failure
-- `CapabilityState.tool.mcp_servers != plan.projections.mcp_servers` -> launch validation failure
+`LaunchPlanner::plan` 返回 `LaunchPlan`。planner 输入由 `LaunchPlanningDeps`、`LaunchCommand`、`SessionConstructionPlan` 与 runtime facts 组成。
 
-### 5. Good / Base / Bad Cases
+`LaunchPlan` 承载或引用：
 
-- Good: pending VFS overlay 合并后，context response 的 `vfs` 与 `runtime_surface.mounts` 都包含 overlay mount。
-- Base: 没有 pending runtime command 时，context response 从 construction base VFS 派生 surface。
-- Bad: runtime transition 的 after-state 缺少 Skill baseline，导致下一轮 context frame 与工具可见说明不包含 active VFS 内嵌 skill。
+- resolved prompt payload
+- `SessionConstructionPlan`
+- lifecycle / restore / hook / follow-up plan
+- pending runtime command apply plan
+- terminal effect plan
+- connector input projection
+- launch trace
 
-### 6. Tests Required
+Connector input 的 working directory、executor config、MCP、VFS、identity、capability state 和 context frame 都从 final construction 与 `LaunchPlan` 投影生成。launch stages 执行计划时沿用 construction 事实，保持 owner、context、VFS、MCP 与 capability 的单一来源。
 
-- API/session context test：final `surface.vfs` 与 `runtime_surface` 使用同一 mount 集合。
-- Application/session test：live 与 pending runtime transition 都从 active VFS 派生 Skill baseline。
-- Canvas tool test：`present_canvas` 在 `canvas_presented` 事件前完成 session meta、active VFS 与 Skill baseline 同步。
+`PreparedTurn` 汇总 connector accepted 前的 turn runtime projection、tools、context frames、hook runtime handle 与 connector-facing `ExecutionContext`。
 
-### 7. Implementation Shape
+`connector.prompt` 返回 `ExecutionStream` 是 launch accepted 边界。accepted 之前允许做 turn claim、active runtime projection、hook `SessionStart` context preparation 和 connector context assembly；accepted 之后才提交 user message、`TurnStarted`、context/capability projection event、bootstrap meta、runtime command `applied` 与 title generation。connector setup 失败时释放 turn runtime 并记录失败终态。
 
-```text
-base construction facts
-  -> effective VFS / MCP resolution
-  -> derive_session_capability_projection
-  -> normalize_capability_state_dimensions
-  -> final SessionConstructionPlan
-  -> query-only runtime_surface
-```
+`TurnCommitter::commit` 消费 `ConnectorAcceptedTurn`，原因是 accepted 后事实只有在 connector 已接收本轮 prompt 后才有业务意义。`StreamIngestionAttacher::attach` 消费 `CommittedTurn`，原因是 processor/adapter supervision 依赖 accepted 后事实已经落库。
 
-## LaunchExecution Contract
+LaunchPlanner 处理 runtime-only planning：
 
-`SessionLaunchPlanner::plan` 返回 `LaunchExecution`。planner 输入由
-`SessionLaunchDeps`、`LaunchCommand`、`SessionConstructionPlan` 与 runtime facts
-组成。
-
-`LaunchExecution` 承载或引用：
-
-- resolved prompt payload；
-- `SessionConstructionPlan`；
-- lifecycle / restore / hook / follow-up plan；
-- pending runtime command apply plan；
-- terminal effect plan；
-- connector input projection；
-- launch trace。
-
-Connector input 的 working directory、executor config、MCP、VFS、identity、
-capability state 和 context frame 都从 final `SessionConstructionPlan` 与
-`LaunchExecution` 投影生成。`prompt_pipeline` 的职责是执行该计划，而不是重新解析
-owner、context、VFS、MCP 或 capability。
-
-`SessionLaunchPlanner` 只能处理 runtime-only planning：
-
-- resolved prompt payload；
-- lifecycle / restore / hook / follow-up；
-- requested runtime command apply plan；
-- terminal effect plan；
-- connector input projection。
-
-禁止在 LaunchPlanner 中出现 VFS/MCP/capability/executor fallback chain，尤其是：
-
-- hub default VFS；
-- cached session profile VFS/MCP/capability；
-- local relay workspace root 到 VFS 的转换；
-- source MCP declaration 合并；
-- skill / guideline discovery；
-- `SessionConstructionPlanner::plan_launch` 这类二次 construction。
-
-## Terminal Effects
-
-Terminal fact 先进入 event store，业务副作用进入 durable outbox。
-
-当前 effect 类型：
-
-- `hook_effects`
-- `session_terminal_callback`
-- `hook_auto_resume`
-
-Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。dispatcher
-支持进程重启后的 replay，handler 以 idempotency key 保证幂等。
-
-## Scenario: Freeform Session Lifecycle Ownership
-
-### 1. Scope / Trigger
-
-- Trigger: 普通自由会话也需要进入 LifecycleRun 过程归属模型，避免 session 与 workflow 过程形成两套事实源。
-
-### 2. Signatures
-
-- API create: `POST /sessions { title?: string, project_id: uuid } -> SessionMeta`
-- Backend service: `FreeformLifecycleService::ensure_run_for_session(project_id, session_id) -> LifecycleRun`
-- Builtin keys:
-  - workflow: `builtin.freeform_agent`
-  - lifecycle: `builtin.freeform_session`
-  - activity: `main_conversation`
-- DB: `lifecycle_runs.activity_state TEXT NULL`
-
-### 3. Contracts
-
-- `/sessions` 创建的是 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
-- 新 session 必须创建 `SessionBinding(owner_type=Project, owner_id=project_id, label=freeform)`。
-- 没有显式 lifecycle 的普通会话必须调用 `ensure_run_for_session`，生成 `LifecycleRun.session_id = session.id`。
-- 启动对账会扫描 project-bound 业务 root session；若没有任何 LifecycleRun，则补齐 freeform LifecycleRun。
-- 对账跳过 `lifecycle_node:*`、`lifecycle_activity:*`、`companion:*` 这类派生 session label。
-- freeform lifecycle 是单 Activity graph：`main_conversation` 使用 `Agent + ContinueRoot` 与 `ActivityCompletionPolicy::OpenEnded`。
-- `OpenEnded` 表示普通 prompt terminal 不会自动完成 activity；归档、显式结束或后续产品动作再提交 completion/cancel event。
-
-### 4. Validation & Error Matrix
-
-- `/sessions` 缺少 `project_id` -> request DTO 反序列化失败。
-- `project_id` 无编辑权限 -> `403`。
-- builtin workflow/lifecycle definition 校验失败 -> `400 BadRequest`。
-- 同一 session 已存在 activity run -> 返回既有 run，不创建重复 run。
-- session 已绑定到其他 Project -> session binding repository 拒绝跨 Project 复用。
-- 对账发现 session 已有任意 LifecycleRun -> 不补 freeform run。
-
-### 5. Good/Base/Bad Cases
-
-- Good: 用户在当前 Project 下创建普通会话，系统创建 session、Project binding、freeform LifecycleRun，并初始化 `main_conversation#1 ready`。
-- Base: ProjectAgent 配置了显式 lifecycle 时，按显式 lifecycle 创建 run，不额外创建 freeform run。
-- Base: 旧的 project-bound session 在启动对账中补齐 freeform run。
-- Bad: 创建无 project scope 的裸 session；后续无法从项目过程视图反查其 LifecycleRun。
-
-### 6. Tests Required
-
-- `cargo test -p agentdash-application workflow::freeform`：断言 builtin definition、open-ended policy、run 初始化和幂等复用。
-- `cargo check -p agentdash-api`：断言 API/request 接线编译通过。
-- `cargo test -p agentdash-application reconcile::boot`：断言启动对账会跳过派生 session label。
-- 前端 `pnpm --filter app-web typecheck`：断言 `createSession(title, projectId)` 调用契约一致。
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```rust
-let meta = session_core.create_session(title).await?;
-return Ok(meta);
-```
-
-#### Correct
-
-```rust
-let meta = session_core.create_session(title).await?;
-session_binding_repo.create(&project_binding).await?;
-freeform_service
-    .ensure_run_for_session(project_id, &meta.id)
-    .await?;
-```
+- resolved prompt payload
+- lifecycle / restore / hook / follow-up
+- requested runtime command apply plan
+- terminal effect plan
+- connector input projection
 
 ## Pending Runtime Commands
 
-Runtime context / capability transition 的事实源是 runtime command event/store。
-Projection 只服务查询、apply-once 与失败恢复。
+Runtime context / capability transition 的事实源是 runtime command event/store。Projection 只服务查询、apply-once 与失败恢复。
 
 状态流：
 
@@ -271,139 +133,36 @@ requested -> applied
 requested -> failed
 ```
 
-connector.prompt accepted 后再标记 applied；connector.prompt 失败时保留
-requested/failed 事实供下一轮恢复。
+connector.prompt accepted 后再标记 applied；connector.prompt 失败时保留 requested/failed 事实供下一轮恢复。
 
-### Scenario: Runtime Capability Transition Replay
+Payload contract:
 
-#### 1. Scope / Trigger
+- persisted payload type: `PendingCapabilityStateTransition`
+- transition field: `RuntimeCapabilityTransition { declarations, effects }`
+- replay entry: `replay_runtime_capability_transitions(base_state, transitions) -> RuntimeCapabilityReplay`
+- payload 语义是 intent，不是 full `CapabilityState` projection
+- 写入 runtime command store 前必须通过 `CapabilityDimensionRegistry::validate_transition`
 
-- Trigger: pending runtime command 需要跨进程保存“下一轮应应用的 runtime context 变化”，同时保持 `CapabilityState`、VFS、Skill、MCP 与 runtime surface 由同一条 projection pipeline 生成。
+## Freeform Session Lifecycle Ownership
 
-#### 2. Signatures
+普通自由会话也进入 LifecycleRun 过程归属模型，避免 session 与 workflow 过程形成两套事实源。
 
-- Persisted payload type: `PendingCapabilityStateTransition`
-- Transition field: `RuntimeCapabilityTransition { declarations, effects }`
-- Replay entry: `replay_runtime_capability_transitions(base_state, transitions) -> RuntimeCapabilityReplay`
+Contract:
 
-#### 3. Contracts
-
-- `PendingCapabilityStateTransition` 保存 phase metadata：`run_id`、`lifecycle_key`、`phase_node`、`capability_keys`、`source_turn_id`。
-- `RuntimeCapabilityTransition.declarations` 保留 source capability / mount declarations；`effects` 保存 tool access、MCP server set、companion roster、VFS overlay 与 mount operations 等可 replay runtime effects。
-- workflow pending path 通过 built-in dimension module 生成 records：Tool module 生成 `capability_directive` declarations 与 `set_tool_access` effect；VFS module 生成 `mount_operation` declarations、`apply_vfs_overlay` effect 与 `apply_mount_operations` effect；MCP / Companion module 分别生成 server set 与 roster effects。
-- 写入 runtime command store 前必须通过 `CapabilityDimensionRegistry::validate_transition` 验证 declarations/effects，确保 JSON payload 已能在 module 边界 decode 为强类型 payload。
-- replay 先从 construction base capability state 开始，按 store 返回顺序 fold 所有 requested transitions，并由 dimension registry 分发 effect records；随后由 capability projection normalizer 写回 effective VFS、MCP、Skill baseline 与 guidelines。
-- repository 继续使用 runtime command `payload_json` 容器；payload 语义是 intent，而不是 full `CapabilityState` projection。
-
-#### 4. Validation & Error Matrix
-
-- pending payload 反序列化失败 -> repository 返回数据错误，当前预研阶段不保留旧 payload 兼容分支。
-- final VFS 缺少 default mount 或 root_ref -> construction `BadRequest`。
-- connector prompt accepted -> command 标记 `applied`。
-- connector setup / prompt 失败 -> command 保持 `requested` 或进入 `failed`，下一轮可按 store 状态恢复。
-
-#### 5. Good / Base / Bad Cases
-
-- Good: pending patch 含 VFS overlay，context query / next-turn launch replay 后 final VFS、runtime surface 与 Skill baseline 都包含 overlay mount。
-- Base: pending patch 只改 tool/MCP，construction base VFS 原样进入 final projection。
-- Bad: payload 保存闭包后的 Skill 列表，下一轮 replay 时会绕过 effective VFS 的 Skill baseline 派生。
-
-#### 6. Tests Required
-
-- Unit: transition replay 合并 VFS overlay、应用 mount directives，并断言 serialized payload 没有 `state` 字段。
-- Repository: requested command supersede、applied、failed 状态仍能保存和读取 transition payload。
-- Runtime: pending transition 的 event/context frame 使用 replay + normalizer 后的 final capability projection。
-
-#### 7. Implementation Boundary
-
-```rust
-let replay = replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)?;
-let mut state = replay.capability_state;
-normalize_capability_state_dimensions(&mut state, Some(effective_vfs), mcp_servers, &baseline);
-```
-
-`SessionLaunchPlanner` 不负责释放 turn claim 或清理 hook runtime。hook runtime
-准备失败时，错误返回到 `SessionLaunchExecutor::execute_constructed_launch`，由 executor
-统一调用 `TurnSupervisor::clear_turn_and_hook`，确保规划阶段不直接执行 turn 清理副作用。
-
-## Scenario: Session Meta Tab Layout Persistence
-
-### 1. Scope / Trigger
-
-- Trigger: workspace panel 需要把 session tab layout 作为正式 session meta 持久化字段，而不是前端静默兼容路径。
-
-### 2. Signatures
-
-- API read: `GET /sessions/{id}/meta -> SessionMeta`
-- API write: `PATCH /sessions/{id}/meta { title?: string, tab_layout?: JsonValue } -> SessionMeta`
-- Rust meta: `SessionMeta { tab_layout: Option<serde_json::Value>, ... }`
-- DB column: `sessions.tab_layout_json TEXT`
-
-### 3. Contracts
-
-- request `title`：存在时必须 trim 后非空，并写入 `title_source = user`。
-- request `tab_layout`：存在时按 JSON 原样保存到 `SessionMeta.tab_layout`。
-- response `SessionMeta` 使用既有 `camelCase` serde，因此前端读取字段为 `tabLayout`。
-- 前端保存仍按 PATCH request 字段 `tab_layout` 发送，不能同时猜测 `tabLayout`/`tab_layout` 响应别名。
-
-### 4. Validation & Error Matrix
-
-- `{}` -> `400 BadRequest`，必须提供 `title` 或 `tab_layout`。
-- `{ "title": "   " }` -> `400 BadRequest`。
-- session 不存在 -> `404 NotFound`。
-- `tab_layout` 不是前端 `SessionTabLayout` 形状 -> 前端 `loadSessionTabLayout` 返回 `null`，不静默吞掉网络/API 错误。
-
-### 5. Good/Base/Bad Cases
-
-- Good: PATCH `{ "tab_layout": { "tabs": [...], "active_tab_uri": "session://main" } }` 后，GET meta 返回 `tabLayout`。
-- Base: 无已保存布局时，`tabLayout` 缺省或为 `null`，前端初始化默认 pinned tabs。
-- Bad: 前端 catch 所有错误并假装后端不支持；这会掩盖 schema/API 漏接线。
-
-### 6. Tests Required
-
-- Repository stale-save 测试必须断言 `tab_layout_json` 不因 event projection merge 丢失。
-- API/session check 必须覆盖 meta DTO 构造中的 `tab_layout` 字段。
-- Frontend check/lint/test 必须覆盖 tab layout service 的类型边界。
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```typescript
-try {
-  await api.patch(`/sessions/${id}/meta`, { tab_layout: layout });
-} catch {
-  // pretend backend does not support it
-}
-```
-
-#### Correct
-
-```typescript
-await api.patch(`/sessions/${id}/meta`, { tab_layout: layout });
-```
-
-调用方可以记录错误或展示失败状态，但 service 层不能把正式后端契约降级成静默兼容路径。
+- `POST /sessions` 创建 project-scoped 业务会话，必须先校验调用者对 `project_id` 有 `Edit` 权限。
+- 新 session 必须创建 `SessionBinding(owner_type=Project, owner_id=project_id, label=freeform)`。
+- 没有显式 lifecycle 的普通会话必须调用 `ensure_run_for_session`，生成 `LifecycleRun.session_id = session.id`。
+- freeform lifecycle 是单 Activity graph：`main_conversation` 使用 `Agent + ContinueRoot` 与 `ActivityCompletionPolicy::OpenEnded`。
+- `OpenEnded` 表示普通 prompt terminal 不会自动完成 activity。
 
 ## Ready Gate
 
 云端 `AppState::new_with_plugins` 返回前必须完成 session 主链路依赖绑定：
 
-- runtime tool provider；
-- MCP relay provider；
-- terminal callback；
-- session construction provider；
-- context audit bus。
+- runtime tool provider
+- MCP relay provider
+- terminal callback
+- session construction provider
+- context audit bus
 
 Ready gate 的职责是保证运行期看到完整依赖图。
-
-## Verification
-
-```powershell
-rg -n "\.start_prompt\(" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-rg -n "PreparedSessionInputs|finalize_request|LaunchCommand::.*_prepared|PromptSessionRequest|SessionLaunchIntent|PreparedLaunchPrompt|AugmentedLaunchInput|PromptAugmentInput|SessionConstructionFacts|SessionConstructionSeed" crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-local/src
-cargo check -p agentdash-application
-cargo check -p agentdash-api
-cargo test -p agentdash-application session::launch
-cargo test -p agentdash-application session::construction
-```

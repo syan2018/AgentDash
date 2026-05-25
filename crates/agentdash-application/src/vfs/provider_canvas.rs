@@ -75,7 +75,12 @@ impl MountProvider for CanvasFsMountProvider {
             .find(|file| file.path == path)
             .map(|file| file.content.clone())
             .ok_or_else(|| MountError::NotFound(format!("Canvas 文件不存在: {path}")))?;
-        Ok(ReadResult::new(path, content))
+        // Canvas 没有 file 级版本号，整个 canvas.updated_at 作为悲观 token：
+        // 修改任意文件 ⇒ canvas touch ⇒ token 变化（保守但正确，满足 dedup invalidation）。
+        let updated_at_ms = canvas.updated_at.timestamp_millis();
+        Ok(ReadResult::new(path, content)
+            .with_version_token(format!("canvas:{}", updated_at_ms))
+            .with_modified_at(updated_at_ms))
     }
 
     async fn write_text(
@@ -216,12 +221,18 @@ impl MountProvider for CanvasFsMountProvider {
                     content: line.trim().to_string(),
                 });
                 if matches.len() >= max_results {
-                    return Ok(SearchResult { matches });
+                    return Ok(SearchResult {
+                        matches,
+                        truncated: true,
+                    });
                 }
             }
         }
 
-        Ok(SearchResult { matches })
+        Ok(SearchResult {
+            matches,
+            truncated: false,
+        })
     }
 
     async fn exec(

@@ -25,7 +25,7 @@ const webServerArgs = [
   backendId,
   "--backend-name",
   `e2e-local-${runId}`,
-  "--accessible-roots",
+  "--workspace-roots",
   repoRoot,
 ];
 

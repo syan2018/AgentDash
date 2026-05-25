@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_application::task::execution::{
-    ExecutionPhase, TaskExecutionCommand, TaskExecutionError,
-};
+use agentdash_application::task::execution::{ExecutionPhase, TaskExecutionCommand};
 use agentdash_domain::task::TaskStatus;
 use axum::{
     Json,
@@ -15,9 +13,9 @@ use uuid::Uuid;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
-    bootstrap::session_context_query::build_session_context_plan,
     dto::TaskResponse,
     rpc::ApiError,
+    session_use_cases::context_query::build_session_context_plan,
 };
 
 #[derive(Debug, Deserialize, Default)]
@@ -98,7 +96,7 @@ pub async fn start_task(
             identity: Some(current_user),
         })
         .await
-        .map_err(map_task_execution_error)?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(StartTaskResponse {
         task_id: result.task_id,
@@ -134,7 +132,7 @@ pub async fn continue_task(
             identity: Some(current_user),
         })
         .await
-        .map_err(map_task_execution_error)?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(ContinueTaskResponse {
         task_id: result.task_id,
@@ -163,7 +161,7 @@ pub async fn cancel_task(
         .story_step_activation_service
         .cancel_task(task_id)
         .await
-        .map_err(map_task_execution_error)?;
+        .map_err(ApiError::from)?;
     Ok(Json(TaskResponse::from(task)))
 }
 
@@ -185,7 +183,7 @@ pub async fn get_task_session(
         .story_step_activation_service
         .get_task_session(task_id)
         .await
-        .map_err(map_task_execution_error)?;
+        .map_err(ApiError::from)?;
     let context_projection = if let Some(session_id) = result.session_id.as_ref() {
         let bindings = state
             .repos
@@ -225,14 +223,4 @@ pub async fn get_task_session(
 
 fn parse_task_id(id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))
-}
-
-pub(crate) fn map_task_execution_error(err: TaskExecutionError) -> ApiError {
-    match err {
-        TaskExecutionError::BadRequest(message) => ApiError::BadRequest(message),
-        TaskExecutionError::NotFound(message) => ApiError::NotFound(message),
-        TaskExecutionError::Conflict(message) => ApiError::Conflict(message),
-        TaskExecutionError::UnprocessableEntity(message) => ApiError::UnprocessableEntity(message),
-        TaskExecutionError::Internal(message) => ApiError::Internal(message),
-    }
 }

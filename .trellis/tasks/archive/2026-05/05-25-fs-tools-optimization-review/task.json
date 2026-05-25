@@ -1,0 +1,32 @@
+{
+  "id": "fs-tools-optimization-review",
+  "name": "fs-tools-optimization-review",
+  "title": "fs_read/fs_grep/fs_glob 工具优化评估",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-05-25",
+  "completedAt": "2026-05-25",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-25-vfs-search-spi-fix",
+    "05-25-fs-read-rebuild",
+    "05-25-fs-grep-rebuild",
+    "05-25-fs-glob-rebuild",
+    "05-25-vfs-grep-query-split"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

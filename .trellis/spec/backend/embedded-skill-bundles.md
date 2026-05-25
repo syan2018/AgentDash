@@ -65,15 +65,13 @@ ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
 
 `ensure_canvas_system_skill` 只是 Canvas 兼容包装，不应继续扩展手写文件同步逻辑。
 
-## Tests Required
+## Validation Contract
 
-- Domain 单测覆盖：
-  - bundle 能 materialize 所有文件。
-  - 已存在文件内容漂移时会被更新。
-  - 缺少 `entry_path` 时 `validate()` 失败。
-- 业务域单测覆盖：
-  - 新建实体包含 bundle entry 和 reference 文件。
-  - mutation/update 后已有 bundle 会同步新增/更新文件。
+- bundle materialization 必须覆盖声明内所有文件。
+- 已存在受管文件内容漂移时，materializer 以源码 bundle 为准更新。
+- 缺少 `entry_path` 时 `validate()` 必须失败。
+- 新建受管实体必须包含 bundle entry 和 reference 文件。
+- mutation/update 后已有 bundle 必须同步新增/更新文件。
 - Skill 作者更新 `SKILL.md` 后，应运行 skill-creator `quick_validate.py` 校验 skill folder。
 
 ## 禁止模式

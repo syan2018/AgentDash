@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use super::entity::{
-    BackendConfig, BackendWorkspaceInventory, LocalBackendClaim, ProjectBackendAccess,
-    ProjectBackendAccessStatus, RuntimeHealth, RuntimeHealthOnlineUpdate, UserPreferences,
-    ViewConfig,
+    BackendConfig, BackendExecutionLease, BackendExecutionTerminalKind, BackendWorkspaceInventory,
+    LocalBackendClaim, ProjectBackendAccess, ProjectBackendAccessStatus, RuntimeHealth,
+    RuntimeHealthOnlineUpdate, UserPreferences, ViewConfig,
 };
 use crate::common::error::DomainError;
 use uuid::Uuid;
@@ -48,6 +50,42 @@ pub trait RuntimeHealthRepository: Send + Sync {
         backend_id: &str,
     ) -> Result<Option<RuntimeHealth>, DomainError>;
     async fn list_runtime_health(&self) -> Result<Vec<RuntimeHealth>, DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait BackendExecutionLeaseRepository: Send + Sync {
+    async fn claim(&self, lease: &BackendExecutionLease) -> Result<(), DomainError>;
+    async fn activate(
+        &self,
+        lease_id: Uuid,
+        activated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
+    async fn release(
+        &self,
+        lease_id: Uuid,
+        terminal_kind: Option<BackendExecutionTerminalKind>,
+        reason: Option<String>,
+        released_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
+    async fn fail(
+        &self,
+        lease_id: Uuid,
+        reason: Option<String>,
+        failed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), DomainError>;
+    async fn mark_lost_by_backend(
+        &self,
+        backend_id: &str,
+        reason: Option<String>,
+        lost_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64, DomainError>;
+    async fn get_by_id(&self, lease_id: Uuid)
+    -> Result<Option<BackendExecutionLease>, DomainError>;
+    async fn list_active(&self) -> Result<Vec<BackendExecutionLease>, DomainError>;
+    async fn count_active_by_backend(
+        &self,
+        backend_ids: &[String],
+    ) -> Result<HashMap<String, i64>, DomainError>;
 }
 
 #[async_trait::async_trait]

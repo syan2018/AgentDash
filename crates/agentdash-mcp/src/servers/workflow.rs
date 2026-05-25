@@ -21,7 +21,9 @@ use agentdash_domain::workflow::{
     WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
     WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
 };
+use agentdash_spi::platform::auth::AuthIdentity;
 
+use crate::authz::{McpProjectPermission, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
 
@@ -175,14 +177,24 @@ pub struct TransitionInput {
 pub struct WorkflowMcpServer {
     services: Arc<McpServices>,
     project_id: Uuid,
+    identity: AuthIdentity,
 }
 
 impl WorkflowMcpServer {
-    pub fn new(services: Arc<McpServices>, project_id: Uuid) -> Self {
+    pub fn new(services: Arc<McpServices>, project_id: Uuid, identity: AuthIdentity) -> Self {
         Self {
             services,
             project_id,
+            identity,
         }
+    }
+
+    async fn require_project(
+        &self,
+        permission: McpProjectPermission,
+    ) -> Result<agentdash_domain::project::Project, McpError> {
+        require_project_permission(&self.services, &self.identity, self.project_id, permission)
+            .await
     }
 
     /// Upsert workflow：按 key 查重，存在则更新版本，不存在则创建。
@@ -193,7 +205,7 @@ impl WorkflowMcpServer {
         let repo = self.services.workflow_definition_repo.as_ref();
 
         if let Some(existing) = repo
-            .get_by_key(&definition.key)
+            .get_by_project_and_key(self.project_id, &definition.key)
             .await
             .map_err(McpError::from)?
         {
@@ -501,6 +513,7 @@ fn build_transitions(inputs: &[TransitionInput]) -> Vec<ActivityTransition> {
 impl WorkflowMcpServer {
     #[tool(description = "列出当前项目下所有 Workflow 和 Lifecycle 定义")]
     async fn list_workflows(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let workflows = self
             .services
             .workflow_definition_repo
@@ -546,10 +559,11 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<GetWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let workflow = self
             .services
             .workflow_definition_repo
-            .get_by_key(&params.workflow_key)
+            .get_by_project_and_key(self.project_id, &params.workflow_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 workflow 失败: {e}")))?
             .ok_or_else(|| McpError::not_found("WorkflowDefinition", &params.workflow_key))?;
@@ -569,6 +583,7 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<GetLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::View).await?;
         let lifecycle = self
             .services
             .activity_lifecycle_definition_repo
@@ -594,6 +609,7 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let contract = build_contract(&params.contract)?;
 
@@ -623,6 +639,7 @@ impl WorkflowMcpServer {
         &self,
         Parameters(params): Parameters<UpsertLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
+        self.require_project(McpProjectPermission::Edit).await?;
         let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let activities = build_activities(&params.activities);
         let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default());

@@ -13,6 +13,7 @@ import {
   isAggregatedContextFrameGroup as isAggregatedContextFrameGroupItem,
   isAggregatedThinkingGroup as isAggregatedThinkingGroupItem,
 } from "./types";
+import { isRenderablePlatformEvent } from "./systemEventVisibility";
 import type {
   AggregatedContextFrameGroup,
   SessionDisplayEntry,
@@ -62,8 +63,11 @@ function getToolAggregationType(event: BackboneEvent): ToolAggregationType | nul
     case "fileChange":
     case "mcpToolCall":
     case "dynamicToolCall":
+    case "collabAgentToolCall":
     case "webSearch":
-      return "turn_fold";
+    case "imageView":
+    case "imageGeneration":
+      return "tool_burst";
     default:
       return null;
   }
@@ -81,187 +85,220 @@ function isContextFrameEvent(event: BackboneEvent): boolean {
   );
 }
 
-function isNonAggregatableEvent(event: BackboneEvent): boolean {
+type EntryClassification =
+  | "tool_like"
+  | "visible_boundary"
+  | "neutral";
+
+function isEffectivelyEmptyTextEntry(entry: SessionDisplayEntry): boolean {
+  const event = entry.event;
+  if (
+    event.type !== "agent_message_delta" &&
+    event.type !== "reasoning_text_delta" &&
+    event.type !== "reasoning_summary_delta"
+  ) {
+    return false;
+  }
+
+  const text = entry.accumulatedText ?? event.payload.delta ?? "";
+  return text.trim().length === 0;
+}
+
+function isUserMessageChunk(event: BackboneEvent): boolean {
   return (
-    event.type === "platform" ||
-    event.type === "token_usage_updated" ||
-    event.type === "thread_status_changed" ||
-    event.type === "error" ||
-    event.type === "approval_request"
+    event.type === "platform" &&
+    event.payload.kind === "session_meta_update" &&
+    event.payload.data.key === "user_message_chunk"
   );
 }
 
-type EntryClassification =
-  | "turn_boundary"
-  | "message"
-  | "tool_like"
-  | "thinking"
-  | "context_frame"
-  | "non_agg";
-
 function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   const event = entry.event;
-  if (event.type === "turn_started" || event.type === "turn_completed") {
-    return "turn_boundary";
-  }
-  if (event.type === "agent_message_delta") {
-    return "message";
-  }
-  if (isThinkingEvent(event)) {
-    return "thinking";
-  }
-  if (isContextFrameEvent(event)) {
-    return "context_frame";
-  }
   if (getToolAggregationType(event) !== null) {
     return "tool_like";
   }
-  if (isNonAggregatableEvent(event)) {
-    return "non_agg";
+
+  if (event.type === "turn_started" || event.type === "turn_completed") {
+    return "neutral";
   }
-  return "non_agg";
+
+  if (
+    event.type === "agent_message_delta" ||
+    event.type === "reasoning_text_delta" ||
+    event.type === "reasoning_summary_delta"
+  ) {
+    return isEffectivelyEmptyTextEntry(entry) ? "neutral" : "visible_boundary";
+  }
+
+  if (
+    event.type === "turn_plan_updated" ||
+    event.type === "approval_request" ||
+    event.type === "error"
+  ) {
+    return "visible_boundary";
+  }
+
+  if (
+    event.type === "token_usage_updated" ||
+    event.type === "thread_status_changed" ||
+    event.type === "context_compacted" ||
+    event.type === "turn_diff_updated" ||
+    event.type === "plan_delta"
+  ) {
+    return "neutral";
+  }
+
+  if (event.type === "platform") {
+    if (isUserMessageChunk(event) || isContextFrameEvent(event) || isRenderablePlatformEvent(event)) {
+      return "visible_boundary";
+    }
+    return "neutral";
+  }
+
+  return "visible_boundary";
 }
 
-function isEffectivelyEmptyMessage(entry: SessionDisplayEntry): boolean {
-  if (entry.event.type !== "agent_message_delta") return false;
-  const text = entry.accumulatedText ?? entry.event.payload.delta ?? "";
-  return text.trim().length === 0;
+function createToolGroup(entry: SessionDisplayEntry): AggregatedEntryGroup {
+  return {
+    type: "aggregated_group",
+    aggregationType: "tool_burst",
+    entries: [entry],
+    id: entry.id,
+    groupKey: `tool-${entry.id}`,
+  };
+}
+
+function appendToolEntry(
+  group: AggregatedEntryGroup | null,
+  entry: SessionDisplayEntry,
+): AggregatedEntryGroup {
+  if (group) {
+    group.entries.push(entry);
+    return group;
+  }
+  return createToolGroup(entry);
+}
+
+function pushToolGroup(
+  result: SessionDisplayItem[],
+  group: AggregatedEntryGroup | null,
+): null {
+  if (!group) return null;
+  if (group.entries.length === 1) {
+    const only = group.entries[0];
+    if (only) result.push(only);
+    return null;
+  }
+  result.push(group);
+  return null;
+}
+
+type SideGroupKind = "thinking" | "context_frame";
+
+type SideGroup =
+  | AggregatedThinkingGroup
+  | AggregatedContextFrameGroup;
+
+function getSideGroupKind(entry: SessionDisplayEntry): SideGroupKind | null {
+  if (isThinkingEvent(entry.event)) return "thinking";
+  if (isContextFrameEvent(entry.event)) return "context_frame";
+  return null;
+}
+
+function createSideGroup(kind: SideGroupKind, entry: SessionDisplayEntry): SideGroup {
+  if (kind === "thinking") {
+    return {
+      type: "aggregated_thinking",
+      entries: [entry],
+      id: entry.id,
+      groupKey: `thinking-${entry.id}`,
+    };
+  }
+  return {
+    type: "aggregated_context_frames",
+    entries: [entry],
+    id: entry.id,
+    groupKey: `context-frame-${entry.id}`,
+  };
+}
+
+function sideGroupMatchesKind(group: SideGroup | null, kind: SideGroupKind): boolean {
+  if (!group) return false;
+  return (
+    (kind === "thinking" && group.type === "aggregated_thinking") ||
+    (kind === "context_frame" && group.type === "aggregated_context_frames")
+  );
+}
+
+function pushSideGroup(result: SessionDisplayItem[], group: SideGroup | null): null {
+  if (!group) return null;
+  if (group.entries.length === 1) {
+    const only = group.entries[0];
+    if (only) result.push(only);
+    return null;
+  }
+  result.push(group);
+  return null;
 }
 
 function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
   const result: SessionDisplayItem[] = [];
-  let currentUnit: AggregatedEntryGroup | null = null;
-  let currentThinkingGroup: AggregatedThinkingGroup | null = null;
-  let currentContextFrameGroup: AggregatedContextFrameGroup | null = null;
+  let activeToolGroup: AggregatedEntryGroup | null = null;
+  let activeSideGroup: SideGroup | null = null;
 
-  const flushUnit = () => {
-    if (currentUnit) {
-      result.push(currentUnit);
-      currentUnit = null;
-    }
+  const flushToolGroup = () => {
+    activeToolGroup = pushToolGroup(result, activeToolGroup);
   };
 
-  const flushThinking = () => {
-    if (currentThinkingGroup) {
-      result.push(currentThinkingGroup);
-      currentThinkingGroup = null;
-    }
+  const flushSideGroup = () => {
+    activeSideGroup = pushSideGroup(result, activeSideGroup);
   };
 
-  const flushContextFrame = () => {
-    if (currentContextFrameGroup) {
-      result.push(currentContextFrameGroup);
-      currentContextFrameGroup = null;
-    }
-  };
-
-  const flushAll = () => {
-    flushUnit();
-    flushThinking();
-    flushContextFrame();
+  const flushVisibleGroups = () => {
+    flushToolGroup();
+    flushSideGroup();
   };
 
   for (const entry of entries) {
     const cls = classifyEntry(entry);
 
     switch (cls) {
-      case "turn_boundary": {
-        flushAll();
-        result.push(entry);
+      case "tool_like": {
+        flushSideGroup();
+        activeToolGroup = appendToolEntry(activeToolGroup, entry);
         break;
       }
 
-      case "message": {
-        if (isEffectivelyEmptyMessage(entry)) {
-          // 空消息：完全丢弃，既不切断 unit 也不进入结果
+      case "visible_boundary": {
+        flushToolGroup();
+
+        const sideKind = getSideGroupKind(entry);
+        if (!sideKind) {
+          flushSideGroup();
+          result.push(entry);
           break;
         }
-        flushAll();
-        result.push(entry);
-        break;
-      }
 
-      case "tool_like": {
-        flushThinking();
-        flushContextFrame();
-        if (currentUnit) {
-          currentUnit.entries.push(entry);
+        const sideGroup = activeSideGroup;
+        if (sideGroup && sideGroupMatchesKind(sideGroup, sideKind)) {
+          sideGroup.entries.push(entry);
         } else {
-          currentUnit = {
-            type: "aggregated_group",
-            aggregationType: "turn_fold",
-            entries: [entry],
-            id: entry.id,
-            groupKey: `tool-${entry.id}`,
-          };
+          flushSideGroup();
+          activeSideGroup = createSideGroup(sideKind, entry);
         }
         break;
       }
 
-      case "thinking": {
-        flushUnit();
-        flushContextFrame();
-        if (currentThinkingGroup) {
-          currentThinkingGroup.entries.push(entry);
-        } else {
-          currentThinkingGroup = {
-            type: "aggregated_thinking",
-            entries: [entry],
-            id: entry.id,
-            groupKey: `thinking-${entry.id}`,
-          };
-        }
-        break;
-      }
-
-      case "context_frame": {
-        flushUnit();
-        flushThinking();
-        if (currentContextFrameGroup) {
-          currentContextFrameGroup.entries.push(entry);
-        } else {
-          currentContextFrameGroup = {
-            type: "aggregated_context_frames",
-            entries: [entry],
-            id: entry.id,
-            groupKey: `context-frame-${entry.id}`,
-          };
-        }
-        break;
-      }
-
-      case "non_agg":
+      case "neutral":
       default: {
-        flushAll();
-        result.push(entry);
         break;
       }
     }
   }
 
-  flushAll();
+  flushVisibleGroups();
 
-  return result.map((item) => {
-    if (
-      (item as AggregatedEntryGroup).type === "aggregated_group" &&
-      (item as AggregatedEntryGroup).entries.length === 1
-    ) {
-      return (item as AggregatedEntryGroup).entries[0]!;
-    }
-    if (
-      (item as AggregatedThinkingGroup).type === "aggregated_thinking" &&
-      (item as AggregatedThinkingGroup).entries.length === 1
-    ) {
-      return (item as AggregatedThinkingGroup).entries[0]!;
-    }
-    if (
-      (item as AggregatedContextFrameGroup).type === "aggregated_context_frames" &&
-      (item as AggregatedContextFrameGroup).entries.length === 1
-    ) {
-      return (item as AggregatedContextFrameGroup).entries[0]!;
-    }
-    return item;
-  });
+  return result;
 }
 
 export { aggregateEntries };

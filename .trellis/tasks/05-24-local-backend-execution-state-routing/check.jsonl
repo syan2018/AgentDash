@@ -1,0 +1,22 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端 DTO、错误与测试质量检查"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证 migration、readiness 与 repository 映射"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 Rust DTO 与前端类型契约同步"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查 allocator、repository、summary DTO 是否复用现有模式"}
+{"command": "cargo fmt --all --check", "result": "passed"}
+{"command": "cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-application -p agentdash-api", "result": "passed"}
+{"command": "cargo test -p agentdash-application relay_connector --lib", "result": "passed"}
+{"command": "cargo test -p agentdash-api relay::registry --lib", "result": "passed"}
+{"command": "cargo test -p agentdash-infrastructure backend_execution --lib", "result": "passed"}
+{"command": "pnpm --filter app-web exec tsc --noEmit", "result": "passed"}
+{"command": "cargo clippy -p agentdash-domain -p agentdash-infrastructure -p agentdash-application -p agentdash-api -- -D warnings", "result": "failed", "reason": "既有 domain clippy：derivable_impls 与 too_many_arguments"}
+{"command": "cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-application -p agentdash-api -p agentdash-local -p agentdash-executor", "result": "passed"}
+{"command": "cargo test -p agentdash-application relay_backend_execution_placement_is_claimed_during_launch --lib", "result": "passed"}
+{"command": "cargo clippy -p agentdash-domain -p agentdash-infrastructure -p agentdash-application -p agentdash-api -- -D warnings", "result": "failed", "reason": "仍为既有 domain clippy：derivable_impls 与 too_many_arguments"}
+{"command": "cargo fmt --all --check", "result": "passed", "date": "2026-05-25"}
+{"command": "cargo check -p agentdash-domain -p agentdash-infrastructure -p agentdash-application -p agentdash-api -p agentdash-local -p agentdash-executor", "result": "passed", "date": "2026-05-25"}
+{"command": "cargo test -p agentdash-application relay_connector --lib", "result": "passed", "date": "2026-05-25"}
+{"command": "cargo test -p agentdash-application relay_backend_execution_placement_is_claimed_during_launch --lib", "result": "passed", "date": "2026-05-25"}
+{"command": "cargo test -p agentdash-api relay::registry --lib", "result": "passed", "date": "2026-05-25"}
+{"command": "cargo test -p agentdash-infrastructure backend_execution --lib", "result": "passed", "date": "2026-05-25"}
+{"command": "pnpm --filter app-web exec tsc --noEmit", "result": "passed", "date": "2026-05-25"}
+{"command": "git diff --check", "result": "passed", "date": "2026-05-25"}

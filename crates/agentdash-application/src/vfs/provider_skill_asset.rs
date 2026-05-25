@@ -30,6 +30,9 @@ pub(crate) struct ProjectedSkillAssetFile {
     content: StoredFileContent,
     size_bytes: u64,
     kind: String,
+    /// Asset 级 updated_at 毫秒时间戳。同一 asset 下所有文件共享此值（悲观 token 策略，
+    /// 与 canvas 一致）—— skill asset 没有 file 级版本号，asset 任意修改都触发 token 失效。
+    asset_updated_at_ms: i64,
 }
 
 fn map_mount_err(error: String) -> MountError {
@@ -117,6 +120,7 @@ pub(crate) async fn load_projected_skill_files(
             );
             continue;
         };
+        let asset_updated_at_ms = asset.updated_at.timestamp_millis();
         for file in asset.files {
             files.insert(
                 format!("skills/{}/{}", asset.key, file.path),
@@ -124,6 +128,7 @@ pub(crate) async fn load_projected_skill_files(
                     content: file.content,
                     size_bytes: file.size_bytes,
                     kind: file.kind.tag().to_string(),
+                    asset_updated_at_ms,
                 },
             );
         }
@@ -145,7 +150,10 @@ pub(crate) async fn read_projected_skill_file(
         .content
         .text_content()
         .ok_or_else(|| MountError::NotSupported(format!("SkillAsset 文件不是文本文件: {path}")))?;
-    Ok(ReadResult::new(path, content.to_string()))
+    let updated_at_ms = file.asset_updated_at_ms;
+    Ok(ReadResult::new(path, content.to_string())
+        .with_version_token(format!("skill:{}", updated_at_ms))
+        .with_modified_at(updated_at_ms))
 }
 
 pub(crate) async fn read_projected_skill_file_binary(
@@ -351,13 +359,19 @@ pub(crate) async fn search_projected_skill_files(
                     content: line.trim().to_string(),
                 });
                 if matches.len() >= max_results {
-                    return Ok(SearchResult { matches });
+                    return Ok(SearchResult {
+                        matches,
+                        truncated: true,
+                    });
                 }
             }
         }
     }
 
-    Ok(SearchResult { matches })
+    Ok(SearchResult {
+        matches,
+        truncated: false,
+    })
 }
 
 pub struct SkillAssetFsMountProvider {
@@ -828,7 +842,7 @@ mod tests {
                     path: Some("skills/writer".to_string()),
                     pattern: "PNG".to_string(),
                     case_sensitive: false,
-                    max_results: None,
+                    ..Default::default()
                 },
                 &MountOperationContext::default(),
             )

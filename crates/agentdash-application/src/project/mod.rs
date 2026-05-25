@@ -4,6 +4,7 @@ pub mod management;
 
 pub use authorization::{
     ProjectAuthorization, ProjectAuthorizationContext, ProjectAuthorizationService,
+    ProjectPermission, project_authorization_context_from_identity,
 };
 pub use management::{
     ProjectMutationInput, apply_project_mutation, build_cloned_project, build_project,

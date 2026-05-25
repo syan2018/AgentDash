@@ -1,0 +1,93 @@
+# Frontend / Backend Contracts
+
+## Role
+
+前后端契约层定义浏览器、云端 API、本机 runtime 和桌面壳共同消费的 wire DTO、事件 envelope 与生成产物。它的目标是让 JSON/NDJSON 形态由 Rust contract 明确表达，并由生成文件进入前端，而不是让前端长期手写后端 DTO。
+
+## Architecture
+
+标准链路：
+
+```text
+Rust contract type
+  -> serde wire shape
+  -> ts-rs TypeScript generation
+  -> packages/app-web/src/generated/*
+  -> frontend service mapper / reducer
+```
+
+`agentdash-contracts` 是业务 DTO 的归属 crate。它承载 HTTP request/response DTO、NDJSON envelope、跨端共享 enum 和少量 wire value object。`agentdash-api` 使用 contract crate 作为 route 输入输出类型；前端只从 generated 文件消费这些类型。
+
+当前 `agentdash-agent-protocol` 承载 Backbone Protocol 这类 runtime event fact；业务 HTTP DTO 归属 `agentdash-contracts`。
+
+## Invariants
+
+- 业务 HTTP JSON 默认使用 `snake_case`，生成类型保持 Rust serde 字段名。
+- Generated TypeScript 只落在 `packages/app-web/src/generated/`，文件头必须注明生成命令。
+- 每个生成入口必须有 check mode；CI 或 `pnpm run contracts:check` 用 check mode 发现 drift。
+- Frontend service mapper 负责 `unknown -> generated type` 的基础运行时验证和业务归一化；字段名、enum 值和 union 形态不在前端重新定义。
+- Route-local DTO 只用于极小的 transport wrapper；跨 feature 复用、前端消费或流式传输的 DTO 必须进入 contract crate。
+- NDJSON stream 的 `connected` / `event` / `heartbeat` envelope 也属于 contract，原因是续传游标、事件事实和 reducer 输入需要跨后端与前端共同演进。
+
+## Contract Crate Shape
+
+当前结构按业务域拆分：
+
+```text
+crates/agentdash-contracts/
+  src/
+    lib.rs
+    generate_ts.rs
+    mcp_preset.rs        # MCP preset CRUD/probe DTO
+    session.rs           # Session event page DTO / NDJSON envelope / runtime projection
+    workflow.rs          # WorkflowContract / lifecycle / activity DTO
+    vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
+    shared_library.rs    # Library asset install/publish DTO
+    project_agent.rs     # ProjectAgent config/session summary DTO
+```
+
+生成输出按领域拆文件：
+
+```text
+packages/app-web/src/generated/
+  backbone-protocol.ts
+  session-contracts.ts
+  workflow-contracts.ts
+  vfs-contracts.ts
+  shared-library-contracts.ts
+  mcp-preset-contracts.ts
+  project-agent-contracts.ts
+```
+
+## Current Baseline
+
+`agentdash-contracts` 现在覆盖这些前端消费的业务 DTO：
+
+| Domain | Generated File | Contract Source |
+| --- | --- | --- |
+| MCP Preset | `mcp-preset-contracts.ts` | `agentdash-contracts::mcp_preset` |
+| Session event stream | `session-contracts.ts` | `agentdash-contracts::session` |
+| Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
+| VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
+| Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
+| Project Agent | `project-agent-contracts.ts` | `agentdash-contracts::project_agent` |
+
+API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
+
+Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields.
+
+## Local Decisions
+
+- Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.
+- VFS, Shared Library and Project Agent use narrow DTOs in `agentdash-contracts` because their API responses intentionally map application/domain internals into stable browser-facing shapes.
+- Generated request/response DTOs model serde wire fields. UI-level convenience such as nullable fields, normalized config objects or derived aliases belongs in frontend type entrypoints rather than in the generated file.
+
+## Validation
+
+```powershell
+pnpm run contracts:check
+cargo check -p agentdash-agent-protocol
+pnpm run frontend:check
+```
+
+当 `agentdash-contracts` 引入后，`contracts:check` 同时运行所有 contract 生成器。

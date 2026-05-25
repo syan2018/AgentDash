@@ -775,3 +775,119 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 完成业务 Contract 生成迁移
+
+**Date**: 2026-05-23
+**Task**: 完成业务 Contract 生成迁移
+**Branch**: `codex/architecture-review-convergence`
+
+### Summary
+
+按 MCP Preset、Session、Workflow、VFS、Shared Library、ProjectAgent 批次完成 agentdash-contracts 迁移，API route 使用 contract DTO，前端改为消费 generated contracts，并更新 cross-layer contract 基线。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8f4651fc` | (see git log) |
+| `310cc877` | (see git log) |
+| `9a60e942` | (see git log) |
+| `8b914563` | (see git log) |
+| `ca39cd4d` | (see git log) |
+| `e9a5cf84` | (see git log) |
+| `7b7b22f3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 20: Prompt Pipeline 阶段边界收敛
+
+**Date**: 2026-05-24
+**Task**: Prompt Pipeline 阶段边界收敛
+**Branch**: `codex/prompt-pipeline-launch-stage-boundaries`
+
+### Summary
+
+完成 session prompt_pipeline 到 launch 子域的阶段化重构：建立 LaunchPlan/PreparedTurn/ConnectorAcceptedTurn/CommittedTurn/AttachedTurn 类型流，拆分 orchestrator/preparation/connector_start/commit/ingestion，收窄阶段依赖，下沉 hook runtime helper，同步 session spec，并完成最终 review check 与验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1d1ace2` | (see git log) |
+| `3bc5e6b8` | (see git log) |
+| `554a78aa` | (see git log) |
+| `aa0b2ba0` | (see git log) |
+| `2249a645` | (see git log) |
+| `6ec532b8` | (see git log) |
+| `47e10a6e` | (see git log) |
+| `f2116c49` | (see git log) |
+| `7fa55c51` | (see git log) |
+| `08624df9` | (see git log) |
+| `f1b4bd9b` | (see git log) |
+| `47a1680d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 21: Auth 身份与权限链路收口
+
+**Date**: 2026-05-24
+**Task**: Auth 身份与权限链路收口
+**Branch**: `main`
+
+### Summary
+
+收口 auth identity 从认证入口到 API/MCP/Terminal/Backend/VFS 的传递与授权链路；Project 授权统一到 domain，Backend 授权统一到 application，并完成 Rust 多包验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `33f1de73` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

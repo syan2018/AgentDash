@@ -11,7 +11,7 @@ interface BackendConfig {
   endpoint?: string;
   online?: boolean;
   backend_id?: string;
-  accessible_roots?: string[];
+  workspace_roots?: string[];
 }
 
 interface ProjectEntity {
@@ -84,9 +84,9 @@ async function ensureBackend(request: APIRequestContext, suffix: string): Promis
   const backend = onlineBackends.find((item) => item.backend_id === PLAYWRIGHT_BACKEND_ID);
   expect(backend, `未找到在线 E2E backend: ${PLAYWRIGHT_BACKEND_ID}`).toBeTruthy();
 
-  const accessibleRoots = backend?.accessible_roots ?? [];
+  const workspaceRoots = backend?.workspace_roots ?? [];
   expect(
-    accessibleRoots.some((root) => REPO_ROOT.startsWith(root.replace(/\\/g, "/"))),
+    workspaceRoots.some((root) => REPO_ROOT.startsWith(root.replace(/\\/g, "/"))),
     `E2E backend 未暴露当前仓库根目录: ${REPO_ROOT}`,
   ).toBeTruthy();
 
@@ -94,7 +94,7 @@ async function ensureBackend(request: APIRequestContext, suffix: string): Promis
     id: PLAYWRIGHT_BACKEND_ID,
     name: backend?.name ?? PLAYWRIGHT_BACKEND_ID,
     online: true,
-    accessible_roots: accessibleRoots,
+    workspace_roots: workspaceRoots,
   };
 }
 

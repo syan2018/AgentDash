@@ -70,13 +70,13 @@
 
 ## Acceptance Criteria
 
-- [ ] 新增或扩展 repository 能查询 session lineage 的 direct children、ancestors、descendants，并保持稳定排序。
-- [ ] fork API 能创建 child session、记录 lineage edge、固化 fork projection 为 child initial compaction，并返回 child session meta。
-- [ ] rollback API 能追加 rollback event、更新 active projection cursor，并让 restore 使用 rollback 后的模型可见 head。
-- [ ] continuation / executor restore 在 branch 和 rollback 场景下通过测试。
-- [ ] API / 前端消费 `session_lineage`，不把 companion parent 误当作通用 branch。
-- [ ] PostgreSQL / SQLite migration 同步，相关 Rust repository tests 通过。
-- [ ] 前端至少覆盖 branch 列表或 parent-child grouping 的单元测试。
+- [x] 新增或扩展 repository 能查询 session lineage 的 direct children、ancestors、descendants，并保持稳定排序。
+- [x] fork API 能创建 child session、记录 lineage edge、固化 fork projection 为 child initial compaction，并返回 child session meta。
+- [x] rollback API 能追加 rollback event、更新 active projection cursor，并让 restore 使用 rollback 后的模型可见 head。
+- [x] continuation / executor restore 在 branch 和 rollback 场景下通过测试。
+- [x] API / 前端消费 `session_lineage`，不把 companion parent 误当作通用 branch。
+- [x] PostgreSQL / SQLite migration 同步，相关 Rust repository tests 通过。
+- [x] 前端至少覆盖 branch 列表或 parent-child grouping 的单元测试。
 
 ## Out Of Scope
 

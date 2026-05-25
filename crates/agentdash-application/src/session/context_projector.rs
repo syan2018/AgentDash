@@ -51,6 +51,97 @@ impl ContextProjector {
         }
     }
 
+    pub async fn build_model_context_at_event(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        head_event_seq: u64,
+    ) -> io::Result<AgentContextEnvelope> {
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let head = self
+            .stores
+            .projections
+            .read_projection_head(session_id, branch_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await?;
+
+        if let Some(mut head) = head {
+            if let Some(active_compaction_id) = head.active_compaction_id.as_deref() {
+                let compaction = self
+                    .stores
+                    .compactions
+                    .get_compaction(session_id, active_compaction_id)
+                    .await?;
+                if compaction
+                    .as_ref()
+                    .is_some_and(|record| compaction_covers_head(record, head_event_seq))
+                {
+                    head.head_event_seq = head_event_seq;
+                    return self
+                        .build_from_projection_head(session_id, branch_id, &events, head)
+                        .await;
+                }
+            } else {
+                head.head_event_seq = head_event_seq;
+                return self
+                    .build_from_projection_head(session_id, branch_id, &events, head)
+                    .await;
+            }
+        }
+
+        Ok(envelope_from_transcript(
+            session_id,
+            branch_id,
+            0,
+            head_event_seq,
+            None,
+            None,
+            build_raw_projected_transcript_from_filtered_events(
+                events
+                    .iter()
+                    .filter(|event| event.event_seq <= head_event_seq),
+            ),
+        ))
+    }
+
+    pub async fn build_model_context_from_compaction(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        compaction_id: &str,
+        head_event_seq: Option<u64>,
+    ) -> io::Result<AgentContextEnvelope> {
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let compaction = self
+            .stores
+            .compactions
+            .get_compaction(session_id, compaction_id)
+            .await?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("compaction {compaction_id} 不存在"),
+                )
+            })?;
+        validate_active_compaction(&compaction)?;
+        let head = SessionProjectionHeadRecord {
+            session_id: session_id.to_string(),
+            branch_id: branch_id.map(ToString::to_string),
+            projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+            projection_version: compaction.projection_version,
+            head_event_seq: head_event_seq
+                .or(compaction.completed_event_seq)
+                .or(compaction.source_end_event_seq)
+                .unwrap_or_else(|| latest_event_seq(&events)),
+            active_compaction_id: Some(compaction_id.to_string()),
+            updated_by_event_seq: compaction.completed_event_seq,
+            updated_at_ms: compaction
+                .completed_at_ms
+                .unwrap_or(compaction.created_at_ms),
+        };
+        self.build_from_projection_head(session_id, branch_id, &events, head)
+            .await
+    }
+
     pub async fn build_projected_transcript(
         &self,
         session_id: &str,
@@ -149,6 +240,16 @@ fn validate_active_compaction(compaction: &SessionCompactionRecord) -> io::Resul
     Ok(())
 }
 
+fn compaction_covers_head(compaction: &SessionCompactionRecord, head_event_seq: u64) -> bool {
+    if compaction.strategy == "fork_initial_projection" {
+        return true;
+    }
+    compaction
+        .source_end_event_seq
+        .map(|source_end| source_end <= head_event_seq)
+        .unwrap_or(true)
+}
+
 fn envelope_from_transcript(
     session_id: &str,
     branch_id: Option<&str>,
@@ -194,17 +295,65 @@ fn projection_entries_from_segments(
     compaction: &SessionCompactionRecord,
     segments: &[SessionProjectionSegmentRecord],
 ) -> Vec<ProjectedEntry> {
-    let mut entries = segments
-        .iter()
-        .filter(|segment| segment.segment_type == "summary_chunk")
-        .filter_map(|segment| summary_entry_from_segment(compaction, segment))
-        .collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    for segment in segments {
+        match segment.segment_type.as_str() {
+            "context_envelope" => {
+                entries.extend(context_entries_from_segment(compaction, segment));
+            }
+            "summary_chunk" => {
+                if let Some(entry) = summary_entry_from_segment(compaction, segment) {
+                    entries.push(entry);
+                }
+            }
+            _ => {}
+        }
+    }
     if entries.is_empty()
         && let Some(entry) = summary_entry_from_compaction(compaction)
     {
         entries.push(entry);
     }
     entries
+}
+
+fn context_entries_from_segment(
+    compaction: &SessionCompactionRecord,
+    segment: &SessionProjectionSegmentRecord,
+) -> Vec<ProjectedEntry> {
+    let messages = segment
+        .content_json
+        .get("messages")
+        .cloned()
+        .unwrap_or_else(|| segment.content_json.clone());
+    let Ok(messages) = serde_json::from_value::<Vec<AgentInputMessage>>(messages) else {
+        return Vec::new();
+    };
+    let segment_range = source_range(segment.source_start_event_seq, segment.source_end_event_seq);
+    messages
+        .into_iter()
+        .enumerate()
+        .map(|(index, message)| {
+            let original_provenance = message.provenance.clone();
+            let mut entry = ProjectedEntry::from(message);
+            entry.origin = ProjectionOrigin::Projection;
+            entry.synthetic = true;
+            entry.source_event_seq = None;
+            entry.source_range = segment_range.clone();
+            entry.projection_segment_id = Some(segment.id.clone());
+            entry.provenance = serde_json::json!({
+                "compaction_id": compaction.id,
+                "projection_version": compaction.projection_version,
+                "segment_type": segment.segment_type,
+                "segment_index": index,
+                "strategy": compaction.strategy,
+                "trigger": compaction.trigger,
+                "source_refs": segment.source_refs_json,
+                "original_provenance": original_provenance,
+            });
+            entry
+        })
+        .collect()
 }
 
 fn summary_entry_from_segment(

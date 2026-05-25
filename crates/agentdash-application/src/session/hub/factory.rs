@@ -27,6 +27,10 @@ impl SessionRuntimeInner {
         )
     }
 
+    pub fn branching_service(&self) -> super::super::branching::SessionBranchingService {
+        super::super::branching::SessionBranchingService::new(self.stores.clone())
+    }
+
     pub fn eventing_service(&self) -> super::super::eventing::SessionEventingService {
         super::super::eventing::SessionEventingService::new(
             self.stores.clone(),

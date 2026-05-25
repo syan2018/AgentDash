@@ -1,9 +1,10 @@
-﻿use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, McpRelayProvider};
 
+use super::branching::SessionBranchingService;
 use super::capability_service::SessionCapabilityService;
 use super::companion_wait::CompanionWaitRegistry;
 use super::construction_provider::SharedSessionConstructionProvider;
@@ -82,6 +83,10 @@ impl SessionRuntimeBuilder {
 
     pub fn core_service(&self) -> SessionCoreService {
         self.inner.core_service()
+    }
+
+    pub fn branching_service(&self) -> SessionBranchingService {
+        self.inner.branching_service()
     }
 
     pub fn eventing_service(&self) -> SessionEventingService {

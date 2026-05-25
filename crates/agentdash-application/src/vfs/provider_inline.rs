@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use super::mount::{PROVIDER_INLINE_FS, list_inline_entries, parse_inline_mount_owner};
 use super::path::normalize_mount_relative_path;
 use super::provider::{
-    MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery, SearchResult,
+    GrepQuery, MountError, MountOperationContext, MountProvider, SearchMatch, SearchQuery,
+    SearchResult,
 };
 use super::types::{
     BinaryReadResult, ExecRequest, ExecResult, ListOptions, ListResult, ReadResult,
@@ -148,6 +149,8 @@ impl MountProvider for InlineFsMountProvider {
         query: &SearchQuery,
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
+        // 通用搜索：substring 匹配（不识别 regex / glob / context / multiline）。
+        // grep 风格的搜索请走 grep_text。
         let files = load_inline_files_from_db(self.inline_file_repo.as_ref(), mount).await?;
         let base_path = match &query.path {
             Some(p) => normalize_mount_relative_path(p, true).map_err(map_mount_err)?,
@@ -156,17 +159,71 @@ impl MountProvider for InlineFsMountProvider {
         let max_results = query.max_results.unwrap_or(usize::MAX);
         let mut matches = Vec::new();
 
-        // A7: pattern 始终视为正则（与 CC GrepTool 一致）。
-        let mut builder = regex::RegexBuilder::new(&query.pattern);
+        for file in &files {
+            let InlineFileContent::Text { content } = &file.content else {
+                continue;
+            };
+            let file_path = &file.path;
+            if !file_path.starts_with(base_path.trim_start_matches("./").trim_start_matches('/'))
+                && !base_path.is_empty()
+                && base_path != "."
+            {
+                continue;
+            }
+            for (idx, line) in content.lines().enumerate() {
+                let matched = if query.case_sensitive {
+                    line.contains(&query.pattern)
+                } else {
+                    line.to_lowercase().contains(&query.pattern.to_lowercase())
+                };
+                if !matched {
+                    continue;
+                }
+                matches.push(SearchMatch {
+                    path: file_path.clone(),
+                    line: Some((idx + 1) as u32),
+                    content: line.trim().to_string(),
+                });
+                if matches.len() >= max_results {
+                    return Ok(SearchResult {
+                        matches,
+                        truncated: true,
+                    });
+                }
+            }
+        }
+        Ok(SearchResult {
+            matches,
+            truncated: false,
+        })
+    }
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        _ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        // grep 风格：pattern 始终正则；支持 case_insensitive / include_glob /
+        // before/after/context_lines / multiline。inline 是唯一原生实现 grep_text
+        // 的内置 provider；其它 provider 走 trait 默认 forward + warn。
+        let files = load_inline_files_from_db(self.inline_file_repo.as_ref(), mount).await?;
+        let base_path = match &query.base.path {
+            Some(p) => normalize_mount_relative_path(p, true).map_err(map_mount_err)?,
+            None => String::new(),
+        };
+        let max_results = query.base.max_results.unwrap_or(usize::MAX);
+        let mut matches = Vec::new();
+
+        let mut builder = regex::RegexBuilder::new(&query.base.pattern);
         builder
-            .case_insensitive(!query.case_sensitive)
+            .case_insensitive(!query.base.case_sensitive)
             .multi_line(query.multiline)
             .dot_matches_new_line(query.multiline);
         let re = builder
             .build()
             .map_err(|e| MountError::OperationFailed(format!("无效正则: {e}")))?;
 
-        // include_glob 过滤（None ⇒ 所有文件）。
         let glob_matcher = match query.include_glob.as_deref() {
             Some(pat) => Some(
                 globset::Glob::new(pat)
@@ -200,7 +257,6 @@ impl MountProvider for InlineFsMountProvider {
                 if !re.is_match(line) {
                     continue;
                 }
-                // 命中：先输出 before 行（追加到 matches 但不算入 max_results 的命中数）。
                 let start = idx.saturating_sub(before);
                 for ctx_idx in start..idx {
                     matches.push(SearchMatch {
@@ -723,5 +779,81 @@ mod tests {
             .await
             .expect("read_text_range");
         assert_eq!(result.content, "line2\nline3");
+    }
+
+    // ─── vfs-grep-query-split 拆分后语义验证 ─────────────────────────────
+    // T5：search_text 退化为 substring，不再识别 regex 元字符。
+
+    #[tokio::test]
+    async fn search_text_substring_does_not_treat_pattern_as_regex() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "funcXfoo\nfunc.*foo literal",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        let result = provider
+            .search_text(
+                &inline_mount(owner_id),
+                &SearchQuery {
+                    pattern: "func.*foo".to_string(),
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("search");
+        // substring 仅匹配字面 "func.*foo"，不应该匹配 "funcXfoo"。
+        assert_eq!(result.matches.len(), 1);
+        assert!(result.matches[0].content.contains("func.*foo literal"));
+    }
+
+    // T2：grep_text 直接调（含 regex / context 字段）的真实路径。
+    #[tokio::test]
+    async fn grep_text_supports_regex_and_context_lines() {
+        let owner_id = Uuid::new_v4();
+        let repo = Arc::new(MemoryInlineFileRepo::default());
+        repo.upsert_file(&InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "L1\nL2\nfunc_foo()\nL4\nL5",
+        ))
+        .await
+        .expect("seed");
+        let provider = InlineFsMountProvider::new(repo);
+
+        let result = provider
+            .grep_text(
+                &inline_mount(owner_id),
+                &GrepQuery {
+                    base: SearchQuery {
+                        pattern: "func.*foo".to_string(),
+                        ..Default::default()
+                    },
+                    before_lines: 1,
+                    after_lines: 1,
+                    ..Default::default()
+                },
+                &MountOperationContext::default(),
+            )
+            .await
+            .expect("grep");
+        // regex 匹配 "func_foo()"，context = before/after 1 行 ⇒ 输出 L2 + 命中 + L4。
+        let contents: Vec<&str> = result.matches.iter().map(|m| m.content.as_str()).collect();
+        assert!(contents.iter().any(|c| c.contains("func_foo")));
+        assert!(contents.iter().any(|c| c == &"L2"));
+        assert!(contents.iter().any(|c| c == &"L4"));
+        // 不应该有 L1 / L5（超出 context 范围）
+        assert!(!contents.iter().any(|c| c == &"L1"));
+        assert!(!contents.iter().any(|c| c == &"L5"));
     }
 }

@@ -216,34 +216,17 @@ impl RuntimeFileEntry {
 // Search
 // ============================================================================
 
-/// 文本搜索查询参数。
+/// 通用文本搜索查询参数。
 ///
-/// **A7 决议**：`pattern` 始终视为正则表达式（与 Claude Code GrepTool 对齐）。
-/// `is_regex` 字段是过渡占位，service 层始终传 `true`；后续 [`vfs-grep-query-split`]
-/// follow-up 任务会拆出 `GrepQuery`，把 grep-specific 字段从 `SearchQuery` 移走。
-///
-/// 字段语义参考 ripgrep / GNU grep：
-/// - `case_sensitive = false` ⇒ provider 应启用 smart-case；`true` ⇒ 严格大小写。
-/// - `context_lines` 等价 `-C N`；`before_lines` / `after_lines` 等价 `-B` / `-A`。
-///   同时设置时，effective_before = `max(before_lines, context_lines)`，after 同理。
-/// - `multiline = true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep
-///   `--multiline --multiline-dotall`）。
-/// - `output_mode` 决定 provider 返回的命中粒度。
-///
-/// [`vfs-grep-query-split`]: ../../../.trellis/tasks/05-25-vfs-grep-query-split/prd.md
+/// 仅承载与"通用搜索"语义相关的字段（substring / 简单匹配）；grep 风格的
+/// 字段（regex / context / multiline / output_mode 等）已移到 [`GrepQuery`]，
+/// 调用方应根据语义需要选择 `MountProvider::search_text` 或 `grep_text`。
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub pattern: String,
     pub path: Option<String>,
     pub case_sensitive: bool,
     pub max_results: Option<usize>,
-    pub is_regex: bool,
-    pub include_glob: Option<String>,
-    pub context_lines: usize,
-    pub before_lines: usize,
-    pub after_lines: usize,
-    pub multiline: bool,
-    pub output_mode: SearchOutputMode,
 }
 
 impl Default for SearchQuery {
@@ -253,7 +236,37 @@ impl Default for SearchQuery {
             path: None,
             case_sensitive: true,
             max_results: None,
-            is_regex: true,
+        }
+    }
+}
+
+/// grep 风格搜索查询参数。
+///
+/// **A7 决议**：`base.pattern` 始终视为正则表达式（与 Claude Code GrepTool 对齐）。
+///
+/// 字段语义参考 ripgrep / GNU grep：
+/// - `base.case_sensitive = false` ⇒ provider 应启用 smart-case；`true` ⇒ 严格大小写。
+/// - `context_lines` 等价 `-C N`；`before_lines` / `after_lines` 等价 `-B` / `-A`。
+///   同时设置时，effective_before = `max(before_lines, context_lines)`，after 同理。
+/// - `multiline = true` ⇒ pattern `.` 跨行 + `^/$` 匹配每行（ripgrep
+///   `--multiline --multiline-dotall`）。
+/// - `include_glob` 限定 grep 仅扫描匹配该 glob 的文件。
+/// - `output_mode` 决定 provider 返回的命中粒度。
+#[derive(Debug, Clone)]
+pub struct GrepQuery {
+    pub base: SearchQuery,
+    pub include_glob: Option<String>,
+    pub context_lines: usize,
+    pub before_lines: usize,
+    pub after_lines: usize,
+    pub multiline: bool,
+    pub output_mode: SearchOutputMode,
+}
+
+impl Default for GrepQuery {
+    fn default() -> Self {
+        Self {
+            base: SearchQuery::default(),
             include_glob: None,
             context_lines: 0,
             before_lines: 0,
@@ -580,6 +593,32 @@ pub trait MountProvider: Send + Sync {
         query: &SearchQuery,
         ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError>;
+
+    /// grep 风格搜索：`base.pattern` 始终正则，支持 include_glob / context /
+    /// multiline / output_mode。
+    ///
+    /// 默认实现 forward 给 `search_text`，丢弃 grep-specific 字段并 `tracing::warn!()`
+    /// 一次提示降级。能原生提供 grep 语义的 provider（如 inline_fs / 未来的
+    /// ripgrep-backed provider）应覆盖此方法。
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        if query.include_glob.is_some()
+            || query.context_lines > 0
+            || query.before_lines > 0
+            || query.after_lines > 0
+            || query.multiline
+        {
+            tracing::warn!(
+                provider = self.provider_id(),
+                "grep_text default impl: dropping grep-specific fields (forwarding to search_text)"
+            );
+        }
+        self.search_text(mount, &query.base, ctx).await
+    }
 
     async fn exec(
         &self,

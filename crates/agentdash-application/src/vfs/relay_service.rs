@@ -843,11 +843,16 @@ impl RelayVfsService {
         let base_path = normalize_mount_relative_path(params.path, true)?;
 
         if mount.provider == PROVIDER_INLINE_FS {
-            return self.search_inline(mount, &base_path, params).await;
+            // 通用 inline 搜索复用 grep_inline；当 params 的 grep 字段为空时
+            // 行为与 substring 等价（is_regex=false → substring，include_glob/
+            // context_lines/multiline 都默认零值）。
+            return self.grep_inline(mount, &base_path, params).await;
         }
 
         if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
             let ctx = MountOperationContext::default();
+            // search_text_extended 仅承载通用搜索语义（substring）；grep 字段在
+            // grep_text_extended 路径处理。这里只填 SearchQuery 的 4 个通用字段。
             let sq = SearchQuery {
                 path: if base_path.is_empty() {
                     None
@@ -857,13 +862,6 @@ impl RelayVfsService {
                 pattern: params.query.to_string(),
                 case_sensitive: params.case_sensitive,
                 max_results: Some(params.max_results),
-                is_regex: params.is_regex,
-                include_glob: params.include_glob.map(|s| s.to_string()),
-                context_lines: params.context_lines,
-                before_lines: params.before_lines,
-                after_lines: params.after_lines,
-                multiline: params.multiline,
-                output_mode: params.output_mode,
             };
             let started_at = Instant::now();
             let result = provider.search_text(mount, &sq, &ctx).await;
@@ -895,7 +893,74 @@ impl RelayVfsService {
         Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
-    async fn search_inline(
+    /// grep 风格搜索（pattern 始终正则；支持 include_glob / context / multiline /
+    /// output_mode）。fs_grep tool 调用此方法；通用搜索请用 [`search_text_extended`]。
+    pub async fn grep_text_extended(
+        &self,
+        vfs: &Vfs,
+        params: &TextSearchParams<'_>,
+    ) -> Result<(Vec<String>, bool), String> {
+        let runtime_vfs = vfs.clone();
+        let mount = resolve_mount(&runtime_vfs, params.mount_id, MountCapability::Search)?;
+        let base_path = normalize_mount_relative_path(params.path, true)?;
+
+        if mount.provider == PROVIDER_INLINE_FS {
+            return self.grep_inline(mount, &base_path, params).await;
+        }
+
+        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
+            let ctx = MountOperationContext::default();
+            let gq = GrepQuery {
+                base: SearchQuery {
+                    path: if base_path.is_empty() {
+                        None
+                    } else {
+                        Some(base_path)
+                    },
+                    pattern: params.query.to_string(),
+                    case_sensitive: params.case_sensitive,
+                    max_results: Some(params.max_results),
+                },
+                include_glob: params.include_glob.map(|s| s.to_string()),
+                context_lines: params.context_lines,
+                before_lines: params.before_lines,
+                after_lines: params.after_lines,
+                multiline: params.multiline,
+                output_mode: params.output_mode,
+            };
+            let started_at = Instant::now();
+            let result = provider.grep_text(mount, &gq, &ctx).await;
+            log_vfs_operation_result(
+                mount,
+                "grep_text",
+                gq.base.path.as_deref().unwrap_or("."),
+                started_at,
+                result.is_ok(),
+            );
+            let result = result.map_err(|e| e.to_string())?;
+            let truncated = result.truncated;
+            let hits: Vec<String> = result
+                .matches
+                .iter()
+                .filter(|m| !is_vcs_path(&m.path))
+                .map(|m| {
+                    let trimmed = trim_long_line(&m.content);
+                    if let Some(line) = m.line {
+                        format!("{}:{}: {}", m.path, line, trimmed)
+                    } else {
+                        format!("{}: {}", m.path, trimmed)
+                    }
+                })
+                .collect();
+            return Ok((hits, truncated));
+        }
+
+        Err(format!("unregistered mount provider: {}", mount.provider))
+    }
+
+    /// inline mount 的 grep 实现（含 overlay）。当 params.grep 字段全为零时
+    /// 行为退化为 substring，可被 search_text_extended 复用。
+    async fn grep_inline(
         &self,
         mount: &Mount,
         base_path: &str,

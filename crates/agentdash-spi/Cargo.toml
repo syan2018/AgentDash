@@ -17,6 +17,7 @@ chrono = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
 strsim = "0.11"
+tracing = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 agentdash-agent-protocol = { workspace = true }

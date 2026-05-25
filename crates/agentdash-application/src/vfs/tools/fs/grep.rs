@@ -167,7 +167,7 @@ impl AgentTool for FsGrepTool {
 
         let (hits, truncated) = self
             .service
-            .search_text_extended(
+            .grep_text_extended(
                 &vfs,
                 &crate::vfs::TextSearchParams {
                     mount_id: &target.mount_id,

@@ -3,7 +3,7 @@
   "name": "vfs-grep-query-split",
   "title": "VFS GrepQuery trait split（SearchQuery 拆出 GrepQuery，承接 SPI 设计泄漏）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

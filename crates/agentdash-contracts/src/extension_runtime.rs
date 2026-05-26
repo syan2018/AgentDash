@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -169,4 +171,37 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
     pub bundles: Vec<ExtensionBundleProjectionResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeActionRequest {
+    pub session_id: String,
+    pub backend_id: String,
+    pub action_key: String,
+    #[serde(default)]
+    pub input: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeTraceResponse {
+    pub trace_id: String,
+    pub invocation_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_trace_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvocationOutputResponse {
+    #[serde(default)]
+    pub output: Value,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeActionResponse {
+    pub action_key: String,
+    pub trace: ExtensionRuntimeTraceResponse,
+    pub output: ExtensionRuntimeInvocationOutputResponse,
 }

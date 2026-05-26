@@ -13,7 +13,9 @@ use agentdash_contracts::extension_runtime::{
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
     ExtensionRuntimeActionKindResponse, ExtensionRuntimeActionProjectionResponse,
-    ExtensionRuntimeProjectionResponse, ExtensionWorkspaceTabProjectionResponse,
+    ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
+    ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionRuntimeTraceResponse, ExtensionWorkspaceTabProjectionResponse,
     ExtensionWorkspaceTabRendererResponse,
 };
 use agentdash_contracts::mcp_preset::{
@@ -172,6 +174,10 @@ fn main() {
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);
             export_all::<ExtensionRuntimeProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
+            export_all::<ExtensionRuntimeTraceResponse>(dir);
+            export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
         },
     );
 

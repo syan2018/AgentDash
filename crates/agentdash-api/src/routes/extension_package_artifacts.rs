@@ -257,7 +257,7 @@ async fn write_storage_object(storage_ref: &str, bytes: &[u8]) -> Result<(), Api
     Ok(())
 }
 
-async fn read_storage_object(storage_ref: &str) -> Result<Vec<u8>, ApiError> {
+pub(crate) async fn read_storage_object(storage_ref: &str) -> Result<Vec<u8>, ApiError> {
     let path = storage_path(storage_ref)?;
     tokio::fs::read(&path)
         .await

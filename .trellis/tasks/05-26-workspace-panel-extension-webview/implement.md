@@ -2,13 +2,13 @@
 
 ## Steps
 
-- [ ] Extend frontend session context mapper with extension runtime.
-- [ ] Add extension tab descriptor factory.
-- [ ] Add registry contribution lifecycle.
-- [ ] Add webview host component.
-- [ ] Add postMessage bridge validation.
-- [ ] Add unavailable states.
-- [ ] Add tests for menu, tab restore, bridge invoke.
+- [x] Extend frontend Project scoped extension runtime state.
+- [x] Add extension tab descriptor factory.
+- [x] Add registry contribution lifecycle.
+- [x] Add webview host component.
+- [x] Add postMessage bridge validation.
+- [x] Add unavailable states.
+- [x] Add tests for menu, tab restore, bridge invoke.
 
 ## Validation
 

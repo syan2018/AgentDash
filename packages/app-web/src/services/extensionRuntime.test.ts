@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { mapExtensionRuntimeProjection } from "./extensionRuntime";
+import {
+  mapExtensionRuntimeInvokeActionResponse,
+  mapExtensionRuntimeProjection,
+} from "./extensionRuntime";
 
 describe("extension runtime mapper", () => {
   it("空响应归一化为空 projection", () => {
@@ -128,5 +131,22 @@ describe("extension runtime mapper", () => {
         output_schema: {},
       }],
     })).toThrow(/action kind/);
+  });
+
+  it("解析 extension runtime invoke response 并归一化 metadata", () => {
+    const response = mapExtensionRuntimeInvokeActionResponse({
+      action_key: "local-hello.profile",
+      trace: {
+        trace_id: "trace-1",
+        invocation_id: "rtinv-1",
+        created_at: "2026-05-26T00:00:00Z",
+      },
+      output: {
+        output: { username: "local-user" },
+      },
+    });
+
+    expect(response.output.output).toEqual({ username: "local-user" });
+    expect(response.output.metadata).toEqual({});
   });
 });

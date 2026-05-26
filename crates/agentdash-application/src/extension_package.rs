@@ -84,6 +84,15 @@ pub fn validate_extension_package_archive(
     })
 }
 
+pub fn read_extension_package_archive_file(
+    archive_bytes: &[u8],
+    file_path: &str,
+) -> Result<Option<Vec<u8>>, DomainError> {
+    let normalized_path = normalize_archive_path(Path::new(file_path))?;
+    let mut files = read_tgz_files(archive_bytes)?;
+    Ok(files.remove(&normalized_path))
+}
+
 pub async fn store_extension_package_artifact(
     repos: &RepositorySet,
     input: StoreExtensionPackageArtifactInput,
@@ -424,6 +433,19 @@ mod tests {
         assert_eq!(validated.manifest.package.name, "@agentdash/local-hello");
         assert!(validated.archive_digest.starts_with("sha256:"));
         assert!(validated.manifest_digest.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn reads_extension_package_archive_file() {
+        let bytes = archive_bytes(vec![(
+            "dist/panel/index.html",
+            b"<main>hello</main>".to_vec(),
+        )]);
+        let content = read_extension_package_archive_file(&bytes, "dist/panel/index.html")
+            .expect("read archive")
+            .expect("file exists");
+
+        assert_eq!(content, b"<main>hello</main>");
     }
 
     #[test]

@@ -456,6 +456,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(extension_runtime::get_project_extension_runtime),
         )
         .route(
+            "/projects/{project_id}/extension-runtime/invoke-action",
+            post(extension_runtime::invoke_project_extension_runtime_action),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
+            get(extension_runtime::get_project_extension_webview_asset),
+        )
+        .route(
             "/projects/{project_id}/extension-artifacts",
             get(extension_package_artifacts::list_extension_package_artifacts)
                 .post(extension_package_artifacts::upload_extension_package_artifact)

@@ -17,11 +17,16 @@ import type {
   ExtensionPermissionProjectionResponse,
   ExtensionRuntimeActionKindResponse,
   ExtensionRuntimeActionProjectionResponse,
+  ExtensionRuntimeInvocationOutputResponse,
+  ExtensionRuntimeInvokeActionRequest,
+  ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeProjectionResponse,
+  ExtensionRuntimeTraceResponse,
   ExtensionWorkspaceTabProjectionResponse,
   ExtensionWorkspaceTabRendererResponse,
   JsonValue,
 } from "../generated/extension-runtime-contracts";
+import { buildApiPath } from "../api/origin";
 
 function recordOrThrow(raw: unknown, label: string): Record<string, unknown> {
   const value = asRecord(raw);
@@ -302,4 +307,69 @@ export async function fetchProjectExtensionRuntime(
     `/projects/${encodeURIComponent(projectId)}/extension-runtime`,
   );
   return mapExtensionRuntimeProjection(raw);
+}
+
+function mapRuntimeTrace(raw: unknown): ExtensionRuntimeTraceResponse {
+  const value = recordOrThrow(raw, "extension runtime trace");
+  return {
+    trace_id: requireStringField(value, "trace_id"),
+    invocation_id: requireStringField(value, "invocation_id"),
+    parent_trace_id: value.parent_trace_id == null ? null : String(value.parent_trace_id),
+    created_at: requireStringField(value, "created_at"),
+  };
+}
+
+function mapInvocationMetadata(raw: unknown): { [key: string]: JsonValue } {
+  if (raw == null) return {};
+  const value = recordOrThrow(raw, "extension runtime invocation metadata");
+  const metadata: { [key: string]: JsonValue } = {};
+  for (const [key, item] of Object.entries(value)) {
+    metadata[key] = mapJsonValue(item, `extension runtime invocation metadata.${key}`);
+  }
+  return metadata;
+}
+
+function mapInvocationOutput(raw: unknown): ExtensionRuntimeInvocationOutputResponse {
+  const value = recordOrThrow(raw, "extension runtime invocation output");
+  return {
+    output: mapJsonValue(value.output, "extension runtime invocation output.output"),
+    metadata: mapInvocationMetadata(value.metadata),
+  };
+}
+
+export function mapExtensionRuntimeInvokeActionResponse(
+  raw: unknown,
+): ExtensionRuntimeInvokeActionResponse {
+  const value = recordOrThrow(raw, "extension runtime invoke action response");
+  return {
+    action_key: requireStringField(value, "action_key"),
+    trace: mapRuntimeTrace(value.trace),
+    output: mapInvocationOutput(value.output),
+  };
+}
+
+export async function invokeProjectExtensionRuntimeAction(
+  projectId: string,
+  request: ExtensionRuntimeInvokeActionRequest,
+): Promise<ExtensionRuntimeInvokeActionResponse> {
+  const raw = await api.post<unknown>(
+    `/projects/${encodeURIComponent(projectId)}/extension-runtime/invoke-action`,
+    request,
+  );
+  return mapExtensionRuntimeInvokeActionResponse(raw);
+}
+
+export function buildExtensionWebviewAssetUrl(
+  projectId: string,
+  extensionKey: string,
+  assetPath: string,
+): string {
+  const encodedAssetPath = assetPath
+    .split("/")
+    .filter((segment) => segment.trim() !== "")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return buildApiPath(
+    `/projects/${encodeURIComponent(projectId)}/extension-runtime/webviews/${encodeURIComponent(extensionKey)}/${encodedAssetPath}`,
+  );
 }

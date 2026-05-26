@@ -33,7 +33,15 @@ export type ExtensionRuntimeActionKindResponse = "session_runtime" | "setup";
 
 export type ExtensionRuntimeActionProjectionResponse = { extension_key: string, extension_id: string, action_key: string, kind: ExtensionRuntimeActionKindResponse, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
 
+export type ExtensionRuntimeInvocationOutputResponse = { output: JsonValue, metadata?: { [key in string]?: JsonValue }, };
+
+export type ExtensionRuntimeInvokeActionRequest = { session_id: string, backend_id: string, action_key: string, input: JsonValue, };
+
+export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
+
 export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, };
+
+export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 
 export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, extension_id: string, type_id: string, label: string, uri_scheme: string, renderer: ExtensionWorkspaceTabRendererResponse, };
 

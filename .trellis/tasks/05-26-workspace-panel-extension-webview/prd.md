@@ -5,11 +5,11 @@
 
 ## Goal
 
-让前端 WorkspacePanel 能根据 session `extension_runtime` 注册动态插件 tab，并在 sandboxed webview 中加载用户自定义 UI bundle。
+让前端 WorkspacePanel 能根据 Project scoped `extension_runtime` 注册动态插件 tab，并在 sandboxed webview 中加载用户自定义 UI bundle。
 
 ## Requirements
 
-- `WorkspaceRuntimeData` 接收 `extension_runtime`。
+- Workspace runtime 接收 Project scoped `extension_runtime`，不把 extension catalog 绑定到单个 session 生命周期。
 - 从 projection 生成动态 `TabTypeDescriptor`。
 - `AddTabMenu` 能展示插件 tab。
 - `workspaceTabStore` 能保存/恢复 plugin tab 的 `type_id + uri`。

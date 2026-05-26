@@ -36,6 +36,7 @@
 - 设计系统优先使用 `@agentdash/ui` primitive，原因是重复业务布局会让视觉语言和交互状态持续漂移。
 - 长连接统一使用 fetch + ReadableStream 消费 NDJSON，原因是鉴权、resume、HMR cleanup 需要与普通 API 和 stream registry 对齐。
 - Extension authoring surface 使用独立 `packages/extension-*` 工作区包，原因是插件作者 API、webview bridge 与开发 CLI 需要随插件协议版本收敛成窄接口。
+- WorkspacePanel 的插件 tab 由 `features/extension-runtime` 消费 Project scoped runtime projection 后注册，原因是插件 catalog 是 Project enabled installation 的全局视图，不应随单个 session 生命周期被创建或销毁。
 
 ## Contract Appendices
 

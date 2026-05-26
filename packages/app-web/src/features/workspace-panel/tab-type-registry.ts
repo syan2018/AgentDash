@@ -5,6 +5,7 @@
  * 内置类型在应用初始化时注册，插件/企业定制可在运行时追加注册。
  */
 
+import { useSyncExternalStore } from "react";
 import type { ComponentType, ReactNode } from "react";
 
 // ─── Tab URI ────────────────────────────────────────────
@@ -84,16 +85,39 @@ export interface SessionTabLayout {
 
 class TabTypeRegistry {
   private types = new Map<string, TabTypeDescriptor>();
+  private contributionTypeIds = new Map<string, Set<string>>();
   private listeners = new Set<() => void>();
+  private snapshot: TabTypeDescriptor[] = [];
 
   register(descriptor: TabTypeDescriptor): void {
     this.types.set(descriptor.typeId, descriptor);
-    this.notify();
+    this.commit();
+  }
+
+  registerContribution(ownerKey: string, descriptors: TabTypeDescriptor[]): void {
+    this.removeContribution(ownerKey);
+    const typeIds = new Set<string>();
+    for (const descriptor of descriptors) {
+      this.types.set(descriptor.typeId, descriptor);
+      typeIds.add(descriptor.typeId);
+    }
+    if (typeIds.size > 0) {
+      this.contributionTypeIds.set(ownerKey, typeIds);
+    }
+    this.commit();
+  }
+
+  unregisterContribution(ownerKey: string): void {
+    this.removeContribution(ownerKey);
+    this.commit();
   }
 
   unregister(typeId: string): void {
     this.types.delete(typeId);
-    this.notify();
+    for (const typeIds of this.contributionTypeIds.values()) {
+      typeIds.delete(typeId);
+    }
+    this.commit();
   }
 
   getType(typeId: string): TabTypeDescriptor | undefined {
@@ -102,9 +126,7 @@ class TabTypeRegistry {
 
   /** 返回所有已注册类型（按 menuOrder 排序） */
   listTypes(): TabTypeDescriptor[] {
-    return [...this.types.values()].sort(
-      (a, b) => (a.menuOrder ?? 100) - (b.menuOrder ?? 100),
-    );
+    return this.snapshot;
   }
 
   /** 返回可通过 "+" 菜单创建的类型（排除 pinned） */
@@ -120,7 +142,23 @@ class TabTypeRegistry {
 
   /** 当前快照版本号（用于 useSyncExternalStore） */
   getSnapshot(): TabTypeDescriptor[] {
-    return this.listTypes();
+    return this.snapshot;
+  }
+
+  private removeContribution(ownerKey: string): void {
+    const previous = this.contributionTypeIds.get(ownerKey);
+    if (!previous) return;
+    for (const typeId of previous) {
+      this.types.delete(typeId);
+    }
+    this.contributionTypeIds.delete(ownerKey);
+  }
+
+  private commit(): void {
+    this.snapshot = [...this.types.values()].sort(
+      (a, b) => (a.menuOrder ?? 100) - (b.menuOrder ?? 100),
+    );
+    this.notify();
   }
 
   private notify(): void {
@@ -132,3 +170,11 @@ class TabTypeRegistry {
 
 /** 全局注册表单例 */
 export const tabTypeRegistry = new TabTypeRegistry();
+
+export function useTabTypeRegistrySnapshot(): TabTypeDescriptor[] {
+  return useSyncExternalStore(
+    (listener) => tabTypeRegistry.subscribe(listener),
+    () => tabTypeRegistry.getSnapshot(),
+    () => tabTypeRegistry.getSnapshot(),
+  );
+}

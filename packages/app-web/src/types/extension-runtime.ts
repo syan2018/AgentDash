@@ -14,7 +14,11 @@ export type {
   ExtensionPermissionProjectionResponse,
   ExtensionRuntimeActionKindResponse,
   ExtensionRuntimeActionProjectionResponse,
+  ExtensionRuntimeInvocationOutputResponse,
+  ExtensionRuntimeInvokeActionRequest,
+  ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeProjectionResponse,
+  ExtensionRuntimeTraceResponse,
   ExtensionWorkspaceTabProjectionResponse,
   ExtensionWorkspaceTabRendererResponse,
 } from "../generated/extension-runtime-contracts";

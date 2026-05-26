@@ -7,6 +7,7 @@ import type {
   TaskSessionExecutorSummary,
   WorkflowRun,
 } from "../../types";
+import type { ProjectExtensionRuntimeState } from "../extension-runtime/model/types";
 import type { SessionRuntimeStateStatus } from "./model/useSessionRuntimeState";
 
 /** WorkspacePanel 对外命令式 API */
@@ -16,9 +17,11 @@ export interface WorkspacePanelHandle {
 }
 
 export interface WorkspaceRuntimeData {
+  projectId: string | null;
   sessionId: string | null;
   runtimeStatus: SessionRuntimeStateStatus;
   runtimeError: string | null;
+  extensionRuntime: ProjectExtensionRuntimeState;
   contextSnapshot: SessionContextSnapshot | null;
   ownerStory: Story | null;
   ownerProjectName: string;

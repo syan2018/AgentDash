@@ -4,6 +4,7 @@ import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resiz
 import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
+import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import {
   WorkspacePanel,
@@ -256,6 +257,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
+  const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   useEffect(() => {
     if (!ownerProjectId) return;
     void fetchWorkspaces(ownerProjectId);
@@ -409,9 +411,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     [currentSessionId, runsBySessionId],
   );
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
+    projectId: ownerProjectId,
     sessionId: currentSessionId,
     runtimeStatus: sessionRuntimeState.status,
     runtimeError: sessionRuntimeState.error,
+    extensionRuntime,
     contextSnapshot: sessionContextSnapshot,
     ownerStory,
     ownerProjectName,
@@ -422,9 +426,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     workflowRuns: lifecycleRuns,
     activeCanvasId,
   }), [
+    ownerProjectId,
     currentSessionId,
     sessionRuntimeState.status,
     sessionRuntimeState.error,
+    extensionRuntime,
     sessionContextSnapshot,
     ownerStory,
     ownerProjectName,

@@ -947,10 +947,8 @@ mod tests {
 
     #[tokio::test]
     async fn grep_text_default_respects_include_glob() {
-        let provider = MockProvider::new(&[
-            ("src/main.rs", "fn x() {}"),
-            ("docs/notes.md", "fn x() {}"),
-        ]);
+        let provider =
+            MockProvider::new(&[("src/main.rs", "fn x() {}"), ("docs/notes.md", "fn x() {}")]);
         let result = provider
             .grep_text(
                 &fake_mount(),
@@ -1044,9 +1042,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_text_default_truncates_at_max_results() {
-        let provider = MockProvider::new(&[
-            ("a.rs", "x\nx\nx\nx\nx"),
-        ]);
+        let provider = MockProvider::new(&[("a.rs", "x\nx\nx\nx\nx")]);
         let result = provider
             .grep_text(
                 &fake_mount(),

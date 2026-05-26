@@ -656,15 +656,13 @@ mod tests {
     async fn search_truncated_when_max_results_reached() {
         let owner_id = Uuid::new_v4();
         let repo = Arc::new(MemoryInlineFileRepo::default());
-        repo.upsert_files(&[
-            InlineFile::new_text(
-                InlineFileOwnerKind::Project,
-                owner_id,
-                "brief",
-                "a.md",
-                "needle\nneedle\nneedle\n",
-            ),
-        ])
+        repo.upsert_files(&[InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "needle\nneedle\nneedle\n",
+        )])
         .await
         .expect("seed");
         let provider = InlineFsMountProvider::new(repo);

@@ -962,8 +962,8 @@ pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &Backb
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::{RuntimeCapabilityTransition, TitleSource};
     use super::super::TerminalEffectType;
+    use super::super::types::{RuntimeCapabilityTransition, TitleSource};
     use super::*;
     use agentdash_agent_protocol::{
         BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,

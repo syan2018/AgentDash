@@ -1982,11 +1982,7 @@ fn encode_branch_id(branch_id: Option<&str>) -> &str {
 }
 
 fn decode_branch_id(value: String) -> Option<String> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn validate_commit_session(

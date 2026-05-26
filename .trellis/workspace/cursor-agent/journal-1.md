@@ -934,3 +934,36 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Companion 通用交互能力申请 MVP
+
+**Date**: 2026-05-26
+**Task**: Companion 通用交互能力申请 MVP
+**Branch**: `main`
+
+### Summary
+
+落地 companion payload object 契约、platform capability grant broker 骨架、companion-system 内嵌 skill 与 lifecycle mount 默认投影，并补齐前端审批卡片和验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4cada192` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

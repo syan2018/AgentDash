@@ -2,6 +2,13 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField, requireNumberField } from "../api/mappers";
 import type { BackboneEnvelope } from "../generated/backbone-protocol";
 import type {
+  SessionProjectionMessageRefResponse,
+  SessionProjectionSegmentProvenanceResponse,
+  SessionProjectionSegmentViewResponse,
+  SessionProjectionSourceRangeResponse,
+  SessionProjectionViewResponse,
+} from "../generated/session-contracts";
+import type {
   AgentBinding,
   ContextSourceRef,
   ExecutionVfs,
@@ -16,6 +23,13 @@ import type {
 } from "../types";
 import { isThinkingLevel } from "../types";
 import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
+
+function asRecordOrThrow(value: unknown, label: string): Record<string, unknown> {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} 不是对象`);
+  }
+  return value as Record<string, unknown>;
+}
 
 function normalizeSessionBindingOwnerType(value: unknown): SessionBindingOwner["owner_type"] {
   switch (value) {
@@ -202,6 +216,94 @@ export async function fetchSessionContext(sessionId: string): Promise<SessionCon
     context_snapshot: (raw.context_snapshot as SessionContextSnapshot | undefined) ?? null,
     session_capabilities: (raw.session_capabilities as SessionBaselineCapabilities | undefined) ?? null,
   };
+}
+
+function mapProjectionSourceRange(raw: unknown): SessionProjectionSourceRangeResponse | undefined {
+  if (raw == null) return undefined;
+  const value = asRecordOrThrow(raw, "projection source_range");
+  return {
+    start_event_seq: requireNumberField(value, "start_event_seq"),
+    end_event_seq: requireNumberField(value, "end_event_seq"),
+  };
+}
+
+function mapProjectionMessageRef(raw: unknown): SessionProjectionMessageRefResponse {
+  const value = asRecordOrThrow(raw, "projection message_ref");
+  return {
+    turn_id: requireStringField(value, "turn_id"),
+    entry_index: requireNumberField(value, "entry_index"),
+  };
+}
+
+function mapProjectionProvenance(
+  raw: unknown,
+): SessionProjectionSegmentProvenanceResponse {
+  const value = asRecordOrThrow(raw, "projection provenance");
+  return {
+    compaction_id: value.compaction_id != null ? String(value.compaction_id) : undefined,
+    projection_version:
+      typeof value.projection_version === "number" ? value.projection_version : undefined,
+    segment_type: value.segment_type != null ? String(value.segment_type) : undefined,
+    strategy: value.strategy != null ? String(value.strategy) : undefined,
+    trigger: value.trigger != null ? String(value.trigger) : undefined,
+    phase: value.phase != null ? String(value.phase) : undefined,
+  };
+}
+
+function mapProjectionSegment(raw: unknown): SessionProjectionSegmentViewResponse {
+  const value = asRecordOrThrow(raw, "projection segment");
+  return {
+    id: requireStringField(value, "id"),
+    sort_order: requireNumberField(value, "sort_order"),
+    segment_type: requireStringField(value, "segment_type"),
+    role: requireStringField(value, "role"),
+    origin: requireStringField(value, "origin"),
+    synthetic: Boolean(value.synthetic),
+    projection_kind: requireStringField(value, "projection_kind"),
+    message_ref: mapProjectionMessageRef(value.message_ref),
+    source_event_seq:
+      typeof value.source_event_seq === "number" ? value.source_event_seq : undefined,
+    source_range: mapProjectionSourceRange(value.source_range),
+    projection_segment_id:
+      value.projection_segment_id != null ? String(value.projection_segment_id) : undefined,
+    preview: typeof value.preview === "string" ? value.preview : "",
+    provenance: mapProjectionProvenance(value.provenance),
+  };
+}
+
+function mapSessionProjectionView(raw: Record<string, unknown>): SessionProjectionViewResponse {
+  if (!Array.isArray(raw.segments)) {
+    throw new Error("会话投影视图响应缺少 segments 数组");
+  }
+  return {
+    session_id: requireStringField(raw, "session_id"),
+    branch_id: raw.branch_id != null ? String(raw.branch_id) : undefined,
+    projection_kind: requireStringField(raw, "projection_kind"),
+    projection_version: requireNumberField(raw, "projection_version"),
+    head_event_seq: requireNumberField(raw, "head_event_seq"),
+    active_compaction_id:
+      raw.active_compaction_id != null ? String(raw.active_compaction_id) : undefined,
+    token_estimate:
+      typeof raw.token_estimate === "number" ? raw.token_estimate : undefined,
+    message_count: requireNumberField(raw, "message_count"),
+    segments: raw.segments.map(mapProjectionSegment),
+  };
+}
+
+/** GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。 */
+export async function fetchSessionContextProjection(
+  sessionId: string,
+): Promise<SessionProjectionViewResponse | null> {
+  let raw: Record<string, unknown>;
+  try {
+    raw = await api.get<Record<string, unknown>>(
+      `/sessions/${encodeURIComponent(sessionId)}/context/projection`,
+    );
+  } catch (err) {
+    if ((err as ApiHttpError).status === 404) return null;
+    throw err;
+  }
+  return mapSessionProjectionView(raw);
 }
 
 export async function fetchSessionBindings(id: string): Promise<SessionBindingOwner[]> {

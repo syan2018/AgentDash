@@ -8,13 +8,17 @@ pub use model::context::AgentContext;
 pub use model::message::{
     AgentMessage, MessageRef, StopReason, TokenUsage, ToolCallInfo, now_millis,
 };
-pub use model::projection::{ProjectedEntry, ProjectedTranscript, ProjectionKind};
+pub use model::projection::{
+    AgentContextEnvelope, AgentInputMessage, ProjectedEntry, ProjectedTranscript, ProjectionKind,
+    ProjectionOrigin, ProjectionSourceRange,
+};
 
 pub use runtime::decisions::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
-    BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
-    CompactionTriggerStats, EvaluateCompactionInput, StopDecision, ToolCallDecision,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
+    BeforeStopInput, BeforeToolCallInput, CompactionFailureInput, CompactionParams,
+    CompactionResult, CompactionTriggerStats, EvaluateCompactionInput, ProviderVisibleContextStats,
+    StopDecision, ToolCallDecision, TransformContextInput, TransformContextOutput,
+    TurnControlDecision,
 };
 pub use runtime::delegate::{AgentRuntimeDelegate, AgentRuntimeError, DynAgentRuntimeDelegate};
 pub use runtime::hooks_io::{

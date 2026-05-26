@@ -11,6 +11,9 @@ use agentdash_agent_types::{
 use agentdash_spi::content_block_to_text;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
+use super::compaction_checkpoint::{
+    apply_checkpoint_to_projected_entries, latest_context_compacted_checkpoint,
+};
 use super::persistence::PersistedSessionEvent;
 
 // ─── Continuation transcript 构建 ─────────────────────────────
@@ -20,15 +23,6 @@ use super::persistence::PersistedSessionEvent;
 //     - `.into_messages()` → 执行器原生恢复（launch restore ExecutorState 分支）
 //     - `build_continuation_context_frame(&transcript, owner_context)` → ContextFrame 注入
 //       （acp_sessions route、routine executor）
-
-#[derive(Debug, Clone)]
-struct CompactionCheckpoint {
-    summary: String,
-    tokens_before: u64,
-    messages_compacted: u32,
-    compacted_until_ref: MessageRef,
-    timestamp_ms: Option<u64>,
-}
 
 /// 把 `ProjectedTranscript` 组装为 `ContextFrame(kind=continuation_context)`。
 pub fn build_continuation_context_frame(
@@ -231,13 +225,34 @@ enum RestoredMessageEnvelope {
     },
 }
 
-/// 从持久化事件重建投影 transcript — 唯一公共入口。
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_events(
+    events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_filtered_events(events.iter())
+}
+
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_filtered_events<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_iter(events)
+}
+
+/// 从持久化事件重建投影 transcript — legacy 公共入口。
 ///
 /// 消费者根据需要自选渲染方式：
 /// - `.into_messages()` → 执行器原生 session restore
 /// - `build_continuation_context_frame(&transcript, owner_context)` → continuation frame 注入
 pub(super) fn build_projected_transcript_from_events(
     events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
+    let raw_entries = build_raw_projected_transcript_from_events(events).entries;
+    apply_checkpoint_to_projected_entries(raw_entries, latest_context_compacted_checkpoint(events))
+}
+
+fn build_raw_projected_transcript_from_iter<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
 ) -> ProjectedTranscript {
     let mut user_messages: HashMap<String, RestoredUserMessageState> = HashMap::new();
     let mut assistant_messages: HashMap<String, RestoredAssistantMessageState> = HashMap::new();
@@ -415,11 +430,11 @@ pub(super) fn build_projected_transcript_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    let raw_entries: Vec<ProjectedEntry> = envelopes
+    let entries: Vec<ProjectedEntry> = envelopes
         .into_iter()
         .map(restored_envelope_to_projected_entry)
         .collect();
-    apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
+    ProjectedTranscript { entries }
 }
 
 // ─── Private helpers ────────────────────────────────────────
@@ -552,24 +567,25 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
         RestoredMessageEnvelope::User {
             message_ref,
             content,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::User {
+            ProjectionKind::Transcript,
+            AgentMessage::User {
                 content,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::Assistant {
             message_ref,
             content,
             tool_calls,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::Assistant {
+            ProjectionKind::Transcript,
+            AgentMessage::Assistant {
                 content,
                 tool_calls: tool_calls.clone(),
                 stop_reason: Some(if tool_calls.is_empty() {
@@ -581,7 +597,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 usage: None,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::ToolResult {
             message_ref,
             tool_call_id,
@@ -590,11 +607,11 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
             content,
             details,
             is_error,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::ToolResult {
+            ProjectionKind::Transcript,
+            AgentMessage::ToolResult {
                 tool_call_id,
                 call_id,
                 tool_name,
@@ -603,7 +620,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 is_error,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
     }
 }
 
@@ -616,90 +634,6 @@ fn make_message_ref(turn_id: Option<&str>, entry_index: Option<u32>, event_seq: 
             .unwrap_or_else(|| format!("_seq:{event_seq}")),
         entry_index: entry_index.unwrap_or(0),
     }
-}
-
-fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<CompactionCheckpoint> {
-    events.iter().rev().find_map(extract_compaction_checkpoint)
-}
-
-fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
-    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
-    match &event.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-            if key == "context_compacted" =>
-        {
-            let compacted_until_ref =
-                serde_json::from_value::<MessageRef>(value.get("compacted_until_ref")?.clone())
-                    .ok()?;
-            Some(CompactionCheckpoint {
-                summary: value.get("summary")?.as_str()?.to_string(),
-                tokens_before: value
-                    .get("tokens_before")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or_default(),
-                messages_compacted: value
-                    .get("messages_compacted")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|v| u32::try_from(v).ok())
-                    .unwrap_or_default(),
-                compacted_until_ref,
-                timestamp_ms: value
-                    .get("timestamp_ms")
-                    .and_then(serde_json::Value::as_u64),
-            })
-        }
-        _ => None,
-    }
-}
-
-/// 在 ProjectedEntry 列表上应用 compaction checkpoint。
-fn apply_compaction_checkpoint_projected(
-    raw_entries: Vec<ProjectedEntry>,
-    checkpoint: Option<CompactionCheckpoint>,
-) -> ProjectedTranscript {
-    let Some(checkpoint) = checkpoint else {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    };
-    if checkpoint.summary.trim().is_empty() || checkpoint.messages_compacted == 0 {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    }
-
-    let cut = raw_entries
-        .iter()
-        .position(|e| e.message_ref == checkpoint.compacted_until_ref)
-        .map(|pos| pos + 1)
-        .unwrap_or(0);
-
-    // 从 cut boundary 回推 compacted_until_ref（保留已 persisted 的 ref 做审计）
-    let derived_ref = if cut > 0 {
-        Some(raw_entries[cut - 1].message_ref.clone())
-    } else {
-        Some(checkpoint.compacted_until_ref.clone())
-    };
-
-    let summary_ref = MessageRef {
-        turn_id: "_compaction_summary".to_string(),
-        entry_index: 0,
-    };
-    let summary_entry = ProjectedEntry {
-        message_ref: summary_ref,
-        projection_kind: ProjectionKind::CompactionSummary,
-        message: AgentMessage::CompactionSummary {
-            summary: checkpoint.summary,
-            tokens_before: checkpoint.tokens_before,
-            messages_compacted: checkpoint.messages_compacted,
-            compacted_until_ref: derived_ref,
-            timestamp: checkpoint.timestamp_ms,
-        },
-    };
-
-    let mut entries = vec![summary_entry];
-    entries.extend(raw_entries.into_iter().skip(cut));
-    ProjectedTranscript { entries }
 }
 
 fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {
@@ -914,7 +848,79 @@ fn json_preview(value: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, TextContent, TraceInfo};
+
     use super::*;
+
+    fn source() -> SourceInfo {
+        SourceInfo {
+            connector_id: "test".to_string(),
+            connector_type: "unit".to_string(),
+            executor_id: None,
+        }
+    }
+
+    fn persisted_event(
+        event_seq: u64,
+        event: BackboneEvent,
+        turn_id: Option<&str>,
+        entry_index: Option<u32>,
+    ) -> PersistedSessionEvent {
+        let notification =
+            BackboneEnvelope::new(event.clone(), "session-1", source()).with_trace(TraceInfo {
+                turn_id: turn_id.map(ToString::to_string),
+                entry_index,
+            });
+        PersistedSessionEvent {
+            session_id: "session-1".to_string(),
+            event_seq,
+            occurred_at_ms: event_seq as i64,
+            committed_at_ms: event_seq as i64,
+            session_update_type: match event {
+                BackboneEvent::Platform(_) => "platform",
+                _ => "event",
+            }
+            .to_string(),
+            turn_id: turn_id.map(ToString::to_string),
+            entry_index,
+            tool_call_id: None,
+            notification,
+        }
+    }
+
+    fn user_message_event(event_seq: u64, turn_id: &str, text: &str) -> PersistedSessionEvent {
+        persisted_event(
+            event_seq,
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "user_message_chunk".to_string(),
+                value: serde_json::to_value(ContentBlock::Text(TextContent::new(text)))
+                    .expect("text block should serialize"),
+            }),
+            Some(turn_id),
+            Some(0),
+        )
+    }
+
+    fn context_compacted_event(event_seq: u64) -> PersistedSessionEvent {
+        persisted_event(
+            event_seq,
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "context_compacted".to_string(),
+                value: serde_json::json!({
+                    "summary": "## 历史摘要\n- 已完成旧分析",
+                    "tokens_before": 42000,
+                    "messages_compacted": 2,
+                    "compacted_until_ref": {
+                        "turn_id": "t-2",
+                        "entry_index": 0,
+                    },
+                    "timestamp_ms": 1710000000000_u64,
+                }),
+            }),
+            Some("t-3"),
+            None,
+        )
+    }
 
     #[test]
     fn codex_content_items_restore_input_image_data_url() {
@@ -949,6 +955,43 @@ mod tests {
         assert_eq!(
             parts[0].extract_text(),
             Some("[image output: unsupported image_url]")
+        );
+    }
+
+    #[test]
+    fn projected_transcript_applies_context_compacted_checkpoint_via_parser() {
+        let transcript = build_projected_transcript_from_events(&[
+            user_message_event(1, "t-1", "历史用户消息 1"),
+            user_message_event(2, "t-2", "历史用户消息 2"),
+            user_message_event(3, "t-3", "最近用户消息"),
+            context_compacted_event(4),
+        ]);
+
+        assert_eq!(transcript.entries.len(), 2);
+        match &transcript.entries[0].message {
+            AgentMessage::CompactionSummary {
+                summary,
+                tokens_before,
+                messages_compacted,
+                compacted_until_ref,
+                ..
+            } => {
+                assert!(summary.contains("历史摘要"));
+                assert_eq!(*tokens_before, 42_000);
+                assert_eq!(*messages_compacted, 2);
+                assert_eq!(
+                    compacted_until_ref.as_ref(),
+                    Some(&MessageRef {
+                        turn_id: "t-2".to_string(),
+                        entry_index: 0,
+                    })
+                );
+            }
+            other => panic!("unexpected summary entry: {other:?}"),
+        }
+        assert_eq!(
+            transcript.entries[1].message.first_text(),
+            Some("最近用户消息")
         );
     }
 }

@@ -3,7 +3,12 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use agentdash_agent_protocol::BackboneEnvelope;
+use agentdash_agent_types::{
+    AgentContextEnvelope, AgentInputMessage, AgentMessage, ProjectionSourceRange,
+};
 use agentdash_spi::session_persistence::PersistedSessionEvent;
+
+const PROJECTION_PREVIEW_MAX_CHARS: usize = 360;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -88,5 +93,294 @@ impl SessionNdjsonEnvelope {
         Self::Heartbeat {
             timestamp: Utc::now().timestamp_millis(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionSourceRangeResponse {
+    #[ts(type = "number")]
+    pub start_event_seq: u64,
+    #[ts(type = "number")]
+    pub end_event_seq: u64,
+}
+
+impl From<ProjectionSourceRange> for SessionProjectionSourceRangeResponse {
+    fn from(range: ProjectionSourceRange) -> Self {
+        Self {
+            start_event_seq: range.start_event_seq,
+            end_event_seq: range.end_event_seq,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionMessageRefResponse {
+    pub turn_id: String,
+    pub entry_index: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionSegmentProvenanceResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub compaction_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub projection_version: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub segment_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub trigger: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub phase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionSegmentViewResponse {
+    pub id: String,
+    #[ts(type = "number")]
+    pub sort_order: u32,
+    pub segment_type: String,
+    pub role: String,
+    pub origin: String,
+    pub synthetic: bool,
+    pub projection_kind: String,
+    pub message_ref: SessionProjectionMessageRefResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub source_event_seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub source_range: Option<SessionProjectionSourceRangeResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub projection_segment_id: Option<String>,
+    pub preview: String,
+    pub provenance: SessionProjectionSegmentProvenanceResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionViewResponse {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch_id: Option<String>,
+    pub projection_kind: String,
+    #[ts(type = "number")]
+    pub projection_version: u64,
+    #[ts(type = "number")]
+    pub head_event_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_compaction_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub token_estimate: Option<u64>,
+    #[ts(type = "number")]
+    pub message_count: u64,
+    pub segments: Vec<SessionProjectionSegmentViewResponse>,
+}
+
+impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
+    fn from(envelope: AgentContextEnvelope) -> Self {
+        let message_count = u64::try_from(envelope.messages.len()).unwrap_or(u64::MAX);
+        let segments = envelope
+            .messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| projection_segment_from_message(index, message))
+            .collect();
+        Self {
+            session_id: envelope.session_id,
+            branch_id: envelope.branch_id,
+            projection_kind: envelope.projection_kind.as_str().to_string(),
+            projection_version: envelope.projection_version,
+            head_event_seq: envelope.head_event_seq,
+            active_compaction_id: envelope.active_compaction_id,
+            token_estimate: envelope.token_estimate,
+            message_count,
+            segments,
+        }
+    }
+}
+
+fn projection_segment_from_message(
+    index: usize,
+    message: AgentInputMessage,
+) -> SessionProjectionSegmentViewResponse {
+    let provenance = projection_provenance(&message.provenance);
+    let segment_type =
+        provenance
+            .segment_type
+            .clone()
+            .unwrap_or_else(|| match message.origin.as_str() {
+                "projection" => "projection_segment".to_string(),
+                _ => "original_event".to_string(),
+            });
+    let id = message
+        .projection_segment_id
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", segment_type, index));
+    let sort_order = u32::try_from(index).unwrap_or(u32::MAX);
+    let role = message_role(&message.message).to_string();
+    let preview = message_preview(&message.message);
+    SessionProjectionSegmentViewResponse {
+        id,
+        sort_order,
+        segment_type,
+        role,
+        origin: message.origin.as_str().to_string(),
+        synthetic: message.synthetic,
+        projection_kind: message.projection_kind.as_str().to_string(),
+        message_ref: SessionProjectionMessageRefResponse {
+            turn_id: message.message_ref.turn_id,
+            entry_index: message.message_ref.entry_index,
+        },
+        source_event_seq: message.source_event_seq,
+        source_range: message.source_range.map(Into::into),
+        projection_segment_id: message.projection_segment_id,
+        preview,
+        provenance,
+    }
+}
+
+fn projection_provenance(value: &serde_json::Value) -> SessionProjectionSegmentProvenanceResponse {
+    SessionProjectionSegmentProvenanceResponse {
+        compaction_id: read_string(value, "compaction_id"),
+        projection_version: read_u64(value, "projection_version"),
+        segment_type: read_string(value, "segment_type"),
+        strategy: read_string(value, "strategy"),
+        trigger: read_string(value, "trigger"),
+        phase: read_string(value, "phase"),
+    }
+}
+
+fn read_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn read_u64(value: &serde_json::Value, key: &str) -> Option<u64> {
+    value.get(key).and_then(serde_json::Value::as_u64)
+}
+
+fn message_role(message: &AgentMessage) -> &'static str {
+    match message {
+        AgentMessage::User { .. } => "user",
+        AgentMessage::Assistant { .. } => "assistant",
+        AgentMessage::ToolResult { .. } => "tool_result",
+        AgentMessage::CompactionSummary { .. } => "compaction_summary",
+    }
+}
+
+fn message_preview(message: &AgentMessage) -> String {
+    let text = message
+        .first_text()
+        .map(ToString::to_string)
+        .or_else(|| assistant_tool_call_preview(message))
+        .unwrap_or_else(|| message_role(message).to_string());
+    truncate_preview(&text)
+}
+
+fn assistant_tool_call_preview(message: &AgentMessage) -> Option<String> {
+    let AgentMessage::Assistant { tool_calls, .. } = message else {
+        return None;
+    };
+    if tool_calls.is_empty() {
+        return None;
+    }
+    let names = tool_calls
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("tool_calls: {names}"))
+}
+
+fn truncate_preview(value: &str) -> String {
+    let mut chars = value.chars();
+    let preview = chars
+        .by_ref()
+        .take(PROJECTION_PREVIEW_MAX_CHARS)
+        .collect::<String>();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use agentdash_agent_types::{
+        AgentContextEnvelope, AgentInputMessage, AgentMessage, MessageRef, ProjectionKind,
+        ProjectionOrigin, ProjectionSourceRange,
+    };
+
+    use super::SessionProjectionViewResponse;
+
+    #[test]
+    fn projection_view_marks_summary_as_synthetic_projection() {
+        let envelope = AgentContextEnvelope {
+            session_id: "sess-1".to_string(),
+            branch_id: None,
+            projection_kind: ProjectionKind::ModelContext,
+            projection_version: 2,
+            head_event_seq: 42,
+            active_compaction_id: Some("compaction-1".to_string()),
+            token_estimate: Some(128),
+            messages: vec![AgentInputMessage {
+                message_ref: MessageRef {
+                    turn_id: "_projection:summary".to_string(),
+                    entry_index: 0,
+                },
+                projection_kind: ProjectionKind::CompactionSummary,
+                message: AgentMessage::compaction_summary("压缩后的历史摘要", 48000, 12),
+                origin: ProjectionOrigin::Projection,
+                synthetic: true,
+                source_event_seq: None,
+                source_range: Some(ProjectionSourceRange {
+                    start_event_seq: 1,
+                    end_event_seq: 30,
+                }),
+                projection_segment_id: Some("segment-1".to_string()),
+                provenance: serde_json::json!({
+                    "compaction_id": "compaction-1",
+                    "projection_version": 2,
+                    "segment_type": "summary_chunk",
+                    "strategy": "summary_prefix",
+                    "trigger": "auto",
+                    "phase": "pre_provider"
+                }),
+            }],
+        };
+
+        let view = SessionProjectionViewResponse::from(envelope);
+
+        assert_eq!(view.projection_kind, "model_context");
+        assert_eq!(view.projection_version, 2);
+        assert_eq!(view.message_count, 1);
+        assert_eq!(view.segments[0].origin, "projection");
+        assert!(view.segments[0].synthetic);
+        assert_eq!(view.segments[0].segment_type, "summary_chunk");
+        assert_eq!(
+            view.segments[0].provenance.compaction_id.as_deref(),
+            Some("compaction-1")
+        );
     }
 }

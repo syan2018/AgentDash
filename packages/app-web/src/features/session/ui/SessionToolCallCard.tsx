@@ -25,6 +25,9 @@ export interface SessionToolCallCardProps {
   compact?: boolean;
   sessionId?: string;
   outputText?: string;
+  titleOverride?: string;
+  statusOverride?: DisplayStatus;
+  kindOverride?: string;
 }
 
 export const SessionToolCallCard = memo(function SessionToolCallCard({
@@ -33,10 +36,13 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
   compact = false,
   sessionId,
   outputText,
+  titleOverride,
+  statusOverride,
+  kindOverride,
 }: SessionToolCallCardProps) {
-  const title = getThreadItemTitle(item);
-  const status = getThreadItemStatus(item) as DisplayStatus;
-  const kind = getThreadItemKind(item);
+  const title = titleOverride ?? getThreadItemTitle(item);
+  const status = statusOverride ?? (getThreadItemStatus(item) as DisplayStatus);
+  const kind = kindOverride ?? getThreadItemKind(item);
   const itemId = item.id;
 
   const [expanded, setExpanded] = useState(Boolean(isPendingApproval));
@@ -288,6 +294,7 @@ function getKindConfig(kind: string): { label: string; icon: string } {
     case "search":     return { label: "搜索", icon: "FIND" };
     case "image":      return { label: "图片", icon: "IMG" };
     case "collab":     return { label: "协作", icon: "COLL" };
+    case "context":    return { label: "上下文", icon: "CTX" };
     default:           return { label: "工具", icon: "TOOL" };
   }
 }

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/session/context-compaction-projection.md", "reason": "上下文压缩 durable projection 语义和边界不变量"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "确认本任务不改 schema / migration"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 projection view API wire shape 不变"}
+{"file": ".trellis/tasks/05-26-05-26-compaction-checkpoint-parser/references/arch-review.md", "reason": "当前压缩持久化架构和 parser 动机补充资料"}

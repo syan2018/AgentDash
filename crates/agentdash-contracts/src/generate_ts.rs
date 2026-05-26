@@ -10,6 +10,9 @@ use agentdash_contracts::project_agent::{
 };
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
+    SessionProjectionMessageRefResponse, SessionProjectionSegmentProvenanceResponse,
+    SessionProjectionSegmentViewResponse, SessionProjectionSourceRangeResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
@@ -60,6 +63,11 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
+            export_all::<SessionProjectionSourceRangeResponse>(dir);
+            export_all::<SessionProjectionMessageRefResponse>(dir);
+            export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
+            export_all::<SessionProjectionSegmentViewResponse>(dir);
+            export_all::<SessionProjectionViewResponse>(dir);
         },
     );
 

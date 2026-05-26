@@ -612,8 +612,21 @@ function CompactionSummaryBody({ section }: { section: CompactionSummarySection 
       <div className="flex flex-wrap gap-1.5">
         <Chip label={`messages: ${section.messages_compacted}`} />
         <Chip label={`tokens: ${section.tokens_before}`} />
+        {section.projection_version != null && <Chip label={`projection: v${section.projection_version}`} />}
+        {section.strategy && <Chip label={`strategy: ${section.strategy}`} />}
+        {section.trigger && <Chip label={`trigger: ${section.trigger}`} />}
+        {section.phase && <Chip label={`phase: ${section.phase}`} />}
+        {section.source_start_event_seq != null && section.source_end_event_seq != null && (
+          <Chip label={`source: ${section.source_start_event_seq}-${section.source_end_event_seq}`} />
+        )}
+        {section.first_kept_event_seq != null && <Chip label={`first kept: ${section.first_kept_event_seq}`} />}
         {section.timestamp_ms != null && <Chip label={`time: ${section.timestamp_ms}`} />}
       </div>
+      {section.compaction_id && (
+        <div className="truncate text-[11px] text-muted-foreground/70">
+          checkpoint {section.compaction_id}
+        </div>
+      )}
       {section.compacted_until_ref != null && (
         <CompactedUntilRefBlock value={section.compacted_until_ref} />
       )}
@@ -678,4 +691,3 @@ function formatJson(value: unknown): string {
     return String(value);
   }
 }
-

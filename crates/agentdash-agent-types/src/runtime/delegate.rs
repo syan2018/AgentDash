@@ -4,9 +4,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::runtime::decisions::{
     AfterToolCallEffects, AfterToolCallInput, AfterTurnInput, BeforeProviderRequestInput,
-    BeforeStopInput, BeforeToolCallInput, CompactionParams, CompactionResult,
-    EvaluateCompactionInput, StopDecision, ToolCallDecision, TransformContextInput,
-    TransformContextOutput, TurnControlDecision,
+    BeforeStopInput, BeforeToolCallInput, CompactionFailureInput, CompactionParams,
+    CompactionResult, EvaluateCompactionInput, StopDecision, ToolCallDecision,
+    TransformContextInput, TransformContextOutput, TurnControlDecision,
 };
 
 // ─── AgentRuntimeDelegate ──────────────────────────────────
@@ -34,6 +34,14 @@ pub trait AgentRuntimeDelegate: Send + Sync {
         result: CompactionResult,
         cancel: CancellationToken,
     ) -> Result<(), AgentRuntimeError>;
+
+    async fn after_compaction_failed(
+        &self,
+        _input: CompactionFailureInput,
+        _cancel: CancellationToken,
+    ) -> Result<(), AgentRuntimeError> {
+        Ok(())
+    }
 
     async fn transform_context(
         &self,

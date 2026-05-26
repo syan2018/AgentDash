@@ -2,15 +2,24 @@ use std::{io, sync::Arc};
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    codex_app_server_protocol as codex,
 };
 use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
-use super::continuation::build_projected_transcript_from_events;
+use super::context_projector::ContextProjector;
+use super::continuation::{
+    build_projected_transcript_from_events, build_raw_projected_transcript_from_events,
+};
 use super::hub_support::SessionEventSubscription;
-use super::persistence::{PersistedSessionEvent, SessionEventPage, SessionStoreSet};
+use super::persistence::{
+    CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
+    SessionCompactionRecord, SessionCompactionStatus, SessionEventPage,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreSet,
+};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::types::TitleSource;
 
@@ -99,10 +108,35 @@ impl SessionEventingService {
         let envelope = self
             .maybe_enrich_compaction_notification(session_id, envelope)
             .await?;
+        if let Some(result) = self
+            .maybe_commit_compaction_projection(session_id, envelope.clone())
+            .await?
+        {
+            let tx = self.runtime_registry.touch_and_sender(session_id).await;
+            let _ = tx.send(result.event.clone());
+            if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
+                &result.event.notification.event
+                && key == "context_compacted"
+                && let Some(frame) = build_compaction_context_frame(value)
+            {
+                let _ = self
+                    .persist_context_frame_direct(
+                        session_id,
+                        result.event.turn_id.as_deref(),
+                        &frame,
+                    )
+                    .await;
+            }
+            self.project_source_session_title(session_id, &result.event)
+                .await?;
+            return Ok(result.event);
+        }
         let persisted = self
             .stores
             .events
             .append_event(session_id, &envelope)
+            .await?;
+        self.advance_model_projection_head(session_id, &persisted)
             .await?;
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(persisted.clone());
@@ -248,8 +282,18 @@ impl SessionEventingService {
         &self,
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::ProjectedTranscript> {
-        let events = self.stores.events.list_all_events(session_id).await?;
-        Ok(build_projected_transcript_from_events(&events))
+        ContextProjector::new(self.stores.clone())
+            .build_projected_transcript(session_id, None)
+            .await
+    }
+
+    pub async fn build_agent_context_envelope(
+        &self,
+        session_id: &str,
+    ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
+        ContextProjector::new(self.stores.clone())
+            .build_model_context(session_id, None)
+            .await
     }
 
     async fn maybe_enrich_compaction_notification(
@@ -289,6 +333,215 @@ impl SessionEventingService {
             obj.insert("compacted_until_ref".to_string(), ref_value);
         }
         Ok(enriched)
+    }
+
+    async fn maybe_commit_compaction_projection(
+        &self,
+        session_id: &str,
+        envelope: BackboneEnvelope,
+    ) -> io::Result<Option<CompactionProjectionCommitResult>> {
+        let Some(value) = context_compacted_value(&envelope) else {
+            return Ok(None);
+        };
+        let Some(summary) = value
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+        else {
+            return Ok(None);
+        };
+
+        let events = self.stores.events.list_all_events(session_id).await?;
+        let base_head_event_seq = latest_event_seq(&events);
+        let projection_version = self
+            .stores
+            .projections
+            .read_projection_head(session_id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await?
+            .map(|head| head.projection_version.saturating_add(1))
+            .unwrap_or(1);
+        let completed_event_seq = base_head_event_seq.saturating_add(1);
+
+        let lifecycle_item_id = value
+            .get("lifecycle_item_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("context-compaction-{completed_event_seq}"));
+        let compaction_id = format!("compaction-{lifecycle_item_id}");
+        let segment_id = format!("{compaction_id}-summary");
+
+        let raw_transcript = build_raw_projected_transcript_from_events(&events);
+        let messages_compacted = value
+            .get("messages_compacted")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or_default();
+        let boundary_ref = value
+            .get("compacted_until_ref")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<MessageRef>(value).ok())
+            .or_else(|| derive_compaction_boundary_ref_from_events(&events, messages_compacted));
+        let boundary = resolve_compaction_boundary(&raw_transcript.entries, boundary_ref.as_ref());
+        let Some(source_end_event_seq) = boundary
+            .source_end_event_seq
+            .or_else(|| source_end_from_count(&raw_transcript.entries, messages_compacted))
+        else {
+            return Ok(None);
+        };
+        let source_start_event_seq = raw_transcript
+            .entries
+            .iter()
+            .filter_map(projected_entry_source_event_seq)
+            .find(|seq| *seq <= source_end_event_seq)
+            .or(Some(source_end_event_seq));
+        let first_kept_event_seq = raw_transcript
+            .entries
+            .iter()
+            .filter_map(projected_entry_source_event_seq)
+            .find(|seq| *seq > source_end_event_seq)
+            .or_else(|| source_end_event_seq.checked_add(1));
+        let start_event_seq = find_compaction_started_event_seq(&events, &lifecycle_item_id)
+            .unwrap_or(base_head_event_seq);
+        let tokens_before = value
+            .get("tokens_before")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let newly_compacted_messages = value
+            .get("newly_compacted_messages")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok());
+        let timestamp_ms = value
+            .get("timestamp_ms")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| i64::try_from(value).ok())
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+
+        let trigger = value
+            .get("trigger")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("auto")
+            .to_string();
+        let reason = value
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| Some("token_pressure".to_string()));
+        let phase = value
+            .get("phase")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| Some("pre_provider".to_string()));
+        let strategy = value
+            .get("strategy")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("summary_prefix")
+            .to_string();
+        let budget_scope = value
+            .get("budget_scope")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+            .or_else(|| Some("model_context".to_string()));
+
+        let mut completed_event = envelope;
+        enrich_context_compacted_commit_value(
+            &mut completed_event,
+            &compaction_id,
+            projection_version,
+            source_start_event_seq,
+            source_end_event_seq,
+            first_kept_event_seq,
+            &trigger,
+            phase.as_deref(),
+            &strategy,
+        );
+
+        let commit = NewCompactionProjectionCommit {
+            completed_event,
+            compaction: SessionCompactionRecord {
+                id: compaction_id.clone(),
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version,
+                lifecycle_item_id: lifecycle_item_id.clone(),
+                start_event_seq,
+                completed_event_seq: None,
+                failed_event_seq: None,
+                status: SessionCompactionStatus::ProjectionCommitted,
+                trigger: trigger.clone(),
+                reason,
+                phase: phase.clone(),
+                strategy: strategy.clone(),
+                budget_scope,
+                base_head_event_seq: Some(base_head_event_seq),
+                source_start_event_seq,
+                source_end_event_seq: Some(source_end_event_seq),
+                first_kept_event_seq,
+                summary: summary.clone(),
+                replacement_projection_json: serde_json::json!({
+                    "projection_kind": SESSION_PROJECTION_KIND_MODEL_CONTEXT,
+                    "projection_version": projection_version,
+                    "summary_segment_id": segment_id.clone(),
+                    "source_start_event_seq": source_start_event_seq,
+                    "source_end_event_seq": source_end_event_seq,
+                    "first_kept_event_seq": first_kept_event_seq,
+                    "compacted_until_ref": boundary_ref.clone(),
+                }),
+                token_stats_json: serde_json::json!({
+                    "tokens_before": tokens_before,
+                    "messages_compacted": messages_compacted,
+                    "newly_compacted_messages": newly_compacted_messages,
+                }),
+                diagnostics_json: serde_json::json!({}),
+                created_by: Some("agent".to_string()),
+                created_at_ms: timestamp_ms,
+                completed_at_ms: None,
+            },
+            segments: vec![SessionProjectionSegmentRecord {
+                id: segment_id,
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version,
+                sort_order: 0,
+                segment_type: "summary_chunk".to_string(),
+                origin: "projection".to_string(),
+                synthetic: true,
+                source_start_event_seq,
+                source_end_event_seq: Some(source_end_event_seq),
+                source_refs_json: serde_json::json!({
+                    "compacted_until_ref": boundary_ref.clone(),
+                    "messages_compacted": messages_compacted,
+                    "newly_compacted_messages": newly_compacted_messages,
+                }),
+                generated_by_compaction_id: Some(compaction_id.clone()),
+                content_json: serde_json::json!({
+                    "role": "system",
+                    "content": summary.clone(),
+                }),
+                token_estimate: Some(estimate_text_tokens(&summary)),
+                created_at_ms: timestamp_ms,
+            }],
+            head: SessionProjectionHeadRecord {
+                session_id: session_id.to_string(),
+                branch_id: None,
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version,
+                head_event_seq: completed_event_seq,
+                active_compaction_id: Some(compaction_id),
+                updated_by_event_seq: None,
+                updated_at_ms: 0,
+            },
+        };
+
+        self.stores
+            .projections
+            .commit_compaction_projection(session_id, commit)
+            .await
+            .map(Some)
     }
 
     async fn derive_compaction_boundary_ref(
@@ -346,9 +599,33 @@ impl SessionEventingService {
             .events
             .append_event(session_id, envelope)
             .await?;
+        self.advance_model_projection_head(session_id, &persisted)
+            .await?;
         let tx = self.runtime_registry.touch_and_sender(session_id).await;
         let _ = tx.send(persisted.clone());
         Ok(persisted)
+    }
+
+    async fn advance_model_projection_head(
+        &self,
+        session_id: &str,
+        persisted: &PersistedSessionEvent,
+    ) -> io::Result<()> {
+        let Some(mut head) = self
+            .stores
+            .projections
+            .read_projection_head(session_id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await?
+        else {
+            return Ok(());
+        };
+        if persisted.event_seq <= head.head_event_seq {
+            return Ok(());
+        }
+        head.head_event_seq = persisted.event_seq;
+        head.updated_by_event_seq = Some(persisted.event_seq);
+        head.updated_at_ms = persisted.committed_at_ms;
+        self.stores.projections.upsert_projection_head(head).await
     }
 
     fn connector_source(&self, executor_id: Option<String>) -> SourceInfo {
@@ -362,6 +639,150 @@ impl SessionEventingService {
             executor_id,
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct CompactionBoundary {
+    source_end_event_seq: Option<u64>,
+}
+
+fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::Value> {
+    match &envelope.event {
+        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+            if key == "context_compacted" =>
+        {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+fn latest_event_seq(events: &[PersistedSessionEvent]) -> u64 {
+    events
+        .iter()
+        .map(|event| event.event_seq)
+        .max()
+        .unwrap_or_default()
+}
+
+fn resolve_compaction_boundary(
+    entries: &[agentdash_agent_types::ProjectedEntry],
+    boundary_ref: Option<&MessageRef>,
+) -> CompactionBoundary {
+    let Some(boundary_ref) = boundary_ref else {
+        return CompactionBoundary::default();
+    };
+    entries
+        .iter()
+        .find(|entry| &entry.message_ref == boundary_ref)
+        .and_then(projected_entry_source_event_seq)
+        .map(|source_end_event_seq| CompactionBoundary {
+            source_end_event_seq: Some(source_end_event_seq),
+        })
+        .unwrap_or_default()
+}
+
+fn source_end_from_count(
+    entries: &[agentdash_agent_types::ProjectedEntry],
+    messages_compacted: u32,
+) -> Option<u64> {
+    if messages_compacted == 0 {
+        return None;
+    }
+    let index = usize::try_from(messages_compacted).ok()?.checked_sub(1)?;
+    entries
+        .get(index)
+        .and_then(projected_entry_source_event_seq)
+}
+
+fn projected_entry_source_event_seq(entry: &agentdash_agent_types::ProjectedEntry) -> Option<u64> {
+    entry
+        .source_event_seq
+        .or_else(|| entry.source_range.as_ref().map(|range| range.end_event_seq))
+}
+
+fn find_compaction_started_event_seq(
+    events: &[PersistedSessionEvent],
+    lifecycle_item_id: &str,
+) -> Option<u64> {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match &event.notification.event {
+            BackboneEvent::ItemStarted(started)
+                if matches!(
+                    &started.item,
+                    codex::ThreadItem::ContextCompaction { id } if id == lifecycle_item_id
+                ) =>
+            {
+                Some(event.event_seq)
+            }
+            _ => None,
+        })
+}
+
+fn enrich_context_compacted_commit_value(
+    envelope: &mut BackboneEnvelope,
+    compaction_id: &str,
+    projection_version: u64,
+    source_start_event_seq: Option<u64>,
+    source_end_event_seq: u64,
+    first_kept_event_seq: Option<u64>,
+    trigger: &str,
+    phase: Option<&str>,
+    strategy: &str,
+) {
+    let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) =
+        &mut envelope.event
+    else {
+        return;
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    obj.insert(
+        "compaction_id".to_string(),
+        serde_json::Value::String(compaction_id.to_string()),
+    );
+    obj.insert(
+        "projection_kind".to_string(),
+        serde_json::Value::String(SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string()),
+    );
+    obj.insert(
+        "projection_version".to_string(),
+        serde_json::json!(projection_version),
+    );
+    obj.insert(
+        "source_start_event_seq".to_string(),
+        serde_json::to_value(source_start_event_seq).unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "source_end_event_seq".to_string(),
+        serde_json::json!(source_end_event_seq),
+    );
+    obj.insert(
+        "first_kept_event_seq".to_string(),
+        serde_json::to_value(first_kept_event_seq).unwrap_or(serde_json::Value::Null),
+    );
+    obj.insert(
+        "trigger".to_string(),
+        serde_json::Value::String(trigger.to_string()),
+    );
+    if let Some(phase) = phase {
+        obj.insert(
+            "phase".to_string(),
+            serde_json::Value::String(phase.to_string()),
+        );
+    }
+    obj.insert(
+        "strategy".to_string(),
+        serde_json::Value::String(strategy.to_string()),
+    );
+}
+
+fn estimate_text_tokens(value: &str) -> u64 {
+    let chars = u64::try_from(value.chars().count()).unwrap_or(u64::MAX);
+    chars.saturating_add(3) / 4 + 4
 }
 
 pub(crate) fn derive_compaction_boundary_ref_from_events(

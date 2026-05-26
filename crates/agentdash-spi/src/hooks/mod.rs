@@ -355,6 +355,22 @@ pub enum ContextFrameSection {
         tokens_before: u64,
         messages_compacted: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        compaction_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projection_version: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strategy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_start_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_end_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_kept_event_seq: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         compacted_until_ref: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timestamp_ms: Option<u64>,
@@ -498,6 +514,19 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn update_token_stats(&self, stats: ContextTokenStats);
     /// 读取当前 token 统计。
     fn token_stats(&self) -> ContextTokenStats;
+
+    /// 记录一次结构性压缩失败，返回当前连续失败次数。
+    fn record_compaction_failure(&self, _error: &str) -> u32 {
+        0
+    }
+
+    /// 清空结构性压缩连续失败计数。
+    fn reset_compaction_failures(&self) {}
+
+    /// 读取结构性压缩连续失败次数。
+    fn compaction_failure_count(&self) -> u32 {
+        0
+    }
 
     /// 读取当前生效的能力 key 集合。
     fn current_capabilities(&self) -> std::collections::BTreeSet<String> {

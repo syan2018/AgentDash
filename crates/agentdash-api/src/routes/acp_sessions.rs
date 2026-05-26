@@ -23,6 +23,7 @@ use agentdash_application::session::{
 };
 use agentdash_contracts::session::{
     SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
+    SessionProjectionViewResponse,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
@@ -554,6 +555,30 @@ pub async fn get_session_context(
     };
 
     Ok(Json(SessionContextResponse::from_construction_plan(plan)))
+}
+
+/// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
+pub async fn get_session_context_projection(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionProjectionViewResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let envelope = state
+        .services
+        .session_eventing
+        .build_agent_context_envelope(&session_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    Ok(Json(SessionProjectionViewResponse::from(envelope)))
 }
 
 impl SessionContextResponse {

@@ -34,7 +34,7 @@ AgentRuntimeDelegate（agent loop 边界同步消费）
 
 ### AgentRuntimeDelegate（`agentdash-agent-types::runtime::delegate`）
 
-Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`evaluate_compaction`、`after_compaction`、`transform_context`、`before_tool_call`、`after_tool_call`、`after_turn`、`before_stop`、`on_before_provider_request`。具体签名查代码。
+Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`evaluate_compaction`、`after_compaction`、`after_compaction_failed`、`transform_context`、`before_tool_call`、`after_tool_call`、`after_turn`、`before_stop`、`on_before_provider_request`。具体签名查代码。
 
 ### ExecutionHookProvider（`agentdash-spi::hooks`）
 
@@ -86,6 +86,7 @@ Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`ev
   `ContextFrame(kind="compaction_summary")`。该 frame 的 `delivery_channel` 是
   `continuation`，section 至少包含 summary、tokens_before、messages_compacted、
   compacted_until_ref 与 timestamp_ms，让用户能看到后续上下文受哪份压缩摘要影响。
+- 结构性压缩失败通过 `after_compaction_failed` 进入 Hook runtime diagnostic。连续失败计数属于 runtime 状态，达到阈值后 `evaluate_compaction` 返回 no-op，避免自动压缩在同一失败条件下反复消耗上下文窗口；成功 `after_compaction` 会复位该计数。
 
 ### Workflow -> Hook Policy
 
@@ -168,4 +169,3 @@ Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`ev
 ---
 
 > Pi Agent 流式 chunk 合并协议已拆分到 [pi-agent-streaming.md](../session/pi-agent-streaming.md)。
-

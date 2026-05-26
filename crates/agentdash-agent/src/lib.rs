@@ -20,7 +20,7 @@ pub use types::{
     BeforeToolCallInput, BeforeToolCallResult, CompactionParams, CompactionResult,
     CompactionTriggerStats, ContentPart, DynAgentRuntimeDelegate, DynAgentTool,
     EvaluateCompactionInput, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
-    StopDecision, StopReason, TokenUsage, ToolApprovalOutcome, ToolApprovalRequest,
-    ToolCallDecision, ToolCallInfo, ToolDefinition, ToolExecutionMode, ToolUpdateCallback,
-    TransformContextInput, TransformContextOutput, TurnControlDecision,
+    ProviderVisibleContextStats, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
+    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, ToolDefinition, ToolExecutionMode,
+    ToolUpdateCallback, TransformContextInput, TransformContextOutput, TurnControlDecision,
 };

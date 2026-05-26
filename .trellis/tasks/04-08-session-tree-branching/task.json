@@ -38,5 +38,5 @@
   "subtasks": [],
   "relatedFiles": [],
   "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 交付 branch-aware checkpoint、lineage 和 projection head 基建。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",
-  "parent": "05-25-context-compaction-architecture-enhancement"
+  "parent": null
 }

@@ -7,7 +7,9 @@ use tokio::sync::Mutex;
 
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
+    CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
+    SessionCompactionRecord, SessionEventBacklog, SessionEventPage, SessionPersistence,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
@@ -28,6 +30,9 @@ struct MemorySessionPersistenceState {
     events: HashMap<String, Vec<PersistedSessionEvent>>,
     terminal_effects: Vec<TerminalEffectRecord>,
     runtime_commands: Vec<RuntimeCommandRecord>,
+    compactions: Vec<SessionCompactionRecord>,
+    projection_segments: Vec<SessionProjectionSegmentRecord>,
+    projection_heads: HashMap<(String, String, String), SessionProjectionHeadRecord>,
 }
 
 #[async_trait::async_trait]
@@ -73,6 +78,15 @@ impl SessionPersistence for MemorySessionPersistence {
         guard
             .runtime_commands
             .retain(|command| command.session_id != session_id);
+        guard
+            .compactions
+            .retain(|compaction| compaction.session_id != session_id);
+        guard
+            .projection_segments
+            .retain(|segment| segment.session_id != session_id);
+        guard
+            .projection_heads
+            .retain(|(id, _, _), _| id != session_id);
         Ok(())
     }
 
@@ -390,6 +404,193 @@ impl SessionPersistence for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
+
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .compactions
+            .iter()
+            .find(|record| record.session_id == session_id && record.id == compaction_id)
+            .cloned())
+    }
+
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>> {
+        let guard = self.inner.lock().await;
+        let requested_branch = branch_key(branch_id);
+        let mut records = guard
+            .compactions
+            .iter()
+            .filter(|record| {
+                record.session_id == session_id
+                    && branch_key(record.branch_id.as_deref()) == requested_branch
+                    && record.projection_kind == projection_kind
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.projection_version);
+        Ok(records)
+    }
+
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+        let guard = self.inner.lock().await;
+        let requested_branch = branch_key(branch_id);
+        let mut segments = guard
+            .projection_segments
+            .iter()
+            .filter(|segment| {
+                segment.session_id == session_id
+                    && branch_key(segment.branch_id.as_deref()) == requested_branch
+                    && segment.projection_kind == projection_kind
+                    && segment.projection_version == projection_version
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        segments.sort_by_key(|segment| segment.sort_order);
+        Ok(segments)
+    }
+
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        branch_id: Option<&str>,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .projection_heads
+            .get(&projection_head_key(session_id, branch_id, projection_kind))
+            .cloned())
+    }
+
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(&head.session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {} 不存在", head.session_id),
+            ));
+        }
+        guard.projection_heads.insert(
+            projection_head_key(
+                &head.session_id,
+                head.branch_id.as_deref(),
+                &head.projection_kind,
+            ),
+            head,
+        );
+        Ok(())
+    }
+
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            ));
+        }
+        validate_commit_session(session_id, &commit)?;
+        if guard
+            .compactions
+            .iter()
+            .any(|record| record.session_id == session_id && record.id == commit.compaction.id)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("compaction {} 已存在", commit.compaction.id),
+            ));
+        }
+        for segment in &commit.segments {
+            if guard
+                .projection_segments
+                .iter()
+                .any(|record| record.session_id == session_id && record.id == segment.id)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("projection segment {} 已存在", segment.id),
+                ));
+            }
+        }
+        let committed_at_ms = chrono::Utc::now().timestamp_millis();
+        let meta = guard.metas.get_mut(session_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            )
+        })?;
+        let event_seq = meta.last_event_seq.checked_add(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("session {session_id} 的 event_seq 已溢出"),
+            )
+        })?;
+        let persisted = build_persisted_event(
+            session_id,
+            event_seq,
+            committed_at_ms,
+            &commit.completed_event,
+        );
+        meta.last_event_seq = event_seq;
+        meta.updated_at = committed_at_ms;
+        apply_envelope_projection(meta, &commit.completed_event);
+        guard
+            .events
+            .entry(session_id.to_string())
+            .or_default()
+            .push(persisted.clone());
+
+        let mut compaction = commit.compaction;
+        compaction.completed_event_seq = Some(event_seq);
+        compaction.completed_at_ms = compaction.completed_at_ms.or(Some(committed_at_ms));
+        let mut head = commit.head;
+        head.head_event_seq = event_seq;
+        head.updated_by_event_seq = Some(event_seq);
+        head.updated_at_ms = if head.updated_at_ms == 0 {
+            committed_at_ms
+        } else {
+            head.updated_at_ms
+        };
+
+        guard.compactions.push(compaction.clone());
+        guard
+            .projection_segments
+            .extend(commit.segments.iter().cloned());
+        guard.projection_heads.insert(
+            projection_head_key(
+                &head.session_id,
+                head.branch_id.as_deref(),
+                &head.projection_kind,
+            ),
+            head.clone(),
+        );
+
+        Ok(CompactionProjectionCommitResult {
+            event: persisted,
+            compaction,
+            segments: commit.segments,
+            head,
+        })
+    }
 }
 
 impl MemorySessionPersistence {
@@ -468,6 +669,45 @@ fn build_persisted_event(
         tool_call_id: None,
         notification: envelope.clone(),
     }
+}
+
+fn branch_key(branch_id: Option<&str>) -> &str {
+    branch_id.unwrap_or("")
+}
+
+fn projection_head_key(
+    session_id: &str,
+    branch_id: Option<&str>,
+    projection_kind: &str,
+) -> (String, String, String) {
+    (
+        session_id.to_string(),
+        branch_key(branch_id).to_string(),
+        projection_kind.to_string(),
+    )
+}
+
+fn validate_commit_session(
+    session_id: &str,
+    commit: &NewCompactionProjectionCommit,
+) -> io::Result<()> {
+    if commit.compaction.session_id != session_id || commit.head.session_id != session_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("compaction projection commit session_id 不一致: {session_id}"),
+        ));
+    }
+    if commit
+        .segments
+        .iter()
+        .any(|segment| segment.session_id != session_id)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("projection segment session_id 不一致: {session_id}"),
+        ));
+    }
+    Ok(())
 }
 
 fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {

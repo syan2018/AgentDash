@@ -891,3 +891,46 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 上下文压缩基建落地
+
+**Date**: 2026-05-26
+**Task**: 上下文压缩基建落地
+**Branch**: `main`
+
+### Summary
+
+完成 Codex-aligned compact lifecycle、projection store、ContextProjector、projection view、失败熔断与规格固化，并归档父任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d36cbe1` | (see git log) |
+| `ff6ac916` | (see git log) |
+| `aadb7db9` | (see git log) |
+| `596a8d1d` | (see git log) |
+| `894f766c` | (see git log) |
+| `0c31e8cd` | (see git log) |
+| `cdc2ef05` | (see git log) |
+| `cd6472e3` | (see git log) |
+| `f89746ea` | (see git log) |
+| `baabaa72` | (see git log) |
+| `600db8f6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

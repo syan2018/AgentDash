@@ -7,26 +7,26 @@
 - [x] 用户确认首个 MVP renderer：直接包含 sandboxed webview/custom UI bundle，schema-driven renderer 仅作为诊断或 fallback。
 - [x] 用户确认首版 scope：project-level extension only。其它 Project 通过 Marketplace / package 快速安装获得同类能力。
 - [x] 用户确认 extension package archive 的首版权威位置：后端 / Project asset 侧为正式安装事实源；local store 只做 dev mode 与运行缓存。
-- [ ] 根据确认结果拆分子任务；父任务保留集成验收与跨层契约。
+- [x] 根据确认结果拆分子任务；父任务保留集成验收与跨层契约。
 
 ## Phase 1: Cross-layer Contracts
 
-- [ ] 扩展 `crates/agentdash-domain/src/shared_library/value_objects.rs`
+- [x] 扩展 `crates/agentdash-domain/src/shared_library/value_objects.rs`
   - `ExtensionTemplatePayload` 增加 `runtime_actions`、`workspace_tabs`、`permissions`、`bundles`。
   - 增加 typed validation：action key、type id、uri scheme、renderer kind、permission shape、bundle digest。
-- [ ] 更新 `crates/agentdash-infrastructure/migrations/*`
+- [x] 更新 `crates/agentdash-infrastructure/migrations/*`
   - 若 manifest JSONB 足够，迁移只需确保 validators 与 existing rows repair。
   - 若引入 package/bundle 表，新增 migration 和 repository。
-- [ ] 更新 `crates/agentdash-application/src/session/construction.rs`
+- [x] 更新 `crates/agentdash-application/src/session/construction.rs`
   - 增加 extension runtime projection 字段：runtime actions、workspace tabs、permissions、bundle refs。
-- [ ] 更新 `crates/agentdash-api/src/session_use_cases/construction.rs`
+- [x] 更新 `crates/agentdash-api/src/session_use_cases/construction.rs`
   - 从 enabled project extension installations flatten 新字段。
   - 增加冲突检测：action key / workspace tab type id / uri scheme。
-- [ ] 更新 `crates/agentdash-api/src/routes/acp_sessions.rs`
+- [x] 更新 `crates/agentdash-api/src/routes/acp_sessions.rs`
   - `SessionContextResponse` 暴露 `extension_runtime` 或等价 projection DTO。
-- [ ] 更新 `crates/agentdash-contracts`
+- [x] 更新 `crates/agentdash-contracts`
   - 生成 shared-library/session context 相关 TS contracts。
-- [ ] 前端更新 `packages/app-web/src/services/session.ts`
+- [x] 前端更新 `packages/app-web/src/services/session.ts`
   - 使用 mapper 解析 extension runtime，禁止直接信任 raw JSON。
 
 Validation:
@@ -40,30 +40,30 @@ pnpm run frontend:check
 
 ## Phase 2: SDK Packages
 
-- [ ] 新增 `packages/extension-sdk`
+- [x] 新增 `packages/extension-sdk`
   - `defineExtension`
   - `ExtensionContext`
   - `runtime.registerAction`
   - `workspace.registerPanel`
   - `commands.registerCommand`
   - schema helpers and manifest builder
-- [ ] 新增 `packages/extension-ui`
+- [x] 新增 `packages/extension-ui`
   - panel bridge client
   - `invokeAction`
   - `openWorkspaceTab`
   - VFS read/write facade
   - event subscribe/emit facade
-- [ ] 新增 `packages/extension-dev`
+- [x] 新增 `packages/extension-dev`
   - CLI `init`
   - CLI `dev`
   - CLI `validate`
   - CLI `pack`
   - CLI `install`
-- [ ] `pack` 集成 bundler，分别产出 extension host bundle 与 webview bundle。
-- [ ] `validate` 检查安装包自包含：禁止依赖安装脚本成为运行路径；标记 native addon / platform binary / postinstall 下载需求。
-- [ ] 更新 `pnpm-workspace.yaml` 如需 package 命名分层。
-- [ ] 新增 `examples/extensions/local-hello/`，作为独立 demo extension project，而不是零散 fixture。
-- [ ] demo project 包含自己的 `package.json`、`agentdash.extension.json`、extension host 入口、webview UI、测试和 README。
+- [x] `pack` 集成 bundler，分别产出 extension host bundle 与 webview bundle。
+- [x] `validate` 检查安装包自包含：禁止依赖安装脚本成为运行路径；标记 native addon / platform binary / postinstall 下载需求。
+- [x] 更新 `pnpm-workspace.yaml` 如需 package 命名分层。
+- [x] 新增 `examples/extensions/local-hello/`，作为独立 demo extension project，而不是零散 fixture。
+- [x] demo project 包含自己的 `package.json`、`agentdash.extension.json`、extension host 入口、webview UI、测试和 README。
 
 Validation:
 
@@ -76,12 +76,12 @@ pnpm --filter @agentdash/extension-dev test
 
 ## Phase 3: Local TS Extension Host
 
-- [ ] 在 `crates/agentdash-local` 增加 extension host manager。
-- [ ] 定义 local <-> TS host JSON-RPC protocol。
-- [ ] 实现 host lifecycle：initialize、activate、deactivate、reload、health。
-- [ ] 实现 action invocation：invoke_action、result/error normalization。
-- [ ] 实现 permission-mediated host APIs：HTTP、VFS、env、process 的首版最小子集。
-- [ ] 让 `pnpm dev` / local dev mode 能发现 `examples/extensions/local-hello`。
+- [x] 在 `crates/agentdash-local` 增加 extension host manager。
+- [x] 定义 local <-> TS host JSON-RPC protocol。
+- [x] 实现 host lifecycle：initialize、activate、deactivate、reload、health。
+- [x] 实现 action invocation：invoke_action、result/error normalization。
+- [x] 实现 permission-mediated host APIs：HTTP、VFS、env、process 的首版最小子集。
+- [x] 让 `pnpm dev` / local dev mode 能发现 `examples/extensions/local-hello`。
 
 Validation:
 
@@ -98,12 +98,12 @@ Manual check:
 
 ## Phase 4: RuntimeGateway Proxy
 
-- [ ] 在 application/API 层实现 `ExtensionRuntimeActionProvider`。
-- [ ] provider 读取当前 session project 的 enabled extension action projection。
-- [ ] provider 通过 `BackendRegistry` 转发到 owning local backend。
-- [ ] relay protocol 增加 extension action invoke command/response。
-- [ ] action result 保留 RuntimeGateway trace、extension id、action key、backend id。
-- [ ] 错误映射到 `ProviderUnavailable` / `CapabilityDenied` / `ProviderFailed`。
+- [x] 在 application/API 层实现 `ExtensionRuntimeActionProvider`。
+- [x] provider 读取当前 session project 的 enabled extension action projection。
+- [x] provider 通过 `BackendRegistry` 转发到 owning local backend。
+- [x] relay protocol 增加 extension action invoke command/response。
+- [x] action result 保留 RuntimeGateway trace、extension id、action key、backend id。
+- [x] 错误映射到 `ProviderUnavailable` / `CapabilityDenied` / `ProviderFailed`。
 
 Validation:
 
@@ -115,15 +115,15 @@ cargo test -p agentdash-relay
 
 ## Phase 5: Frontend WorkspacePanel Contributions
 
-- [ ] `WorkspaceRuntimeData` 增加 `extension_runtime`。
-- [ ] 新增 extension tab descriptor factory。
-- [ ] `tabTypeRegistry` 支持 runtime contribution lifecycle。
-- [ ] `AddTabMenu` 订阅 registry snapshot 变化，显示 plugin tabs。
-- [ ] plugin tab unavailable state：extension disabled / action missing / backend offline。
-- [ ] 实现首个 renderer：
+- [x] `WorkspaceRuntimeData` 增加 `extension_runtime`。
+- [x] 新增 extension tab descriptor factory。
+- [x] `tabTypeRegistry` 支持 runtime contribution lifecycle。
+- [x] `AddTabMenu` 订阅 registry snapshot 变化，显示 plugin tabs。
+- [x] plugin tab unavailable state：extension disabled / action missing / backend offline。
+- [x] 实现首个 renderer：
   - `webview` 主路径：sandboxed iframe + bridge + asset loading + lifecycle。
   - `runtime_panel` 可选：schema form + invoke + result view，用于开发诊断或 fallback。
-- [ ] 补充 WorkspacePanel tests。
+- [x] 补充 WorkspacePanel tests。
 
 Validation:
 
@@ -142,14 +142,14 @@ Manual check:
 
 ## Phase 6: Install / Pack / Project Flow
 
-- [ ] `extension-dev pack` 输出 archive、manifest、digest。
-- [ ] `extension-dev install` 上传 archive artifact，并调用 AgentDash API 写入 Project extension installation；MVP 主路径支持外部 archive 安装，而不是只支持 native plugin embedded seed。
-- [ ] 后端保存 artifact storage ref、digest、package metadata 与 source version。
-- [ ] `agentdash-local` 按 Project installation 下载、校验、解包 archive，并复用本机 cache。
-- [ ] 安装端不执行 `npm install` / `pnpm install` / package lifecycle scripts；所有运行依赖来自 archive contents。
-- [ ] Marketplace / Assets UI 可展示 extension template 新字段摘要。
-- [ ] Project source-status 覆盖 extension installation。
-- [ ] Extension enable/disable 触发 session runtime projection refresh。
+- [x] `extension-dev pack` 输出 archive、manifest、digest。
+- [x] `extension-dev install` 上传 archive artifact，并调用 AgentDash API 写入 Project extension installation；MVP 主路径支持外部 archive 安装，而不是只支持 native plugin embedded seed。
+- [x] 后端保存 artifact storage ref、digest、package metadata 与 source version。
+- [x] `agentdash-local` 按 Project installation 下载、校验、解包 archive，并复用本机 cache。
+- [x] 安装端不执行 `npm install` / `pnpm install` / package lifecycle scripts；所有运行依赖来自 archive contents。
+- [x] Marketplace / Assets UI 可展示 extension template 新字段摘要。
+- [x] Project source-status 覆盖 extension installation。
+- [x] Extension enable/disable 触发 session runtime projection refresh。
 
 Validation:
 
@@ -161,11 +161,11 @@ pnpm run frontend:test
 
 ## Phase 7: Canvas Promote to Extension
 
-- [ ] 定义 Canvas -> ExtensionTemplate mapper。
-- [ ] 后端发布路径从 Canvas 读取 files、entry、sandbox config、bindings。
-- [ ] Extension manifest 写入 `workspace_tabs` with `canvas_panel` renderer。
-- [ ] 前端增加 Promote action 入口和安装后打开 tab 路径。
-- [ ] 使用 Canvas runtime preview 抽象渲染 promoted extension。
+- [x] 定义 Canvas -> ExtensionTemplate mapper。
+- [x] 后端发布路径从 Canvas 读取 files、entry、sandbox config、bindings。
+- [x] Extension manifest 写入 `workspace_tabs` with `canvas_panel` renderer。
+- [x] 前端增加 Promote action 入口和安装后打开 tab 路径。
+- [x] 使用 Canvas runtime preview 抽象渲染 promoted extension。
 
 Validation:
 
@@ -177,14 +177,14 @@ pnpm run frontend:test
 
 ## Phase 8: Demo Extension and End-to-end Verification
 
-- [ ] `examples/extensions/local-hello` 可在目录内独立运行 `dev`、`validate`、`pack`。
-- [ ] demo action `local-hello.profile` 通过 extension backend SDK 调用 `api.local.getProfile()`，返回受限本机 profile。
-- [ ] demo webview 通过 `@agentdash/extension-ui` 调用 action 并展示 username / platform / backend id / session 摘要。
-- [ ] 新增 packaged artifact E2E：`local-hello` 源码目录执行 `pack`，上传 archive artifact，Project installation 引用 artifact storage ref/digest。
-- [ ] E2E 安装后不依赖 local dev ref：清理或忽略 demo 源码路径，`agentdash-local` 从平台 artifact 下载、校验、解包 packaged extension。
-- [ ] 新增 E2E：packaged local-hello install -> session context exposes extension_runtime -> open panel -> invoke action -> display local profile。
-- [ ] 新增 E2E：Canvas promote -> install -> workspace tab opens。
-- [ ] 运行关键检查。
+- [x] `examples/extensions/local-hello` 可在目录内独立运行 `dev`、`validate`、`pack`。
+- [x] demo action `local-hello.profile` 通过 extension backend SDK 调用 `api.local.getProfile()`，返回受限本机 profile。
+- [x] demo webview 通过 `@agentdash/extension-ui` 调用 action 并展示 username / platform / backend id / session 摘要。
+- [x] 新增 packaged artifact E2E：`local-hello` 源码目录执行 `pack`，上传 archive artifact，Project installation 引用 artifact storage ref/digest。
+- [x] E2E 安装后不依赖 local dev ref：清理或忽略 demo 源码路径，`agentdash-local` 从平台 artifact 下载、校验、解包 packaged extension。
+- [x] 新增 E2E：packaged local-hello install -> session context exposes extension_runtime -> open panel -> invoke action -> display local profile。
+- [x] 新增 E2E：Canvas promote -> install -> workspace tab opens。
+- [x] 运行关键检查。
 
 Validation:
 
@@ -239,4 +239,4 @@ pnpm run e2e:test:critical
 - [x] 用户确认 Phase 0 三个产品决策。
 - [x] 根据决策创建或确认子任务树。
 - [x] 每个子任务都拥有自己的 PRD / design / implement。
-- [ ] 父任务不直接启动实现，除非用户要求把 MVP 合并为一个实现任务。
+- [x] 父任务不直接启动实现，除非用户要求把 MVP 合并为一个实现任务。

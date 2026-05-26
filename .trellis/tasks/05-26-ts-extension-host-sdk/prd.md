@@ -151,16 +151,16 @@ Demo 验证必须覆盖正式打包产物在平台中的可用性：不能只验
 
 ## Acceptance Criteria
 
-- [ ] `prd.md`、`design.md`、`implement.md` 完整描述 TS Extension Host + SDK + frontend panel + RuntimeGateway + Project installation 的端到端方案。
-- [ ] 设计明确 native Rust plugin 与 TS user extension 的职责边界，避免把两者混为一个安装模型。
-- [ ] 设计明确 SDK 包结构、插件项目结构、manifest 生成/校验/打包/安装流程。
-- [ ] 设计明确 `extension_template` / `project_extension_installations` 如何扩展以承载 workspace tabs、runtime actions、permissions 与 bundle refs。
-- [ ] 设计明确 `agentdash-local` 与 TS Extension Host 的通信协议方向、生命周期、reload 和权限裁决。
-- [ ] 设计明确 RuntimeGateway 如何代理插件 action，并保持 actor/context/trace 由宿主组装。
-- [ ] 设计明确前端 WorkspacePanel 如何消费 `extension_runtime` 并注册动态 tab。
-- [ ] 设计包含 Canvas 转插件的产品路径与技术映射。
-- [ ] 设计包含 packaged demo extension 的平台级验收：archive 上传/存储、Project 安装、session projection、WorkspacePanel 打开、webview bridge 调用 local action。
-- [ ] `implement.md` 给出可拆分执行阶段、主要修改文件、验证命令和回滚点。
+- [x] `prd.md`、`design.md`、`implement.md` 完整描述 TS Extension Host + SDK + frontend panel + RuntimeGateway + Project installation 的端到端方案。
+- [x] 设计明确 native Rust plugin 与 TS user extension 的职责边界，避免把两者混为一个安装模型。
+- [x] 设计明确 SDK 包结构、插件项目结构、manifest 生成/校验/打包/安装流程。
+- [x] 设计明确 `extension_template` / `project_extension_installations` 如何扩展以承载 workspace tabs、runtime actions、permissions 与 bundle refs。
+- [x] 设计明确 `agentdash-local` 与 TS Extension Host 的通信协议方向、生命周期、reload 和权限裁决。
+- [x] 设计明确 RuntimeGateway 如何代理插件 action，并保持 actor/context/trace 由宿主组装。
+- [x] 设计明确前端 WorkspacePanel 如何消费 `extension_runtime` 并注册动态 tab。
+- [x] 设计包含 Canvas 转插件的产品路径与技术映射。
+- [x] 设计包含 packaged demo extension 的平台级验收：archive 上传/存储、Project 安装、session projection、WorkspacePanel 打开、webview bridge 调用 local action。
+- [x] `implement.md` 给出可拆分执行阶段、主要修改文件、验证命令和回滚点。
 
 ## Scope Boundary
 

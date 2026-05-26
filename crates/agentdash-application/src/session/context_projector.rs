@@ -1,7 +1,7 @@
 use std::io;
 
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentInputMessage, AgentMessage, MessageRef, ProjectedEntry,
+    AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef, ProjectedEntry,
     ProjectedTranscript, ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
 };
 use agentdash_spi::{
@@ -39,15 +39,19 @@ impl ContextProjector {
                 self.build_from_projection_head(session_id, branch_id, &events, head)
                     .await
             }
-            None => Ok(envelope_from_transcript(
-                session_id,
-                branch_id,
-                0,
-                latest_event_seq(&events),
-                None,
-                None,
-                build_raw_projected_transcript_from_filtered_events(events.iter()),
-            )),
+            None => {
+                let transcript = build_raw_projected_transcript_from_filtered_events(events.iter());
+                let token_estimate = entries_token_estimate(&transcript.entries);
+                Ok(envelope_from_transcript(
+                    session_id,
+                    branch_id,
+                    0,
+                    latest_event_seq(&events),
+                    None,
+                    token_estimate,
+                    transcript,
+                ))
+            }
         }
     }
 
@@ -70,18 +74,20 @@ impl ContextProjector {
         head: SessionProjectionHeadRecord,
     ) -> io::Result<AgentContextEnvelope> {
         let Some(active_compaction_id) = head.active_compaction_id.as_deref() else {
+            let transcript = build_raw_projected_transcript_from_filtered_events(
+                events
+                    .iter()
+                    .filter(|event| event.event_seq <= head.head_event_seq),
+            );
+            let token_estimate = entries_token_estimate(&transcript.entries);
             return Ok(envelope_from_transcript(
                 session_id,
                 branch_id,
                 head.projection_version,
                 head.head_event_seq,
                 None,
-                None,
-                build_raw_projected_transcript_from_filtered_events(
-                    events
-                        .iter()
-                        .filter(|event| event.event_seq <= head.head_event_seq),
-                ),
+                token_estimate,
+                transcript,
             ));
         };
 
@@ -122,6 +128,7 @@ impl ContextProjector {
             build_raw_projected_transcript_from_filtered_events(events.iter().filter(|event| {
                 event.event_seq >= suffix_start_event_seq && event.event_seq <= head.head_event_seq
             }));
+        let token_estimate = token_estimate(&segments, &entries, &suffix.entries);
         entries.extend(suffix.entries);
 
         Ok(envelope_from_entries(
@@ -130,7 +137,7 @@ impl ContextProjector {
             head.projection_version,
             head.head_event_seq,
             Some(active_compaction_id.to_string()),
-            token_estimate(&segments),
+            token_estimate,
             entries,
         ))
     }
@@ -231,8 +238,8 @@ fn summary_entry_from_segment(
         AgentMessage::CompactionSummary {
             summary,
             tokens_before: tokens_before(compaction),
-            messages_compacted: messages_compacted(source_range.as_ref()),
-            compacted_until_ref: None,
+            messages_compacted: checkpoint_messages_compacted(compaction, Some(segment)),
+            compacted_until_ref: checkpoint_compacted_until_ref(compaction, Some(segment)),
             timestamp: Some(segment.created_at_ms.max(0) as u64),
         },
         Some(segment.id.clone()),
@@ -266,8 +273,8 @@ fn summary_entry_from_compaction(compaction: &SessionCompactionRecord) -> Option
         AgentMessage::CompactionSummary {
             summary,
             tokens_before: tokens_before(compaction),
-            messages_compacted: messages_compacted(source_range.as_ref()),
-            compacted_until_ref: None,
+            messages_compacted: checkpoint_messages_compacted(compaction, None),
+            compacted_until_ref: checkpoint_compacted_until_ref(compaction, None),
             timestamp: compaction
                 .completed_at_ms
                 .or(Some(compaction.created_at_ms))
@@ -312,16 +319,39 @@ fn source_range(start: Option<u64>, end: Option<u64>) -> Option<ProjectionSource
     }
 }
 
-fn messages_compacted(source_range: Option<&ProjectionSourceRange>) -> u32 {
-    source_range
-        .and_then(|range| {
-            range
-                .end_event_seq
-                .checked_sub(range.start_event_seq)?
-                .checked_add(1)
-        })
-        .and_then(|value| u32::try_from(value).ok())
+fn checkpoint_messages_compacted(
+    compaction: &SessionCompactionRecord,
+    segment: Option<&SessionProjectionSegmentRecord>,
+) -> u32 {
+    segment
+        .and_then(|segment| read_u32(&segment.source_refs_json, "messages_compacted"))
+        .or_else(|| read_u32(&compaction.token_stats_json, "messages_compacted"))
         .unwrap_or_default()
+}
+
+fn checkpoint_compacted_until_ref(
+    compaction: &SessionCompactionRecord,
+    segment: Option<&SessionProjectionSegmentRecord>,
+) -> Option<MessageRef> {
+    segment
+        .and_then(|segment| read_message_ref(&segment.source_refs_json, "compacted_until_ref"))
+        .or_else(|| {
+            read_message_ref(
+                &compaction.replacement_projection_json,
+                "compacted_until_ref",
+            )
+        })
+}
+
+fn read_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn read_message_ref(value: &serde_json::Value, key: &str) -> Option<MessageRef> {
+    serde_json::from_value(value.get(key)?.clone()).ok()
 }
 
 fn tokens_before(compaction: &SessionCompactionRecord) -> u64 {
@@ -338,7 +368,11 @@ fn tokens_before(compaction: &SessionCompactionRecord) -> u64 {
         .unwrap_or_default()
 }
 
-fn token_estimate(segments: &[SessionProjectionSegmentRecord]) -> Option<u64> {
+fn token_estimate(
+    segments: &[SessionProjectionSegmentRecord],
+    projection_entries: &[ProjectedEntry],
+    suffix_entries: &[ProjectedEntry],
+) -> Option<u64> {
     let mut total = 0_u64;
     let mut has_estimate = false;
     for segment in segments {
@@ -347,7 +381,108 @@ fn token_estimate(segments: &[SessionProjectionSegmentRecord]) -> Option<u64> {
             total = total.saturating_add(value);
         }
     }
+    if !has_estimate && !projection_entries.is_empty() {
+        has_estimate = true;
+        total = total.saturating_add(entries_token_total(projection_entries));
+    }
+    for entry in suffix_entries {
+        has_estimate = true;
+        total = total.saturating_add(estimate_message_tokens(&entry.message));
+    }
     has_estimate.then_some(total)
+}
+
+fn entries_token_estimate(entries: &[ProjectedEntry]) -> Option<u64> {
+    if entries.is_empty() {
+        return None;
+    }
+    Some(entries_token_total(entries))
+}
+
+fn entries_token_total(entries: &[ProjectedEntry]) -> u64 {
+    entries.iter().fold(0_u64, |total, entry| {
+        total.saturating_add(estimate_message_tokens(&entry.message))
+    })
+}
+
+fn estimate_message_tokens(message: &AgentMessage) -> u64 {
+    match message {
+        AgentMessage::User { content, .. } => estimate_content_tokens(content),
+        AgentMessage::Assistant {
+            content,
+            tool_calls,
+            error_message,
+            ..
+        } => {
+            let tool_chars = tool_calls.iter().fold(0_usize, |acc, call| {
+                acc.saturating_add(call.id.chars().count())
+                    .saturating_add(
+                        call.call_id
+                            .as_deref()
+                            .map(|value| value.chars().count())
+                            .unwrap_or(0),
+                    )
+                    .saturating_add(call.name.chars().count())
+                    .saturating_add(json_chars(&call.arguments))
+            });
+            estimate_content_tokens(content)
+                .saturating_add(chars_to_tokens(tool_chars))
+                .saturating_add(error_message.as_deref().map(text_tokens).unwrap_or(0))
+        }
+        AgentMessage::ToolResult {
+            tool_call_id,
+            call_id,
+            tool_name,
+            content,
+            details,
+            ..
+        } => {
+            let metadata_chars = tool_call_id
+                .chars()
+                .count()
+                .saturating_add(
+                    call_id
+                        .as_deref()
+                        .map(|value| value.chars().count())
+                        .unwrap_or(0),
+                )
+                .saturating_add(
+                    tool_name
+                        .as_deref()
+                        .map(|value| value.chars().count())
+                        .unwrap_or(0),
+                )
+                .saturating_add(details.as_ref().map(json_chars).unwrap_or(0));
+            estimate_content_tokens(content).saturating_add(chars_to_tokens(metadata_chars))
+        }
+        AgentMessage::CompactionSummary { summary, .. } => text_tokens(summary),
+    }
+}
+
+fn estimate_content_tokens(content: &[ContentPart]) -> u64 {
+    let chars = content.iter().fold(0_usize, |acc, part| {
+        acc.saturating_add(match part {
+            ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => {
+                text.chars().count()
+            }
+            ContentPart::Image { mime_type, .. } => mime_type.chars().count().saturating_add(1024),
+        })
+    });
+    chars_to_tokens(chars).saturating_add(4)
+}
+
+fn text_tokens(value: &str) -> u64 {
+    chars_to_tokens(value.chars().count()).saturating_add(4)
+}
+
+fn json_chars(value: &serde_json::Value) -> usize {
+    serde_json::to_string(value)
+        .map(|value| value.chars().count())
+        .unwrap_or_default()
+}
+
+fn chars_to_tokens(chars: usize) -> u64 {
+    u64::try_from(chars).unwrap_or(u64::MAX).saturating_add(3) / 4
 }
 
 fn latest_event_seq(events: &[PersistedSessionEvent]) -> u64 {

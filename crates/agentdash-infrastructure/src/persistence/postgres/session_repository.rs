@@ -1317,7 +1317,8 @@ impl SessionPersistence for PostgresSessionRepository {
         }
 
         let mut head = commit.head;
-        head.updated_by_event_seq = head.updated_by_event_seq.or(Some(event_seq));
+        head.head_event_seq = event_seq;
+        head.updated_by_event_seq = Some(event_seq);
         head.updated_at_ms = if head.updated_at_ms == 0 {
             committed_at_ms
         } else {
@@ -2227,5 +2228,7 @@ mod tests {
             Some(compaction_id.as_str())
         );
         assert_eq!(head.projection_version, 1);
+        assert_eq!(head.head_event_seq, result.event.event_seq);
+        assert_eq!(head.updated_by_event_seq, Some(result.event.event_seq));
     }
 }

@@ -1499,7 +1499,8 @@ impl SessionPersistence for SqliteSessionRepository {
         }
 
         let mut head = commit.head;
-        head.updated_by_event_seq = head.updated_by_event_seq.or(Some(event_seq));
+        head.head_event_seq = event_seq;
+        head.updated_by_event_seq = Some(event_seq);
         head.updated_at_ms = if head.updated_at_ms == 0 {
             committed_at_ms
         } else {
@@ -2451,6 +2452,8 @@ mod tests {
             .expect("projection head 应存在");
         assert_eq!(head.active_compaction_id.as_deref(), Some("compaction-1"));
         assert_eq!(head.projection_version, 1);
+        assert_eq!(head.head_event_seq, result.event.event_seq);
+        assert_eq!(head.updated_by_event_seq, Some(result.event.event_seq));
     }
 
     #[tokio::test]

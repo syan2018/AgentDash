@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="AgentDash">
+  <rect width="1024" height="1024" fill="#000" />
+  <g
+    fill="none"
+    stroke="#fff"
+    stroke-width="12"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+    stroke-miterlimit="10"
+  >
+    <path d="M512 96V928" />
+    <path d="M512 184L164 410L512 600L860 410Z" />
+    <path d="M164 614L338 505L512 600L338 714Z" />
+    <path d="M860 614L686 505L512 600L686 714Z" />
+    <path d="M338 714L512 600L686 714L512 826Z" />
+  </g>
+</svg>

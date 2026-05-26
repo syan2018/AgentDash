@@ -5,7 +5,7 @@
  *
  *   Root（story / task-orphan / project）
  *     └── Child Task（仅 story root 下挂属于该 story 的 task session）
- *         └── Companion（由 parent_session_id 表达的父子会话，与 Story→Task 嵌套独立）
+ *         └── Linked Session（由 parent_session_id + parent_relation_kind 表达的父子会话）
  *
  * 规则：
  * - owner_type === "story" 的 session → Story root，task session 按 story_id 挂到下方
@@ -13,14 +13,18 @@
  *   - 若有匹配的 Story root → 作为该 Story 的 child
  *   - 若 story_id 为 null 或指向不存在的 Story root → 降级为独立 root（孤儿）
  * - owner_type === "project" 的 session → 独立 root
- * - parent_session_id 不为 null 的 session → 作为所指 session 的 companion 挂在其下；
+ * - parent_session_id 不为 null 的 session → 作为所指 session 的 relation child 挂在其下；
  *   若父 session 不在列表中，则作为独立 root 降级展示
  *
- * Companion 与 Story→Task 嵌套共存：先按 parent_session_id 抽出 companions，
+ * Parent relation 与 Story→Task 嵌套共存：先按 parent_session_id 抽出 linked children，
  * 剩余 session 再按 owner_type/story_id 做 Story→Task 分组。
  */
 
 import type { ProjectSessionEntry } from "../../types";
+import {
+  normalizeParentRelationKind,
+  type SessionLinkedChild,
+} from "./session-relations";
 
 // ─── 数据结构 ─────────────────────────────────────────────────────────────
 
@@ -34,15 +38,15 @@ export type SessionGroupNodeKind = "story" | "task" | "orphan" | "project";
  * - kind=orphan：owner_type=task 但找不到 Story root，降级为独立 root
  * - kind=project：owner_type=project 的独立 root
  *
- * companions 总是指向当前 session 的 parent_session_id-子会话。
+ * linkedChildren 总是指向当前 session 的 parent_session_id 子会话，并保留 relation kind。
  */
 export interface SessionGroupNode {
   kind: SessionGroupNodeKind;
   session: ProjectSessionEntry;
   /** 仅 kind=story 时才会有内容（对应 task session） */
   children: SessionGroupNode[];
-  /** 与 parent_session_id 语义一致的 companion 子会话 */
-  companions: ProjectSessionEntry[];
+  /** 与 parent_session_id / parent_relation_kind 语义一致的关联子会话 */
+  linkedChildren: SessionLinkedChild[];
 }
 
 // ─── 核心分组函数 ─────────────────────────────────────────────────────────
@@ -50,45 +54,48 @@ export interface SessionGroupNode {
 /**
  * 将扁平 sessions 分组为 Story→Task 树。
  *
- * 稳定性：输入顺序决定输出顺序（对 root、对 task children、对 companions 均保持输入顺序）。
+ * 稳定性：输入顺序决定输出顺序（对 root、对 task children、对 linked children 均保持输入顺序）。
  */
 export function groupSessionsByStory(sessions: ProjectSessionEntry[]): SessionGroupNode[] {
   if (sessions.length === 0) return [];
 
-  // Pass 1：按 parent_session_id 把 companions 归到父 session 名下
-  const companionsByParent = new Map<string, ProjectSessionEntry[]>();
+  // Pass 1：按 parent_session_id 把 relation children 归到父 session 名下
+  const linkedChildrenByParent = new Map<string, SessionLinkedChild[]>();
   const sessionIds = new Set(sessions.map((s) => s.session_id));
-  const nonCompanions: ProjectSessionEntry[] = [];
-  const orphanCompanions: ProjectSessionEntry[] = [];
+  const rootCandidates: ProjectSessionEntry[] = [];
+  const orphanLinkedChildren: ProjectSessionEntry[] = [];
 
   for (const s of sessions) {
     if (s.parent_session_id && sessionIds.has(s.parent_session_id)) {
-      const arr = companionsByParent.get(s.parent_session_id) ?? [];
-      arr.push(s);
-      companionsByParent.set(s.parent_session_id, arr);
+      const arr = linkedChildrenByParent.get(s.parent_session_id) ?? [];
+      arr.push({
+        session: s,
+        relation_kind: normalizeParentRelationKind(s.parent_relation_kind),
+      });
+      linkedChildrenByParent.set(s.parent_session_id, arr);
     } else if (s.parent_session_id) {
       // 父 session 不在当前列表里，降级为独立节点
-      orphanCompanions.push(s);
+      orphanLinkedChildren.push(s);
     } else {
-      nonCompanions.push(s);
+      rootCandidates.push(s);
     }
   }
 
-  const companionsOf = (sessionId: string) => companionsByParent.get(sessionId) ?? [];
+  const linkedChildrenOf = (sessionId: string) => linkedChildrenByParent.get(sessionId) ?? [];
 
-  // Pass 2：在 nonCompanions 中拆出 Story root 与 Task
+  // Pass 2：在 rootCandidates 中拆出 Story root 与 Task
   const storyRoots: SessionGroupNode[] = [];
   const storyIdToNode = new Map<string, SessionGroupNode>();
   const taskSessions: ProjectSessionEntry[] = [];
   const projectSessions: ProjectSessionEntry[] = [];
 
-  for (const s of nonCompanions) {
+  for (const s of rootCandidates) {
     if (s.owner_type === "story") {
       const node: SessionGroupNode = {
         kind: "story",
         session: s,
         children: [],
-        companions: companionsOf(s.session_id),
+        linkedChildren: linkedChildrenOf(s.session_id),
       };
       storyRoots.push(node);
       storyIdToNode.set(s.owner_id, node);
@@ -108,14 +115,14 @@ export function groupSessionsByStory(sessions: ProjectSessionEntry[]): SessionGr
         kind: "task",
         session: t,
         children: [],
-        companions: companionsOf(t.session_id),
+        linkedChildren: linkedChildrenOf(t.session_id),
       });
     } else {
       orphanRoots.push({
         kind: "orphan",
         session: t,
         children: [],
-        companions: companionsOf(t.session_id),
+        linkedChildren: linkedChildrenOf(t.session_id),
       });
     }
   }
@@ -125,11 +132,11 @@ export function groupSessionsByStory(sessions: ProjectSessionEntry[]): SessionGr
     kind: "project",
     session: s,
     children: [],
-    companions: companionsOf(s.session_id),
+    linkedChildren: linkedChildrenOf(s.session_id),
   }));
 
-  // Pass 5：孤儿 companion 降级独立 root（kind 按 owner_type 归类）
-  const orphanCompanionRoots: SessionGroupNode[] = orphanCompanions.map((s) => ({
+  // Pass 5：孤儿 relation child 降级独立 root（kind 按 owner_type 归类）
+  const orphanLinkedRoots: SessionGroupNode[] = orphanLinkedChildren.map((s) => ({
     kind:
       s.owner_type === "story"
         ? "story"
@@ -138,11 +145,11 @@ export function groupSessionsByStory(sessions: ProjectSessionEntry[]): SessionGr
           : "project",
     session: s,
     children: [],
-    companions: companionsOf(s.session_id),
+    linkedChildren: linkedChildrenOf(s.session_id),
   }));
 
   // 合并输出：保持 session 输入相对顺序（按类型简单拼接即可，单类型内部保持输入顺序）
-  return [...storyRoots, ...orphanRoots, ...projectRoots, ...orphanCompanionRoots];
+  return [...storyRoots, ...orphanRoots, ...projectRoots, ...orphanLinkedRoots];
 }
 
 // ─── 折叠状态持久化 ──────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 import type { ProjectSessionEntry } from "../../types";
+import { normalizeParentRelationKind } from "../../features/agent/session-relations";
 
 export interface SessionShortcutRow {
   session: ProjectSessionEntry;
   depth: number;
-  isCompanion: boolean;
+  parentRelationKind: ProjectSessionEntry["parent_relation_kind"];
 }
 
 function sessionActivity(session: ProjectSessionEntry): number {
@@ -71,29 +72,33 @@ export function buildSessionShortcutRows(
   const appendTree = (
     session: ProjectSessionEntry,
     depth: number,
-    isCompanion: boolean,
+    parentRelationKind: ProjectSessionEntry["parent_relation_kind"],
   ) => {
     if (visited.has(session.session_id)) return;
     visited.add(session.session_id);
-    rows.push({ session, depth, isCompanion });
+    rows.push({ session, depth, parentRelationKind });
 
     const children = sortByActivityDesc(
       byParentId.get(session.session_id) ?? [],
       latestBySessionId,
     );
     for (const child of children) {
-      appendTree(child, depth + 1, true);
+      appendTree(
+        child,
+        depth + 1,
+        normalizeParentRelationKind(child.parent_relation_kind),
+      );
     }
   };
 
   for (const root of sortByActivityDesc(roots, latestBySessionId)) {
-    appendTree(root, 0, false);
+    appendTree(root, 0, null);
   }
 
   // 防御异常数据：如果 parent_session_id 形成环，仍然把未访问的 session 展示出来。
   const unvisited = sessions.filter((session) => !visited.has(session.session_id));
   for (const session of sortByActivityDesc(unvisited, latestBySessionId)) {
-    appendTree(session, 0, false);
+    appendTree(session, 0, null);
   }
 
   return rows;

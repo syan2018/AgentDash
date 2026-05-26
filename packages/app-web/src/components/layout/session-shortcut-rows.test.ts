@@ -33,7 +33,7 @@ describe("buildSessionShortcutRows", () => {
     expect(rows.every((row) => row.depth === 0)).toBe(true);
   });
 
-  it("把 companion 紧跟在父 session 后并增加缩进层级", () => {
+  it("把 relation child 紧跟在父 session 后并保留 relation kind", () => {
     const rows = buildSessionShortcutRows([
       makeSession({ session_id: "other", last_activity: 20 }),
       makeSession({ session_id: "parent", last_activity: 10 }),
@@ -41,6 +41,7 @@ describe("buildSessionShortcutRows", () => {
         session_id: "child",
         last_activity: 30,
         parent_session_id: "parent",
+        parent_relation_kind: "fork",
       }),
     ]);
 
@@ -49,10 +50,10 @@ describe("buildSessionShortcutRows", () => {
       "child",
       "other",
     ]);
-    expect(rows[1]).toMatchObject({ depth: 1, isCompanion: true });
+    expect(rows[1]).toMatchObject({ depth: 1, parentRelationKind: "fork" });
   });
 
-  it("父 session 缺失时将 companion 当作根行展示", () => {
+  it("父 session 缺失时将 relation child 当作根行展示", () => {
     const rows = buildSessionShortcutRows([
       makeSession({
         session_id: "orphan-child",
@@ -61,7 +62,7 @@ describe("buildSessionShortcutRows", () => {
     ]);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ depth: 0, isCompanion: false });
+    expect(rows[0]).toMatchObject({ depth: 0, parentRelationKind: null });
   });
 
   it("异常循环数据不会导致无限递归", () => {

@@ -1,0 +1,28 @@
+{
+  "id": "companion-interaction-capability-grant",
+  "name": "companion-interaction-capability-grant",
+  "title": "Companion 通用交互信道与能力扩展治理设计",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "cross-layer",
+  "package": null,
+  "priority": "P2",
+  "creator": "cursor-agent",
+  "assignee": "cursor-agent",
+  "createdAt": "2026-05-26",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-26-companion-interaction-persistence-model"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

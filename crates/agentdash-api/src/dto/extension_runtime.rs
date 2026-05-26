@@ -132,6 +132,9 @@ pub fn extension_runtime_projection_response(
                     ExtensionWorkspaceTabRendererDeclaration::Webview { entry } => {
                         ExtensionWorkspaceTabRendererResponse::Webview { entry }
                     }
+                    ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => {
+                        ExtensionWorkspaceTabRendererResponse::CanvasPanel { entry }
+                    }
                 },
             })
             .collect(),

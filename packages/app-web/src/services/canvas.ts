@@ -1,5 +1,6 @@
 import { api } from "../api/client";
 import { asRecord, asRecordArray, asStringArray } from "../api/mappers";
+import type { ExtensionPackageInstallationResponse } from "../generated/extension-package-contracts";
 import type {
   Canvas,
   CanvasDataBinding,
@@ -146,7 +147,7 @@ function mapCanvas(raw: Record<string, unknown>): Canvas {
   };
 }
 
-function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSnapshot {
+export function mapCanvasRuntimeSnapshot(raw: Record<string, unknown>): CanvasRuntimeSnapshot {
   return {
     canvas_id: String(raw.canvas_id ?? ""),
     session_id: raw.session_id != null ? String(raw.session_id) : null,
@@ -240,12 +241,30 @@ export interface CanvasRuntimeInvokeInput {
   input?: unknown;
 }
 
+export interface PromoteCanvasToExtensionInput {
+  extension_key?: string;
+  display_name?: string;
+  package_version?: string;
+  asset_version?: string;
+  overwrite?: boolean;
+}
+
 export async function invokeCanvasRuntimeAction(
   canvasId: string,
   input: CanvasRuntimeInvokeInput,
 ): Promise<RuntimeInvocationResult> {
   return api.post<RuntimeInvocationResult>(
     `/canvases/${encodeURIComponent(canvasId)}/runtime-invoke`,
+    input,
+  );
+}
+
+export async function promoteCanvasToExtension(
+  canvasId: string,
+  input: PromoteCanvasToExtensionInput = {},
+): Promise<ExtensionPackageInstallationResponse> {
+  return api.post<ExtensionPackageInstallationResponse>(
+    `/canvases/${encodeURIComponent(canvasId)}/promote-extension`,
     input,
   );
 }

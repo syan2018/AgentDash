@@ -38,6 +38,7 @@
 - Extension authoring surface 使用独立 `packages/extension-*` 工作区包，原因是插件作者 API、webview bridge 与开发 CLI 需要随插件协议版本收敛成窄接口。
 - WorkspacePanel 的插件 tab 由 `features/extension-runtime` 消费 Project scoped runtime projection 后注册，原因是插件 catalog 是 Project enabled installation 的全局视图，不应随单个 session 生命周期被创建或销毁。
 - Extension webview action target 优先使用 Session runtime surface backend，缺省时使用当前 Project workspace binding，原因是 WorkspacePanel 插件 tab 的生命周期归属 Project，而本机 extension host 的可执行 backend 来自 workspace 授权事实。
+- `canvas_panel` 插件 tab 在主前端读取 package artifact 内的 Canvas runtime snapshot 并复用 `CanvasRuntimePreview`，原因是 Canvas-derived extension 需要沿用 Canvas runtime sandbox/asset bridge，同时保持 Project extension installation 作为 WorkspacePanel tab catalog 的事实源。
 
 ## Contract Appendices
 

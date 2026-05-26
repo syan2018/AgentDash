@@ -7,19 +7,26 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::canvas::{
-    CanvasMutationInput, CanvasRuntimeBridgeSnapshot, apply_canvas_mutation, build_canvas,
+    CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
+    apply_canvas_mutation, build_canvas, build_canvas_extension_package,
     build_runtime_snapshot_with_bindings,
+};
+use agentdash_application::extension_package::{
+    InstallExtensionPackageArtifactInput, StoreExtensionPackageArtifactInput,
+    install_extension_package_artifact, store_extension_package_artifact,
 };
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult,
 };
+use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::CanvasResponse;
+use crate::routes::extension_package_artifacts::{storage_ref_for, write_storage_object};
 use crate::rpc::ApiError;
 use crate::session_use_cases::context_query::build_session_context_plan;
 
@@ -60,6 +67,16 @@ pub struct CanvasRuntimeInvokeRequest {
     pub action_key: String,
     #[serde(default)]
     pub input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromoteCanvasToExtensionRequest {
+    pub extension_key: Option<String>,
+    pub display_name: Option<String>,
+    pub package_version: Option<String>,
+    pub asset_version: Option<String>,
+    #[serde(default = "default_promote_overwrite")]
+    pub overwrite: bool,
 }
 
 pub async fn list_project_canvases(
@@ -169,6 +186,61 @@ pub async fn delete_canvas(
     state.repos.canvas_repo.delete(canvas.id).await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
+}
+
+pub async fn promote_canvas_to_extension(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+    Json(req): Json<PromoteCanvasToExtensionRequest>,
+) -> Result<Json<ExtensionPackageInstallationResponse>, ApiError> {
+    let canvas =
+        load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
+            .await?;
+    let package = build_canvas_extension_package(
+        &canvas,
+        CanvasExtensionPackageInput {
+            package_version: req.package_version,
+            asset_version: req.asset_version,
+        },
+    )?;
+    let archive_bytes = package.archive_bytes;
+    let storage_ref = storage_ref_for(canvas.project_id, &package.archive_digest)?;
+    write_storage_object(&storage_ref, &archive_bytes).await?;
+    let artifact = store_extension_package_artifact(
+        &state.repos,
+        StoreExtensionPackageArtifactInput {
+            project_id: canvas.project_id,
+            storage_ref,
+            archive_bytes,
+            expected_archive_digest: Some(package.archive_digest),
+        },
+    )
+    .await?;
+    let installation = install_extension_package_artifact(
+        &state.repos,
+        InstallExtensionPackageArtifactInput {
+            project_id: canvas.project_id,
+            artifact_id: artifact.id,
+            extension_key: req.extension_key,
+            display_name: req
+                .display_name
+                .or_else(|| Some(canvas.title.trim().to_string())),
+            overwrite: req.overwrite,
+        },
+    )
+    .await?;
+    let artifact = installation.package_artifact.ok_or_else(|| {
+        ApiError::Internal("Canvas promoted extension installation 缺少 artifact 引用".into())
+    })?;
+
+    Ok(Json(ExtensionPackageInstallationResponse {
+        installation_id: installation.id.to_string(),
+        extension_key: installation.extension_key,
+        extension_id: installation.manifest.extension_id,
+        package_artifact_id: artifact.artifact_id.to_string(),
+        archive_digest: artifact.archive_digest,
+    }))
 }
 
 pub async fn get_canvas_runtime_snapshot(
@@ -285,6 +357,10 @@ async fn load_canvas_with_permission(
 
 fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw_project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
+}
+
+fn default_promote_overwrite() -> bool {
+    true
 }
 
 async fn resolve_canvas_runtime_vfs(

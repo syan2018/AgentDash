@@ -2,12 +2,12 @@
 
 ## Steps
 
-- [ ] Define Canvas -> ExtensionTemplate mapper.
-- [ ] Add backend publish/promote use case.
-- [ ] Add artifact packaging for Canvas files.
-- [ ] Add frontend promote entry.
-- [ ] Add runtime renderer support.
-- [ ] Add tests and E2E.
+- [x] Define Canvas -> ExtensionTemplate mapper.
+- [x] Add backend publish/promote use case.
+- [x] Add artifact packaging for Canvas files.
+- [x] Add frontend promote entry.
+- [x] Add runtime renderer support.
+- [x] Add tests and E2E.
 
 ## Validation
 

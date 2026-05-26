@@ -287,7 +287,7 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("{field} 非法")))
 }
 
-fn storage_ref_for(project_id: Uuid, archive_digest: &str) -> Result<String, ApiError> {
+pub(crate) fn storage_ref_for(project_id: Uuid, archive_digest: &str) -> Result<String, ApiError> {
     let digest = archive_digest
         .strip_prefix("sha256:")
         .ok_or_else(|| ApiError::BadRequest("archive_digest 格式非法".into()))?;
@@ -296,7 +296,7 @@ fn storage_ref_for(project_id: Uuid, archive_digest: &str) -> Result<String, Api
     ))
 }
 
-async fn write_storage_object(storage_ref: &str, bytes: &[u8]) -> Result<(), ApiError> {
+pub(crate) async fn write_storage_object(storage_ref: &str, bytes: &[u8]) -> Result<(), ApiError> {
     let path = storage_path(storage_ref)?;
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)

@@ -159,6 +159,11 @@ function mapWorkspaceTabRenderer(raw: unknown): ExtensionWorkspaceTabRendererRes
         kind: "webview",
         entry: requireStringField(value, "entry"),
       };
+    case "canvas_panel":
+      return {
+        kind: "canvas_panel",
+        entry: requireStringField(value, "entry"),
+      };
     default:
       throw new Error(`未知的 extension workspace tab renderer kind: ${String(value.kind ?? "")}`);
   }

@@ -60,6 +60,8 @@ Project extension runtime projection 归 `agentdash-application::extension_runti
 
 Extension package artifact 归独立 `agentdash-domain::extension_package` / `agentdash-application::extension_package` 模块，API 入口为 `agentdash-api/src/routes/extension_package_artifacts.rs`。正式 packaged extension 安装以平台保存的 archive artifact 为事实源：后端校验 manifest、bundle digest 与 archive digest，保存 package metadata、manifest snapshot、storage ref 和 source version；Project extension installation 可引用 `package_artifact`，不要求再绑定 Shared Library source。
 
+Canvas 发布为插件的用例归 `agentdash-application::canvas::promotion`，API 入口为 `POST /api/canvases/{id}/promote-extension`。该用例从 Canvas 聚合生成 `.agentdash-extension.tgz`，写入 Project scoped extension package artifact，再安装为 Project extension installation。
+
 Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService` 表达；API、application 与 MCP 只把请求身份投影为 `ProjectAuthorizationContext` 后消费同一规则。Backend owner/scope/admin/personal 的跨聚合判定由 `agentdash-application::backend::BackendAuthorizationService` 表达，API route 只做 extractor、DTO 与错误映射。
 
 ## Local Decisions

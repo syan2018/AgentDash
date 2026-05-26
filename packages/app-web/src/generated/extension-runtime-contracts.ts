@@ -45,6 +45,6 @@ export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: s
 
 export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, extension_id: string, type_id: string, label: string, uri_scheme: string, renderer: ExtensionWorkspaceTabRendererResponse, };
 
-export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, };
+export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, } | { "kind": "canvas_panel", entry: string, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;

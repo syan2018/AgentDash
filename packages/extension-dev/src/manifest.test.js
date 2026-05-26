@@ -14,6 +14,12 @@ test("validateProject accepts a packaged manifest shape", async () => {
   assert.deepEqual(result.errors, []);
 });
 
+test("validateProject accepts canvas panel renderer", async () => {
+  const root = await fixtureProject({ rendererKind: "canvas_panel" });
+  const result = await validateProject(root);
+  assert.deepEqual(result.errors, []);
+});
+
 test("validateProject rejects lifecycle scripts and package mismatch", async () => {
   const root = await fixtureProject({
     packageName: "@agentdash/other",
@@ -36,7 +42,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown> }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel" }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -74,7 +80,7 @@ async function fixtureProject(options = {}) {
           type_id: "local-hello.panel",
           label: "Hello",
           uri_scheme: "local-hello",
-          renderer: { kind: "webview", entry: "dist/panel/index.html" },
+          renderer: { kind: options.rendererKind ?? "webview", entry: "dist/panel/index.html" },
         },
       ],
       permissions: [{ kind: "local_profile", access: "read" }],

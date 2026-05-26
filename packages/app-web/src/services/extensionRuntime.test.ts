@@ -89,6 +89,13 @@ describe("extension runtime mapper", () => {
         label: "Profile",
         uri_scheme: "local-hello",
         renderer: { kind: "webview", entry: "dist/panel/index.html" },
+      }, {
+        extension_key: "packaged-canvas",
+        extension_id: "packaged-canvas",
+        type_id: "packaged-canvas.panel",
+        label: "Canvas",
+        uri_scheme: "packaged-canvas",
+        renderer: { kind: "canvas_panel", entry: "dist/canvas/runtime-snapshot.json" },
       }],
       permissions: [{
         extension_key: "local-hello",
@@ -112,6 +119,10 @@ describe("extension runtime mapper", () => {
     expect(projection.workspace_tabs[0].renderer).toEqual({
       kind: "webview",
       entry: "dist/panel/index.html",
+    });
+    expect(projection.workspace_tabs[1].renderer).toEqual({
+      kind: "canvas_panel",
+      entry: "dist/canvas/runtime-snapshot.json",
     });
     expect(projection.permissions[0].permission).toEqual({
       kind: "local_profile",

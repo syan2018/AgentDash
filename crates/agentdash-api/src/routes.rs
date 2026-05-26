@@ -323,6 +323,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(canvases::invoke_canvas_runtime_action),
         )
         .route(
+            "/canvases/{id}/promote-extension",
+            post(canvases::promote_canvas_to_extension),
+        )
+        .route(
             "/stories/{id}/tasks",
             get(stories::list_tasks).post(stories::create_task),
         )

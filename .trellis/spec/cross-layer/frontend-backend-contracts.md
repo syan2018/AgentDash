@@ -95,6 +95,7 @@ Session branch DTOs also live in `agentdash-contracts::session`: fork request/re
 - Extension package artifact 使用独立 `agentdash-contracts::extension_package` 与 `extension-package-contracts.ts`，原因是 packaged archive 的上传、安装引用和下载元数据是平台 artifact 契约，不属于 runtime projection 列表，也不属于 Shared Library payload。
 - Workspace webview panel 通过 `POST /api/projects/{project_id}/extension-runtime/invoke-action` 进入 RuntimeGateway，父页面 bridge 负责补齐 session、backend 与 Project context，原因是 iframe 内插件 UI 只能发送 action key 与 input，不应持有主前端 token、store 或内部 API client。
 - Packaged panel UI 通过 `GET /api/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}` 读取 artifact 内文件，服务端只允许读取已声明 workspace tab renderer entry 所在目录，原因是插件 UI 资源属于安装后的 Project artifact，而不是 Shared Library source payload。
+- `canvas_panel` workspace tab renderer 复用 packaged panel asset 读取 contract，entry 指向包内 Canvas runtime snapshot，原因是 Canvas-derived extension 应与其它 packaged extension 共享 artifact/source-status/install 语义，同时复用现有 Canvas runtime preview。
 
 ## Validation
 

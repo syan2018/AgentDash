@@ -3,7 +3,9 @@ import {
   createCanvas,
   deleteCanvas,
   fetchProjectCanvases,
+  promoteCanvasToExtension,
 } from "../../services/canvas";
+import { useExtensionRuntimeStore } from "../extension-runtime/model/extensionRuntimeStore";
 import type { Canvas } from "../../types";
 import { CanvasSessionPanel } from "./CanvasSessionPanel";
 
@@ -25,6 +27,7 @@ export function ProjectCanvasManager({
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingCanvasId, setDeletingCanvasId] = useState<string | null>(null);
+  const [promotingCanvasId, setPromotingCanvasId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -128,6 +131,24 @@ export function ProjectCanvasManager({
       setDeletingCanvasId(null);
     }
   }, [canvases]);
+
+  const handlePromoteCanvas = useCallback(async (canvas: Canvas) => {
+    setPromotingCanvasId(canvas.id);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await promoteCanvasToExtension(canvas.id, {
+        display_name: canvas.title,
+        overwrite: true,
+      });
+      await useExtensionRuntimeStore.getState().fetchProject(projectId);
+      setMessage(`已发布为 WorkspacePanel 插件：${result.extension_key}`);
+    } catch (promoteError) {
+      setError(promoteError instanceof Error ? promoteError.message : "发布 Canvas 插件失败");
+    } finally {
+      setPromotingCanvasId(null);
+    }
+  }, [projectId]);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
@@ -287,6 +308,14 @@ export function ProjectCanvasManager({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handlePromoteCanvas(selectedCanvas)}
+                    disabled={promotingCanvasId === selectedCanvas.id}
+                    className="rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {promotingCanvasId === selectedCanvas.id ? "发布中..." : "发布为插件"}
+                  </button>
                   <span className="rounded-[8px] border border-border bg-secondary/20 px-2 py-1 text-[11px] text-muted-foreground">
                     mount: {selectedCanvas.mount_id}
                   </span>

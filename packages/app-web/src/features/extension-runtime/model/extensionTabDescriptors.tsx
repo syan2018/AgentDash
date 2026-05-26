@@ -4,6 +4,7 @@ import type {
 } from "../../../types";
 import type { TabTypeDescriptor } from "../../workspace-panel/tab-type-registry";
 import { ExtensionTabIcon } from "../ui/ExtensionTabIcon";
+import { ExtensionCanvasPanel } from "../ui/ExtensionCanvasPanel";
 import { ExtensionWebviewPanel } from "../ui/ExtensionWebviewPanel";
 
 interface CreateExtensionTabDescriptorsInput {
@@ -28,14 +29,19 @@ function createExtensionTabDescriptor(
     pinned: false,
     defaultUri: `${tab.uri_scheme}://panel`,
     menuOrder: 200 + index,
-    renderContent: (props) => (
-      <ExtensionWebviewPanel
-        tab={tab}
-        uri={props.uri}
-        tabId={props.tabId}
-        isActive={props.isActive}
-      />
-    ),
+    renderContent: (props) => {
+      if (tab.renderer.kind === "canvas_panel") {
+        return <ExtensionCanvasPanel tab={tab} />;
+      }
+      return (
+        <ExtensionWebviewPanel
+          tab={tab}
+          uri={props.uri}
+          tabId={props.tabId}
+          isActive={props.isActive}
+        />
+      );
+    },
     resolveTitle(uri) {
       const parsed = parseExtensionTabUri(tab.uri_scheme, uri);
       if (!parsed) return tab.label;

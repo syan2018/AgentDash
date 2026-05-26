@@ -254,7 +254,7 @@ fn normalize_webview_asset_path(raw: &str) -> Result<String, ApiError> {
 
 fn webview_asset_allowed(manifest: &ExtensionTemplatePayload, asset_path: &str) -> bool {
     manifest.workspace_tabs.iter().any(|tab| {
-        let ExtensionWorkspaceTabRendererDeclaration::Webview { entry } = &tab.renderer;
+        let entry = workspace_tab_renderer_entry(&tab.renderer);
         let Ok(entry_path) = normalize_webview_asset_path(entry) else {
             return false;
         };
@@ -266,6 +266,13 @@ fn webview_asset_allowed(manifest: &ExtensionTemplatePayload, asset_path: &str) 
         };
         asset_path.starts_with(&format!("{dir}/"))
     })
+}
+
+fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
+    match renderer {
+        ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
+        | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
+    }
 }
 
 fn content_type_for_path(path: &str) -> &'static str {

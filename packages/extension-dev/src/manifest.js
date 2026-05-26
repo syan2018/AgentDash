@@ -264,8 +264,13 @@ function validateWorkspaceTabs(tabs, errors) {
       errors.push("workspace_tabs[].uri_scheme 必须是小写 URI scheme");
     }
     const renderer = asRecord(record.renderer);
-    if (!renderer || renderer.kind !== "webview" || !stringField(renderer, "entry")) {
-      errors.push("workspace_tabs[].renderer 必须是 webview 且包含 entry");
+    const rendererKind = stringField(renderer ?? {}, "kind");
+    if (
+      !renderer
+      || (rendererKind !== "webview" && rendererKind !== "canvas_panel")
+      || !stringField(renderer, "entry")
+    ) {
+      errors.push("workspace_tabs[].renderer 必须是 webview 或 canvas_panel 且包含 entry");
     }
   }
 }

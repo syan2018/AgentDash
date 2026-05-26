@@ -49,6 +49,7 @@ pub enum ExtensionMessageRendererDeclarationResponse {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionWorkspaceTabRendererResponse {
     Webview { entry: String },
+    CanvasPanel { entry: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

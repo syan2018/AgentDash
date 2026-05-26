@@ -11,7 +11,10 @@ use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::{
     ExtensionPackageArtifact, ExtensionPackageArtifactRef, validate_sha256_digest,
 };
-use agentdash_domain::shared_library::{ExtensionTemplatePayload, ProjectExtensionInstallation};
+use agentdash_domain::shared_library::{
+    ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
+    ProjectExtensionInstallation,
+};
 
 use crate::repository_set::RepositorySet;
 use crate::shared_library::seed_digest;
@@ -74,6 +77,7 @@ pub fn validate_extension_package_archive(
 
     let package_json = parse_json_file(&files, PACKAGE_JSON_PATH)?;
     validate_package_json(&package_json, &manifest)?;
+    validate_workspace_tab_entries(&files, &manifest)?;
     validate_bundle_entries(&files, &manifest)?;
 
     Ok(ValidatedExtensionPackageArchive {
@@ -313,6 +317,28 @@ fn validate_bundle_entries(
     Ok(())
 }
 
+fn validate_workspace_tab_entries(
+    files: &BTreeMap<String, Vec<u8>>,
+    manifest: &ExtensionTemplatePayload,
+) -> Result<(), DomainError> {
+    for tab in &manifest.workspace_tabs {
+        let entry = workspace_tab_renderer_entry(&tab.renderer);
+        if !files.contains_key(entry) {
+            return Err(DomainError::InvalidConfig(format!(
+                "extension package archive 缺少 workspace tab renderer entry `{entry}`"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
+    match renderer {
+        ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
+        | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
+    }
+}
+
 async fn upsert_extension_installation(
     repos: &RepositorySet,
     installation: ProjectExtensionInstallation,
@@ -424,6 +450,27 @@ mod tests {
         ])
     }
 
+    fn canvas_panel_manifest() -> Value {
+        serde_json::json!({
+            "manifest_version": "2",
+            "extension_id": "canvas-demo",
+            "package": {
+                "name": "@agentdash/canvas-demo",
+                "version": "0.1.0"
+            },
+            "asset_version": "0.1.0",
+            "workspace_tabs": [{
+                "type_id": "canvas-demo.panel",
+                "label": "Canvas Demo",
+                "uri_scheme": "canvas-demo",
+                "renderer": {
+                    "kind": "canvas_panel",
+                    "entry": "dist/canvas/runtime-snapshot.json"
+                }
+            }]
+        })
+    }
+
     #[test]
     fn validates_extension_package_archive() {
         let bytes = valid_archive();
@@ -446,6 +493,54 @@ mod tests {
             .expect("file exists");
 
         assert_eq!(content, b"<main>hello</main>");
+    }
+
+    #[test]
+    fn validates_canvas_panel_renderer_entry() {
+        let bytes = archive_bytes(vec![
+            (
+                EXTENSION_MANIFEST_PATH,
+                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+            ),
+            (
+                PACKAGE_JSON_PATH,
+                serde_json::to_vec(&serde_json::json!({
+                    "name": "@agentdash/canvas-demo",
+                    "version": "0.1.0"
+                }))
+                .expect("package bytes"),
+            ),
+            (
+                "dist/canvas/runtime-snapshot.json",
+                br#"{"canvas_id":"00000000-0000-0000-0000-000000000000"}"#.to_vec(),
+            ),
+        ]);
+
+        let validated = validate_extension_package_archive(&bytes, None).expect("valid");
+
+        assert_eq!(validated.manifest.extension_id, "canvas-demo");
+    }
+
+    #[test]
+    fn rejects_missing_workspace_tab_renderer_entry() {
+        let bytes = archive_bytes(vec![
+            (
+                EXTENSION_MANIFEST_PATH,
+                serde_json::to_vec(&canvas_panel_manifest()).expect("manifest bytes"),
+            ),
+            (
+                PACKAGE_JSON_PATH,
+                serde_json::to_vec(&serde_json::json!({
+                    "name": "@agentdash/canvas-demo",
+                    "version": "0.1.0"
+                }))
+                .expect("package bytes"),
+            ),
+        ]);
+
+        let err = validate_extension_package_archive(&bytes, None).expect_err("missing entry");
+
+        assert!(err.to_string().contains("workspace tab renderer entry"));
     }
 
     #[test]

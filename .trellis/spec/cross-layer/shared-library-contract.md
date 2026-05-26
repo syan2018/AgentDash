@@ -174,7 +174,7 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
   "capability_directives": ["ToolCapabilityDirective"],
   "asset_refs": [{ "asset_type": "string", "key": "string", "required": "bool" }],
   "runtime_actions": [{ "action_key": "string", "kind": "session_runtime | setup", "description": "string", "input_schema": "JSONSchema", "output_schema": "JSONSchema", "permissions": ["string"] }],
-  "workspace_tabs": [{ "type_id": "string", "label": "string", "uri_scheme": "string", "renderer": { "kind": "webview", "entry": "string" } }],
+  "workspace_tabs": [{ "type_id": "string", "label": "string", "uri_scheme": "string", "renderer": { "kind": "webview | canvas_panel", "entry": "string" } }],
   "permissions": [{ "kind": "local_profile | workspace | runtime_action", "access": "read | write | read_write?", "action_key": "string?" }],
   "bundles": [{ "kind": "extension_host", "entry": "string", "digest": "sha256:<hex>" }]
 }
@@ -211,6 +211,8 @@ Update:
 ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
 
 正式 packaged extension 安装以平台 artifact 为事实源。`ExtensionTemplate` 可以作为 marketplace/template payload，`.agentdash-extension.tgz` 上传后由后端校验 archive digest、manifest digest、package metadata 和 bundle digest，并保存为 Project scoped package artifact。Project extension installation 可以记录 `package_artifact`，此时 `installed_source` 为空；Shared Library source-status 只表达由 `InstalledAssetSource` 追踪的 marketplace/template 来源。
+
+Canvas 发布为插件时生成同款 packaged extension artifact。其 workspace tab 使用 `canvas_panel` renderer，`entry` 指向包内 Canvas runtime snapshot；安装、覆盖和 source-status 仍按 packaged extension installation 处理。
 
 ## Publish Semantics
 

@@ -1,6 +1,6 @@
 /// PiAgentConnector — 基于 agentdash-agent 的进程内 Agent 连接器
 ///
-/// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
+/// 与 `CodexBridgeConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;

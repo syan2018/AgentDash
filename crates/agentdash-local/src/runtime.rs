@@ -7,7 +7,6 @@ use std::sync::Arc;
 use agentdash_application::session::{SessionExecutionState, SessionRuntimeServices};
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_executor::connectors::vibe_kanban::VibeKanbanExecutorsConnector;
 use agentdash_infrastructure::SqliteSessionRepository;
 use agentdash_spi::AgentConnector;
 use anyhow::Context;
@@ -450,19 +449,8 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
     };
 
     let (session_runtime, connector) = if config.executor_enabled {
-        let workspace_root = config
-            .workspace_roots
-            .first()
-            .cloned()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-
-        let sub_connectors: Vec<Arc<dyn AgentConnector>> = vec![
-            Arc::new(VibeKanbanExecutorsConnector::new_with_exclusions(
-                workspace_root.clone(),
-                ["CODEX"],
-            )),
-            Arc::new(CodexBridgeConnector::new(workspace_root.clone())),
-        ];
+        let sub_connectors: Vec<Arc<dyn AgentConnector>> =
+            vec![Arc::new(CodexBridgeConnector::new())];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
         let db_path = local_runtime_session_db_path(&config.backend_id)?;
         if let Some(parent) = db_path.parent() {

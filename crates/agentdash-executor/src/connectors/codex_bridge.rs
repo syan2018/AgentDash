@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -22,11 +23,6 @@ use codex_app_server_protocol::{
     Thread, ThreadForkParams, ThreadForkResponse, ThreadNameUpdatedNotification, ThreadStartParams,
     ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
-use executors::{
-    executors::{BaseCodingAgent, StandardCodingAgentExecutor as _},
-    model_selector::PermissionPolicy,
-    profile::{ExecutorConfigs, ExecutorProfileId},
-};
 use futures::stream::BoxStream;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -36,9 +32,8 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use workspace_utils::command_ext::GroupSpawnNoWindowExt;
 
-use crate::adapters::codex_config::to_codex_config;
+use crate::adapters::codex_config::{CodexExecutorConfig, CodexPermissionPolicy, to_codex_config};
 use crate::connectors::context_frame_render::compose_prompt_text;
 
 const CODEX_EXECUTOR_ID: &str = "CODEX";
@@ -56,16 +51,14 @@ type PendingResponseMap =
     Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ConnectorError>>>>>;
 
 pub struct CodexBridgeConnector {
-    default_repo_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl CodexBridgeConnector {
     /// 首阶段桥接：对外暴露独立 Codex connector，内部走原生 app-server 协议。
     /// 后续替换底层 SDK/运行时时，仅需继续演进该模块。
-    pub fn new(default_repo_root: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            default_repo_root,
             cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -150,8 +143,72 @@ fn build_prompt_text(
     Ok(prompt_text)
 }
 
+fn executable_available(name: &str) -> bool {
+    let name_path = Path::new(name);
+    if name_path.components().count() > 1 {
+        return name_path.is_file();
+    }
+
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+
+    for dir in env::split_paths(&paths) {
+        for candidate in executable_candidates(name) {
+            if dir.join(candidate).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn executable_candidates(name: &str) -> Vec<String> {
+    if cfg!(windows) {
+        if Path::new(name).extension().is_some() {
+            vec![name.to_string()]
+        } else {
+            vec![
+                format!("{name}.exe"),
+                format!("{name}.cmd"),
+                format!("{name}.bat"),
+                name.to_string(),
+            ]
+        }
+    } else {
+        vec![name.to_string()]
+    }
+}
+
+fn spawn_codex_process(
+    command: &mut tokio::process::Command,
+) -> std::io::Result<tokio::process::Child> {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command.spawn()
+}
+
+fn codex_discovery_patch() -> json_patch::Patch {
+    serde_json::from_value(serde_json::json!([
+        { "op": "replace", "path": "/options/model_selector/providers", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/models", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/default_model", "value": null },
+        { "op": "replace", "path": "/options/model_selector/agents", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/permissions", "value": ["AUTO", "SUPERVISED", "PLAN"] },
+        { "op": "replace", "path": "/options/loading_models", "value": false },
+        { "op": "replace", "path": "/options/loading_agents", "value": false },
+        { "op": "replace", "path": "/options/loading_slash_commands", "value": false },
+        { "op": "replace", "path": "/options/slash_commands", "value": [] }
+    ]))
+    .expect("static codex discovery patch must be valid")
+}
+
 fn build_thread_start_params(
-    codex_config: &executors::profile::ExecutorConfig,
+    codex_config: &CodexExecutorConfig,
     working_directory: &Path,
 ) -> ThreadStartParams {
     let mut config_overrides = HashMap::new();
@@ -171,10 +228,10 @@ fn build_thread_start_params(
     };
 
     let approval_policy = match codex_config.permission_policy {
-        Some(PermissionPolicy::Auto) => Some(AskForApproval::Never),
-        Some(PermissionPolicy::Supervised) => Some(AskForApproval::UnlessTrusted),
+        Some(CodexPermissionPolicy::Auto) => Some(AskForApproval::Never),
+        Some(CodexPermissionPolicy::Supervised) => Some(AskForApproval::UnlessTrusted),
         // 当前先保证协议通路可用；plan 专属协作模式后续单独补齐。
-        Some(PermissionPolicy::Plan) => Some(AskForApproval::OnRequest),
+        Some(CodexPermissionPolicy::Plan) => Some(AskForApproval::OnRequest),
         None => Some(AskForApproval::OnRequest),
     };
 
@@ -472,7 +529,7 @@ impl AgentConnector for CodexBridgeConnector {
         ConnectorCapabilities {
             supports_cancel: true,
             supports_discovery: true,
-            supports_variants: true,
+            supports_variants: false,
             supports_model_override: true,
             supports_permission_policy: true,
             supports_source_session_title: true,
@@ -480,28 +537,11 @@ impl AgentConnector for CodexBridgeConnector {
     }
 
     fn list_executors(&self) -> Vec<AgentInfo> {
-        let configs = ExecutorConfigs::get_cached();
-        let profile_id = ExecutorProfileId {
-            executor: BaseCodingAgent::Codex,
-            variant: None,
-        };
-        let available = configs
-            .get_coding_agent(&profile_id)
-            .map(|agent| agent.get_availability_info().is_available())
-            .unwrap_or(false);
-
-        let mut variants = configs
-            .executors
-            .get(&BaseCodingAgent::Codex)
-            .map(|profile| profile.configurations.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        variants.sort();
-
         vec![AgentInfo {
             id: CODEX_EXECUTOR_ID.to_string(),
             name: "Codex".to_string(),
-            variants,
-            available,
+            variants: Vec::new(),
+            available: executable_available("npx"),
         }]
     }
 
@@ -516,21 +556,10 @@ impl AgentConnector for CodexBridgeConnector {
             )));
         }
 
-        let profile_id = ExecutorProfileId {
-            executor: BaseCodingAgent::Codex,
-            variant: None,
-        };
-        let agent = ExecutorConfigs::get_cached()
-            .get_coding_agent(&profile_id)
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string())
-            })?;
-
-        let wd = working_dir.unwrap_or_else(|| self.default_repo_root.clone());
-        agent
-            .discover_options(Some(&wd), Some(&self.default_repo_root))
-            .await
-            .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
+        let _ = working_dir;
+        Ok(Box::pin(futures::stream::once(async {
+            codex_discovery_patch()
+        })))
     }
 
     async fn has_live_session(&self, session_id: &str) -> bool {
@@ -566,16 +595,15 @@ impl AgentConnector for CodexBridgeConnector {
             .env("RUST_LOG", "error")
             .envs(context.session.environment_variables.clone());
 
-        let mut child = process
-            .group_spawn_no_window()
+        let mut child = spawn_codex_process(&mut process)
             .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
-        let stdout = child.inner().stdout.take().ok_or_else(|| {
+        let stdout = child.stdout.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string())
         })?;
-        let stderr = child.inner().stderr.take().ok_or_else(|| {
+        let stderr = child.stderr.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stderr".to_string())
         })?;
-        let stdin = child.inner().stdin.take().ok_or_else(|| {
+        let stdin = child.stdin.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stdin".to_string())
         })?;
 

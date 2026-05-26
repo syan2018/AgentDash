@@ -47,7 +47,7 @@ export interface UseExecutorDiscoveryResult {
   refetch: () => void;
 }
 
-// ===================== discovered-options（vibe-kanban 对齐） =====================
+// ===================== discovered-options =====================
 
 export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
 

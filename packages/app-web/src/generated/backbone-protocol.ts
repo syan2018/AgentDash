@@ -52,7 +52,7 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
  * 平台内部事件流转的统一类型。
  *
  * 变体名由平台定义（控制语义），payload 优先对齐 Codex App Server Protocol。
- * 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
+ * 所有 connector（codex_bridge / pi_agent 等）都必须映射到同一套变体，
  * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
  * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */

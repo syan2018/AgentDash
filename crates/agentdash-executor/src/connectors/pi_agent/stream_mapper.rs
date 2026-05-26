@@ -125,22 +125,19 @@ fn is_shell_exec(tool_name: &str) -> bool {
     tool_name == "shell_exec"
 }
 
-/// 从 shell_exec 的 args JSON 中提取 command / cwd（cwd 总是返回绝对路径）
+/// 从 shell_exec 的 args JSON 中提取 command / cwd。
+/// cwd 的绝对路径解析交给 `agentdash_agent_protocol::backbone::thread_item::command_execution` 处理。
 fn extract_shell_args(args: &serde_json::Value) -> (String, String) {
     let command = args
         .get("command")
         .and_then(|v| v.as_str())
         .unwrap_or("(unknown)")
         .to_string();
-    let raw_cwd = args.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
-    let cwd_path = std::path::Path::new(raw_cwd);
-    let cwd = if cwd_path.is_absolute() {
-        raw_cwd.to_string()
-    } else {
-        std::env::current_dir()
-            .map(|base| base.join(cwd_path).to_string_lossy().to_string())
-            .unwrap_or_else(|_| raw_cwd.to_string())
-    };
+    let cwd = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".")
+        .to_string();
     (command, cwd)
 }
 
@@ -162,7 +159,8 @@ fn partial_result_text(partial_result: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// 通过 serde 构造 CommandExecution ThreadItem（绕过 AbsolutePathBuf 未 re-export 的限制）
+/// 通过共享 builder 构造 CommandExecution ThreadItem。
+/// AbsolutePathBuf 限制（cwd 必须绝对）由 builder 内部处理。
 fn make_command_execution_item(
     item_id: &str,
     state: &ToolCallEmitState,
@@ -175,21 +173,16 @@ fn make_command_execution_item(
         .clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let (command, cwd) = extract_shell_args(&args);
-    let json_val = serde_json::json!({
-        "type": "commandExecution",
-        "id": item_id,
-        "command": command,
-        "cwd": cwd,
-        "processId": null,
-        "source": status_to_source_str(),
-        "status": status,
-        "commandActions": [],
-        "aggregatedOutput": aggregated_output,
-        "exitCode": exit_code,
-        "durationMs": null,
-    });
-    serde_json::from_value(json_val).unwrap_or_else(|e| {
-        tracing::warn!("Failed to construct CommandExecution item via serde: {e}");
+    agentdash_agent_protocol::backbone::thread_item::command_execution(
+        item_id,
+        command,
+        cwd,
+        status,
+        aggregated_output,
+        exit_code,
+    )
+    .unwrap_or_else(|e| {
+        tracing::warn!("Failed to build CommandExecution: {e}; falling back to dynamic_tool_call");
         make_dynamic_tool_item(
             item_id,
             state,
@@ -198,10 +191,6 @@ fn make_command_execution_item(
             None,
         )
     })
-}
-
-fn status_to_source_str() -> &'static str {
-    "agent"
 }
 
 /// 构造 DynamicToolCall ThreadItem 用于 ItemStarted/ItemCompleted。

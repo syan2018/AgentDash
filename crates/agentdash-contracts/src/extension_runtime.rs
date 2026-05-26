@@ -73,12 +73,25 @@ pub struct ExtensionInstalledAssetSourceResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionPackageArtifactRefResponse {
+    pub artifact_id: String,
+    pub package_name: String,
+    pub package_version: String,
+    pub asset_version: String,
+    pub source_version: String,
+    pub storage_ref: String,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionInstallationProjectionResponse {
     pub installation_id: String,
     pub extension_key: String,
     pub extension_id: String,
     pub display_name: String,
-    pub installed_source: ExtensionInstalledAssetSourceResponse,
+    pub installed_source: Option<ExtensionInstalledAssetSourceResponse>,
+    pub package_artifact: Option<ExtensionPackageArtifactRefResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

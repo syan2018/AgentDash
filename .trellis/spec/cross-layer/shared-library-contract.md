@@ -166,11 +166,17 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
 {
   "manifest_version": "string",
   "extension_id": "string",
+  "package": { "name": "string", "version": "string" },
+  "asset_version": "string",
   "commands": [{ "name": "string", "description": "string", "handler": { "kind": "inject_message", "content": "string" } }],
   "flags": [{ "name": "string", "type": "bool | string", "default": "matching value", "description": "string" }],
   "message_renderers": [{ "custom_type": "string", "renderer": { "kind": "json_card | markdown" } }],
   "capability_directives": ["ToolCapabilityDirective"],
-  "asset_refs": [{ "asset_type": "string", "key": "string", "required": "bool" }]
+  "asset_refs": [{ "asset_type": "string", "key": "string", "required": "bool" }],
+  "runtime_actions": [{ "action_key": "string", "kind": "session_runtime | setup", "description": "string", "input_schema": "JSONSchema", "output_schema": "JSONSchema", "permissions": ["string"] }],
+  "workspace_tabs": [{ "type_id": "string", "label": "string", "uri_scheme": "string", "renderer": { "kind": "webview", "entry": "string" } }],
+  "permissions": [{ "kind": "local_profile | workspace | runtime_action", "access": "read | write | read_write?", "action_key": "string?" }],
+  "bundles": [{ "kind": "extension_host", "entry": "string", "digest": "sha256:<hex>" }]
 }
 ```
 
@@ -203,6 +209,8 @@ Update:
 - 用户手动重装/覆盖。
 
 ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
+
+正式 packaged extension 安装以平台 artifact 为事实源。`ExtensionTemplate` 可以作为 marketplace/template payload，`.agentdash-extension.tgz` 上传后由后端校验 archive digest、manifest digest、package metadata 和 bundle digest，并保存为 Project scoped package artifact。Project extension installation 可以记录 `package_artifact`，此时 `installed_source` 为空；Shared Library source-status 只表达由 `InstalledAssetSource` 追踪的 marketplace/template 来源。
 
 ## Publish Semantics
 

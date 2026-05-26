@@ -11,6 +11,7 @@ import type {
   ExtensionInstalledAssetSourceResponse,
   ExtensionMessageRendererDeclarationResponse,
   ExtensionMessageRendererProjectionResponse,
+  ExtensionPackageArtifactRefResponse,
   ExtensionPermissionAccessResponse,
   ExtensionPermissionDeclarationResponse,
   ExtensionPermissionProjectionResponse,
@@ -37,6 +38,18 @@ function optionalArray(raw: Record<string, unknown>, field: string): unknown[] {
     throw new Error(`extension_runtime.${field} 不是数组`);
   }
   return value;
+}
+
+function requireNullableField(
+  raw: Record<string, unknown>,
+  field: string,
+  label: string,
+): unknown | null {
+  if (!Object.prototype.hasOwnProperty.call(raw, field)) {
+    throw new Error(`${label}.${field} 缺失`);
+  }
+  const value = raw[field];
+  return value === null ? null : value;
 }
 
 function mapJsonValue(raw: unknown, label: string): JsonValue {
@@ -91,6 +104,20 @@ function mapInstalledSource(raw: unknown): ExtensionInstalledAssetSourceResponse
     source_version: requireStringField(value, "source_version"),
     source_digest: requireStringField(value, "source_digest"),
     installed_at: requireStringField(value, "installed_at"),
+  };
+}
+
+function mapPackageArtifactRef(raw: unknown): ExtensionPackageArtifactRefResponse {
+  const value = recordOrThrow(raw, "extension package_artifact");
+  return {
+    artifact_id: requireStringField(value, "artifact_id"),
+    package_name: requireStringField(value, "package_name"),
+    package_version: requireStringField(value, "package_version"),
+    asset_version: requireStringField(value, "asset_version"),
+    source_version: requireStringField(value, "source_version"),
+    storage_ref: requireStringField(value, "storage_ref"),
+    archive_digest: requireStringField(value, "archive_digest"),
+    manifest_digest: requireStringField(value, "manifest_digest"),
   };
 }
 
@@ -157,12 +184,15 @@ function mapPermission(raw: unknown): ExtensionPermissionDeclarationResponse {
 
 function mapInstallation(raw: unknown): ExtensionInstallationProjectionResponse {
   const value = recordOrThrow(raw, "extension installation");
+  const installedSource = requireNullableField(value, "installed_source", "extension installation");
+  const packageArtifact = requireNullableField(value, "package_artifact", "extension installation");
   return {
     installation_id: requireStringField(value, "installation_id"),
     extension_key: requireStringField(value, "extension_key"),
     extension_id: requireStringField(value, "extension_id"),
     display_name: requireStringField(value, "display_name"),
-    installed_source: mapInstalledSource(value.installed_source),
+    installed_source: installedSource === null ? null : mapInstalledSource(installedSource),
+    package_artifact: packageArtifact === null ? null : mapPackageArtifactRef(packageArtifact),
   };
 }
 

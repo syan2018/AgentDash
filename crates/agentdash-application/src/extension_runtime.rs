@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, btree_map::Entry};
 
 use agentdash_domain::DomainError;
+use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
 use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionFlagType,
     ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
@@ -26,7 +27,8 @@ pub struct ExtensionInstallationProjection {
     pub extension_key: String,
     pub extension_id: String,
     pub display_name: String,
-    pub installed_source: InstalledAssetSource,
+    pub installed_source: Option<InstalledAssetSource>,
+    pub package_artifact: Option<ExtensionPackageArtifactRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +137,7 @@ pub fn extension_runtime_projection_from_installations(
                 extension_id: extension_id.clone(),
                 display_name: installation.display_name.clone(),
                 installed_source: installation.installed_source,
+                package_artifact: installation.package_artifact,
             });
         projection
             .commands
@@ -246,6 +249,7 @@ fn claim_unique_extension_runtime_key(
 
 #[cfg(test)]
 mod tests {
+    use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
         ExtensionCommandHandler, ExtensionFlagDefinition, ExtensionFlagType,
@@ -274,8 +278,13 @@ mod tests {
         uri_scheme: &str,
     ) -> ExtensionTemplatePayload {
         ExtensionTemplatePayload {
-            manifest_version: "1".to_string(),
+            manifest_version: "2".to_string(),
             extension_id: extension_id.to_string(),
+            package: ExtensionPackageMetadata {
+                name: extension_id.to_string(),
+                version: "0.1.0".to_string(),
+            },
+            asset_version: "0.1.0".to_string(),
             commands: vec![ExtensionCommandDefinition {
                 name: format!("{extension_id}:run"),
                 description: "run demo".to_string(),

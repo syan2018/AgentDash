@@ -13,13 +13,15 @@ export type ExtensionFlagProjectionResponse = { extension_key: string, extension
 
 export type ExtensionFlagTypeResponse = "bool" | "string";
 
-export type ExtensionInstallationProjectionResponse = { installation_id: string, extension_key: string, extension_id: string, display_name: string, installed_source: ExtensionInstalledAssetSourceResponse, };
+export type ExtensionInstallationProjectionResponse = { installation_id: string, extension_key: string, extension_id: string, display_name: string, installed_source: ExtensionInstalledAssetSourceResponse | null, package_artifact: ExtensionPackageArtifactRefResponse | null, };
 
 export type ExtensionInstalledAssetSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 
 export type ExtensionMessageRendererDeclarationResponse = { "kind": "json_card" } | { "kind": "markdown" };
 
 export type ExtensionMessageRendererProjectionResponse = { extension_key: string, extension_id: string, custom_type: string, renderer: ExtensionMessageRendererDeclarationResponse, };
+
+export type ExtensionPackageArtifactRefResponse = { artifact_id: string, package_name: string, package_version: string, asset_version: string, source_version: string, storage_ref: string, archive_digest: string, manifest_digest: string, };
 
 export type ExtensionPermissionAccessResponse = "read" | "write" | "read_write";
 

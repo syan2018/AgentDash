@@ -11,10 +11,11 @@ pub use agentdash_contracts::extension_runtime::{
     ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
     ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
-    ExtensionPermissionAccessResponse, ExtensionPermissionDeclarationResponse,
-    ExtensionPermissionProjectionResponse, ExtensionRuntimeActionKindResponse,
-    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
-    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
+    ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
+    ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
+    ExtensionRuntimeActionKindResponse, ExtensionRuntimeActionProjectionResponse,
+    ExtensionRuntimeProjectionResponse, ExtensionWorkspaceTabProjectionResponse,
+    ExtensionWorkspaceTabRendererResponse,
 };
 
 pub fn extension_runtime_projection_response(
@@ -29,13 +30,27 @@ pub fn extension_runtime_projection_response(
                 extension_key: installation.extension_key,
                 extension_id: installation.extension_id,
                 display_name: installation.display_name,
-                installed_source: ExtensionInstalledAssetSourceResponse {
-                    library_asset_id: installation.installed_source.library_asset_id.to_string(),
-                    source_ref: installation.installed_source.source_ref,
-                    source_version: installation.installed_source.source_version,
-                    source_digest: installation.installed_source.source_digest,
-                    installed_at: installation.installed_source.installed_at.to_rfc3339(),
-                },
+                installed_source: installation.installed_source.map(|source| {
+                    ExtensionInstalledAssetSourceResponse {
+                        library_asset_id: source.library_asset_id.to_string(),
+                        source_ref: source.source_ref,
+                        source_version: source.source_version,
+                        source_digest: source.source_digest,
+                        installed_at: source.installed_at.to_rfc3339(),
+                    }
+                }),
+                package_artifact: installation.package_artifact.map(|artifact| {
+                    ExtensionPackageArtifactRefResponse {
+                        artifact_id: artifact.artifact_id.to_string(),
+                        package_name: artifact.package_name,
+                        package_version: artifact.package_version,
+                        asset_version: artifact.asset_version,
+                        source_version: artifact.source_version,
+                        storage_ref: artifact.storage_ref,
+                        archive_digest: artifact.archive_digest,
+                        manifest_digest: artifact.manifest_digest,
+                    }
+                }),
             })
             .collect(),
         commands: projection

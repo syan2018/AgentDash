@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::DomainError;
 use crate::common::{MountCapability, SystemPromptMode, ThinkingLevel};
+use crate::extension_package::ExtensionPackageMetadata;
 use crate::mcp_preset::{McpRoutePolicy, McpTransportConfig};
 use crate::skill_asset::SkillAssetFileKind;
 use crate::workflow::ToolCapabilityDirective;
@@ -652,6 +653,8 @@ impl InlineMountFilePayload {
 pub struct ExtensionTemplatePayload {
     pub manifest_version: String,
     pub extension_id: String,
+    pub package: ExtensionPackageMetadata,
+    pub asset_version: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<ExtensionCommandDefinition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -679,6 +682,8 @@ impl ExtensionTemplatePayload {
             &self.manifest_version,
         )?;
         require_non_empty("extension_template.extension_id", &self.extension_id)?;
+        self.package.validate()?;
+        require_non_empty("extension_template.asset_version", &self.asset_version)?;
         for command in &self.commands {
             command.validate()?;
         }
@@ -1106,8 +1111,13 @@ mod tests {
     #[test]
     fn validates_extension_template_payload() {
         let payload = json!({
-            "manifest_version": "1",
+            "manifest_version": "2",
             "extension_id": "gitlab-review",
+            "package": {
+                "name": "gitlab-review",
+                "version": "0.1.0"
+            },
+            "asset_version": "0.1.0",
             "commands": [{
                 "name": "gitlab-review:prepare",
                 "description": "准备 review",
@@ -1159,8 +1169,13 @@ mod tests {
         let bad_action = LibraryAssetPayload::from_value(
             LibraryAssetType::ExtensionTemplate,
             json!({
-                "manifest_version": "1",
+                "manifest_version": "2",
                 "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
                 "runtime_actions": [{
                     "action_key": "Bad.Action",
                     "kind": "session_runtime",
@@ -1175,8 +1190,13 @@ mod tests {
         let bad_tab = LibraryAssetPayload::from_value(
             LibraryAssetType::ExtensionTemplate,
             json!({
-                "manifest_version": "1",
+                "manifest_version": "2",
                 "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
                 "workspace_tabs": [{
                     "type_id": "bad.panel",
                     "label": "Bad",
@@ -1190,8 +1210,13 @@ mod tests {
         let bad_bundle = LibraryAssetPayload::from_value(
             LibraryAssetType::ExtensionTemplate,
             json!({
-                "manifest_version": "1",
+                "manifest_version": "2",
                 "extension_id": "bad",
+                "package": {
+                    "name": "bad",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
                 "bundles": [{
                     "kind": "extension_host",
                     "entry": "dist/extension.js",
@@ -1205,8 +1230,13 @@ mod tests {
     #[test]
     fn rejects_extension_flag_default_type_mismatch() {
         let payload = json!({
-            "manifest_version": "1",
+            "manifest_version": "2",
             "extension_id": "bad",
+            "package": {
+                "name": "bad",
+                "version": "0.1.0"
+            },
+            "asset_version": "0.1.0",
             "flags": [{
                 "name": "bad.verbose",
                 "type": "bool",

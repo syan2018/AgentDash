@@ -56,8 +56,13 @@ impl AgentDashPlugin for ConnectorCatalogPlugin {
             ),
             version: "0.1.0".to_string(),
             payload: json!({
-                "manifest_version": "1",
+                "manifest_version": "2",
                 "extension_id": "builtin-session-notes",
+                "package": {
+                    "name": "builtin-session-notes",
+                    "version": "0.1.0"
+                },
+                "asset_version": "0.1.0",
                 "commands": [{
                     "name": "session-notes:add",
                     "description": "向当前会话注入一条备注提示",

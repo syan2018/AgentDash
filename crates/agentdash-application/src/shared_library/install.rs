@@ -253,16 +253,18 @@ pub async fn list_project_asset_source_status(
         .list_by_project(project_id)
         .await?
     {
-        extension_installations.push(
-            source_status_item(
-                repos,
-                "extension_installation",
-                installation.id,
-                installation.extension_key,
-                installation.installed_source,
-            )
-            .await?,
-        );
+        if let Some(installed_source) = installation.installed_source {
+            extension_installations.push(
+                source_status_item(
+                    repos,
+                    "extension_installation",
+                    installation.id,
+                    installation.extension_key,
+                    installed_source,
+                )
+                .await?,
+            );
+        }
     }
 
     Ok(ProjectAssetSourceStatus {

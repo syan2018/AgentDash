@@ -9,7 +9,8 @@ use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
 use agentdash_infrastructure::{
     PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository, PostgresInlineFileRepository,
+    PostgresBackendRepository, PostgresCanvasRepository,
+    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
@@ -73,6 +74,9 @@ pub(crate) async fn build_repositories(
     let project_extension_installation_repo = Arc::new(
         PostgresProjectExtensionInstallationRepository::new(pool.clone()),
     );
+    let extension_package_artifact_repo = Arc::new(
+        PostgresExtensionPackageArtifactRepository::new(pool.clone()),
+    );
 
     let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
 
@@ -110,6 +114,7 @@ pub(crate) async fn build_repositories(
         user_directory_repo: user_directory_repo.clone(),
         settings_repo: settings_repo.clone(),
         shared_library_repo: shared_library_repo.clone(),
+        extension_package_artifact_repo: extension_package_artifact_repo.clone(),
         project_extension_installation_repo: project_extension_installation_repo.clone(),
         llm_provider_repo: llm_provider_repo.clone(),
         mcp_preset_repo: mcp_preset_repo.clone(),

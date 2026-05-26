@@ -5,6 +5,7 @@ pub mod backends;
 pub mod canvases;
 pub mod discovered_options;
 pub mod discovery;
+pub mod extension_package_artifacts;
 pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
@@ -48,6 +49,7 @@ use crate::stream;
 
 const SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
 const VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+const EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let mcp_services = Arc::new(McpServices {
@@ -452,6 +454,22 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/extension-runtime",
             get(extension_runtime::get_project_extension_runtime),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts",
+            get(extension_package_artifacts::list_extension_package_artifacts)
+                .post(extension_package_artifacts::upload_extension_package_artifact)
+                .layer(DefaultBodyLimit::max(
+                    EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES,
+                )),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/install",
+            post(extension_package_artifacts::install_extension_package_artifact_route),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+            get(extension_package_artifacts::download_extension_package_archive),
         )
         // ACP Sessions — CRUD
         .route(

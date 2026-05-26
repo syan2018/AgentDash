@@ -59,6 +59,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures = "0.3"
 zip = "2.4"
+flate2 = "1.1.9"
+tar = "0.4.45"
 
 # 嵌入式脚本引擎
 rhai = { version = "1.24", features = ["serde", "sync"] }

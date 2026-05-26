@@ -53,6 +53,13 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - Local runtime 的 session notification forwarder 按 `session_id` 唯一运行；同一 relay session 的 follow-up prompt 复用现有 forwarder，保证同一条 session event 只有一个 relay 转发路径。
 - Relay protocol 顶层信封保留在 `agentdash-relay/src/protocol.rs`；握手、心跳和 capability discovery payload 位于 `agentdash-relay/src/protocol/handshake.rs`，prompt / discovery / workspace / tool / VFS materialization / terminal / session event / MCP payload 位于 `agentdash-relay/src/protocol/` 对应子模块。顶层信封和子协议 payload 分离，原因是 wire format 必须集中稳定，而各子协议会按本机能力独立演进。
 
+### Extension Artifact Cache
+
+- `agentdash-local` 通过后端 archive download API 获取 Project scoped extension package artifact。
+- cache key 使用 `artifact_id + archive_digest`，原因是同一 artifact 重新发布或 digest 改变时必须形成新的本机缓存目录。
+- 下载后必须校验 archive sha256 digest，再把 `.agentdash-extension.tgz` 解包到可清理 cache 目录。
+- 解包只接受 archive 内相对普通文件路径；Extension Host 读取 cache 中的 package 内容，不在安装路径执行 npm/pnpm install 或 package lifecycle scripts。
+
 ### 样式与依赖
 
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口

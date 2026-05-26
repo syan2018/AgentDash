@@ -1006,6 +1006,7 @@ mod tests {
     };
     use agentdash_application::session::ownership::SessionOwnerResolver;
     use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
@@ -1103,8 +1104,13 @@ mod tests {
             "digest",
         );
         let manifest = ExtensionTemplatePayload {
-            manifest_version: "1".to_string(),
+            manifest_version: "2".to_string(),
             extension_id: "demo".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "demo".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            asset_version: "0.1.0".to_string(),
             commands: vec![ExtensionCommandDefinition {
                 name: "demo:run".to_string(),
                 description: "run demo".to_string(),

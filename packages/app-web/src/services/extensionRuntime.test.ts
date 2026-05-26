@@ -30,6 +30,23 @@ describe("extension runtime mapper", () => {
           source_digest: "sha256:digest",
           installed_at: "2026-05-26T00:00:00Z",
         },
+        package_artifact: null,
+      }, {
+        installation_id: "installation-2",
+        extension_key: "packaged-hello",
+        extension_id: "packaged-hello",
+        display_name: "Packaged Hello",
+        installed_source: null,
+        package_artifact: {
+          artifact_id: "artifact-1",
+          package_name: "@agentdash/local-hello",
+          package_version: "0.1.0",
+          asset_version: "2026.05.26",
+          source_version: "0.1.0",
+          storage_ref: "extension-packages/project-1/digest.agentdash-extension.tgz",
+          archive_digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          manifest_digest: "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+        },
       }],
       commands: [{
         extension_key: "local-hello",
@@ -85,6 +102,10 @@ describe("extension runtime mapper", () => {
     });
 
     expect(projection.runtime_actions[0].action_key).toBe("local-hello.profile");
+    expect(projection.installations[0].installed_source?.source_ref).toBe("plugin:local-hello");
+    expect(projection.installations[0].package_artifact).toBeNull();
+    expect(projection.installations[1].installed_source).toBeNull();
+    expect(projection.installations[1].package_artifact?.artifact_id).toBe("artifact-1");
     expect(projection.workspace_tabs[0].renderer).toEqual({
       kind: "webview",
       entry: "dist/panel/index.html",

@@ -16,7 +16,7 @@
 - `main` 已合入 context compaction infrastructure，PR33 应切换为以 `main` 为基线继续处理。
 - 本地已在 `codex/pr33-main-merge-check` 做过 no-commit merge 演练，唯一冲突集中在 `context_projector.rs` / `compaction_checkpoint.rs` 的 projection segment 解析职责。
 - 已确认的冲突吸附方向是：`compaction_checkpoint.rs` 解析 `summary_chunk` 与 `context_envelope`，`context_projector.rs` 负责读取 projection head 并组装 context。
-- 当前用户要求先不要继续查编译链路；本任务默认只做静态检查和差异校验，编译 / 全量测试需要用户后续明确允许。
+- 合 PR 前质量门已切到真实 PR 分支执行；格式、contracts、backend、frontend 检查均在主仓库分支上收口。
 
 ## Requirements
 
@@ -40,7 +40,7 @@
 - [ ] `parent_relation_kind` 被前端列表分组和展示消费，fork / rollback branch 不再被统一叫作 companion。
 - [ ] 项目会话列表的 lineage 查询失败不会静默降级为无 parent。
 - [ ] `.trellis/tasks/04-08-session-tree-branching/task.json` 与本任务 metadata 反映 `main` 作为 PR target。
-- [ ] 按用户约束完成 `git diff --check`、冲突状态检查和静态吸附扫描；未获得允许前不跑编译 / 全量测试。
+- [ ] 按用户约束完成 `git diff --check`、冲突状态检查、静态吸附扫描，并在真实 PR 分支上完成除用户指示排除项外的合并前质量门收口。
 
 ## Out Of Scope
 
@@ -51,4 +51,4 @@
 
 ## Open Questions
 
-- 是否允许在最终收口前运行最小化的 targeted tests 或 type-check，待实现前由用户决定。
+- Playwright 关键 e2e 当前卡在 webServer 启动参数契约，已按用户指示不纳入本轮修复范围。

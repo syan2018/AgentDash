@@ -46,7 +46,18 @@
 - [x] `git diff --check`
 - [x] `rg -n "parent_relation_kind|companions|companion|isCompanion" packages/app-web/src`
 - [x] `rg -n "lineage_view|rollback_model_projection|resolve_active_compaction_after_rollback|fork_point_compaction_id" crates`
-- [x] 未获得用户允许前，不运行 `pnpm dev`、cargo build/check 或全量测试。
+
+## Phase 7: Merge Readiness Quality Gate
+
+- [x] `cargo fmt --all --check`
+- [x] `pnpm run contracts:check`
+- [x] `pnpm run backend:check`
+- [x] `pnpm run backend:clippy`
+- [x] `pnpm run backend:test`
+- [x] `pnpm run frontend:check`
+- [x] `pnpm run frontend:lint`
+- [x] `pnpm run frontend:test`
+- [ ] `pnpm run e2e:test:critical` 的测试进程未进入用例阶段；当前阻塞点是 Playwright webServer 启动参数契约，已按用户指示不纳入本轮修复。
 
 ## Risk Points
 

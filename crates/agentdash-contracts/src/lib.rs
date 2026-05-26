@@ -1,3 +1,4 @@
+pub mod extension_runtime;
 pub mod mcp_preset;
 pub mod project_agent;
 pub mod session;

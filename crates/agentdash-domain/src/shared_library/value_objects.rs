@@ -662,6 +662,14 @@ pub struct ExtensionTemplatePayload {
     pub capability_directives: Vec<ToolCapabilityDirective>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub asset_refs: Vec<ExtensionAssetRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_actions: Vec<ExtensionRuntimeActionDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_tabs: Vec<ExtensionWorkspaceTabDefinition>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<ExtensionPermissionDeclaration>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundles: Vec<ExtensionBundleRef>,
 }
 
 impl ExtensionTemplatePayload {
@@ -682,6 +690,18 @@ impl ExtensionTemplatePayload {
         }
         for asset_ref in &self.asset_refs {
             asset_ref.validate()?;
+        }
+        for action in &self.runtime_actions {
+            action.validate()?;
+        }
+        for tab in &self.workspace_tabs {
+            tab.validate()?;
+        }
+        for permission in &self.permissions {
+            permission.validate()?;
+        }
+        for bundle in &self.bundles {
+            bundle.validate()?;
         }
         Ok(())
     }
@@ -795,11 +815,221 @@ impl ExtensionAssetRef {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionRuntimeActionKind {
+    SessionRuntime,
+    Setup,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ExtensionRuntimeActionDefinition {
+    pub action_key: String,
+    pub kind: ExtensionRuntimeActionKind,
+    pub description: String,
+    #[serde(default = "empty_json_schema")]
+    pub input_schema: Value,
+    #[serde(default = "empty_json_schema")]
+    pub output_schema: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<String>,
+}
+
+impl ExtensionRuntimeActionDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_runtime_action_key(
+            "extension_template.runtime_actions[].action_key",
+            &self.action_key,
+        )?;
+        require_non_empty(
+            "extension_template.runtime_actions[].description",
+            &self.description,
+        )?;
+        validate_json_schema(
+            "extension_template.runtime_actions[].input_schema",
+            &self.input_schema,
+        )?;
+        validate_json_schema(
+            "extension_template.runtime_actions[].output_schema",
+            &self.output_schema,
+        )?;
+        for permission in &self.permissions {
+            validate_permission_key(
+                "extension_template.runtime_actions[].permissions[]",
+                permission,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionWorkspaceTabDefinition {
+    pub type_id: String,
+    pub label: String,
+    pub uri_scheme: String,
+    pub renderer: ExtensionWorkspaceTabRendererDeclaration,
+}
+
+impl ExtensionWorkspaceTabDefinition {
+    fn validate(&self) -> Result<(), DomainError> {
+        validate_extension_qualified_id(
+            "extension_template.workspace_tabs[].type_id",
+            &self.type_id,
+        )?;
+        require_non_empty("extension_template.workspace_tabs[].label", &self.label)?;
+        validate_uri_scheme(
+            "extension_template.workspace_tabs[].uri_scheme",
+            &self.uri_scheme,
+        )?;
+        self.renderer.validate()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionWorkspaceTabRendererDeclaration {
+    Webview { entry: String },
+}
+
+impl ExtensionWorkspaceTabRendererDeclaration {
+    fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::Webview { entry } => {
+                require_non_empty("extension_template.workspace_tabs[].renderer.entry", entry)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionPermissionAccess {
+    Read,
+    Write,
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtensionPermissionDeclaration {
+    LocalProfile { access: ExtensionPermissionAccess },
+    Workspace { access: ExtensionPermissionAccess },
+    RuntimeAction { action_key: String },
+}
+
+impl ExtensionPermissionDeclaration {
+    fn validate(&self) -> Result<(), DomainError> {
+        match self {
+            Self::LocalProfile { .. } | Self::Workspace { .. } => Ok(()),
+            Self::RuntimeAction { action_key } => validate_runtime_action_key(
+                "extension_template.permissions[].action_key",
+                action_key,
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionBundleKind {
+    ExtensionHost,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionBundleRef {
+    pub kind: ExtensionBundleKind,
+    pub entry: String,
+    pub digest: String,
+}
+
+impl ExtensionBundleRef {
+    fn validate(&self) -> Result<(), DomainError> {
+        require_non_empty("extension_template.bundles[].entry", &self.entry)?;
+        validate_bundle_digest("extension_template.bundles[].digest", &self.digest)
+    }
+}
+
+fn empty_json_schema() -> Value {
+    Value::Object(Default::default())
+}
+
+fn validate_json_schema(field: &str, value: &Value) -> Result<(), DomainError> {
+    if value.is_object() || value.is_boolean() {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须是 JSON Schema 对象或布尔值"
+        )))
+    }
+}
+
 fn require_non_empty(field: &str, value: &str) -> Result<(), DomainError> {
     if value.trim().is_empty() {
         return Err(DomainError::InvalidConfig(format!("{field} 不能为空")));
     }
     Ok(())
+}
+
+fn validate_runtime_action_key(field: &str, value: &str) -> Result<(), DomainError> {
+    require_non_empty(field, value)?;
+    let valid = value.split('.').all(|segment| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须由小写字母、数字、下划线、短横线和点分段组成: {value}"
+        )))
+    }
+}
+
+fn validate_extension_qualified_id(field: &str, value: &str) -> Result<(), DomainError> {
+    validate_runtime_action_key(field, value)
+}
+
+fn validate_permission_key(field: &str, value: &str) -> Result<(), DomainError> {
+    validate_runtime_action_key(field, value)
+}
+
+fn validate_uri_scheme(field: &str, value: &str) -> Result<(), DomainError> {
+    require_non_empty(field, value)?;
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return Err(DomainError::InvalidConfig(format!("{field} 不能为空")));
+    };
+    let valid = first.is_ascii_lowercase()
+        && chars.all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '+' || c == '.' || c == '-'
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须是小写 URI scheme: {value}"
+        )))
+    }
+}
+
+fn validate_bundle_digest(field: &str, value: &str) -> Result<(), DomainError> {
+    require_non_empty(field, value)?;
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(DomainError::InvalidConfig(format!(
+            "{field} 必须使用 sha256:<hex> 格式"
+        )));
+    };
+    let valid = hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit());
+    if valid {
+        Ok(())
+    } else {
+        Err(DomainError::InvalidConfig(format!(
+            "{field} 必须包含 64 位 sha256 十六进制摘要"
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -892,6 +1122,29 @@ mod tests {
             "message_renderers": [{
                 "custom_type": "gitlab-review.summary",
                 "renderer": { "kind": "json_card" }
+            }],
+            "runtime_actions": [{
+                "action_key": "gitlab-review.prepare",
+                "kind": "session_runtime",
+                "description": "准备 review runtime action",
+                "input_schema": {},
+                "output_schema": {},
+                "permissions": ["local.profile.read"]
+            }],
+            "workspace_tabs": [{
+                "type_id": "gitlab-review.summary-panel",
+                "label": "Review",
+                "uri_scheme": "gitlab-review",
+                "renderer": { "kind": "webview", "entry": "dist/panel/index.html" }
+            }],
+            "permissions": [{
+                "kind": "local_profile",
+                "access": "read"
+            }],
+            "bundles": [{
+                "kind": "extension_host",
+                "entry": "dist/extension.js",
+                "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
             }]
         });
 
@@ -899,6 +1152,54 @@ mod tests {
             .expect("valid extension template");
 
         assert!(matches!(typed, LibraryAssetPayload::ExtensionTemplate(_)));
+    }
+
+    #[test]
+    fn rejects_invalid_extension_runtime_contracts() {
+        let bad_action = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "1",
+                "extension_id": "bad",
+                "runtime_actions": [{
+                    "action_key": "Bad.Action",
+                    "kind": "session_runtime",
+                    "description": "bad",
+                    "input_schema": {},
+                    "output_schema": {}
+                }]
+            }),
+        );
+        assert!(bad_action.is_err());
+
+        let bad_tab = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "1",
+                "extension_id": "bad",
+                "workspace_tabs": [{
+                    "type_id": "bad.panel",
+                    "label": "Bad",
+                    "uri_scheme": "Bad",
+                    "renderer": { "kind": "webview", "entry": "dist/index.html" }
+                }]
+            }),
+        );
+        assert!(bad_tab.is_err());
+
+        let bad_bundle = LibraryAssetPayload::from_value(
+            LibraryAssetType::ExtensionTemplate,
+            json!({
+                "manifest_version": "1",
+                "extension_id": "bad",
+                "bundles": [{
+                    "kind": "extension_host",
+                    "entry": "dist/extension.js",
+                    "digest": "sha256:not-a-digest"
+                }]
+            }),
+        );
+        assert!(bad_bundle.is_err());
     }
 
     #[test]

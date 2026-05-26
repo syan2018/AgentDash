@@ -40,6 +40,7 @@ crates/agentdash-contracts/
     generate_ts.rs
     mcp_preset.rs        # MCP preset CRUD/probe DTO
     session.rs           # Session event page DTO / NDJSON envelope / runtime projection
+    extension_runtime.rs # Project extension runtime surface DTO
     workflow.rs          # WorkflowContract / lifecycle / activity DTO
     vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
     shared_library.rs    # Library asset install/publish DTO
@@ -52,6 +53,7 @@ crates/agentdash-contracts/
 packages/app-web/src/generated/
   backbone-protocol.ts
   session-contracts.ts
+  extension-runtime-contracts.ts
   workflow-contracts.ts
   vfs-contracts.ts
   shared-library-contracts.ts
@@ -67,6 +69,7 @@ packages/app-web/src/generated/
 | --- | --- | --- |
 | MCP Preset | `mcp-preset-contracts.ts` | `agentdash-contracts::mcp_preset` |
 | Session event stream / projection view | `session-contracts.ts` | `agentdash-contracts::session` |
+| Extension Runtime | `extension-runtime-contracts.ts` | `agentdash-contracts::extension_runtime` |
 | Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
 | VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
 | Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
@@ -85,6 +88,7 @@ Session branch DTOs also live in `agentdash-contracts::session`: fork request/re
 - Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.
 - VFS, Shared Library and Project Agent use narrow DTOs in `agentdash-contracts` because their API responses intentionally map application/domain internals into stable browser-facing shapes.
 - Generated request/response DTOs model serde wire fields. UI-level convenience such as nullable fields, normalized config objects or derived aliases belongs in frontend type entrypoints rather than in the generated file.
+- Project extension runtime surface 使用独立 `agentdash-contracts::extension_runtime` 与 `extension-runtime-contracts.ts`，原因是它是 Project enabled extension installations 派生出的全局 runtime surface，不属于 Shared Library marketplace/source-status，也不是 Session Context 私有字段。
 
 ## Validation
 

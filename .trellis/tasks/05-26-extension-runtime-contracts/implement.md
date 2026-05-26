@@ -4,9 +4,9 @@
 
 - [ ] 扩展 domain value objects 和 validators。
 - [ ] 如需 schema repair，新增 migration。
-- [ ] 扩展 session construction projection structs。
-- [ ] 扩展 API response DTO / contract generation。
-- [ ] 扩展前端 session context types 和 mapper。
+- [ ] 新增独立 extension_runtime application projection 模块，并让 session construction 读取该 projection。
+- [ ] 扩展 Project 级 API response DTO / contract generation。
+- [ ] 新增前端 extension runtime types/service mapper。
 - [ ] 增加 Rust tests：payload validation、projection flatten、conflict detection。
 - [ ] 增加前端 tests：mapper 解析 extension runtime。
 

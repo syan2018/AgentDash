@@ -1,5 +1,16 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::extension_runtime::{
+    ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
+    ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
+    ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
+    ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
+    ExtensionPermissionAccessResponse, ExtensionPermissionDeclarationResponse,
+    ExtensionPermissionProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
+};
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
@@ -131,6 +142,32 @@ fn main() {
         export_all::<UpdateProjectVfsMountRequest>(dir);
         export_all::<ProjectVfsMountResponse>(dir);
     });
+
+    write_domain(
+        &generated_dir.join("extension-runtime-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ExtensionRuntimeActionKindResponse>(dir);
+            export_all::<ExtensionFlagTypeResponse>(dir);
+            export_all::<ExtensionPermissionAccessResponse>(dir);
+            export_all::<ExtensionBundleKindResponse>(dir);
+            export_all::<ExtensionCommandHandlerResponse>(dir);
+            export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
+            export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+            export_all::<ExtensionPermissionDeclarationResponse>(dir);
+            export_all::<ExtensionInstalledAssetSourceResponse>(dir);
+            export_all::<ExtensionInstallationProjectionResponse>(dir);
+            export_all::<ExtensionCommandProjectionResponse>(dir);
+            export_all::<ExtensionFlagProjectionResponse>(dir);
+            export_all::<ExtensionMessageRendererProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
+            export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
+            export_all::<ExtensionPermissionProjectionResponse>(dir);
+            export_all::<ExtensionBundleProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeProjectionResponse>(dir);
+        },
+    );
 
     write_domain(
         &generated_dir.join("shared-library-contracts.ts"),

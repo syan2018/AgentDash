@@ -562,5 +562,6 @@ export * from "./canvas";
 export * from "./session";
 export * from "./mcp-preset";
 export * from "./skill-asset";
+export * from "./extension-runtime";
 export * from "./shared-library";
 export * from "./acp";

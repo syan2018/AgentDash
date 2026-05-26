@@ -5,6 +5,7 @@ pub mod backends;
 pub mod canvases;
 pub mod discovered_options;
 pub mod discovery;
+pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
@@ -447,6 +448,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/shared-library/source-status",
             get(shared_library::get_project_asset_source_status),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime",
+            get(extension_runtime::get_project_extension_runtime),
         )
         // ACP Sessions — CRUD
         .route(

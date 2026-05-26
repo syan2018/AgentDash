@@ -140,6 +140,41 @@ export function collectNewSystemEvents(
   return { items, lastSeenSeq };
 }
 
+function isCompactionSummaryFrame(event: BackboneEvent): boolean {
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "session_meta_update" ||
+    event.payload.data.key !== "context_frame"
+  ) {
+    return false;
+  }
+  const value = event.payload.data.value;
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+    value.kind === "compaction_summary";
+}
+
+function isProjectionRefreshEvent(event: BackboneEvent): boolean {
+  if (event.type === "turn_completed" || event.type === "context_compacted") {
+    return true;
+  }
+  if (event.type !== "platform") {
+    return false;
+  }
+  return extractPlatformEventType(event) === "context_compacted" ||
+    isCompactionSummaryFrame(event);
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function computeProjectionRefreshKey(rawEvents: SessionEventEnvelope[]): number {
+  let refreshKey = 0;
+  for (const event of rawEvents) {
+    if (isProjectionRefreshEvent(event.notification.event)) {
+      refreshKey = Math.max(refreshKey, event.event_seq);
+    }
+  }
+  return refreshKey;
+}
+
 // ─── 子组件 ────────────────────────────────────────────
 
 function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
@@ -470,9 +505,10 @@ export function SessionChatView({
     tokenUsage,
   } = useSessionFeed({ sessionId: streamSessionId, enabled: hasSession });
 
-  const projectionRefreshKey = rawEvents.length > 0
-    ? rawEvents[rawEvents.length - 1]?.event_seq ?? 0
-    : 0;
+  const projectionRefreshKey = useMemo(
+    () => computeProjectionRefreshKey(rawEvents),
+    [rawEvents],
+  );
 
   useEffect(() => {
     if (!hasSession || executionState?.status !== "running") return;

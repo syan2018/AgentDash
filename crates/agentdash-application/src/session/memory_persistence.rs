@@ -568,7 +568,8 @@ impl SessionPersistence for MemorySessionPersistence {
         compaction.completed_event_seq = Some(event_seq);
         compaction.completed_at_ms = compaction.completed_at_ms.or(Some(committed_at_ms));
         let mut head = commit.head;
-        head.updated_by_event_seq = head.updated_by_event_seq.or(Some(event_seq));
+        head.head_event_seq = event_seq;
+        head.updated_by_event_seq = Some(event_seq);
         head.updated_at_ms = if head.updated_at_ms == 0 {
             committed_at_ms
         } else {

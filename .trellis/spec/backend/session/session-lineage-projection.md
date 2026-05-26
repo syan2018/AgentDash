@@ -17,8 +17,9 @@ Session lineage projection applies to AgentDash-owned session branch, fork and r
 `SessionBranchingService` owns branch use cases:
 
 - `fork_session` resolves an event, message ref or compaction fork point; creates child `SessionMeta`; writes the lineage edge; commits a child initial compaction; and initializes the child model context projection head.
-- `rollback_model_projection` appends `session_projection_rolled_back` as a platform event and upserts `session_projection_heads(model_context)` to the requested target head.
-- `lineage_view` returns the direct parent edge, ancestors and direct children.
+- `fork_session` accepts an explicit compaction fork point only when that compaction has committed projection facts and covers the requested fork event head, because the child initial projection must not inherit model context that is outside the parent boundary.
+- `rollback_model_projection` appends `session_projection_rolled_back` as a platform event and upserts `session_projection_heads(model_context)` to the requested target head. The target is bounded by the current model-visible projection head, because append-only `session_events` can contain facts that rollback has already hidden from model input.
+- `lineage_view` returns the direct parent edge, ancestors and direct children. List surfaces that only need parent grouping read the direct parent edge instead of the full lineage view.
 
 `ContextProjector` builds model input from projection heads. For branch restore it can build at a specific event head and can build from an explicit compaction id. `context_envelope` segments are projection-origin, synthetic model input entries, and keep original message provenance under their segment provenance.
 
@@ -30,7 +31,7 @@ The HTTP surface is exposed through ACP session routes:
 - `GET /sessions/{id}/lineage`
 - `POST /sessions/{id}/projection/rollback`
 
-DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Project session list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from `session_lineage` first, with companion context as the narrow companion fallback.
+DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Project session list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from direct `session_lineage` parent edges first, with companion context as the narrow companion fallback. Frontend project session grouping preserves `parent_relation_kind` so fork, rollback branch, spawned agent and companion edges remain distinguishable in list and shortcut surfaces.
 
 Session detail surfaces lineage through the same generated DTO. The chat view branch panel reads `GET /sessions/{id}/lineage` and displays parent source, relation status, fork point and direct children beside the model context projection view.
 

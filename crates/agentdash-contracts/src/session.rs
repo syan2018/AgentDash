@@ -73,7 +73,7 @@ pub enum SessionNdjsonEnvelope {
     },
     Event {
         #[serde(flatten)]
-        event: SessionEventResponse,
+        event: Box<SessionEventResponse>,
     },
     Heartbeat {
         #[ts(type = "number")]
@@ -88,7 +88,7 @@ impl SessionNdjsonEnvelope {
 
     pub fn event(event: PersistedSessionEvent) -> Self {
         Self::Event {
-            event: event.into(),
+            event: Box::new(event.into()),
         }
     }
 

@@ -297,7 +297,7 @@ fn translate_type_to_glob(name: &str) -> Result<String, String> {
             let supported: Vec<&str> = LANG_EXTENSIONS.iter().map(|(k, _)| *k).collect();
             format!("unknown type `{name}`; supported: {}", supported.join(", "))
         })?;
-    let exts: Vec<&str> = entry.1.iter().copied().collect();
+    let exts: Vec<&str> = entry.1.to_vec();
     Ok(if exts.len() == 1 {
         format!("**/*.{}", exts[0])
     } else {

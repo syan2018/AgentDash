@@ -81,7 +81,7 @@ impl RuntimeGateway {
             .cloned()
             .ok_or_else(|| RuntimeInvocationError::ProviderUnavailable {
                 action_key: request.action_key.clone(),
-                trace: Some(trace.clone()),
+                trace: Some(Box::new(trace.clone())),
             })?;
 
         validate_request(provider.as_ref(), &request)?;

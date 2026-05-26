@@ -198,7 +198,7 @@ fn write_domain(
     let output = lines.join("\n");
 
     if check {
-        match fs::read_to_string(&out) {
+        match fs::read_to_string(out) {
             Ok(existing) if existing == output => {
                 eprintln!("{} is up to date", out.display());
                 return;
@@ -217,7 +217,7 @@ fn write_domain(
         }
     }
 
-    fs::write(&out, output).expect("write generated TS");
+    fs::write(out, output).expect("write generated TS");
 
     eprintln!("Wrote {} ({} types)", out.display(), declarations.len());
 }

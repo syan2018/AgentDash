@@ -17,32 +17,32 @@ pub enum RuntimeInvocationError {
         message: String,
         #[source]
         source: Option<RuntimeActionKeyErrorSource>,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
     #[error("runtime action 被拒绝: {message}")]
     CapabilityDenied {
         message: String,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
     #[error("runtime action 当前不可执行: {message}")]
     Conflict {
         message: String,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
     #[error("runtime provider 不可用: {action_key}")]
     ProviderUnavailable {
         action_key: RuntimeActionKey,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
     #[error("runtime provider 执行失败: {message}")]
     ProviderFailed {
         message: String,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
     #[error("runtime invocation 超时: {message}")]
     Timeout {
         message: String,
-        trace: Option<RuntimeTrace>,
+        trace: Option<Box<RuntimeTrace>>,
     },
 }
 
@@ -55,7 +55,7 @@ impl RuntimeInvocationError {
         Self::InvalidRequest {
             message: message.into(),
             source: None,
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
@@ -67,35 +67,35 @@ impl RuntimeInvocationError {
         Self::InvalidRequest {
             message: message.into(),
             source: Some(RuntimeActionKeyErrorSource(source.into())),
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
     pub fn capability_denied(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
         Self::CapabilityDenied {
             message: message.into(),
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
     pub fn provider_failed(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
         Self::ProviderFailed {
             message: message.into(),
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
     pub fn conflict(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
         Self::Conflict {
             message: message.into(),
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
     pub fn timeout(message: impl Into<String>, trace: Option<RuntimeTrace>) -> Self {
         Self::Timeout {
             message: message.into(),
-            trace,
+            trace: trace.map(Box::new),
         }
     }
 
@@ -125,7 +125,7 @@ impl RuntimeInvocationError {
             | RuntimeInvocationError::Conflict { trace, .. }
             | RuntimeInvocationError::ProviderUnavailable { trace, .. }
             | RuntimeInvocationError::ProviderFailed { trace, .. }
-            | RuntimeInvocationError::Timeout { trace, .. } => trace.as_ref(),
+            | RuntimeInvocationError::Timeout { trace, .. } => trace.as_deref(),
         }
     }
 
@@ -138,35 +138,35 @@ impl RuntimeInvocationError {
             } => RuntimeInvocationError::InvalidRequest {
                 message,
                 source,
-                trace: trace.or(Some(fallback)),
+                trace: trace.or_else(|| Some(Box::new(fallback))),
             },
             RuntimeInvocationError::CapabilityDenied { message, trace } => {
                 RuntimeInvocationError::CapabilityDenied {
                     message,
-                    trace: trace.or(Some(fallback)),
+                    trace: trace.or_else(|| Some(Box::new(fallback))),
                 }
             }
             RuntimeInvocationError::Conflict { message, trace } => {
                 RuntimeInvocationError::Conflict {
                     message,
-                    trace: trace.or(Some(fallback)),
+                    trace: trace.or_else(|| Some(Box::new(fallback))),
                 }
             }
             RuntimeInvocationError::ProviderUnavailable { action_key, trace } => {
                 RuntimeInvocationError::ProviderUnavailable {
                     action_key,
-                    trace: trace.or(Some(fallback)),
+                    trace: trace.or_else(|| Some(Box::new(fallback))),
                 }
             }
             RuntimeInvocationError::ProviderFailed { message, trace } => {
                 RuntimeInvocationError::ProviderFailed {
                     message,
-                    trace: trace.or(Some(fallback)),
+                    trace: trace.or_else(|| Some(Box::new(fallback))),
                 }
             }
             RuntimeInvocationError::Timeout { message, trace } => RuntimeInvocationError::Timeout {
                 message,
-                trace: trace.or(Some(fallback)),
+                trace: trace.or_else(|| Some(Box::new(fallback))),
             },
         }
     }

@@ -5,7 +5,7 @@ use crate::model::message::{AgentMessage, MessageRef};
 // ─── ProjectionKind ────────────────────────────────────────
 
 /// 投影视图或条目类别。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionKind {
     /// 直接从原始 transcript 事件还原
@@ -13,6 +13,7 @@ pub enum ProjectionKind {
     /// 压缩摘要（不对应单条原始事件，而是多条事件的聚合投影）
     CompactionSummary,
     /// 模型可见上下文投影
+    #[default]
     ModelContext,
     /// 前端 timeline 投影
     Timeline,
@@ -35,17 +36,12 @@ impl ProjectionKind {
     }
 }
 
-impl Default for ProjectionKind {
-    fn default() -> Self {
-        Self::ModelContext
-    }
-}
-
 // ─── Projection Provenance ──────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectionOrigin {
+    #[default]
     Event,
     Projection,
 }
@@ -63,12 +59,6 @@ impl ProjectionOrigin {
             Self::Event => "event",
             Self::Projection => "projection",
         }
-    }
-}
-
-impl Default for ProjectionOrigin {
-    fn default() -> Self {
-        Self::Event
     }
 }
 

@@ -6,7 +6,6 @@ use agentdash_domain::mcp_preset as domain;
 use agentdash_domain::shared_library::InstalledAssetSource;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-
 pub struct McpHttpHeader {
     pub name: String,
     pub value: String,
@@ -31,7 +30,6 @@ impl From<McpHttpHeader> for domain::McpHttpHeader {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-
 pub struct McpEnvVar {
     pub name: String,
     pub value: String,
@@ -57,7 +55,6 @@ impl From<McpEnvVar> for domain::McpEnvVar {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-
 pub enum McpTransportConfig {
     Http {
         url: String,
@@ -120,7 +117,6 @@ impl From<McpTransportConfig> for domain::McpTransportConfig {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-
 pub enum McpRoutePolicy {
     #[default]
     Auto,
@@ -150,7 +146,6 @@ impl From<McpRoutePolicy> for domain::McpRoutePolicy {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-
 pub enum McpPresetSourceTag {
     Builtin,
     User,
@@ -166,7 +161,6 @@ impl From<domain::McpPresetSource> for McpPresetSourceTag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-
 pub struct InstalledAssetSourceResponse {
     pub library_asset_id: String,
     pub source_ref: String,
@@ -188,7 +182,6 @@ impl From<InstalledAssetSource> for InstalledAssetSourceResponse {
 }
 
 #[derive(Debug, Clone, Serialize, TS, PartialEq, Eq)]
-
 pub struct McpPresetResponse {
     pub id: String,
     pub project_id: String,
@@ -235,7 +228,6 @@ impl From<domain::McpPreset> for McpPresetResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
-
 pub struct CreateMcpPresetRequest {
     pub key: String,
     pub display_name: String,
@@ -248,7 +240,6 @@ pub struct CreateMcpPresetRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, TS)]
-
 pub struct UpdateMcpPresetRequest {
     #[serde(default)]
     #[ts(optional)]
@@ -268,7 +259,6 @@ pub struct UpdateMcpPresetRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, TS)]
-
 pub struct CloneMcpPresetRequest {
     #[serde(default)]
     #[ts(optional)]
@@ -279,7 +269,6 @@ pub struct CloneMcpPresetRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, TS)]
-
 pub struct ListMcpPresetQuery {
     #[serde(default)]
     #[ts(optional)]
@@ -288,7 +277,6 @@ pub struct ListMcpPresetQuery {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case")]
-
 pub enum ProbeMcpPresetResponse {
     Ok {
         latency_ms: u32,
@@ -303,7 +291,6 @@ pub enum ProbeMcpPresetResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-
 pub struct ProbeMcpToolInfo {
     pub name: String,
     pub description: String,

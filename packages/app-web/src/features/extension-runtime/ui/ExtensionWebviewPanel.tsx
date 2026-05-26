@@ -11,6 +11,7 @@ import type {
   ResolvedMountSummary,
 } from "../../../types";
 import { useWorkspaceData, type WorkspaceData } from "../../workspace-panel/workspace-data-context";
+import type { WorkspaceBackendTarget } from "../../workspace-panel/workspace-panel-types";
 import {
   bridgeParamString,
   parseExtensionBridgeMessage,
@@ -26,11 +27,7 @@ interface ExtensionWebviewPanelProps {
   isActive: boolean;
 }
 
-interface BackendTarget {
-  backend_id: string;
-  label: string;
-  online: boolean;
-}
+type BackendTarget = WorkspaceBackendTarget;
 
 interface Availability {
   available: boolean;
@@ -199,9 +196,9 @@ function resolveAvailability(
   if (!installation.package_artifact) {
     return unavailable("Extension bundle 缺失", "当前插件安装没有可加载的 package artifact。");
   }
-  const backend = selectBackendTarget(workspaceData.runtimeSurface);
+  const backend = selectBackendTarget(workspaceData);
   if (!backend) {
-    return unavailable("Backend 不可用", "当前 Session runtime surface 没有可用 backend。");
+    return unavailable("Backend 不可用", "当前 Project workspace 没有可用 backend。");
   }
   if (!backend.online) {
     return {
@@ -234,6 +231,13 @@ function unavailable(title: string, detail: string): Availability {
 }
 
 function selectBackendTarget(
+  workspaceData: WorkspaceData,
+): BackendTarget | null {
+  const runtimeBackend = selectRuntimeSurfaceBackend(workspaceData.runtimeSurface);
+  return runtimeBackend ?? workspaceData.workspaceBackend;
+}
+
+function selectRuntimeSurfaceBackend(
   runtimeSurface: WorkspaceData["runtimeSurface"],
 ): BackendTarget | null {
   const mounts = runtimeSurface?.mounts ?? [];

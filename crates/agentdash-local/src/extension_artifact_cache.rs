@@ -86,7 +86,13 @@ pub async fn download_and_cache_extension_artifact(
     tokio::fs::create_dir_all(&cache_dir).await?;
     tokio::fs::write(&archive_path, &bytes).await?;
     replace_unpacked_dir(&unpacked_dir).await?;
-    unpack_tgz_bytes(&bytes, &unpacked_dir).await?;
+    let unpack_bytes = bytes.clone();
+    let unpack_target = unpacked_dir.clone();
+    tokio::task::spawn_blocking(move || unpack_tgz_bytes(&unpack_bytes, &unpack_target))
+        .await
+        .map_err(|error| {
+            ExtensionArtifactCacheError::Archive(format!("unpack task join 失败: {error}"))
+        })??;
 
     let manifest = CacheManifest {
         artifact_id: request.artifact_id,
@@ -111,7 +117,7 @@ async fn download_archive(
         ));
     }
     let url = format!(
-        "{base}/api/projects/{}/extension-artifacts/{}/archive",
+        "{base}/api/local-runtime/projects/{}/extension-artifacts/{}/archive",
         url_escape(&request.project_id),
         url_escape(&request.artifact_id)
     );
@@ -171,10 +177,7 @@ async fn replace_unpacked_dir(path: &Path) -> Result<(), ExtensionArtifactCacheE
     Ok(())
 }
 
-async fn unpack_tgz_bytes(
-    bytes: &[u8],
-    target_dir: &Path,
-) -> Result<(), ExtensionArtifactCacheError> {
+fn unpack_tgz_bytes(bytes: &[u8], target_dir: &Path) -> Result<(), ExtensionArtifactCacheError> {
     let decoder = GzDecoder::new(bytes);
     let mut archive = tar::Archive::new(decoder);
     let entries = archive
@@ -188,7 +191,7 @@ async fn unpack_tgz_bytes(
         })?)?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_dir() {
-            tokio::fs::create_dir_all(target_dir.join(&path)).await?;
+            std::fs::create_dir_all(target_dir.join(&path))?;
             continue;
         }
         if !entry_type.is_file() {
@@ -199,10 +202,9 @@ async fn unpack_tgz_bytes(
         }
         let destination = target_dir.join(&path);
         if let Some(parent) = destination.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+            std::fs::create_dir_all(parent)?;
         }
-        let file = tokio::fs::File::create(&destination).await?;
-        let mut std_file = file.into_std().await;
+        let mut std_file = std::fs::File::create(&destination)?;
         std::io::copy(&mut entry, &mut std_file)?;
     }
     Ok(())
@@ -314,7 +316,7 @@ mod tests {
     async fn unpacks_safe_archive_paths() {
         let temp = tempfile::tempdir().expect("tempdir");
         let bytes = archive_bytes("dist/extension.js", b"hello");
-        unpack_tgz_bytes(&bytes, temp.path()).await.expect("unpack");
+        unpack_tgz_bytes(&bytes, temp.path()).expect("unpack");
         let unpacked = tokio::fs::read_to_string(temp.path().join("dist/extension.js"))
             .await
             .expect("read");

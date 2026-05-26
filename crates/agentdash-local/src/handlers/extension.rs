@@ -5,6 +5,10 @@ use agentdash_relay::{
 use serde_json::{Map, json};
 
 use super::CommandHandler;
+use crate::{
+    ExtensionArtifactDownloadRequest, LocalExtensionHostActivation,
+    download_and_cache_extension_artifact,
+};
 
 impl CommandHandler {
     pub(super) async fn handle_extension_action_invoke(
@@ -12,6 +16,15 @@ impl CommandHandler {
         id: String,
         payload: CommandExtensionActionInvokePayload,
     ) -> RelayMessage {
+        let activation = self.ensure_extension_host_activation(&payload).await;
+        if let Err(error) = activation {
+            return RelayMessage::ResponseExtensionActionInvoke {
+                id,
+                payload: None,
+                error: Some(RelayError::runtime_error(error)),
+            };
+        }
+
         match self
             .extension_host
             .invoke_action(&payload.action_key, payload.input.clone())
@@ -47,5 +60,39 @@ impl CommandHandler {
                 error: Some(RelayError::runtime_error(error.to_string())),
             },
         }
+    }
+
+    async fn ensure_extension_host_activation(
+        &self,
+        payload: &CommandExtensionActionInvokePayload,
+    ) -> Result<(), String> {
+        let Some(artifact) = payload.package_artifact.as_ref() else {
+            return Ok(());
+        };
+        let cache_entry = download_and_cache_extension_artifact(ExtensionArtifactDownloadRequest {
+            api_base_url: self.extension_artifact_api_base_url.clone(),
+            access_token: self.extension_artifact_access_token.clone(),
+            project_id: payload.project_id.clone(),
+            artifact_id: artifact.artifact_id.clone(),
+            archive_digest: artifact.archive_digest.clone(),
+            cache_root: self.extension_artifact_cache_root.clone(),
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+
+        self.extension_host
+            .activate_cached_artifact(
+                &cache_entry,
+                LocalExtensionHostActivation {
+                    extension_key: payload.extension_key.clone(),
+                    backend_id: self.backend_id.clone(),
+                    project_id: Some(payload.project_id.clone()),
+                    session_id: Some(payload.session_id.clone()),
+                    workspace_roots: self.workspace_roots.clone(),
+                },
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }

@@ -55,7 +55,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 
 ### Extension Artifact Cache
 
-- `agentdash-local` 通过后端 archive download API 获取 Project scoped extension package artifact。
+- `agentdash-local` 通过 local-runtime archive download API 获取 Project scoped extension package artifact；请求使用 backend relay bearer token，云端按 token 解析 backend 并校验 Project backend access。
 - cache key 使用 `artifact_id + archive_digest`，原因是同一 artifact 重新发布或 digest 改变时必须形成新的本机缓存目录。
 - 下载后必须校验 archive sha256 digest，再把 `.agentdash-extension.tgz` 解包到可清理 cache 目录。
 - 解包只接受 archive 内相对普通文件路径；Extension Host 读取 cache 中的 package 内容，不在安装路径执行 npm/pnpm install 或 package lifecycle scripts。
@@ -69,6 +69,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - packaged mode 直接消费 `ExtensionArtifactCacheEntry.unpacked_dir`，原因是 artifact cache 已完成 archive digest 校验与安全解包。
 - action exception 和 host process exit 投影为 host 调用错误，原因是 extension host 故障应隔离在插件执行面内，保留 `agentdash-local` 主进程生命周期。
 - Relay `command.extension_action_invoke` 进入本机 CommandHandler 后调用 TS Extension Host，原因是 RuntimeGateway 只拥有 action/trace/placement 意图，具体插件执行发生在 local runtime。
+- Relay payload 携带 package artifact 时，CommandHandler 先按 `artifact_id + archive_digest` 准备本机 cache，再用 extension key、backend id、project/session id 与 workspace roots 激活 TS Extension Host，原因是 packaged extension 的执行上下文由 Project 安装与本机 workspace 共同确定。
 
 ### 样式与依赖
 

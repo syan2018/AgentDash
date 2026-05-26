@@ -632,7 +632,7 @@ function startFrontendProcess() {
   startPnpmFilterScript(supervisor, {
     packageName: 'app-web',
     scriptName: config.frontendMode,
-    scriptArgs: ['--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'],
+    scriptArgs: ['--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'],
     label: 'frontend',
     env: frontendEnv,
   });

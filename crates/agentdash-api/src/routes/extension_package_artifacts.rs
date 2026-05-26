@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Multipart, Path, State};
-use axum::http::{HeaderValue, header};
+use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -20,10 +20,12 @@ use agentdash_contracts::extension_package::{
     ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
     InstallExtensionPackageArtifactRequest,
 };
+use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::ExtensionPackageArtifact;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +179,45 @@ pub async fn download_extension_package_archive(
         ProjectPermission::View,
     )
     .await?;
+    extension_package_archive_response(state, project_id, artifact_id).await
+}
+
+pub async fn download_extension_package_archive_for_backend(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<ProjectExtensionArtifactItemPath>,
+) -> Result<Response, ApiError> {
+    let project_id = parse_uuid(&path.project_id, "project_id")?;
+    let artifact_id = parse_uuid(&path.artifact_id, "artifact_id")?;
+    let token = extract_bearer_token(&headers)
+        .ok_or_else(|| ApiError::Unauthorized("缺少 backend relay token".into()))?;
+    let backend = match state
+        .repos
+        .backend_repo
+        .get_backend_by_auth_token(token)
+        .await
+    {
+        Ok(backend) => backend,
+        Err(DomainError::NotFound { .. }) => {
+            return Err(ApiError::Unauthorized("backend relay token 无效".into()));
+        }
+        Err(error) => return Err(ApiError::from(error)),
+    };
+    if !backend.enabled {
+        return Err(ApiError::Forbidden(format!(
+            "backend `{}` 未启用",
+            backend.id
+        )));
+    }
+    ensure_project_backend_access(&state, project_id, &backend.id).await?;
+    extension_package_archive_response(state, project_id, artifact_id).await
+}
+
+async fn extension_package_archive_response(
+    state: Arc<AppState>,
+    project_id: Uuid,
+    artifact_id: Uuid,
+) -> Result<Response, ApiError> {
     let artifact = state
         .repos
         .extension_package_artifact_repo
@@ -210,6 +251,17 @@ pub async fn download_extension_package_archive(
         Bytes::from(bytes),
     )
         .into_response())
+}
+
+fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| {
+            value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+        })
 }
 
 fn artifact_response(artifact: ExtensionPackageArtifact) -> ExtensionPackageArtifactResponse {

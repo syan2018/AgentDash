@@ -17,6 +17,12 @@ import {
 
 const require = createRequire(import.meta.url);
 const AGENTDASH_SDK_PACKAGES = /^@agentdash\/extension-(sdk|ui)$/;
+const PANEL_ENTRY_CANDIDATES = [
+  "src/panel/main.tsx",
+  "src/panel/main.ts",
+  "src/panel/index.tsx",
+  "src/panel/index.ts",
+];
 
 /**
  * @typedef {{ archive_path: string, archive_digest: string, manifest_digest: string, manifest: import("./manifest.js").UnknownRecord }} PackResult
@@ -47,6 +53,7 @@ export async function packProject(projectRoot, options = {}) {
   });
 
   await copyPanelAssets(root, distDir);
+  await buildPanelBundle(root, distDir);
   const manifest = await writePackedManifest(root);
   const validation = await validateProject(root, { requireBundles: true });
   if (validation.errors.length > 0) {
@@ -81,7 +88,11 @@ export async function packProject(projectRoot, options = {}) {
  */
 export async function watchProject(projectRoot) {
   const root = path.resolve(projectRoot);
-  const ctx = await context({
+  const distDir = path.join(root, "dist");
+  await mkdir(distDir, { recursive: true });
+  await copyPanelAssets(root, distDir);
+  const contexts = [];
+  contexts.push(await context({
     entryPoints: [path.join(root, "src", "extension.ts")],
     outfile: path.join(root, "dist", "extension.js"),
     bundle: true,
@@ -89,8 +100,12 @@ export async function watchProject(projectRoot) {
     format: "esm",
     target: "es2022",
     plugins: [agentdashSdkPackagesPlugin()],
-  });
-  await ctx.watch();
+  }));
+  const panelEntry = await findPanelEntry(root);
+  if (panelEntry) {
+    contexts.push(await context(panelBuildOptions(panelEntry, path.join(distDir, "panel", "main.js"))));
+  }
+  await Promise.all(contexts.map((ctx) => ctx.watch()));
 }
 
 /**
@@ -123,6 +138,52 @@ async function copyPanelAssets(root, distDir) {
 }
 
 /**
+ * @param {string} root
+ * @param {string} distDir
+ * @returns {Promise<void>}
+ */
+async function buildPanelBundle(root, distDir) {
+  const panelEntry = await findPanelEntry(root);
+  if (!panelEntry) return;
+  await build(panelBuildOptions(panelEntry, path.join(distDir, "panel", "main.js")));
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function findPanelEntry(root) {
+  for (const candidate of PANEL_ENTRY_CANDIDATES) {
+    const absolute = path.join(root, candidate);
+    try {
+      const info = await stat(absolute);
+      if (info.isFile()) return absolute;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+/**
+ * @param {string} entry
+ * @param {string} outfile
+ * @returns {import("esbuild").BuildOptions}
+ */
+function panelBuildOptions(entry, outfile) {
+  return {
+    entryPoints: [entry],
+    outfile,
+    bundle: true,
+    platform: "browser",
+    format: "esm",
+    target: "es2022",
+    sourcemap: false,
+    plugins: [agentdashSdkPackagesPlugin()],
+  };
+}
+
+/**
  * @param {string} source
  * @param {string} target
  */
@@ -133,10 +194,18 @@ async function copyDirectory(source, target) {
     const targetPath = path.join(target, entry.name);
     if (entry.isDirectory()) {
       await copyDirectory(sourcePath, targetPath);
-    } else if (entry.isFile()) {
+    } else if (entry.isFile() && !isPanelSourceFile(sourcePath)) {
       await writeFile(targetPath, await readFile(sourcePath));
     }
   }
+}
+
+/**
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isPanelSourceFile(filePath) {
+  return /\.(ts|tsx)$/.test(filePath);
 }
 
 /**

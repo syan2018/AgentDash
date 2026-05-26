@@ -1,0 +1,45 @@
+{
+  "manifest_version": "2",
+  "extension_id": "local-hello",
+  "package": {
+    "name": "@agentdash/example-local-hello",
+    "version": "0.1.0"
+  },
+  "asset_version": "0.1.0",
+  "runtime_actions": [
+    {
+      "action_key": "local-hello.profile",
+      "kind": "session_runtime",
+      "description": "Read the current local runtime profile",
+      "input_schema": {},
+      "output_schema": {},
+      "permissions": [
+        "local.profile.read"
+      ]
+    }
+  ],
+  "workspace_tabs": [
+    {
+      "type_id": "local-hello.panel",
+      "label": "Local Hello",
+      "uri_scheme": "local-hello",
+      "renderer": {
+        "kind": "webview",
+        "entry": "dist/panel/index.html"
+      }
+    }
+  ],
+  "permissions": [
+    {
+      "kind": "local_profile",
+      "access": "read"
+    }
+  ],
+  "bundles": [
+    {
+      "kind": "extension_host",
+      "entry": "dist/extension.js",
+      "digest": "sha256:2963dd024cfd151d267df1652ae8aa33b05764f302b2355c92542803b8e2bd55"
+    }
+  ]
+}

@@ -76,6 +76,7 @@ async function createWorkspace(
   backendId: string,
   suffix: string,
 ): Promise<WorkspaceEntity> {
+  await grantProjectBackendAccess(request, projectId, backendId);
   const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/workspaces`, {
     data: {
       name: `E2E Drawer Workspace ${suffix}`,
@@ -90,6 +91,20 @@ async function createWorkspace(
   expect(workspace.bindings[0]?.backend_id).toBe(backendId);
   expect(workspace.bindings[0]?.root_ref).toBe(REPO_ROOT);
   return workspace;
+}
+
+async function grantProjectBackendAccess(
+  request: APIRequestContext,
+  projectId: string,
+  backendId: string,
+): Promise<void> {
+  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/backend-access`, {
+    data: {
+      backend_id: backendId,
+      priority: 0,
+    },
+  });
+  expect(resp.ok(), await resp.text()).toBeTruthy();
 }
 
 async function updateProjectDefaultWorkspace(

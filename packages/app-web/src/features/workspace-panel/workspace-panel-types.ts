@@ -16,6 +16,12 @@ export interface WorkspacePanelHandle {
   openTab: (typeId: string, uri?: string) => void;
 }
 
+export interface WorkspaceBackendTarget {
+  backend_id: string;
+  label: string;
+  online: boolean;
+}
+
 export interface WorkspaceRuntimeData {
   projectId: string | null;
   sessionId: string | null;
@@ -27,6 +33,7 @@ export interface WorkspaceRuntimeData {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
+  workspaceBackend: WorkspaceBackendTarget | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: WorkflowRun[];

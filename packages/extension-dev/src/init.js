@@ -17,6 +17,8 @@ export async function initProject(targetDir, options = {}) {
   await writeFile(path.join(root, "agentdash.extension.json"), manifestJson(packageName, extensionId));
   await writeFile(path.join(root, "src", "extension.ts"), extensionSource(packageName, extensionId));
   await writeFile(path.join(root, "src", "panel", "index.html"), panelHtml(extensionId));
+  await writeFile(path.join(root, "src", "panel", "main.tsx"), panelMainSource(extensionId));
+  await writeFile(path.join(root, "src", "panel", "App.tsx"), panelAppSource(extensionId));
 }
 
 /**
@@ -34,11 +36,17 @@ function packageJson(packageName) {
         "@agentdash/extension-dev": "workspace:*",
         "@agentdash/extension-sdk": "workspace:*",
         "@agentdash/extension-ui": "workspace:*",
+        "@types/react": "^19.2.7",
+        "@types/react-dom": "^19.2.3",
+        react: "^19.2.0",
+        "react-dom": "^19.2.0",
         typescript: "~5.9.3",
       },
       scripts: {
+        dev: "agentdash-ext dev",
         validate: "agentdash-ext validate",
         pack: "agentdash-ext pack",
+        "agentdash:install": "agentdash-ext install",
       },
     },
     null,
@@ -57,6 +65,7 @@ function tsconfigJson() {
         lib: ["ES2022", "DOM"],
         module: "ESNext",
         moduleResolution: "bundler",
+        jsx: "react-jsx",
         strict: true,
         skipLibCheck: true,
       },
@@ -160,7 +169,103 @@ function panelHtml(extensionId) {
   </head>
   <body>
     <main id="root">AgentDash extension panel</main>
+    <script type="module" src="./main.js"></script>
   </body>
 </html>
+`;
+}
+
+/**
+ * @param {string} extensionId
+ * @returns {string}
+ */
+function panelMainSource(extensionId) {
+  return `import React from "react";
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
+
+const root = document.getElementById("root");
+if (!root) {
+  throw new Error("AgentDash extension panel root element is missing");
+}
+
+createRoot(root).render(
+  <React.StrictMode>
+    <App actionKey=${JSON.stringify(`${extensionId}.profile`)} />
+  </React.StrictMode>,
+);
+`;
+}
+
+/**
+ * @param {string} extensionId
+ * @returns {string}
+ */
+function panelAppSource(extensionId) {
+  return `import { useEffect, useMemo, useState } from "react";
+import { createExtensionBridge, type JsonObject } from "@agentdash/extension-ui";
+
+interface AppProps {
+  actionKey: string;
+}
+
+type ProfileState =
+  | { status: "loading" }
+  | { status: "ready"; profile: JsonObject }
+  | { status: "error"; message: string };
+
+export function App({ actionKey }: AppProps) {
+  const bridge = useMemo(() => createExtensionBridge(), []);
+  const [state, setState] = useState<ProfileState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    bridge.invokeAction<Record<string, never>, JsonObject>(actionKey, {})
+      .then((profile) => {
+        if (!cancelled) setState({ status: "ready", profile });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setState({ status: "error", message: error instanceof Error ? error.message : "Profile request failed" });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [actionKey, bridge]);
+
+  if (state.status === "loading") {
+    return <main>Loading ${extensionId} profile...</main>;
+  }
+
+  if (state.status === "error") {
+    return (
+      <main>
+        <h1>${extensionId}</h1>
+        <p role="alert">{state.message}</p>
+      </main>
+    );
+  }
+
+  return (
+    <main>
+      <h1>${extensionId}</h1>
+      <dl>
+        <dt>Username</dt>
+        <dd>{textField(state.profile.username)}</dd>
+        <dt>Platform</dt>
+        <dd>{textField(state.profile.platform)}</dd>
+        <dt>Backend</dt>
+        <dd>{textField(state.profile.backend_id)}</dd>
+        <dt>Session</dt>
+        <dd>{textField(state.profile.session_id)}</dd>
+      </dl>
+    </main>
+  );
+}
+
+function textField(value: unknown): string {
+  return typeof value === "string" && value.trim() !== "" ? value : "unknown";
+}
 `;
 }

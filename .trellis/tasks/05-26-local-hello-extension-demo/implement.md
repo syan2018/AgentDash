@@ -2,12 +2,12 @@
 
 ## Steps
 
-- [ ] Add demo project directory.
-- [ ] Add demo manifest and source files.
-- [ ] Add dev/validate/pack/install scripts.
-- [ ] Add README explaining independent workflow.
-- [ ] Add E2E for packaged artifact install and panel action invoke.
-- [ ] Add CI command or documented verification path.
+- [x] Add demo project directory.
+- [x] Add demo manifest and source files.
+- [x] Add dev/validate/pack/install scripts.
+- [x] Add README explaining independent workflow.
+- [x] Add E2E for packaged artifact install and panel action invoke.
+- [x] Add CI command or documented verification path.
 
 ## Validation
 

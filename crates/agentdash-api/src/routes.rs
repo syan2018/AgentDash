@@ -638,6 +638,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/routine-triggers/{endpoint_id}/fire",
             post(routines::fire_webhook),
         )
+        .route(
+            "/local-runtime/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+            get(extension_package_artifacts::download_extension_package_archive_for_backend),
+        )
         .merge(secured_api)
         .with_state(state.clone());
 

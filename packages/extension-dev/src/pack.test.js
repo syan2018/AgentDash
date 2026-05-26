@@ -23,6 +23,14 @@ test("packProject builds a self-contained agentdash extension archive", async ()
     ].join("\n"),
   );
   await writeFile(path.join(root, "src", "panel", "index.html"), "<main>Hello</main>\n");
+  await writeFile(
+    path.join(root, "src", "panel", "main.ts"),
+    [
+      'const target = document.querySelector("main");',
+      'if (target) target.textContent = "Hello panel bundle";',
+      "",
+    ].join("\n"),
+  );
   await writeFile(path.join(root, "package.json"), JSON.stringify({
     name: "@agentdash/local-hello",
     version: "0.1.0",
@@ -47,4 +55,8 @@ test("packProject builds a self-contained agentdash extension archive", async ()
   assert.match(packed.archive_path, /\.agentdash-extension\.tgz$/);
   const manifest = JSON.parse(await readFile(path.join(root, "agentdash.extension.json"), "utf8"));
   assert.match(manifest.bundles[0].digest, /^sha256:[0-9a-f]{64}$/);
+
+  const panelBundle = await readFile(path.join(root, "dist", "panel", "main.js"), "utf8");
+  assert.match(panelBundle, /Hello panel bundle/);
+  await assert.rejects(readFile(path.join(root, "dist", "panel", "main.ts"), "utf8"));
 });

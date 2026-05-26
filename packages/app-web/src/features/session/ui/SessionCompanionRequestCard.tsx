@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import type { BackboneEvent } from "../../../generated/backbone-protocol";
-import { extractPlatformEventData } from "../model/platformEvent";
+import { extractPlatformEventData, isRecord } from "../model/platformEvent";
 import { EventFullCard } from "./EventCards";
 import { respondCompanionRequest } from "../../../services/executor";
 
@@ -20,34 +20,60 @@ export interface SessionCompanionRequestCardProps {
 
 export function SessionCompanionRequestCard({ event, sessionId }: SessionCompanionRequestCardProps) {
   const data = extractPlatformEventData(event);
+  const payload = isRecord(data?.payload) ? data.payload : null;
 
   const requestId = typeof data?.request_id === "string" ? data.request_id : null;
-  const prompt = typeof data?.prompt === "string" ? data.prompt : "Agent 请求你回应";
-  const options = Array.isArray(data?.options) ? (data.options as string[]) : [];
+  const payloadType = stringField(data, "payload_type") ?? stringField(payload, "type");
+  const uiHint = stringField(data, "ui_hint");
+  const prompt = stringField(data, "prompt") ?? stringField(payload, "prompt") ?? "Agent 请求你回应";
+  const options = stringArrayField(data, "options");
   const wait = data?.wait === true;
+  const requestedPaths = stringArrayField(payload, "requested_paths");
+  const isCapabilityGrant =
+    payloadType === "capability_grant_request" || uiHint === "capability_grant_card";
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [responded, setResponded] = useState<string | null>(null);
   const [customInput, setCustomInput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleRespond = async (choice: string) => {
+  const submitPayload = async (responsePayload: Record<string, unknown>, label: string) => {
     if (!sessionId || !requestId || isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
     try {
-      await respondCompanionRequest(sessionId, requestId, {
-        type: "decision",
-        status: "approved",
-        choice,
-        summary: choice,
-      });
-      setResponded(choice);
+      await respondCompanionRequest(sessionId, requestId, responsePayload);
+      setResponded(label);
     } catch (err) {
       setError(err instanceof Error ? err.message : "回应失败");
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleRespond = async (choice: string) => {
+    await submitPayload(
+      {
+        type: "decision",
+        status: "approved",
+        choice,
+        summary: choice,
+      },
+      choice,
+    );
+  };
+
+  const handleCapabilityGrant = async (approved: boolean) => {
+    const status = approved ? "approved" : "rejected";
+    await submitPayload(
+      {
+        type: "capability_grant_result",
+        status,
+        summary: approved ? "用户已批准临时能力申请" : "用户已拒绝临时能力申请",
+        ...(approved ? { granted_paths: requestedPaths } : { rejected_paths: requestedPaths }),
+      },
+      approved ? "已批准" : "已拒绝",
+    );
   };
 
   const handleSubmitCustom = async () => {
@@ -64,6 +90,14 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
         : "Agent 正在等待你的回应（session 已挂起）",
     );
   }
+  if (isCapabilityGrant) {
+    const scope = stringField(payload, "scope");
+    const reason = stringField(payload, "reason");
+    const ttl = numberField(payload, "ttl_seconds");
+    if (requestedPaths.length > 0) detailLines.push(`请求能力：${requestedPaths.join(", ")}`);
+    if (reason) detailLines.push(`理由：${reason}`);
+    if (scope) detailLines.push(`范围：${scope}${ttl ? `，TTL ${ttl} 秒` : ""}`);
+  }
 
   const badge = wait
     ? "border-warning/25 bg-warning/10 text-warning"
@@ -77,7 +111,26 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
         </div>
       ) : (
         <>
-          {options.length > 0 ? (
+          {isCapabilityGrant ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => { void handleCapabilityGrant(true); }}
+                disabled={isSubmitting}
+                className="rounded-[8px] border border-success/30 bg-success/10 px-3 py-1.5 text-sm text-success transition-colors hover:bg-success/20 disabled:opacity-50"
+              >
+                {isSubmitting ? "处理中..." : "批准"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleCapabilityGrant(false); }}
+                disabled={isSubmitting}
+                className="rounded-[8px] border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm text-destructive transition-colors hover:bg-destructive/20 disabled:opacity-50"
+              >
+                {isSubmitting ? "处理中..." : "拒绝"}
+              </button>
+            </div>
+          ) : options.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {options.map((option) => (
                 <button
@@ -87,7 +140,7 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
                   disabled={isSubmitting}
                   className="rounded-[8px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
                 >
-                  {isSubmitting ? "处理中…" : option}
+                  {isSubmitting ? "处理中..." : option}
                 </button>
               ))}
             </div>
@@ -108,7 +161,7 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
                 disabled={isSubmitting || !customInput.trim()}
                 className="rounded-[8px] border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
               >
-                {isSubmitting ? "处理中…" : "提交"}
+                {isSubmitting ? "处理中..." : "提交"}
               </button>
             </div>
           )}
@@ -124,12 +177,31 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
 
   return (
     <EventFullCard
-      badgeToken={wait ? "等待回应" : "请求"}
+      badgeToken={isCapabilityGrant ? "能力申请" : wait ? "等待回应" : "请求"}
       badgeClass={badge}
       message={prompt}
       detailLines={detailLines}
       bodyExtra={bodyExtra}
-      debugChips={requestId ? [`request: ${requestId.slice(0, 12)}`] : []}
+      debugChips={[
+        ...(requestId ? [`request: ${requestId.slice(0, 12)}`] : []),
+        ...(payloadType ? [`payload: ${payloadType}`] : []),
+      ]}
     />
   );
+}
+
+function stringField(record: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberField(record: Record<string, unknown> | null | undefined, key: string): number | null {
+  const value = record?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringArrayField(record: Record<string, unknown> | null | undefined, key: string): string[] {
+  const value = record?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }

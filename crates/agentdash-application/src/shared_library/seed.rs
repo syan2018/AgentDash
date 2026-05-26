@@ -49,6 +49,11 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
         key: "canvas-system",
         version: "1.0.4",
     },
+    BuiltinAssetVersion {
+        asset_type: LibraryAssetType::SkillTemplate,
+        key: "companion-system",
+        version: "1.0.0",
+    },
 ];
 
 pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {

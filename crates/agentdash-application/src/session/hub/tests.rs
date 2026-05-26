@@ -2431,6 +2431,14 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
                 "tokens_before": 42000,
                 "messages_compacted": 2,
                 "newly_compacted_messages": 2,
+                "compacted_until_ref": {
+                    "turn_id": "t-2",
+                    "entry_index": 0,
+                },
+                "first_kept_ref": {
+                    "turn_id": "t-3",
+                    "entry_index": 0,
+                },
                 "timestamp_ms": 1710000000000_u64,
             }),
         ),

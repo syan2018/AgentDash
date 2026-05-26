@@ -3,6 +3,7 @@ pub mod auth_session;
 pub mod backend;
 pub mod canvas;
 pub mod common;
+pub mod companion;
 pub mod context_container;
 pub mod context_source;
 pub mod embedded_skill;

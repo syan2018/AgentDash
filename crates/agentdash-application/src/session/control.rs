@@ -5,7 +5,9 @@ use agentdash_spi::ConnectorError;
 use super::companion_wait::CompanionWaitRegistry;
 use super::eventing::SessionEventingService;
 use super::persistence::SessionStoreSet;
-use crate::companion::build_companion_human_response_notification;
+use crate::companion::{
+    PayloadTypeRegistry, build_companion_human_response_notification, payload_types,
+};
 
 #[derive(Clone)]
 pub struct SessionControlService {
@@ -67,6 +69,18 @@ impl SessionControlService {
         request_id: &str,
         payload: serde_json::Value,
     ) -> Result<(), ConnectorError> {
+        if let Some(error) = payload_types::payload_object_error(&payload) {
+            return Err(ConnectorError::Runtime(error));
+        }
+        let wait_request_type = self
+            .companion_wait_registry
+            .request_type(session_id, request_id)
+            .await;
+        let registry = PayloadTypeRegistry::with_builtins();
+        if let Some(error) = registry.validate_response(&payload, wait_request_type.as_deref()) {
+            return Err(ConnectorError::Runtime(error));
+        }
+
         let resolved = self
             .companion_wait_registry
             .resolve(session_id, request_id, payload.clone())

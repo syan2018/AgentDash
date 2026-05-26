@@ -65,6 +65,14 @@ ensure_embedded_skill_bundle(files, &CANVAS_SYSTEM_BUNDLE)
 
 `ensure_canvas_system_skill` 只是 Canvas 兼容包装，不应继续扩展手写文件同步逻辑。
 
+项目级内嵌 Skill 当前通过 `SkillAssetService::bootstrap_builtins(project_id, Some(key))`
+同步到项目 SkillAsset，再由 VFS projection 暴露给 session。`append_skill_asset_projection`
+在普通 session 中创建 `skill_asset_fs` 只读 mount；当 VFS 已包含 lifecycle mount 时，会把
+SkillAsset keys 写入 lifecycle mount metadata，由 `LifecycleMountProvider` 在
+`lifecycle://skills/<key>/...` 下暴露同一组 skill 文件。`companion-system` 使用这条
+lifecycle projection，让执行 workflow / lifecycle 的 session 获得 companion 协作协议说明，
+同时保持 skill 内容仍由 embedded bundle 与项目 SkillAsset 管理。
+
 ## Validation Contract
 
 - bundle materialization 必须覆盖声明内所有文件。

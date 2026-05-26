@@ -6,9 +6,14 @@
 //! - ui_hint: 前端应使用哪种 UI 组件渲染
 //!
 //! 校验在 companion_request / companion_respond 执行时按 type 进行。
-//! 未识别的 payload 字段静默忽略，保证向前兼容。
+//! 未识别的 payload 字段由通用 companion payload 处理，已注册 type 会执行
+//! role、必填字段和 typed validator 校验。
 
 use std::collections::HashMap;
+
+use agentdash_domain::workflow::ToolCapabilityPath;
+
+type PayloadValidator = fn(&serde_json::Value) -> Option<String>;
 
 /// 单个 payload type 的定义
 #[derive(Debug, Clone)]
@@ -25,6 +30,8 @@ pub struct PayloadTypeDefinition {
     pub response_type: Option<&'static str>,
     /// 前端 UI 组件提示
     pub ui_hint: &'static str,
+    /// type-specific 校验器
+    pub validator: Option<PayloadValidator>,
 }
 
 /// Payload Type 注册表
@@ -47,6 +54,7 @@ impl PayloadTypeRegistry {
             required_fields: &["prompt"],
             response_type: Some("completion"),
             ui_hint: "task_dispatch_card",
+            validator: None,
         });
         registry.register(PayloadTypeDefinition {
             name: "review",
@@ -55,6 +63,7 @@ impl PayloadTypeRegistry {
             required_fields: &["prompt"],
             response_type: Some("resolution"),
             ui_hint: "review_card",
+            validator: None,
         });
         registry.register(PayloadTypeDefinition {
             name: "approval",
@@ -63,6 +72,7 @@ impl PayloadTypeRegistry {
             required_fields: &["prompt"],
             response_type: Some("decision"),
             ui_hint: "approval_card",
+            validator: None,
         });
         registry.register(PayloadTypeDefinition {
             name: "notification",
@@ -71,6 +81,16 @@ impl PayloadTypeRegistry {
             required_fields: &["message"],
             response_type: None, // 不期望回复
             ui_hint: "notification_toast",
+            validator: None,
+        });
+        registry.register(PayloadTypeDefinition {
+            name: "capability_grant_request",
+            is_request: true,
+            is_response: false,
+            required_fields: &["requested_paths", "reason", "scope"],
+            response_type: Some("capability_grant_result"),
+            ui_hint: "capability_grant_card",
+            validator: Some(validate_capability_grant_request),
         });
 
         // ─── Response types ──────────────────────────────────
@@ -81,6 +101,7 @@ impl PayloadTypeRegistry {
             required_fields: &["status", "summary"],
             response_type: None,
             ui_hint: "completion_card",
+            validator: None,
         });
         registry.register(PayloadTypeDefinition {
             name: "resolution",
@@ -89,6 +110,7 @@ impl PayloadTypeRegistry {
             required_fields: &["status", "summary"],
             response_type: None,
             ui_hint: "resolution_badge",
+            validator: None,
         });
         registry.register(PayloadTypeDefinition {
             name: "decision",
@@ -97,6 +119,16 @@ impl PayloadTypeRegistry {
             required_fields: &["choice"],
             response_type: None,
             ui_hint: "decision_badge",
+            validator: None,
+        });
+        registry.register(PayloadTypeDefinition {
+            name: "capability_grant_result",
+            is_request: false,
+            is_response: true,
+            required_fields: &["status", "summary"],
+            response_type: None,
+            ui_hint: "capability_grant_result_badge",
+            validator: Some(validate_capability_grant_result),
         });
 
         registry
@@ -125,12 +157,13 @@ impl PayloadTypeRegistry {
 
         for field in definition.required_fields {
             let value = payload.get(*field);
-            let is_empty = value
-                .map(|v| v.as_str().is_some_and(|s| s.trim().is_empty()) || v.is_null())
-                .unwrap_or(true);
-            if is_empty {
+            if payload_field_is_empty(value) {
                 return Some(format!("payload.type=`{type_name}` 要求必填 `{field}`"));
             }
+        }
+
+        if let Some(validator) = definition.validator {
+            return validator(payload);
         }
 
         None
@@ -168,12 +201,13 @@ impl PayloadTypeRegistry {
 
         for field in definition.required_fields {
             let value = payload.get(*field);
-            let is_empty = value
-                .map(|v| v.as_str().is_some_and(|s| s.trim().is_empty()) || v.is_null())
-                .unwrap_or(true);
-            if is_empty {
+            if payload_field_is_empty(value) {
                 return Some(format!("payload.type=`{type_name}` 要求必填 `{field}`"));
             }
+        }
+
+        if let Some(validator) = definition.validator {
+            return validator(payload);
         }
 
         None
@@ -210,6 +244,82 @@ impl PayloadTypeRegistry {
     }
 }
 
+pub fn payload_object_error(payload: &serde_json::Value) -> Option<String> {
+    (!payload.is_object()).then(|| "payload 必须是 JSON object".to_string())
+}
+
+fn payload_field_is_empty(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::String(text)) => text.trim().is_empty(),
+        Some(serde_json::Value::Array(items)) => items.is_empty(),
+        Some(serde_json::Value::Object(map)) => map.is_empty(),
+        Some(_) => false,
+    }
+}
+
+fn validate_capability_grant_request(payload: &serde_json::Value) -> Option<String> {
+    let Some(requested_paths) = payload
+        .get("requested_paths")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Some(
+            "payload.type=`capability_grant_request` 要求 requested_paths 为非空字符串数组"
+                .to_string(),
+        );
+    };
+    for path in requested_paths {
+        let Some(path) = path.as_str().map(str::trim).filter(|path| !path.is_empty()) else {
+            return Some(
+                "payload.type=`capability_grant_request` 要求 requested_paths 为非空字符串数组"
+                    .to_string(),
+            );
+        };
+        if let Err(error) = ToolCapabilityPath::parse(path) {
+            return Some(format!(
+                "payload.type=`capability_grant_request` 的 requested_paths 包含非法路径: {error}"
+            ));
+        }
+    }
+
+    match payload.get("scope").and_then(|value| value.as_str()) {
+        Some("turn" | "session" | "workflow_step") => {}
+        Some(_) | None => {
+            return Some(
+                "payload.type=`capability_grant_request` 的 scope 必须为 turn、session 或 workflow_step"
+                    .to_string(),
+            );
+        }
+    }
+
+    if let Some(ttl) = payload.get("ttl_seconds") {
+        match ttl.as_u64() {
+            Some(value) if value > 0 => {}
+            _ => {
+                return Some(
+                    "payload.type=`capability_grant_request` 的 ttl_seconds 必须为正整数"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    None
+}
+
+fn validate_capability_grant_result(payload: &serde_json::Value) -> Option<String> {
+    match payload.get("status").and_then(|value| value.as_str()) {
+        Some(
+            "approved" | "rejected" | "pending_user_approval" | "applied" | "failed"
+            | "expired" | "revoked",
+        ) => None,
+        Some(_) | None => Some(
+            "payload.type=`capability_grant_result` 的 status 必须为 approved、rejected、pending_user_approval、applied、failed、expired 或 revoked"
+                .to_string(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +334,8 @@ mod tests {
         assert!(registry.get("approval").is_some());
         assert!(registry.get("decision").is_some());
         assert!(registry.get("notification").is_some());
+        assert!(registry.get("capability_grant_request").is_some());
+        assert!(registry.get("capability_grant_result").is_some());
     }
 
     #[test]
@@ -311,5 +423,56 @@ mod tests {
         let registry = PayloadTypeRegistry::with_builtins();
         assert!(registry.expected_response_type("notification").is_none());
         assert!(registry.response_hint("notification").is_none());
+    }
+
+    #[test]
+    fn validate_request_passes_for_capability_grant_request() {
+        let registry = PayloadTypeRegistry::with_builtins();
+        let payload = serde_json::json!({
+            "type": "capability_grant_request",
+            "requested_paths": ["workflow_management::upsert_lifecycle_tool"],
+            "reason": "需要更新 lifecycle 定义",
+            "scope": "session",
+            "ttl_seconds": 3600
+        });
+        assert!(registry.validate_request(&payload).is_none());
+        assert_eq!(
+            registry.expected_response_type("capability_grant_request"),
+            Some("capability_grant_result")
+        );
+    }
+
+    #[test]
+    fn validate_request_rejects_empty_capability_paths() {
+        let registry = PayloadTypeRegistry::with_builtins();
+        let payload = serde_json::json!({
+            "type": "capability_grant_request",
+            "requested_paths": [""],
+            "reason": "需要更新 lifecycle 定义",
+            "scope": "session"
+        });
+        let error = registry.validate_request(&payload).unwrap();
+        assert!(error.contains("requested_paths"));
+    }
+
+    #[test]
+    fn validate_response_passes_for_capability_grant_result() {
+        let registry = PayloadTypeRegistry::with_builtins();
+        let payload = serde_json::json!({
+            "type": "capability_grant_result",
+            "status": "approved",
+            "summary": "已批准"
+        });
+        assert!(
+            registry
+                .validate_response(&payload, Some("capability_grant_request"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn payload_object_error_rejects_non_object() {
+        assert!(payload_object_error(&serde_json::json!("{}")).is_some());
+        assert!(payload_object_error(&serde_json::json!({})).is_none());
     }
 }

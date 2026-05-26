@@ -1,5 +1,6 @@
 pub mod notifications;
 pub mod payload_types;
+pub(crate) mod skill_projection;
 pub mod tools;
 
 pub use notifications::build_companion_human_response_notification;

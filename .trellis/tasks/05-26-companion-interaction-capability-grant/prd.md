@@ -2,9 +2,9 @@
 
 ## Goal
 
-设计一期 Companion 扩展方案，让 Agent 可以通过统一的 companion 信道主动发起跨主体交互请求，包括问用户、请求平台 broker 裁决、派发其它 session / companion agent 协作，以及申请临时能力扩展。所有授权类请求最终汇入标准权限系统与 Capability runtime，避免权限事实藏在自然语言消息或工具提示里。
+落地一期 Companion 扩展 MVP，让 Agent 可以通过统一的 companion 信道主动发起跨主体交互请求，包括问用户、请求平台 broker 裁决、派发其它 session / companion agent 协作，以及申请临时能力扩展。所有授权类请求最终汇入标准权限系统与 Capability runtime，避免权限事实藏在自然语言消息或工具提示里。
 
-本任务产出规划与设计，不直接进入实现阶段。实现前需要明确 MVP 范围、数据模型与前端交互边界。
+本期实现范围聚焦 companion 基础契约、platform broker 骨架、capability grant payload、`companion-system` 内嵌 skill、lifecycle mount 默认投影与最小前端渲染。独立 interaction 持久化、grant record 状态机与 runtime apply 由后续子任务继续推进。
 
 ## Background
 
@@ -126,22 +126,21 @@ Companion payload type 需要从当前轻量字段校验演进到更明确的注
 
 ## Acceptance Criteria
 
-- [ ] 明确 Companion 通用交互信道的职责边界：交互入口、协作编排、回执，不承担最终权限事实。
-- [ ] 明确 `capability_grant_request` 从 companion payload 到 permission / grant record 的完整链路。
-- [ ] 明确权限裁决如何转成 `RuntimeCapabilityTransition`，并复用现有 capability dimension pipeline。
-- [ ] 明确 live apply 与 next-turn apply 的生效语义，以及对应的 context frame / tool schema delta。
-- [ ] 明确 `PayloadTypeRegistry` 的演进方向，包括 schema、response type、UI hint 与诊断策略。
-- [ ] 明确 `companion-system` embedded skill 的文件结构、注入条件和维护规则。
-- [ ] 明确现有 companion payload 基础契约的轻量收束范围，避免工具提示继续膨胀。
-- [ ] 明确 `payload: object` 的工具 schema、后端解析和前端回应链路。
-- [ ] 明确前端卡片与状态展示的最小范围。
-- [ ] 明确审计、TTL、撤销、过期和失败诊断要求。
-- [ ] 形成 `design.md`，包含架构边界、数据流、数据模型草案、主要 trade-off。
-- [ ] 形成 `implement.md`，拆分可执行阶段、验证命令、风险文件和回滚点。
+- [x] 明确 Companion 通用交互信道的职责边界：交互入口、协作编排、回执，不承担最终权限事实。
+- [x] 明确 `capability_grant_request` 从 companion payload 到 permission / grant record 的完整链路。
+- [x] 明确权限裁决如何转成 `RuntimeCapabilityTransition`，并复用现有 capability dimension pipeline。
+- [x] 明确 live apply 与 next-turn apply 的生效语义，以及对应的 context frame / tool schema delta。
+- [x] 明确 `PayloadTypeRegistry` 的演进方向，包括 schema、response type、UI hint 与诊断策略。
+- [x] 明确 `companion-system` embedded skill 的文件结构、注入条件和维护规则。
+- [x] 明确现有 companion payload 基础契约的轻量收束范围，避免工具提示继续膨胀。
+- [x] 明确 `payload: object` 的工具 schema、后端解析和前端回应链路。
+- [x] 明确前端卡片与状态展示的最小范围。
+- [x] 明确审计、TTL、撤销、过期和失败诊断要求。
+- [x] 形成 `design.md`，包含架构边界、数据流、数据模型草案、主要 trade-off。
+- [x] 形成 `implement.md`，拆分可执行阶段、验证命令、风险文件和回滚点。
 
 ## Out Of Scope
 
-- 本任务不实现完整代码改动。
 - 本期设计不负责 backend accessible root 扩展治理；该方向由 `05-17-backend-capability-expansion-governance` 覆盖。
 - 本期设计不落地 companion interaction 独立持久化表；该方向由后续 tracking task 讨论。
 - 本期设计不要求重做全部 companion UI，仅定义这条能力扩展链路需要的最小 UI 模型。

@@ -1,4 +1,5 @@
 mod error;
+mod extension_actions;
 mod gateway;
 mod provider;
 mod session_actions;
@@ -7,6 +8,10 @@ mod tool_adapter;
 mod types;
 
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
+pub use extension_actions::{
+    ExtensionRuntimeActionProvider, ExtensionRuntimeActionTransport,
+    ExtensionRuntimeActionTransportError,
+};
 pub use gateway::RuntimeGateway;
 pub use provider::RuntimeProvider;
 pub(crate) use session_actions::execute_runtime_mcp_tool;

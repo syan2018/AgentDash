@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::RelayError;
 
 pub mod discovery;
+pub mod extension_runtime;
 pub mod handshake;
 pub mod mcp;
 pub mod prompt;
@@ -18,6 +19,7 @@ pub mod vfs_materialization;
 pub mod workspace;
 
 pub use discovery::*;
+pub use extension_runtime::*;
 pub use handshake::*;
 pub use mcp::*;
 pub use prompt::*;
@@ -382,6 +384,13 @@ pub enum RelayMessage {
         payload: CommandMcpClosePayload,
     },
 
+    /// 调用本机 TS Extension Host runtime action
+    #[serde(rename = "command.extension_action_invoke")]
+    CommandExtensionActionInvoke {
+        id: String,
+        payload: CommandExtensionActionInvokePayload,
+    },
+
     // ── MCP Relay 响应（本机 → 云端）──
     #[serde(rename = "response.mcp_probe_transport")]
     ResponseMcpProbeTransport {
@@ -415,6 +424,15 @@ pub enum RelayMessage {
         id: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         payload: Option<ResponseMcpClosePayload>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<RelayError>,
+    },
+
+    #[serde(rename = "response.extension_action_invoke")]
+    ResponseExtensionActionInvoke {
+        id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        payload: Option<ResponseExtensionActionInvokePayload>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<RelayError>,
     },
@@ -552,10 +570,12 @@ impl RelayMessage {
             | Self::CommandMcpListTools { id, .. }
             | Self::CommandMcpCallTool { id, .. }
             | Self::CommandMcpClose { id, .. }
+            | Self::CommandExtensionActionInvoke { id, .. }
             | Self::ResponseMcpProbeTransport { id, .. }
             | Self::ResponseMcpListTools { id, .. }
             | Self::ResponseMcpCallTool { id, .. }
             | Self::ResponseMcpClose { id, .. }
+            | Self::ResponseExtensionActionInvoke { id, .. }
             | Self::EventCapabilitiesChanged { id, .. }
             | Self::EventSessionNotification { id, .. }
             | Self::EventSessionStateChanged { id, .. }
@@ -682,6 +702,56 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["payload"]["status"], "error");
         assert_eq!(json["payload"]["error"], "进程启动失败");
+    }
+
+    #[test]
+    fn extension_action_invoke_roundtrip() {
+        let msg = RelayMessage::CommandExtensionActionInvoke {
+            id: "ext-1".to_string(),
+            payload: CommandExtensionActionInvokePayload {
+                extension_key: "local-hello".to_string(),
+                extension_id: "local-hello".to_string(),
+                action_key: "local-hello.profile".to_string(),
+                project_id: "project-1".to_string(),
+                session_id: "session-1".to_string(),
+                input: serde_json::json!({ "verbose": true }),
+                package_artifact: Some(ExtensionPackageArtifactRelay {
+                    artifact_id: "artifact-1".to_string(),
+                    archive_digest:
+                        "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                            .to_string(),
+                }),
+                trace_id: "trace-1".to_string(),
+                invocation_id: "rtinv-1".to_string(),
+            },
+        };
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "command.extension_action_invoke");
+        assert_eq!(json["payload"]["action_key"], "local-hello.profile");
+
+        let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(deser.id(), "ext-1");
+    }
+
+    #[test]
+    fn extension_action_response_roundtrip() {
+        let msg = RelayMessage::ResponseExtensionActionInvoke {
+            id: "ext-1".to_string(),
+            payload: Some(ResponseExtensionActionInvokePayload {
+                extension_key: "local-hello".to_string(),
+                extension_id: "local-hello".to_string(),
+                action_key: "local-hello.profile".to_string(),
+                output: serde_json::json!({ "backend_id": "backend-1" }),
+                metadata: serde_json::Map::from_iter([(
+                    "trace_id".to_string(),
+                    serde_json::json!("trace-1"),
+                )]),
+            }),
+            error: None,
+        };
+        let json = serde_json::to_value(&msg).expect("serialize");
+        assert_eq!(json["type"], "response.extension_action_invoke");
+        assert_eq!(json["payload"]["metadata"]["trace_id"], "trace-1");
     }
 
     #[test]

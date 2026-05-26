@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use agentdash_relay::*;
 
+use crate::LocalExtensionHostManager;
 use crate::handlers::CommandHandler;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
@@ -30,6 +31,7 @@ pub struct Config {
     pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub extension_host: LocalExtensionHostManager,
 }
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
@@ -102,6 +104,7 @@ async fn run_session(
         config.connector.clone(),
         config.mcp_manager.clone(),
         config.workspace_contract_config.clone(),
+        config.extension_host.clone(),
         event_tx,
     );
 

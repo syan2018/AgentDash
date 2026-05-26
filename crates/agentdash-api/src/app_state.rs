@@ -195,6 +195,8 @@ impl AppState {
             mcp_probe_relay,
             setup_action_transport,
             session_mcp_access,
+            repos.project_extension_installation_repo.clone(),
+            backend_registry.clone(),
         );
 
         let lock_map = Arc::new(TaskLockMap::new());

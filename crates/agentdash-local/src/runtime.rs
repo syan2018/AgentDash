@@ -14,6 +14,7 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio::sync::{Mutex, watch};
 
+use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
@@ -492,6 +493,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         connector,
         mcp_manager,
         workspace_contract_config: local_backend_config.workspace_contract,
+        extension_host: LocalExtensionHostManager::with_default_config(),
     })
 }
 

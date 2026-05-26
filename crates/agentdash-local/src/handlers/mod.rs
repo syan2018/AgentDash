@@ -9,6 +9,7 @@
 //! - `terminal`：交互式终端 spawn / input / resize / kill
 //! - `relay_mcp_servers`：relay MCP Server 配置解析
 
+mod extension;
 mod materialization;
 mod mcp_relay;
 mod prompt;
@@ -24,6 +25,7 @@ use std::sync::Arc;
 use agentdash_relay::*;
 use tokio::sync::{Mutex, mpsc};
 
+use crate::LocalExtensionHostManager;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
@@ -44,6 +46,7 @@ pub struct CommandHandler {
     pub(crate) terminal_manager: Arc<TerminalManager>,
     pub(crate) materialization_store: Arc<MaterializationStore>,
     pub(crate) session_forwarders: Arc<Mutex<HashSet<String>>>,
+    pub(crate) extension_host: LocalExtensionHostManager,
 }
 
 impl CommandHandler {
@@ -54,6 +57,7 @@ impl CommandHandler {
         connector: Option<Arc<dyn AgentConnector>>,
         mcp_manager: Option<Arc<McpClientManager>>,
         workspace_contract_config: WorkspaceContractRuntimeConfig,
+        extension_host: LocalExtensionHostManager,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         let terminal_manager = Arc::new(TerminalManager::new(event_tx.clone()));
@@ -68,6 +72,7 @@ impl CommandHandler {
             terminal_manager,
             materialization_store,
             session_forwarders: Arc::new(Mutex::new(HashSet::new())),
+            extension_host,
         }
     }
 
@@ -170,6 +175,10 @@ impl CommandHandler {
             }
             RelayMessage::CommandMcpClose { id, payload } => {
                 vec![self.handle_mcp_close(id, payload).await]
+            }
+
+            RelayMessage::CommandExtensionActionInvoke { id, payload } => {
+                vec![self.handle_extension_action_invoke(id, payload).await]
             }
 
             // ── 交互式终端 ──

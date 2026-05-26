@@ -1,0 +1,50 @@
+// @ts-check
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { packProject } from "./pack.js";
+
+test("packProject builds a self-contained agentdash extension archive", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentdash-pack-"));
+  await mkdir(path.join(root, "src", "panel"), { recursive: true });
+  await writeFile(
+    path.join(root, "src", "extension.ts"),
+    [
+      'import { defineExtension } from "@agentdash/extension-sdk";',
+      "",
+      "export default defineExtension({",
+      "  activate() {},",
+      "});",
+      "",
+    ].join("\n"),
+  );
+  await writeFile(path.join(root, "src", "panel", "index.html"), "<main>Hello</main>\n");
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    name: "@agentdash/local-hello",
+    version: "0.1.0",
+    type: "module",
+  }));
+  await writeFile(path.join(root, "agentdash.extension.json"), JSON.stringify({
+    manifest_version: "2",
+    extension_id: "local-hello",
+    package: { name: "@agentdash/local-hello", version: "0.1.0" },
+    asset_version: "0.1.0",
+    bundles: [
+      {
+        kind: "extension_host",
+        entry: "dist/extension.js",
+        digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      },
+    ],
+  }));
+
+  const packed = await packProject(root);
+  assert.match(packed.archive_digest, /^sha256:[0-9a-f]{64}$/);
+  assert.match(packed.archive_path, /\.agentdash-extension\.tgz$/);
+  const manifest = JSON.parse(await readFile(path.join(root, "agentdash.extension.json"), "utf8"));
+  assert.match(manifest.bundles[0].digest, /^sha256:[0-9a-f]{64}$/);
+});

@@ -2,14 +2,14 @@
 
 ## Steps
 
-- [ ] Add package skeletons and workspace configuration.
-- [ ] Implement `defineExtension` and contribution collection.
-- [ ] Implement webview bridge client types.
-- [ ] Implement CLI `init` template.
-- [ ] Implement CLI `validate`.
-- [ ] Implement CLI `pack` with bundler.
-- [ ] Implement CLI `install` against artifact/project install API.
-- [ ] Add unit tests and local-hello consumer checks.
+- [x] Add package skeletons and workspace configuration.
+- [x] Implement `defineExtension` and contribution collection.
+- [x] Implement webview bridge client types.
+- [x] Implement CLI `init` template.
+- [x] Implement CLI `validate`.
+- [x] Implement CLI `pack` with bundler.
+- [x] Implement CLI `install` against artifact/project install API.
+- [x] Add unit tests and local-hello consumer checks.
 
 ## Validation
 

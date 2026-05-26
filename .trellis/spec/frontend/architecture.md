@@ -24,6 +24,9 @@
 | `packages/ui` | 共享 UI primitive 与样式 |
 | `packages/core` | 共享核心逻辑与 ports |
 | `packages/views` | 可复用 view components |
+| `packages/extension-sdk` | Extension host 侧插件作者 API 与 contribution collector |
+| `packages/extension-ui` | Workspace webview panel 内的 extension bridge API |
+| `packages/extension-dev` | Extension authoring CLI，负责 init / dev / validate / pack / install |
 
 主应用组织：`api/`、`services/`、`stores/`、`features/<feature>/model`、`features/<feature>/ui`、`pages/`、`types/`、`generated/`。
 
@@ -32,6 +35,7 @@
 - 前端类型直接使用 `snake_case`，原因是它让 DTO 契约错误暴露在 mapper / typecheck 边界，而不是被双读字段掩盖。
 - 设计系统优先使用 `@agentdash/ui` primitive，原因是重复业务布局会让视觉语言和交互状态持续漂移。
 - 长连接统一使用 fetch + ReadableStream 消费 NDJSON，原因是鉴权、resume、HMR cleanup 需要与普通 API 和 stream registry 对齐。
+- Extension authoring surface 使用独立 `packages/extension-*` 工作区包，原因是插件作者 API、webview bridge 与开发 CLI 需要随插件协议版本收敛成窄接口。
 
 ## Contract Appendices
 
@@ -43,4 +47,3 @@
 - [Design Language](./design-language.md)
 - [Quality Guidelines](./quality-guidelines.md)
 - [Activity Lifecycle Frontend Contract](./workflow-activity-lifecycle.md)
-

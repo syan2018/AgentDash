@@ -243,6 +243,37 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
+  packages/extension-dev:
+    dependencies:
+      '@agentdash/extension-sdk':
+        specifier: workspace:*
+        version: link:../extension-sdk
+      '@agentdash/extension-ui':
+        specifier: workspace:*
+        version: link:../extension-ui
+      esbuild:
+        specifier: ^0.27.3
+        version: 0.27.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.13
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/extension-sdk:
+    devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/extension-ui:
+    devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
   packages/ui:
     dependencies:
       '@streamdown/cjk':

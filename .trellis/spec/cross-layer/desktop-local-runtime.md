@@ -60,6 +60,15 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 - 下载后必须校验 archive sha256 digest，再把 `.agentdash-extension.tgz` 解包到可清理 cache 目录。
 - 解包只接受 archive 内相对普通文件路径；Extension Host 读取 cache 中的 package 内容，不在安装路径执行 npm/pnpm install 或 package lifecycle scripts。
 
+### Local TS Extension Host
+
+- `agentdash-local` 管理 Node-based extension host 子进程，通过 stdio JSON line 协议执行 activate / reload / invoke / health。
+- Extension bundle 在受限 VM context 中加载 self-contained ESM，原因是插件包来自可安装产物，运行面需要与本机 runtime 主进程隔离。
+- `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
+- 本机 profile API 按 manifest `local_profile` 权限或 action `local.profile.read` 权限裁决，原因是插件贡献声明是 runtime surface 与本机能力之间的授权边界。
+- packaged mode 直接消费 `ExtensionArtifactCacheEntry.unpacked_dir`，原因是 artifact cache 已完成 archive digest 校验与安全解包。
+- action exception 和 host process exit 投影为 host 调用错误，原因是 extension host 故障应隔离在插件执行面内，保留 `agentdash-local` 主进程生命周期。
+
 ### 样式与依赖
 
 - `@agentdash/ui/styles.css` 是 Web/Tauri 共享的唯一全局样式入口

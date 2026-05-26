@@ -347,7 +347,7 @@ fn parse_uuid(row: &sqlx::postgres::PgRow, field: &str) -> Result<Uuid, DomainEr
 }
 
 fn parse_uuid_value(raw: &str, field: &str) -> Result<Uuid, DomainError> {
-    Uuid::parse_str(&raw).map_err(|error| {
+    Uuid::parse_str(raw).map_err(|error| {
         DomainError::InvalidConfig(format!("project_extension_installations.{field}: {error}"))
     })
 }

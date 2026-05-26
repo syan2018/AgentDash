@@ -64,6 +64,12 @@ impl CodexBridgeConnector {
     }
 }
 
+impl Default for CodexBridgeConnector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn connector_type_label(connector_type: ConnectorType) -> &'static str {
     match connector_type {
         ConnectorType::LocalExecutor => "local_executor",

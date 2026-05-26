@@ -2,13 +2,13 @@
 
 ## Steps
 
-- [ ] Define local extension host protocol types.
-- [ ] Add host manager in `crates/agentdash-local`.
-- [ ] Add packaged artifact cache loader.
-- [ ] Add dev mode source loader.
-- [ ] Implement invoke action path.
-- [ ] Implement local API facade and permission check.
-- [ ] Add tests for lifecycle, invoke, permission denied, crash handling.
+- [x] Define local extension host protocol types.
+- [x] Add host manager in `crates/agentdash-local`.
+- [x] Add packaged artifact cache loader.
+- [x] Add dev mode source loader.
+- [x] Implement invoke action path.
+- [x] Implement local API facade and permission check.
+- [x] Add tests for lifecycle, invoke, permission denied, crash handling.
 
 ## Validation
 

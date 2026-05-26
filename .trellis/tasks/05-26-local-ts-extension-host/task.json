@@ -3,7 +3,7 @@
   "name": "local-ts-extension-host",
   "title": "Local TS Extension Host",
   "description": "让 agentdash-local 管理 TS Extension Host，支持 activate/reload/invoke 与受限本机 SDK facade。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

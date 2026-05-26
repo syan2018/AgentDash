@@ -176,7 +176,10 @@ impl fmt::Display for CompactionCheckpointError {
                 "projection segment {segment_id} 归属 {generated_by_compaction_id} 与 compaction {compaction_id} 不一致"
             ),
             Self::InvalidContextEnvelopeMessages { segment_id } => {
-                write!(f, "context_envelope projection segment {segment_id} 的 messages 不是合法 AgentInputMessage 数组")
+                write!(
+                    f,
+                    "context_envelope projection segment {segment_id} 的 messages 不是合法 AgentInputMessage 数组"
+                )
             }
         }
     }
@@ -192,7 +195,9 @@ pub(super) fn projection_entries_from_checkpoint_records(
     for segment in segments {
         match segment.segment_type.as_str() {
             "context_envelope" => {
-                entries.extend(context_entries_from_projection_segment(compaction, segment)?);
+                entries.extend(context_entries_from_projection_segment(
+                    compaction, segment,
+                )?);
             }
             "summary_chunk" => {
                 if let Some(entry) = checkpoint_from_projection_segment(compaction, segment)?
@@ -741,7 +746,10 @@ mod tests {
         assert_eq!(entries[0].origin, ProjectionOrigin::Projection);
         assert!(entries[0].synthetic);
         assert_eq!(entries[0].source_event_seq, None);
-        assert_eq!(entries[0].projection_segment_id.as_deref(), Some("segment-1"));
+        assert_eq!(
+            entries[0].projection_segment_id.as_deref(),
+            Some("segment-1")
+        );
         assert_eq!(
             entries[0].provenance.get("segment_type"),
             Some(&serde_json::json!("context_envelope"))

@@ -235,15 +235,16 @@ pub async fn list_project_sessions(
         let session_id = session_id.clone();
         let branching = state.services.session_branching.clone();
         async move {
-            let lineage = branching
-                .lineage_view(&session_id)
+            branching
+                .lineage_parent(&session_id)
                 .await
-                .ok()
-                .and_then(|view| view.lineage);
-            (session_id, lineage)
+                .map(|lineage| (session_id, lineage))
         }
     }))
-    .await;
+    .await
+    .into_iter()
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| ApiError::Internal(format!("批量读取 session lineage 失败: {e}")))?;
     let lineage_map: HashMap<String, Option<agentdash_application::session::SessionLineageRecord>> =
         lineage_pairs.into_iter().collect();
 

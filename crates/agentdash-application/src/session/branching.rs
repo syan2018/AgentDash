@@ -200,6 +200,15 @@ impl SessionBranchingService {
             .as_ref()
             .map(|head| head.head_event_seq)
             .unwrap_or(meta.last_event_seq);
+        if request.target_event_seq > previous_head_event_seq {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "rollback target {} 超过当前模型可见 head {}",
+                    request.target_event_seq, previous_head_event_seq
+                ),
+            ));
+        }
         let previous_compaction_id = previous_head
             .as_ref()
             .and_then(|head| head.active_compaction_id.clone());
@@ -267,6 +276,13 @@ impl SessionBranchingService {
         })
     }
 
+    pub async fn lineage_parent(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>> {
+        self.stores.lineage.get_session_lineage(session_id).await
+    }
+
     async fn resolve_fork_point(
         &self,
         request: &SessionForkRequest,
@@ -298,24 +314,28 @@ impl SessionBranchingService {
             .as_ref()
             .and_then(|head| head.active_compaction_id.clone());
 
-        let mut compaction_id = request.fork_point_compaction_id.clone();
+        let requested_compaction =
+            if let Some(compaction_id) = request.fork_point_compaction_id.as_deref() {
+                Some(
+                    self.committed_compaction_for_projection_restore(
+                        &request.parent_session_id,
+                        compaction_id,
+                        "fork point",
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+        let mut compaction_id = requested_compaction
+            .as_ref()
+            .map(|compaction| compaction.id.clone());
         let event_seq = if let Some(event_seq) = request.fork_point_event_seq {
             event_seq
         } else if let Some(message_ref) = request.fork_point_ref.as_ref() {
             resolve_message_ref_event_seq(&self.stores, &request.parent_session_id, message_ref)
                 .await?
-        } else if let Some(compaction_id) = compaction_id.as_deref() {
-            let compaction = self
-                .stores
-                .compactions
-                .get_compaction(&request.parent_session_id, compaction_id)
-                .await?
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("fork point compaction {compaction_id} 不存在"),
-                    )
-                })?;
+        } else if let Some(compaction) = requested_compaction.as_ref() {
             compaction
                 .completed_event_seq
                 .or(compaction.source_end_event_seq)
@@ -329,6 +349,17 @@ impl SessionBranchingService {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("fork point {event_seq} 超过当前模型可见 head {current_head_event_seq}"),
+            ));
+        }
+        if let Some(compaction) = requested_compaction.as_ref()
+            && !compaction_valid_for_head(compaction, event_seq)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "fork point compaction {} 不能覆盖 event head {}",
+                    compaction.id, event_seq
+                ),
             ));
         }
 
@@ -349,15 +380,39 @@ impl SessionBranchingService {
         let Some(compaction_id) = candidate_compaction_id else {
             return Ok(None);
         };
-        let Some(compaction) = self
+        let compaction = self
+            .committed_compaction_for_projection_restore(session_id, &compaction_id, "rollback")
+            .await?;
+        Ok(compaction_valid_for_head(&compaction, target_event_seq).then_some(compaction_id))
+    }
+
+    async fn committed_compaction_for_projection_restore(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+        usage: &str,
+    ) -> io::Result<SessionCompactionRecord> {
+        let compaction = self
             .stores
             .compactions
-            .get_compaction(session_id, &compaction_id)
+            .get_compaction(session_id, compaction_id)
             .await?
-        else {
-            return Ok(None);
-        };
-        Ok(compaction_valid_for_head(&compaction, target_event_seq).then_some(compaction_id))
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{usage} compaction {compaction_id} 不存在"),
+                )
+            })?;
+        if compaction.status != SessionCompactionStatus::ProjectionCommitted {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{usage} compaction {} 状态不是 projection_committed",
+                    compaction.id
+                ),
+            ));
+        }
+        Ok(compaction)
     }
 }
 
@@ -742,6 +797,19 @@ mod tests {
             .expect("rollback 应成功");
         assert_eq!(rollback.head.head_event_seq, 1);
         assert_eq!(rollback.event.event_seq, 3);
+
+        let forward_rollback = service
+            .rollback_model_projection(SessionProjectionRollbackRequest {
+                session_id: "session".to_string(),
+                target_event_seq: 2,
+                active_compaction_id: None,
+                reason: Some("should fail".to_string()),
+            })
+            .await;
+        assert!(matches!(
+            forward_rollback,
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput
+        ));
 
         let all_events = stores
             .events

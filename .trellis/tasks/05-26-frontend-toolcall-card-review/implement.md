@@ -58,18 +58,29 @@
 目标：把 `normalized_to_backbone.rs` 的工具语义还原走通；前端无需任何变化即可
 "自然"看到分化（旧 SessionToolCallCard 通用路径会接住）。
 
-- [ ] P2.1 新增 `crates/agentdash-executor/src/adapters/threaditem_mapping.rs`，
+**P2 已完成 ✅**（实施时偏离 design.md，归位决议见末尾）。Commit: `76721ce5`
+
+- [x] P2.1 ✅ 实现位置由 `executor/adapters/threaditem_mapping.rs` 改为
+      `agentdash-agent-protocol/src/backbone/thread_item.rs`（用户反馈"位置
+      不合适，糊屎"后归位）。270 行 + 9 单测。提供类型安全 builder API：
+      `command_execution` / `file_change` / `web_search` / `dynamic_tool_call` /
+      `context_compaction`；`FileChangeSpec` 表达 Add/Delete/Edit/Rename；
+      内部 cwd 自动 `current_dir().join` 绝对化（解决 AbsolutePathBuf 反序列化
+      对绝对路径的强校验）
+- [ ] P2.1-legacy 新增 `crates/agentdash-executor/src/adapters/threaditem_mapping.rs`，
       实现 `action_type_to_thread_item`（design.md §2.1–§2.2）
       - 包含 `command_status_from_tool_status`、`patch_apply_status_from_tool_status`、
         `dynamic_status_from_tool_status` 三个状态转换辅助
       - 包含 `convert_file_change_to_codex` 把 `executors::FileChange` 子枚举
         映射到 `codex::FileUpdateChange`（含为 Write/Delete/Rename 合成
         unified_diff 字符串的逻辑）
-- [ ] P2.2 改 `tool_use_envelopes` 调用 `action_type_to_thread_item` 替代原地
-      `ThreadItem::DynamicToolCall { ... }` 直接构造
-- [ ] P2.3 cwd 缺失策略：从 `NormalizedEntry` / converter 字段推导，缺省 "."
-      （OQ1）
-- [ ] P2.4 新增单测覆盖（`normalized_to_backbone.rs` 测试模块或 `threaditem_mapping.rs::tests`）：
+- [x] P2.2 ✅ `tool_use_envelopes` 内部抽 `build_thread_item` 函数按 ActionType
+      分发；CommandRun → CommandExecution、FileEdit → FileChange、Search →
+      WebSearch；FileRead/WebFetch/AskUserQuestion/TaskCreate/Other 走
+      DynamicToolCall 但 tool 名规范化（Read/WebFetch/AskUserQuestion/Task/Other）
+- [x] P2.3 ✅ cwd 由 builder 自动绝对化（OQ1 解决）
+- [x] P2.4 ✅ 12 个映射单测覆盖每条分支（normalized_to_backbone.rs::tests）
+- [ ] P2.4-legacy 新增单测覆盖（`normalized_to_backbone.rs` 测试模块或 `threaditem_mapping.rs::tests`）：
       - `CommandRun` → `CommandExecution`
       - `FileEdit{Edit}` / `FileEdit{Write}` / `FileEdit{Rename}` / `FileEdit{Delete}`
         → `FileChange`
@@ -77,16 +88,23 @@
       - `Tool { tool_name="Read" }` → `DynamicToolCall(tool="Read")`
       - `TaskCreate` → `CollabAgentToolCall`
       - `Other` → `DynamicToolCall(tool="Other")`
-- [ ] P2.5 改 `pi_agent/stream_mapper.rs` 加 Bash/Edit/Search 白名单
-      （design.md §2.4），新增 1-2 个 connector_tests
-- [ ] P2.6 验证：
-      - `cargo test -p agentdash-executor` 全绿
-      - `cargo clippy --workspace -- -D warnings` 无新增告警
-      - `cargo test -p agentdash-application` / `-p agentdash-infrastructure`
-        若已有 ThreadItem variant 测试，全部仍绿（验证 application/persistence
-        层 match arms 仍然正确）
+- [x] P2.5 ✅ `pi_agent/stream_mapper.rs::make_command_execution_item` 改用
+      shared builder，删除本地 JSON 拼接 hack 与 `status_to_source_str`；
+      `extract_shell_args` 不再做 cwd 绝对化（统一交给 builder）。
+      原计划"加 Bash/Edit/Search 白名单"未做——因为 builder 集中后，pi_agent
+      已通过 builder 拿到正确 CommandExecution 构造，不再需要在 pi_agent 内
+      重复白名单分发（连同 design.md §2.4 的方案也作废）
+- [x] P2.6 ✅ 验证：
+      - `cargo test -p agentdash-agent-protocol --lib`：9 passed
+      - `cargo test -p agentdash-executor --lib`：70 passed (58 现有 + 12 新增)
+      - 改动文件 clippy 0 warning（剩余 11 个 collapsible_if 是预存红，与本次无关）
 
-**Review gate**：P2 提交一次，pause 等用户验证 ThreadItem 流量是否正确。
+**P2 决议偏离 design.md 的关键调整**：
+- mapping 模块从 executor crate 内部迁到 agent-protocol crate `backbone` 子模块
+- pi_agent 通过 builder 而非本地白名单分发
+- 这两点应在 design.md 下次更新时同步
+
+**Review gate**：P2 已 commit，等用户验证 ThreadItem 流量后进 P3。
 
 ---
 

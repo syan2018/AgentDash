@@ -1,7 +1,7 @@
 use std::io;
 
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo};
-use agentdash_agent_types::{AgentContextEnvelope, MessageRef};
+use agentdash_agent_types::{AgentContextEnvelope, AgentMessage, MessageRef, ProjectedEntry};
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 
 use super::context_projector::ContextProjector;
@@ -17,10 +17,8 @@ use super::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSou
 pub struct SessionForkRequest {
     pub parent_session_id: String,
     pub title: Option<String>,
-    pub fork_point_event_seq: Option<u64>,
     pub fork_point_ref: Option<MessageRef>,
     pub fork_point_compaction_id: Option<String>,
-    pub relation_kind: SessionLineageRelationKind,
     pub metadata_json: serde_json::Value,
 }
 
@@ -77,19 +75,19 @@ impl SessionBranchingService {
             })?;
 
         let fork_point = self.resolve_fork_point(&request).await?;
+        let relation_kind = SessionLineageRelationKind::Fork;
         let projector = ContextProjector::new(self.stores.clone());
         let parent_context = if let Some(compaction_id) = fork_point.compaction_id.as_deref() {
             projector
                 .build_model_context_from_compaction(
                     &parent.id,
-                    None,
                     compaction_id,
                     Some(fork_point.event_seq),
                 )
                 .await?
         } else {
             projector
-                .build_model_context_at_event(&parent.id, None, fork_point.event_seq)
+                .build_model_context_at_event(&parent.id, fork_point.event_seq)
                 .await?
         };
 
@@ -98,7 +96,7 @@ impl SessionBranchingService {
         let lineage = SessionLineageRecord {
             child_session_id: child.id.clone(),
             parent_session_id: parent.id.clone(),
-            relation_kind: request.relation_kind,
+            relation_kind,
             fork_point_event_seq: Some(fork_point.event_seq),
             fork_point_ref_json: request
                 .fork_point_ref
@@ -138,7 +136,7 @@ impl SessionBranchingService {
             &child,
             &fork_point,
             &parent_context,
-            request.relation_kind,
+            relation_kind,
             now,
         )?;
         let projection_commit = match self
@@ -190,11 +188,7 @@ impl SessionBranchingService {
         let previous_head = self
             .stores
             .projections
-            .read_projection_head(
-                &request.session_id,
-                None,
-                SESSION_PROJECTION_KIND_MODEL_CONTEXT,
-            )
+            .read_projection_head(&request.session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
             .await?;
         let previous_head_event_seq = previous_head
             .as_ref()
@@ -240,7 +234,6 @@ impl SessionBranchingService {
             .await?;
         let head = SessionProjectionHeadRecord {
             session_id: request.session_id,
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: previous_head
                 .map(|head| head.projection_version.saturating_add(1))
@@ -302,7 +295,6 @@ impl SessionBranchingService {
             .projections
             .read_projection_head(
                 &request.parent_session_id,
-                None,
                 SESSION_PROJECTION_KIND_MODEL_CONTEXT,
             )
             .await?;
@@ -330,9 +322,7 @@ impl SessionBranchingService {
         let mut compaction_id = requested_compaction
             .as_ref()
             .map(|compaction| compaction.id.clone());
-        let event_seq = if let Some(event_seq) = request.fork_point_event_seq {
-            event_seq
-        } else if let Some(message_ref) = request.fork_point_ref.as_ref() {
+        let event_seq = if let Some(message_ref) = request.fork_point_ref.as_ref() {
             resolve_message_ref_event_seq(&self.stores, &request.parent_session_id, message_ref)
                 .await?
         } else if let Some(compaction) = requested_compaction.as_ref() {
@@ -484,7 +474,6 @@ fn build_initial_fork_projection_commit(
         compaction: SessionCompactionRecord {
             id: compaction_id.clone(),
             session_id: child.id.clone(),
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: 1,
             lifecycle_item_id,
@@ -526,7 +515,6 @@ fn build_initial_fork_projection_commit(
         segments: vec![SessionProjectionSegmentRecord {
             id: segment_id,
             session_id: child.id.clone(),
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: 1,
             sort_order: 0,
@@ -543,7 +531,6 @@ fn build_initial_fork_projection_commit(
         }],
         head: SessionProjectionHeadRecord {
             session_id: child.id.clone(),
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: 1,
             head_event_seq: 1,
@@ -626,17 +613,13 @@ async fn resolve_message_ref_event_seq(
     message_ref: &MessageRef,
 ) -> io::Result<u64> {
     let transcript = ContextProjector::new(stores.clone())
-        .build_projected_transcript(session_id, None)
+        .build_projected_transcript(session_id)
         .await?;
-    transcript
+    let (index, entry) = transcript
         .entries
         .iter()
-        .find(|entry| &entry.message_ref == message_ref)
-        .and_then(|entry| {
-            entry
-                .source_event_seq
-                .or_else(|| entry.source_range.as_ref().map(|range| range.end_event_seq))
-        })
+        .enumerate()
+        .find(|(_, entry)| &entry.message_ref == message_ref)
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -645,7 +628,133 @@ async fn resolve_message_ref_event_seq(
                     message_ref.turn_id, message_ref.entry_index
                 ),
             )
+        })?;
+    validate_fork_point_message_boundary(&transcript.entries, index, entry)?;
+    let event_seq = entry
+        .source_event_seq
+        .or_else(|| entry.source_range.as_ref().map(|range| range.end_event_seq))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "message ref {}:{} 缺少可解析的 source range",
+                    message_ref.turn_id, message_ref.entry_index
+                ),
+            )
+        })?;
+    let events = stores.events.list_all_events(session_id).await?;
+    ensure_fork_point_turn_completed(&events, entry, event_seq)?;
+    Ok(event_seq)
+}
+
+fn validate_fork_point_message_boundary(
+    entries: &[ProjectedEntry],
+    index: usize,
+    entry: &ProjectedEntry,
+) -> io::Result<()> {
+    match &entry.message {
+        AgentMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty() => {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "fork point 不能停在 assistant tool call 之后、tool result 之前",
+            ))
+        }
+        AgentMessage::ToolResult { tool_call_id, .. } => {
+            ensure_tool_results_complete_at_boundary(entries, index, tool_call_id)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn ensure_tool_results_complete_at_boundary(
+    entries: &[ProjectedEntry],
+    index: usize,
+    selected_tool_call_id: &str,
+) -> io::Result<()> {
+    let Some((assistant_index, required_tool_call_ids)) =
+        preceding_tool_call_group(entries, index, selected_tool_call_id)
+    else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("fork point tool result {selected_tool_call_id} 缺少对应 tool call"),
+        ));
+    };
+
+    let mut completed_tool_call_ids = Vec::new();
+    for entry in &entries[assistant_index + 1..=index] {
+        if let AgentMessage::ToolResult {
+            tool_call_id,
+            call_id,
+            ..
+        } = &entry.message
+        {
+            completed_tool_call_ids.push(tool_call_id.as_str());
+            if let Some(call_id) = call_id.as_deref() {
+                completed_tool_call_ids.push(call_id);
+            }
+        }
+    }
+    let complete = required_tool_call_ids
+        .iter()
+        .all(|required| completed_tool_call_ids.iter().any(|done| *done == required));
+    if complete {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "fork point 不能落在未完整返回的 tool result 组中",
+        ))
+    }
+}
+
+fn preceding_tool_call_group(
+    entries: &[ProjectedEntry],
+    index: usize,
+    selected_tool_call_id: &str,
+) -> Option<(usize, Vec<String>)> {
+    entries[..index]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(assistant_index, entry)| {
+            let AgentMessage::Assistant { tool_calls, .. } = &entry.message else {
+                return None;
+            };
+            let mut ids = Vec::new();
+            for tool_call in tool_calls {
+                ids.push(tool_call.id.clone());
+                if let Some(call_id) = tool_call.call_id.as_deref() {
+                    ids.push(call_id.to_string());
+                }
+            }
+            ids.iter()
+                .any(|id| id == selected_tool_call_id)
+                .then_some((assistant_index, ids))
         })
+}
+
+fn ensure_fork_point_turn_completed(
+    events: &[PersistedSessionEvent],
+    entry: &ProjectedEntry,
+    event_seq: u64,
+) -> io::Result<()> {
+    if entry.synthetic || entry.message_ref.turn_id.starts_with("_projection:") {
+        return Ok(());
+    }
+    let turn_id = entry.message_ref.turn_id.as_str();
+    let completed = events.iter().any(|event| {
+        event.event_seq >= event_seq
+            && event.turn_id.as_deref() == Some(turn_id)
+            && event.session_update_type == "turn_completed"
+    });
+    if completed {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("fork point 指向的 turn {turn_id} 尚未完成"),
+        ))
+    }
 }
 
 fn compaction_valid_for_head(compaction: &SessionCompactionRecord, head_event_seq: u64) -> bool {
@@ -728,10 +837,8 @@ mod tests {
             .fork_session(SessionForkRequest {
                 parent_session_id: "parent".to_string(),
                 title: Some("child".to_string()),
-                fork_point_event_seq: None,
                 fork_point_ref: None,
                 fork_point_compaction_id: None,
-                relation_kind: SessionLineageRelationKind::Fork,
                 metadata_json: serde_json::json!({}),
             })
             .await
@@ -754,7 +861,7 @@ mod tests {
             .expect("应能继续写入 parent");
 
         let child_context = ContextProjector::new(stores)
-            .build_model_context(&result.child_session.id, None)
+            .build_model_context(&result.child_session.id)
             .await
             .expect("应能恢复 child context");
         assert_eq!(child_context.messages.len(), 1);
@@ -819,7 +926,7 @@ mod tests {
         assert_eq!(all_events.len(), 3);
 
         let context = ContextProjector::new(stores)
-            .build_model_context("session", None)
+            .build_model_context("session")
             .await
             .expect("应能按 rollback head 恢复 context");
         assert_eq!(context.messages.len(), 1);

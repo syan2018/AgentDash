@@ -359,8 +359,8 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
-  // ── thread_status_changed / context_compacted / turn_diff_updated — 静默 ──
-  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "context_compacted" ||
+  // ── thread_status_changed / executor_context_compacted / turn_diff_updated — 静默 ──
+  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
       bbEvent.type === "turn_diff_updated") {
     return prev;
   }

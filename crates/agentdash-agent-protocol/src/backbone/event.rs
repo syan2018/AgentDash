@@ -41,7 +41,9 @@ pub enum BackboneEvent {
     // ── 资源 / 状态 ──
     TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
-    ContextCompacted(codex::ContextCompactedNotification),
+    /// 外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned
+    /// summary/boundary/replacement provenance，只能作为遥测与审计事实。
+    ExecutorContextCompacted(codex::ContextCompactedNotification),
 
     // ── 审批请求（server → client，需要平台决策后回传）──
     ApprovalRequest(ApprovalRequest),

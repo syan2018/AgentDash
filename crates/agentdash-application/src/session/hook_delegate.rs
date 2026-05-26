@@ -1323,6 +1323,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                 },
@@ -1361,6 +1362,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                 },
@@ -1390,6 +1392,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                 },
@@ -1456,6 +1459,7 @@ mod tests {
                                 timestamp: None,
                             },
                         ],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                     provider_visible: Some(agentdash_spi::ProviderVisibleContextStats {
@@ -1506,7 +1510,13 @@ mod tests {
             .after_compaction(
                 CompactionResult {
                     messages: vec![AgentMessage::compaction_summary("summary body", 48_000, 6)],
+                    message_refs: vec![None],
                     summary_message: AgentMessage::compaction_summary("summary body", 48_000, 6),
+                    compacted_until_ref: agentdash_spi::MessageRef {
+                        turn_id: "turn-1".to_string(),
+                        entry_index: 0,
+                    },
+                    first_kept_ref: None,
                     trigger_stats: agentdash_spi::CompactionTriggerStats {
                         input_tokens: 48_000,
                         context_window: 64_000,
@@ -1580,6 +1590,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![AgentMessage::user("旧消息")],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                     provider_visible: Some(agentdash_spi::ProviderVisibleContextStats {
@@ -1615,7 +1626,13 @@ mod tests {
             .after_compaction(
                 CompactionResult {
                     messages: vec![AgentMessage::compaction_summary("summary body", 48_000, 6)],
+                    message_refs: vec![None],
                     summary_message: AgentMessage::compaction_summary("summary body", 48_000, 6),
+                    compacted_until_ref: agentdash_spi::MessageRef {
+                        turn_id: "turn-1".to_string(),
+                        entry_index: 0,
+                    },
+                    first_kept_ref: None,
                     trigger_stats: agentdash_spi::CompactionTriggerStats {
                         input_tokens: 48_000,
                         context_window: 64_000,
@@ -1648,6 +1665,7 @@ mod tests {
             context: AgentContext {
                 system_prompt: "test".to_string(),
                 messages: vec![AgentMessage::user("hello")],
+                message_refs: vec![],
                 tools: vec![],
             },
         };
@@ -1701,6 +1719,7 @@ mod tests {
             context: AgentContext {
                 system_prompt: "test".to_string(),
                 messages: vec![AgentMessage::user("hello")],
+                message_refs: vec![],
                 tools: vec![],
             },
         };
@@ -1772,6 +1791,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![AgentMessage::user("hello")],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                 },
@@ -1805,6 +1825,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                     message: AgentMessage::assistant("ok"),
@@ -1856,6 +1877,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                     message: AgentMessage::assistant("ok"),

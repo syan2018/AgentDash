@@ -73,13 +73,22 @@ describe("computeProjectionRefreshKey", () => {
     expect(computeProjectionRefreshKey(events)).toBe(1);
   });
 
-  it("context_compacted 与 compaction_summary context_frame 会推进 projection refresh key", () => {
+  it("外部 executor_context_compacted 不推进 projection refresh key", () => {
     const events = [
       eventEnvelope(1, agentDeltaEvent("assistant-1")),
       eventEnvelope(2, {
-        type: "context_compacted",
+        type: "executor_context_compacted",
         payload: { threadId: "thread-1", turnId: "turn-1" },
       }),
+      eventEnvelope(3, agentDeltaEvent("assistant-2")),
+    ];
+
+    expect(computeProjectionRefreshKey(events)).toBe(0);
+  });
+
+  it("compaction_summary context_frame 会推进 projection refresh key", () => {
+    const events = [
+      eventEnvelope(1, agentDeltaEvent("assistant-1")),
       eventEnvelope(3, platformMetaEvent("context_frame", {
         kind: "compaction_summary",
         id: "frame-1",

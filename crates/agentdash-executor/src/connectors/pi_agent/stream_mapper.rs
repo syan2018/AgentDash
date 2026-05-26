@@ -518,13 +518,15 @@ pub(super) fn convert_event_to_envelopes(
         AgentEvent::ContextCompacted {
             item_id,
             messages,
+            compacted_until_ref,
+            first_kept_ref,
             newly_compacted_messages,
+            ..
         } => {
             let Some(AgentMessage::CompactionSummary {
                 summary,
                 tokens_before,
                 messages_compacted,
-                compacted_until_ref,
                 timestamp,
                 ..
             }) = messages.first()
@@ -543,6 +545,7 @@ pub(super) fn convert_event_to_envelopes(
                             "messages_compacted": messages_compacted,
                             "newly_compacted_messages": newly_compacted_messages,
                             "compacted_until_ref": compacted_until_ref,
+                            "first_kept_ref": first_kept_ref,
                             "timestamp_ms": timestamp,
                         }),
                     }),

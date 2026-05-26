@@ -11,18 +11,12 @@ use agentdash_agent_types::{
 use agentdash_spi::content_block_to_text;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection, RuntimeEventSource};
 
-use super::compaction_checkpoint::{
-    apply_checkpoint_to_projected_entries, latest_context_compacted_checkpoint,
-};
 use super::persistence::PersistedSessionEvent;
 
 // ─── Continuation transcript 构建 ─────────────────────────────
 //
-// 唯一公共入口：`build_projected_transcript_from_events`
-//   → 返回 `ProjectedTranscript`，消费者自选渲染方式：
-//     - `.into_messages()` → 执行器原生恢复（launch restore ExecutorState 分支）
-//     - `build_continuation_context_frame(&transcript, owner_context)` → ContextFrame 注入
-//       （acp_sessions route、routine executor）
+// 原始事件 transcript 只表达已持久化消息。内部 compaction 的恢复语义由 projection
+// store materialize，continuation 不再从普通 `context_compacted` 事件推导 checkpoint。
 
 /// 把 `ProjectedTranscript` 组装为 `ContextFrame(kind=continuation_context)`。
 pub fn build_continuation_context_frame(
@@ -237,18 +231,6 @@ pub(super) fn build_raw_projected_transcript_from_filtered_events<'a>(
     events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
 ) -> ProjectedTranscript {
     build_raw_projected_transcript_from_iter(events)
-}
-
-/// 从持久化事件重建投影 transcript — legacy 公共入口。
-///
-/// 消费者根据需要自选渲染方式：
-/// - `.into_messages()` → 执行器原生 session restore
-/// - `build_continuation_context_frame(&transcript, owner_context)` → continuation frame 注入
-pub(super) fn build_projected_transcript_from_events(
-    events: &[PersistedSessionEvent],
-) -> ProjectedTranscript {
-    let raw_entries = build_raw_projected_transcript_from_events(events).entries;
-    apply_checkpoint_to_projected_entries(raw_entries, latest_context_compacted_checkpoint(events))
 }
 
 fn build_raw_projected_transcript_from_iter<'a>(
@@ -848,79 +830,7 @@ fn json_preview(value: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_protocol::{BackboneEnvelope, SourceInfo, TextContent, TraceInfo};
-
     use super::*;
-
-    fn source() -> SourceInfo {
-        SourceInfo {
-            connector_id: "test".to_string(),
-            connector_type: "unit".to_string(),
-            executor_id: None,
-        }
-    }
-
-    fn persisted_event(
-        event_seq: u64,
-        event: BackboneEvent,
-        turn_id: Option<&str>,
-        entry_index: Option<u32>,
-    ) -> PersistedSessionEvent {
-        let notification =
-            BackboneEnvelope::new(event.clone(), "session-1", source()).with_trace(TraceInfo {
-                turn_id: turn_id.map(ToString::to_string),
-                entry_index,
-            });
-        PersistedSessionEvent {
-            session_id: "session-1".to_string(),
-            event_seq,
-            occurred_at_ms: event_seq as i64,
-            committed_at_ms: event_seq as i64,
-            session_update_type: match event {
-                BackboneEvent::Platform(_) => "platform",
-                _ => "event",
-            }
-            .to_string(),
-            turn_id: turn_id.map(ToString::to_string),
-            entry_index,
-            tool_call_id: None,
-            notification,
-        }
-    }
-
-    fn user_message_event(event_seq: u64, turn_id: &str, text: &str) -> PersistedSessionEvent {
-        persisted_event(
-            event_seq,
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "user_message_chunk".to_string(),
-                value: serde_json::to_value(ContentBlock::Text(TextContent::new(text)))
-                    .expect("text block should serialize"),
-            }),
-            Some(turn_id),
-            Some(0),
-        )
-    }
-
-    fn context_compacted_event(event_seq: u64) -> PersistedSessionEvent {
-        persisted_event(
-            event_seq,
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "context_compacted".to_string(),
-                value: serde_json::json!({
-                    "summary": "## 历史摘要\n- 已完成旧分析",
-                    "tokens_before": 42000,
-                    "messages_compacted": 2,
-                    "compacted_until_ref": {
-                        "turn_id": "t-2",
-                        "entry_index": 0,
-                    },
-                    "timestamp_ms": 1710000000000_u64,
-                }),
-            }),
-            Some("t-3"),
-            None,
-        )
-    }
 
     #[test]
     fn codex_content_items_restore_input_image_data_url() {
@@ -955,43 +865,6 @@ mod tests {
         assert_eq!(
             parts[0].extract_text(),
             Some("[image output: unsupported image_url]")
-        );
-    }
-
-    #[test]
-    fn projected_transcript_applies_context_compacted_checkpoint_via_parser() {
-        let transcript = build_projected_transcript_from_events(&[
-            user_message_event(1, "t-1", "历史用户消息 1"),
-            user_message_event(2, "t-2", "历史用户消息 2"),
-            user_message_event(3, "t-3", "最近用户消息"),
-            context_compacted_event(4),
-        ]);
-
-        assert_eq!(transcript.entries.len(), 2);
-        match &transcript.entries[0].message {
-            AgentMessage::CompactionSummary {
-                summary,
-                tokens_before,
-                messages_compacted,
-                compacted_until_ref,
-                ..
-            } => {
-                assert!(summary.contains("历史摘要"));
-                assert_eq!(*tokens_before, 42_000);
-                assert_eq!(*messages_compacted, 2);
-                assert_eq!(
-                    compacted_until_ref.as_ref(),
-                    Some(&MessageRef {
-                        turn_id: "t-2".to_string(),
-                        entry_index: 0,
-                    })
-                );
-            }
-            other => panic!("unexpected summary entry: {other:?}"),
-        }
-        assert_eq!(
-            transcript.entries[1].message.first_text(),
-            Some("最近用户消息")
         );
     }
 }

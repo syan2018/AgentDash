@@ -515,7 +515,7 @@ fn envelope_event_type_label(event: &BackboneEvent) -> &'static str {
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
         BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
-        BackboneEvent::ContextCompacted(_) => "context_compacted",
+        BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
         BackboneEvent::ApprovalRequest(_) => "approval_request",
         BackboneEvent::Error(_) => "error",
         BackboneEvent::Platform(_) => "platform_event",

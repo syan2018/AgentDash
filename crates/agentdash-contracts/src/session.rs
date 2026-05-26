@@ -176,9 +176,6 @@ pub struct SessionProjectionSegmentViewResponse {
 #[serde(rename_all = "snake_case")]
 pub struct SessionProjectionViewResponse {
     pub session_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub branch_id: Option<String>,
     pub projection_kind: String,
     #[ts(type = "number")]
     pub projection_version: u64,
@@ -265,17 +262,11 @@ pub struct CreateSessionForkRequest {
     #[ts(optional)]
     pub title: Option<String>,
     #[serde(default)]
-    #[ts(optional, type = "number")]
-    pub fork_point_event_seq: Option<u64>,
-    #[serde(default)]
     #[ts(optional)]
     pub fork_point_ref: Option<SessionMessageRefDto>,
     #[serde(default)]
     #[ts(optional)]
     pub fork_point_compaction_id: Option<String>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub relation_kind: Option<SessionLineageRelationKindDto>,
     #[serde(default)]
     #[ts(optional)]
     pub metadata_json: Option<Value>,
@@ -397,7 +388,6 @@ impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
             .collect();
         Self {
             session_id: envelope.session_id,
-            branch_id: envelope.branch_id,
             projection_kind: envelope.projection_kind.as_str().to_string(),
             projection_version: envelope.projection_version,
             head_event_seq: envelope.head_event_seq,
@@ -532,7 +522,6 @@ mod projection_tests {
     fn projection_view_marks_summary_as_synthetic_projection() {
         let envelope = AgentContextEnvelope {
             session_id: "sess-1".to_string(),
-            branch_id: None,
             projection_kind: ProjectionKind::ModelContext,
             projection_version: 2,
             head_event_seq: 42,

@@ -500,8 +500,6 @@ pub const SESSION_PROJECTION_KIND_HANDOFF: &str = "handoff";
 pub struct SessionCompactionRecord {
     pub id: String,
     pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<String>,
     pub projection_kind: String,
     pub projection_version: u64,
     pub lifecycle_item_id: String,
@@ -547,8 +545,6 @@ pub struct SessionCompactionRecord {
 pub struct SessionProjectionSegmentRecord {
     pub id: String,
     pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<String>,
     pub projection_kind: String,
     pub projection_version: u64,
     pub sort_order: u64,
@@ -574,8 +570,6 @@ pub struct SessionProjectionSegmentRecord {
 #[serde(rename_all = "snake_case")]
 pub struct SessionProjectionHeadRecord {
     pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<String>,
     pub projection_kind: String,
     pub projection_version: u64,
     pub head_event_seq: u64,
@@ -771,7 +765,6 @@ pub trait SessionCompactionStore: Send + Sync {
     async fn list_compactions(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Vec<SessionCompactionRecord>>;
 }
@@ -781,14 +774,12 @@ pub trait SessionProjectionStore: Send + Sync {
     async fn list_projection_segments(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
         projection_version: u64,
     ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
     async fn read_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Option<SessionProjectionHeadRecord>>;
     async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;
@@ -899,20 +890,17 @@ pub trait SessionPersistence: Send + Sync {
     async fn list_compactions(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Vec<SessionCompactionRecord>>;
     async fn list_projection_segments(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
         projection_version: u64,
     ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
     async fn read_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Option<SessionProjectionHeadRecord>>;
     async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;

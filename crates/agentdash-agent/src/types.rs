@@ -59,6 +59,9 @@ pub enum AgentEvent {
     ContextCompacted {
         item_id: String,
         messages: Vec<AgentMessage>,
+        message_refs: Vec<Option<MessageRef>>,
+        compacted_until_ref: MessageRef,
+        first_kept_ref: Option<MessageRef>,
         newly_compacted_messages: u32,
     },
     ContextCompactionFailed {
@@ -108,6 +111,7 @@ pub struct AgentState {
     pub thinking_level: ThinkingLevel,
     pub tools: Vec<DynAgentTool>,
     pub messages: Vec<AgentMessage>,
+    pub message_refs: Vec<Option<MessageRef>>,
     pub is_streaming: bool,
     pub stream_message: Option<AgentMessage>,
     pub pending_tool_calls: std::collections::HashSet<String>,
@@ -119,6 +123,7 @@ impl std::fmt::Debug for AgentState {
         f.debug_struct("AgentState")
             .field("thinking_level", &self.thinking_level)
             .field("messages_count", &self.messages.len())
+            .field("message_refs_count", &self.message_refs.len())
             .field("tools_count", &self.tools.len())
             .field("is_streaming", &self.is_streaming)
             .field("pending_tool_calls", &self.pending_tool_calls)
@@ -134,6 +139,7 @@ impl AgentState {
             thinking_level: ThinkingLevel::default(),
             tools: Vec::new(),
             messages: Vec::new(),
+            message_refs: Vec::new(),
             is_streaming: false,
             stream_message: None,
             pending_tool_calls: std::collections::HashSet::new(),

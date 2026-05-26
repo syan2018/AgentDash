@@ -4,16 +4,14 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
     codex_app_server_protocol as codex,
 };
-use agentdash_agent_types::{AgentMessage, MessageRef};
+use agentdash_agent_types::MessageRef;
 use agentdash_spi::SESSION_PROJECTION_KIND_MODEL_CONTEXT;
 use agentdash_spi::hooks::ContextFrame;
 use tokio::sync::broadcast;
 
 use super::compaction_context_frame::build_compaction_context_frame;
 use super::context_projector::ContextProjector;
-use super::continuation::{
-    build_projected_transcript_from_events, build_raw_projected_transcript_from_events,
-};
+use super::continuation::build_raw_projected_transcript_from_events;
 use super::hub_support::SessionEventSubscription;
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
@@ -105,9 +103,6 @@ impl SessionEventingService {
         session_id: &str,
         envelope: BackboneEnvelope,
     ) -> io::Result<PersistedSessionEvent> {
-        let envelope = self
-            .maybe_enrich_compaction_notification(session_id, envelope)
-            .await?;
         if let Some(result) = self
             .maybe_commit_compaction_projection(session_id, envelope.clone())
             .await?
@@ -283,7 +278,7 @@ impl SessionEventingService {
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::ProjectedTranscript> {
         ContextProjector::new(self.stores.clone())
-            .build_projected_transcript(session_id, None)
+            .build_projected_transcript(session_id)
             .await
     }
 
@@ -292,47 +287,8 @@ impl SessionEventingService {
         session_id: &str,
     ) -> io::Result<agentdash_agent_types::AgentContextEnvelope> {
         ContextProjector::new(self.stores.clone())
-            .build_model_context(session_id, None)
+            .build_model_context(session_id)
             .await
-    }
-
-    async fn maybe_enrich_compaction_notification(
-        &self,
-        session_id: &str,
-        envelope: BackboneEnvelope,
-    ) -> io::Result<BackboneEnvelope> {
-        let messages_compacted = match &envelope.event {
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-                if key == "context_compacted" =>
-            {
-                value
-                    .get("messages_compacted")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|value| u32::try_from(value).ok())
-            }
-            _ => None,
-        };
-
-        let Some(messages_compacted) = messages_compacted else {
-            return Ok(envelope);
-        };
-
-        let Some(compacted_until_ref) = self
-            .derive_compaction_boundary_ref(session_id, messages_compacted)
-            .await?
-        else {
-            return Ok(envelope);
-        };
-
-        let mut enriched = envelope;
-        if let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) =
-            &mut enriched.event
-            && let Some(obj) = value.as_object_mut()
-            && let Ok(ref_value) = serde_json::to_value(&compacted_until_ref)
-        {
-            obj.insert("compacted_until_ref".to_string(), ref_value);
-        }
-        Ok(enriched)
     }
 
     async fn maybe_commit_compaction_projection(
@@ -350,7 +306,10 @@ impl SessionEventingService {
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
         else {
-            return Ok(None);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "context_compacted 缺少 summary，拒绝提交 projection",
+            ));
         };
 
         let events = self.stores.events.list_all_events(session_id).await?;
@@ -358,7 +317,7 @@ impl SessionEventingService {
         let projection_version = self
             .stores
             .projections
-            .read_projection_head(session_id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
             .await?
             .map(|head| head.projection_version.saturating_add(1))
             .unwrap_or(1);
@@ -383,26 +342,57 @@ impl SessionEventingService {
             .get("compacted_until_ref")
             .cloned()
             .and_then(|value| serde_json::from_value::<MessageRef>(value).ok())
-            .or_else(|| derive_compaction_boundary_ref_from_events(&events, messages_compacted));
-        let boundary = resolve_compaction_boundary(&raw_transcript.entries, boundary_ref.as_ref());
-        let Some(source_end_event_seq) = boundary
-            .source_end_event_seq
-            .or_else(|| source_end_from_count(&raw_transcript.entries, messages_compacted))
-        else {
-            return Ok(None);
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "context_compacted 缺少 compacted_until_ref，拒绝提交 projection",
+                )
+            })?;
+        let Some(first_kept_ref_value) = value.get("first_kept_ref").cloned() else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "context_compacted 缺少 first_kept_ref，拒绝提交 projection",
+            ));
         };
+        let first_kept_ref = serde_json::from_value::<Option<MessageRef>>(first_kept_ref_value)
+            .map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("context_compacted first_kept_ref 非法: {error}"),
+                )
+            })?;
+        let source_end_event_seq =
+            resolve_message_ref_source_event_seq(&raw_transcript.entries, &boundary_ref)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "context_compacted boundary {}:{} 不在当前 transcript 中",
+                            boundary_ref.turn_id, boundary_ref.entry_index
+                        ),
+                    )
+                })?;
         let source_start_event_seq = raw_transcript
             .entries
             .iter()
             .filter_map(projected_entry_source_event_seq)
             .find(|seq| *seq <= source_end_event_seq)
             .or(Some(source_end_event_seq));
-        let first_kept_event_seq = raw_transcript
-            .entries
-            .iter()
-            .filter_map(projected_entry_source_event_seq)
-            .find(|seq| *seq > source_end_event_seq)
-            .or_else(|| source_end_event_seq.checked_add(1));
+        let first_kept_event_seq = match first_kept_ref.as_ref() {
+            Some(first_kept_ref) => Some(
+                resolve_message_ref_source_event_seq(&raw_transcript.entries, first_kept_ref)
+                    .ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "context_compacted first_kept_ref {}:{} 不在当前 transcript 中",
+                                first_kept_ref.turn_id, first_kept_ref.entry_index
+                            ),
+                        )
+                    })?,
+            ),
+            None => source_end_event_seq.checked_add(1),
+        };
         let start_event_seq = find_compaction_started_event_seq(&events, &lifecycle_item_id)
             .unwrap_or(base_head_event_seq);
         let tokens_before = value
@@ -463,7 +453,6 @@ impl SessionEventingService {
             compaction: SessionCompactionRecord {
                 id: compaction_id.clone(),
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                 projection_version,
                 lifecycle_item_id: lifecycle_item_id.clone(),
@@ -489,6 +478,7 @@ impl SessionEventingService {
                     "source_end_event_seq": source_end_event_seq,
                     "first_kept_event_seq": first_kept_event_seq,
                     "compacted_until_ref": boundary_ref.clone(),
+                    "first_kept_ref": first_kept_ref.clone(),
                 }),
                 token_stats_json: serde_json::json!({
                     "tokens_before": tokens_before,
@@ -503,7 +493,6 @@ impl SessionEventingService {
             segments: vec![SessionProjectionSegmentRecord {
                 id: segment_id,
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                 projection_version,
                 sort_order: 0,
@@ -514,6 +503,7 @@ impl SessionEventingService {
                 source_end_event_seq: Some(source_end_event_seq),
                 source_refs_json: serde_json::json!({
                     "compacted_until_ref": boundary_ref.clone(),
+                    "first_kept_ref": first_kept_ref.clone(),
                     "messages_compacted": messages_compacted,
                     "newly_compacted_messages": newly_compacted_messages,
                 }),
@@ -527,7 +517,6 @@ impl SessionEventingService {
             }],
             head: SessionProjectionHeadRecord {
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                 projection_version,
                 head_event_seq: completed_event_seq,
@@ -542,22 +531,6 @@ impl SessionEventingService {
             .commit_compaction_projection(session_id, commit)
             .await
             .map(Some)
-    }
-
-    async fn derive_compaction_boundary_ref(
-        &self,
-        session_id: &str,
-        messages_compacted: u32,
-    ) -> io::Result<Option<MessageRef>> {
-        if messages_compacted == 0 {
-            return Ok(None);
-        }
-
-        let events = self.stores.events.list_all_events(session_id).await?;
-        Ok(derive_compaction_boundary_ref_from_events(
-            &events,
-            messages_compacted,
-        ))
     }
 
     async fn persist_context_frame_direct(
@@ -611,10 +584,16 @@ impl SessionEventingService {
         session_id: &str,
         persisted: &PersistedSessionEvent,
     ) -> io::Result<()> {
+        if matches!(
+            &persisted.notification.event,
+            BackboneEvent::ExecutorContextCompacted(_)
+        ) {
+            return Ok(());
+        }
         let Some(mut head) = self
             .stores
             .projections
-            .read_projection_head(session_id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
             .await?
         else {
             return Ok(());
@@ -641,11 +620,6 @@ impl SessionEventingService {
     }
 }
 
-#[derive(Debug, Default)]
-struct CompactionBoundary {
-    source_end_event_seq: Option<u64>,
-}
-
 fn context_compacted_value(envelope: &BackboneEnvelope) -> Option<&serde_json::Value> {
     match &envelope.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
@@ -665,33 +639,13 @@ fn latest_event_seq(events: &[PersistedSessionEvent]) -> u64 {
         .unwrap_or_default()
 }
 
-fn resolve_compaction_boundary(
+fn resolve_message_ref_source_event_seq(
     entries: &[agentdash_agent_types::ProjectedEntry],
-    boundary_ref: Option<&MessageRef>,
-) -> CompactionBoundary {
-    let Some(boundary_ref) = boundary_ref else {
-        return CompactionBoundary::default();
-    };
+    message_ref: &MessageRef,
+) -> Option<u64> {
     entries
         .iter()
-        .find(|entry| &entry.message_ref == boundary_ref)
-        .and_then(projected_entry_source_event_seq)
-        .map(|source_end_event_seq| CompactionBoundary {
-            source_end_event_seq: Some(source_end_event_seq),
-        })
-        .unwrap_or_default()
-}
-
-fn source_end_from_count(
-    entries: &[agentdash_agent_types::ProjectedEntry],
-    messages_compacted: u32,
-) -> Option<u64> {
-    if messages_compacted == 0 {
-        return None;
-    }
-    let index = usize::try_from(messages_compacted).ok()?.checked_sub(1)?;
-    entries
-        .get(index)
+        .find(|entry| &entry.message_ref == message_ref)
         .and_then(projected_entry_source_event_seq)
 }
 
@@ -785,44 +739,6 @@ fn estimate_text_tokens(value: &str) -> u64 {
     chars.saturating_add(3) / 4 + 4
 }
 
-pub(crate) fn derive_compaction_boundary_ref_from_events(
-    events: &[PersistedSessionEvent],
-    messages_compacted: u32,
-) -> Option<MessageRef> {
-    if messages_compacted == 0 {
-        return None;
-    }
-
-    let transcript = build_projected_transcript_from_events(events);
-    let first_entry = transcript.entries.first()?;
-    let (start_index, previously_compacted, previous_boundary_ref) = match &first_entry.message {
-        AgentMessage::CompactionSummary {
-            messages_compacted,
-            compacted_until_ref,
-            ..
-        } => (
-            1_usize,
-            usize::try_from(*messages_compacted).ok()?,
-            compacted_until_ref.clone(),
-        ),
-        _ => (0, 0, None),
-    };
-
-    let total_compacted = usize::try_from(messages_compacted).ok()?;
-    if total_compacted < previously_compacted {
-        return None;
-    }
-    if total_compacted == previously_compacted {
-        return previous_boundary_ref;
-    }
-
-    let cut = start_index.checked_add(total_compacted - previously_compacted)?;
-    transcript
-        .entries
-        .get(cut.checked_sub(1)?)
-        .map(|entry| entry.message_ref.clone())
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -878,11 +794,41 @@ mod tests {
                 source: "codex".to_string(),
             }),
             session_id,
-            SourceInfo {
-                connector_id: "codex-bridge".to_string(),
-                connector_type: "local_executor".to_string(),
-                executor_id: Some("CODEX".to_string()),
-            },
+            test_source_info(),
+        )
+    }
+
+    fn test_source_info() -> SourceInfo {
+        SourceInfo {
+            connector_id: "codex-bridge".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("CODEX".to_string()),
+        }
+    }
+
+    fn context_compacted_envelope(session_id: &str, value: serde_json::Value) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                key: "context_compacted".to_string(),
+                value,
+            }),
+            session_id,
+            test_source_info(),
+        )
+        .with_trace(TraceInfo {
+            turn_id: Some("turn-compact".to_string()),
+            entry_index: None,
+        })
+    }
+
+    fn executor_context_compacted_envelope(session_id: &str) -> BackboneEnvelope {
+        BackboneEnvelope::new(
+            BackboneEvent::ExecutorContextCompacted(codex::ContextCompactedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+            }),
+            session_id,
+            test_source_info(),
         )
     }
 
@@ -996,6 +942,109 @@ mod tests {
             .expect("session meta exists");
         assert_eq!(meta.title, "New session");
         assert_eq!(meta.title_source, TitleSource::Auto);
+    }
+
+    #[tokio::test]
+    async fn context_compacted_missing_summary_or_boundary_is_not_persisted() {
+        let session_id = "sess-bad-context-compaction";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        let service = test_eventing_service(stores.clone());
+
+        let missing_summary = service
+            .persist_notification(
+                session_id,
+                context_compacted_envelope(
+                    session_id,
+                    serde_json::json!({
+                        "messages_compacted": 2,
+                        "compacted_until_ref": { "turn_id": "turn-1", "entry_index": 0 },
+                        "first_kept_ref": null,
+                    }),
+                ),
+            )
+            .await;
+        assert!(matches!(
+            missing_summary,
+            Err(error) if error.kind() == io::ErrorKind::InvalidData
+        ));
+
+        let missing_first_kept = service
+            .persist_notification(
+                session_id,
+                context_compacted_envelope(
+                    session_id,
+                    serde_json::json!({
+                        "summary": "历史摘要",
+                        "messages_compacted": 2,
+                        "compacted_until_ref": { "turn_id": "turn-1", "entry_index": 0 },
+                    }),
+                ),
+            )
+            .await;
+        assert!(matches!(
+            missing_first_kept,
+            Err(error) if error.kind() == io::ErrorKind::InvalidData
+        ));
+
+        let events = stores
+            .events
+            .list_all_events(session_id)
+            .await
+            .expect("read events");
+        assert!(events.is_empty());
+        let head = stores
+            .projections
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await
+            .expect("read projection head");
+        assert!(head.is_none());
+    }
+
+    #[tokio::test]
+    async fn executor_context_compacted_is_telemetry_and_does_not_advance_projection_head() {
+        let session_id = "sess-external-compact";
+        let persistence = Arc::new(MemorySessionPersistence::default());
+        let stores = SessionStoreSet::from_persistence(persistence);
+        stores
+            .meta
+            .create_session(&test_meta(session_id, TitleSource::Auto))
+            .await
+            .expect("create session");
+        stores
+            .projections
+            .upsert_projection_head(SessionProjectionHeadRecord {
+                session_id: session_id.to_string(),
+                projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                projection_version: 1,
+                head_event_seq: 0,
+                active_compaction_id: Some("compaction-existing".to_string()),
+                updated_by_event_seq: None,
+                updated_at_ms: 1,
+            })
+            .await
+            .expect("seed projection head");
+        let service = test_eventing_service(stores.clone());
+
+        let persisted = service
+            .persist_notification(session_id, executor_context_compacted_envelope(session_id))
+            .await
+            .expect("persist external telemetry");
+        assert_eq!(persisted.session_update_type, "executor_context_compacted");
+
+        let head = stores
+            .projections
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .await
+            .expect("read projection head")
+            .expect("projection head exists");
+        assert_eq!(head.head_event_seq, 0);
+        assert_eq!(head.updated_by_event_seq, None);
     }
 
     struct NoopConnector;

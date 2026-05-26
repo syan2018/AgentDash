@@ -26,21 +26,17 @@ impl ContextProjector {
         Self { stores }
     }
 
-    pub async fn build_model_context(
-        &self,
-        session_id: &str,
-        branch_id: Option<&str>,
-    ) -> io::Result<AgentContextEnvelope> {
+    pub async fn build_model_context(&self, session_id: &str) -> io::Result<AgentContextEnvelope> {
         let events = self.stores.events.list_all_events(session_id).await?;
         let head = self
             .stores
             .projections
-            .read_projection_head(session_id, branch_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
             .await?;
 
         match head {
             Some(head) => {
-                self.build_from_projection_head(session_id, branch_id, &events, head)
+                self.build_from_projection_head(session_id, &events, head)
                     .await
             }
             None => {
@@ -48,7 +44,6 @@ impl ContextProjector {
                 let token_estimate = entries_token_estimate(&transcript.entries);
                 Ok(envelope_from_transcript(
                     session_id,
-                    branch_id,
                     0,
                     latest_event_seq(&events),
                     None,
@@ -62,14 +57,13 @@ impl ContextProjector {
     pub async fn build_model_context_at_event(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         head_event_seq: u64,
     ) -> io::Result<AgentContextEnvelope> {
         let events = self.stores.events.list_all_events(session_id).await?;
         let head = self
             .stores
             .projections
-            .read_projection_head(session_id, branch_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+            .read_projection_head(session_id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
             .await?;
 
         if let Some(mut head) = head {
@@ -85,20 +79,19 @@ impl ContextProjector {
                 {
                     head.head_event_seq = head_event_seq;
                     return self
-                        .build_from_projection_head(session_id, branch_id, &events, head)
+                        .build_from_projection_head(session_id, &events, head)
                         .await;
                 }
             } else {
                 head.head_event_seq = head_event_seq;
                 return self
-                    .build_from_projection_head(session_id, branch_id, &events, head)
+                    .build_from_projection_head(session_id, &events, head)
                     .await;
             }
         }
 
         Ok(envelope_from_transcript(
             session_id,
-            branch_id,
             0,
             head_event_seq,
             None,
@@ -114,7 +107,6 @@ impl ContextProjector {
     pub async fn build_model_context_from_compaction(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         compaction_id: &str,
         head_event_seq: Option<u64>,
     ) -> io::Result<AgentContextEnvelope> {
@@ -133,7 +125,6 @@ impl ContextProjector {
         validate_active_compaction(&compaction)?;
         let head = SessionProjectionHeadRecord {
             session_id: session_id.to_string(),
-            branch_id: branch_id.map(ToString::to_string),
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: compaction.projection_version,
             head_event_seq: head_event_seq
@@ -146,17 +137,16 @@ impl ContextProjector {
                 .completed_at_ms
                 .unwrap_or(compaction.created_at_ms),
         };
-        self.build_from_projection_head(session_id, branch_id, &events, head)
+        self.build_from_projection_head(session_id, &events, head)
             .await
     }
 
     pub async fn build_projected_transcript(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
     ) -> io::Result<ProjectedTranscript> {
         Ok(self
-            .build_model_context(session_id, branch_id)
+            .build_model_context(session_id)
             .await?
             .into_projected_transcript())
     }
@@ -164,7 +154,6 @@ impl ContextProjector {
     async fn build_from_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         events: &[PersistedSessionEvent],
         head: SessionProjectionHeadRecord,
     ) -> io::Result<AgentContextEnvelope> {
@@ -177,7 +166,6 @@ impl ContextProjector {
             let token_estimate = entries_token_estimate(&transcript.entries);
             return Ok(envelope_from_transcript(
                 session_id,
-                branch_id,
                 head.projection_version,
                 head.head_event_seq,
                 None,
@@ -204,7 +192,6 @@ impl ContextProjector {
             .projections
             .list_projection_segments(
                 session_id,
-                branch_id,
                 SESSION_PROJECTION_KIND_MODEL_CONTEXT,
                 head.projection_version,
             )
@@ -224,7 +211,6 @@ impl ContextProjector {
 
         Ok(envelope_from_entries(
             session_id,
-            branch_id,
             head.projection_version,
             head.head_event_seq,
             Some(active_compaction_id.to_string()),
@@ -263,7 +249,6 @@ fn compaction_covers_head(compaction: &SessionCompactionRecord, head_event_seq: 
 
 fn envelope_from_transcript(
     session_id: &str,
-    branch_id: Option<&str>,
     projection_version: u64,
     head_event_seq: u64,
     active_compaction_id: Option<String>,
@@ -272,7 +257,6 @@ fn envelope_from_transcript(
 ) -> AgentContextEnvelope {
     envelope_from_entries(
         session_id,
-        branch_id,
         projection_version,
         head_event_seq,
         active_compaction_id,
@@ -283,7 +267,6 @@ fn envelope_from_transcript(
 
 fn envelope_from_entries(
     session_id: &str,
-    branch_id: Option<&str>,
     projection_version: u64,
     head_event_seq: u64,
     active_compaction_id: Option<String>,
@@ -292,7 +275,6 @@ fn envelope_from_entries(
 ) -> AgentContextEnvelope {
     AgentContextEnvelope {
         session_id: session_id.to_string(),
-        branch_id: branch_id.map(ToString::to_string),
         projection_kind: ProjectionKind::ModelContext,
         projection_version,
         head_event_seq,

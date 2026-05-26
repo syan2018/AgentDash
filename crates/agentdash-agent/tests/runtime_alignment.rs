@@ -251,6 +251,7 @@ async fn agent_loop_emits_prompt_before_assistant_and_returns_new_messages() {
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
+        message_refs: vec![],
         tools: vec![],
     };
 
@@ -531,6 +532,7 @@ async fn empty_continue_decision_keeps_loop_running_without_fake_messages() {
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
+        message_refs: vec![],
         tools: vec![],
     };
     let tool_instances: Vec<DynAgentTool> = vec![];
@@ -580,6 +582,7 @@ async fn tool_arguments_are_validated_before_before_tool_call_hook() {
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
+        message_refs: vec![],
         tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let before_calls_clone = before_calls.clone();
@@ -677,6 +680,7 @@ async fn responses_tool_name_delta_emits_start_before_arguments_finish() {
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
+        message_refs: vec![],
         tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let tool_instances = vec![tool];
@@ -843,6 +847,7 @@ async fn ask_decision_waits_for_approval_and_rejection_keeps_tool_unexecuted() {
     let mut context = AgentContext {
         system_prompt: String::new(),
         messages: vec![],
+        message_refs: vec![],
         tools: vec![ToolDefinition::from_tool(tool.as_ref())],
     };
     let events = Arc::new(Mutex::new(Vec::new()));

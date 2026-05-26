@@ -6,7 +6,7 @@
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
-use crate::types::{AgentError, AgentMessage, CompactionParams, CompactionResult};
+use crate::types::{AgentError, AgentMessage, CompactionParams, CompactionResult, MessageRef};
 
 /// 默认摘要 system prompt
 const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
@@ -39,15 +39,37 @@ const UPDATE_SUMMARIZATION_PROMPT: &str = "\
 /// 执行压缩：cut point -> 摘要生成 -> 消息替换
 pub async fn execute_compaction(
     messages: &[AgentMessage],
+    message_refs: &[Option<MessageRef>],
     params: &CompactionParams,
     bridge: &dyn LlmBridge,
     cancel: &CancellationToken,
 ) -> Result<Option<CompactionResult>, AgentError> {
+    if message_refs.len() != messages.len() {
+        return Err(AgentError::InvalidState(
+            "compaction_message_ref_len_mismatch".to_string(),
+        ));
+    }
     let start_index = first_uncompacted_message_index(messages);
     let cut_index = find_cut_point(messages, start_index, params);
     if cut_index == 0 {
         return Ok(None); // 没有可压缩的消息
     }
+    let compacted_until_ref = message_refs
+        .get(cut_index.saturating_sub(1))
+        .and_then(Clone::clone)
+        .ok_or_else(|| AgentError::InvalidState("compaction_boundary_ref_missing".to_string()))?;
+    let first_kept_ref = if cut_index < messages.len() {
+        Some(
+            message_refs
+                .get(cut_index)
+                .and_then(Clone::clone)
+                .ok_or_else(|| {
+                    AgentError::InvalidState("compaction_first_kept_ref_missing".to_string())
+                })?,
+        )
+    } else {
+        None
+    };
 
     let previous_summary = existing_summary(messages);
     let summary = if let Some(ref custom) = params.custom_summary {
@@ -73,28 +95,46 @@ pub async fn execute_compaction(
     let total_compacted_messages = previously_compacted + newly_compacted_messages;
 
     // 构建压缩摘要消息
-    let summary_message = AgentMessage::compaction_summary(
+    let summary_message = AgentMessage::compaction_summary_with_boundary(
         summary,
         params.trigger_stats.input_tokens,
         total_compacted_messages,
+        Some(compacted_until_ref.clone()),
     );
 
     // 替换消息：[CompactionSummary] + [kept_messages]
     let mut projected_messages = vec![summary_message.clone()];
     projected_messages.extend(messages[cut_index..].iter().cloned());
+    let mut projected_refs = vec![None];
+    projected_refs.extend(message_refs[cut_index..].iter().cloned());
 
     Ok(Some(CompactionResult {
         messages: projected_messages,
+        message_refs: projected_refs,
         summary_message,
+        compacted_until_ref,
+        first_kept_ref,
         trigger_stats: params.trigger_stats.clone(),
         newly_compacted_messages,
         used_custom_summary,
     }))
 }
 
-pub fn should_execute_compaction(messages: &[AgentMessage], params: &CompactionParams) -> bool {
+pub fn should_execute_compaction(
+    messages: &[AgentMessage],
+    message_refs: &[Option<MessageRef>],
+    params: &CompactionParams,
+) -> bool {
+    if message_refs.len() != messages.len() {
+        return false;
+    }
     let start_index = first_uncompacted_message_index(messages);
-    find_cut_point(messages, start_index, params) > 0
+    let cut = find_cut_point(messages, start_index, params);
+    cut > 0
+        && message_refs
+            .get(cut.saturating_sub(1))
+            .is_some_and(Option::is_some)
+        && (cut >= messages.len() || message_refs.get(cut).is_some_and(Option::is_some))
 }
 
 /// 确定 cut point（按 token budget 保留尾部，并用 keep_last_n 作为最低保护）。

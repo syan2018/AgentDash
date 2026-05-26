@@ -192,11 +192,20 @@ impl AgentMessage {
         tokens_before: u64,
         messages_compacted: u32,
     ) -> Self {
+        Self::compaction_summary_with_boundary(summary, tokens_before, messages_compacted, None)
+    }
+
+    pub fn compaction_summary_with_boundary(
+        summary: impl Into<String>,
+        tokens_before: u64,
+        messages_compacted: u32,
+        compacted_until_ref: Option<MessageRef>,
+    ) -> Self {
         Self::CompactionSummary {
             summary: summary.into(),
             tokens_before,
             messages_compacted,
-            compacted_until_ref: None,
+            compacted_until_ref,
             timestamp: Some(now_millis()),
         }
     }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
-use agentdash_agent_types::AgentMessage;
+use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
@@ -174,6 +174,7 @@ pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf
 #[derive(Debug, Clone, Default)]
 pub struct RestoredSessionState {
     pub messages: Vec<AgentMessage>,
+    pub message_refs: Vec<Option<MessageRef>>,
 }
 
 /// 工具簇标识 — 每个簇控制一组相关工具的注入。

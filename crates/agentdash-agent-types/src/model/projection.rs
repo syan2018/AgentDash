@@ -223,8 +223,6 @@ impl From<AgentInputMessage> for ProjectedEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentContextEnvelope {
     pub session_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<String>,
     pub projection_kind: ProjectionKind,
     pub projection_version: u64,
     pub head_event_seq: u64,

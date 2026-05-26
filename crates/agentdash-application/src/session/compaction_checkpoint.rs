@@ -1,19 +1,15 @@
 use std::fmt;
 
-use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
 use agentdash_agent_types::{
-    AgentInputMessage, AgentMessage, MessageRef, ProjectedEntry, ProjectedTranscript,
-    ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
+    AgentInputMessage, AgentMessage, MessageRef, ProjectedEntry, ProjectionKind, ProjectionOrigin,
+    ProjectionSourceRange,
 };
-use agentdash_spi::{
-    PersistedSessionEvent, SessionCompactionRecord, SessionProjectionSegmentRecord,
-};
+use agentdash_spi::{SessionCompactionRecord, SessionProjectionSegmentRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum CompactionCheckpointSource {
     ProjectionSegment,
     CompactionRecord,
-    ContextEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +30,6 @@ impl CompactionCheckpointProvenance {
             "source": match self.source {
                 CompactionCheckpointSource::ProjectionSegment => "projection_segment",
                 CompactionCheckpointSource::CompactionRecord => "compaction_record",
-                CompactionCheckpointSource::ContextEvent => "context_event",
             },
             "compaction_id": self.compaction_id.clone(),
             "segment_id": self.segment_id.clone(),
@@ -377,134 +372,6 @@ pub(super) fn checkpoint_from_compaction_record(
     }))
 }
 
-pub(super) fn latest_context_compacted_checkpoint(
-    events: &[PersistedSessionEvent],
-) -> Option<CompactionCheckpoint> {
-    events.iter().rev().find_map(|event| {
-        checkpoint_from_context_compacted_event(event)
-            .ok()
-            .flatten()
-    })
-}
-
-pub(super) fn checkpoint_from_context_compacted_event(
-    event: &PersistedSessionEvent,
-) -> Result<Option<CompactionCheckpoint>, CompactionCheckpointError> {
-    let BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value }) =
-        &event.notification.event
-    else {
-        return Ok(None);
-    };
-    if key != "context_compacted" {
-        return Ok(None);
-    }
-    checkpoint_from_context_compacted_value(value)
-}
-
-pub(super) fn checkpoint_from_context_compacted_value(
-    value: &serde_json::Value,
-) -> Result<Option<CompactionCheckpoint>, CompactionCheckpointError> {
-    let Some(summary) = value
-        .get("summary")
-        .and_then(serde_json::Value::as_str)
-        .and_then(non_empty_string)
-    else {
-        return Ok(None);
-    };
-
-    Ok(Some(CompactionCheckpoint {
-        summary,
-        tokens_before: value
-            .get("tokens_before")
-            .and_then(serde_json::Value::as_u64)
-            .or_else(|| value.get("before").and_then(serde_json::Value::as_u64))
-            .unwrap_or_default(),
-        messages_compacted: read_u32(value, "messages_compacted").unwrap_or_default(),
-        compacted_until_ref: read_message_ref_optional(value, "compacted_until_ref")?,
-        source_range: None,
-        first_kept_event_seq: None,
-        timestamp_ms: value
-            .get("timestamp_ms")
-            .and_then(serde_json::Value::as_u64),
-        compaction_id: None,
-        segment_id: None,
-        projection_version: value
-            .get("projection_version")
-            .and_then(serde_json::Value::as_u64),
-        provenance: CompactionCheckpointProvenance {
-            source: CompactionCheckpointSource::ContextEvent,
-            compaction_id: value
-                .get("compaction_id")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string),
-            segment_id: None,
-            projection_version: value
-                .get("projection_version")
-                .and_then(serde_json::Value::as_u64),
-            segment_type: None,
-            strategy: value
-                .get("strategy")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string),
-            trigger: value
-                .get("trigger")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string),
-            phase: value
-                .get("phase")
-                .and_then(serde_json::Value::as_str)
-                .map(ToString::to_string),
-        },
-        message_ref: MessageRef {
-            turn_id: "_compaction_summary".to_string(),
-            entry_index: 0,
-        },
-        origin: ProjectionOrigin::Projection,
-        synthetic: true,
-    }))
-}
-
-pub(super) fn apply_checkpoint_to_projected_entries(
-    raw_entries: Vec<ProjectedEntry>,
-    checkpoint: Option<CompactionCheckpoint>,
-) -> ProjectedTranscript {
-    let Some(checkpoint) = checkpoint else {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    };
-    if checkpoint.summary.trim().is_empty() || checkpoint.messages_compacted == 0 {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    }
-    let Some(boundary_ref) = checkpoint.compacted_until_ref.as_ref() else {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    };
-
-    let cut = raw_entries
-        .iter()
-        .position(|entry| entry.message_ref == *boundary_ref)
-        .map(|pos| pos + 1)
-        .unwrap_or(0);
-    let derived_ref = if cut > 0 {
-        Some(raw_entries[cut - 1].message_ref.clone())
-    } else {
-        Some(boundary_ref.clone())
-    };
-    let Some(summary_entry) = checkpoint.to_projected_entry_with_boundary(derived_ref) else {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    };
-
-    let mut entries = vec![summary_entry];
-    entries.extend(raw_entries.into_iter().skip(cut));
-    ProjectedTranscript { entries }
-}
-
 fn validate_segment(
     compaction: &SessionCompactionRecord,
     segment: &SessionProjectionSegmentRecord,
@@ -617,7 +484,6 @@ fn tokens_before(compaction: &SessionCompactionRecord) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_agent_protocol::{BackboneEnvelope, PlatformEvent, SourceInfo};
     use agentdash_spi::{SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionStatus};
 
     use super::*;
@@ -626,7 +492,6 @@ mod tests {
         SessionCompactionRecord {
             id: "compaction-1".to_string(),
             session_id: "session-1".to_string(),
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: 7,
             lifecycle_item_id: "compact-item".to_string(),
@@ -662,7 +527,6 @@ mod tests {
         SessionProjectionSegmentRecord {
             id: "segment-1".to_string(),
             session_id: "session-1".to_string(),
-            branch_id: None,
             projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
             projection_version: 7,
             sort_order: 0,
@@ -679,31 +543,6 @@ mod tests {
             content_json: serde_json::json!({ "content": "segment summary" }),
             token_estimate: Some(128),
             created_at_ms: 1500,
-        }
-    }
-
-    fn context_event(value: serde_json::Value) -> PersistedSessionEvent {
-        PersistedSessionEvent {
-            session_id: "session-1".to_string(),
-            event_seq: 10,
-            occurred_at_ms: 10,
-            committed_at_ms: 10,
-            session_update_type: "platform".to_string(),
-            turn_id: Some("turn-1".to_string()),
-            entry_index: None,
-            tool_call_id: None,
-            notification: BackboneEnvelope::new(
-                BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                    key: "context_compacted".to_string(),
-                    value,
-                }),
-                "session-1",
-                SourceInfo {
-                    connector_id: "test".to_string(),
-                    connector_type: "unit".to_string(),
-                    executor_id: None,
-                },
-            ),
         }
     }
 
@@ -807,70 +646,6 @@ mod tests {
             Some((1, 8))
         );
         assert_eq!(entry.projection_segment_id.as_deref(), Some("segment-1"));
-    }
-
-    #[test]
-    fn context_compacted_event_payload_parses_checkpoint() {
-        let event = context_event(serde_json::json!({
-            "summary": "event summary",
-            "tokens_before": 42000,
-            "messages_compacted": 3,
-            "compacted_until_ref": { "turn_id": "event-turn", "entry_index": 2 },
-            "timestamp_ms": 123_u64,
-        }));
-
-        let checkpoint = checkpoint_from_context_compacted_event(&event)
-            .expect("checkpoint should parse")
-            .expect("checkpoint should exist");
-        assert_eq!(checkpoint.summary, "event summary");
-        assert_eq!(checkpoint.tokens_before, 42000);
-        assert_eq!(checkpoint.messages_compacted, 3);
-        assert_eq!(checkpoint.timestamp_ms, Some(123));
-        assert_eq!(
-            checkpoint.compacted_until_ref,
-            Some(MessageRef {
-                turn_id: "event-turn".to_string(),
-                entry_index: 2,
-            })
-        );
-    }
-
-    #[test]
-    fn invalid_message_ref_returns_error_and_latest_discovery_skips_it() {
-        let bad = context_event(serde_json::json!({
-            "summary": "bad",
-            "messages_compacted": 1,
-            "compacted_until_ref": { "turn_id": 1 },
-        }));
-        let good = context_event(serde_json::json!({
-            "summary": "good",
-            "messages_compacted": 1,
-            "compacted_until_ref": { "turn_id": "ok", "entry_index": 0 },
-        }));
-
-        assert!(matches!(
-            checkpoint_from_context_compacted_event(&bad),
-            Err(CompactionCheckpointError::InvalidMessageRef { .. })
-        ));
-        let checkpoint = latest_context_compacted_checkpoint(&[good, bad])
-            .expect("latest valid checkpoint should be discovered");
-        assert_eq!(checkpoint.summary, "good");
-    }
-
-    #[test]
-    fn null_message_ref_is_treated_as_absent_boundary() {
-        let event = context_event(serde_json::json!({
-            "summary": "event summary",
-            "messages_compacted": 1,
-            "compacted_until_ref": null,
-        }));
-
-        let checkpoint = checkpoint_from_context_compacted_event(&event)
-            .expect("checkpoint should parse")
-            .expect("checkpoint should exist");
-        assert_eq!(checkpoint.compacted_until_ref, None);
-        assert!(checkpoint.to_projected_entry().is_some());
-        assert!(apply_checkpoint_to_projected_entries(Vec::new(), Some(checkpoint)).is_empty());
     }
 
     #[test]

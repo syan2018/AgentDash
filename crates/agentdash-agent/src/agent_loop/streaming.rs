@@ -136,6 +136,8 @@ pub(super) async fn stream_assistant_response(
     } else {
         context.messages.clone()
     };
+    let message_refs_for_llm =
+        align_message_refs(&context.messages, &context.message_refs, &messages_for_llm);
 
     let mut request = BridgeRequest {
         system_prompt: Some(context.system_prompt.clone()),
@@ -153,6 +155,7 @@ pub(super) async fn stream_assistant_response(
                     context: AgentContext {
                         system_prompt: context.system_prompt.clone(),
                         messages: messages_for_llm.clone(),
+                        message_refs: message_refs_for_llm.clone(),
                         tools: context.tools.clone(),
                     },
                     provider_visible: Some(draft_stats.clone()),
@@ -163,7 +166,11 @@ pub(super) async fn stream_assistant_response(
             .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
 
         if let Some(params) = params
-            && crate::compaction::should_execute_compaction(&messages_for_llm, &params)
+            && crate::compaction::should_execute_compaction(
+                &messages_for_llm,
+                &message_refs_for_llm,
+                &params,
+            )
         {
             compaction_context_window = params.trigger_stats.context_window;
             compaction_reserve_tokens = params.reserve_tokens;
@@ -176,18 +183,28 @@ pub(super) async fn stream_assistant_response(
             )
             .await;
 
-            match crate::compaction::execute_compaction(&messages_for_llm, &params, bridge, cancel)
-                .await
+            match crate::compaction::execute_compaction(
+                &messages_for_llm,
+                &message_refs_for_llm,
+                &params,
+                bridge,
+                cancel,
+            )
+            .await
             {
                 Ok(Some(result)) => {
                     messages_for_llm = result.messages.clone();
                     context.messages = result.messages.clone();
+                    context.message_refs = result.message_refs.clone();
                     request.messages = messages_for_llm.clone();
                     emit_event(
                         emit,
                         AgentEvent::ContextCompacted {
                             item_id,
                             messages: result.messages.clone(),
+                            message_refs: result.message_refs.clone(),
+                            compacted_until_ref: result.compacted_until_ref.clone(),
+                            first_kept_ref: result.first_kept_ref.clone(),
                             newly_compacted_messages: result.newly_compacted_messages,
                         },
                     )
@@ -567,6 +584,7 @@ pub(super) async fn stream_assistant_response(
         )
         .await;
         context.messages.push(assistant_message.clone());
+        context.message_refs.push(None);
     } else {
         *context
             .messages
@@ -594,6 +612,7 @@ async fn ensure_partial_started(
         return;
     }
     context.messages.push(partial.message.clone());
+    context.message_refs.push(None);
     partial.added_partial = true;
     emit_event(
         emit,
@@ -610,6 +629,34 @@ fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
     {
         *last = partial.message.clone();
     }
+}
+
+fn align_message_refs(
+    base_messages: &[AgentMessage],
+    base_refs: &[Option<crate::types::MessageRef>],
+    projected_messages: &[AgentMessage],
+) -> Vec<Option<crate::types::MessageRef>> {
+    if base_messages.len() != base_refs.len() {
+        return vec![None; projected_messages.len()];
+    }
+    let mut next_base = 0_usize;
+    projected_messages
+        .iter()
+        .map(|message| {
+            let matched = base_messages
+                .iter()
+                .enumerate()
+                .skip(next_base)
+                .find(|(_, base_message)| *base_message == message)
+                .map(|(idx, _)| idx);
+            if let Some(idx) = matched {
+                next_base = idx.saturating_add(1);
+                base_refs[idx].clone()
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn provider_visible_stats(request: &BridgeRequest) -> ProviderVisibleContextStats {

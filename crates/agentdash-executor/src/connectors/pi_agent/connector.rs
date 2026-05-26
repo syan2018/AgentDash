@@ -345,11 +345,7 @@ impl AgentConnector for PiAgentConnector {
         if prompt_text.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
-        let restored_messages = context
-            .turn
-            .restored_session_state
-            .as_ref()
-            .map(|state| state.messages.clone());
+        let restored_state = context.turn.restored_session_state.as_ref().cloned();
 
         let existing_runtime = {
             let mut agents = self.agents.lock().await;
@@ -370,6 +366,7 @@ impl AgentConnector for PiAgentConnector {
         let mut agent = if let Some(runtime) = existing_runtime {
             if should_recreate_agent {
                 let preserved_messages = runtime.agent.messages().await;
+                let preserved_message_refs = runtime.agent.message_refs().await;
                 let provider_state = self.load_provider_runtime_state().await;
                 if !provider_state.is_configured() {
                     return Err(ConnectorError::InvalidConfig(
@@ -385,7 +382,9 @@ impl AgentConnector for PiAgentConnector {
                     )
                     .await?;
                 let agent = self.create_agent_with_bridge(bridge);
-                agent.replace_messages(preserved_messages).await;
+                agent
+                    .replace_messages_with_refs(preserved_messages, preserved_message_refs)
+                    .await;
                 current_tools = context.turn.assembled_tools.clone();
                 tracing::info!(
                     session_id = %session_id,
@@ -429,8 +428,10 @@ impl AgentConnector for PiAgentConnector {
                 cached_identity_prompt = Some(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
-            if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
-                agent.replace_messages(messages).await;
+            if let Some(state) = restored_state.filter(|state| !state.messages.is_empty()) {
+                agent
+                    .replace_messages_with_refs(state.messages, state.message_refs)
+                    .await;
             }
         } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref() {
             if let Some(system_prompt) = incoming_identity_prompt.as_ref() {

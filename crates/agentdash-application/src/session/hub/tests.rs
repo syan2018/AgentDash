@@ -2305,7 +2305,6 @@ async fn commit_test_compaction_projection(
                 compaction: SessionCompactionRecord {
                     id: "compaction-1".to_string(),
                     session_id: session_id.to_string(),
-                    branch_id: None,
                     projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                     projection_version: 1,
                     lifecycle_item_id: "compact-item-1".to_string(),
@@ -2343,7 +2342,6 @@ async fn commit_test_compaction_projection(
                 segments: vec![SessionProjectionSegmentRecord {
                     id: "projection-segment-1".to_string(),
                     session_id: session_id.to_string(),
-                    branch_id: None,
                     projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                     projection_version: 1,
                     sort_order: 0,
@@ -2369,7 +2367,6 @@ async fn commit_test_compaction_projection(
                 }],
                 head: SessionProjectionHeadRecord {
                     session_id: session_id.to_string(),
-                    branch_id: None,
                     projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
                     projection_version: 1,
                     head_event_seq: 3,
@@ -2472,7 +2469,7 @@ async fn build_projected_transcript_applies_latest_compaction_checkpoint() {
 
     let compactions = hub
         .persistence
-        .list_compactions(&session.id, None, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
+        .list_compactions(&session.id, SESSION_PROJECTION_KIND_MODEL_CONTEXT)
         .await
         .expect("compactions should load");
     assert_eq!(compactions.len(), 1);

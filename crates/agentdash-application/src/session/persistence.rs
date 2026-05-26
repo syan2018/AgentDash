@@ -214,11 +214,10 @@ impl SessionCompactionStore for SessionPersistenceStoreAdapter {
     async fn list_compactions(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Vec<SessionCompactionRecord>> {
         self.persistence
-            .list_compactions(session_id, branch_id, projection_kind)
+            .list_compactions(session_id, projection_kind)
             .await
     }
 }
@@ -228,23 +227,21 @@ impl SessionProjectionStore for SessionPersistenceStoreAdapter {
     async fn list_projection_segments(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
         projection_version: u64,
     ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
         self.persistence
-            .list_projection_segments(session_id, branch_id, projection_kind, projection_version)
+            .list_projection_segments(session_id, projection_kind, projection_version)
             .await
     }
 
     async fn read_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Option<SessionProjectionHeadRecord>> {
         self.persistence
-            .read_projection_head(session_id, branch_id, projection_kind)
+            .read_projection_head(session_id, projection_kind)
             .await
     }
 

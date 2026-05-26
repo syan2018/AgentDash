@@ -3,7 +3,7 @@
 
 import type { BackboneEnvelope } from "./backbone-protocol";
 
-export type CreateSessionForkRequest = { title?: string, fork_point_event_seq?: number, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, relation_kind?: SessionLineageRelationKindDto, metadata_json?: JsonValue, };
+export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 
@@ -39,4 +39,4 @@ export type SessionProjectionSegmentViewResponse = { id: string, sort_order: num
 
 export type SessionProjectionSourceRangeResponse = { start_event_seq: number, end_event_seq: number, };
 
-export type SessionProjectionViewResponse = { session_id: string, branch_id?: string, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, token_estimate?: number, message_count: number, segments: Array<SessionProjectionSegmentViewResponse>, };
+export type SessionProjectionViewResponse = { session_id: string, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, token_estimate?: number, message_count: number, segments: Array<SessionProjectionSegmentViewResponse>, };

@@ -190,8 +190,15 @@ impl<'a> LaunchPlanner<'a> {
                             input.session_id
                         ))
                     })?;
-                (!transcript.is_empty()).then(|| RestoredSessionState {
-                    messages: transcript.into_messages(),
+                (!transcript.is_empty()).then(|| {
+                    let entries = transcript.entries;
+                    RestoredSessionState {
+                        messages: entries.iter().map(|entry| entry.message.clone()).collect(),
+                        message_refs: entries
+                            .iter()
+                            .map(|entry| Some(entry.message_ref.clone()))
+                            .collect(),
+                    }
                 })
             }
             _ => None,

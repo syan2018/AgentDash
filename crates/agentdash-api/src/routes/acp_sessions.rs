@@ -20,15 +20,15 @@ use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
-    LaunchCommand, SessionExecutionState, SessionForkRequest, SessionLineageRelationKind,
-    SessionMeta, SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest,
-    TitleSource, UserPromptInput,
+    LaunchCommand, SessionExecutionState, SessionForkRequest, SessionMeta,
+    SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
+    UserPromptInput,
 };
 use agentdash_contracts::session::{
     CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
-    SessionLineageRelationKindDto, SessionLineageViewResponse, SessionNdjsonEnvelope,
-    SessionProjectionRollbackResponse, SessionProjectionViewResponse,
+    SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
+    SessionProjectionViewResponse,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
@@ -607,10 +607,8 @@ pub async fn fork_session(
         .fork_session(SessionForkRequest {
             parent_session_id: session_id.clone(),
             title: req.title,
-            fork_point_event_seq: req.fork_point_event_seq,
             fork_point_ref: req.fork_point_ref.map(Into::into),
             fork_point_compaction_id: req.fork_point_compaction_id,
-            relation_kind: relation_kind_from_dto(req.relation_kind),
             metadata_json: req.metadata_json.unwrap_or_else(|| serde_json::json!({})),
         })
         .await
@@ -1295,17 +1293,6 @@ async fn ensure_bindings_permission(
         }
     }
     Ok(())
-}
-
-fn relation_kind_from_dto(
-    value: Option<SessionLineageRelationKindDto>,
-) -> SessionLineageRelationKind {
-    match value.unwrap_or(SessionLineageRelationKindDto::Fork) {
-        SessionLineageRelationKindDto::Fork => SessionLineageRelationKind::Fork,
-        SessionLineageRelationKindDto::Companion => SessionLineageRelationKind::Companion,
-        SessionLineageRelationKindDto::SpawnedAgent => SessionLineageRelationKind::SpawnedAgent,
-        SessionLineageRelationKindDto::RollbackBranch => SessionLineageRelationKind::RollbackBranch,
-    }
 }
 
 async fn copy_parent_session_bindings_to_child(

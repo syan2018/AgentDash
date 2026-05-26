@@ -413,7 +413,9 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ContextCompacted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ExecutorContextCompacted(p))))
+                    .await;
             }
         }
         "error" => {
@@ -896,7 +898,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thread_compacted_maps_to_context_compacted_event() {
+    async fn thread_compacted_maps_to_executor_context_compacted_event() {
         let (tx, mut rx) = mpsc::channel(1);
         let source = SourceInfo {
             connector_id: "codex-bridge".to_string(),
@@ -925,11 +927,11 @@ mod tests {
             .expect("notification should emit an event")
             .expect("event should be ok");
         match envelope.event {
-            BackboneEvent::ContextCompacted(payload) => {
+            BackboneEvent::ExecutorContextCompacted(payload) => {
                 assert_eq!(payload.thread_id, "thread-1");
                 assert_eq!(payload.turn_id, "turn-1");
             }
-            event => panic!("expected context compacted event, got {event:?}"),
+            event => panic!("expected executor context compacted event, got {event:?}"),
         }
     }
 }

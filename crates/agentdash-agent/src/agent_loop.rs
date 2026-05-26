@@ -250,6 +250,7 @@ async fn run_loop(
                     )
                     .await;
                     context.messages.push(msg.clone());
+                    context.message_refs.push(None);
                     new_messages.push(msg);
                 }
             }
@@ -300,6 +301,7 @@ async fn run_loop(
 
                 for result in &tool_results {
                     context.messages.push(result.clone());
+                    context.message_refs.push(None);
                     new_messages.push(result.clone());
                 }
             }

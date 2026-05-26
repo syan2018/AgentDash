@@ -215,7 +215,6 @@ impl PostgresSessionRepository {
         Ok(SessionCompactionRecord {
             id: row.get::<String, _>("id"),
             session_id: row.get::<String, _>("session_id"),
-            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
             projection_kind: row.get::<String, _>("projection_kind"),
             projection_version: parse_non_negative_u64(
                 row.get::<i64, _>("projection_version"),
@@ -284,7 +283,6 @@ impl PostgresSessionRepository {
         Ok(SessionProjectionSegmentRecord {
             id: row.get::<String, _>("id"),
             session_id: row.get::<String, _>("session_id"),
-            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
             projection_kind: row.get::<String, _>("projection_kind"),
             projection_version: parse_non_negative_u64(
                 row.get::<i64, _>("projection_version"),
@@ -327,7 +325,6 @@ impl PostgresSessionRepository {
     ) -> io::Result<SessionProjectionHeadRecord> {
         Ok(SessionProjectionHeadRecord {
             session_id: row.get::<String, _>("session_id"),
-            branch_id: decode_branch_id(row.get::<String, _>("branch_id")),
             projection_kind: row.get::<String, _>("projection_kind"),
             projection_version: parse_non_negative_u64(
                 row.get::<i64, _>("projection_version"),
@@ -1109,7 +1106,7 @@ impl SessionPersistence for PostgresSessionRepository {
     ) -> io::Result<Option<SessionCompactionRecord>> {
         let row = sqlx::query(
             r#"
-            SELECT id, session_id, branch_id, projection_kind, projection_version,
+            SELECT id, session_id, projection_kind, projection_version,
                    lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
                    status, trigger, reason, phase, strategy, budget_scope,
                    base_head_event_seq, source_start_event_seq, source_end_event_seq,
@@ -1130,24 +1127,22 @@ impl SessionPersistence for PostgresSessionRepository {
     async fn list_compactions(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Vec<SessionCompactionRecord>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, branch_id, projection_kind, projection_version,
+            SELECT id, session_id, projection_kind, projection_version,
                    lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
                    status, trigger, reason, phase, strategy, budget_scope,
                    base_head_event_seq, source_start_event_seq, source_end_event_seq,
                    first_kept_event_seq, summary, replacement_projection_json,
                    token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
             FROM session_compactions
-            WHERE session_id = $1 AND branch_id = $2 AND projection_kind = $3
+            WHERE session_id = $1 AND projection_kind = $2
             ORDER BY projection_version ASC, created_at_ms ASC
             "#,
         )
         .bind(session_id)
-        .bind(encode_branch_id(branch_id))
         .bind(projection_kind)
         .fetch_all(&self.pool)
         .await
@@ -1158,7 +1153,6 @@ impl SessionPersistence for PostgresSessionRepository {
     async fn list_projection_segments(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
         projection_version: u64,
     ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
@@ -1168,17 +1162,16 @@ impl SessionPersistence for PostgresSessionRepository {
         )?;
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, branch_id, projection_kind, projection_version, sort_order,
+            SELECT id, session_id, projection_kind, projection_version, sort_order,
                    segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
                    source_refs_json, generated_by_compaction_id, content_json, token_estimate,
                    created_at_ms
             FROM session_projection_segments
-            WHERE session_id = $1 AND branch_id = $2 AND projection_kind = $3 AND projection_version = $4
+            WHERE session_id = $1 AND projection_kind = $2 AND projection_version = $3
             ORDER BY sort_order ASC
             "#,
         )
         .bind(session_id)
-        .bind(encode_branch_id(branch_id))
         .bind(projection_kind)
         .bind(projection_version)
         .fetch_all(&self.pool)
@@ -1190,19 +1183,17 @@ impl SessionPersistence for PostgresSessionRepository {
     async fn read_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Option<SessionProjectionHeadRecord>> {
         let row = sqlx::query(
             r#"
-            SELECT session_id, branch_id, projection_kind, projection_version, head_event_seq,
+            SELECT session_id, projection_kind, projection_version, head_event_seq,
                    active_compaction_id, updated_by_event_seq, updated_at_ms
             FROM session_projection_heads
-            WHERE session_id = $1 AND branch_id = $2 AND projection_kind = $3
+            WHERE session_id = $1 AND projection_kind = $2
             "#,
         )
         .bind(session_id)
-        .bind(encode_branch_id(branch_id))
         .bind(projection_kind)
         .fetch_optional(&self.pool)
         .await
@@ -1226,10 +1217,10 @@ impl SessionPersistence for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO session_projection_heads (
-                session_id, branch_id, projection_kind, projection_version, head_event_seq,
+                session_id, projection_kind, projection_version, head_event_seq,
                 active_compaction_id, updated_by_event_seq, updated_at_ms
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT(session_id, branch_id, projection_kind) DO UPDATE SET
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT(session_id, projection_kind) DO UPDATE SET
                 projection_version = excluded.projection_version,
                 head_event_seq = excluded.head_event_seq,
                 active_compaction_id = excluded.active_compaction_id,
@@ -1238,7 +1229,6 @@ impl SessionPersistence for PostgresSessionRepository {
             "#,
         )
         .bind(&head.session_id)
-        .bind(encode_branch_id(head.branch_id.as_deref()))
         .bind(&head.projection_kind)
         .bind(projection_version)
         .bind(head_event_seq)
@@ -1668,25 +1658,24 @@ async fn insert_compaction_row(
     sqlx::query(
         r#"
         INSERT INTO session_compactions (
-            id, session_id, branch_id, projection_kind, projection_version,
+            id, session_id, projection_kind, projection_version,
             lifecycle_item_id, start_event_seq, completed_event_seq, failed_event_seq,
             status, trigger, reason, phase, strategy, budget_scope,
             base_head_event_seq, source_start_event_seq, source_end_event_seq,
             first_kept_event_seq, summary, replacement_projection_json,
             token_stats_json, diagnostics_json, created_by, created_at_ms, completed_at_ms
         ) VALUES (
-            $1, $2, $3, $4, $5,
-            $6, $7, $8, $9,
-            $10, $11, $12, $13, $14, $15,
-            $16, $17, $18,
-            $19, $20, $21,
-            $22, $23, $24, $25, $26
+            $1, $2, $3, $4,
+            $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14,
+            $15, $16, $17,
+            $18, $19, $20,
+            $21, $22, $23, $24, $25
         )
         "#,
     )
     .bind(&record.id)
     .bind(&record.session_id)
-    .bind(encode_branch_id(record.branch_id.as_deref()))
     .bind(&record.projection_kind)
     .bind(projection_version)
     .bind(&record.lifecycle_item_id)
@@ -1749,21 +1738,20 @@ async fn insert_projection_segment_row(
     sqlx::query(
         r#"
         INSERT INTO session_projection_segments (
-            id, session_id, branch_id, projection_kind, projection_version, sort_order,
+            id, session_id, projection_kind, projection_version, sort_order,
             segment_type, origin, synthetic, source_start_event_seq, source_end_event_seq,
             source_refs_json, generated_by_compaction_id, content_json, token_estimate,
             created_at_ms
         ) VALUES (
-            $1, $2, $3, $4, $5, $6,
-            $7, $8, $9, $10, $11,
-            $12, $13, $14, $15,
-            $16
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, $10,
+            $11, $12, $13, $14,
+            $15
         )
         "#,
     )
     .bind(&segment.id)
     .bind(&segment.session_id)
-    .bind(encode_branch_id(segment.branch_id.as_deref()))
     .bind(&segment.projection_kind)
     .bind(projection_version)
     .bind(sort_order)
@@ -1802,10 +1790,10 @@ async fn upsert_projection_head_row(
     sqlx::query(
         r#"
         INSERT INTO session_projection_heads (
-            session_id, branch_id, projection_kind, projection_version, head_event_seq,
+            session_id, projection_kind, projection_version, head_event_seq,
             active_compaction_id, updated_by_event_seq, updated_at_ms
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT(session_id, branch_id, projection_kind) DO UPDATE SET
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT(session_id, projection_kind) DO UPDATE SET
             projection_version = excluded.projection_version,
             head_event_seq = excluded.head_event_seq,
             active_compaction_id = excluded.active_compaction_id,
@@ -1814,7 +1802,6 @@ async fn upsert_projection_head_row(
         "#,
     )
     .bind(&head.session_id)
-    .bind(encode_branch_id(head.branch_id.as_deref()))
     .bind(&head.projection_kind)
     .bind(projection_version)
     .bind(head_event_seq)
@@ -1977,14 +1964,6 @@ fn parse_json_column(raw: String, column: &str) -> io::Result<serde_json::Value>
     })
 }
 
-fn encode_branch_id(branch_id: Option<&str>) -> &str {
-    branch_id.unwrap_or("")
-}
-
-fn decode_branch_id(value: String) -> Option<String> {
-    if value.is_empty() { None } else { Some(value) }
-}
-
 fn validate_commit_session(
     session_id: &str,
     commit: &NewCompactionProjectionCommit,
@@ -2005,7 +1984,115 @@ fn validate_commit_session(
             format!("projection segment session_id 不一致: {session_id}"),
         ));
     }
+    if commit.compaction.projection_kind != commit.head.projection_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection kind {} 与 head kind {} 不一致",
+                commit.compaction.projection_kind, commit.head.projection_kind
+            ),
+        ));
+    }
+    if commit.compaction.projection_version != commit.head.projection_version {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection version {} 与 head version {} 不一致",
+                commit.compaction.projection_version, commit.head.projection_version
+            ),
+        ));
+    }
+    if commit.head.active_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "projection head active_compaction_id 必须指向当前 compaction {}",
+                commit.compaction.id
+            ),
+        ));
+    }
+    let compaction_range = source_range_pair(
+        "session_compactions",
+        commit.compaction.source_start_event_seq,
+        commit.compaction.source_end_event_seq,
+    )?;
+    for segment in &commit.segments {
+        if segment.projection_kind != commit.compaction.projection_kind {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} kind {} 与 compaction kind {} 不一致",
+                    segment.id, segment.projection_kind, commit.compaction.projection_kind
+                ),
+            ));
+        }
+        if segment.projection_version != commit.compaction.projection_version {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} version {} 与 compaction version {} 不一致",
+                    segment.id, segment.projection_version, commit.compaction.projection_version
+                ),
+            ));
+        }
+        if segment.generated_by_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} 必须归属于 compaction {}",
+                    segment.id, commit.compaction.id
+                ),
+            ));
+        }
+        let segment_range = source_range_pair(
+            "session_projection_segments",
+            segment.source_start_event_seq,
+            segment.source_end_event_seq,
+        )?;
+        match (compaction_range, segment_range) {
+            (Some((compaction_start, compaction_end)), Some((segment_start, segment_end)))
+                if segment_start < compaction_start || segment_end > compaction_end =>
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 不在 compaction {} source range 内",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            (None, Some(_)) | (Some(_), None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 与 compaction {} 不一致",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            _ => {}
+        }
+    }
     Ok(())
+}
+
+fn source_range_pair(
+    label: &str,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> io::Result<Option<(u64, u64)>> {
+    match (start, end) {
+        (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
+        (Some(start), Some(end)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 非法: {start}>{end}"),
+        )),
+        (None, None) => Ok(None),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 必须同时包含 start/end"),
+        )),
+    }
 }
 
 fn sqlx_to_io(error: sqlx::Error) -> io::Error {
@@ -2105,7 +2192,7 @@ fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
         BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
-        BackboneEvent::ContextCompacted(_) => "context_compacted",
+        BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
         BackboneEvent::ApprovalRequest(_) => "approval_request",
         BackboneEvent::Error(_) => "error",
         BackboneEvent::Platform(_) => "platform",
@@ -2247,7 +2334,6 @@ mod tests {
             compaction: SessionCompactionRecord {
                 id: compaction_id.to_string(),
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: "model_context".to_string(),
                 projection_version,
                 lifecycle_item_id: "compact-item-1".to_string(),
@@ -2280,7 +2366,6 @@ mod tests {
             segments: vec![SessionProjectionSegmentRecord {
                 id: segment_id.to_string(),
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: "model_context".to_string(),
                 projection_version,
                 sort_order: 0,
@@ -2300,7 +2385,6 @@ mod tests {
             }],
             head: SessionProjectionHeadRecord {
                 session_id: session_id.to_string(),
-                branch_id: None,
                 projection_kind: "model_context".to_string(),
                 projection_version,
                 head_event_seq: 9,
@@ -2511,14 +2595,14 @@ mod tests {
         assert_eq!(stored.status, SessionCompactionStatus::ProjectionCommitted);
 
         let segments = repo
-            .list_projection_segments(&session_id, None, "model_context", 1)
+            .list_projection_segments(&session_id, "model_context", 1)
             .await
             .expect("应能查询 projection segments");
         assert_eq!(segments.len(), 1);
         assert_eq!(segments[0].segment_type, "summary_chunk");
 
         let head = repo
-            .read_projection_head(&session_id, None, "model_context")
+            .read_projection_head(&session_id, "model_context")
             .await
             .expect("应能查询 projection head")
             .expect("projection head 应存在");

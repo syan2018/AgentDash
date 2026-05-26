@@ -154,7 +154,7 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
 }
 
 function isProjectionRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type === "turn_completed" || event.type === "context_compacted") {
+  if (event.type === "turn_completed") {
     return true;
   }
   if (event.type !== "platform") {

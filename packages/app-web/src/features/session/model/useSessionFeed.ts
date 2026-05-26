@@ -141,7 +141,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   if (
     event.type === "token_usage_updated" ||
     event.type === "thread_status_changed" ||
-    event.type === "context_compacted" ||
+    event.type === "executor_context_compacted" ||
     event.type === "turn_diff_updated" ||
     event.type === "plan_delta"
   ) {

@@ -286,7 +286,6 @@ function mapSessionProjectionView(raw: Record<string, unknown>): SessionProjecti
   }
   return {
     session_id: requireStringField(raw, "session_id"),
-    branch_id: raw.branch_id != null ? String(raw.branch_id) : undefined,
     projection_kind: requireStringField(raw, "projection_kind"),
     projection_version: requireNumberField(raw, "projection_version"),
     head_event_seq: requireNumberField(raw, "head_event_seq"),

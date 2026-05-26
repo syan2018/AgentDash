@@ -557,6 +557,7 @@ mod tests {
                     context: AgentContext {
                         system_prompt: "test".to_string(),
                         messages: vec![],
+                        message_refs: vec![],
                         tools: vec![],
                     },
                 },

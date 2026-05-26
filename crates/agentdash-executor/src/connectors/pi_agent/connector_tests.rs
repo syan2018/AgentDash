@@ -1,6 +1,8 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
-use agentdash_agent::{AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason};
+use agentdash_agent::{
+    AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
+};
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
@@ -403,11 +405,26 @@ fn context_compaction_started_maps_to_context_compaction_item() {
 fn context_compaction_completed_maps_lifecycle_and_metadata() {
     let event = AgentEvent::ContextCompacted {
         item_id: "compact-1".to_string(),
-        messages: vec![agentdash_agent::AgentMessage::compaction_summary(
-            "summary body",
-            48_000,
-            8,
-        )],
+        messages: vec![
+            agentdash_agent::AgentMessage::compaction_summary_with_boundary(
+                "summary body",
+                48_000,
+                8,
+                Some(MessageRef {
+                    turn_id: "turn-1".to_string(),
+                    entry_index: 2,
+                }),
+            ),
+        ],
+        message_refs: vec![None],
+        compacted_until_ref: MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 2,
+        },
+        first_kept_ref: Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 3,
+        }),
         newly_compacted_messages: 3,
     };
 
@@ -433,6 +450,8 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
             assert_eq!(key, "context_compacted");
             assert_eq!(value["lifecycle_item_id"], "compact-1");
             assert_eq!(value["summary"], "summary body");
+            assert_eq!(value["compacted_until_ref"]["turn_id"], "turn-1");
+            assert_eq!(value["first_kept_ref"]["entry_index"], 3);
             assert_eq!(value["newly_compacted_messages"], 3);
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -1389,6 +1408,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                             agentdash_spi::AgentMessage::user("历史用户消息"),
                             agentdash_spi::AgentMessage::assistant("历史助手消息"),
                         ],
+                        message_refs: vec![None, None],
                     }),
                     ..Default::default()
                 },

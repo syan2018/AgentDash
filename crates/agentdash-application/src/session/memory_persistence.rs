@@ -33,7 +33,7 @@ struct MemorySessionPersistenceState {
     runtime_commands: Vec<RuntimeCommandRecord>,
     compactions: Vec<SessionCompactionRecord>,
     projection_segments: Vec<SessionProjectionSegmentRecord>,
-    projection_heads: HashMap<(String, String, String), SessionProjectionHeadRecord>,
+    projection_heads: HashMap<(String, String), SessionProjectionHeadRecord>,
     lineage: Vec<SessionLineageRecord>,
 }
 
@@ -86,9 +86,7 @@ impl SessionPersistence for MemorySessionPersistence {
         guard
             .projection_segments
             .retain(|segment| segment.session_id != session_id);
-        guard
-            .projection_heads
-            .retain(|(id, _, _), _| id != session_id);
+        guard.projection_heads.retain(|(id, _), _| id != session_id);
         guard.lineage.retain(|edge| {
             edge.child_session_id != session_id && edge.parent_session_id != session_id
         });
@@ -426,18 +424,14 @@ impl SessionPersistence for MemorySessionPersistence {
     async fn list_compactions(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Vec<SessionCompactionRecord>> {
         let guard = self.inner.lock().await;
-        let requested_branch = branch_key(branch_id);
         let mut records = guard
             .compactions
             .iter()
             .filter(|record| {
-                record.session_id == session_id
-                    && branch_key(record.branch_id.as_deref()) == requested_branch
-                    && record.projection_kind == projection_kind
+                record.session_id == session_id && record.projection_kind == projection_kind
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -448,18 +442,15 @@ impl SessionPersistence for MemorySessionPersistence {
     async fn list_projection_segments(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
         projection_version: u64,
     ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
         let guard = self.inner.lock().await;
-        let requested_branch = branch_key(branch_id);
         let mut segments = guard
             .projection_segments
             .iter()
             .filter(|segment| {
                 segment.session_id == session_id
-                    && branch_key(segment.branch_id.as_deref()) == requested_branch
                     && segment.projection_kind == projection_kind
                     && segment.projection_version == projection_version
             })
@@ -472,13 +463,12 @@ impl SessionPersistence for MemorySessionPersistence {
     async fn read_projection_head(
         &self,
         session_id: &str,
-        branch_id: Option<&str>,
         projection_kind: &str,
     ) -> io::Result<Option<SessionProjectionHeadRecord>> {
         let guard = self.inner.lock().await;
         Ok(guard
             .projection_heads
-            .get(&projection_head_key(session_id, branch_id, projection_kind))
+            .get(&projection_head_key(session_id, projection_kind))
             .cloned())
     }
 
@@ -491,11 +481,7 @@ impl SessionPersistence for MemorySessionPersistence {
             ));
         }
         guard.projection_heads.insert(
-            projection_head_key(
-                &head.session_id,
-                head.branch_id.as_deref(),
-                &head.projection_kind,
-            ),
+            projection_head_key(&head.session_id, &head.projection_kind),
             head,
         );
         Ok(())
@@ -581,11 +567,7 @@ impl SessionPersistence for MemorySessionPersistence {
             .projection_segments
             .extend(commit.segments.iter().cloned());
         guard.projection_heads.insert(
-            projection_head_key(
-                &head.session_id,
-                head.branch_id.as_deref(),
-                &head.projection_kind,
-            ),
+            projection_head_key(&head.session_id, &head.projection_kind),
             head.clone(),
         );
 
@@ -826,10 +808,6 @@ fn build_persisted_event(
     }
 }
 
-fn branch_key(branch_id: Option<&str>) -> &str {
-    branch_id.unwrap_or("")
-}
-
 fn lineage_matches(
     edge: &SessionLineageRecord,
     relation_kind: Option<SessionLineageRelationKind>,
@@ -858,16 +836,8 @@ fn sort_lineage_edges(edges: &mut [SessionLineageRecord]) {
     });
 }
 
-fn projection_head_key(
-    session_id: &str,
-    branch_id: Option<&str>,
-    projection_kind: &str,
-) -> (String, String, String) {
-    (
-        session_id.to_string(),
-        branch_key(branch_id).to_string(),
-        projection_kind.to_string(),
-    )
+fn projection_head_key(session_id: &str, projection_kind: &str) -> (String, String) {
+    (session_id.to_string(), projection_kind.to_string())
 }
 
 fn validate_commit_session(
@@ -890,7 +860,115 @@ fn validate_commit_session(
             format!("projection segment session_id 不一致: {session_id}"),
         ));
     }
+    if commit.compaction.projection_kind != commit.head.projection_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection kind {} 与 head kind {} 不一致",
+                commit.compaction.projection_kind, commit.head.projection_kind
+            ),
+        ));
+    }
+    if commit.compaction.projection_version != commit.head.projection_version {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection version {} 与 head version {} 不一致",
+                commit.compaction.projection_version, commit.head.projection_version
+            ),
+        ));
+    }
+    if commit.head.active_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "projection head active_compaction_id 必须指向当前 compaction {}",
+                commit.compaction.id
+            ),
+        ));
+    }
+    let compaction_range = source_range_pair(
+        "session_compactions",
+        commit.compaction.source_start_event_seq,
+        commit.compaction.source_end_event_seq,
+    )?;
+    for segment in &commit.segments {
+        if segment.projection_kind != commit.compaction.projection_kind {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} kind {} 与 compaction kind {} 不一致",
+                    segment.id, segment.projection_kind, commit.compaction.projection_kind
+                ),
+            ));
+        }
+        if segment.projection_version != commit.compaction.projection_version {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} version {} 与 compaction version {} 不一致",
+                    segment.id, segment.projection_version, commit.compaction.projection_version
+                ),
+            ));
+        }
+        if segment.generated_by_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} 必须归属于 compaction {}",
+                    segment.id, commit.compaction.id
+                ),
+            ));
+        }
+        let segment_range = source_range_pair(
+            "session_projection_segments",
+            segment.source_start_event_seq,
+            segment.source_end_event_seq,
+        )?;
+        match (compaction_range, segment_range) {
+            (Some((compaction_start, compaction_end)), Some((segment_start, segment_end)))
+                if segment_start < compaction_start || segment_end > compaction_end =>
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 不在 compaction {} source range 内",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            (None, Some(_)) | (Some(_), None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 与 compaction {} 不一致",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            _ => {}
+        }
+    }
     Ok(())
+}
+
+fn source_range_pair(
+    label: &str,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> io::Result<Option<(u64, u64)>> {
+    match (start, end) {
+        (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
+        (Some(start), Some(end)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 非法: {start}>{end}"),
+        )),
+        (None, None) => Ok(None),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 必须同时包含 start/end"),
+        )),
+    }
 }
 
 fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
@@ -1380,7 +1458,7 @@ pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
         BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
-        BackboneEvent::ContextCompacted(_) => "context_compacted",
+        BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
         BackboneEvent::ApprovalRequest(_) => "approval_request",
         BackboneEvent::Error(_) => "error",
         BackboneEvent::Platform(_) => "platform_event",

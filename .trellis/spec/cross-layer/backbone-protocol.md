@@ -41,7 +41,7 @@ pub enum BackboneEvent {
     PlanDelta(codex::PlanDeltaNotification),
     TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
-    ContextCompacted(codex::ContextCompactedNotification),
+    ExecutorContextCompacted(codex::ContextCompactedNotification),
     ApprovalRequest(ApprovalRequest),
     Error(codex::ErrorNotification),
     Platform(PlatformEvent),
@@ -56,7 +56,9 @@ Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Pla
 
 来源执行器提供会话标题时使用 `PlatformEvent::SourceSessionTitleUpdated`，字段为 `executor_session_id`、`title`、`preview`、`source`。应用层负责把该事件投影为统一的 `session_meta_updated`，并按 `user > source > auto` 的标题来源优先级写入 `SessionMeta`。
 
-上下文压缩使用 Codex `ThreadItem::contextCompaction` 作为 lifecycle item。平台自有 runtime 的成功 compact 通过 `context_compacted` platform payload 提供 checkpoint metadata，再发送 `ItemCompleted`；失败 compact 通过 `context_compaction_failed` platform payload 提供结构化 diagnostic，并同时发送标准 `Error` 事件。外部 runtime 的 legacy compact marker 只作为 lifecycle / audit fact，不在缺少 replacement provenance 时创建 AgentDash-owned checkpoint。
+上下文压缩使用 Codex `ThreadItem::contextCompaction` 作为 lifecycle item。平台自有 runtime 的成功 compact 通过 `PlatformEvent::SessionMetaUpdate(key = "context_compacted")` 提供 summary、`compacted_until_ref` 和 `first_kept_ref`，这些字段构成 AgentDash-owned projection commit 的可信来源；失败 compact 通过 `context_compaction_failed` platform payload 提供结构化 diagnostic，并同时发送标准 `Error` 事件。外部 executor 的 compact marker 映射为 `executor_context_compacted`，它表达外部 executor 发生过压缩，但没有 replacement provenance，因此语义上属于遥测与审计事件。
+
+前端模型上下文面板的 refresh key 来自 `turn_completed`、内部 platform `context_compacted` 和 `ContextFrame(kind="compaction_summary")`。`executor_context_compacted` 只影响时间线/状态展示语义，因为内部 projection store 没有发生 commit。
 
 ## TypeScript Binding
 

@@ -1,6 +1,6 @@
 {
-  "id": "05-26-compaction-checkpoint-parser",
-  "name": "05-26-compaction-checkpoint-parser",
+  "id": "compaction-checkpoint-parser",
+  "name": "compaction-checkpoint-parser",
   "title": "上下文压缩 checkpoint 解析层收敛",
   "description": "",
   "status": "in_progress",

@@ -66,16 +66,6 @@ pub(super) struct CompactionCheckpoint {
 }
 
 impl CompactionCheckpoint {
-    pub(super) fn suffix_start_event_seq(&self, head_event_seq: u64) -> u64 {
-        self.first_kept_event_seq
-            .or_else(|| {
-                self.source_range
-                    .as_ref()
-                    .map(|range| range.end_event_seq.saturating_add(1))
-            })
-            .unwrap_or(head_event_seq.saturating_add(1))
-    }
-
     pub(super) fn to_projected_entry(&self) -> Option<ProjectedEntry> {
         self.to_projected_entry_with_boundary(self.compacted_until_ref.clone())
     }
@@ -778,7 +768,11 @@ mod tests {
                 .map(|range| (range.start_event_seq, range.end_event_seq)),
             Some((2, 4))
         );
-        assert_eq!(checkpoint.suffix_start_event_seq(10), 9);
+        assert_eq!(
+            suffix_start_event_seq_from_compaction(&compaction(), 10)
+                .expect("suffix boundary should parse"),
+            9
+        );
     }
 
     #[test]

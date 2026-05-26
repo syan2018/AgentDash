@@ -4,7 +4,7 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_completed → SessionToolCallCard (ThreadItem)
+ * - item_started / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
  *   - user_message_chunk → SessionMessageCard (user)
@@ -35,8 +35,8 @@ import type {
 } from "../model/types";
 import { extractPlatformEventData } from "../model/platformEvent";
 import { parseContextFrame } from "../model/contextFrame";
-import { SessionToolCallCard } from "./SessionToolCallCard";
-import { CommandExecutionCard } from "./CommandExecutionCard";
+import { ToolCallCardShell } from "./ToolCallCardShell";
+import { renderToolCallCard } from "./toolCardRegistry";
 import { SessionMessageCard } from "./SessionMessageCard";
 import { SessionPlanCard } from "./SessionPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
@@ -110,32 +110,22 @@ export function SingleEntry({
     case "item_started":
     case "item_completed": {
       const threadItem = event.payload.item;
-      if (threadItem.type === "commandExecution") {
-        return (
-          <CommandExecutionCard
-            item={threadItem}
-            sessionId={sessionId ?? undefined}
-            outputText={accumulatedText}
-          />
-        );
-      }
-      if (threadItem.type === "contextCompaction") {
-        return (
-          <SessionToolCallCard
-            item={threadItem}
-            statusOverride={event.type === "item_started" ? "inProgress" : "completed"}
-            kindOverride="context"
-            titleOverride="上下文压缩"
-          />
-        );
-      }
+      const card = renderToolCallCard(threadItem, {
+        sessionId: sessionId ?? undefined,
+        outputText: accumulatedText,
+      });
       return (
-        <SessionToolCallCard
-          item={threadItem}
+        <ToolCallCardShell
+          kind={card.kind}
+          title={card.title}
+          status={card.status}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}
-          outputText={accumulatedText}
-        />
+          itemId={threadItem.id}
+          durationMs={card.durationMs}
+        >
+          {card.body}
+        </ToolCallCardShell>
       );
     }
 
@@ -321,7 +311,7 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
   );
 }
 
-function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").ThreadItem | null {
+function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").AgentDashThreadItem | null {
   const evt = entry.event;
   if (evt.type === "item_started" || evt.type === "item_completed") {
     return evt.payload.item;

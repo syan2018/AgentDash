@@ -9,6 +9,7 @@ export type {
   BackboneEvent,
   BackboneEnvelope,
   ThreadItem,
+  AgentDashThreadItem,
   PlatformEvent,
   HookTracePayload,
   HookTraceData,
@@ -52,7 +53,7 @@ export type {
 
 import type {
   BackboneEvent,
-  ThreadItem,
+  AgentDashThreadItem,
   PlatformEvent,
   ThreadTokenUsage,
 } from "../../../generated/backbone-protocol";
@@ -257,8 +258,8 @@ export interface SessionDisplayEntry {
 /** 工具调用聚合状态 */
 export interface SessionToolCallState {
   itemId: string;
-  startedItem: ThreadItem | null;
-  completedItem: ThreadItem | null;
+  startedItem: AgentDashThreadItem | null;
+  completedItem: AgentDashThreadItem | null;
   status: string;
 }
 
@@ -359,8 +360,8 @@ export function extractTextFromEvent(event: BackboneEvent): string {
   }
 }
 
-/** 从 ThreadItem 获取显示标题 */
-export function getThreadItemTitle(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 获取显示标题 */
+export function getThreadItemTitle(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
       return item.command;
@@ -384,21 +385,28 @@ export function getThreadItemTitle(item: ThreadItem): string {
       return "用户消息";
     case "contextCompaction":
       return "上下文压缩";
+    case "fsRead":
+      return `Read ${item.path}`;
+    case "fsGrep":
+      return `Grep "${item.pattern}"`;
+    case "fsGlob":
+      return `Glob ${item.pattern}`;
     default:
       return "未知";
   }
 }
 
-/** 从 ThreadItem 获取状态 */
-export function getThreadItemStatus(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 获取状态 */
+export function getThreadItemStatus(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
-      return item.status;
     case "fileChange":
-      return item.status;
     case "mcpToolCall":
-      return item.status;
     case "dynamicToolCall":
+    case "collabAgentToolCall":
+    case "fsRead":
+    case "fsGrep":
+    case "fsGlob":
       return item.status;
     case "contextCompaction":
       return "completed";
@@ -407,8 +415,8 @@ export function getThreadItemStatus(item: ThreadItem): string {
   }
 }
 
-/** 从 ThreadItem 获取工具类型标签（委托给 threadItemKind 注册表） */
-export function getThreadItemKind(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 获取工具类型标签（委托给 threadItemKind 注册表） */
+export function getThreadItemKind(item: AgentDashThreadItem): string {
   return resolveKind(item).kind;
 }
 

@@ -7,7 +7,7 @@
 
 import { useMemo, useRef } from "react";
 import { useSessionStream } from "./useSessionStream";
-import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import {
   isAggregatedGroup as isAggregatedGroupItem,
   isAggregatedContextFrameGroup as isAggregatedContextFrameGroupItem,
@@ -47,7 +47,7 @@ export interface UseSessionFeedResult {
   tokenUsage: TokenUsageInfo | null;
 }
 
-function extractThreadItem(event: BackboneEvent): ThreadItem | null {
+function extractThreadItem(event: BackboneEvent): AgentDashThreadItem | null {
   if (event.type === "item_started" || event.type === "item_completed") {
     return event.payload.item;
   }
@@ -67,6 +67,9 @@ function getToolAggregationType(event: BackboneEvent): ToolAggregationType | nul
     case "webSearch":
     case "imageView":
     case "imageGeneration":
+    case "fsRead":
+    case "fsGrep":
+    case "fsGlob":
       return "tool_burst";
     default:
       return null;

@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { BackboneEvent, BackboneEnvelope, ThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, BackboneEnvelope, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import {
   cancelSession,
   fetchSessionEvents,
@@ -84,8 +84,8 @@ function backboneEventTypeName(event: BackboneEvent): string {
   return event.type;
 }
 
-/** 从 ThreadItem 提取 item ID */
-function threadItemId(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 提取 item ID */
+function threadItemId(item: AgentDashThreadItem): string {
   return item.id;
 }
 

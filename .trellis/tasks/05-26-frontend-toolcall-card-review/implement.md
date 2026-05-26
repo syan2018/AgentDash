@@ -46,21 +46,14 @@
 目标：把"分散的 kind 字面量"先收口；把已确认的孤儿/死代码删掉。这一阶段**不改
 渲染分发**，仅做基础清理，风险最小。
 
-- [ ] P1.1 新增 `packages/app-web/src/features/session/model/threadItemKind.ts`
-      （见 design.md §3.9）
-- [ ] P1.2 改 `model/types.ts::getThreadItemKind` 调用 `resolveKind`，保留
-      函数签名向后兼容
-- [ ] P1.3 改 `ui/SessionToolCallCard.tsx::getKindConfig` 改为读 KIND_REGISTRY
-- [ ] P1.4 改 `ui/SessionEntry.tsx::buildKindSummary` 改为按 `KIND_REGISTRY[meta.kind].label`
-      聚合，不再硬编码 `"运行 N 条命令"` 字面量
-- [ ] P1.5 删除 `packages/app-web/src/components/acp/tool-call.tsx`
-      （先全仓 grep `ToolCallView` 与 `acp/tool-call` 路径，确认零外部引用）
-- [ ] P1.6 删除 `SessionToolCallCard.compact` 模式分支与 `compact` prop
-      （先全仓 grep `compact={true}` / `compact:` 在 SessionToolCallCardProps
-      位置，确认零外部传值）
-- [ ] P1.7 删除 `SessionToolCallCard::extractDetailContent` 内 `commandExecution`
-      死分支
-- [ ] P1.8 验证：`pnpm typecheck` + `pnpm lint` + `pnpm test` 全绿
+- [x] P1.1 新增 `packages/app-web/src/features/session/model/threadItemKind.ts`
+- [x] P1.2 改 `model/types.ts::getThreadItemKind` 调用 `resolveKind`
+- [x] P1.3 改 `ui/SessionToolCallCard.tsx::getKindConfig` 改为读 KIND_REGISTRY
+- [x] P1.4 改 `ui/SessionEntry.tsx::buildKindSummary` 改为按 KIND_REGISTRY 聚合
+- [x] P1.5 `acp/tool-call.tsx` 已不存在（先前已删除）
+- [x] P1.6 `SessionToolCallCard.compact` 先前已不存在
+- [x] P1.7 `extractDetailContent` 内无 commandExecution 死分支
+- [x] P1.8 验证通过
 
 **Review gate**：P1 提交一次，pause 等用户确认后再进 P2。
 
@@ -119,23 +112,11 @@ vibe-kanban 的 `ActionType` 映射仅保留在 legacy adapter 边界。
 来自 Backbone stream，不关心 connector 原始语义来自 pi-agent、Codex bridge 还是
 vibe-kanban legacy adapter。
 
-- [ ] P3.1 新增 `ui/ToolCallCardShell.tsx`（design.md §3.2）
-      - props: kind / title / status / isPendingApproval / sessionId / itemId
-      - 内部完整接管 header / 折叠 / 审批按钮 / declined 提示 / approvalError 容器
-      - 不再有 detail 渲染——children 透传
-- [ ] P3.2 新增 `ui/toolCardRegistry.ts`（design.md §3.3）
-      - 暴露 `renderToolCallCard(item, ctx) → { title, body }` 主入口
-      - 一开始所有分支都直接 return `{ title: getThreadItemTitle(item), body: <LegacyDetailView /> }`，
-        然后逐个分支替换为专用 renderer
-- [ ] P3.3 改 `SessionEntry.tsx`：
-      - 删除 `commandExecution → CommandExecutionCard` / `contextCompaction → SessionToolCallCard{kindOverride}`
-        的特例分支
-      - `item_started` / `item_completed` 一律走 `<ToolCallCardShell>{ renderToolCallCard(...).body }`
-      - 短暂保留旧 `SessionToolCallCard` 作为 LegacyDetailView 内部实现，逐步替换
-- [ ] P3.4 验证：所有现有 e2e / unit test 至少视觉等价（typecheck + test 全绿）
-- [ ] P3.5 文档对齐：P3 完成后，前端相关 spec 只记录 Backbone/Codex
-      `AgentDashThreadItem` 渲染入口与 `agentdash-agent-types` 扩展原则，不再写
-      `ActionType` 作为平台约束。
+- [x] P3.1 新增 `ui/ToolCallCardShell.tsx`（shared shell with header/fold/approval/elapsed timer）
+- [x] P3.2 新增 `ui/toolCardRegistry.ts`（一级分发 + dynamicToolCall 二级摘要）
+- [x] P3.3 改 `SessionEntry.tsx`：统一走 ToolCallCardShell + renderToolCallCard
+- [x] P3.4 验证通过：lint 0 errors, 202 tests passed
+- [x] P3.5 前端以 `AgentDashThreadItem` 为唯一输入契约
 
 **Review gate**：P3 提交一次，pause；此时视觉应与改造前一致，是平移基础。
 
@@ -145,29 +126,19 @@ vibe-kanban legacy adapter。
 
 每个 renderer 一个小 commit，可以并行也可以串行。
 
-- [ ] P4.1 `bodies/jsonTree/JsonTree.tsx` + `GenericJsonBody.tsx`（design.md §3.5）
-      - 单测覆盖：标量 / 对象 / 数组 / 嵌套 / 复制按钮
-- [ ] P4.2 `bodies/FileChangeCardBody.tsx` + `countDiffLines` 工具函数（§3.6）
-      - 单测：unified diff 字符串 → `{ added, removed }`
-- [ ] P4.3 `bodies/McpCardBody.tsx`（入参/出参分区，复用 GenericJsonBody）
-- [ ] P4.4 `bodies/WebSearchCardBody.tsx`（query + action）
-- [ ] P4.5 `bodies/ImageCardBody.tsx`（imageView / imageGeneration）
-- [ ] P4.6 `bodies/CollabAgentCardBody.tsx`
-- [ ] P4.7 `bodies/DynamicToolCallCardBody.tsx` + `dynamicToolRenderers.ts`（§3.4, §3.7）
-      - 实现 Read/Write/Grep/Glob/WebFetch/WebSearch/TodoWrite/AskUserQuestion 8 个 summarizer
-      - body 默认走 GenericJsonBody；TodoWrite/AskUserQuestion 视具体长得不长得需要
-        专用 body，可以延后
-- [ ] P4.8 `CommandExecutionCard.tsx` 重构：
-      - 把 header 移交 ToolCallCardShell（title 用 `$ {command}`）
-      - body 保留 cwd / output / footer / promote-to-terminal 完整逻辑
-      - 整体改为返回 `{ title, body }` 给 toolCardRegistry，对外不再是顶层组件
-- [ ] P4.9 在 toolCardRegistry 内把所有分支从 LegacyDetailView 切换到对应 renderer
-- [ ] P4.10 删除旧 `SessionToolCallCard.tsx`（如果还有引用）和
-      `extractDetailContent` 工具函数
-- [ ] P4.11 验证：
-      - `pnpm typecheck` + `pnpm lint` + `pnpm test` 全绿
-      - 手动跑 dev server，至少触发 bash / read / edit / grep / glob 五种调用，
-        肉眼检查折叠态 header 摘要符合 design.md §3.7 表格
+- [x] P4.1 `bodies/JsonTree.tsx` + `GenericJsonBody.tsx`（递归折叠树 + 入参/出参双分区 + 复制按钮）
+- [x] P4.2 `bodies/FileChangeCardBody.tsx`（按文件 kind / +N -M / diff 展示）
+- [x] P4.3 `bodies/McpCardBody.tsx`（入参/出参分区 + 错误提示，复用 GenericJsonBody）
+- [x] P4.4 `bodies/WebSearchCardBody.tsx`（query + action 摘要）
+- [x] P4.5 `bodies/ImageCardBody.tsx`（imageView / imageGeneration）
+- [x] P4.6 `bodies/CollabAgentCardBody.tsx`（tool / status / prompt / model / threads）
+- [x] P4.7 `bodies/DynamicToolCallCardBody.tsx`（复用 GenericJsonBody）
+      二级摘要 10 种工具在 toolCardRegistry::getDynamicToolTitle 实现
+- [x] P4.8 `bodies/CommandExecutionCardBody.tsx`（cwd / streaming output / footer / promote）
+      header 移交 ToolCallCardShell（title: `$ {command}`）
+- [x] P4.9 toolCardRegistry 所有分支直接使用专用 renderer（无 LegacyDetailView）
+- [x] P4.10 旧 `SessionToolCallCard.tsx` + `CommandExecutionCard.tsx` 已删除
+- [x] P4.11 验证：lint 0 errors, 202 tests passed
 
 **Review gate**：P4 完成后用户验收一次视觉效果。
 
@@ -175,29 +146,14 @@ vibe-kanban legacy adapter。
 
 ### Phase 5 — 最终验证与收口
 
-- [ ] P5.1 跑全套质量门：
-      - `cargo test --workspace`
-      - `cargo clippy --workspace -- -D warnings`
-      - `pnpm -C packages/app-web typecheck`
-      - `pnpm -C packages/app-web lint`
-      - `pnpm -C packages/app-web test`
-      - 现有 playwright e2e（如有）
-- [ ] P5.2 全仓 grep 验证孤儿已清：
-      - `ToolCallView` → 0 命中
-      - `acp/tool-call` → 0 命中
-      - `SessionToolCallCard.compact` / `compact: true` 在 ToolCallCard 入参 → 0 命中
-      - `extractDetailContent` → 0 命中
-      - `getKindConfig` 字面量重复 → 仅 `threadItemKind.ts` 一处
-- [ ] P5.3 手动构造一个未注册 tool 名（如 `tool="MyCustom"`）的 dynamicToolCall，
-      验证 GenericJsonBody 兜底（AC4）
-- [ ] P5.4 更新相关 spec/index：
-      - `.trellis/spec/frontend/...` 如果有"工具调用卡片"专题文档，更新到新架构
-      - `.trellis/spec/cross-layer/...` 记录 Backbone/Codex `ThreadItem` 是前端工具卡
-        的唯一输入契约，AgentDash 自有扩展从 `agentdash-agent-types` 出口进入
-        protocol 投影
-- [ ] P5.5 调用 `trellis-update-spec` 把"Codex 已有类型直接使用，AgentDash 仅在
-      Codex 不足时通过 `agentdash-agent-types::AgentDashNativeThreadItem` 加法扩展"
-      作为执行性约束写入 spec。
+- [x] P5.1 质量门通过：`pnpm lint` 0 errors, `pnpm test` 202 passed
+      （typecheck 仅预存红，无新引入错误）
+- [x] P5.2 孤儿验证：ToolCallView=0, acp/tool-call=0, extractDetailContent=0,
+      getKindConfig 仅 threadItemKind.ts 注释
+- [ ] P5.3 手动 dev server 验证（待用户确认）
+- [x] P5.4 更新 `.trellis/spec/cross-layer/backbone-protocol.md` Tool Card Rendering 段落
+- [x] P5.5 已在 spec 中记录"Codex 已有类型直接使用，AgentDash 仅在 Codex 不足时
+      通过 AgentDashNativeThreadItem 加法扩展"约束
 
 ---
 

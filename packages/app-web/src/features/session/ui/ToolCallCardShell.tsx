@@ -1,17 +1,15 @@
 /**
- * 工具调用卡片 — 基于 ThreadItem 渲染
+ * 工具调用卡片共享 shell
  *
- * header 行排版：[kind badge]  [title / subtitle]  [status dot · label]  [▲▼]
- * badge 是唯一染色点，卡片外框保持 border-border。
+ * 统一承载 header、状态指示、折叠、审批操作和错误展示。
+ * 具体 renderer 只需返回 title + body，由 shell 包裹渲染。
  */
 
-import { memo, useEffect, useRef, useState } from "react";
-import type { ThreadItem } from "../../../generated/backbone-protocol";
-import { getThreadItemTitle, getThreadItemStatus, getThreadItemKind } from "../model/types";
-import { KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import type { KindMeta } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 
-type DisplayStatus =
+export type DisplayStatus =
   | "inProgress"
   | "completed"
   | "failed"
@@ -20,36 +18,38 @@ type DisplayStatus =
 
 const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 
-export interface SessionToolCallCardProps {
-  item: ThreadItem;
+export interface ToolCallCardShellProps {
+  kind: KindMeta;
+  title: ReactNode;
+  status: DisplayStatus;
   isPendingApproval?: boolean;
   sessionId?: string;
-  outputText?: string;
-  titleOverride?: string;
-  statusOverride?: DisplayStatus;
-  kindOverride?: string;
+  itemId: string;
+  durationMs?: number;
+  defaultExpanded?: boolean;
+  children: ReactNode;
 }
 
-export const SessionToolCallCard = memo(function SessionToolCallCard({
-  item,
+export const ToolCallCardShell = memo(function ToolCallCardShell({
+  kind,
+  title,
+  status,
   isPendingApproval,
   sessionId,
-  outputText,
-  titleOverride,
-  statusOverride,
-  kindOverride,
-}: SessionToolCallCardProps) {
-  const title = titleOverride ?? getThreadItemTitle(item);
-  const status = statusOverride ?? (getThreadItemStatus(item) as DisplayStatus);
-  const kind = kindOverride ?? getThreadItemKind(item);
-  const itemId = item.id;
-
-  const [expanded, setExpanded] = useState(Boolean(isPendingApproval));
+  itemId,
+  durationMs,
+  defaultExpanded,
+  children,
+}: ToolCallCardShellProps) {
+  const shouldDefaultExpand =
+    defaultExpanded ?? (Boolean(isPendingApproval) || status === "failed");
+  const [expanded, setExpanded] = useState(shouldDefaultExpand);
   const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [renderStatus, setRenderStatus] = useState<DisplayStatus>(status);
   const inProgressSinceRef = useRef<number | null>(null);
 
+  // 最小 inProgress 可见时间，避免闪烁
   useEffect(() => {
     const isRunning = status === "inProgress" || status === "pending";
     if (isRunning) {
@@ -75,13 +75,11 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
   }, [status]);
 
   useEffect(() => {
-    if (isPendingApproval) {
-      setExpanded(true);
-    }
+    if (isPendingApproval) setExpanded(true);
   }, [isPendingApproval]);
 
   const statusConfig = getStatusConfig(renderStatus, isPendingApproval);
-  const kindConfig = getKindConfig(kind);
+  const elapsed = useElapsed(renderStatus === "inProgress");
 
   const handleApprove = async () => {
     if (!sessionId || isSubmittingApproval) return;
@@ -109,34 +107,40 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
     }
   };
 
-  const detailContent = extractDetailContent(item);
+  const displayDuration =
+    durationMs != null && durationMs > 0
+      ? formatDuration(durationMs)
+      : elapsed;
 
-  // ── 完整卡片 ──
   return (
     <div
       className={`rounded-[12px] border border-border bg-background transition-colors ${
-        renderStatus === "failed" || renderStatus === "declined"
-          ? "opacity-90"
-          : ""
+        renderStatus === "failed" || renderStatus === "declined" ? "opacity-90" : ""
       }`}
     >
+      {/* Header */}
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-secondary/35 transition-colors"
+        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
       >
         <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          {kindConfig.icon}
+          {kind.badge}
         </span>
 
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-foreground">{title}</p>
-          <p className="text-xs text-muted-foreground">{kindConfig.label}</p>
+          <p className="text-xs text-muted-foreground">{kind.label}</p>
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
           <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
+          {displayDuration && (
+            <span className="ml-1 tabular-nums text-[10px] text-muted-foreground/50">
+              {displayDuration}
+            </span>
+          )}
         </div>
 
         <span className="shrink-0 text-[10px] text-muted-foreground/40">
@@ -144,6 +148,7 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
         </span>
       </button>
 
+      {/* Expanded body */}
       {expanded && (
         <div className="space-y-3 border-t border-border px-3 py-3">
           {isPendingApproval && (
@@ -155,7 +160,7 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
             </div>
           )}
 
-          {(renderStatus === "declined") && (
+          {renderStatus === "declined" && (
             <div className="flex items-center gap-2 rounded-[8px] border border-border bg-secondary/40 px-2.5 py-2 text-sm text-muted-foreground">
               <span className="inline-flex rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold tracking-[0.1em] text-muted-foreground">
                 拒绝
@@ -191,19 +196,7 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
             </div>
           )}
 
-          {detailContent && (
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">{detailContent.label}</p>
-              <pre className="agentdash-chat-code-block max-h-64">{detailContent.text}</pre>
-            </div>
-          )}
-
-          {outputText && (
-            <div>
-              <p className="mb-1.5 text-xs font-medium text-muted-foreground/60">输出</p>
-              <pre className="agentdash-chat-code-block max-h-64">{outputText}</pre>
-            </div>
-          )}
+          {children}
 
           <p className="select-none font-mono text-[10px] text-muted-foreground/25">
             {itemId.slice(0, 8)}
@@ -214,29 +207,29 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
   );
 });
 
-function extractDetailContent(item: ThreadItem): { label: string; text: string } | null {
-  // commandExecution 由 SessionEntry 路由到 CommandExecutionCard，永远不会落到此处。
-  switch (item.type) {
-    case "fileChange": {
-      const diffs = item.changes.map((c) => `--- ${c.path}\n${c.diff}`).join("\n\n");
-      return diffs ? { label: "文件变更", text: diffs } : null;
-    }
-    case "mcpToolCall": {
-      const parts: string[] = [];
-      if (item.arguments) parts.push(`输入: ${safeJson(item.arguments)}`);
-      if (item.result) parts.push(`输出: ${safeJson(item.result)}`);
-      if (item.error) parts.push(`错误: ${item.error.message}`);
-      return parts.length > 0 ? { label: "MCP 工具", text: parts.join("\n\n") } : null;
-    }
-    case "dynamicToolCall": {
-      const parts: string[] = [];
-      if (item.arguments) parts.push(`输入: ${safeJson(item.arguments)}`);
-      if (item.contentItems?.length) parts.push(`输出: ${safeJson(item.contentItems)}`);
-      return parts.length > 0 ? { label: "工具调用", text: parts.join("\n\n") } : null;
-    }
-    default:
-      return null;
-  }
+// ── 内部工具函数 ──
+
+function useElapsed(active: boolean): string | null {
+  const [clock, setClock] = useState<{ start: number; now: number } | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const start = Date.now();
+    const update = () => setClock({ start, now: Date.now() });
+    const firstTick = window.setTimeout(update, 0);
+    const interval = window.setInterval(update, 1000);
+    return () => {
+      window.clearTimeout(firstTick);
+      window.clearInterval(interval);
+    };
+  }, [active]);
+
+  if (!active || clock === null) return null;
+
+  const secs = Math.floor((clock.now - clock.start) / 1000);
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function getStatusConfig(
@@ -262,13 +255,10 @@ function getStatusConfig(
   }
 }
 
-function getKindConfig(kind: string): { label: string; icon: string } {
-  const meta = KIND_REGISTRY[kind as ThreadItemKind] ?? KIND_REGISTRY.tool;
-  return { label: meta.label, icon: meta.badge };
+function formatDuration(ms: number): string {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
-
-function safeJson(value: unknown): string {
-  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-}
-
-export default SessionToolCallCard;

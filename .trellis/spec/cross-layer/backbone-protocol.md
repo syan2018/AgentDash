@@ -156,3 +156,19 @@ BackboneEnvelope (NDJSON)
 ```
 
 前端直接消费 `BackboneEnvelope` / `BackboneEvent` 类型，不在主路径经过外部 SDK 解析。
+
+### Tool Card Rendering
+
+工具调用卡片以 `AgentDashThreadItem` 为唯一输入契约，通过 `ToolCallCardShell` + `toolCardRegistry` 统一渲染：
+
+```text
+AgentDashThreadItem
+  -> toolCardRegistry.renderToolCallCard(item, ctx) → { kind, title, body, status }
+  -> ToolCallCardShell(kind, title, status, children=body)
+```
+
+- `ToolCallCardShell`：统一承载 header（badge/title/status/elapsed）、折叠、审批操作、错误展示。
+- `toolCardRegistry`：按 `item.type` 一级分发到专用 renderer body；`dynamicToolCall` 内部按 `tool` 名做二级摘要。
+- `threadItemKind.ts`：kind 元数据（badge/label/summaryVerb）的单一来源。
+- Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的走 `GenericJsonBody` 兜底。
+- Codex 已有 item 直接使用 Codex Protocol type；AgentDash 仅在 Codex 不足时通过 `AgentDashNativeThreadItem` 做加法扩展。

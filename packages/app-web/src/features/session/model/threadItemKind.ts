@@ -2,14 +2,13 @@
  * ThreadItem kind 单一来源
  *
  * 所有 ThreadItem 渲染相关的 kind 元数据（badge 文案 / 中文 label / 视觉样式键）
- * 集中在此处定义。废弃此前散落在 model/types.ts::getThreadItemKind、
- * SessionToolCallCard::getKindConfig、SessionEntry::buildKindSummary 三处的
- * 字面量重复。
+ * 集中在此处定义。ToolCallCardShell 和 SessionEntry::buildKindSummary 均从此
+ * 注册表读取，不再有散落的字面量重复。
  *
  * 设计意图：未来加新工具种类（或 dynamicToolCall.tool 名细分）时，只在此文件
  * 增补 KIND_REGISTRY + resolveKind/resolveDynamicKind 两处映射，渲染器无需变更。
  */
-import type { ThreadItem } from "../../../generated/backbone-protocol";
+import type { AgentDashThreadItem } from "../../../generated/backbone-protocol";
 
 export type ThreadItemKind =
   | "execute"
@@ -58,7 +57,7 @@ export const KIND_REGISTRY: Record<ThreadItemKind, KindMeta> = {
  * Write/Edit → edit，WebFetch → fetch，其余 → tool）。这层细分让前端在后端尚未把
  * ActionType 还原到对应 ThreadItem variant 时也能给出体面的 badge 与 label。
  */
-export function resolveKind(item: ThreadItem): KindMeta {
+export function resolveKind(item: AgentDashThreadItem): KindMeta {
   switch (item.type) {
     case "commandExecution":    return KIND_REGISTRY.execute;
     case "fileChange":          return KIND_REGISTRY.edit;
@@ -69,6 +68,9 @@ export function resolveKind(item: ThreadItem): KindMeta {
     case "collabAgentToolCall": return KIND_REGISTRY.collab;
     case "contextCompaction":   return KIND_REGISTRY.context;
     case "dynamicToolCall":     return resolveDynamicKind(item.tool);
+    case "fsRead":              return KIND_REGISTRY.read;
+    case "fsGrep":
+    case "fsGlob":              return KIND_REGISTRY.search;
     default:                    return KIND_REGISTRY.other;
   }
 }

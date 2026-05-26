@@ -210,9 +210,8 @@ class FetchNdjsonTransport implements SessionStreamTransport {
 
     if (!payload || typeof payload !== "object") return;
     const record = payload as SessionNdjsonEnvelope;
-    const eventType = String(record.type ?? "");
 
-    if (eventType === "connected") {
+    if (record.type === "connected") {
       const lastEventIdRaw = record.last_event_id;
       const lastEventId = Number(lastEventIdRaw);
       if (Number.isFinite(lastEventId) && lastEventId > this.sinceId) {
@@ -221,7 +220,7 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       return;
     }
 
-    if (eventType === "event" || eventType === "notification") {
+    if (record.type === "event") {
       const normalizedEvent = parseSessionEventEnvelopePayload(record);
       if (normalizedEvent) {
         if (normalizedEvent.event_seq > this.sinceId) {
@@ -232,7 +231,7 @@ class FetchNdjsonTransport implements SessionStreamTransport {
       return;
     }
 
-    if (eventType === "heartbeat") {
+    if (record.type === "heartbeat") {
       return;
     }
   }

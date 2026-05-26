@@ -6,6 +6,7 @@ import { computeProjectionRefreshKey } from "./SessionChatView";
 const completedTurn: Turn = {
   id: "turn-1",
   items: [],
+  itemsView: "full",
   status: "completed",
   error: null,
   startedAt: null,

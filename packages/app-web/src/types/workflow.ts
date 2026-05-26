@@ -3,7 +3,7 @@ import type {
   ActivityAttemptState,
   ActivityAttemptStatus,
   ActivityCompletionPolicy,
-  ActivityDefinition,
+  ActivityDefinition as GeneratedActivityDefinition,
   ActivityExecutorSpec,
   ActivityInputArtifact,
   ActivityIterationPolicy,
@@ -11,7 +11,7 @@ import type {
   ActivityLifecycleRunState,
   ActivityOutputArtifact,
   ActivityRunStatus,
-  ActivityTransition,
+  ActivityTransition as GeneratedActivityTransition,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
   AgentSessionPolicy,
@@ -19,7 +19,7 @@ import type {
   ArtifactAliasPolicy,
   ArtifactBinding,
   BashExecExecutorSpec,
-  CapabilityConfig,
+  CapabilityConfig as GeneratedCapabilityConfig,
   ContextStrategy,
   EffectiveSessionContract,
   ExecutorRunRef,
@@ -35,9 +35,6 @@ import type {
   LifecycleExecutionEventKind,
   LifecycleNodeType,
   LifecycleRunStatus,
-  LifecycleStepDefinition,
-  LifecycleStepExecutionStatus,
-  LifecycleStepState,
   OutputPortDefinition,
   StandaloneFulfillment,
   ToolCapabilityDirective,
@@ -47,7 +44,7 @@ import type {
   ValidationSeverity,
   WorkflowBindingKind,
   WorkflowContextBinding,
-  WorkflowContract,
+  WorkflowContract as GeneratedWorkflowContract,
   WorkflowDefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
@@ -59,7 +56,6 @@ export type {
   ActivityAttemptState,
   ActivityAttemptStatus,
   ActivityCompletionPolicy,
-  ActivityDefinition,
   ActivityExecutorSpec,
   ActivityInputArtifact,
   ActivityIterationPolicy,
@@ -67,7 +63,6 @@ export type {
   ActivityLifecycleRunState,
   ActivityOutputArtifact,
   ActivityRunStatus,
-  ActivityTransition,
   ActivityTransitionKind,
   AgentActivityExecutorSpec,
   AgentSessionPolicy,
@@ -75,7 +70,6 @@ export type {
   ArtifactAliasPolicy,
   ArtifactBinding,
   BashExecExecutorSpec,
-  CapabilityConfig,
   ContextStrategy,
   EffectiveSessionContract,
   ExecutorRunRef,
@@ -91,9 +85,6 @@ export type {
   LifecycleExecutionEventKind,
   LifecycleNodeType,
   LifecycleRunStatus,
-  LifecycleStepDefinition,
-  LifecycleStepExecutionStatus,
-  LifecycleStepState,
   OutputPortDefinition,
   StandaloneFulfillment,
   ToolCapabilityDirective,
@@ -103,7 +94,6 @@ export type {
   ValidationSeverity,
   WorkflowBindingKind,
   WorkflowContextBinding,
-  WorkflowContract,
   WorkflowDefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
@@ -113,7 +103,49 @@ export type {
 export type WorkflowTargetKind = WorkflowBindingKind;
 export type WorkflowRunStatus = LifecycleRunStatus;
 export type CapabilityDirective = ToolCapabilityDirective;
-export type WorkflowCapabilityConfig = CapabilityConfig;
+
+export interface WorkflowCapabilityConfig extends GeneratedCapabilityConfig {
+  tool_directives: ToolCapabilityDirective[];
+  mount_directives: unknown[];
+}
+
+export type CapabilityConfig = WorkflowCapabilityConfig;
+
+export interface WorkflowContract
+  extends Omit<GeneratedWorkflowContract, "capability_config" | "output_ports" | "input_ports"> {
+  capability_config: WorkflowCapabilityConfig;
+  output_ports: OutputPortDefinition[];
+  input_ports: InputPortDefinition[];
+}
+
+export interface ActivityDefinition
+  extends Omit<GeneratedActivityDefinition, "input_ports" | "output_ports"> {
+  input_ports: InputPortDefinition[];
+  output_ports: OutputPortDefinition[];
+}
+
+export interface ActivityTransition
+  extends Omit<GeneratedActivityTransition, "artifact_bindings"> {
+  artifact_bindings: ArtifactBinding[];
+}
+
+export function isWorkflowJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isWorkflowJsonValue);
+  }
+  if (typeof value !== "object") {
+    return false;
+  }
+  return Object.values(value).every(isWorkflowJsonValue);
+}
 
 export interface HookRulePreset {
   key: string;

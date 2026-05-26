@@ -6,6 +6,7 @@
  */
 
 import type {
+  JsonValue,
   WorkflowHookTrigger,
   WorkflowTargetKind,
 } from "../../../../types";
@@ -66,10 +67,10 @@ export const GATE_TRIGGER_ORDER: WorkflowHookTrigger[] = GATE_TRIGGER_OPTIONS;
  */
 export function buildDefaultParams(
   schema: Record<string, unknown>,
-): Record<string, unknown> | null {
+): Record<string, JsonValue> | null {
   const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
   if (!props) return null;
-  const result: Record<string, unknown> = {};
+  const result: Record<string, JsonValue> = {};
   for (const [key, prop] of Object.entries(props)) {
     if (prop.type === "array") result[key] = [];
     else if (prop.type === "string") result[key] = "";

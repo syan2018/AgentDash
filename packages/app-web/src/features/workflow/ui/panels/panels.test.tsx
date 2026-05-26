@@ -212,7 +212,12 @@ describe("PortsPanel", () => {
     { key: "report", description: "输出报告", gate_strategy: "existence" },
   ];
   const inputPorts: InputPortDefinition[] = [
-    { key: "research_input", description: "研究输入", context_strategy: "full" },
+    {
+      key: "research_input",
+      description: "研究输入",
+      context_strategy: "full",
+      standalone_fulfillment: "required",
+    },
   ];
 
   it("渲染 output / input 两段并展示计数", () => {
@@ -253,7 +258,7 @@ describe("PortsPanel", () => {
 
   it("onOutputChange 接收 OutputPortDefinition[]", () => {
     const handler = vi.fn<(ports: OutputPortDefinition[]) => void>();
-    handler([{ key: "x", description: "y" }]);
-    expect(handler).toHaveBeenCalledWith([{ key: "x", description: "y" }]);
+    handler([{ key: "x", description: "y", gate_strategy: "existence" }]);
+    expect(handler).toHaveBeenCalledWith([{ key: "x", description: "y", gate_strategy: "existence" }]);
   });
 });

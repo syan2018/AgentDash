@@ -18,6 +18,7 @@
 
 import { useCallback, useState } from "react";
 
+import { isWorkflowJsonValue } from "../../../types";
 import type {
   ActivityCompletionPolicy,
   ActivityDefinition,
@@ -818,8 +819,10 @@ function FunctionExecutorForm({
                     return;
                   }
                   try {
-                    const parsed = JSON.parse(raw) as Record<string, unknown>;
-                    onChange({ ...executor, body_template: parsed });
+                    const parsed: unknown = JSON.parse(raw);
+                    if (isWorkflowJsonValue(parsed)) {
+                      onChange({ ...executor, body_template: parsed });
+                    }
                   } catch {
                     // keep typing；不抛错
                   }
@@ -847,7 +850,7 @@ function FunctionExecutorForm({
           <div>
             <label className="agentdash-form-label">Args</label>
             <input
-              value={executor.args.join(" ")}
+              value={(executor.args ?? []).join(" ")}
               onChange={(e) =>
                 onChange({ ...executor, args: e.target.value.split(" ").filter(Boolean) })
               }
@@ -1147,7 +1150,15 @@ function ActivityInputPortsList({
   onChange: (next: InputPortDefinition[]) => void;
 }) {
   const handleAdd = () =>
-    onChange([...ports, { key: "", description: "", context_strategy: "full" }]);
+    onChange([
+      ...ports,
+      {
+        key: "",
+        description: "",
+        context_strategy: "full",
+        standalone_fulfillment: "required",
+      },
+    ]);
 
   return (
     <div>
@@ -1291,4 +1302,3 @@ function mergeContractIntoStep<P extends { key: string }>(
   const stepExtras = currentActivity.filter((p) => !oldContractKeys.has(p.key));
   return [...newContract, ...stepExtras];
 }
-

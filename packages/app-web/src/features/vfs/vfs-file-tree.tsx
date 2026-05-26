@@ -262,9 +262,9 @@ function nodeToEntry(node: TreeNode): SurfaceMountEntry {
   return {
     path: node.path,
     entry_type: node.isDir ? "directory" : "file",
-    size: node.size,
-    content_kind: node.contentKind,
-    mime_type: node.mimeType,
+    size: node.size ?? undefined,
+    content_kind: node.contentKind ?? undefined,
+    mime_type: node.mimeType ?? undefined,
     is_dir: node.isDir,
   };
 }

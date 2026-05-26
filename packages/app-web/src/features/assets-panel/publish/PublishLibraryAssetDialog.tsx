@@ -107,7 +107,7 @@ export function PublishLibraryAssetDialog({
         scope: "user",
         key: trimmedKey,
         display_name: trimmedDisplayName,
-        description: description.trim() || null,
+        description: description.trim() || undefined,
         version: trimmedVersion,
         overwrite,
       });

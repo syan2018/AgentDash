@@ -7,10 +7,7 @@ import type {
 } from "../../../types";
 
 function cloneOutputPort(port: OutputPortDefinition): OutputPortDefinition {
-  return {
-    ...port,
-    gate_params: port.gate_params ? { ...port.gate_params } : port.gate_params,
-  };
+  return { ...port };
 }
 
 function cloneInputPort(port: InputPortDefinition): InputPortDefinition {
@@ -22,7 +19,12 @@ function fallbackOutputPort(key: string): OutputPortDefinition {
 }
 
 function fallbackInputPort(key: string): InputPortDefinition {
-  return { key, description: "", context_strategy: "full" };
+  return {
+    key,
+    description: "",
+    context_strategy: "full",
+    standalone_fulfillment: "required",
+  };
 }
 
 function workflowForStep(

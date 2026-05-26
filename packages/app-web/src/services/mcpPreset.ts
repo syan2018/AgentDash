@@ -94,7 +94,7 @@ export function mapMcpPreset(raw: Record<string, unknown>): McpPresetDto {
       raw.builtin_key === null || raw.builtin_key === undefined
         ? undefined
         : String(raw.builtin_key),
-    installed_source: mapInstalledAssetSource(raw.installed_source),
+    installed_source: mapInstalledAssetSource(raw.installed_source) ?? undefined,
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
   };

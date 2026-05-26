@@ -113,12 +113,12 @@ function toEventEnvelope(event: StreamInputEvent): SessionEventEnvelope {
     session_id: event.session_id,
     event_seq: event.event_seq,
     notification: event.notification,
-    occurred_at_ms: event.occurred_at_ms ?? null,
-    committed_at_ms: event.committed_at_ms ?? null,
+    occurred_at_ms: event.occurred_at_ms ?? 0,
+    committed_at_ms: event.committed_at_ms ?? 0,
     session_update_type: event.session_update_type ?? backboneEventTypeName(event.notification.event),
-    turn_id: event.turn_id ?? event.notification.trace?.turnId ?? null,
-    entry_index: event.entry_index ?? event.notification.trace?.entryIndex ?? null,
-    tool_call_id: event.tool_call_id ?? null,
+    turn_id: event.turn_id ?? event.notification.trace?.turnId ?? undefined,
+    entry_index: event.entry_index ?? event.notification.trace?.entryIndex ?? undefined,
+    tool_call_id: event.tool_call_id ?? undefined,
   };
 }
 

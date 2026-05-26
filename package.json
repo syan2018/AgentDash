@@ -26,7 +26,7 @@
     "dev:backend": "pnpm run kill:backend && cargo run --bin agentdash-server",
     "frontend:dev": "pnpm --filter app-web dev",
     "frontend:build": "pnpm run icons:generate && pnpm --filter app-web build",
-    "frontend:check": "pnpm --filter app-web exec tsc --noEmit",
+    "frontend:check": "pnpm --filter app-web run typecheck",
     "shared:check": "pnpm --filter @agentdash/core typecheck && pnpm --filter @agentdash/ui typecheck && pnpm --filter @agentdash/views typecheck",
     "desktop:check": "pnpm run shared:check && pnpm --filter app-tauri typecheck && cargo check -p agentdash-local-tauri",
     "frontend:test": "pnpm --filter app-web test",

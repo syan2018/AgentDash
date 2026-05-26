@@ -149,7 +149,7 @@ function isCompactionSummaryFrame(event: BackboneEvent): boolean {
     return false;
   }
   const value = event.payload.data.value;
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
     value.kind === "compaction_summary";
 }
 

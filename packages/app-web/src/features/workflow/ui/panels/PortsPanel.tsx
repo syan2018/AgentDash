@@ -381,7 +381,12 @@ export function PortsPanel({
             onClick={() =>
               onInputChange([
                 ...inputPorts,
-                { key: "", description: "", context_strategy: "full" },
+                {
+                  key: "",
+                  description: "",
+                  context_strategy: "full",
+                  standalone_fulfillment: "required",
+                },
               ])
             }
             className={addBtnClass}

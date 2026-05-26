@@ -46,6 +46,8 @@ export const DEFINITION_SOURCE_LABEL: Record<WorkflowDefinitionSource, string> =
 export const EXECUTION_EVENT_KIND_LABEL: Record<LifecycleExecutionEventKind, string> = {
   step_activated: "Step Activated",
   step_completed: "Step Completed",
+  constraint_blocked: "Constraint Blocked",
+  completion_evaluated: "Completion Evaluated",
   artifact_appended: "Artifact Appended",
   context_injected: "Context Injected",
 };

@@ -57,6 +57,7 @@ import type {
   ThreadTokenUsage,
 } from "../../../generated/backbone-protocol";
 import type { SessionEventResponse } from "../../../generated/session-contracts";
+import { resolveKind } from "./threadItemKind";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -406,30 +407,9 @@ export function getThreadItemStatus(item: ThreadItem): string {
   }
 }
 
-/** 从 ThreadItem 获取工具类型标签 */
+/** 从 ThreadItem 获取工具类型标签（委托给 threadItemKind 注册表） */
 export function getThreadItemKind(item: ThreadItem): string {
-  switch (item.type) {
-    case "commandExecution":
-      return "execute";
-    case "fileChange":
-      return "edit";
-    case "mcpToolCall":
-      return "mcp";
-    case "dynamicToolCall":
-      return "tool";
-    case "webSearch":
-      return "search";
-    case "imageView":
-      return "image";
-    case "imageGeneration":
-      return "image";
-    case "collabAgentToolCall":
-      return "collab";
-    case "contextCompaction":
-      return "context";
-    default:
-      return "other";
-  }
+  return resolveKind(item).kind;
 }
 
 /** 从 BackboneEvent 判断是否是系统/平台事件 */

@@ -8,6 +8,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { ThreadItem } from "../../../generated/backbone-protocol";
 import { getThreadItemTitle, getThreadItemStatus, getThreadItemKind } from "../model/types";
+import { KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
 
 type DisplayStatus =
@@ -22,7 +23,6 @@ const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 export interface SessionToolCallCardProps {
   item: ThreadItem;
   isPendingApproval?: boolean;
-  compact?: boolean;
   sessionId?: string;
   outputText?: string;
   titleOverride?: string;
@@ -33,7 +33,6 @@ export interface SessionToolCallCardProps {
 export const SessionToolCallCard = memo(function SessionToolCallCard({
   item,
   isPendingApproval,
-  compact = false,
   sessionId,
   outputText,
   titleOverride,
@@ -109,23 +108,6 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
       setIsSubmittingApproval(false);
     }
   };
-
-  // ── compact 模式 ──
-  if (compact) {
-    return (
-      <div className="rounded-[8px] border border-border bg-background px-2.5 py-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-            {kindConfig.icon}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-foreground/80">{title}</span>
-          <span className={`shrink-0 text-[10px] ${statusConfig.color}`}>
-            {statusConfig.label}
-          </span>
-        </div>
-      </div>
-    );
-  }
 
   const detailContent = extractDetailContent(item);
 
@@ -233,13 +215,8 @@ export const SessionToolCallCard = memo(function SessionToolCallCard({
 });
 
 function extractDetailContent(item: ThreadItem): { label: string; text: string } | null {
+  // commandExecution 由 SessionEntry 路由到 CommandExecutionCard，永远不会落到此处。
   switch (item.type) {
-    case "commandExecution": {
-      if (item.aggregatedOutput) {
-        return { label: "命令输出", text: item.aggregatedOutput };
-      }
-      return { label: "命令", text: `$ ${item.command}\n(cwd: ${item.cwd})` };
-    }
     case "fileChange": {
       const diffs = item.changes.map((c) => `--- ${c.path}\n${c.diff}`).join("\n\n");
       return diffs ? { label: "文件变更", text: diffs } : null;
@@ -286,17 +263,8 @@ function getStatusConfig(
 }
 
 function getKindConfig(kind: string): { label: string; icon: string } {
-  switch (kind) {
-    case "execute":    return { label: "执行", icon: "RUN" };
-    case "edit":       return { label: "编辑", icon: "EDIT" };
-    case "mcp":        return { label: "MCP", icon: "MCP" };
-    case "tool":       return { label: "工具", icon: "TOOL" };
-    case "search":     return { label: "搜索", icon: "FIND" };
-    case "image":      return { label: "图片", icon: "IMG" };
-    case "collab":     return { label: "协作", icon: "COLL" };
-    case "context":    return { label: "上下文", icon: "CTX" };
-    default:           return { label: "工具", icon: "TOOL" };
-  }
+  const meta = KIND_REGISTRY[kind as ThreadItemKind] ?? KIND_REGISTRY.tool;
+  return { label: meta.label, icon: meta.badge };
 }
 
 function safeJson(value: unknown): string {

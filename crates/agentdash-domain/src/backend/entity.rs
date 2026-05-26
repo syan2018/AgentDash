@@ -50,9 +50,10 @@ pub enum BackendType {
     Remote,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendVisibility {
+    #[default]
     Private,
     Shared,
     System,
@@ -68,15 +69,10 @@ impl BackendVisibility {
     }
 }
 
-impl Default for BackendVisibility {
-    fn default() -> Self {
-        Self::Private
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendShareScopeKind {
+    #[default]
     User,
     Project,
     System,
@@ -89,12 +85,6 @@ impl BackendShareScopeKind {
             Self::Project => "project",
             Self::System => "system",
         }
-    }
-}
-
-impl Default for BackendShareScopeKind {
-    fn default() -> Self {
-        Self::User
     }
 }
 

@@ -2,8 +2,8 @@ use std::fmt;
 
 use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
 use agentdash_agent_types::{
-    AgentMessage, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
-    ProjectionOrigin, ProjectionSourceRange,
+    AgentInputMessage, AgentMessage, MessageRef, ProjectedEntry, ProjectedTranscript,
+    ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
 };
 use agentdash_spi::{
     PersistedSessionEvent, SessionCompactionRecord, SessionProjectionSegmentRecord,
@@ -66,16 +66,6 @@ pub(super) struct CompactionCheckpoint {
 }
 
 impl CompactionCheckpoint {
-    pub(super) fn suffix_start_event_seq(&self, head_event_seq: u64) -> u64 {
-        self.first_kept_event_seq
-            .or_else(|| {
-                self.source_range
-                    .as_ref()
-                    .map(|range| range.end_event_seq.saturating_add(1))
-            })
-            .unwrap_or(head_event_seq.saturating_add(1))
-    }
-
     pub(super) fn to_projected_entry(&self) -> Option<ProjectedEntry> {
         self.to_projected_entry_with_boundary(self.compacted_until_ref.clone())
     }
@@ -134,6 +124,9 @@ pub(super) enum CompactionCheckpointError {
         segment_id: String,
         generated_by_compaction_id: String,
     },
+    InvalidContextEnvelopeMessages {
+        segment_id: String,
+    },
 }
 
 impl fmt::Display for CompactionCheckpointError {
@@ -172,6 +165,12 @@ impl fmt::Display for CompactionCheckpointError {
                 f,
                 "projection segment {segment_id} 归属 {generated_by_compaction_id} 与 compaction {compaction_id} 不一致"
             ),
+            Self::InvalidContextEnvelopeMessages { segment_id } => {
+                write!(
+                    f,
+                    "context_envelope projection segment {segment_id} 的 messages 不是合法 AgentInputMessage 数组"
+                )
+            }
         }
     }
 }
@@ -183,14 +182,21 @@ pub(super) fn projection_entries_from_checkpoint_records(
     segments: &[SessionProjectionSegmentRecord],
 ) -> Result<Vec<ProjectedEntry>, CompactionCheckpointError> {
     let mut entries = Vec::new();
-    for segment in segments
-        .iter()
-        .filter(|segment| segment.segment_type == "summary_chunk")
-    {
-        if let Some(entry) = checkpoint_from_projection_segment(compaction, segment)?
-            .and_then(|checkpoint| checkpoint.to_projected_entry())
-        {
-            entries.push(entry);
+    for segment in segments {
+        match segment.segment_type.as_str() {
+            "context_envelope" => {
+                entries.extend(context_entries_from_projection_segment(
+                    compaction, segment,
+                )?);
+            }
+            "summary_chunk" => {
+                if let Some(entry) = checkpoint_from_projection_segment(compaction, segment)?
+                    .and_then(|checkpoint| checkpoint.to_projected_entry())
+                {
+                    entries.push(entry);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -201,6 +207,52 @@ pub(super) fn projection_entries_from_checkpoint_records(
         entries.push(entry);
     }
     Ok(entries)
+}
+
+fn context_entries_from_projection_segment(
+    compaction: &SessionCompactionRecord,
+    segment: &SessionProjectionSegmentRecord,
+) -> Result<Vec<ProjectedEntry>, CompactionCheckpointError> {
+    validate_segment(compaction, segment)?;
+    let messages = segment
+        .content_json
+        .get("messages")
+        .cloned()
+        .unwrap_or_else(|| segment.content_json.clone());
+    let messages = serde_json::from_value::<Vec<AgentInputMessage>>(messages).map_err(|_| {
+        CompactionCheckpointError::InvalidContextEnvelopeMessages {
+            segment_id: segment.id.clone(),
+        }
+    })?;
+    let segment_range = source_range(segment.source_start_event_seq, segment.source_end_event_seq)?;
+
+    Ok(messages
+        .into_iter()
+        .enumerate()
+        .map(|(index, message)| {
+            let original_provenance = message.provenance.clone();
+            let mut entry = ProjectedEntry::from(message);
+            entry.origin = ProjectionOrigin::Projection;
+            entry.synthetic = true;
+            entry.source_event_seq = None;
+            entry.source_range = segment_range.clone();
+            entry.projection_segment_id = Some(segment.id.clone());
+            entry.provenance = serde_json::json!({
+                "source": "projection_segment",
+                "compaction_id": compaction.id.clone(),
+                "segment_id": segment.id.clone(),
+                "projection_version": compaction.projection_version,
+                "segment_type": segment.segment_type.clone(),
+                "segment_index": index,
+                "strategy": compaction.strategy.clone(),
+                "trigger": compaction.trigger.clone(),
+                "phase": compaction.phase.clone(),
+                "source_refs": segment.source_refs_json.clone(),
+                "original_provenance": original_provenance,
+            });
+            entry
+        })
+        .collect())
 }
 
 pub(super) fn suffix_start_event_seq_from_compaction(
@@ -656,6 +708,45 @@ mod tests {
     }
 
     #[test]
+    fn context_envelope_segment_materializes_original_messages() {
+        let message = AgentInputMessage {
+            message_ref: MessageRef {
+                turn_id: "turn-1".to_string(),
+                entry_index: 0,
+            },
+            projection_kind: ProjectionKind::ModelContext,
+            message: AgentMessage::user("hello from parent"),
+            origin: ProjectionOrigin::Event,
+            synthetic: false,
+            source_event_seq: Some(3),
+            source_range: None,
+            projection_segment_id: None,
+            provenance: serde_json::json!({ "original": true }),
+        };
+        let mut segment = segment();
+        segment.segment_type = "context_envelope".to_string();
+        segment.source_start_event_seq = None;
+        segment.source_end_event_seq = None;
+        segment.content_json = serde_json::json!({ "messages": [message] });
+
+        let entries = projection_entries_from_checkpoint_records(&compaction(), &[segment])
+            .expect("context envelope should parse");
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].origin, ProjectionOrigin::Projection);
+        assert!(entries[0].synthetic);
+        assert_eq!(entries[0].source_event_seq, None);
+        assert_eq!(
+            entries[0].projection_segment_id.as_deref(),
+            Some("segment-1")
+        );
+        assert_eq!(
+            entries[0].provenance.get("segment_type"),
+            Some(&serde_json::json!("context_envelope"))
+        );
+    }
+
+    #[test]
     fn segment_metadata_takes_priority_over_compaction_metadata() {
         let checkpoint = checkpoint_from_projection_segment(&compaction(), &segment())
             .expect("checkpoint should parse")
@@ -677,7 +768,11 @@ mod tests {
                 .map(|range| (range.start_event_seq, range.end_event_seq)),
             Some((2, 4))
         );
-        assert_eq!(checkpoint.suffix_start_event_seq(10), 9);
+        assert_eq!(
+            suffix_start_event_seq_from_compaction(&compaction(), 10)
+                .expect("suffix boundary should parse"),
+            9
+        );
     }
 
     #[test]

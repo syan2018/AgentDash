@@ -2,22 +2,22 @@
 
 ## Phase 0. Dependency Gate
 
-- [ ] 确认父任务 `.trellis/tasks/05-25-context-compaction-architecture-enhancement` 已交付 `session_checkpoints`。
-- [ ] 确认 active projection cursor 已存在，或在本任务第一阶段补齐。
-- [ ] 确认 `ProjectedTranscript` restore 路径支持 checkpoint + suffix。
+- [x] 确认父任务 `.trellis/tasks/archive/2026-05/05-25-context-compaction-architecture-enhancement` 已交付 `session_compactions`、`session_projection_segments`、`session_projection_heads`。
+- [x] 确认 `ContextProjector` restore 路径支持 active compaction + segments + suffix。
+- [x] 确认 fork child initial projection 需要的 segment / replacement envelope 表达方式。
 
 ## Phase 1. Repository And Migration
 
-- [ ] 新增 `session_lineage` schema。
-- [ ] 新增或补齐 `session_projection_heads` schema。
-- [ ] 扩展 SPI repository trait：
-  - [ ] upsert / insert lineage edge。
-  - [ ] list direct children。
-  - [ ] list ancestors。
-  - [ ] list descendants with stable ordering。
-  - [ ] read / update projection head。
-- [ ] 同步 PostgreSQL repository。
-- [ ] 同步 SQLite repository。
+- [x] 新增 `session_lineage` schema。
+- [x] 复用已存在的 `session_projection_heads` schema，并补齐 branch/fork 读写场景。
+- [x] 扩展 SPI repository trait：
+  - [x] upsert / insert lineage edge。
+  - [x] list direct children。
+  - [x] list ancestors。
+  - [x] list descendants with stable ordering。
+  - [x] read / update projection head。
+- [x] 同步 PostgreSQL repository。
+- [x] 同步 SQLite repository。
 
 Validation:
 
@@ -27,12 +27,12 @@ cargo test -p agentdash-infrastructure session_repository -- --nocapture
 
 ## Phase 2. Fork Use Case
 
-- [ ] 实现 fork point resolver：支持 `event_seq` / `MessageRef` / checkpoint id。
-- [ ] 创建 child session meta。
-- [ ] 写入 `session_lineage` edge。
-- [ ] materialize child initial checkpoint。
-- [ ] 初始化 child projection head。
-- [ ] 写入 `session_branch_forked` platform event。
+- [x] 实现 fork point resolver：支持 `event_seq` / `MessageRef` / checkpoint id。
+- [x] 创建 child session meta。
+- [x] 写入 `session_lineage` edge。
+- [x] materialize child initial compaction checkpoint。
+- [x] 初始化 child projection head。
+- [x] 写入 `session_branch_forked` platform event。
 
 Validation:
 
@@ -42,11 +42,11 @@ cargo test -p agentdash-application session fork -- --nocapture
 
 ## Phase 3. Rollback Use Case
 
-- [ ] 实现 rollback target resolver。
-- [ ] 追加 rollback platform event。
-- [ ] 更新 `session_projection_heads.model_visible`。
-- [ ] 确保 active checkpoint 查询不会返回 rollback head 之后的 checkpoint。
-- [ ] 保持 UI event backlog 完整，不删除 `session_events`。
+- [x] 实现 rollback target resolver。
+- [x] 追加 rollback platform event。
+- [x] 更新 `session_projection_heads.model_visible`。
+- [x] 确保 active compaction / suffix 查询不会越过 rollback 后的 projection head。
+- [x] 保持 UI event backlog 完整，不删除 `session_events`。
 
 Validation:
 
@@ -56,10 +56,10 @@ cargo test -p agentdash-application session rollback continuation -- --nocapture
 
 ## Phase 4. Branch-aware Restore
 
-- [ ] 更新 continuation / executor restore 入口，统一通过 projection head 找 checkpoint。
-- [ ] 覆盖 fork child restore。
-- [ ] 覆盖 parent fork 后继续追加事件不影响 child restore。
-- [ ] 覆盖 rollback 后 restore。
+- [x] 更新 continuation / executor restore 入口，统一通过 projection head 找 active compaction。
+- [x] 覆盖 fork child restore。
+- [x] 覆盖 parent fork 后继续追加事件不影响 child restore。
+- [x] 覆盖 rollback 后 restore。
 
 Validation:
 
@@ -69,10 +69,10 @@ cargo test -p agentdash-application continuation -- --nocapture
 
 ## Phase 5. API And Frontend
 
-- [ ] 新增 branch / lineage API。
-- [ ] 前端 session list 改用 lineage grouping。
-- [ ] Session detail 增加 fork source / branch status 展示。
-- [ ] 增加前端测试。
+- [x] 新增 branch / lineage API。
+- [x] 前端 session list 改用 lineage grouping。
+- [x] Session detail 增加 fork source / branch status 展示。
+- [x] 增加前端测试。
 
 Validation:
 
@@ -83,11 +83,11 @@ pnpm typecheck
 
 ## Phase 6. Quality Gate
 
-- [ ] `cargo fmt`
-- [ ] Rust targeted tests。
-- [ ] PostgreSQL / SQLite migration verification。
-- [ ] 前端 targeted tests。
-- [ ] 用 `trellis-update-spec` 固化 session lineage / projection head 契约。
+- [x] `cargo fmt`
+- [x] Rust targeted tests。
+- [x] PostgreSQL / SQLite migration verification。
+- [x] 前端 targeted tests。
+- [x] 用 `trellis-update-spec` 固化 session lineage / projection head 契约。
 
 ## Risky Files
 

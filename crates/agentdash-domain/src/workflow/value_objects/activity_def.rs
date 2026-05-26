@@ -1,4 +1,4 @@
-﻿use schemars::JsonSchema;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -94,20 +94,21 @@ pub struct HumanApprovalExecutorSpec {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityCompletionPolicy {
-    OutputPorts { required_ports: Vec<String> },
+    OutputPorts {
+        required_ports: Vec<String>,
+    },
+    #[default]
     ExecutorTerminal,
-    HumanDecision { decision_port: String },
-    HookGate { hook_key: String },
+    HumanDecision {
+        decision_port: String,
+    },
+    HookGate {
+        hook_key: String,
+    },
     OpenEnded,
-}
-
-impl Default for ActivityCompletionPolicy {
-    fn default() -> Self {
-        Self::ExecutorTerminal
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
@@ -173,9 +174,10 @@ pub enum ActivityTransitionKind {
     Artifact,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransitionCondition {
+    #[default]
     Always,
     ArtifactFieldEquals {
         activity: String,
@@ -193,12 +195,6 @@ pub enum TransitionCondition {
         signal_key: String,
         value: Value,
     },
-}
-
-impl Default for TransitionCondition {
-    fn default() -> Self {
-        Self::Always
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]

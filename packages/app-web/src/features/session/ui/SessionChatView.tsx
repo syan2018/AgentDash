@@ -39,6 +39,7 @@ import {
 } from "../../../services/session";
 import type { SessionExecutionState } from "../../../types";
 import { SessionProjectionView } from "./SessionProjectionView";
+import { SessionLineageView } from "./SessionLineageView";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -348,6 +349,7 @@ export function SessionChatView({
   const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [showProjectionView, setShowProjectionView] = useState(false);
+  const [showLineageView, setShowLineageView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
@@ -399,6 +401,7 @@ export function SessionChatView({
 
   useEffect(() => {
     setShowProjectionView(false);
+    setShowLineageView(false);
   }, [sessionId]);
 
   // ─── 执行器配置 ──────────────────────────────────────
@@ -772,19 +775,39 @@ export function SessionChatView({
           )}
           <ContextUsageRing usage={tokenUsage} />
           {hasSession && sessionId && (
-            <button
-              type="button"
-              onClick={() => setShowProjectionView((value) => !value)}
-              className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-                showProjectionView
-                  ? "border-primary/30 bg-primary/10 text-primary"
-                  : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-              }`}
-            >
-              模型上下文
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setShowLineageView((value) => !value)}
+                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+                  showLineageView
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                分支
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowProjectionView((value) => !value)}
+                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+                  showProjectionView
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                模型上下文
+              </button>
+            </>
           )}
         </div>
+      )}
+
+      {showLineageView && sessionId && (
+        <SessionLineageView
+          sessionId={sessionId}
+          refreshKey={projectionRefreshKey}
+        />
       )}
 
       {showProjectionView && sessionId && (

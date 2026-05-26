@@ -2,6 +2,15 @@ import { api, type ApiHttpError } from "../api/client";
 import { requireStringField, requireNumberField } from "../api/mappers";
 import type { BackboneEnvelope } from "../generated/backbone-protocol";
 import type {
+  CreateSessionForkRequest,
+  RollbackSessionProjectionRequest,
+  SessionForkChildSessionResponse,
+  SessionForkResponse,
+  SessionLineageRecordResponse,
+  SessionLineageRelationKindDto,
+  SessionLineageStatusDto,
+  SessionLineageViewResponse,
+  SessionProjectionRollbackResponse,
   SessionProjectionMessageRefResponse,
   SessionProjectionSegmentProvenanceResponse,
   SessionProjectionSegmentViewResponse,
@@ -306,6 +315,131 @@ export async function fetchSessionContextProjection(
   return mapSessionProjectionView(raw);
 }
 
+function normalizeLineageRelationKind(value: unknown): SessionLineageRelationKindDto {
+  switch (value) {
+    case "fork":
+    case "companion":
+    case "spawned_agent":
+    case "rollback_branch":
+      return value;
+    default:
+      throw new Error(`未知的 session lineage relation_kind: ${String(value ?? "")}`);
+  }
+}
+
+function normalizeLineageStatus(value: unknown): SessionLineageStatusDto {
+  switch (value) {
+    case "open":
+    case "closed":
+    case "archived":
+      return value;
+    default:
+      throw new Error(`未知的 session lineage status: ${String(value ?? "")}`);
+  }
+}
+
+function mapLineageRecord(raw: unknown): SessionLineageRecordResponse {
+  const value = asRecordOrThrow(raw, "session lineage");
+  return {
+    child_session_id: requireStringField(value, "child_session_id"),
+    parent_session_id: requireStringField(value, "parent_session_id"),
+    relation_kind: normalizeLineageRelationKind(value.relation_kind),
+    fork_point_event_seq:
+      typeof value.fork_point_event_seq === "number" ? value.fork_point_event_seq : undefined,
+    fork_point_ref_json: value.fork_point_ref_json as SessionLineageRecordResponse["fork_point_ref_json"],
+    fork_point_compaction_id:
+      value.fork_point_compaction_id != null ? String(value.fork_point_compaction_id) : undefined,
+    status: normalizeLineageStatus(value.status),
+    created_at_ms: requireNumberField(value, "created_at_ms"),
+    updated_at_ms: requireNumberField(value, "updated_at_ms"),
+    metadata_json: value.metadata_json as SessionLineageRecordResponse["metadata_json"],
+  };
+}
+
+function mapForkChildSession(raw: unknown): SessionForkChildSessionResponse {
+  const value = asRecordOrThrow(raw, "fork child_session");
+  return {
+    id: requireStringField(value, "id"),
+    title: requireStringField(value, "title"),
+    created_at: requireNumberField(value, "created_at"),
+    updated_at: requireNumberField(value, "updated_at"),
+    last_event_seq: requireNumberField(value, "last_event_seq"),
+  };
+}
+
+function mapSessionForkResponse(raw: Record<string, unknown>): SessionForkResponse {
+  return {
+    parent_session_id: requireStringField(raw, "parent_session_id"),
+    child_session: mapForkChildSession(raw.child_session),
+    lineage: mapLineageRecord(raw.lineage),
+    child_initial_compaction_id: requireStringField(raw, "child_initial_compaction_id"),
+    projection_version: requireNumberField(raw, "projection_version"),
+    head_event_seq: requireNumberField(raw, "head_event_seq"),
+  };
+}
+
+function mapLineageView(raw: Record<string, unknown>): SessionLineageViewResponse {
+  const ancestors = Array.isArray(raw.ancestors) ? raw.ancestors : [];
+  const children = Array.isArray(raw.children) ? raw.children : [];
+  return {
+    session_id: requireStringField(raw, "session_id"),
+    lineage: raw.lineage == null ? undefined : mapLineageRecord(raw.lineage),
+    ancestors: ancestors.map(mapLineageRecord),
+    children: children.map(mapLineageRecord),
+  };
+}
+
+function mapProjectionRollbackResponse(raw: Record<string, unknown>): SessionProjectionRollbackResponse {
+  const event = mapPersistedSessionEvent(asRecordOrThrow(raw.event, "rollback event"));
+  return {
+    session_id: requireStringField(raw, "session_id"),
+    event: {
+      session_id: event.session_id,
+      event_seq: event.event_seq,
+      occurred_at_ms: event.occurred_at_ms,
+      committed_at_ms: event.committed_at_ms,
+      session_update_type: event.session_update_type,
+      turn_id: event.turn_id ?? undefined,
+      entry_index: event.entry_index ?? undefined,
+      tool_call_id: event.tool_call_id ?? undefined,
+      notification: event.notification,
+    },
+    head_event_seq: requireNumberField(raw, "head_event_seq"),
+    active_compaction_id:
+      raw.active_compaction_id != null ? String(raw.active_compaction_id) : undefined,
+    projection_version: requireNumberField(raw, "projection_version"),
+    updated_by_event_seq:
+      typeof raw.updated_by_event_seq === "number" ? raw.updated_by_event_seq : undefined,
+  };
+}
+
+export async function forkSession(
+  sessionId: string,
+  request: CreateSessionForkRequest = {},
+): Promise<SessionForkResponse> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/sessions/${encodeURIComponent(sessionId)}/fork`,
+    request,
+  );
+  return mapSessionForkResponse(raw);
+}
+
+export async function fetchSessionLineage(sessionId: string): Promise<SessionLineageViewResponse> {
+  const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(sessionId)}/lineage`);
+  return mapLineageView(raw);
+}
+
+export async function rollbackSessionProjection(
+  sessionId: string,
+  request: RollbackSessionProjectionRequest,
+): Promise<SessionProjectionRollbackResponse> {
+  const raw = await api.post<Record<string, unknown>>(
+    `/sessions/${encodeURIComponent(sessionId)}/projection/rollback`,
+    request,
+  );
+  return mapProjectionRollbackResponse(raw);
+}
+
 export async function fetchSessionBindings(id: string): Promise<SessionBindingOwner[]> {
   const raw = await api.get<Record<string, unknown>[]>(`/sessions/${encodeURIComponent(id)}/bindings`);
   return raw.map(mapSessionBindingOwner);
@@ -415,6 +549,11 @@ function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
   }
 }
 
+function normalizeParentRelationKind(value: unknown): ProjectSessionEntry["parent_relation_kind"] {
+  if (value == null) return null;
+  return normalizeLineageRelationKind(value);
+}
+
 function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEntry {
   return {
     session_id: requireStringField(raw, "session_id"),
@@ -429,6 +568,7 @@ function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEnt
     agent_key: raw.agent_key != null ? String(raw.agent_key) : null,
     agent_display_name: raw.agent_display_name != null ? String(raw.agent_display_name) : null,
     parent_session_id: raw.parent_session_id != null ? String(raw.parent_session_id) : null,
+    parent_relation_kind: normalizeParentRelationKind(raw.parent_relation_kind),
   };
 }
 

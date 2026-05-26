@@ -7,9 +7,9 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{
-    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionPersistence,
-    SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
@@ -38,6 +38,7 @@ pub(crate) struct SessionBootstrapInput {
 pub(crate) struct SessionBootstrapOutput {
     pub session_runtime_builder: SessionRuntimeBuilder,
     pub session_core: SessionCoreService,
+    pub session_branching: SessionBranchingService,
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
     pub session_control: SessionControlService,
@@ -123,6 +124,7 @@ pub(crate) async fn build_session_runtime(
     }
 
     let session_core = session_runtime_builder.core_service();
+    let session_branching = session_runtime_builder.branching_service();
     let session_eventing = session_runtime_builder.eventing_service();
     let session_runtime = session_runtime_builder.runtime_service();
     let session_control = session_runtime_builder.control_service();
@@ -159,6 +161,7 @@ pub(crate) async fn build_session_runtime(
     Ok(SessionBootstrapOutput {
         session_runtime_builder,
         session_core,
+        session_branching,
         session_eventing,
         session_runtime,
         session_control,

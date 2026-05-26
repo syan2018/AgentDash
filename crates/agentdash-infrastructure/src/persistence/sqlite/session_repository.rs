@@ -6,7 +6,8 @@ use agentdash_spi::session_persistence::{
     CompactionProjectionCommitResult, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
     SessionCompactionRecord, SessionCompactionStatus, SessionEventBacklog, SessionEventPage,
-    SessionMeta, SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionMeta,
+    SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
     TerminalEffectRecord, TerminalEffectStatus, TitleSource,
 };
 use agentdash_spi::session_persistence::{
@@ -187,6 +188,28 @@ impl SqliteSessionRepository {
 
             CREATE INDEX IF NOT EXISTS idx_session_projection_heads_active_compaction
                 ON session_projection_heads(session_id, active_compaction_id);
+
+            CREATE TABLE IF NOT EXISTS session_lineage (
+                child_session_id TEXT PRIMARY KEY,
+                parent_session_id TEXT NOT NULL,
+                relation_kind TEXT NOT NULL,
+                fork_point_event_seq INTEGER,
+                fork_point_ref_json TEXT NOT NULL DEFAULT '{}',
+                fork_point_compaction_id TEXT,
+                status TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                CHECK (child_session_id <> parent_session_id),
+                FOREIGN KEY (child_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (fork_point_compaction_id) REFERENCES session_compactions(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_lineage_parent_status_kind
+                ON session_lineage(parent_session_id, status, relation_kind, created_at_ms, child_session_id);
+            CREATE INDEX IF NOT EXISTS idx_session_lineage_fork_point
+                ON session_lineage(parent_session_id, fork_point_event_seq, fork_point_compaction_id);
             "#,
         )
         .execute(&self.pool)
@@ -521,6 +544,33 @@ impl SqliteSessionRepository {
         })
     }
 
+    fn lineage_from_row(row: &sqlx::sqlite::SqliteRow) -> io::Result<SessionLineageRecord> {
+        Ok(SessionLineageRecord {
+            child_session_id: row.get::<String, _>("child_session_id"),
+            parent_session_id: row.get::<String, _>("parent_session_id"),
+            relation_kind: parse_lineage_relation_kind(
+                row.get::<String, _>("relation_kind"),
+                "session_lineage.relation_kind",
+            )?,
+            fork_point_event_seq: parse_optional_non_negative_u64(
+                row.get::<Option<i64>, _>("fork_point_event_seq"),
+                "session_lineage.fork_point_event_seq",
+            )?,
+            fork_point_ref_json: parse_json_column(
+                row.get::<String, _>("fork_point_ref_json"),
+                "session_lineage.fork_point_ref_json",
+            )?,
+            fork_point_compaction_id: row.get::<Option<String>, _>("fork_point_compaction_id"),
+            status: parse_lineage_status(row.get::<String, _>("status"), "session_lineage.status")?,
+            created_at_ms: row.get::<i64, _>("created_at_ms"),
+            updated_at_ms: row.get::<i64, _>("updated_at_ms"),
+            metadata_json: parse_json_column(
+                row.get::<String, _>("metadata_json"),
+                "session_lineage.metadata_json",
+            )?,
+        })
+    }
+
     async fn update_runtime_commands_status(
         &self,
         command_ids: &[uuid::Uuid],
@@ -749,6 +799,14 @@ impl SessionPersistence for SqliteSessionRepository {
             .execute(&mut *tx)
             .await
             .map_err(sqlx_to_io)?;
+        sqlx::query(
+            "DELETE FROM session_lineage WHERE child_session_id = ? OR parent_session_id = ?",
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_io)?;
         sqlx::query("DELETE FROM session_projection_heads WHERE session_id = ?")
             .bind(session_id)
             .execute(&mut *tx)
@@ -1516,6 +1574,244 @@ impl SessionPersistence for SqliteSessionRepository {
             head,
         })
     }
+
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+        if record.child_session_id == record.parent_session_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "session lineage 不能指向自身",
+            ));
+        }
+        let cycle = sqlx::query_scalar::<_, i64>(
+            r#"
+            WITH RECURSIVE parents(session_id) AS (
+                SELECT ?
+                UNION ALL
+                SELECT session_lineage.parent_session_id
+                FROM session_lineage
+                JOIN parents ON session_lineage.child_session_id = parents.session_id
+                WHERE session_lineage.child_session_id <> ?
+            )
+            SELECT 1
+            FROM parents
+            WHERE session_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(&record.parent_session_id)
+        .bind(&record.child_session_id)
+        .bind(&record.child_session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        if cycle.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "session lineage 不能形成环",
+            ));
+        }
+        let fork_point_event_seq = encode_optional_u64_as_i64(
+            record.fork_point_event_seq,
+            "session_lineage.fork_point_event_seq",
+        )?;
+        let fork_point_ref_json = json_string(
+            &record.fork_point_ref_json,
+            "session_lineage.fork_point_ref_json",
+        )?;
+        let metadata_json = json_string(&record.metadata_json, "session_lineage.metadata_json")?;
+        sqlx::query(
+            r#"
+            INSERT INTO session_lineage (
+                child_session_id, parent_session_id, relation_kind,
+                fork_point_event_seq, fork_point_ref_json, fork_point_compaction_id,
+                status, created_at_ms, updated_at_ms, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(child_session_id) DO UPDATE SET
+                parent_session_id = excluded.parent_session_id,
+                relation_kind = excluded.relation_kind,
+                fork_point_event_seq = excluded.fork_point_event_seq,
+                fork_point_ref_json = excluded.fork_point_ref_json,
+                fork_point_compaction_id = excluded.fork_point_compaction_id,
+                status = excluded.status,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                metadata_json = excluded.metadata_json
+            "#,
+        )
+        .bind(&record.child_session_id)
+        .bind(&record.parent_session_id)
+        .bind(record.relation_kind.as_str())
+        .bind(fork_point_event_seq)
+        .bind(fork_point_ref_json)
+        .bind(&record.fork_point_compaction_id)
+        .bind(record.status.as_str())
+        .bind(record.created_at_ms)
+        .bind(record.updated_at_ms)
+        .bind(metadata_json)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        Ok(())
+    }
+
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>> {
+        let row = sqlx::query(
+            r#"
+            SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                   fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                   updated_at_ms, metadata_json
+            FROM session_lineage
+            WHERE child_session_id = ?
+            "#,
+        )
+        .bind(child_session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        row.as_ref().map(Self::lineage_from_row).transpose()
+    }
+
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let rows = sqlx::query(
+            r#"
+            SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                   fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                   updated_at_ms, metadata_json
+            FROM session_lineage
+            WHERE parent_session_id = ?
+              AND (? IS NULL OR relation_kind = ?)
+              AND (? IS NULL OR status = ?)
+            ORDER BY created_at_ms ASC, updated_at_ms ASC, child_session_id ASC
+            "#,
+        )
+        .bind(parent_session_id)
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::lineage_from_row).collect()
+    }
+
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let rows = sqlx::query(
+            r#"
+            WITH RECURSIVE lineage_path AS (
+                SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                       fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                       updated_at_ms, metadata_json, 0 AS depth
+                FROM session_lineage
+                WHERE child_session_id = ?
+                UNION ALL
+                SELECT parent.child_session_id, parent.parent_session_id, parent.relation_kind,
+                       parent.fork_point_event_seq, parent.fork_point_ref_json,
+                       parent.fork_point_compaction_id, parent.status, parent.created_at_ms,
+                       parent.updated_at_ms, parent.metadata_json, lineage_path.depth + 1
+                FROM session_lineage parent
+                JOIN lineage_path ON parent.child_session_id = lineage_path.parent_session_id
+            )
+            SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                   fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                   updated_at_ms, metadata_json
+            FROM lineage_path
+            ORDER BY depth ASC
+            "#,
+        )
+        .bind(child_session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::lineage_from_row).collect()
+    }
+
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let rows = sqlx::query(
+            r#"
+            WITH RECURSIVE lineage_tree AS (
+                SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                       fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                       updated_at_ms, metadata_json, 1 AS depth
+                FROM session_lineage
+                WHERE parent_session_id = ?
+                  AND (? IS NULL OR relation_kind = ?)
+                  AND (? IS NULL OR status = ?)
+                UNION ALL
+                SELECT child.child_session_id, child.parent_session_id, child.relation_kind,
+                       child.fork_point_event_seq, child.fork_point_ref_json,
+                       child.fork_point_compaction_id, child.status, child.created_at_ms,
+                       child.updated_at_ms, child.metadata_json, lineage_tree.depth + 1
+                FROM session_lineage child
+                JOIN lineage_tree ON child.parent_session_id = lineage_tree.child_session_id
+                WHERE (? IS NULL OR child.relation_kind = ?)
+                  AND (? IS NULL OR child.status = ?)
+            )
+            SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
+                   fork_point_ref_json, fork_point_compaction_id, status, created_at_ms,
+                   updated_at_ms, metadata_json
+            FROM lineage_tree
+            ORDER BY depth ASC, created_at_ms ASC, updated_at_ms ASC, child_session_id ASC
+            "#,
+        )
+        .bind(root_session_id)
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(relation_kind.map(SessionLineageRelationKind::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .bind(status.map(SessionLineageStatus::as_str))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        rows.iter().map(Self::lineage_from_row).collect()
+    }
+
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()> {
+        let result = sqlx::query(
+            r#"
+            UPDATE session_lineage
+            SET status = ?, updated_at_ms = ?
+            WHERE child_session_id = ?
+            "#,
+        )
+        .bind(status.as_str())
+        .bind(updated_at_ms)
+        .bind(child_session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+        if result.rows_affected() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session lineage child {child_session_id} 不存在"),
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn json_string<T: serde::Serialize>(value: &T, column: &str) -> io::Result<String> {
@@ -1783,6 +2079,19 @@ fn parse_runtime_command_status(value: String, field: &str) -> io::Result<Runtim
 
 fn parse_compaction_status(value: String, field: &str) -> io::Result<SessionCompactionStatus> {
     SessionCompactionStatus::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+}
+
+fn parse_lineage_relation_kind(
+    value: String,
+    field: &str,
+) -> io::Result<SessionLineageRelationKind> {
+    SessionLineageRelationKind::try_from(value.as_str())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+}
+
+fn parse_lineage_status(value: String, field: &str) -> io::Result<SessionLineageStatus> {
+    SessionLineageStatus::try_from(value.as_str())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
 }
 
@@ -2215,6 +2524,27 @@ mod tests {
         }
     }
 
+    fn lineage_record(
+        child: &str,
+        parent: &str,
+        relation_kind: SessionLineageRelationKind,
+        status: SessionLineageStatus,
+        created_at_ms: i64,
+    ) -> SessionLineageRecord {
+        SessionLineageRecord {
+            child_session_id: child.to_string(),
+            parent_session_id: parent.to_string(),
+            relation_kind,
+            fork_point_event_seq: Some(7),
+            fork_point_ref_json: serde_json::json!({ "turn_id": "turn-1", "entry_index": 0 }),
+            fork_point_compaction_id: None,
+            status,
+            created_at_ms,
+            updated_at_ms: created_at_ms,
+            metadata_json: serde_json::json!({}),
+        }
+    }
+
     #[tokio::test]
     async fn append_event_assigns_monotonic_event_seq() {
         let pool = SqlitePool::connect("sqlite::memory:")
@@ -2454,6 +2784,110 @@ mod tests {
         assert_eq!(head.projection_version, 1);
         assert_eq!(head.head_event_seq, result.event.event_seq);
         assert_eq!(head.updated_by_event_seq, Some(result.event.event_seq));
+    }
+
+    #[tokio::test]
+    async fn session_lineage_queries_are_stable_and_filterable() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSessionRepository::new(pool);
+        repo.initialize().await.expect("应能初始化 session 表");
+        for id in ["root", "child-a", "child-b", "grand"] {
+            repo.create_session(&session_meta(id))
+                .await
+                .expect("应能创建 session");
+        }
+
+        repo.upsert_session_lineage(lineage_record(
+            "child-a",
+            "root",
+            SessionLineageRelationKind::Fork,
+            SessionLineageStatus::Open,
+            20,
+        ))
+        .await
+        .expect("应能写入 fork edge");
+        repo.upsert_session_lineage(lineage_record(
+            "child-b",
+            "root",
+            SessionLineageRelationKind::Companion,
+            SessionLineageStatus::Open,
+            10,
+        ))
+        .await
+        .expect("应能写入 companion edge");
+        repo.upsert_session_lineage(lineage_record(
+            "grand",
+            "child-b",
+            SessionLineageRelationKind::Fork,
+            SessionLineageStatus::Open,
+            30,
+        ))
+        .await
+        .expect("应能写入 grand edge");
+
+        let children = repo
+            .list_session_children("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 direct children");
+        assert_eq!(
+            children
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a"]
+        );
+
+        let fork_children = repo
+            .list_session_children(
+                "root",
+                Some(SessionLineageRelationKind::Fork),
+                Some(SessionLineageStatus::Open),
+            )
+            .await
+            .expect("应能按 relation 查询 children");
+        assert_eq!(fork_children.len(), 1);
+        assert_eq!(fork_children[0].child_session_id, "child-a");
+
+        let ancestors = repo
+            .list_session_ancestors("grand")
+            .await
+            .expect("应能查询 ancestors");
+        assert_eq!(
+            ancestors
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["grand", "child-b"]
+        );
+
+        let descendants = repo
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 descendants");
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a", "grand"]
+        );
+
+        repo.set_session_lineage_status("child-b", SessionLineageStatus::Closed, 40)
+            .await
+            .expect("应能关闭 lineage edge");
+        let open_descendants = repo
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 open descendants");
+        assert_eq!(
+            open_descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-a"]
+        );
     }
 
     #[tokio::test]

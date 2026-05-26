@@ -8,7 +8,7 @@
  *   - 第 2 行：agent 名 · Story/Task 归属（含"打开 Story"小按钮）· 状态标签
  *   - hover 才出现右侧操作区（跳转按钮）
  * - Story 分组带折叠头；折叠状态写入 localStorage（见 session-grouping.ts）
- * - Companion 默认折叠，父行右侧显示 `+N` 徽标，点击展开/收起
+ * - Parent relation children 默认折叠，父行右侧显示 `+N` 徽标，点击展开/收起
  *   - 折叠状态本地 useState，不持久化
  *   - 徽标点击 stopPropagation，避免触发行的 session 切换
  */
@@ -23,6 +23,7 @@ import {
   writeStoryCollapsed,
   type SessionGroupNode,
 } from "./session-grouping";
+import { sessionParentRelationLabel } from "./session-relations";
 import {
   applySessionFilters,
   type SessionStatusFilter,
@@ -90,16 +91,16 @@ interface SessionRowProps {
   session: ProjectSessionEntry;
   isSelected: boolean;
   onSelectSession: (sessionId: string) => void;
-  /** 缩进层级（0 = story 下的 task；1 = companion；以此类推）。用于左侧 padding。 */
+  /** 缩进层级（0 = story 下的 task；1 = relation child；以此类推）。用于左侧 padding。 */
   indent: number;
-  /** 是否作为 companion 展示（决定前缀箭头与次级视觉权重） */
-  isCompanion?: boolean;
-  /** companion 数量：>0 时在标题右侧显示 `+N` 徽标 */
-  companionCount?: number;
-  /** companion 是否已展开（仅当 companionCount>0 时生效） */
-  companionsExpanded?: boolean;
-  /** 切换 companion 展开状态 */
-  onToggleCompanions?: () => void;
+  /** 当前行是否作为 parent relation child 展示 */
+  parentRelationKind?: ProjectSessionEntry["parent_relation_kind"];
+  /** 关联子会话数量：>0 时在标题右侧显示折叠按钮 */
+  linkedChildCount?: number;
+  /** 关联子会话是否已展开 */
+  linkedChildrenExpanded?: boolean;
+  /** 切换关联子会话展开状态 */
+  onToggleLinkedChildren?: () => void;
 }
 
 function SessionRow({
@@ -107,10 +108,10 @@ function SessionRow({
   isSelected,
   onSelectSession,
   indent,
-  isCompanion = false,
-  companionCount = 0,
-  companionsExpanded = false,
-  onToggleCompanions,
+  parentRelationKind = null,
+  linkedChildCount = 0,
+  linkedChildrenExpanded = false,
+  onToggleLinkedChildren,
 }: SessionRowProps) {
   const navigate = useNavigate();
 
@@ -120,6 +121,9 @@ function SessionRow({
   const agentText = getAgentLabel(session);
   const timeText = formatRelativeTime(session.last_activity);
   const ownerLabel = getOwnerBadgeLabel(session);
+  const relationLabel = parentRelationKind
+    ? sessionParentRelationLabel(parentRelationKind)
+    : null;
 
   const handleClick = () => onSelectSession(session.session_id);
 
@@ -148,9 +152,12 @@ function SessionRow({
     >
       {/* ── 第 1 行：圆点 + 标题 + 时间 + hover 操作区 ── */}
       <div className="flex items-center gap-2">
-        {/* 前缀：companion 箭头 */}
-        {isCompanion && (
-          <span className="shrink-0 text-[11px] text-primary/70">↳</span>
+        {/* 前缀：parent relation */}
+        {relationLabel && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-primary/70">
+            <span aria-hidden>↳</span>
+            <span>{relationLabel}</span>
+          </span>
         )}
 
         {/* 状态圆点 */}
@@ -159,7 +166,7 @@ function SessionRow({
         {/* 标题 */}
         <span
           className={`min-w-0 flex-1 truncate ${
-            isCompanion ? "text-xs text-muted-foreground" : "text-sm text-foreground"
+            relationLabel ? "text-xs text-muted-foreground" : "text-sm text-foreground"
           } ${isSelected ? "font-medium" : ""}`}
         >
           {session.session_title ?? "无标题会话"}
@@ -188,7 +195,7 @@ function SessionRow({
         </div>
       </div>
 
-      {/* ── 第 2 行：agent · 归属 · 状态 · companion 折叠 ── */}
+      {/* ── 第 2 行：agent · 归属 · 状态 · relation 折叠 ── */}
       <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
         <span
           className={`min-w-0 max-w-[55%] shrink-0 truncate ${
@@ -208,25 +215,25 @@ function SessionRow({
         )}
         {!ownerLabel && <span className="min-w-0 flex-1" />}
 
-        {/* Companion 折叠按钮（状态 pill 之前，灰色低调） */}
-        {companionCount > 0 && onToggleCompanions && (
+        {/* Relation child 折叠按钮（状态 pill 之前，灰色低调） */}
+        {linkedChildCount > 0 && onToggleLinkedChildren && (
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onToggleCompanions();
+              onToggleLinkedChildren();
             }}
             className="flex shrink-0 items-center gap-1 rounded-[8px] border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             title={
-              companionsExpanded
-                ? `折叠 ${companionCount} 个 companion 子会话`
-                : `展开 ${companionCount} 个 companion 子会话`
+              linkedChildrenExpanded
+                ? `折叠 ${linkedChildCount} 个关联子会话`
+                : `展开 ${linkedChildCount} 个关联子会话`
             }
-            aria-expanded={companionsExpanded}
+            aria-expanded={linkedChildrenExpanded}
             aria-label={
-              companionsExpanded
-                ? `折叠 ${companionCount} 个 companion`
-                : `展开 ${companionCount} 个 companion`
+              linkedChildrenExpanded
+                ? `折叠 ${linkedChildCount} 个关联子会话`
+                : `展开 ${linkedChildCount} 个关联子会话`
             }
           >
             <svg
@@ -240,12 +247,12 @@ function SessionRow({
               strokeLinecap="round"
               strokeLinejoin="round"
               aria-hidden
-              className={`transition-transform ${companionsExpanded ? "rotate-90" : ""}`}
+              className={`transition-transform ${linkedChildrenExpanded ? "rotate-90" : ""}`}
             >
               <path d="m9 18 6-6-6-6" />
             </svg>
             <span className="leading-none">
-              {companionsExpanded ? "折叠" : "展开"} {companionCount} 个 companion
+              {linkedChildrenExpanded ? "折叠" : "展开"} {linkedChildCount} 个关联
             </span>
           </button>
         )}
@@ -260,16 +267,16 @@ function SessionRow({
   );
 }
 
-// ─── SessionSubtree：递归渲染 task + companions（含折叠） ─────────────
+// ─── SessionSubtree：递归渲染 task + relation children（含折叠） ─────────────
 
 interface SessionSubtreeProps {
   node: SessionGroupNode;
   selectedSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
-  /** 本节点自身行的 indent（companions 会 +1） */
+  /** 本节点自身行的 indent（relation children 会 +1） */
   indent: number;
-  /** 本节点自身是否以 companion 形式渲染（↳ 前缀） */
-  asCompanion?: boolean;
+  /** 本节点自身是否以 parent relation child 形式渲染 */
+  parentRelationKind?: ProjectSessionEntry["parent_relation_kind"];
 }
 
 function SessionSubtree({
@@ -277,11 +284,11 @@ function SessionSubtree({
   selectedSessionId,
   onSelectSession,
   indent,
-  asCompanion = false,
+  parentRelationKind = null,
 }: SessionSubtreeProps) {
-  // Companion 折叠：默认收起；本地 useState，不持久化
-  const [companionsExpanded, setCompanionsExpanded] = useState(false);
-  const companionCount = node.companions.length;
+  // Relation child 折叠：默认收起；本地 useState，不持久化
+  const [linkedChildrenExpanded, setLinkedChildrenExpanded] = useState(false);
+  const linkedChildCount = node.linkedChildren.length;
 
   return (
     <>
@@ -290,14 +297,14 @@ function SessionSubtree({
         isSelected={selectedSessionId === node.session.session_id}
         onSelectSession={onSelectSession}
         indent={indent}
-        isCompanion={asCompanion}
-        companionCount={companionCount}
-        companionsExpanded={companionsExpanded}
-        onToggleCompanions={
-          companionCount > 0 ? () => setCompanionsExpanded((v) => !v) : undefined
+        parentRelationKind={parentRelationKind}
+        linkedChildCount={linkedChildCount}
+        linkedChildrenExpanded={linkedChildrenExpanded}
+        onToggleLinkedChildren={
+          linkedChildCount > 0 ? () => setLinkedChildrenExpanded((v) => !v) : undefined
         }
       />
-      {/* Story 的 child task（不参与 companion 折叠） */}
+      {/* Story 的 child task（不参与 relation child 折叠） */}
       {node.children.map((child) => (
         <SessionSubtree
           key={child.session.session_id}
@@ -307,16 +314,16 @@ function SessionSubtree({
           indent={indent + 1}
         />
       ))}
-      {/* Companion 行：受折叠控制 */}
-      {companionsExpanded &&
-        node.companions.map((companion) => (
+      {/* Parent relation 行：受折叠控制 */}
+      {linkedChildrenExpanded &&
+        node.linkedChildren.map((child) => (
           <SessionRow
-            key={companion.session_id}
-            session={companion}
-            isSelected={selectedSessionId === companion.session_id}
+            key={child.session.session_id}
+            session={child.session}
+            isSelected={selectedSessionId === child.session.session_id}
             onSelectSession={onSelectSession}
             indent={indent + 1}
-            isCompanion
+            parentRelationKind={child.relation_kind}
           />
         ))}
     </>
@@ -387,10 +394,10 @@ interface StoryGroupProps {
 }
 
 function countDescendants(node: SessionGroupNode): number {
-  // Story 行自身 + children (task) + 各层 companions
-  let count = 1 + node.companions.length;
+  // Story 行自身 + children (task) + 各层 relation children
+  let count = 1 + node.linkedChildren.length;
   for (const child of node.children) {
-    count += 1 + child.companions.length;
+    count += 1 + child.linkedChildren.length;
   }
   return count;
 }
@@ -416,9 +423,9 @@ function StoryGroup({ node, projectId, selectedSessionId, onSelectSession }: Sto
 
   const descendantCount = countDescendants(node);
 
-  // Story 自身的 companion 折叠状态（同样本地 useState）
-  const [storyCompanionsExpanded, setStoryCompanionsExpanded] = useState(false);
-  const storyCompanionCount = node.companions.length;
+  // Story 自身的 relation child 折叠状态（同样本地 useState）
+  const [storyLinkedChildrenExpanded, setStoryLinkedChildrenExpanded] = useState(false);
+  const storyLinkedChildCount = node.linkedChildren.length;
 
   return (
     <div>
@@ -436,27 +443,27 @@ function StoryGroup({ node, projectId, selectedSessionId, onSelectSession }: Sto
             isSelected={selectedSessionId === node.session.session_id}
             onSelectSession={onSelectSession}
             indent={0}
-            companionCount={storyCompanionCount}
-            companionsExpanded={storyCompanionsExpanded}
-            onToggleCompanions={
-              storyCompanionCount > 0
-                ? () => setStoryCompanionsExpanded((v) => !v)
+            linkedChildCount={storyLinkedChildCount}
+            linkedChildrenExpanded={storyLinkedChildrenExpanded}
+            onToggleLinkedChildren={
+              storyLinkedChildCount > 0
+                ? () => setStoryLinkedChildrenExpanded((v) => !v)
                 : undefined
             }
           />
-          {/* Story 自己的 companions：受折叠控制 */}
-          {storyCompanionsExpanded &&
-            node.companions.map((companion) => (
+          {/* Story 自己的 relation children：受折叠控制 */}
+          {storyLinkedChildrenExpanded &&
+            node.linkedChildren.map((child) => (
               <SessionRow
-                key={companion.session_id}
-                session={companion}
-                isSelected={selectedSessionId === companion.session_id}
+                key={child.session.session_id}
+                session={child.session}
+                isSelected={selectedSessionId === child.session.session_id}
                 onSelectSession={onSelectSession}
                 indent={1}
-                isCompanion
+                parentRelationKind={child.relation_kind}
               />
             ))}
-          {/* Story 下的 Task（indent=1） + task 自己的 companions (indent=2) */}
+          {/* Story 下的 Task（indent=1） + task 自己的 relation children (indent=2) */}
           {node.children.map((child) => (
             <SessionSubtree
               key={child.session.session_id}
@@ -714,7 +721,7 @@ export function ActiveSessionList({
                 />
               );
             }
-            // orphan / project：根级 line-row + companions
+            // orphan / project：根级 line-row + relation children
             return (
               <SessionSubtree
                 key={root.session.session_id}

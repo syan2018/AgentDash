@@ -30,6 +30,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "session_bindings",
     "session_compactions",
     "session_events",
+    "session_lineage",
     "session_projection_heads",
     "session_projection_segments",
     "session_runtime_commands",

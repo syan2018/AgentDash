@@ -14,7 +14,7 @@
 
 ```text
 session_events
-  -> session_checkpoints
+  -> session_compactions / session_projection_segments
   -> session_lineage / session_projection_heads
 ```
 
@@ -22,21 +22,21 @@ session_events
 
 不可变审计日志，记录 Backbone / Platform feed。fork、rollback、branch status change 都应写入结构化 platform event，便于 UI 和审计追踪。
 
-### session_checkpoints
+### session_compactions
 
-模型可恢复快照。branch 场景下 checkpoint 至少需要：
+模型可恢复 checkpoint 表面。父任务已经把结构性 compact 固化为 `session_compactions` 与 `session_projection_segments`，branch 场景继续复用这套形态：
 
-- `checkpoint_id`
+- `compaction_id`
 - `session_id`
-- `created_event_seq`
-- `covered_until_event_seq`
-- `covered_until_ref`
-- `base_checkpoint_id`
-- `lineage_node_id`
+- `source_start_event_seq`
+- `source_end_event_seq`
+- `first_kept_event_seq`
+- `base_compaction_id`
+- `branch_id`
 - `status`
 - `replacement_projection_json`
 
-fork child 的 initial checkpoint 可以把 parent fork projection 固化到 child 自己名下。这样 child restore 不依赖 parent 后续 retention。
+fork child 的 initial compaction checkpoint 可以把 parent fork projection 固化到 child 自己名下。这样 child restore 不依赖 parent 后续 retention。
 
 ### session_lineage
 
@@ -48,7 +48,7 @@ parent_session_id
 relation_kind
 fork_point_event_seq
 fork_point_ref
-fork_point_checkpoint_id
+fork_point_compaction_id
 status
 created_at_ms
 metadata_json
@@ -68,7 +68,7 @@ metadata_json
 session_id
 projection_kind
 head_event_seq
-active_checkpoint_id
+active_compaction_id
 updated_by_event_seq
 updated_at_ms
 ```
@@ -81,7 +81,7 @@ updated_at_ms
 resolve parent active projection at fork point
   -> create child session meta
   -> insert session_lineage edge
-  -> materialize child initial checkpoint
+  -> materialize child initial compaction checkpoint
   -> initialize child projection head
   -> emit branch_forked platform event
 ```
@@ -89,7 +89,7 @@ resolve parent active projection at fork point
 关键约束：
 
 - fork point 必须稳定引用 parent 事件边界。
-- child initial checkpoint 写入成功前，不应返回 fork 成功。
+- child initial compaction checkpoint 写入成功前，不应返回 fork 成功。
 - child session 可以继续使用自己的 `session_events` 追加 suffix。
 - parent 后续事件不会改变 child initial checkpoint。
 
@@ -99,28 +99,28 @@ resolve parent active projection at fork point
 validate rollback target within current session projection
   -> append rollback platform event
   -> update session_projection_heads.model_visible
-  -> mark skipped checkpoints inactive or make query exclude them by head
+  -> move model-visible projection head to the rollback target
   -> emit branch_rolled_back platform event
 ```
 
 rollback 不删除事件。查询 active checkpoint 时必须同时满足：
 
-- checkpoint `session_id` 匹配；
-- checkpoint `status` 有效；
-- checkpoint `created_event_seq <= projection_head.head_event_seq`；
-- checkpoint 不在被 rollback 排除的 projection 段之后。
+- compaction `session_id` 匹配；
+- compaction `status` 有效；
+- compaction source range 不越过 `projection_head.head_event_seq`；
+- suffix replay 只读取 projection head 允许的事件边界。
 
 ## Restore Flow
 
 ```text
 load projection head
-  -> find latest valid checkpoint before head
-  -> load replacement_projection_json
-  -> replay session_events suffix after checkpoint until head
+  -> load active compaction and projection segments
+  -> build replacement projection entries
+  -> replay session_events suffix after first_kept/source_end until head
   -> ProjectedTranscript
 ```
 
-fork child restore 如果存在 child initial checkpoint，直接从 child checkpoint 开始。如果没有 materialized checkpoint，则通过 `session_lineage.fork_point_*` 读取 parent projection，但这是更弱的 fallback shape，初版不推荐作为主路径。
+fork child restore 直接从 child initial compaction checkpoint 开始。`session_lineage.fork_point_*` 负责解释来源和支持审计；模型恢复不需要重新依赖 parent 的 live projection。
 
 ## API Shape
 
@@ -153,8 +153,8 @@ Backbone / Platform event 可新增：
 项目仍在预研期，直接创建目标 schema。PostgreSQL 和 SQLite 需要同步：
 
 - `session_lineage`
-- `session_projection_heads`
-- 如果父任务尚未创建，则本任务依赖或补齐 `session_checkpoints`
+- fork / rollback 相关 platform events
+- child initial compaction metadata 与 projection segment 类型约定
 
 ## Trade-offs
 

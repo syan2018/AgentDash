@@ -407,7 +407,7 @@ where
                 AgentSessionPolicy::ContinueRoot => {
                     self.start_continue_root(
                         definition,
-                        &activity,
+                        activity,
                         spec.workflow_key.as_str(),
                         state,
                         claim,

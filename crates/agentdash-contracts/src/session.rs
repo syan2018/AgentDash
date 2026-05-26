@@ -1,12 +1,15 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ts_rs::TS;
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentInputMessage, AgentMessage, ProjectionSourceRange,
+    AgentContextEnvelope, AgentInputMessage, AgentMessage, MessageRef, ProjectionSourceRange,
 };
-use agentdash_spi::session_persistence::PersistedSessionEvent;
+use agentdash_spi::session_persistence::{
+    PersistedSessionEvent, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+};
 
 const PROJECTION_PREVIEW_MAX_CHARS: usize = 360;
 
@@ -70,7 +73,7 @@ pub enum SessionNdjsonEnvelope {
     },
     Event {
         #[serde(flatten)]
-        event: SessionEventResponse,
+        event: Box<SessionEventResponse>,
     },
     Heartbeat {
         #[ts(type = "number")]
@@ -85,7 +88,7 @@ impl SessionNdjsonEnvelope {
 
     pub fn event(event: PersistedSessionEvent) -> Self {
         Self::Event {
-            event: event.into(),
+            event: Box::new(event.into()),
         }
     }
 
@@ -190,6 +193,197 @@ pub struct SessionProjectionViewResponse {
     #[ts(type = "number")]
     pub message_count: u64,
     pub segments: Vec<SessionProjectionSegmentViewResponse>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLineageRelationKindDto {
+    Fork,
+    Companion,
+    SpawnedAgent,
+    RollbackBranch,
+}
+
+impl From<SessionLineageRelationKind> for SessionLineageRelationKindDto {
+    fn from(value: SessionLineageRelationKind) -> Self {
+        match value {
+            SessionLineageRelationKind::Fork => Self::Fork,
+            SessionLineageRelationKind::Companion => Self::Companion,
+            SessionLineageRelationKind::SpawnedAgent => Self::SpawnedAgent,
+            SessionLineageRelationKind::RollbackBranch => Self::RollbackBranch,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLineageStatusDto {
+    Open,
+    Closed,
+    Archived,
+}
+
+impl From<SessionLineageStatus> for SessionLineageStatusDto {
+    fn from(value: SessionLineageStatus) -> Self {
+        match value {
+            SessionLineageStatus::Open => Self::Open,
+            SessionLineageStatus::Closed => Self::Closed,
+            SessionLineageStatus::Archived => Self::Archived,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionMessageRefDto {
+    pub turn_id: String,
+    pub entry_index: u32,
+}
+
+impl From<MessageRef> for SessionMessageRefDto {
+    fn from(value: MessageRef) -> Self {
+        Self {
+            turn_id: value.turn_id,
+            entry_index: value.entry_index,
+        }
+    }
+}
+
+impl From<SessionMessageRefDto> for MessageRef {
+    fn from(value: SessionMessageRefDto) -> Self {
+        Self {
+            turn_id: value.turn_id,
+            entry_index: value.entry_index,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct CreateSessionForkRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+    #[serde(default)]
+    #[ts(optional, type = "number")]
+    pub fork_point_event_seq: Option<u64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub fork_point_ref: Option<SessionMessageRefDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub fork_point_compaction_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub relation_kind: Option<SessionLineageRelationKindDto>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub metadata_json: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RollbackSessionProjectionRequest {
+    #[ts(type = "number")]
+    pub target_event_seq: u64,
+    #[serde(default)]
+    #[ts(optional)]
+    pub active_compaction_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionLineageRecordResponse {
+    pub child_session_id: String,
+    pub parent_session_id: String,
+    pub relation_kind: SessionLineageRelationKindDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub fork_point_event_seq: Option<u64>,
+    pub fork_point_ref_json: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork_point_compaction_id: Option<String>,
+    pub status: SessionLineageStatusDto,
+    #[ts(type = "number")]
+    pub created_at_ms: i64,
+    #[ts(type = "number")]
+    pub updated_at_ms: i64,
+    pub metadata_json: Value,
+}
+
+impl From<SessionLineageRecord> for SessionLineageRecordResponse {
+    fn from(value: SessionLineageRecord) -> Self {
+        Self {
+            child_session_id: value.child_session_id,
+            parent_session_id: value.parent_session_id,
+            relation_kind: value.relation_kind.into(),
+            fork_point_event_seq: value.fork_point_event_seq,
+            fork_point_ref_json: value.fork_point_ref_json,
+            fork_point_compaction_id: value.fork_point_compaction_id,
+            status: value.status.into(),
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            metadata_json: value.metadata_json,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionForkChildSessionResponse {
+    pub id: String,
+    pub title: String,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    #[ts(type = "number")]
+    pub last_event_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionForkResponse {
+    pub parent_session_id: String,
+    pub child_session: SessionForkChildSessionResponse,
+    pub lineage: SessionLineageRecordResponse,
+    pub child_initial_compaction_id: String,
+    #[ts(type = "number")]
+    pub projection_version: u64,
+    #[ts(type = "number")]
+    pub head_event_seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionLineageViewResponse {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lineage: Option<SessionLineageRecordResponse>,
+    pub ancestors: Vec<SessionLineageRecordResponse>,
+    pub children: Vec<SessionLineageRecordResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionRollbackResponse {
+    pub session_id: String,
+    pub event: SessionEventResponse,
+    #[ts(type = "number")]
+    pub head_event_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_compaction_id: Option<String>,
+    #[ts(type = "number")]
+    pub projection_version: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub updated_by_event_seq: Option<u64>,
 }
 
 impl From<AgentContextEnvelope> for SessionProjectionViewResponse {

@@ -78,6 +78,8 @@ Frontend type entrypoints re-export generated contracts directly when the wire s
 
 Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service mappers may validate `unknown` payloads, but must not redefine this projection shape outside generated session contracts.
 
+Session branch DTOs also live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. Frontend service code consumes the generated relation/status unions and keeps session tree grouping keyed by backend-provided `parent_session_id` / `parent_relation_kind`.
+
 ## Local Decisions
 
 - Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.

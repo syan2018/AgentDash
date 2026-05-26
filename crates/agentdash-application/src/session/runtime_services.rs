@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
+use super::branching::SessionBranchingService;
 use super::core::SessionCoreService;
 use super::eventing::SessionEventingService;
 use super::hub::SessionRuntimeInner;
@@ -13,6 +14,7 @@ use super::runtime_control::SessionRuntimeService;
 #[derive(Clone)]
 pub struct SessionRuntimeServices {
     pub core: SessionCoreService,
+    pub branching: SessionBranchingService,
     pub eventing: SessionEventingService,
     pub runtime: SessionRuntimeService,
     pub launch: SessionLaunchService,
@@ -35,6 +37,7 @@ impl SessionRuntimeServices {
     pub(crate) fn from_inner(inner: &SessionRuntimeInner) -> Self {
         Self {
             core: inner.core_service(),
+            branching: inner.branching_service(),
             eventing: inner.eventing_service(),
             runtime: inner.runtime_service(),
             launch: inner.launch_service(),

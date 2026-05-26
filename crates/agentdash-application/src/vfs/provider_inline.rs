@@ -258,11 +258,11 @@ impl MountProvider for InlineFsMountProvider {
                     continue;
                 }
                 let start = idx.saturating_sub(before);
-                for ctx_idx in start..idx {
+                for (ctx_idx, ctx_line) in lines.iter().enumerate().take(idx).skip(start) {
                     matches.push(SearchMatch {
                         path: file_path.clone(),
                         line: Some((ctx_idx + 1) as u32),
-                        content: lines[ctx_idx].trim().to_string(),
+                        content: ctx_line.trim().to_string(),
                     });
                 }
                 matches.push(SearchMatch {
@@ -271,11 +271,11 @@ impl MountProvider for InlineFsMountProvider {
                     content: line.trim().to_string(),
                 });
                 let end = (idx + 1 + after).min(lines.len());
-                for ctx_idx in (idx + 1)..end {
+                for (ctx_idx, ctx_line) in lines.iter().enumerate().take(end).skip(idx + 1) {
                     matches.push(SearchMatch {
                         path: file_path.clone(),
                         line: Some((ctx_idx + 1) as u32),
-                        content: lines[ctx_idx].trim().to_string(),
+                        content: ctx_line.trim().to_string(),
                     });
                 }
                 if matches.len() >= max_results {
@@ -656,15 +656,13 @@ mod tests {
     async fn search_truncated_when_max_results_reached() {
         let owner_id = Uuid::new_v4();
         let repo = Arc::new(MemoryInlineFileRepo::default());
-        repo.upsert_files(&[
-            InlineFile::new_text(
-                InlineFileOwnerKind::Project,
-                owner_id,
-                "brief",
-                "a.md",
-                "needle\nneedle\nneedle\n",
-            ),
-        ])
+        repo.upsert_files(&[InlineFile::new_text(
+            InlineFileOwnerKind::Project,
+            owner_id,
+            "brief",
+            "a.md",
+            "needle\nneedle\nneedle\n",
+        )])
         .await
         .expect("seed");
         let provider = InlineFsMountProvider::new(repo);

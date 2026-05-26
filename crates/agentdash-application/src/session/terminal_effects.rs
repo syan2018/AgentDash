@@ -375,7 +375,7 @@ impl SessionTerminalEffectDispatcher {
                         .mark_terminal_effect_failed(item.record.id, error.clone())
                         .await?;
                 }
-                Err(io::Error::new(io::ErrorKind::Other, error))
+                Err(io::Error::other(error))
             }
         }
     }

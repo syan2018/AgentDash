@@ -179,7 +179,7 @@ fn skill_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
             let files = template
                 .bundle
                 .files
-                .into_iter()
+                .iter()
                 .map(|file| SkillTemplateFilePayload {
                     path: file.relative_path.to_string(),
                     content: file.content.to_string(),

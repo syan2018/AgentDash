@@ -17,9 +17,9 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
-    SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
@@ -36,6 +36,7 @@ const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub session_core: SessionCoreService,
+    pub session_branching: SessionBranchingService,
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
     pub session_control: SessionControlService,
@@ -175,6 +176,7 @@ impl AppState {
         .await?;
         let session_runtime_builder = session_bootstrap.session_runtime_builder;
         let session_core = session_bootstrap.session_core;
+        let session_branching = session_bootstrap.session_branching;
         let session_eventing = session_bootstrap.session_eventing;
         let session_runtime = session_bootstrap.session_runtime;
         let session_control = session_bootstrap.session_control;
@@ -266,6 +268,7 @@ impl AppState {
             repos,
             services: ServiceSet {
                 session_core,
+                session_branching,
                 session_eventing,
                 session_runtime,
                 session_control,

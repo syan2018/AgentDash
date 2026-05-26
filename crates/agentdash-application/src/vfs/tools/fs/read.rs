@@ -31,10 +31,10 @@ const MAX_LINES: usize = 5000;
 const DEDUP_CAPACITY: usize = 64;
 
 type DedupKey = (
-    String,         /* mount_id */
-    String,         /* path */
-    Option<usize>,  /* offset, 1-based 入参（None = unset） */
-    Option<usize>,  /* limit */
+    String,        /* mount_id */
+    String,        /* path */
+    Option<usize>, /* offset, 1-based 入参（None = unset） */
+    Option<usize>, /* limit */
 );
 
 #[derive(Clone)]
@@ -480,9 +480,7 @@ mod fs_read_tests {
                 .get(path)
                 .ok_or_else(|| MountError::NotFound(path.to_string()))?;
             let text = file.text.as_ref().ok_or_else(|| {
-                MountError::NotSupported(format!(
-                    "binary file cannot be read as text: {path}"
-                ))
+                MountError::NotSupported(format!("binary file cannot be read as text: {path}"))
             })?;
             let mut result = ReadResult::new(path, text.clone());
             if let Some(token) = file.token.lock().unwrap().clone() {
@@ -502,9 +500,7 @@ mod fs_read_tests {
                 .get(path)
                 .ok_or_else(|| MountError::NotFound(path.to_string()))?;
             let (bytes, mime) = file.binary.as_ref().ok_or_else(|| {
-                MountError::NotSupported(format!(
-                    "text file cannot be read as binary: {path}"
-                ))
+                MountError::NotSupported(format!("text file cannot be read as binary: {path}"))
             })?;
             Ok(BinaryReadResult::new(path, bytes.clone(), mime)
                 .with_attributes(attrs("binary", mime)))
@@ -543,7 +539,11 @@ mod fs_read_tests {
             let entries = files
                 .iter()
                 .map(|(path, file)| {
-                    let kind = if file.binary.is_some() { "binary" } else { "text" };
+                    let kind = if file.binary.is_some() {
+                        "binary"
+                    } else {
+                        "text"
+                    };
                     let mime = file
                         .binary
                         .as_ref()
@@ -583,7 +583,11 @@ mod fs_read_tests {
             let file = files
                 .get(path)
                 .ok_or_else(|| MountError::NotFound(path.to_string()))?;
-            let kind = if file.binary.is_some() { "binary" } else { "text" };
+            let kind = if file.binary.is_some() {
+                "binary"
+            } else {
+                "text"
+            };
             let mime = file
                 .binary
                 .as_ref()
@@ -852,7 +856,10 @@ mod fs_read_tests {
             Err(AgentToolError::ExecutionFailed(msg)) => {
                 assert!(msg.contains("File not found"));
                 // 候选列表里至少包含 note.md（最短编辑距离）
-                assert!(msg.contains("note.md"), "msg should include candidate, got: {msg}");
+                assert!(
+                    msg.contains("note.md"),
+                    "msg should include candidate, got: {msg}"
+                );
             }
             other => panic!("expected ExecutionFailed, got {other:?}"),
         }

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::convert::Infallible;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,11 +20,15 @@ use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::construction::SessionConstructionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
-    LaunchCommand, SessionExecutionState, SessionMeta, TitleSource, UserPromptInput,
+    LaunchCommand, SessionExecutionState, SessionForkRequest, SessionLineageRelationKind,
+    SessionMeta, SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest,
+    TitleSource, UserPromptInput,
 };
 use agentdash_contracts::session::{
-    SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
-    SessionProjectionViewResponse,
+    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
+    SessionLineageRelationKindDto, SessionLineageViewResponse, SessionNdjsonEnvelope,
+    SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
@@ -579,6 +584,133 @@ pub async fn get_session_context_projection(
         .map_err(|error| ApiError::Internal(error.to_string()))?;
 
     Ok(Json(SessionProjectionViewResponse::from(envelope)))
+}
+
+/// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
+pub async fn fork_session(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+    Json(req): Json<CreateSessionForkRequest>,
+) -> Result<Json<SessionForkResponse>, ApiError> {
+    let parent_bindings = ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let result = state
+        .services
+        .session_branching
+        .fork_session(SessionForkRequest {
+            parent_session_id: session_id.clone(),
+            title: req.title,
+            fork_point_event_seq: req.fork_point_event_seq,
+            fork_point_ref: req.fork_point_ref.map(Into::into),
+            fork_point_compaction_id: req.fork_point_compaction_id,
+            relation_kind: relation_kind_from_dto(req.relation_kind),
+            metadata_json: req.metadata_json.unwrap_or_else(|| serde_json::json!({})),
+        })
+        .await
+        .map_err(api_error_from_io)?;
+
+    if let Err(error) = copy_parent_session_bindings_to_child(
+        state.as_ref(),
+        &parent_bindings,
+        &result.child_session.id,
+    )
+    .await
+    {
+        let _ = state
+            .services
+            .session_core
+            .delete_session(&result.child_session.id)
+            .await;
+        return Err(error);
+    }
+
+    Ok(Json(SessionForkResponse {
+        parent_session_id: result.parent_session_id,
+        child_session: SessionForkChildSessionResponse {
+            id: result.child_session.id,
+            title: result.child_session.title,
+            created_at: result.child_session.created_at,
+            updated_at: result.child_session.updated_at,
+            last_event_seq: result.child_session.last_event_seq,
+        },
+        lineage: result.lineage.into(),
+        child_initial_compaction_id: result.projection_commit.compaction.id,
+        projection_version: result.projection_commit.head.projection_version,
+        head_event_seq: result.projection_commit.head.head_event_seq,
+    }))
+}
+
+/// GET /sessions/{id}/lineage — 返回当前 session 的父边、祖先与直接 children。
+pub async fn get_session_lineage(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+) -> Result<Json<SessionLineageViewResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let view = state
+        .services
+        .session_branching
+        .lineage_view(&session_id)
+        .await
+        .map_err(api_error_from_io)?;
+
+    Ok(Json(SessionLineageViewResponse {
+        session_id,
+        lineage: view.lineage.map(Into::into),
+        ancestors: view.ancestors.into_iter().map(Into::into).collect(),
+        children: view.children.into_iter().map(Into::into).collect(),
+    }))
+}
+
+/// POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
+pub async fn rollback_session_projection(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(session_id): Path<String>,
+    Json(req): Json<RollbackSessionProjectionRequest>,
+) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let result = state
+        .services
+        .session_branching
+        .rollback_model_projection(ApplicationProjectionRollbackRequest {
+            session_id: session_id.clone(),
+            target_event_seq: req.target_event_seq,
+            active_compaction_id: req.active_compaction_id,
+            reason: req.reason,
+        })
+        .await
+        .map_err(api_error_from_io)?;
+
+    Ok(Json(SessionProjectionRollbackResponse {
+        session_id,
+        event: result.event.into(),
+        head_event_seq: result.head.head_event_seq,
+        active_compaction_id: result.head.active_compaction_id,
+        projection_version: result.head.projection_version,
+        updated_by_event_seq: result.head.updated_by_event_seq,
+    }))
 }
 
 impl SessionContextResponse {
@@ -1163,6 +1295,98 @@ async fn ensure_bindings_permission(
         }
     }
     Ok(())
+}
+
+fn relation_kind_from_dto(
+    value: Option<SessionLineageRelationKindDto>,
+) -> SessionLineageRelationKind {
+    match value.unwrap_or(SessionLineageRelationKindDto::Fork) {
+        SessionLineageRelationKindDto::Fork => SessionLineageRelationKind::Fork,
+        SessionLineageRelationKindDto::Companion => SessionLineageRelationKind::Companion,
+        SessionLineageRelationKindDto::SpawnedAgent => SessionLineageRelationKind::SpawnedAgent,
+        SessionLineageRelationKindDto::RollbackBranch => SessionLineageRelationKind::RollbackBranch,
+    }
+}
+
+async fn copy_parent_session_bindings_to_child(
+    state: &AppState,
+    parent_bindings: &[SessionBinding],
+    child_session_id: &str,
+) -> Result<(), ApiError> {
+    let mut created_binding_ids = Vec::with_capacity(parent_bindings.len());
+    for binding in parent_bindings {
+        let child_binding = SessionBinding::new(
+            binding.project_id,
+            child_session_id.to_string(),
+            binding.owner_type,
+            binding.owner_id,
+            forked_binding_label(binding, child_session_id),
+        );
+        match state
+            .repos
+            .session_binding_repo
+            .create(&child_binding)
+            .await
+        {
+            Ok(()) => created_binding_ids.push(child_binding.id),
+            Err(error) => {
+                cleanup_session_bindings(state, created_binding_ids).await;
+                return Err(ApiError::from(error));
+            }
+        }
+    }
+
+    let mut freeform_project_ids = HashSet::new();
+    for binding in parent_bindings {
+        if binding.owner_type == SessionOwnerType::Project
+            && binding.label == agentdash_application::workflow::FREEFORM_SESSION_LABEL
+            && freeform_project_ids.insert(binding.project_id)
+            && let Err(error) =
+                ensure_freeform_lifecycle_run(state, binding.project_id, child_session_id).await
+        {
+            cleanup_session_bindings(state, created_binding_ids).await;
+            return Err(error);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cleanup_session_bindings(state: &AppState, binding_ids: Vec<uuid::Uuid>) {
+    for binding_id in binding_ids {
+        let _ = state.repos.session_binding_repo.delete(binding_id).await;
+    }
+}
+
+fn forked_binding_label(binding: &SessionBinding, child_session_id: &str) -> String {
+    if binding.owner_type == SessionOwnerType::Story {
+        format!(
+            "{}:fork:{}",
+            binding.label,
+            short_session_suffix(child_session_id)
+        )
+    } else {
+        binding.label.clone()
+    }
+}
+
+fn short_session_suffix(session_id: &str) -> &str {
+    session_id
+        .rsplit('-')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(session_id)
+}
+
+fn api_error_from_io(error: io::Error) -> ApiError {
+    match error.kind() {
+        io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
+            ApiError::BadRequest(error.to_string())
+        }
+        io::ErrorKind::NotFound => ApiError::NotFound(error.to_string()),
+        io::ErrorKind::AlreadyExists => ApiError::Conflict(error.to_string()),
+        _ => ApiError::Internal(error.to_string()),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -2,22 +2,20 @@
 
 ## 1. 总体架构
 
-### 1.1 双线分层
+### 1.1 当前输入链路
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ executors crate (vibe-kanban)                                    │
-│   NormalizedEntry { entry_type: ToolUse { tool_name, action_type } } │
+│ AgentDash-owned tools / connectors                               │
+│   structured tool facts                                          │
 └──────────────────────┬───────────────────────────────────────────┘
-                       │ ActionType (FileRead/FileEdit/CommandRun/Search/…)
+                       │ AgentDashThreadItem
                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│ agentdash-executor 适配器层                                       │
-│   normalized_to_backbone.rs::tool_use_envelopes                  │
-│   pi_agent/stream_mapper.rs                                      │
-│   → 按 ActionType 分发到对应 ThreadItem variant ★ 新增           │
+│ agentdash-agent-protocol::backbone                               │
+│   Codex ThreadItem builders / AgentDash item notifications       │
 └──────────────────────┬───────────────────────────────────────────┘
-                       │ ThreadItem (CommandExecution/FileChange/WebSearch/DynamicToolCall…)
+                       │ AgentDashThreadItem (Codex ThreadItem | AgentDash native item)
                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │ backbone-protocol → 前端 generated/backbone-protocol.ts           │
@@ -26,137 +24,65 @@
                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │ 前端 SessionEntry → ToolCallCardShell (header + 折叠 + 审批)      │
-│   → 一级分发 (ThreadItem.type)                                   │
+│   → 一级分发 (AgentDashThreadItem.type)                          │
 │   → 二级分发 (dynamicToolCall 内按 tool 名)  ★ 新增              │
 │   → renderer 注册表 / GenericJsonBody 兜底                       │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+legacy vibe-kanban 链路已经在后端任务中收束为 adapter 边界：
+
+```text
+vibe-kanban NormalizedEntry / ActionType
+  -> agentdash-executor::adapters::vibe_kanban_legacy_log_mapper
+  -> agentdash-agent-protocol::backbone::thread_item builders
+  -> BackboneEnvelope
+```
+
 ### 1.2 数据契约边界
 
-- `ActionType` 是上游 normalize 的语义类型，**不动**
-- `ThreadItem` schema **不动**——这次只是把已有 variant 用起来
-- `BackboneEvent` / 前端生成 `backbone-protocol.ts` **不动**
-- 改动集中在两个位置：
-  - 后端：`agentdash-executor` 内部分发逻辑
-  - 前端：`packages/app-web/src/features/session/ui/` 与 `model/`
+- 前端工具卡只消费 Backbone stream 内的 `AgentDashThreadItem`。
+- Codex Protocol 已有的 `ThreadItem`、状态 enum 与输出片段直接使用。
+- Codex 不足表达的 AgentDash 自有工具事实，从
+  `agentdash-agent-types::AgentDashNativeThreadItem` 做加法扩展。
+- `ActionType` 只属于 vibe-kanban legacy adapter，不进入前端设计模型。
+- P3 改动集中在 `packages/app-web/src/features/session/ui/` 与 `model/`。
 
-## 2. 后端：ActionType → ThreadItem 映射
+## 2. 后端基线：Backbone/Codex 事实源
 
-### 2.1 映射函数位置
+后端基线由 `.trellis/tasks/05-26-backend-tool-event-source-convergence` 提供。
+本任务只记录 P3 前端可依赖的结果：
 
-新增 `crates/agentdash-executor/src/adapters/threaditem_mapping.rs`，提供：
+- `agentdash-agent-protocol::backbone::thread_item` 是 Codex `ThreadItem` 的集中构造
+  API，处理 Codex 内部 path 类型和 serde wire shape。
+- `AgentDashThreadItem` 是前端 item lifecycle 的统一输入：
+  `ThreadItem | AgentDashNativeThreadItem`。
+- `pi_agent::stream_mapper` 将 `shell_exec` 产出 Codex `CommandExecution`，将
+  `fs_apply_patch` 产出 Codex `FileChange`，将 `fs_read` / `fs_grep` / `fs_glob`
+  产出 AgentDash native item，其他工具继续走
+  Codex `DynamicToolCall`。
+- `vibe_kanban_legacy_log_mapper` 承接 `ActionType` 到 Codex `ThreadItem` 的 legacy
+  输入转换，并保留 dynamic fallback 的 `content_items`。
 
-```rust
-pub(crate) fn action_type_to_thread_item(
-    action_type: &ActionType,
-    tool_name: &str,
-    tool_status: &ToolStatus,
-    item_id: String,
-    raw_content: &str,
-) -> codex::ThreadItem
-```
+### 2.1 前端依赖的 ThreadItem 形态
 
-`tool_use_envelopes` 调用此函数替代原地的 `ThreadItem::DynamicToolCall { ... }`
-直接构造。
+P3 renderer 面向以下 item 类型：
 
-### 2.2 各分支映射规则
+- `commandExecution`：命令执行，header 直接展示 `$ command`。
+- `fileChange`：文件变更，按文件/patch change 渲染摘要和 diff。
+  `fs_apply_patch` 后端已经进入该 Codex variant。
+- `webSearch`：搜索 query 与 action。
+- `mcpToolCall`：MCP server/tool 与参数。
+- `imageView` / `imageGeneration`：图片路径、预览或 prompt。
+- `collabAgentToolCall`：协作 agent 任务。
+- `contextCompaction`：上下文压缩 lifecycle item。
+- `dynamicToolCall`：Codex 没有专用 variant 或 connector 保留通用工具形态时的兜底，
+  前端按 `tool` 名做二级摘要。
+- `fsRead` / `fsGrep` / `fsGlob`：AgentDash native read/search/list item，优先按
+  结构化字段摘要，body 仍保留原始 arguments 与 contentItems。
 
-```rust
-match action_type {
-    ActionType::CommandRun { command, result, category: _ } => {
-        ThreadItem::CommandExecution {
-            id: item_id,
-            command: command.clone(),
-            cwd: cwd_from_context_or_default(),  // 从 entry context 推导，缺省 "."
-            status: command_status_from_tool_status(tool_status),
-            exit_code: result.as_ref().and_then(|r| r.exit_code),
-            // aggregated_output: result.as_ref().map(|r| r.output.clone()),
-            // 其余字段按 ThreadItem::CommandExecution 当前 schema 取舍
-            ...
-        }
-    }
-
-    ActionType::FileEdit { path, changes } => {
-        ThreadItem::FileChange {
-            id: item_id,
-            changes: changes
-                .iter()
-                .map(|fc| convert_file_change(path, fc))  // 把 executors::FileChange 转 codex::FileUpdateChange
-                .collect(),
-            status: patch_apply_status_from_tool_status(tool_status),
-        }
-    }
-
-    ActionType::Search { query } => {
-        ThreadItem::WebSearch {
-            id: item_id,
-            query: query.clone(),
-            action: None,
-        }
-    }
-
-    ActionType::TaskCreate { description, subagent_type, .. } => {
-        ThreadItem::CollabAgentToolCall {
-            id: item_id,
-            tool: subagent_type.clone().unwrap_or_else(|| "task".into()),
-            // 其余字段按 ThreadItem::CollabAgentToolCall 当前 schema 取舍
-            ...
-        }
-    }
-
-    // 没有专用 variant 的语义保持 DynamicToolCall，但保留 tool_name
-    ActionType::FileRead { path } => dynamic_tool_call(item_id, "Read", json!({ "path": path }), tool_status),
-    ActionType::WebFetch { url } => dynamic_tool_call(item_id, "WebFetch", json!({ "url": url }), tool_status),
-    ActionType::AskUserQuestion { questions } => dynamic_tool_call(item_id, "AskUserQuestion", json!(questions), tool_status),
-    ActionType::Other { description } => dynamic_tool_call(item_id, "Other", json!({ "description": description }), tool_status),
-
-    // 通用 Tool 与 PlanPresentation/TodoManagement 保持原有路径
-    ActionType::Tool { tool_name, arguments, result } => dynamic_tool_call(item_id, tool_name, ...),
-    ActionType::PlanPresentation { .. } | ActionType::TodoManagement { .. } => unreachable!(),
-}
-```
-
-### 2.3 cwd / exit_code 等缺失字段
-
-- `ActionType::CommandRun` 没带 `cwd`。从 `NormalizedEntry` 上下文（如果有）推导，
-  否则填 `"."`（与 `CommandExecutionCard` 当前接受的占位一致）
-- `ActionType::CommandRun.result.output` 流式输出在当前 envelope 路径里要走
-  `CommandExecutionOutputDeltaNotification`，本次先不接管，老路径继续工作
-  （即 R1 仅产 `ThreadItem::CommandExecution` 的 started/completed envelope，
-  output delta 仍然由其他路径推送，或在 completed 时一次性塞 `aggregatedOutput`）
-- 状态转换辅助函数对每种 ThreadItem 子状态独立实现
-  （`CommandExecutionStatus` / `PatchApplyStatus` / `DynamicToolCallStatus`），
-  不复用同一个枚举
-
-### 2.4 pi_agent/stream_mapper.rs
-
-`pi_agent` 自己的工具语义不必走 `ActionType`——它是直接对接 pi 协议的 raw 流。
-对常见 tool 名做硬编码白名单：
-
-```rust
-match tool_name.to_lowercase().as_str() {
-    "bash" | "shell" | "execute_shell" => construct_command_execution(...),
-    "edit" | "str_replace_editor" | "apply_patch" => construct_file_change(...),
-    "websearch" | "search" => construct_web_search(...),
-    _ => construct_dynamic_tool_call(...),  // 现有路径
-}
-```
-
-不强求 pi_agent 与 normalized_to_backbone 完全对齐，至少 Bash/Edit/Search 三类
-能命中专用 variant。
-
-### 2.5 测试
-
-- `crates/agentdash-executor/src/adapters/normalized_to_backbone.rs` 已有
-  `convert_event_to_envelopes` 测试套（如未有则新增），覆盖：
-  - `CommandRun` → `CommandExecution`
-  - `FileEdit{Edit}` → `FileChange`
-  - `Search` → `WebSearch`
-  - `Tool { tool_name="Read" }` → `DynamicToolCall(tool="Read")`
-  - 未知 `Other` → `DynamicToolCall(tool="Other")`
-- `pi_agent/stream_mapper.rs` 已有 connector_tests，新增 1-2 个 case 验证白名单
-- 一律不打断 application 层 / persistence 层已有的 ThreadItem variant 测试
+前端 P3 不读取 connector-private payload 来判断一级类型；所有一级类型以
+`item.type` 为准。
 
 ## 3. 前端：渲染分发架构
 
@@ -392,33 +318,20 @@ function resolveDynamicKind(tool: string): KindMeta {
 
 ### 4.1 部署时序
 
-后端先到位 → 旧前端：
-- 旧前端会继续走 `SessionToolCallCard`，但 ThreadItem.type 多样化
-  （commandExecution/fileChange/...），旧 SessionEntry 已有特例分支
-  （commandExecution → CommandExecutionCard），新分发出来的 fileChange / webSearch
-  会落到 SessionToolCallCard 通用路径——视觉一致，**功能不退化**
+项目当前未上线，P3 不按兼容 rollout 设计。实施顺序直接以当前后端基线为准：
 
-新前端先到位 → 旧后端：
-- 新前端注册表里 `dynamicToolCall` 二级分发已经覆盖 Read/Grep/Edit/...
-  常见工具，单凭 `tool` 名就能给出体面摘要——**视觉甚至比双线齐到还要前置生效**
-- `commandExecution` / `fileChange` 等 renderer 暂时收不到流量，无害
+1. 后端已经产出 Backbone/Codex `ThreadItem`。
+2. P3 建立前端 shell 与 registry，先保持视觉平移。
+3. P4 逐个 renderer 替换 body 与摘要。
 
 ### 4.2 回滚
 
-- 后端：`tool_use_envelopes` 内部的 dispatch 函数加 feature flag
-  `dispatch_thread_item_variants`（默认 on，回滚时 off 退回纯 DynamicToolCall）
-- 前端：toolCardRegistry 与 dynamicToolRenderers 是新文件；shell 与旧
-  `SessionToolCallCard` 暂时并存，SessionEntry 通过一个 `useNewToolCardLayout`
-  常量切换；切换稳定后下一个 commit 再删旧组件
+P3/P4 每个阶段保持单 commit 可回退。回退单位是前端 renderer 或 shell
+重构提交，不引入运行时 feature flag。
 
 ## 5. Open Questions
 
-- **OQ1**: `ThreadItem::CommandExecution.cwd` 在 `ActionType::CommandRun` 没带 cwd
-  时填什么？建议从 `NormalizedEntry` 关联的 session/turn metadata 取，否则填 "."；
-  实施时验证一下 `NormalizedEntry` 是否带 cwd
-- **OQ2**: `ThreadItem::FileChange` 的 schema 与 `executors::FileChange` 子枚举
-  （Write/Delete/Rename/Edit）的字段对齐方式——具体到代码层面要把
-  `FileChange::Write { content }` / `Delete` / `Rename { new_path }` 的语义如何
-  映射到 codex `FileUpdateChange`，可能需要在 mapping 函数里造 unified_diff 字符串
-- **OQ3**: 双线 feature flag 是否真的需要？如果 PR 切得足够小，每一步都能独立合并，
-  可以省掉 flag。在 implement.md 里再决议
+- **OQ1**: P3 的 `ToolCallCardShell` 是否保留旧 `SessionToolCallCard` 作为
+  临时 `LegacyDetailView`，还是直接把现有 detail 内容迁入 registry body。
+- **OQ2**: GenericJsonBody 的复制按钮粒度是分区复制还是整条 item 复制；优先保证
+  展开后完整原始值可见。

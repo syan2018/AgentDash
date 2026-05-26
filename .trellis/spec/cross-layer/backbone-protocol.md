@@ -29,8 +29,8 @@ pub enum BackboneEvent {
     AgentMessageDelta(codex::AgentMessageDeltaNotification),
     ReasoningTextDelta(codex::ReasoningTextDeltaNotification),
     ReasoningSummaryDelta(codex::ReasoningSummaryTextDeltaNotification),
-    ItemStarted(codex::ItemStartedNotification),
-    ItemCompleted(codex::ItemCompletedNotification),
+    ItemStarted(ItemStartedNotification),
+    ItemCompleted(ItemCompletedNotification),
     CommandOutputDelta(codex::CommandExecutionOutputDeltaNotification),
     FileChangeDelta(codex::FileChangeOutputDeltaNotification),
     McpToolCallProgress(codex::McpToolCallProgressNotification),
@@ -49,6 +49,29 @@ pub enum BackboneEvent {
 ```
 
 序列化采用 `#[serde(tag = "type", content = "payload", rename_all = "snake_case")]`。
+
+## Thread Items
+
+Backbone item lifecycle 使用 `AgentDashThreadItem`：
+
+```rust
+pub enum AgentDashThreadItem {
+    Codex(codex::ThreadItem),
+    AgentDash(AgentDashNativeThreadItem),
+}
+```
+
+Codex 已有的 item 语义保持原生 `ThreadItem` wire shape。AgentDash 自有 item 当前覆盖
+`fsRead`、`fsGrep`、`fsGlob`，用于表达 Codex Protocol 尚未提供一等 variant 的
+read/search/list 工具事实。
+
+Codex `fileChange` 是文件修改的统一 item 语义；AgentDash `fs_apply_patch` 进入
+Backbone 时映射为该 Codex variant。
+
+`ItemStartedNotification` / `ItemCompletedNotification` 在 Backbone 中携带
+`AgentDashThreadItem`，同时保留 `thread_id`、`turn_id` 与毫秒时间戳。Codex bridge
+接入 Codex 原生事件时包装为 `AgentDashThreadItem::Codex`；AgentDash 自有 connector
+可直接产出 native item。
 
 ## PlatformEvent
 

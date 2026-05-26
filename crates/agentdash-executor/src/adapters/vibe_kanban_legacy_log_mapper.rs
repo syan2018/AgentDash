@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent, SourceInfo, TraceInfo,
     backbone::thread_item::{self as builder, FileChangeSpec},
 };
 use codex_app_server_protocol as codex;
@@ -10,11 +11,11 @@ use executors::{
     logs::{ActionType, FileChange, NormalizedEntry, NormalizedEntryType, ToolStatus},
 };
 
-/// NormalizedEntry → BackboneEnvelope 转换器。
+/// vibe-kanban legacy `NormalizedEntry` → BackboneEnvelope 转换器。
 ///
-/// 将 executors crate 的 NormalizedEntry 直接映射到 Codex 对齐的 BackboneEvent。
+/// 将 vibe-kanban executors crate 的 legacy normalized log 映射到 AgentDash Backbone。
 #[derive(Debug)]
-pub struct NormalizedToBackboneConverter {
+pub struct VibeKanbanLogToBackboneConverter {
     session_id: String,
     turn_id: String,
     source: SourceInfo,
@@ -26,7 +27,7 @@ pub struct NormalizedToBackboneConverter {
     tool_started: HashMap<String, bool>,
 }
 
-impl NormalizedToBackboneConverter {
+impl VibeKanbanLogToBackboneConverter {
     pub fn new(
         session_id: impl Into<String>,
         source: SourceInfo,
@@ -202,17 +203,23 @@ impl NormalizedToBackboneConverter {
         let tool_call_id = tool_call_id_from_entry(&self.turn_id, entry_index, entry);
         let item_id = self.synth_item_id(entry_index, &tool_call_id);
 
-        let item = build_thread_item(action_type, tool_name, status, item_id, &entry.content);
+        let item = legacy_action_type_to_thread_item(
+            action_type,
+            tool_name,
+            status,
+            item_id,
+            &entry.content,
+        );
 
         let is_new = !self.tool_started.contains_key(&tool_call_id);
         if is_new {
             self.tool_started.insert(tool_call_id, true);
             vec![self.wrap(
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
                     item,
-                    thread_id: self.session_id.clone(),
-                    turn_id: self.turn_id.clone(),
-                }),
+                    self.session_id.clone(),
+                    self.turn_id.clone(),
+                )),
                 entry_index,
             )]
         } else if matches!(
@@ -223,21 +230,21 @@ impl NormalizedToBackboneConverter {
                 | ToolStatus::Denied { .. }
         ) {
             vec![self.wrap(
-                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
                     item,
-                    thread_id: self.session_id.clone(),
-                    turn_id: self.turn_id.clone(),
-                }),
+                    self.session_id.clone(),
+                    self.turn_id.clone(),
+                )),
                 entry_index,
             )]
         } else {
             // 中间更新 — 作为新的 ItemStarted 覆盖（Codex 协议无 item update 概念）
             vec![self.wrap(
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
                     item,
-                    thread_id: self.session_id.clone(),
-                    turn_id: self.turn_id.clone(),
-                }),
+                    self.session_id.clone(),
+                    self.turn_id.clone(),
+                )),
                 entry_index,
             )]
         }
@@ -282,7 +289,7 @@ fn tool_call_id_from_entry(
     format!("tool-{}-{}", turn_prefix, entry_index)
 }
 
-/// 把 `ActionType` 还原到对应的 codex `ThreadItem` variant。
+/// 把 vibe-kanban legacy `ActionType` 投影到对应的 codex `ThreadItem` variant。
 ///
 /// 设计意图：上游 `executors` 已把工具语义 normalize 出 `FileRead/FileEdit/CommandRun/Search/...`
 /// 等分支，本函数据此把语义类型还原到 `ThreadItem` 已有的对应 variant，避免所有
@@ -292,7 +299,7 @@ fn tool_call_id_from_entry(
 /// 没有专用 ThreadItem variant 的 ActionType（FileRead/WebFetch/TaskCreate/AskUserQuestion/Other）
 /// 仍走 DynamicToolCall，但 `tool` 名按工具语义规范化（如 `Read`/`WebFetch`），
 /// 让前端二级分发能识别。
-fn build_thread_item(
+fn legacy_action_type_to_thread_item(
     action_type: &ActionType,
     tool_name: &str,
     status: &ToolStatus,
@@ -301,12 +308,12 @@ fn build_thread_item(
 ) -> codex::ThreadItem {
     // 失败时退回 dynamic tool call 兜底（保留完整 ActionType payload 供前端兜底渲染）。
     let fallback = || -> codex::ThreadItem {
-        builder::dynamic_tool_call(
+        legacy_dynamic_tool_call(
             &item_id,
             tool_name,
             serde_json::to_value(action_type).unwrap_or_default(),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         )
     };
@@ -315,25 +322,27 @@ fn build_thread_item(
         ActionType::CommandRun {
             command, result, ..
         } => {
-            let exit_code: Option<i32> = result
-                .as_ref()
-                .and_then(|r| r.exit_status.as_ref())
-                .map(|es| match es {
-                    executors::logs::CommandExitStatus::ExitCode { code } => *code,
-                    executors::logs::CommandExitStatus::Success { success } => {
-                        if *success { 0 } else { 1 }
-                    }
-                });
-            let aggregated_output = result
-                .as_ref()
-                .and_then(|r| r.output.clone())
-                .or_else(|| {
-                    if fallback_content.is_empty() {
-                        None
-                    } else {
-                        Some(fallback_content.to_string())
-                    }
-                });
+            let exit_code: Option<i32> =
+                result
+                    .as_ref()
+                    .and_then(|r| r.exit_status.as_ref())
+                    .map(|es| match es {
+                        executors::logs::CommandExitStatus::ExitCode { code } => *code,
+                        executors::logs::CommandExitStatus::Success { success } => {
+                            if *success {
+                                0
+                            } else {
+                                1
+                            }
+                        }
+                    });
+            let aggregated_output = result.as_ref().and_then(|r| r.output.clone()).or_else(|| {
+                if fallback_content.is_empty() {
+                    None
+                } else {
+                    Some(fallback_content.to_string())
+                }
+            });
             builder::command_execution(
                 &item_id,
                 command.clone(),
@@ -343,9 +352,7 @@ fn build_thread_item(
                 exit_code,
             )
             .unwrap_or_else(|e| {
-                tracing::warn!(
-                    "Failed to build CommandExecution from ActionType::CommandRun: {e}"
-                );
+                tracing::warn!("Failed to build CommandExecution from ActionType::CommandRun: {e}");
                 fallback()
             })
         }
@@ -361,44 +368,43 @@ fn build_thread_item(
             })
         }
 
-        ActionType::Search { query } => {
-            builder::web_search(&item_id, query.clone()).unwrap_or_else(|e| {
+        ActionType::Search { query } => builder::web_search(&item_id, query.clone())
+            .unwrap_or_else(|e| {
                 tracing::warn!("Failed to build WebSearch from ActionType::Search: {e}");
                 fallback()
-            })
-        }
+            }),
 
         // 没有专用 ThreadItem variant 的语义：保持 DynamicToolCall，但工具名规范化以
         // 让前端二级分发能识别。
-        ActionType::FileRead { path } => builder::dynamic_tool_call(
+        ActionType::FileRead { path } => legacy_dynamic_tool_call(
             item_id,
             "Read",
             serde_json::json!({ "path": path }),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         ),
-        ActionType::WebFetch { url } => builder::dynamic_tool_call(
+        ActionType::WebFetch { url } => legacy_dynamic_tool_call(
             item_id,
             "WebFetch",
             serde_json::json!({ "url": url }),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         ),
-        ActionType::AskUserQuestion { questions } => builder::dynamic_tool_call(
+        ActionType::AskUserQuestion { questions } => legacy_dynamic_tool_call(
             item_id,
             "AskUserQuestion",
             serde_json::to_value(questions).unwrap_or_default(),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         ),
         ActionType::TaskCreate {
             description,
             subagent_type,
             ..
-        } => builder::dynamic_tool_call(
+        } => legacy_dynamic_tool_call(
             item_id,
             "Task",
             serde_json::json!({
@@ -406,15 +412,15 @@ fn build_thread_item(
                 "subagent_type": subagent_type,
             }),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         ),
-        ActionType::Other { description } => builder::dynamic_tool_call(
+        ActionType::Other { description } => legacy_dynamic_tool_call(
             item_id,
             "Other",
             serde_json::json!({ "description": description }),
             dynamic_tool_call_status(status),
-            None,
+            fallback_content,
             tool_success(status),
         ),
 
@@ -434,16 +440,41 @@ fn build_thread_item(
         // PlanPresentation/TodoManagement 在 tool_use_envelopes 上游已被 SessionMetaUpdate
         // 分流，不会进入此函数；保留 fallback 防御。
         ActionType::PlanPresentation { .. } | ActionType::TodoManagement { .. } => {
-            builder::dynamic_tool_call(
+            legacy_dynamic_tool_call(
                 item_id,
                 tool_name,
                 serde_json::to_value(action_type).unwrap_or_default(),
                 dynamic_tool_call_status(status),
-                None,
+                fallback_content,
                 tool_success(status),
             )
         }
     }
+}
+
+fn legacy_dynamic_tool_call(
+    item_id: impl Into<String>,
+    tool_name: impl Into<String>,
+    arguments: serde_json::Value,
+    status: codex::DynamicToolCallStatus,
+    fallback_content: &str,
+    success: Option<bool>,
+) -> codex::ThreadItem {
+    let content_items = if fallback_content.is_empty() {
+        None
+    } else {
+        Some(vec![codex::DynamicToolCallOutputContentItem::InputText {
+            text: fallback_content.to_string(),
+        }])
+    };
+    builder::dynamic_tool_call(
+        item_id,
+        tool_name,
+        arguments,
+        status,
+        content_items,
+        success,
+    )
 }
 
 /// 把 vibe-kanban `executors::FileChange` 子枚举投影成 builder 的 [`FileChangeSpec`]。
@@ -535,7 +566,7 @@ mod tests {
     use executors::logs::{CommandExitStatus, CommandRunResult};
 
     fn run(action_type: ActionType, status: ToolStatus) -> codex::ThreadItem {
-        build_thread_item(&action_type, "tool", &status, "id-1".to_string(), "")
+        legacy_action_type_to_thread_item(&action_type, "tool", &status, "id-1".to_string(), "")
     }
 
     #[test]
@@ -718,7 +749,38 @@ mod tests {
                 tool, arguments, ..
             } => {
                 assert_eq!(tool, "Read");
-                assert_eq!(arguments.get("path").and_then(|v| v.as_str()), Some("src/main.rs"));
+                assert_eq!(
+                    arguments.get("path").and_then(|v| v.as_str()),
+                    Some("src/main.rs")
+                );
+            }
+            other => panic!("expected DynamicToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dynamic_fallback_preserves_fallback_content() {
+        let action_type = ActionType::FileRead {
+            path: "src/main.rs".to_string(),
+        };
+        let item = legacy_action_type_to_thread_item(
+            &action_type,
+            "tool",
+            &ToolStatus::Success,
+            "id-1".to_string(),
+            "file contents",
+        );
+
+        match item {
+            codex::ThreadItem::DynamicToolCall { content_items, .. } => {
+                let content_items = content_items.expect("content items");
+                assert_eq!(content_items.len(), 1);
+                match &content_items[0] {
+                    codex::DynamicToolCallOutputContentItem::InputText { text } => {
+                        assert_eq!(text, "file contents");
+                    }
+                    other => panic!("expected InputText, got {other:?}"),
+                }
             }
             other => panic!("expected DynamicToolCall, got {other:?}"),
         }

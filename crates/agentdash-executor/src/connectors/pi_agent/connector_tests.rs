@@ -392,8 +392,8 @@ fn context_compaction_started_maps_to_context_compaction_item() {
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(started) => {
             assert!(matches!(
-                &started.item,
-                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
+                started.item.as_codex(),
+                Some(agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id })
                     if id == "compact-1"
             ));
         }
@@ -459,8 +459,8 @@ fn context_compaction_completed_maps_lifecycle_and_metadata() {
     match &envelopes[1].event {
         BackboneEvent::ItemCompleted(completed) => {
             assert!(matches!(
-                &completed.item,
-                agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id }
+                completed.item.as_codex(),
+                Some(agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id })
                     if id == "compact-1"
             ));
         }
@@ -711,7 +711,207 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. }) if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
+            );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn fs_tools_map_to_agentdash_native_thread_items() {
+    let cases = [
+        (
+            "fs_read",
+            serde_json::json!({ "file_path": "README.md", "offset": 4, "limit": 12 }),
+        ),
+        (
+            "fs_grep",
+            serde_json::json!({
+                "pattern": "AgentDashThreadItem",
+                "path": "crates",
+                "glob": "*.rs",
+                "type": "rust",
+                "output_mode": "content",
+                "head_limit": 20,
+                "offset": 2
+            }),
+        ),
+        (
+            "fs_glob",
+            serde_json::json!({ "pattern": "**/*.rs", "path": "crates", "maxResults": 50 }),
+        ),
+    ];
+
+    for (tool_name, args) in cases {
+        let event = AgentEvent::ToolExecutionStart {
+            tool_call_id: format!("{tool_name}-1"),
+            tool_name: tool_name.to_string(),
+            args,
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let envelopes = convert_event_to_envelopes(
+            &event,
+            "session-1",
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(envelopes.len(), 1);
+        match (&envelopes[0].event, tool_name) {
+            (BackboneEvent::ItemStarted(n), "fs_read") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                            path,
+                            offset: Some(4),
+                            limit: Some(12),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if path == "README.md"
+                ));
+            }
+            (BackboneEvent::ItemStarted(n), "fs_grep") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsGrep {
+                            pattern,
+                            path: Some(path),
+                            glob: Some(glob),
+                            file_type: Some(file_type),
+                            output_mode: Some(output_mode),
+                            head_limit: Some(20),
+                            offset: Some(2),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if pattern == "AgentDashThreadItem"
+                        && path == "crates"
+                        && glob == "*.rs"
+                        && file_type == "rust"
+                        && output_mode == "content"
+                ));
+            }
+            (BackboneEvent::ItemStarted(n), "fs_glob") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsGlob {
+                            pattern,
+                            path: Some(path),
+                            max_results: Some(50),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if pattern == "**/*.rs" && path == "crates"
+                ));
+            }
+            (other, _) => panic!("unexpected backbone event: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn fs_apply_patch_maps_to_codex_file_change() {
+    let patch = "\
+*** Begin Patch
+*** Add File: notes.txt
++hello
+*** Update File: src/lib.rs
+@@
+-old
++new
+*** Delete File: gone.txt
+*** End Patch
+";
+    let event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-patch-1".to_string(),
+        tool_name: "fs_apply_patch".to_string(),
+        args: serde_json::json!({ "patch": patch }),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let Some(codex_app_server_protocol::ThreadItem::FileChange {
+                changes, status, ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected codex FileChange, got {:?}", n.item);
+            };
+            assert!(matches!(
+                status,
+                codex_app_server_protocol::PatchApplyStatus::InProgress
+            ));
+            assert_eq!(changes.len(), 3);
+            assert_eq!(changes[0].path, "notes.txt");
+            assert!(matches!(
+                changes[0].kind,
+                codex_app_server_protocol::PatchChangeKind::Add
+            ));
+            assert_eq!(changes[1].path, "src/lib.rs");
+            assert!(matches!(
+                changes[1].kind,
+                codex_app_server_protocol::PatchChangeKind::Update { .. }
+            ));
+            assert_eq!(changes[2].path, "gone.txt");
+            assert!(matches!(
+                changes[2].kind,
+                codex_app_server_protocol::PatchChangeKind::Delete
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn fs_apply_patch_falls_back_to_dynamic_when_patch_is_unparseable() {
+    let event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-patch-1".to_string(),
+        tool_name: "fs_apply_patch".to_string(),
+        args: serde_json::json!({ "patch": "not a patch" }),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "fs_apply_patch")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -835,7 +1035,7 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     match &update_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "echo")
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "echo")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -844,7 +1044,7 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     match &end_envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. } if tool == "echo" && *success == Some(true))
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. }) if tool == "echo" && *success == Some(true))
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -994,7 +1194,7 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
     match &envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "present_canvas")
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "present_canvas")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),

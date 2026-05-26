@@ -8,7 +8,8 @@ use std::{
 };
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -200,7 +201,7 @@ fn build_thread_fork_params(
         thread_id,
         model: thread_start.model.clone(),
         model_provider: thread_start.model_provider.clone(),
-        service_tier: thread_start.service_tier,
+        service_tier: thread_start.service_tier.clone(),
         cwd: thread_start.cwd.clone(),
         approval_policy: thread_start.approval_policy,
         sandbox: thread_start.sandbox,
@@ -307,14 +308,22 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ItemStarted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ItemStarted(
+                        ItemStartedNotification::from_codex(p),
+                    ))))
+                    .await;
             }
         }
         "item/completed" => {
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ItemCompleted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ItemCompleted(
+                        ItemCompletedNotification::from_codex(p),
+                    ))))
+                    .await;
             }
         }
         "item/commandExecution/outputDelta" => {

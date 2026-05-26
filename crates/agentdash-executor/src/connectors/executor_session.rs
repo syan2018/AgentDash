@@ -19,7 +19,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
 use workspace_utils::{log_msg::LogMsg, msg_store::MsgStore};
 
-use crate::adapters::normalized_to_backbone::NormalizedToBackboneConverter;
+use crate::adapters::vibe_kanban_legacy_log_mapper::VibeKanbanLogToBackboneConverter;
 use crate::connectors::context_frame_render::compose_prompt_text;
 
 fn connector_type_label(connector_type: ConnectorType) -> &'static str {
@@ -140,8 +140,11 @@ pub(crate) async fn spawn_executor_session(
         executor_id: Some(context.session.executor_config.executor.to_string()),
     };
     let turn_id = context.session.turn_id.clone();
-    let mut converter =
-        NormalizedToBackboneConverter::new(session_id.to_string(), source.clone(), turn_id.clone());
+    let mut converter = VibeKanbanLogToBackboneConverter::new(
+        session_id.to_string(),
+        source.clone(),
+        turn_id.clone(),
+    );
 
     tokio::spawn(async move {
         let mut stream = msg_store.history_plus_stream();

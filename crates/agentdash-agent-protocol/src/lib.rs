@@ -6,6 +6,7 @@ pub mod compat;
 pub use backbone::approval::ApprovalRequest;
 pub use backbone::envelope::{BackboneEnvelope, SourceInfo, TraceInfo};
 pub use backbone::event::BackboneEvent;
+pub use backbone::item::{ItemCompletedNotification, ItemStartedNotification};
 pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent,
@@ -14,6 +15,8 @@ pub use backbone::platform::{
 pub use compat::{envelope_to_session_notification, session_notification_to_envelope};
 
 pub use codex_app_server_protocol;
+
+pub use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem};
 
 pub use agent_client_protocol::{ContentBlock, EmbeddedResourceResource, TextContent};
 

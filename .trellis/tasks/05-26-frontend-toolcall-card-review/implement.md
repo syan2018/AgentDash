@@ -2,8 +2,21 @@
 
 ## 阶段拆分
 
-按照"先共享基础 → 后端语义还原 → 前端 shell+注册表 → 各 renderer → 清理"的
+按照"先共享基础 → 后端协议基线确认 → 前端 shell+注册表 → 各 renderer → 清理"的
 顺序推进。每个阶段结束都应能独立编译/通过测试，便于阶段性提交。
+
+## 当前后端基线（2026-05-26 修订）
+
+本任务的后续 P3 从 `.trellis/tasks/05-26-backend-tool-event-source-convergence`
+之后继续：前端只消费 Backbone `AgentDashThreadItem`，不再把 vibe-kanban
+`ActionType` 当成平台工具语义来源。
+
+- Codex Protocol 已有的 `ThreadItem` / status enum / 输出片段直接使用。
+- `fs_apply_patch` 使用 Codex `fileChange`，前端复用 FileChange renderer。
+- AgentDash 自有工具执行事实从 `agentdash-agent-types::AgentDashNativeThreadItem`
+  扩展，当前覆盖 `fsRead` / `fsGrep` / `fsGlob`。
+- vibe-kanban `ActionType` 只属于 legacy executor adapter；前端 P3 不围绕
+  `ActionType` 设计 renderer，也不要求新增 `ActionType -> UI` 映射。
 
 ---
 
@@ -53,12 +66,14 @@
 
 ---
 
-### Phase 2 — 后端 ActionType → ThreadItem 分发（后端独立）
+### Phase 2 — 后端 Backbone/Codex 事实源归位（后端独立）
 
-目标：把 `normalized_to_backbone.rs` 的工具语义还原走通；前端无需任何变化即可
-"自然"看到分化（旧 SessionToolCallCard 通用路径会接住）。
+目标：前端 P3 开始前，后端主链路已经以 Backbone/Codex `ThreadItem` 为事实源；
+vibe-kanban 的 `ActionType` 映射仅保留在 legacy adapter 边界。
 
-**P2 已完成 ✅**（实施时偏离 design.md，归位决议见末尾）。Commit: `76721ce5`
+**P2 原实现已被后续任务吸收并修正 ✅**：见
+`.trellis/tasks/05-26-backend-tool-event-source-convergence`。该后续任务完成后，
+本任务 P3 直接面向 Backbone `AgentDashThreadItem` 渲染。
 
 - [x] P2.1 ✅ 实现位置由 `executor/adapters/threaditem_mapping.rs` 改为
       `agentdash-agent-protocol/src/backbone/thread_item.rs`（用户反馈"位置
@@ -67,27 +82,12 @@
       `context_compaction`；`FileChangeSpec` 表达 Add/Delete/Edit/Rename；
       内部 cwd 自动 `current_dir().join` 绝对化（解决 AbsolutePathBuf 反序列化
       对绝对路径的强校验）
-- [ ] P2.1-legacy 新增 `crates/agentdash-executor/src/adapters/threaditem_mapping.rs`，
-      实现 `action_type_to_thread_item`（design.md §2.1–§2.2）
-      - 包含 `command_status_from_tool_status`、`patch_apply_status_from_tool_status`、
-        `dynamic_status_from_tool_status` 三个状态转换辅助
-      - 包含 `convert_file_change_to_codex` 把 `executors::FileChange` 子枚举
-        映射到 `codex::FileUpdateChange`（含为 Write/Delete/Rename 合成
-        unified_diff 字符串的逻辑）
 - [x] P2.2 ✅ `tool_use_envelopes` 内部抽 `build_thread_item` 函数按 ActionType
       分发；CommandRun → CommandExecution、FileEdit → FileChange、Search →
       WebSearch；FileRead/WebFetch/AskUserQuestion/TaskCreate/Other 走
       DynamicToolCall 但 tool 名规范化（Read/WebFetch/AskUserQuestion/Task/Other）
 - [x] P2.3 ✅ cwd 由 builder 自动绝对化（OQ1 解决）
-- [x] P2.4 ✅ 12 个映射单测覆盖每条分支（normalized_to_backbone.rs::tests）
-- [ ] P2.4-legacy 新增单测覆盖（`normalized_to_backbone.rs` 测试模块或 `threaditem_mapping.rs::tests`）：
-      - `CommandRun` → `CommandExecution`
-      - `FileEdit{Edit}` / `FileEdit{Write}` / `FileEdit{Rename}` / `FileEdit{Delete}`
-        → `FileChange`
-      - `Search` → `WebSearch`
-      - `Tool { tool_name="Read" }` → `DynamicToolCall(tool="Read")`
-      - `TaskCreate` → `CollabAgentToolCall`
-      - `Other` → `DynamicToolCall(tool="Other")`
+- [x] P2.4 ✅ 映射单测覆盖 legacy mapper 的主要分支。
 - [x] P2.5 ✅ `pi_agent/stream_mapper.rs::make_command_execution_item` 改用
       shared builder，删除本地 JSON 拼接 hack 与 `status_to_source_str`；
       `extract_shell_args` 不再做 cwd 绝对化（统一交给 builder）。
@@ -99,19 +99,25 @@
       - `cargo test -p agentdash-executor --lib`：70 passed (58 现有 + 12 新增)
       - 改动文件 clippy 0 warning（剩余 11 个 collapsible_if 是预存红，与本次无关）
 
-**P2 决议偏离 design.md 的关键调整**：
-- mapping 模块从 executor crate 内部迁到 agent-protocol crate `backbone` 子模块
-- pi_agent 通过 builder 而非本地白名单分发
-- 这两点应在 design.md 下次更新时同步
+**后续任务追加的收口结果**：
+- `NormalizedToBackboneConverter` 已改名为 `VibeKanbanLogToBackboneConverter`。
+- legacy dynamic fallback 保留 `entry.content` 到 `content_items`。
+- 状态直接使用 Codex Protocol enum。
+- `fs_apply_patch` 进入 Codex `fileChange`，前端后续直接复用 FileChange renderer。
+- `AgentDashThreadItem` 从 `agentdash-agent-types` 导出，作为 Codex `ThreadItem` 与
+  AgentDash native item 的统一 item lifecycle 输入。
 
-**Review gate**：P2 已 commit，等用户验证 ThreadItem 流量后进 P3。
+**Review gate**：P3 以 Backbone `AgentDashThreadItem` 作为输入，不再等待
+`ActionType` 路线继续展开。
 
 ---
 
 ### Phase 3 — 前端 ToolCallCardShell 与一级分发（前端核心重构）
 
-目标：抽 shell + 注册表，逐步替换 `SessionToolCallCard`。每个 renderer 单独
-PR-able。
+目标：抽 shell + 注册表，逐步替换 `SessionToolCallCard`。P3 只基于
+`AgentDashThreadItem.type` 做一级分发，`dynamicToolCall.tool` 做二级摘要；其输入
+来自 Backbone stream，不关心 connector 原始语义来自 pi-agent、Codex bridge 还是
+vibe-kanban legacy adapter。
 
 - [ ] P3.1 新增 `ui/ToolCallCardShell.tsx`（design.md §3.2）
       - props: kind / title / status / isPendingApproval / sessionId / itemId
@@ -127,6 +133,9 @@ PR-able。
       - `item_started` / `item_completed` 一律走 `<ToolCallCardShell>{ renderToolCallCard(...).body }`
       - 短暂保留旧 `SessionToolCallCard` 作为 LegacyDetailView 内部实现，逐步替换
 - [ ] P3.4 验证：所有现有 e2e / unit test 至少视觉等价（typecheck + test 全绿）
+- [ ] P3.5 文档对齐：P3 完成后，前端相关 spec 只记录 Backbone/Codex
+      `AgentDashThreadItem` 渲染入口与 `agentdash-agent-types` 扩展原则，不再写
+      `ActionType` 作为平台约束。
 
 **Review gate**：P3 提交一次，pause；此时视觉应与改造前一致，是平移基础。
 
@@ -183,10 +192,12 @@ PR-able。
       验证 GenericJsonBody 兜底（AC4）
 - [ ] P5.4 更新相关 spec/index：
       - `.trellis/spec/frontend/...` 如果有"工具调用卡片"专题文档，更新到新架构
-      - `.trellis/spec/cross-layer/...` 如果有 ActionType ↔ ThreadItem 映射文档，
-        加上新映射表
-- [ ] P5.5 调用 `trellis-update-spec` 把"connector 必须把 ActionType 还原到对应
-      ThreadItem variant"作为执行性约束写入 spec，避免未来新增 connector 时退化
+      - `.trellis/spec/cross-layer/...` 记录 Backbone/Codex `ThreadItem` 是前端工具卡
+        的唯一输入契约，AgentDash 自有扩展从 `agentdash-agent-types` 出口进入
+        protocol 投影
+- [ ] P5.5 调用 `trellis-update-spec` 把"Codex 已有类型直接使用，AgentDash 仅在
+      Codex 不足时通过 `agentdash-agent-types::AgentDashNativeThreadItem` 加法扩展"
+      作为执行性约束写入 spec。
 
 ---
 
@@ -216,7 +227,7 @@ pnpm -C packages/app-web dev
 | Phase | commit 主题 |
 |-------|------------|
 | P1    | feat(frontend): 收口 kind 注册表 + 清理 acp/tool-call 与 compact 死代码 |
-| P2    | feat(executor): ActionType → ThreadItem variant 分发还原工具语义 |
+| P2    | feat(executor): Backbone/Codex 工具事件事实源收束 |
 | P3    | refactor(frontend): 抽 ToolCallCardShell + 一级分发注册表 |
 | P4    | feat(frontend): 各工具卡 body renderer + dynamicToolCall 二级摘要 |
 | P5    | chore: 收口 spec 与最终验证 |
@@ -224,6 +235,7 @@ pnpm -C packages/app-web dev
 ## Rollback 路径
 
 - P1 / P3 视觉变化：单 commit revert 即可
-- P2 后端语义还原：单 commit revert（P3 之后视觉稳定，互不依赖）
+- P2 后端语义收束：由 `05-26-backend-tool-event-source-convergence` 单独承载；
+  P3 只依赖 Backbone/Codex `ThreadItem` 输入契约
 - P4 各 renderer：toolCardRegistry 内分支独立，单个 renderer 出问题
   可以临时 fallback 回 GenericJsonBody / LegacyDetailView，无需整体回滚

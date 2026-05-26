@@ -4,7 +4,8 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_agent_protocol::{ContentBlock, TextContent};
 use agentdash_domain::DomainError;
@@ -2097,11 +2098,11 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
     hub.inject_notification(
         &session.id,
         BackboneEnvelope::new(
-            BackboneEvent::ItemStarted(codex::ItemStartedNotification {
-                item: item_started,
-                thread_id: session.id.clone(),
-                turn_id: "t-1".to_string(),
-            }),
+            BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                item_started,
+                session.id.clone(),
+                "t-1".to_string(),
+            )),
             session.id.clone(),
             source.clone(),
         )
@@ -2128,11 +2129,11 @@ async fn build_projected_transcript_reconstructs_tool_history_without_owner_bloc
     hub.inject_notification(
         &session.id,
         BackboneEnvelope::new(
-            BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                item: item_completed,
-                thread_id: session.id.clone(),
-                turn_id: "t-1".to_string(),
-            }),
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                item_completed,
+                session.id.clone(),
+                "t-1".to_string(),
+            )),
             session.id.clone(),
             source.clone(),
         )
@@ -2270,13 +2271,13 @@ fn context_compaction_completed_envelope(
         executor_id: None,
     };
     BackboneEnvelope::new(
-        BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-            item: codex::ThreadItem::ContextCompaction {
+        BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+            codex::ThreadItem::ContextCompaction {
                 id: item_id.to_string(),
             },
-            thread_id: session_id.to_string(),
-            turn_id: turn_id.to_string(),
-        }),
+            session_id.to_string(),
+            turn_id.to_string(),
+        )),
         session_id,
         source,
     )

@@ -5,7 +5,10 @@ use agent_client_protocol::{
 use codex_app_server_protocol as codex;
 use serde_json::{Map, Value, json};
 
-use crate::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+use crate::{
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent,
+};
 
 const AGENTDASH_NS: &str = "agentdash";
 const AGENTDASH_META_VERSION: u32 = 1;
@@ -330,17 +333,17 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 duration_ms: None,
             };
             if is_terminal {
-                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: trace.turn_id.clone().unwrap_or_default(),
-                })
+                    session_id.to_string(),
+                    trace.turn_id.clone().unwrap_or_default(),
+                ))
             } else {
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: trace.turn_id.clone().unwrap_or_default(),
-                })
+                    session_id.to_string(),
+                    trace.turn_id.clone().unwrap_or_default(),
+                ))
             }
         }
         SessionUpdate::ToolCallUpdate(tcu) => {
@@ -379,17 +382,17 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 duration_ms: None,
             };
             if is_terminal {
-                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: trace.turn_id.clone().unwrap_or_default(),
-                })
+                    session_id.to_string(),
+                    trace.turn_id.clone().unwrap_or_default(),
+                ))
             } else {
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: trace.turn_id.clone().unwrap_or_default(),
-                })
+                    session_id.to_string(),
+                    trace.turn_id.clone().unwrap_or_default(),
+                ))
             }
         }
         SessionUpdate::UserMessageChunk(chunk) => {

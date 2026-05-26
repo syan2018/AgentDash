@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::backbone::approval::ApprovalRequest;
+use crate::backbone::item::{ItemCompletedNotification, ItemStartedNotification};
 use crate::backbone::platform::PlatformEvent;
 
 /// 平台内部事件流转的统一类型。
 ///
-/// 变体名由平台定义（控制语义），payload 类型严格对齐 Codex App Server Protocol。
+/// 变体名由平台定义（控制语义），payload 优先对齐 Codex App Server Protocol。
 /// 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
-/// 不设"通用退化变体"。Codex 原生协议没有覆盖的语义通过 `Platform` 扩展。
+/// 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
+/// `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum BackboneEvent {
@@ -19,10 +21,9 @@ pub enum BackboneEvent {
     ReasoningSummaryDelta(codex::ReasoningSummaryTextDeltaNotification),
 
     // ── Item 生命周期（涵盖所有工具调用语义）──
-    // ThreadItem 区分: CommandExecution / FileChange / McpToolCall /
-    //   DynamicToolCall / AgentMessage / Plan / Reasoning / WebSearch 等
-    ItemStarted(codex::ItemStartedNotification),
-    ItemCompleted(codex::ItemCompletedNotification),
+    // AgentDashThreadItem 区分 Codex 原生 item 与 AgentDash native item。
+    ItemStarted(ItemStartedNotification),
+    ItemCompleted(ItemCompletedNotification),
 
     // ── Item 过程增量 ──
     CommandOutputDelta(codex::CommandExecutionOutputDeltaNotification),

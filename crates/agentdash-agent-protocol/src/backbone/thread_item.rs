@@ -7,8 +7,8 @@
 //! crate 没有 re-export `AbsolutePathBuf`，且其 `Deserialize` 实现要求
 //! "已是绝对路径或 thread-local 设了 base"——直接用结构体字面量在外部构造行不通。
 //!
-//! 此前 `agentdash-executor::connectors::pi_agent::stream_mapper` 与
-//! `agentdash-executor::adapters::normalized_to_backbone` 各自用
+//! 此前 `agentdash-executor::connectors::pi_agent::stream_mapper` 与 legacy
+//! vibe-kanban mapper 各自用
 //! `serde_json::json!(...)` + `from_value` 绕过此限制，导致 hack 散落两处、
 //! 状态转换重复实现。
 //!
@@ -162,10 +162,7 @@ fn ensure_absolute(p: &Path) -> PathBuf {
 
 fn file_change_to_json(change: &FileChangeSpec) -> serde_json::Value {
     match change {
-        FileChangeSpec::Edit {
-            path,
-            unified_diff,
-        } => serde_json::json!({
+        FileChangeSpec::Edit { path, unified_diff } => serde_json::json!({
             "path": path,
             "kind": { "type": "update", "move_path": null },
             "diff": unified_diff,

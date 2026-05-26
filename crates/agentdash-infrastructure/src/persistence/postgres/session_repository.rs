@@ -1,7 +1,8 @@
 use std::io;
 
-use agentdash_agent_protocol::codex_app_server_protocol::ThreadItem;
-use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
+use agentdash_agent_protocol::{
+    AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
+};
 use agentdash_spi::session_persistence::{
     CompactionProjectionCommitResult, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
@@ -2199,13 +2200,8 @@ fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
     }
 }
 
-fn thread_item_tool_call_id(item: &ThreadItem) -> Option<String> {
-    match item {
-        ThreadItem::DynamicToolCall { id, .. }
-        | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::McpToolCall { id, .. } => Some(id.clone()),
-        _ => None,
-    }
+fn thread_item_tool_call_id(item: &AgentDashThreadItem) -> Option<String> {
+    item.tool_call_id().map(ToString::to_string)
 }
 
 fn envelope_tool_call_id(envelope: &BackboneEnvelope) -> Option<String> {
@@ -2221,7 +2217,7 @@ mod tests {
     use super::*;
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    use agentdash_agent_protocol::{SourceInfo, TraceInfo};
+    use agentdash_agent_protocol::{ItemCompletedNotification, SourceInfo, TraceInfo};
     use chrono::Utc;
 
     fn turn_terminal_envelope(
@@ -2251,6 +2247,7 @@ mod tests {
                 turn: codex::Turn {
                     id: turn_id.to_string(),
                     items: Vec::new(),
+                    items_view: codex::TurnItemsView::NotLoaded,
                     status,
                     error,
                     started_at: None,
@@ -2298,13 +2295,13 @@ mod tests {
         item_id: &str,
     ) -> BackboneEnvelope {
         BackboneEnvelope::new(
-            BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                item: codex::ThreadItem::ContextCompaction {
+            BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                codex::ThreadItem::ContextCompaction {
                     id: item_id.to_string(),
                 },
-                thread_id: session_id.to_string(),
-                turn_id: turn_id.to_string(),
-            }),
+                session_id.to_string(),
+                turn_id.to_string(),
+            )),
             session_id,
             SourceInfo {
                 connector_id: "test".to_string(),

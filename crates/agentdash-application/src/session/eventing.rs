@@ -665,8 +665,8 @@ fn find_compaction_started_event_seq(
         .find_map(|event| match &event.notification.event {
             BackboneEvent::ItemStarted(started)
                 if matches!(
-                    &started.item,
-                    codex::ThreadItem::ContextCompaction { id } if id == lifecycle_item_id
+                    started.item.as_codex(),
+                    Some(codex::ThreadItem::ContextCompaction { id }) if id == lifecycle_item_id
                 ) =>
             {
                 Some(event.event_seq)

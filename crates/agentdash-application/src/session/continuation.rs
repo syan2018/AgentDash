@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
+use agentdash_agent_protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ContentBlock, PlatformEvent,
+};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
@@ -667,7 +669,14 @@ struct ExtractedToolCall {
     is_error: bool,
 }
 
-fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<ExtractedToolCall> {
+fn extract_tool_call_from_thread_item(item: &AgentDashThreadItem) -> Option<ExtractedToolCall> {
+    match item {
+        AgentDashThreadItem::Codex(item) => extract_tool_call_from_codex_thread_item(item),
+        AgentDashThreadItem::AgentDash(item) => extract_tool_call_from_agentdash_thread_item(item),
+    }
+}
+
+fn extract_tool_call_from_codex_thread_item(item: &codex::ThreadItem) -> Option<ExtractedToolCall> {
     match item {
         codex::ThreadItem::DynamicToolCall {
             id,
@@ -776,6 +785,29 @@ fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<Extrac
         }
         _ => None,
     }
+}
+
+fn extract_tool_call_from_agentdash_thread_item(
+    item: &AgentDashNativeThreadItem,
+) -> Option<ExtractedToolCall> {
+    let is_terminal = matches!(
+        item.status(),
+        codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
+    );
+    let content_parts = item
+        .content_items()
+        .map(|items| codex_content_items_to_parts(items))
+        .unwrap_or_default();
+    Some(ExtractedToolCall {
+        id: item.id().to_string(),
+        name: item.tool_name().to_string(),
+        raw_input: Some(item.arguments().clone()),
+        raw_output: None,
+        content_parts,
+        is_terminal,
+        is_error: item.success() == Some(false)
+            || matches!(item.status(), codex::DynamicToolCallStatus::Failed),
+    })
 }
 
 fn codex_content_items_to_parts(

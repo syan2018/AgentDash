@@ -1,3 +1,3 @@
 pub mod codex_config;
-pub mod normalized_to_backbone;
 pub mod vibe_kanban_config;
+pub mod vibe_kanban_legacy_log_mapper;

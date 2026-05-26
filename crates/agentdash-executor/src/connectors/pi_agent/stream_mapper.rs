@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use agentdash_agent::{AgentEvent, AgentMessage, AgentToolResult, ContentPart};
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent, SourceInfo, TraceInfo, backbone::thread_item,
 };
+use agentdash_agent_types::{AgentDashNativeThreadItem, AgentDashThreadItem};
 use codex_app_server_protocol as codex;
 
 fn make_envelope(
@@ -167,13 +169,13 @@ fn make_command_execution_item(
     status: codex::CommandExecutionStatus,
     aggregated_output: Option<String>,
     exit_code: Option<i32>,
-) -> codex::ThreadItem {
+) -> AgentDashThreadItem {
     let args = state
         .raw_input
         .clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let (command, cwd) = extract_shell_args(&args);
-    agentdash_agent_protocol::backbone::thread_item::command_execution(
+    let item = agentdash_agent_protocol::backbone::thread_item::command_execution(
         item_id,
         command,
         cwd,
@@ -183,44 +185,227 @@ fn make_command_execution_item(
     )
     .unwrap_or_else(|e| {
         tracing::warn!("Failed to build CommandExecution: {e}; falling back to dynamic_tool_call");
-        make_dynamic_tool_item(
+        thread_item::dynamic_tool_call(
             item_id,
-            state,
+            state.tool_name.clone(),
+            state
+                .raw_input
+                .clone()
+                .unwrap_or(serde_json::Value::Object(Default::default())),
             codex::DynamicToolCallStatus::InProgress,
             None,
             None,
         )
-    })
+    });
+    item.into()
 }
 
-/// 构造 DynamicToolCall ThreadItem 用于 ItemStarted/ItemCompleted。
+/// 构造通用工具 ThreadItem。Codex 已有的语义用 Codex variant；AgentDash 自有
+/// read/search/list 语义用 native variant。
 fn make_dynamic_tool_item(
     item_id: &str,
     state: &ToolCallEmitState,
     status: codex::DynamicToolCallStatus,
     content_items: Option<Vec<codex::DynamicToolCallOutputContentItem>>,
     success: Option<bool>,
-) -> codex::ThreadItem {
+) -> AgentDashThreadItem {
     let arguments = state
         .raw_input
         .clone()
         .unwrap_or(serde_json::Value::Object(Default::default()));
-    codex::ThreadItem::DynamicToolCall {
-        id: item_id.to_string(),
-        namespace: None,
-        tool: state.tool_name.clone(),
-        arguments,
-        status,
-        content_items,
-        success,
-        duration_ms: None,
+    match state.tool_name.as_str() {
+        "fs_apply_patch" => make_apply_patch_file_change_item(
+            item_id,
+            &arguments,
+            patch_apply_status_from_dynamic(&status),
+        )
+        .unwrap_or_else(|| {
+            thread_item::dynamic_tool_call(
+                item_id,
+                state.tool_name.clone(),
+                arguments,
+                status,
+                content_items,
+                success,
+            )
+            .into()
+        }),
+        "fs_read" => AgentDashNativeThreadItem::FsRead {
+            id: item_id.to_string(),
+            path: string_arg(&arguments, "path")
+                .or_else(|| string_arg(&arguments, "file_path"))
+                .unwrap_or_default(),
+            offset: usize_arg(&arguments, "offset"),
+            limit: usize_arg(&arguments, "limit"),
+            arguments,
+            status,
+            content_items,
+            success,
+        }
+        .into(),
+        "fs_grep" => AgentDashNativeThreadItem::FsGrep {
+            id: item_id.to_string(),
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
+            path: string_arg(&arguments, "path"),
+            glob: string_arg(&arguments, "glob"),
+            file_type: string_arg(&arguments, "type"),
+            output_mode: string_arg(&arguments, "output_mode"),
+            head_limit: usize_arg(&arguments, "head_limit"),
+            offset: usize_arg(&arguments, "offset"),
+            arguments,
+            status,
+            content_items,
+            success,
+        }
+        .into(),
+        "fs_glob" => AgentDashNativeThreadItem::FsGlob {
+            id: item_id.to_string(),
+            pattern: string_arg(&arguments, "pattern").unwrap_or_default(),
+            path: string_arg(&arguments, "path"),
+            max_results: usize_arg(&arguments, "max_results")
+                .or_else(|| usize_arg(&arguments, "maxResults")),
+            arguments,
+            status,
+            content_items,
+            success,
+        }
+        .into(),
+        _ => thread_item::dynamic_tool_call(
+            item_id,
+            state.tool_name.clone(),
+            arguments,
+            status,
+            content_items,
+            success,
+        )
+        .into(),
     }
 }
 
-fn make_context_compaction_item(item_id: &str) -> codex::ThreadItem {
+fn make_apply_patch_file_change_item(
+    item_id: &str,
+    arguments: &serde_json::Value,
+    status: codex::PatchApplyStatus,
+) -> Option<AgentDashThreadItem> {
+    let patch = string_arg(arguments, "patch")?;
+    let changes = parse_apply_patch_specs(&patch).ok()?;
+    if changes.is_empty() {
+        return None;
+    }
+    match thread_item::file_change(item_id, changes, status) {
+        Ok(item) => Some(item.into()),
+        Err(error) => {
+            tracing::warn!("Failed to build FileChange from fs_apply_patch: {error}");
+            None
+        }
+    }
+}
+
+fn patch_apply_status_from_dynamic(
+    status: &codex::DynamicToolCallStatus,
+) -> codex::PatchApplyStatus {
+    match status {
+        codex::DynamicToolCallStatus::InProgress => codex::PatchApplyStatus::InProgress,
+        codex::DynamicToolCallStatus::Completed => codex::PatchApplyStatus::Completed,
+        codex::DynamicToolCallStatus::Failed => codex::PatchApplyStatus::Failed,
+    }
+}
+
+fn parse_apply_patch_specs(patch: &str) -> Result<Vec<thread_item::FileChangeSpec>, String> {
+    let lines: Vec<&str> = patch.lines().collect();
+    let mut index = lines
+        .iter()
+        .position(|line| line.trim_end() == "*** Begin Patch")
+        .ok_or_else(|| "missing begin marker".to_string())?
+        + 1;
+    let mut specs = Vec::new();
+
+    while index < lines.len() {
+        let line = lines[index].trim_end();
+        if line == "*** End Patch" {
+            break;
+        }
+        if let Some(path) = line.strip_prefix("*** Add File: ") {
+            index += 1;
+            let mut diff_lines = Vec::new();
+            while index < lines.len() && !is_apply_patch_file_op_or_end(lines[index].trim_end()) {
+                let next = lines[index].trim_end();
+                if next != "*** End of File" {
+                    diff_lines.push(next.to_string());
+                }
+                index += 1;
+            }
+            specs.push(thread_item::FileChangeSpec::Add {
+                path: path.to_string(),
+                diff: diff_lines.join("\n"),
+            });
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Delete File: ") {
+            specs.push(thread_item::FileChangeSpec::Delete {
+                path: path.to_string(),
+            });
+            index += 1;
+            continue;
+        }
+        if let Some(path) = line.strip_prefix("*** Update File: ") {
+            index += 1;
+            let mut move_path = None;
+            let mut diff_lines = Vec::new();
+            while index < lines.len() && !is_apply_patch_file_op_or_end(lines[index].trim_end()) {
+                let next = lines[index].trim_end();
+                if let Some(target) = next.strip_prefix("*** Move to: ") {
+                    move_path = Some(target.to_string());
+                } else if next != "*** End of File" {
+                    diff_lines.push(next.to_string());
+                }
+                index += 1;
+            }
+            let diff = diff_lines.join("\n");
+            if let Some(new_path) = move_path {
+                specs.push(thread_item::FileChangeSpec::Rename {
+                    path: path.to_string(),
+                    new_path,
+                    diff,
+                });
+            } else {
+                specs.push(thread_item::FileChangeSpec::Edit {
+                    path: path.to_string(),
+                    unified_diff: diff,
+                });
+            }
+            continue;
+        }
+        index += 1;
+    }
+
+    Ok(specs)
+}
+
+fn is_apply_patch_file_op_or_end(line: &str) -> bool {
+    line == "*** End Patch"
+        || line.starts_with("*** Add File: ")
+        || line.starts_with("*** Delete File: ")
+        || line.starts_with("*** Update File: ")
+}
+
+fn make_context_compaction_item(item_id: &str) -> AgentDashThreadItem {
     codex::ThreadItem::ContextCompaction {
         id: item_id.to_string(),
     }
+    .into()
+}
+
+fn string_arg(args: &serde_json::Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+}
+
+fn usize_arg(args: &serde_json::Value, key: &str) -> Option<usize> {
+    args.get(key)
+        .and_then(|value| value.as_u64())
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 pub(super) fn convert_event_to_envelopes(
@@ -274,11 +459,11 @@ pub(super) fn convert_event_to_envelopes(
                     )
                 };
                 vec![wrap(
-                    BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
                         item,
-                        thread_id: session_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                    }),
+                        session_id.to_string(),
+                        turn_id.to_string(),
+                    )),
                     state.entry_index,
                 )]
             }
@@ -441,11 +626,11 @@ pub(super) fn convert_event_to_envelopes(
                             None,
                         );
                         envelopes.push(wrap(
-                            BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                            BackboneEvent::ItemStarted(ItemStartedNotification::new(
                                 item,
-                                thread_id: session_id.to_string(),
-                                turn_id: turn_id.to_string(),
-                            }),
+                                session_id.to_string(),
+                                turn_id.to_string(),
+                            )),
                             _state.entry_index,
                         ));
                     }
@@ -464,11 +649,11 @@ pub(super) fn convert_event_to_envelopes(
 
         AgentEvent::ContextCompactionStarted { item_id } => {
             vec![wrap(
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
-                    item: make_context_compaction_item(item_id),
-                    thread_id: session_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                }),
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                    make_context_compaction_item(item_id),
+                    session_id.to_string(),
+                    turn_id.to_string(),
+                )),
                 *entry_index,
             )]
         }
@@ -541,11 +726,11 @@ pub(super) fn convert_event_to_envelopes(
                     *entry_index,
                 ),
                 wrap(
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: make_context_compaction_item(item_id),
-                        thread_id: session_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                    }),
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        make_context_compaction_item(item_id),
+                        session_id.to_string(),
+                        turn_id.to_string(),
+                    )),
                     *entry_index,
                 ),
             ]
@@ -582,11 +767,11 @@ pub(super) fn convert_event_to_envelopes(
                 )
             };
             vec![wrap(
-                BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                BackboneEvent::ItemStarted(ItemStartedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                }),
+                    session_id.to_string(),
+                    turn_id.to_string(),
+                )),
                 state.entry_index,
             )]
         }
@@ -636,11 +821,11 @@ pub(super) fn convert_event_to_envelopes(
                     None,
                 );
                 vec![wrap(
-                    BackboneEvent::ItemStarted(codex::ItemStartedNotification {
+                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
                         item,
-                        thread_id: session_id.to_string(),
-                        turn_id: turn_id.to_string(),
-                    }),
+                        session_id.to_string(),
+                        turn_id.to_string(),
+                    )),
                     state.entry_index,
                 )]
             }
@@ -763,11 +948,11 @@ pub(super) fn convert_event_to_envelopes(
             };
 
             vec![wrap(
-                BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
+                BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
                     item,
-                    thread_id: session_id.to_string(),
-                    turn_id: turn_id.to_string(),
-                }),
+                    session_id.to_string(),
+                    turn_id.to_string(),
+                )),
                 state.entry_index,
             )]
         }

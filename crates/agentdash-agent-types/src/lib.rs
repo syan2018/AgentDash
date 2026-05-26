@@ -1,4 +1,5 @@
 pub mod model;
+pub mod protocol;
 pub mod runtime;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
@@ -11,6 +12,10 @@ pub use model::message::{
 pub use model::projection::{
     AgentContextEnvelope, AgentInputMessage, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     ProjectionOrigin, ProjectionSourceRange,
+};
+pub use protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, CodexThreadItem, CommandExecutionStatus,
+    DynamicToolCallOutputContentItem, DynamicToolCallStatus, McpToolCallStatus, PatchApplyStatus,
 };
 
 pub use runtime::decisions::{

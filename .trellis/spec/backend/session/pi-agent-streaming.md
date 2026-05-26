@@ -24,9 +24,17 @@
 
 ### 3. ToolCall 映射
 
-- `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`（`ThreadItem::DynamicToolCall`）；
+- `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`，item 类型为
+  `AgentDashThreadItem`；
 - `ToolCallResult` 完成映射为 `BackboneEvent::ItemCompleted`；
 - `ToolCallEmitState` 追踪每个 `tool_call_id` 的 `entry_index` 和元数据。
+- 工具名称到 item 的映射：
+  - `shell_exec` -> Codex `ThreadItem::CommandExecution`
+  - `fs_apply_patch` -> Codex `ThreadItem::FileChange`
+  - `fs_read` -> `AgentDashNativeThreadItem::FsRead`
+  - `fs_grep` -> `AgentDashNativeThreadItem::FsGrep`
+  - `fs_glob` -> `AgentDashNativeThreadItem::FsGlob`
+  - 其他工具 -> Codex `ThreadItem::DynamicToolCall`
 
 ### 4. Turn 生命周期
 

@@ -786,7 +786,10 @@ mod tests {
         ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionMeta, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, SourceInfo, TraceInfo};
+    use agentdash_agent_protocol::{
+        BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+        SourceInfo, TraceInfo,
+    };
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
@@ -1128,6 +1131,7 @@ mod tests {
         codex::ThreadItem::McpToolCall {
             id: id.to_string(),
             server: "memory".to_string(),
+            plugin_id: None,
             tool: "lookup".to_string(),
             status: codex::McpToolCallStatus::Completed,
             arguments: serde_json::json!({ "query": "lifecycle" }),
@@ -1174,16 +1178,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemStarted(codex::ItemStartedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                        dynamic_tool_item(
                             "tool-1",
                             "read_file",
                             codex::DynamicToolCallStatus::InProgress,
                             None,
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1194,16 +1198,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        dynamic_tool_item(
                             "tool-1",
                             "read_file",
                             codex::DynamicToolCallStatus::Completed,
                             Some("file contents"),
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1214,16 +1218,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        dynamic_tool_item(
                             "patch-1",
                             "fs_apply_patch",
                             codex::DynamicToolCallStatus::Completed,
                             Some("patched"),
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1234,11 +1238,11 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: mcp_tool_item("mcp-1"),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        mcp_tool_item("mcp-1"),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await

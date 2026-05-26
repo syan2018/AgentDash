@@ -1,4 +1,6 @@
-use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, codex_app_server_protocol as codex,
+};
 use agentdash_domain::DomainError;
 use agentdash_domain::task::{Artifact, ArtifactType};
 use serde::Serialize;
@@ -82,7 +84,14 @@ fn is_same_tool_execution_artifact(artifact: &Artifact, turn_id: &str, tool_call
 /// 从 BackboneEvent 的 ThreadItem 中提取 tool call 信息，构建 artifact patch。
 ///
 /// 返回 `(tool_call_id, patch)` 或 `None`（如果 ThreadItem 不是 tool call 类型）。
-pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<String, Value>)> {
+pub fn build_thread_item_patch(item: &AgentDashThreadItem) -> Option<(String, Map<String, Value>)> {
+    match item {
+        AgentDashThreadItem::Codex(item) => build_codex_thread_item_patch(item),
+        AgentDashThreadItem::AgentDash(item) => build_agentdash_thread_item_patch(item),
+    }
+}
+
+fn build_codex_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<String, Value>)> {
     match item {
         codex::ThreadItem::DynamicToolCall {
             id,
@@ -183,7 +192,83 @@ pub fn build_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Map<
             }
             Some((id.clone(), patch))
         }
+        codex::ThreadItem::FileChange {
+            id,
+            changes,
+            status,
+            ..
+        } => {
+            let changes_value = serialize_or_fail(changes, "file_changes");
+            let mut patch = Map::new();
+            patch.insert("title".to_string(), json!(file_change_title(changes)));
+            patch.insert("kind".to_string(), json!("file_change"));
+            patch.insert("status".to_string(), json!(patch_apply_status_str(status)));
+            patch.insert("raw_input".to_string(), changes_value.clone());
+            patch.insert(
+                "input_preview".to_string(),
+                json!(preview_value(&changes_value)),
+            );
+            patch.insert("content".to_string(), changes_value.clone());
+            patch.insert(
+                "output_preview".to_string(),
+                json!(preview_value(&changes_value)),
+            );
+            match status {
+                codex::PatchApplyStatus::Completed => {
+                    patch.insert("success".to_string(), json!(true));
+                }
+                codex::PatchApplyStatus::Failed | codex::PatchApplyStatus::Declined => {
+                    patch.insert("success".to_string(), json!(false));
+                }
+                codex::PatchApplyStatus::InProgress => {}
+            }
+            Some((id.clone(), patch))
+        }
         _ => None,
+    }
+}
+
+fn build_agentdash_thread_item_patch(
+    item: &AgentDashNativeThreadItem,
+) -> Option<(String, Map<String, Value>)> {
+    let id = item.id().to_string();
+    let mut patch = Map::new();
+    patch.insert("title".to_string(), json!(agentdash_item_title(item)));
+    patch.insert("kind".to_string(), json!(item.tool_name()));
+    patch.insert(
+        "status".to_string(),
+        json!(dynamic_tool_call_status_str(item.status())),
+    );
+    patch.insert("raw_input".to_string(), item.arguments().clone());
+    patch.insert(
+        "input_preview".to_string(),
+        json!(preview_value(item.arguments())),
+    );
+    if let Some(items) = item.content_items() {
+        let content_value = serialize_or_fail(items, "content_items");
+        patch.insert("content".to_string(), content_value.clone());
+        patch.insert(
+            "output_preview".to_string(),
+            json!(preview_value(&content_value)),
+        );
+    }
+    if let Some(success) = item.success() {
+        patch.insert("success".to_string(), json!(success));
+    }
+    Some((id, patch))
+}
+
+fn agentdash_item_title(item: &AgentDashNativeThreadItem) -> String {
+    match item {
+        AgentDashNativeThreadItem::FsRead { path, .. } => path.clone(),
+        AgentDashNativeThreadItem::FsGrep { pattern, path, .. } => path
+            .as_ref()
+            .map(|path| format!("{pattern} in {path}"))
+            .unwrap_or_else(|| pattern.clone()),
+        AgentDashNativeThreadItem::FsGlob { pattern, path, .. } => path
+            .as_ref()
+            .map(|path| format!("{pattern} in {path}"))
+            .unwrap_or_else(|| pattern.clone()),
     }
 }
 
@@ -209,6 +294,23 @@ fn command_execution_status_str(status: &codex::CommandExecutionStatus) -> &'sta
         codex::CommandExecutionStatus::Completed => "completed",
         codex::CommandExecutionStatus::Failed => "failed",
         codex::CommandExecutionStatus::Declined => "declined",
+    }
+}
+
+fn patch_apply_status_str(status: &codex::PatchApplyStatus) -> &'static str {
+    match status {
+        codex::PatchApplyStatus::InProgress => "in_progress",
+        codex::PatchApplyStatus::Completed => "completed",
+        codex::PatchApplyStatus::Failed => "failed",
+        codex::PatchApplyStatus::Declined => "declined",
+    }
+}
+
+fn file_change_title(changes: &[codex::FileUpdateChange]) -> String {
+    match changes {
+        [] => "file_change".to_string(),
+        [change] => change.path.clone(),
+        [first, rest @ ..] => format!("{} (+{} files)", first.path, rest.len()),
     }
 }
 
@@ -287,6 +389,32 @@ mod tests {
             dynamic_tool_call_status_str(&codex::DynamicToolCallStatus::Failed),
             "failed"
         );
+    }
+
+    #[test]
+    fn file_change_thread_item_builds_tool_execution_patch() {
+        let item: codex::ThreadItem = serde_json::from_value(json!({
+            "type": "fileChange",
+            "id": "patch-1",
+            "changes": [{
+                "path": "src/lib.rs",
+                "kind": { "type": "update", "move_path": null },
+                "diff": "@@\n-old\n+new"
+            }],
+            "status": "completed"
+        }))
+        .expect("fileChange item should deserialize");
+
+        let Some((tool_call_id, patch)) = build_codex_thread_item_patch(&item) else {
+            panic!("fileChange should produce artifact patch");
+        };
+
+        assert_eq!(tool_call_id, "patch-1");
+        assert_eq!(patch.get("kind"), Some(&json!("file_change")));
+        assert_eq!(patch.get("title"), Some(&json!("src/lib.rs")));
+        assert_eq!(patch.get("status"), Some(&json!("completed")));
+        assert_eq!(patch.get("success"), Some(&json!(true)));
+        assert!(patch.get("content").is_some());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use agentdash_agent_protocol::BackboneEvent;
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
+use agentdash_agent_protocol::{AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -105,15 +105,8 @@ fn event_tool_call_id(event: &PersistedSessionEvent) -> Option<String> {
     }
 }
 
-fn tool_item_id(item: &codex::ThreadItem) -> Option<String> {
-    match item {
-        codex::ThreadItem::DynamicToolCall { id, .. }
-        | codex::ThreadItem::CommandExecution { id, .. }
-        | codex::ThreadItem::McpToolCall { id, .. }
-        | codex::ThreadItem::FileChange { id, .. }
-        | codex::ThreadItem::CollabAgentToolCall { id, .. } => Some(id.clone()),
-        _ => None,
-    }
+fn tool_item_id(item: &AgentDashThreadItem) -> Option<String> {
+    item.tool_call_id().map(ToString::to_string)
 }
 
 fn build_tool_call_projection(
@@ -246,7 +239,14 @@ fn apply_tool_snapshot(
     *is_error |= snapshot.is_error;
 }
 
-fn tool_snapshot_from_item(item: &codex::ThreadItem) -> Option<ToolSnapshot> {
+fn tool_snapshot_from_item(item: &AgentDashThreadItem) -> Option<ToolSnapshot> {
+    match item {
+        AgentDashThreadItem::Codex(item) => tool_snapshot_from_codex_item(item),
+        AgentDashThreadItem::AgentDash(item) => tool_snapshot_from_agentdash_item(item),
+    }
+}
+
+fn tool_snapshot_from_codex_item(item: &codex::ThreadItem) -> Option<ToolSnapshot> {
     match item {
         codex::ThreadItem::DynamicToolCall {
             tool,
@@ -357,6 +357,39 @@ fn tool_snapshot_from_item(item: &codex::ThreadItem) -> Option<ToolSnapshot> {
             is_error: false,
         }),
         _ => None,
+    }
+}
+
+fn tool_snapshot_from_agentdash_item(item: &AgentDashNativeThreadItem) -> Option<ToolSnapshot> {
+    let result = item
+        .content_items()
+        .and_then(|items| serde_json::to_value(items).ok());
+    Some(ToolSnapshot {
+        kind: item.tool_name().to_string(),
+        name: agentdash_item_name(item),
+        provider: None,
+        status: Some(dynamic_tool_call_status_str(item.status()).to_string()),
+        request: Some(item.arguments().clone()),
+        stdout: item
+            .content_items()
+            .map(|items| dynamic_content_items_text(items)),
+        result,
+        is_error: item.success() == Some(false)
+            || matches!(item.status(), codex::DynamicToolCallStatus::Failed),
+    })
+}
+
+fn agentdash_item_name(item: &AgentDashNativeThreadItem) -> String {
+    match item {
+        AgentDashNativeThreadItem::FsRead { path, .. } => path.clone(),
+        AgentDashNativeThreadItem::FsGrep { pattern, path, .. } => path
+            .as_ref()
+            .map(|path| format!("{pattern} in {path}"))
+            .unwrap_or_else(|| pattern.clone()),
+        AgentDashNativeThreadItem::FsGlob { pattern, path, .. } => path
+            .as_ref()
+            .map(|path| format!("{pattern} in {path}"))
+            .unwrap_or_else(|| pattern.clone()),
     }
 }
 

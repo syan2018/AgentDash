@@ -62,7 +62,8 @@ pnpm run frontend:check
 - [ ] `pack` 集成 bundler，分别产出 extension host bundle 与 webview bundle。
 - [ ] `validate` 检查安装包自包含：禁止依赖安装脚本成为运行路径；标记 native addon / platform binary / postinstall 下载需求。
 - [ ] 更新 `pnpm-workspace.yaml` 如需 package 命名分层。
-- [ ] 增加 sample extension fixture。
+- [ ] 新增 `examples/extensions/local-hello/`，作为独立 demo extension project，而不是零散 fixture。
+- [ ] demo project 包含自己的 `package.json`、`agentdash.extension.json`、extension host 入口、webview UI、测试和 README。
 
 Validation:
 
@@ -80,7 +81,7 @@ pnpm --filter @agentdash/extension-dev test
 - [ ] 实现 host lifecycle：initialize、activate、deactivate、reload、health。
 - [ ] 实现 action invocation：invoke_action、result/error normalization。
 - [ ] 实现 permission-mediated host APIs：HTTP、VFS、env、process 的首版最小子集。
-- [ ] 让 `pnpm dev` / local dev mode 能发现 sample extension。
+- [ ] 让 `pnpm dev` / local dev mode 能发现 `examples/extensions/local-hello`。
 
 Validation:
 
@@ -91,7 +92,7 @@ pnpm run dev:local
 
 Manual check:
 
-- 启动 sample extension。
+- 启动 `local-hello` extension。
 - 修改 TS handler 后 reload。
 - 调用 action 返回新结果。
 
@@ -133,7 +134,7 @@ pnpm run frontend:test
 
 Manual check:
 
-- 安装 sample extension。
+- 安装 `local-hello` extension。
 - 打开 session。
 - `+` 菜单出现插件面板。
 - 打开插件 webview 面板后，用户自定义 UI 能通过 `@agentdash/extension-ui` bridge 调用 runtime action 并展示结果。
@@ -174,9 +175,14 @@ cargo test -p agentdash-api canvases
 pnpm run frontend:test
 ```
 
-## Phase 8: End-to-end Verification
+## Phase 8: Demo Extension and End-to-end Verification
 
-- [ ] 新增 E2E：sample extension install -> session context exposes extension_runtime -> open panel -> invoke action。
+- [ ] `examples/extensions/local-hello` 可在目录内独立运行 `dev`、`validate`、`pack`。
+- [ ] demo action `local-hello.profile` 通过 extension backend SDK 调用 `api.local.getProfile()`，返回受限本机 profile。
+- [ ] demo webview 通过 `@agentdash/extension-ui` 调用 action 并展示 username / platform / backend id / session 摘要。
+- [ ] 新增 packaged artifact E2E：`local-hello` 源码目录执行 `pack`，上传 archive artifact，Project installation 引用 artifact storage ref/digest。
+- [ ] E2E 安装后不依赖 local dev ref：清理或忽略 demo 源码路径，`agentdash-local` 从平台 artifact 下载、校验、解包 packaged extension。
+- [ ] 新增 E2E：packaged local-hello install -> session context exposes extension_runtime -> open panel -> invoke action -> display local profile。
 - [ ] 新增 E2E：Canvas promote -> install -> workspace tab opens。
 - [ ] 运行关键检查。
 
@@ -215,18 +221,22 @@ pnpm run e2e:test:critical
   - 扩展 domain/API/contracts/session projection。
 - `extension-sdk-cli`
   - 新增 SDK 和 dev CLI。
+- `extension-package-artifacts`
+  - 后端 archive artifact 存储、digest、下载与 local cache。
 - `local-ts-extension-host`
   - 本机 TS host 与 JSON-RPC protocol。
 - `extension-runtime-gateway-proxy`
   - RuntimeGateway proxy provider 与 relay command。
 - `workspace-panel-extension-tabs`
   - 前端动态 tabs 与 renderer。
+- `local-hello-extension-demo`
+  - 独立 demo extension project 与端到端金线验证。
 - `canvas-promote-extension`
   - Canvas 转插件示例与发布安装链路。
 
 ## Review Gates Before `task.py start`
 
 - [x] 用户确认 Phase 0 三个产品决策。
-- [ ] 根据决策创建或确认子任务树。
-- [ ] 每个子任务都拥有自己的 PRD / design / implement。
+- [x] 根据决策创建或确认子任务树。
+- [x] 每个子任务都拥有自己的 PRD / design / implement。
 - [ ] 父任务不直接启动实现，除非用户要求把 MVP 合并为一个实现任务。

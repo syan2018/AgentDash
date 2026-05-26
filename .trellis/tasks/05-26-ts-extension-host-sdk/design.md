@@ -308,6 +308,62 @@ ExtensionTemplatePayload
 
 产物仍走 Shared Library publish/install 流程。安装到 Project 后，session projection 暴露 workspace tab，前端打开 tab 后用 Canvas runtime panel 运行。
 
+## Demo Extension Project
+
+需要提供一个完整、独立、可调试的 demo extension project，建议路径：
+
+```text
+examples/
+  extensions/
+    local-hello/
+      package.json
+      agentdash.extension.json
+      src/
+        extension.ts
+        panel/
+          main.tsx
+          App.tsx
+        shared/
+          schema.ts
+      tests/
+        extension.test.ts
+      README.md
+```
+
+它在仓库中作为 SDK consumer 存在，但结构上模拟外部插件仓库。首版可以通过 workspace/file dependency 指向本仓 SDK 包；发布态文档展示如何切换成 registry dependency。
+
+`local-hello` 的 runtime action：
+
+```ts
+ctx.runtime.registerAction("local-hello.profile", {
+  permissions: ["local.profile.read"],
+  async handler(_input, api) {
+    return api.local.getProfile();
+  },
+});
+```
+
+`api.local.getProfile()` 由 `agentdash-local` 提供受限 facade，返回可展示但低敏的信息：
+
+- username 或 display name。
+- platform / arch。
+- backend id。
+- project id / session id 摘要。
+- workspace root basename 或 redacted path。
+
+Demo webview panel 使用 `@agentdash/extension-ui` 调用 `local-hello.profile`，展示结果和错误状态。它必须经过真实 `pack -> install -> session projection -> WorkspacePanel webview -> RuntimeGateway -> agentdash-local -> TS Extension Host` 链路，而不是直接 mock API。
+
+Demo 的验收以 packaged archive 为准：
+
+- `agentdash-ext pack` 生成 `.agentdash-extension.tgz`、manifest、digest。
+- 平台接收 archive artifact，并保存 storage ref / digest / package metadata。
+- Project installation 引用该 artifact，而不是引用 demo 源码目录。
+- `agentdash-local` 从平台下载 archive、校验 digest、解包到运行缓存。
+- 新打开或刷新后的 session 能从 projection 看到 `local-hello` tab contribution。
+- WorkspacePanel 打开 packaged webview bundle 后，通过 bridge 调用 packaged extension host action。
+
+Local dev ref 只验证开发体验，不算平台级发布验收通过。
+
 ## Database and Migration Shape
 
 `project_extension_installations` 已有 `manifest JSONB` 与 `config JSONB`，首版可以优先通过 manifest 扩展承载声明。若需要管理 bundle 实体，建议新增专门表或资产记录：
@@ -341,6 +397,6 @@ ExtensionTemplatePayload
 6. RuntimeGateway 增加 extension proxy provider。
 7. 后端保存 packaged extension archive artifact，Project installation 引用 artifact digest/storage ref。
 8. `extension-dev pack` 产出自包含 extension host bundle 与 webview bundle，不要求安装端执行依赖安装。
-9. 提供一个 sample extension，自定义 panel bundle 调用本机 TS action 并展示结果。
+9. 提供 `examples/extensions/local-hello/`，作为真实 SDK consumer，自定义 panel bundle 调用本机 TS action 并展示本机 profile。
 
 Canvas promote 可以作为 MVP 后半段或第二阶段。它适合验证现有 Canvas runtime 如何包装成 extension，但不替代 webview 作为用户自定义 UI 主路径。

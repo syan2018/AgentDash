@@ -1,14 +1,18 @@
 use std::io;
 
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
+    AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, ProjectedEntry,
+    ProjectedTranscript, ProjectionKind,
 };
 use agentdash_spi::{
     SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 
+use super::compaction_checkpoint::{
+    CompactionCheckpointError, projection_entries_from_checkpoint_records,
+    suffix_start_event_seq_from_compaction,
+};
 use super::continuation::build_raw_projected_transcript_from_filtered_events;
 use super::persistence::{PersistedSessionEvent, SessionStoreSet};
 
@@ -115,15 +119,11 @@ impl ContextProjector {
             )
             .await?;
 
-        let mut entries = projection_entries_from_segments(&compaction, &segments);
-        let suffix_start_event_seq = compaction
-            .first_kept_event_seq
-            .or_else(|| {
-                compaction
-                    .source_end_event_seq
-                    .map(|seq| seq.saturating_add(1))
-            })
-            .unwrap_or(head.head_event_seq.saturating_add(1));
+        let mut entries = projection_entries_from_checkpoint_records(&compaction, &segments)
+            .map_err(checkpoint_error_to_io)?;
+        let suffix_start_event_seq =
+            suffix_start_event_seq_from_compaction(&compaction, head.head_event_seq)
+                .map_err(checkpoint_error_to_io)?;
         let suffix =
             build_raw_projected_transcript_from_filtered_events(events.iter().filter(|event| {
                 event.event_seq >= suffix_start_event_seq && event.event_seq <= head.head_event_seq
@@ -154,6 +154,10 @@ fn validate_active_compaction(compaction: &SessionCompactionRecord) -> io::Resul
         ));
     }
     Ok(())
+}
+
+fn checkpoint_error_to_io(error: CompactionCheckpointError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
 }
 
 fn envelope_from_transcript(
@@ -195,177 +199,6 @@ fn envelope_from_entries(
         token_estimate,
         messages: entries.into_iter().map(AgentInputMessage::from).collect(),
     }
-}
-
-fn projection_entries_from_segments(
-    compaction: &SessionCompactionRecord,
-    segments: &[SessionProjectionSegmentRecord],
-) -> Vec<ProjectedEntry> {
-    let mut entries = segments
-        .iter()
-        .filter(|segment| segment.segment_type == "summary_chunk")
-        .filter_map(|segment| summary_entry_from_segment(compaction, segment))
-        .collect::<Vec<_>>();
-    if entries.is_empty()
-        && let Some(entry) = summary_entry_from_compaction(compaction)
-    {
-        entries.push(entry);
-    }
-    entries
-}
-
-fn summary_entry_from_segment(
-    compaction: &SessionCompactionRecord,
-    segment: &SessionProjectionSegmentRecord,
-) -> Option<ProjectedEntry> {
-    let summary = segment_summary_text(segment)
-        .or_else(|| non_empty_string(&compaction.summary))
-        .filter(|value| !value.trim().is_empty())?;
-    let source_range = source_range(segment.source_start_event_seq, segment.source_end_event_seq)
-        .or_else(|| {
-            source_range(
-                compaction.source_start_event_seq,
-                compaction.source_end_event_seq,
-            )
-        });
-    let message_ref = MessageRef {
-        turn_id: format!("_projection:{}", segment.id),
-        entry_index: segment.sort_order.try_into().unwrap_or(u32::MAX),
-    };
-    let mut entry = ProjectedEntry::projection(
-        message_ref,
-        ProjectionKind::CompactionSummary,
-        AgentMessage::CompactionSummary {
-            summary,
-            tokens_before: tokens_before(compaction),
-            messages_compacted: checkpoint_messages_compacted(compaction, Some(segment)),
-            compacted_until_ref: checkpoint_compacted_until_ref(compaction, Some(segment)),
-            timestamp: Some(segment.created_at_ms.max(0) as u64),
-        },
-        Some(segment.id.clone()),
-        source_range,
-    );
-    entry.origin = ProjectionOrigin::from_label(&segment.origin);
-    entry.synthetic = segment.synthetic;
-    entry.provenance = serde_json::json!({
-        "compaction_id": compaction.id,
-        "projection_version": compaction.projection_version,
-        "segment_type": segment.segment_type,
-        "strategy": compaction.strategy,
-        "trigger": compaction.trigger,
-        "phase": compaction.phase,
-    });
-    Some(entry)
-}
-
-fn summary_entry_from_compaction(compaction: &SessionCompactionRecord) -> Option<ProjectedEntry> {
-    let summary = non_empty_string(&compaction.summary)?;
-    let source_range = source_range(
-        compaction.source_start_event_seq,
-        compaction.source_end_event_seq,
-    );
-    Some(ProjectedEntry::projection(
-        MessageRef {
-            turn_id: format!("_compaction:{}", compaction.id),
-            entry_index: 0,
-        },
-        ProjectionKind::CompactionSummary,
-        AgentMessage::CompactionSummary {
-            summary,
-            tokens_before: tokens_before(compaction),
-            messages_compacted: checkpoint_messages_compacted(compaction, None),
-            compacted_until_ref: checkpoint_compacted_until_ref(compaction, None),
-            timestamp: compaction
-                .completed_at_ms
-                .or(Some(compaction.created_at_ms))
-                .map(|value| value.max(0) as u64),
-        },
-        None,
-        source_range,
-    ))
-}
-
-fn segment_summary_text(segment: &SessionProjectionSegmentRecord) -> Option<String> {
-    segment
-        .content_json
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .or_else(|| {
-            segment
-                .content_json
-                .get("summary")
-                .and_then(serde_json::Value::as_str)
-        })
-        .or_else(|| segment.content_json.as_str())
-        .and_then(non_empty_string)
-}
-
-fn non_empty_string(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn source_range(start: Option<u64>, end: Option<u64>) -> Option<ProjectionSourceRange> {
-    match (start, end) {
-        (Some(start), Some(end)) if end >= start => Some(ProjectionSourceRange {
-            start_event_seq: start,
-            end_event_seq: end,
-        }),
-        _ => None,
-    }
-}
-
-fn checkpoint_messages_compacted(
-    compaction: &SessionCompactionRecord,
-    segment: Option<&SessionProjectionSegmentRecord>,
-) -> u32 {
-    segment
-        .and_then(|segment| read_u32(&segment.source_refs_json, "messages_compacted"))
-        .or_else(|| read_u32(&compaction.token_stats_json, "messages_compacted"))
-        .unwrap_or_default()
-}
-
-fn checkpoint_compacted_until_ref(
-    compaction: &SessionCompactionRecord,
-    segment: Option<&SessionProjectionSegmentRecord>,
-) -> Option<MessageRef> {
-    segment
-        .and_then(|segment| read_message_ref(&segment.source_refs_json, "compacted_until_ref"))
-        .or_else(|| {
-            read_message_ref(
-                &compaction.replacement_projection_json,
-                "compacted_until_ref",
-            )
-        })
-}
-
-fn read_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
-    value
-        .get(key)
-        .and_then(serde_json::Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-}
-
-fn read_message_ref(value: &serde_json::Value, key: &str) -> Option<MessageRef> {
-    serde_json::from_value(value.get(key)?.clone()).ok()
-}
-
-fn tokens_before(compaction: &SessionCompactionRecord) -> u64 {
-    compaction
-        .token_stats_json
-        .get("before")
-        .and_then(serde_json::Value::as_u64)
-        .or_else(|| {
-            compaction
-                .token_stats_json
-                .get("tokens_before")
-                .and_then(serde_json::Value::as_u64)
-        })
-        .unwrap_or_default()
 }
 
 fn token_estimate(

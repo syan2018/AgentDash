@@ -6,6 +6,7 @@ pub mod bootstrap;
 pub mod capability_projection;
 pub mod capability_service;
 pub mod capability_state;
+mod compaction_checkpoint;
 mod compaction_context_frame;
 pub mod companion_wait;
 pub mod construction;

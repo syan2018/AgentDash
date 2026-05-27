@@ -241,6 +241,20 @@ pub struct ExtensionRuntimeInvokeActionRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeChannelRequest {
+    pub session_id: String,
+    pub backend_id: String,
+    pub channel_key: String,
+    pub method: String,
+    #[serde(default)]
+    pub input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_extension_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionRuntimeTraceResponse {
     pub trace_id: String,
     pub invocation_id: String,
@@ -260,6 +274,14 @@ pub struct ExtensionRuntimeInvocationOutputResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionRuntimeInvokeActionResponse {
     pub action_key: String,
+    pub trace: ExtensionRuntimeTraceResponse,
+    pub output: ExtensionRuntimeInvocationOutputResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionRuntimeInvokeChannelResponse {
+    pub channel_key: String,
+    pub method: String,
     pub trace: ExtensionRuntimeTraceResponse,
     pub output: ExtensionRuntimeInvocationOutputResponse,
 }

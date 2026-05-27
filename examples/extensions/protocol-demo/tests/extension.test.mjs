@@ -33,9 +33,10 @@ test("manifest covers built-in host capabilities without lifecycle scripts", () 
   assert.equal(packageJson.scripts.pack, "agentdash-ext pack");
 });
 
-test("source demonstrates author-owned protocol adapter and self channel shortcut", () => {
+test("source demonstrates author-owned protocol adapter and channel authoring sugar", () => {
   assert.match(extensionSource, /ctx\.channels\.register/);
   assert.match(extensionSource, /ctx\.api\.channels\.self/);
+  assert.match(extensionSource, /ctx\.api\.channels\.from\("demo", "api"\)/);
   assert.match(clientSource, /api\.workspace\.writeText/);
   assert.match(clientSource, /api\.process\.shell/);
   assert.match(clientSource, /api\.http\.fetch/);
@@ -43,6 +44,8 @@ test("source demonstrates author-owned protocol adapter and self channel shortcu
 
 test("panel uses extension-ui bridge to exercise the runtime actions", () => {
   assert.match(panelSource, /@agentdash\/extension-ui/);
+  assert.match(panelSource, /bridge\.invokeChannel/);
   assert.match(panelSource, /PROTOCOL_DEMO_ACTIONS\.consumeDemoChannel/);
   assert.match(panelSource, /Self Channel/);
+  assert.match(panelSource, /Panel Channel/);
 });

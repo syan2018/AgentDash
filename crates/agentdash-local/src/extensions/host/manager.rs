@@ -67,6 +67,7 @@ impl LocalExtensionHostManager {
         };
         if let Some(mut process) = process {
             let _ = process.call("deactivate", json!({})).await;
+            process.active_extensions.clear();
             let _ = process.child.kill().await;
             let _ = process.child.wait().await;
         }
@@ -182,7 +183,9 @@ impl LocalExtensionHostManager {
             profile,
             workspace_roots: activation.workspace_roots.clone(),
         };
-        process.active = Some(active.clone());
+        process
+            .active_extensions
+            .insert(active.extension_key.clone(), active.clone());
         let result = process
             .call(
                 "activate",
@@ -194,7 +197,7 @@ impl LocalExtensionHostManager {
             )
             .await;
         if result.is_err() {
-            process.active = None;
+            process.active_extensions.remove(&active.extension_key);
         }
         reset_after_process_exit(&mut guard, &result);
         serde_json::from_value(result?).map_err(LocalExtensionHostError::from)
@@ -217,7 +220,9 @@ impl LocalExtensionHostManager {
             profile,
             workspace_roots: activation.workspace_roots.clone(),
         };
-        process.active = Some(active.clone());
+        process
+            .active_extensions
+            .insert(active.extension_key.clone(), active.clone());
         let result = process
             .call(
                 "reload",
@@ -229,7 +234,7 @@ impl LocalExtensionHostManager {
             )
             .await;
         if result.is_err() {
-            process.active = None;
+            process.active_extensions.remove(&active.extension_key);
         }
         reset_after_process_exit(&mut guard, &result);
         serde_json::from_value(result?).map_err(LocalExtensionHostError::from)

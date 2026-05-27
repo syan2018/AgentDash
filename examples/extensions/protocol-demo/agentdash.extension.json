@@ -154,7 +154,7 @@
     {
       "kind": "extension_host",
       "entry": "dist/extension.js",
-      "digest": "sha256:158d4ef503fff354a8ddf617bfba45630fb7fb9f587d1781736f3e1f3a0b0e16"
+      "digest": "sha256:e3b1793171105cdfe87fb080b28e62e7ead473576d1eb36d1ca777018824f2ef"
     }
   ]
 }

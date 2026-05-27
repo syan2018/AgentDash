@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   buildExtensionWebviewAssetUrl,
   invokeProjectExtensionRuntimeAction,
+  invokeProjectExtensionRuntimeChannel,
 } from "../../../services/extensionRuntime";
+import { readSurfaceFile, writeSurfaceFile } from "../../../services/vfs";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { JsonValue } from "../../../generated/extension-runtime-contracts";
 import type {
@@ -98,9 +100,52 @@ export function ExtensionWebviewPanel({
           });
           return result.output.output;
         }
-        case "vfs.read":
-        case "vfs.write":
-          throw new Error("Extension VFS bridge 尚未接入");
+        case "extension.invoke_channel": {
+          const channelKey = bridgeParamString(message.params, "channel_key");
+          const method = bridgeParamString(message.params, "method");
+          if (!channelKey || !method) {
+            throw new Error("extension.invoke_channel 参数非法");
+          }
+          const dependencyAlias = bridgeParamString(message.params, "dependency_alias");
+          const result = await invokeProjectExtensionRuntimeChannel(projectId, {
+            session_id: sessionId,
+            backend_id: availability.backend.backend_id,
+            channel_key: channelKey,
+            method,
+            input: toJsonValue(message.params.input),
+            consumer_extension_key: tab.extension_key,
+            dependency_alias: dependencyAlias || null,
+          });
+          return result.output.output;
+        }
+        case "vfs.read": {
+          const path = bridgeParamString(message.params, "path");
+          if (!path) {
+            throw new Error("vfs.read 缺少 path");
+          }
+          const target = resolvePanelVfsTarget(workspaceData);
+          const result = await readSurfaceFile({
+            surfaceRef: target.surfaceRef,
+            mountId: target.mountId,
+            path,
+          });
+          return result.content;
+        }
+        case "vfs.write": {
+          const path = bridgeParamString(message.params, "path");
+          const content = bridgeParamRawString(message.params, "content");
+          if (!path) {
+            throw new Error("vfs.write 缺少 path");
+          }
+          const target = resolvePanelVfsTarget(workspaceData);
+          await writeSurfaceFile({
+            surfaceRef: target.surfaceRef,
+            mountId: target.mountId,
+            path,
+            content,
+          });
+          return null;
+        }
         default:
           throw new Error(`未知 Extension bridge method: ${message.method}`);
       }
@@ -166,6 +211,34 @@ export function ExtensionWebviewPanel({
       />
     </div>
   );
+}
+
+function bridgeParamRawString(
+  params: Record<string, unknown>,
+  key: string,
+): string {
+  const value = params[key];
+  return typeof value === "string" ? value : "";
+}
+
+function resolvePanelVfsTarget(
+  workspaceData: WorkspaceData,
+): { surfaceRef: string; mountId: string } {
+  const surface = workspaceData.runtimeSurface;
+  if (!surface) {
+    throw new Error("Extension VFS bridge 缺少 runtime surface");
+  }
+  const mountId = surface.default_mount_id
+    ?? surface.mounts.find((mount) => mount.backend_id.trim() !== "")?.id
+    ?? surface.mounts[0]?.id
+    ?? "";
+  if (!mountId) {
+    throw new Error("Extension VFS bridge 缺少可用 mount");
+  }
+  return {
+    surfaceRef: surface.surface_ref,
+    mountId,
+  };
 }
 
 function resolveAvailability(

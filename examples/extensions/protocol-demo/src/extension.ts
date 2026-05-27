@@ -105,10 +105,11 @@ export default defineExtension({
         "extension.channel.invoke:protocol-demo.api.runShell",
       ],
       async invoke(input) {
-        const channel = ctx.api.channels.self("api");
-        const greeting = await channel.invoke<JsonObject, JsonObject>("greet", input);
-        const shell = await channel.invoke<JsonObject, JsonObject>("runShell", {
-          label: "self-channel",
+        const selfChannel = ctx.api.channels.self("api");
+        const dependencyChannel = ctx.api.channels.from("demo", "api");
+        const greeting = await selfChannel.invoke<JsonObject, JsonObject>("greet", input);
+        const shell = await dependencyChannel.invoke<JsonObject, JsonObject>("runShell", {
+          label: "dependency-alias",
         });
         return {
           greeting,

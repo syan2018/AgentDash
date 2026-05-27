@@ -562,6 +562,7 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseMcpCallTool { .. }
             | RelayMessage::ResponseMcpClose { .. }
             | RelayMessage::ResponseExtensionActionInvoke { .. }
+            | RelayMessage::ResponseExtensionChannelInvoke { .. }
             | RelayMessage::ResponseVfsMaterialize { .. }
             | RelayMessage::ResponseTerminalSpawn { .. }
             | RelayMessage::ResponseTerminalInput { .. }

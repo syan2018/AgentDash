@@ -24,12 +24,16 @@ use agentdash_application::extension_runtime::{
     uninstall_extension_installation,
 };
 use agentdash_application::runtime_gateway::{
-    RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
-    RuntimeInvocationResult, RuntimeTarget,
+    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
+    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeActionKey,
+    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
+    RuntimeTrace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
-    ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeChannelRequest as ExtensionRuntimeInvokeChannelRequestDto,
+    ExtensionRuntimeInvokeChannelResponse, ExtensionRuntimeTraceResponse,
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
@@ -129,6 +133,76 @@ pub async fn invoke_project_extension_runtime_action(
 
     let result = state.services.runtime_gateway.invoke(request).await?;
     Ok(Json(extension_runtime_invoke_response(result)))
+}
+
+/// POST `/api/projects/:project_id/extension-runtime/invoke-channel`
+pub async fn invoke_project_extension_runtime_channel(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<ProjectExtensionRuntimePath>,
+    Json(req): Json<ExtensionRuntimeInvokeChannelRequestDto>,
+) -> Result<Json<ExtensionRuntimeInvokeChannelResponse>, ApiError> {
+    let project_id = parse_project_id(&path.project_id)?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let session_id = req.session_id.trim();
+    if session_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "extension channel invoke 缺少 session_id".into(),
+        ));
+    }
+    let backend_id = req.backend_id.trim();
+    if backend_id.is_empty() {
+        return Err(ApiError::BadRequest(
+            "extension channel invoke 缺少 backend_id".into(),
+        ));
+    }
+    if req.channel_key.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "extension channel invoke 缺少 channel_key".into(),
+        ));
+    }
+    if req.method.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "extension channel invoke 缺少 method".into(),
+        ));
+    }
+    ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
+    ensure_project_backend_access(&state, project_id, backend_id).await?;
+
+    let consumer = req
+        .consumer_extension_key
+        .as_ref()
+        .map(
+            |extension_key| ExtensionRuntimeChannelConsumer::ExtensionPanel {
+                extension_key: extension_key.trim().to_string(),
+            },
+        )
+        .unwrap_or(ExtensionRuntimeChannelConsumer::SessionUser);
+    let invoker = ExtensionRuntimeChannelInvoker::new(
+        state.repos.project_extension_installation_repo.clone(),
+        state.services.backend_registry.clone(),
+    );
+    let result = invoker
+        .invoke(ExtensionRuntimeChannelInvokeRequest {
+            project_id,
+            session_id: session_id.to_string(),
+            backend_id: backend_id.to_string(),
+            consumer,
+            channel_key: req.channel_key,
+            dependency_alias: req.dependency_alias,
+            method: req.method,
+            input: req.input,
+            trace: RuntimeTrace::new(),
+        })
+        .await?;
+    Ok(Json(extension_runtime_channel_invoke_response(result)))
 }
 
 /// DELETE `/api/projects/:project_id/extensions/:installation_id`
@@ -234,6 +308,25 @@ fn extension_runtime_invoke_response(
 ) -> ExtensionRuntimeInvokeActionResponse {
     ExtensionRuntimeInvokeActionResponse {
         action_key: result.action_key.to_string(),
+        trace: ExtensionRuntimeTraceResponse {
+            trace_id: result.trace.trace_id,
+            invocation_id: result.trace.invocation_id,
+            parent_trace_id: result.trace.parent_trace_id,
+            created_at: result.trace.created_at.to_rfc3339(),
+        },
+        output: ExtensionRuntimeInvocationOutputResponse {
+            output: result.output.output,
+            metadata: result.output.metadata,
+        },
+    }
+}
+
+fn extension_runtime_channel_invoke_response(
+    result: ExtensionRuntimeChannelInvokeResult,
+) -> ExtensionRuntimeInvokeChannelResponse {
+    ExtensionRuntimeInvokeChannelResponse {
+        channel_key: result.channel_key,
+        method: result.method,
         trace: ExtensionRuntimeTraceResponse {
             trace_id: result.trace.trace_id,
             invocation_id: result.trace.invocation_id,

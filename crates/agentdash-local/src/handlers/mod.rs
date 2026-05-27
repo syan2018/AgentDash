@@ -195,6 +195,9 @@ impl CommandHandler {
             RelayMessage::CommandExtensionActionInvoke { id, payload } => {
                 vec![self.handle_extension_action_invoke(id, payload).await]
             }
+            RelayMessage::CommandExtensionChannelInvoke { id, payload } => {
+                vec![self.handle_extension_channel_invoke(id, payload).await]
+            }
 
             // ── 交互式终端 ──
             RelayMessage::CommandTerminalSpawn { id, payload } => {

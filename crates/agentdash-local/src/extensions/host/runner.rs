@@ -5,8 +5,9 @@ import readline from "node:readline";
 import vm from "node:vm";
 import { pathToFileURL } from "node:url";
 
-let active = null;
-let currentActionKey = null;
+const extensions = new Map();
+let defaultExtensionKey = null;
+let currentInvocation = null;
 let nextHostApiId = 1;
 const pendingHostApi = new Map();
 
@@ -72,20 +73,24 @@ function createExtensionContext(extensionKey) {
     api: {
       runtime: {
         async invoke(actionKey, input) {
-          return await requestHostApi("runtime.invoke", { action_key: actionKey, input: toJsonValue(input) });
+          const local = findAction(actionKey);
+          if (local) {
+            return await invokeRegisteredAction(local.extensionKey, local.action, input);
+          }
+          return await requestHostApi("runtime.invoke", { action_key: actionKey, input: toJsonValue(input) }, extensionKey);
         },
       },
       local: {
         async getProfile() {
-          return await requestHostApi("local.get_profile", { action_key: currentActionKey });
+          return await requestHostApi("local.get_profile", {}, extensionKey);
         },
       },
       http: {
         async fetch(url, options = {}) {
-          return await requestHostApi("http.fetch", { action_key: currentActionKey, url, options: toJsonValue(options) });
+          return await requestHostApi("http.fetch", { url, options: toJsonValue(options) }, extensionKey);
         },
         async fetchJson(url, options = {}) {
-          const response = await requestHostApi("http.fetch", { action_key: currentActionKey, url, options: toJsonValue(options) });
+          const response = await requestHostApi("http.fetch", { url, options: toJsonValue(options) }, extensionKey);
           if (response && typeof response === "object" && typeof response.body === "string") {
             return JSON.parse(response.body);
           }
@@ -94,62 +99,66 @@ function createExtensionContext(extensionKey) {
       },
       workspace: {
         async readText(path) {
-          return await requestHostApi("workspace.read_text", { action_key: currentActionKey, path });
+          return await requestHostApi("workspace.read_text", { path }, extensionKey);
         },
         async writeText(path, content) {
-          return await requestHostApi("workspace.write_text", { action_key: currentActionKey, path, content });
+          return await requestHostApi("workspace.write_text", { path, content }, extensionKey);
         },
         async list(path) {
-          return await requestHostApi("workspace.list", { action_key: currentActionKey, path });
+          return await requestHostApi("workspace.list", { path }, extensionKey);
         },
         async stat(path) {
-          return await requestHostApi("workspace.stat", { action_key: currentActionKey, path });
+          return await requestHostApi("workspace.stat", { path }, extensionKey);
         },
       },
       env: {
         async get(name) {
-          return await requestHostApi("env.get", { action_key: currentActionKey, name });
+          return await requestHostApi("env.get", { name }, extensionKey);
         },
       },
       process: {
         async exec(command, args = [], options = {}) {
-          return await requestHostApi("process.exec", { action_key: currentActionKey, command, args: toJsonValue(args), options: toJsonValue(options) });
+          return await requestHostApi("process.exec", { command, args: toJsonValue(args), options: toJsonValue(options) }, extensionKey);
         },
         async shell(command, options = {}) {
-          return await requestHostApi("process.shell", { action_key: currentActionKey, command, options: toJsonValue(options) });
+          return await requestHostApi("process.shell", { command, options: toJsonValue(options) }, extensionKey);
         },
       },
       channels: {
         async invoke(channelKey, method, input) {
           const canonical = canonicalChannelKey(extensionKey, channelKey);
-          if (channels.has(channelHandlerKey(canonical, method))) {
-            return await invokeRegisteredChannel(channels, canonical, method, input);
+          const local = findChannel(canonical, method);
+          if (local) {
+            return await invokeRegisteredChannel(local.extensionKey, canonical, method, input);
           }
           return await requestHostApi("extension.channel_invoke", {
-            action_key: currentActionKey,
             channel_key: channelKey,
             method,
             input: toJsonValue(input),
-          });
+          }, extensionKey);
         },
         self(channelKey = "api") {
           const canonical = canonicalChannelKey(extensionKey, channelKey);
           return {
             async invoke(method, input) {
-              return await invokeRegisteredChannel(channels, canonical, method, input);
+              return await invokeRegisteredChannel(extensionKey, canonical, method, input);
             },
           };
         },
         from(alias, channelKey = null) {
           return {
             async invoke(method, input) {
+              const resolved = resolveDependencyChannel(extensionKey, alias, channelKey);
+              const local = findChannel(resolved.channelKey, method);
+              if (local) {
+                return await invokeRegisteredChannel(local.extensionKey, resolved.channelKey, method, input);
+              }
               return await requestHostApi("extension.channel_invoke", {
-                action_key: currentActionKey,
                 dependency_alias: alias,
                 channel_key: channelKey,
                 method,
                 input: toJsonValue(input),
-              });
+              }, extensionKey);
             },
           };
         },
@@ -216,17 +225,92 @@ function createExtensionContext(extensionKey) {
   return { ctx, actions, channels, contributions };
 }
 
-async function invokeRegisteredChannel(channels, channelKey, method, input) {
-  const handler = channels.get(channelHandlerKey(channelKey, method));
+function findAction(actionKey) {
+  for (const [extensionKey, record] of extensions) {
+    const action = record.actions.get(actionKey);
+    if (action) return { extensionKey, action };
+  }
+  return null;
+}
+
+function findChannel(channelKey, method) {
+  const key = channelHandlerKey(channelKey, method);
+  for (const [extensionKey, record] of extensions) {
+    if (record.channels.has(key)) return { extensionKey, handler: record.channels.get(key) };
+  }
+  return null;
+}
+
+async function invokeRegisteredAction(extensionKey, action, input) {
+  const previous = currentInvocation;
+  currentInvocation = {
+    extensionKey,
+    actionKey: action.action_key,
+    channelKey: null,
+    channelMethod: null,
+  };
+  try {
+    return toJsonValue(await action.invoke(toJsonValue(input)));
+  } finally {
+    currentInvocation = previous;
+  }
+}
+
+async function invokeRegisteredChannel(extensionKey, channelKey, method, input) {
+  const record = extensions.get(extensionKey);
+  const handler = record?.channels.get(channelHandlerKey(channelKey, method));
   if (!handler) {
     throw new Error(`extension channel method is not registered: ${channelKey}.${method}`);
   }
-  return toJsonValue(await handler.invoke(toJsonValue(input)));
+  const previous = currentInvocation;
+  currentInvocation = {
+    extensionKey,
+    actionKey: null,
+    channelKey,
+    channelMethod: method,
+  };
+  try {
+    return toJsonValue(await handler.invoke(toJsonValue(input)));
+  } finally {
+    currentInvocation = previous;
+  }
 }
 
-async function requestHostApi(method, params) {
+function resolveDependencyChannel(extensionKey, alias, channelKey) {
+  const record = extensions.get(extensionKey);
+  if (!record) throw new Error(`extension is not active: ${extensionKey}`);
+  const dependency = (record.manifest?.extension_dependencies ?? []).find((item) => item.alias === alias);
+  if (!dependency) throw new Error(`extension dependency alias is not declared: ${alias}`);
+  const requested = typeof channelKey === "string" ? channelKey.trim() : "";
+  if (requested === "") {
+    const first = dependency.channels?.[0];
+    if (!first) throw new Error(`extension dependency has no channels: ${alias}`);
+    return { channelKey: first, alias };
+  }
+  const matched = requested.includes(".")
+    ? dependency.channels.find((item) => item === requested)
+    : dependency.channels.find((item) => item.split(".").at(-1) === requested);
+  if (!matched) throw new Error(`extension dependency channel is not declared: ${alias}.${requested}`);
+  return { channelKey: matched, alias };
+}
+
+function invocationContextParams(extensionKey) {
+  return {
+    extension_key: extensionKey,
+    action_key: currentInvocation?.extensionKey === extensionKey ? currentInvocation.actionKey : null,
+    channel_key: currentInvocation?.extensionKey === extensionKey ? currentInvocation.channelKey : null,
+    channel_method: currentInvocation?.extensionKey === extensionKey ? currentInvocation.channelMethod : null,
+  };
+}
+
+async function requestHostApi(method, params, extensionKey) {
   const id = `host-api-${nextHostApiId++}`;
-  send({ kind: "host_api_request", id, method, params: toJsonValue(params) });
+  send({
+    kind: "host_api_request",
+    id,
+    method,
+    params: toJsonValue({ ...invocationContextParams(extensionKey), ...params }),
+  });
   return await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingHostApi.delete(id);
@@ -282,60 +366,92 @@ async function loadExtension(bundlePath) {
 }
 
 async function activate(params) {
+  const extensionKey = params.extension_key;
+  if (typeof extensionKey !== "string" || extensionKey.trim() === "") {
+    throw new Error("extension_key is required");
+  }
+  await deactivate({ extension_key: extensionKey });
   const extension = await loadExtension(params.bundle_path);
-  const { ctx, actions, channels, contributions } = createExtensionContext(params.extension_key);
-  active = {
+  const { ctx, actions, channels, contributions } = createExtensionContext(extensionKey);
+  const record = {
     extension,
     manifest: params.manifest,
-    extensionKey: params.extension_key,
+    extensionKey,
     actions,
     channels,
     contributions,
   };
-  if (typeof extension.activate === "function") {
-    await extension.activate(ctx);
+  extensions.set(extensionKey, record);
+  defaultExtensionKey = extensionKey;
+  try {
+    if (typeof extension.activate === "function") {
+      await extension.activate(ctx);
+    }
+  } catch (error) {
+    extensions.delete(extensionKey);
+    if (defaultExtensionKey === extensionKey) defaultExtensionKey = extensions.keys().next().value ?? null;
+    throw error;
   }
   return healthPayload();
 }
 
-async function deactivate() {
-  if (active?.extension && typeof active.extension.deactivate === "function") {
-    await active.extension.deactivate();
+async function deactivate(params = {}) {
+  const extensionKey = typeof params.extension_key === "string" ? params.extension_key : null;
+  if (extensionKey) {
+    const record = extensions.get(extensionKey);
+    if (record?.extension && typeof record.extension.deactivate === "function") {
+      await record.extension.deactivate();
+    }
+    extensions.delete(extensionKey);
+    if (defaultExtensionKey === extensionKey) defaultExtensionKey = extensions.keys().next().value ?? null;
+    return healthPayload();
   }
-  active = null;
+  for (const record of extensions.values()) {
+    if (record?.extension && typeof record.extension.deactivate === "function") {
+      await record.extension.deactivate();
+    }
+  }
+  extensions.clear();
+  defaultExtensionKey = null;
   return healthPayload();
 }
 
 async function invokeAction(params) {
-  if (!active) throw new Error("extension is not active");
   const actionKey = params.action_key;
-  const action = active.actions.get(actionKey);
-  if (!action) throw new Error(`extension action is not registered: ${actionKey}`);
-  const previous = currentActionKey;
-  currentActionKey = actionKey;
-  try {
-    return toJsonValue(await action.invoke(toJsonValue(params.input)));
-  } finally {
-    currentActionKey = previous;
-  }
+  const found = findAction(actionKey);
+  if (!found) throw new Error(`extension action is not registered: ${actionKey}`);
+  return await invokeRegisteredAction(found.extensionKey, found.action, params.input);
 }
 
 async function invokeChannel(params) {
-  if (!active) throw new Error("extension is not active");
-  const channelKey = canonicalChannelKey(active.extensionKey, params.channel_key);
   const method = params.method;
   if (typeof method !== "string" || method.trim() === "") {
     throw new Error("extension channel method is required");
   }
-  return await invokeRegisteredChannel(active.channels, channelKey, method, params.input);
+  const scope = typeof params.extension_key === "string" ? params.extension_key : defaultExtensionKey;
+  const channelKey = params.channel_key?.includes(".")
+    ? params.channel_key
+    : canonicalChannelKey(scope, params.channel_key);
+  const found = findChannel(channelKey, method);
+  if (!found) throw new Error(`extension channel method is not registered: ${channelKey}.${method}`);
+  return await invokeRegisteredChannel(found.extensionKey, channelKey, method, params.input);
 }
 
 function healthPayload() {
+  const defaultRecord = defaultExtensionKey ? extensions.get(defaultExtensionKey) : null;
+  const actionKeys = [];
+  const channelKeys = new Set();
+  for (const record of extensions.values()) {
+    actionKeys.push(...record.actions.keys());
+    for (const key of record.channels.keys()) {
+      channelKeys.add(key.split('#')[0]);
+    }
+  }
   return {
-    active: Boolean(active),
-    extension_id: active?.manifest?.extension_id ?? null,
-    action_keys: active ? [...active.actions.keys()].sort() : [],
-    channel_keys: active ? [...new Set([...active.channels.keys()].map((key) => key.split('#')[0]))].sort() : [],
+    active: extensions.size > 0,
+    extension_id: defaultRecord?.manifest?.extension_id ?? null,
+    action_keys: actionKeys.sort(),
+    channel_keys: [...channelKeys].sort(),
     pid: process.pid,
   };
 }
@@ -345,10 +461,10 @@ async function handleRequest(message) {
     case "activate":
       return await activate(message.params ?? {});
     case "reload":
-      await deactivate();
+      await deactivate({ extension_key: message.params?.extension_key });
       return await activate(message.params ?? {});
     case "deactivate":
-      return await deactivate();
+      return await deactivate(message.params ?? {});
     case "invoke_action":
       return await invokeAction(message.params ?? {});
     case "invoke_channel":

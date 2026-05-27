@@ -48,15 +48,11 @@ fn resolve_local_profile(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    let action_key = require_action_key(params, EXTENSION_PERMISSION_LOCAL_PROFILE_READ)?;
-    let decision = active
-        .manifest
-        .evaluate_action_permission(&action_key, EXTENSION_PERMISSION_LOCAL_PROFILE_READ);
-    if !decision.allowed {
-        return Err(LocalExtensionHostError::PermissionDenied(
-            decision.denial_message(),
-        ));
-    }
+    require_declared_permission(
+        active,
+        params,
+        &[EXTENSION_PERMISSION_LOCAL_PROFILE_READ.to_string()],
+    )?;
     serde_json::to_value(&active.profile).map_err(LocalExtensionHostError::from)
 }
 
@@ -66,7 +62,7 @@ fn resolve_env_get(
 ) -> Result<Value, LocalExtensionHostError> {
     let name = require_string(params, "name")?;
     let permissions = vec!["env.read".to_string(), format!("env.read:{name}")];
-    require_declared_action_permission(active, params, &permissions)?;
+    require_declared_permission(active, params, &permissions)?;
     let value = std::env::var(&name).ok();
     Ok(json!(value))
 }
@@ -75,7 +71,7 @@ async fn resolve_workspace_read_text(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(active, params, &["workspace.vfs.read".to_string()])?;
+    require_declared_permission(active, params, &["workspace.vfs.read".to_string()])?;
     let path = require_string(params, "path")?;
     let workspace_root = resolve_workspace_root(active, params)?;
     let executor = ToolExecutor::new(active.workspace_roots.clone());
@@ -90,7 +86,7 @@ async fn resolve_workspace_write_text(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(active, params, &["workspace.vfs.write".to_string()])?;
+    require_declared_permission(active, params, &["workspace.vfs.write".to_string()])?;
     let path = require_string(params, "path")?;
     let content = require_string(params, "content")?;
     let workspace_root = resolve_workspace_root(active, params)?;
@@ -106,7 +102,7 @@ async fn resolve_workspace_list(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(active, params, &["workspace.vfs.list".to_string()])?;
+    require_declared_permission(active, params, &["workspace.vfs.list".to_string()])?;
     let path = optional_string(params, "path").unwrap_or_else(|| ".".to_string());
     let workspace_root = resolve_workspace_root(active, params)?;
     let executor = ToolExecutor::new(active.workspace_roots.clone());
@@ -129,7 +125,7 @@ async fn resolve_workspace_stat(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(active, params, &["workspace.vfs.read".to_string()])?;
+    require_declared_permission(active, params, &["workspace.vfs.read".to_string()])?;
     let path = require_string(params, "path")?;
     let workspace_root = resolve_workspace_root(active, params)?;
     let executor = ToolExecutor::new(active.workspace_roots.clone());
@@ -155,7 +151,7 @@ async fn resolve_process_shell(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(
+    require_declared_permission(
         active,
         params,
         &[EXTENSION_PERMISSION_PROCESS_EXECUTE.to_string()],
@@ -192,7 +188,7 @@ async fn resolve_process_exec(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    require_declared_action_permission(
+    require_declared_permission(
         active,
         params,
         &[EXTENSION_PERMISSION_PROCESS_EXECUTE.to_string()],
@@ -269,7 +265,7 @@ async fn resolve_http_fetch(
     }
     let host = parsed.host_str().unwrap_or_default().to_string();
     let permissions = vec!["http.fetch".to_string(), format!("http.fetch:{host}")];
-    require_declared_action_permission(active, params, &permissions)?;
+    require_declared_permission(active, params, &permissions)?;
 
     let options = params.get("options").unwrap_or(&Value::Null);
     let method = optional_string(options, "method").unwrap_or_else(|| "GET".to_string());
@@ -313,51 +309,80 @@ async fn resolve_http_fetch(
     }))
 }
 
-fn require_action_key(params: &Value, permission: &str) -> Result<String, LocalExtensionHostError> {
-    params
-        .get("action_key")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            LocalExtensionHostError::PermissionDenied(format!("{permission} 缺少 action context"))
-        })
-}
-
-fn require_declared_action_permission(
+fn require_declared_permission(
     active: &ActiveExtension,
     params: &Value,
     permissions: &[String],
-) -> Result<String, LocalExtensionHostError> {
+) -> Result<(), LocalExtensionHostError> {
     let requested = permissions
         .first()
         .map(String::as_str)
         .unwrap_or("unknown.permission");
-    let action_key = require_action_key(params, requested)?;
-    let Some(action) = active
-        .manifest
-        .runtime_actions
-        .iter()
-        .find(|action| action.action_key == action_key)
-    else {
-        return Err(LocalExtensionHostError::PermissionDenied(format!(
-            "extension action `{action_key}` 不存在"
-        )));
-    };
-    if permissions.iter().any(|permission| {
-        action
-            .permissions
+    if let Some(action_key) = optional_string(params, "action_key") {
+        let Some(action) = active
+            .manifest
+            .runtime_actions
             .iter()
-            .any(|declared| declared == permission)
-    }) {
-        Ok(action_key)
-    } else {
-        Err(LocalExtensionHostError::PermissionDenied(format!(
+            .find(|action| action.action_key == action_key)
+        else {
+            return Err(LocalExtensionHostError::PermissionDenied(format!(
+                "extension action `{action_key}` 不存在"
+            )));
+        };
+        if permissions.iter().any(|permission| {
+            action
+                .permissions
+                .iter()
+                .any(|declared| declared == permission)
+        }) {
+            return Ok(());
+        }
+        return Err(LocalExtensionHostError::PermissionDenied(format!(
             "extension action `{action_key}` 未声明 {}",
             permissions.join(" 或 ")
-        )))
+        )));
     }
+
+    if let (Some(channel_key), Some(channel_method)) = (
+        optional_string(params, "channel_key"),
+        optional_string(params, "channel_method"),
+    ) {
+        let Some(channel) = active
+            .manifest
+            .protocol_channels
+            .iter()
+            .find(|channel| channel.channel_key == channel_key)
+        else {
+            return Err(LocalExtensionHostError::PermissionDenied(format!(
+                "extension channel `{channel_key}` 不存在"
+            )));
+        };
+        let Some(method) = channel
+            .methods
+            .iter()
+            .find(|method| method.name == channel_method)
+        else {
+            return Err(LocalExtensionHostError::PermissionDenied(format!(
+                "extension channel method `{channel_key}.{channel_method}` 不存在"
+            )));
+        };
+        if permissions.iter().any(|permission| {
+            method
+                .permissions
+                .iter()
+                .any(|declared| declared == permission)
+        }) {
+            return Ok(());
+        }
+        return Err(LocalExtensionHostError::PermissionDenied(format!(
+            "extension channel method `{channel_key}.{channel_method}` 未声明 {}",
+            permissions.join(" 或 ")
+        )));
+    }
+
+    Err(LocalExtensionHostError::PermissionDenied(format!(
+        "{requested} 缺少 action 或 channel invocation context"
+    )))
 }
 
 fn require_string(params: &Value, field: &str) -> Result<String, LocalExtensionHostError> {

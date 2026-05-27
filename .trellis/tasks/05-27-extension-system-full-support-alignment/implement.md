@@ -16,7 +16,7 @@
 
 - [x] 扩展 `packages/extension-sdk` 的 Host API 类型：local、runtime、http、workspace/VFS、env/secret、process。
 - [x] 扩展 `packages/extension-sdk` 的 channel API：provider 侧 `ctx.channels.register`，consumer 侧 `ctx.api.channels.invoke`。
-- [ ] 增加 channel authoring sugar：`ctx.api.channels.self(...)`、dependency alias client、Canvas binding alias contract。
+- [x] 增加 channel authoring sugar：`ctx.api.channels.self(...)`、dependency alias client、Canvas binding alias contract。
 - [x] 扩展 `ExtensionPermissionDeclaration` TS 类型与 manifest schema。
 - [x] 增加 `protocol_channels` 与 `extension_dependencies` manifest schema，并定义 channel key / method / version / schema validation。
 - [x] 扩展 `packages/extension-dev/src/manifest.js` validation 和 tests，覆盖新增 permission/capability/runtime requirement。
@@ -55,7 +55,7 @@ pnpm --dir examples/extensions/local-hello run test
 - [x] 在 `agentdash-local/src/extensions/host/` 增加 Host API registry/dispatcher。
 - [x] 将 `local.get_profile` 迁入 registry entry。
 - [ ] 实现 `runtime.invoke` entry，并明确 recursion/trace/admission 规则。
-- [ ] 实现 `extension.channel_invoke` entry，并明确 provider/consumer/dependency/trace/admission 规则。
+- [x] 实现 `extension.channel_invoke` entry，并明确 provider/consumer/dependency/trace/admission 规则。
 - [x] 实现 HTTP entry，包含 URL parse、method/body/header contract、timeout 和 response normalization；host declaration 仅在保留为安装摘要或诊断信息时参与。
 - [x] 实现 workspace/VFS entry，复用现有 workspace root/path safety helper。
 - [x] 实现 env/secret entry，显式 allowlist、redaction 和 missing secret 错误。
@@ -73,13 +73,13 @@ cargo test -p agentdash-domain extension
 
 ## Phase 4: Protocol Channel Registry, RuntimeGateway and Projection Alignment
 
-- [ ] 更新 extension runtime projection，让新增 capability/permission/protocol channel/dependency 可被前端、Canvas 和 admission 使用。
-- [ ] RuntimeGateway extension provider 在 action invocation 阶段校验 Project installation、action declaration、package artifact、backend target 和 permission summary。
-- [ ] RuntimeGateway extension provider 在 channel invocation 阶段校验 provider installation、consumer identity、dependency declaration、channel method declaration、package artifact、backend target 和 permission summary。
+- [x] 更新 extension runtime projection，让新增 capability/permission/protocol channel/dependency 可被前端、Canvas 和 admission 使用。
+- [x] RuntimeGateway extension provider 在 action invocation 阶段校验 Project installation、action declaration、package artifact、backend target 和 permission summary。
+- [x] RuntimeGateway extension provider 在 channel invocation 阶段校验 provider installation、consumer identity、dependency declaration、channel method declaration、package artifact、backend target 和 permission summary。
 - [ ] Gateway 与 local host 使用同一 domain evaluator 或同构 helper，避免同一 manifest 两边裁决不同。
-- [ ] 输出 metadata/trace 包含 provider extension key/id、consumer identity、action/channel key、method、capability family、backend id、invocation id。
-- [ ] trace 同时记录 channel alias 与 canonical provider extension/channel，确保 sugar 不影响审计。
-- [ ] 为 Canvas runtime bridge 定义 extension channel consumer contract，确保 Canvas 能按 Project/session context 调用插件信道。
+- [x] 输出 metadata/trace 包含 provider extension key/id、consumer identity、action/channel key、method、capability family、backend id、invocation id。
+- [x] trace 同时记录 channel alias 与 canonical provider extension/channel，确保 sugar 不影响审计。
+- [x] 为 Canvas runtime bridge 定义 extension channel consumer contract，确保 Canvas 能按 Project/session context 调用插件信道。
 
 Validation:
 
@@ -91,11 +91,11 @@ cargo test -p agentdash-api extension
 ## Phase 5: Frontend Webview Bridge
 
 - [ ] 对齐 `@agentdash/extension-ui` 与 `ExtensionWebviewPanel` 支持的方法。
-- [ ] 增加 panel/Canvas-facing `extension.invoke_channel` bridge method，参数只包含 channel key、method、input，Project/session/backend/actor/context 由宿主组装。
-- [ ] 接通 panel VFS read/write 或从 SDK 中移除未实现声明；本任务倾向接通。
+- [x] 增加 panel/Canvas-facing `extension.invoke_channel` bridge method，参数只包含 channel key、method、input，Project/session/backend/actor/context 由宿主组装。
+- [x] 接通 panel VFS read/write 或从 SDK 中移除未实现声明；本任务倾向接通。
 - [ ] 定义 events 的宿主语义：panel-local、workspace-level，或 extension runtime event；实现与文档保持一致。
 - [ ] 增加 bridge model/ui tests，覆盖 method params、unknown method、permission/admission error 显示。
-- [ ] 保持 WorkspacePanel dynamic tab 仍从 Project extension runtime projection 生成。
+- [x] 保持 WorkspacePanel dynamic tab 仍从 Project extension runtime projection 生成。
 
 Validation:
 
@@ -115,7 +115,7 @@ pnpm --filter app-web typecheck
 - [x] 新增独立 `examples/extensions/protocol-demo`；`local-hello` 保持最小 Host API 示例。
 - [x] 示例 manifest 声明所有 top-level capabilities 与 action-level permissions。
 - [x] 示例 manifest 声明 protocol channel provider surface 与 consumer dependency。
-- [ ] 示例代码使用 self-channel shortcut 和 dependency alias，避免在闭合调用里手写自己的插件名。
+- [x] 示例代码使用 self-channel shortcut 和 dependency alias，避免在闭合调用里手写自己的插件名。
 - [x] 示例 panel 调用多个 action，并展示成功/错误状态。
 - [x] 示例 tests 覆盖 pure TS action、protocol adapter mock、channel provider/consumer、permission declaration。
 - [ ] `pack` 后 archive 可通过前端 Assets 页安装，并在 session WorkspacePanel 打开试用。
@@ -159,15 +159,15 @@ Docs acceptance:
 
 ## Phase 8: Final Verification
 
-- [ ] `cargo test -p agentdash-domain extension`
-- [ ] `cargo test -p agentdash-local extension_host`
-- [ ] `cargo test -p agentdash-application extension`
-- [ ] `cargo test -p agentdash-api extension`
-- [ ] `pnpm --filter @agentdash/extension-sdk typecheck`
-- [ ] `pnpm --filter @agentdash/extension-ui typecheck`
-- [ ] `pnpm --filter @agentdash/extension-dev test`
-- [ ] `pnpm --filter app-web typecheck`
-- [ ] Example `validate/test/pack`
+- [x] `cargo test -p agentdash-domain extension`
+- [x] `cargo test -p agentdash-local extensions::host::tests`
+- [x] `cargo test -p agentdash-application extension`
+- [x] `cargo test -p agentdash-api extension`
+- [x] `pnpm --filter @agentdash/extension-sdk typecheck`
+- [x] `pnpm --filter @agentdash/extension-ui typecheck`
+- [x] `pnpm --filter @agentdash/extension-dev test`
+- [x] `pnpm --filter app-web typecheck`
+- [x] Example `validate/test/pack`
 - [ ] 前端安装和试用插件手工验证
 
 ## Risk Files

@@ -49,6 +49,10 @@ export type ExtensionRuntimeInvokeActionRequest = { session_id: string, backend_
 
 export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
+export type ExtensionRuntimeInvokeChannelRequest = { session_id: string, backend_id: string, channel_key: string, method: string, input: JsonValue, consumer_extension_key?: string | null, dependency_alias?: string | null, };
+
+export type ExtensionRuntimeInvokeChannelResponse = { channel_key: string, method: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
+
 export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocol_channels: Array<ExtensionProtocolChannelProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, };
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };

@@ -25,6 +25,8 @@ import type {
   ExtensionRuntimeInvocationOutputResponse,
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
+  ExtensionRuntimeInvokeChannelRequest,
+  ExtensionRuntimeInvokeChannelResponse,
   ExtensionRuntimeProjectionResponse,
   ExtensionRuntimeTraceResponse,
   ExtensionWorkspaceTabProjectionResponse,
@@ -453,6 +455,18 @@ export function mapExtensionRuntimeInvokeActionResponse(
   };
 }
 
+export function mapExtensionRuntimeInvokeChannelResponse(
+  raw: unknown,
+): ExtensionRuntimeInvokeChannelResponse {
+  const value = recordOrThrow(raw, "extension runtime invoke channel response");
+  return {
+    channel_key: requireStringField(value, "channel_key"),
+    method: requireStringField(value, "method"),
+    trace: mapRuntimeTrace(value.trace),
+    output: mapInvocationOutput(value.output),
+  };
+}
+
 export async function invokeProjectExtensionRuntimeAction(
   projectId: string,
   request: ExtensionRuntimeInvokeActionRequest,
@@ -462,6 +476,17 @@ export async function invokeProjectExtensionRuntimeAction(
     request,
   );
   return mapExtensionRuntimeInvokeActionResponse(raw);
+}
+
+export async function invokeProjectExtensionRuntimeChannel(
+  projectId: string,
+  request: ExtensionRuntimeInvokeChannelRequest,
+): Promise<ExtensionRuntimeInvokeChannelResponse> {
+  const raw = await api.post<unknown>(
+    `/projects/${encodeURIComponent(projectId)}/extension-runtime/invoke-channel`,
+    request,
+  );
+  return mapExtensionRuntimeInvokeChannelResponse(raw);
 }
 
 export function mapUninstallExtensionInstallationResponse(

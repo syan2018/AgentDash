@@ -8,6 +8,7 @@ type PanelState = {
   workspace: JsonValue;
   shell: JsonValue;
   channel: JsonValue;
+  bridgeChannel: JsonValue;
   error: string | null;
 };
 
@@ -16,6 +17,7 @@ const initialState: PanelState = {
   workspace: null,
   shell: null,
   channel: null,
+  bridgeChannel: null,
   error: null,
 };
 
@@ -46,7 +48,12 @@ export function App() {
         PROTOCOL_DEMO_ACTIONS.consumeDemoChannel,
         input,
       );
-      setState({ greet, workspace, shell, channel, error: null });
+      const bridgeChannel = await bridge.invokeChannel<JsonObject, JsonValue>(
+        "api",
+        "greet",
+        input,
+      );
+      setState({ greet, workspace, shell, channel, bridgeChannel, error: null });
     } catch (error) {
       setState({
         ...initialState,
@@ -84,6 +91,7 @@ export function App() {
         <ResultTile title="Workspace API" value={state.workspace} />
         <ResultTile title="Process API" value={state.shell} />
         <ResultTile title="Self Channel" value={state.channel} />
+        <ResultTile title="Panel Channel" value={state.bridgeChannel} />
       </div>
     </section>
   );

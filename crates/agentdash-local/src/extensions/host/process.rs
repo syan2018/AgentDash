@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 
@@ -18,7 +19,7 @@ pub(super) struct ExtensionHostProcess {
     stdin: ChildStdin,
     stdout: Lines<BufReader<ChildStdout>>,
     next_id: u64,
-    pub active: Option<ActiveExtension>,
+    pub active_extensions: BTreeMap<String, ActiveExtension>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,7 +65,7 @@ impl ExtensionHostProcess {
             stdin,
             stdout: BufReader::new(stdout).lines(),
             next_id: 1,
-            active: None,
+            active_extensions: BTreeMap::new(),
         })
     }
 
@@ -126,7 +127,8 @@ impl ExtensionHostProcess {
             .ok_or_else(|| LocalExtensionHostError::Protocol("host api request 缺少 id".into()))?;
         let method = message.method.unwrap_or_default();
         let params = message.params.unwrap_or(Value::Null);
-        let response = match resolve_host_api(self.active.as_ref(), &method, &params).await {
+        let active = active_extension_for_request(&self.active_extensions, &params);
+        let response = match resolve_host_api(active, &method, &params).await {
             Ok(result) => json!({ "kind": "host_api_response", "id": id, "result": result }),
             Err(error) => {
                 json!({ "kind": "host_api_response", "id": id, "error": error.to_string() })
@@ -155,6 +157,24 @@ impl ExtensionHostProcess {
             None => LocalExtensionHostError::Process("extension host stdout 已关闭".into()),
         })
     }
+}
+
+fn active_extension_for_request<'a>(
+    active_extensions: &'a BTreeMap<String, ActiveExtension>,
+    params: &Value,
+) -> Option<&'a ActiveExtension> {
+    let extension_key = params
+        .get("extension_key")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(extension_key) = extension_key {
+        return active_extensions.get(extension_key);
+    }
+    if active_extensions.len() == 1 {
+        return active_extensions.values().next();
+    }
+    None
 }
 
 fn spawn_stderr_drain(stderr: ChildStderr) {

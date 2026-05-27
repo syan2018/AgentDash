@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   mapExtensionRuntimeInvokeActionResponse,
+  mapExtensionRuntimeInvokeChannelResponse,
   mapExtensionRuntimeProjection,
   mapUninstallExtensionInstallationResponse,
 } from "./extensionRuntime";
@@ -14,6 +15,8 @@ describe("extension runtime mapper", () => {
       flags: [],
       message_renderers: [],
       runtime_actions: [],
+      protocol_channels: [],
+      extension_dependencies: [],
       workspace_tabs: [],
       permissions: [],
       bundles: [],
@@ -83,6 +86,30 @@ describe("extension runtime mapper", () => {
         output_schema: {},
         permissions: ["local.profile.read"],
       }],
+      protocol_channels: [{
+        extension_key: "local-hello",
+        extension_id: "local-hello",
+        channel_key: "local-hello.api",
+        version: "1.0.0",
+        description: "Local API",
+        methods: [{
+          name: "echo",
+          description: "Echo",
+          input_schema: true,
+          output_schema: true,
+          permissions: [],
+        }],
+      }],
+      extension_dependencies: [{
+        extension_key: "packaged-hello",
+        extension_id: "packaged-hello",
+        dependency: {
+          alias: "hello",
+          extension_id: "local-hello",
+          version: "^1.0.0",
+          channels: ["local-hello.api"],
+        },
+      }],
       workspace_tabs: [{
         extension_key: "local-hello",
         extension_id: "local-hello",
@@ -113,6 +140,8 @@ describe("extension runtime mapper", () => {
     });
 
     expect(projection.runtime_actions[0].action_key).toBe("local-hello.profile");
+    expect(projection.protocol_channels[0].channel_key).toBe("local-hello.api");
+    expect(projection.extension_dependencies[0].dependency.alias).toBe("hello");
     expect(projection.installations[0].installed_source?.source_ref).toBe("plugin:local-hello");
     expect(projection.installations[0].package_artifact).toBeNull();
     expect(projection.installations[1].installed_source).toBeNull();
@@ -175,5 +204,26 @@ describe("extension runtime mapper", () => {
 
     expect(response.output.output).toEqual({ username: "local-user" });
     expect(response.output.metadata).toEqual({});
+  });
+
+  it("解析 extension runtime channel invoke response", () => {
+    const response = mapExtensionRuntimeInvokeChannelResponse({
+      channel_key: "protocol-demo.api",
+      method: "greet",
+      trace: {
+        trace_id: "trace-1",
+        invocation_id: "rtinv-1",
+        created_at: "2026-05-26T00:00:00Z",
+      },
+      output: {
+        output: { greeting: "hello" },
+        metadata: { dependency_alias: "demo" },
+      },
+    });
+
+    expect(response.channel_key).toBe("protocol-demo.api");
+    expect(response.method).toBe("greet");
+    expect(response.output.output).toEqual({ greeting: "hello" });
+    expect(response.output.metadata).toEqual({ dependency_alias: "demo" });
   });
 });

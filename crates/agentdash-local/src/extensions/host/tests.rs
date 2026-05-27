@@ -93,6 +93,43 @@ async fn protocol_channel_registers_and_self_invokes() {
 }
 
 #[tokio::test]
+async fn dependency_alias_invokes_provider_channel_in_same_host() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let provider_dir = write_provider_package(temp.path()).await.expect("provider");
+    let consumer_dir = write_consumer_package(temp.path()).await.expect("consumer");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(
+            &provider_dir,
+            LocalExtensionHostActivation {
+                extension_key: "provider".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate provider");
+    manager
+        .activate_dev_directory(
+            &consumer_dir,
+            LocalExtensionHostActivation {
+                extension_key: "consumer".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate consumer");
+
+    let result = manager
+        .invoke_action("consumer.call", json!({ "source": "dependency" }))
+        .await
+        .expect("invoke consumer");
+
+    assert_eq!(result["echoed"]["source"], "dependency");
+    assert_eq!(result["provider"], "provider");
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn permission_denied_when_local_profile_is_not_declared() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), profile_bundle(), false, false)
@@ -324,6 +361,80 @@ async fn write_bundle(package_dir: &Path, bundle: String) -> anyhow::Result<()> 
     Ok(())
 }
 
+async fn write_provider_package(root: &Path) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("provider");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = provider_channel_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "provider",
+        "package": { "name": "@agentdash/provider", "version": "1.0.0" },
+        "asset_version": "1.0.0",
+        "protocol_channels": [{
+            "channel_key": "provider.api",
+            "version": "1.0.0",
+            "description": "Provider API",
+            "methods": [{
+                "name": "echo",
+                "description": "Echo input",
+                "input_schema": true,
+                "output_schema": true,
+                "permissions": [],
+            }],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
+async fn write_consumer_package(root: &Path) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("consumer");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = consumer_dependency_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "consumer",
+        "package": { "name": "@agentdash/consumer", "version": "1.0.0" },
+        "asset_version": "1.0.0",
+        "runtime_actions": [{
+            "action_key": "consumer.call",
+            "kind": "session_runtime",
+            "description": "Call provider",
+            "input_schema": true,
+            "output_schema": true,
+            "permissions": ["extension.channel.invoke:provider.api.echo"],
+        }],
+        "extension_dependencies": [{
+            "alias": "provider",
+            "extension_id": "provider",
+            "version": "^1.0.0",
+            "channels": ["provider.api"],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
 fn profile_bundle() -> String {
     r#"
 export default {
@@ -402,6 +513,47 @@ export default {
       description: "Invoke own channel",
       async invoke(input) {
         return await ctx.api.channels.self("api").invoke("echo", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn provider_channel_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.channels.register({
+      channel_key: "api",
+      version: "1.0.0",
+      description: "Provider API",
+      methods: {
+        echo: {
+          description: "Echo input",
+          invoke(input) {
+            return { provider: "provider", echoed: input };
+          },
+        },
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn consumer_dependency_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "consumer.call",
+      kind: "session_runtime",
+      description: "Call provider channel",
+      async invoke(input) {
+        return await ctx.api.channels.from("provider").invoke("echo", input);
       },
     });
   },

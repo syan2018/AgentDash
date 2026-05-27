@@ -2,9 +2,11 @@ use std::time::Duration;
 
 use agentdash_application::runtime_gateway::{
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
+    ExtensionRuntimeChannelTransport,
 };
 use agentdash_relay::{
-    CommandExtensionActionInvokePayload, RelayMessage, ResponseExtensionActionInvokePayload,
+    CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload, RelayMessage,
+    ResponseExtensionActionInvokePayload, ResponseExtensionChannelInvokePayload,
 };
 use async_trait::async_trait;
 
@@ -38,6 +40,40 @@ impl ExtensionRuntimeActionTransport for BackendRegistry {
             )),
             other => Err(ExtensionRuntimeActionTransportError::Failed(format!(
                 "unexpected extension action relay response: {}",
+                other.id()
+            ))),
+        }
+    }
+}
+
+#[async_trait]
+impl ExtensionRuntimeChannelTransport for BackendRegistry {
+    async fn invoke_extension_channel(
+        &self,
+        backend_id: &str,
+        payload: CommandExtensionChannelInvokePayload,
+    ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError> {
+        let command = RelayMessage::CommandExtensionChannelInvoke {
+            id: RelayMessage::new_id("ext-channel"),
+            payload,
+        };
+        let response = self
+            .send_command_with_timeout(backend_id, command, Duration::from_secs(30))
+            .await
+            .map_err(transport_error_from_backend)?;
+        match response {
+            RelayMessage::ResponseExtensionChannelInvoke {
+                payload: Some(payload),
+                error: None,
+                ..
+            } => Ok(payload),
+            RelayMessage::ResponseExtensionChannelInvoke {
+                error: Some(error), ..
+            } => Err(ExtensionRuntimeActionTransportError::Failed(
+                error.to_string(),
+            )),
+            other => Err(ExtensionRuntimeActionTransportError::Failed(format!(
+                "unexpected extension channel relay response: {}",
                 other.id()
             ))),
         }
@@ -156,6 +192,7 @@ mod tests {
             session_id: "session-1".to_string(),
             input: json!({}),
             package_artifact: None,
+            runtime_extensions: vec![],
             trace_id: "trace-1".to_string(),
             invocation_id: "rtinv-1".to_string(),
         }

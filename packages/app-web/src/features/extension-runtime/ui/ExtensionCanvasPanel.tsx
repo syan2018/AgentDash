@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { authenticatedFetch } from "../../../api/client";
+import type { JsonValue } from "../../../generated/extension-runtime-contracts";
 import { mapCanvasRuntimeSnapshot } from "../../../services/canvas";
-import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
+import {
+  buildExtensionWebviewAssetUrl,
+  invokeProjectExtensionRuntimeChannel,
+} from "../../../services/extensionRuntime";
 import type {
   CanvasRuntimeSnapshot,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../types";
 import { CanvasRuntimePreview } from "../../canvas-panel/CanvasRuntimePreview";
+import type { CanvasExtensionChannelRequest } from "../../canvas-panel/CanvasRuntimePreview";
 import { useWorkspaceData, type WorkspaceData } from "../../workspace-panel/workspace-data-context";
+import type { WorkspaceBackendTarget } from "../../workspace-panel/workspace-panel-types";
 
 interface ExtensionCanvasPanelProps {
   tab: ExtensionWorkspaceTabProjectionResponse;
@@ -103,12 +109,73 @@ export function ExtensionCanvasPanel({ tab }: ExtensionCanvasPanelProps) {
     };
     return (
       <div className="flex h-full min-h-0 bg-background">
-        <CanvasRuntimePreview snapshot={snapshot} />
+        <CanvasRuntimePreview
+          snapshot={snapshot}
+          extensionChannelBridge={(request) =>
+            invokeExtensionChannelFromCanvas(workspaceData, tab, request)}
+        />
       </div>
     );
   }
 
   return null;
+}
+
+async function invokeExtensionChannelFromCanvas(
+  workspaceData: WorkspaceData,
+  tab: ExtensionWorkspaceTabProjectionResponse,
+  request: CanvasExtensionChannelRequest,
+): Promise<unknown> {
+  if (!workspaceData.projectId || !workspaceData.sessionId) {
+    throw new Error("Canvas extension channel 缺少 Project 或 Session context");
+  }
+  const backend = selectBackendTarget(workspaceData);
+  if (!backend || !backend.online) {
+    throw new Error("Canvas extension channel 缺少可用 backend");
+  }
+  const result = await invokeProjectExtensionRuntimeChannel(workspaceData.projectId, {
+    session_id: workspaceData.sessionId,
+    backend_id: backend.backend_id,
+    channel_key: request.channel_key,
+    method: request.method,
+    input: toJsonValue(request.input),
+    consumer_extension_key: tab.extension_key,
+    dependency_alias: request.dependency_alias ?? null,
+  });
+  return result.output.output;
+}
+
+function toJsonValue(raw: unknown): JsonValue {
+  if (raw === null || typeof raw === "string" || typeof raw === "boolean") return raw;
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (Array.isArray(raw)) return raw.map(toJsonValue);
+  if (raw == null || typeof raw !== "object") return null;
+  const result: { [key: string]: JsonValue } = {};
+  for (const [key, value] of Object.entries(raw)) {
+    result[key] = toJsonValue(value);
+  }
+  return result;
+}
+
+function selectBackendTarget(
+  workspaceData: WorkspaceData,
+): WorkspaceBackendTarget | null {
+  const mounts = workspaceData.runtimeSurface?.mounts ?? [];
+  const defaultMount = workspaceData.runtimeSurface?.default_mount_id
+    ? mounts.find((mount) => mount.id === workspaceData.runtimeSurface?.default_mount_id) ?? null
+    : null;
+  const ordered = defaultMount
+    ? [defaultMount, ...mounts.filter((mount) => mount.id !== defaultMount.id)]
+    : mounts;
+  const selected = ordered.find((mount) => mount.backend_id.trim() !== "");
+  if (selected) {
+    return {
+      backend_id: selected.backend_id,
+      label: selected.display_name || selected.backend_id,
+      online: selected.backend_online !== false,
+    };
+  }
+  return workspaceData.workspaceBackend;
 }
 
 function resolveAvailability(

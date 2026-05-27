@@ -22,6 +22,8 @@ export type {
   ExtensionRuntimeInvocationOutputResponse,
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
+  ExtensionRuntimeInvokeChannelRequest,
+  ExtensionRuntimeInvokeChannelResponse,
   ExtensionRuntimeProjectionResponse,
   ExtensionRuntimeTraceResponse,
   ExtensionWorkspaceTabProjectionResponse,

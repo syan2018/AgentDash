@@ -26,6 +26,12 @@ export interface ExtensionBridge {
     actionKey: string,
     input: TInput,
   ): Promise<TOutput>;
+  invokeChannel<TInput extends JsonValue, TOutput extends JsonValue>(
+    channelKey: string,
+    method: string,
+    input: TInput,
+    options?: { dependency_alias?: string },
+  ): Promise<TOutput>;
   openWorkspaceTab(typeId: string, uri: string): Promise<void>;
   vfs: {
     read(path: string): Promise<string>;
@@ -117,6 +123,14 @@ export function createExtensionBridge(options: ExtensionBridgeOptions = {}): Ext
   return {
     invokeAction(actionKey, input) {
       return request("runtime.invoke_action", { action_key: actionKey, input });
+    },
+    invokeChannel(channelKey, method, input, options = {}) {
+      return request("extension.invoke_channel", {
+        channel_key: channelKey,
+        method,
+        input,
+        dependency_alias: options.dependency_alias ?? null,
+      });
     },
     async openWorkspaceTab(typeId, uri) {
       await request("workspace.open_tab", { type_id: typeId, uri });

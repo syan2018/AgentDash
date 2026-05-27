@@ -10,7 +10,9 @@ mod types;
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use extension_actions::{
     ExtensionRuntimeActionProvider, ExtensionRuntimeActionTransport,
-    ExtensionRuntimeActionTransportError,
+    ExtensionRuntimeActionTransportError, ExtensionRuntimeChannelConsumer,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
+    ExtensionRuntimeChannelInvoker, ExtensionRuntimeChannelTransport,
 };
 pub use gateway::RuntimeGateway;
 pub use provider::RuntimeProvider;

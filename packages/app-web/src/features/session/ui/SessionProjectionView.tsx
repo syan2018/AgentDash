@@ -94,10 +94,12 @@ function buildContextCategories(
       source: "policy",
     });
   }
-  if (tokenUsage?.effectiveContextWindow) {
+  const contextWindow = tokenUsage?.effectiveContextWindow ?? tokenUsage?.modelContextWindow;
+  if (tokenUsage && contextWindow) {
+    const reserveToSubtract = tokenUsage.effectiveContextWindow == null ? tokenUsage.reserveTokens : 0;
     const freeTokens = Math.max(
       0,
-      tokenUsage.effectiveContextWindow - tokenUsage.currentContextTokens - tokenUsage.reserveTokens,
+      contextWindow - tokenUsage.currentContextTokens - reserveToSubtract,
     );
     rows.push({
       id: "free_space",

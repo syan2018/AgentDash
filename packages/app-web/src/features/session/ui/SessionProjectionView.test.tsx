@@ -19,6 +19,44 @@ describe("SessionProjectionViewPanel", () => {
     expect(markup).toContain("System / Developer");
     expect(markup).toContain("工具调用");
   });
+
+  it("剩余空间使用 effective window 时不重复扣除 reserve", () => {
+    const markup = renderToStaticMarkup(
+      <SessionProjectionViewPanel
+        projection={sampleProjection()}
+        tokenUsage={{
+          currentContextTokens: 13_500,
+          providerContextTokens: 12_600,
+          pendingEstimateTokens: 900,
+          cumulativeTotalTokens: 126_000,
+          modelContextWindow: 200_000,
+          effectiveContextWindow: 180_000,
+          reserveTokens: 16_384,
+          usageSource: "providerPlusEstimate",
+          last: {
+            inputTokens: 10_000,
+            outputTokens: 500,
+            totalTokens: 12_600,
+            cacheReadTokens: 2_000,
+            cacheCreationTokens: 0,
+            reasoningTokens: 100,
+          },
+          total: {
+            inputTokens: 100_000,
+            outputTokens: 5_000,
+            totalTokens: 126_000,
+            cacheReadTokens: 20_000,
+            cacheCreationTokens: 0,
+            reasoningTokens: 1_000,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("剩余空间");
+    expect(markup).toContain("166.5K");
+    expect(markup).not.toContain("150.1K");
+  });
 });
 
 function sampleProjection(): SessionProjectionViewResponse {

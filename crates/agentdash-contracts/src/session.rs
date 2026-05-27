@@ -602,13 +602,14 @@ fn context_usage_analysis(
     let summary_tokens = sum_segment_tokens(segments, |segment| {
         segment.role == "compaction_summary" || segment.origin == "projection"
     });
-    let message_tokens = sum_segment_tokens(segments, |segment| {
+    let raw_message_tokens = sum_segment_tokens(segments, |segment| {
         segment.role != "compaction_summary" && segment.origin != "projection"
     });
     let attachment_tokens = segments
         .iter()
         .map(|segment| segment.attachment_tokens)
         .fold(0_u64, u64::saturating_add);
+    let message_tokens = raw_message_tokens.saturating_sub(attachment_tokens);
     let categories = vec![
         context_category(
             "system_developer",
@@ -902,6 +903,19 @@ mod projection_tests {
         let view = SessionProjectionViewResponse::from(envelope);
 
         assert!(view.context_usage.messages.attachment_tokens > 0);
+        let messages_category = view
+            .context_usage
+            .categories
+            .iter()
+            .find(|category| category.kind == "messages")
+            .expect("messages category should exist");
+        assert_eq!(
+            messages_category.token_estimate,
+            view.segments[0]
+                .token_estimate
+                .expect("segment token estimate")
+                .saturating_sub(view.context_usage.messages.attachment_tokens)
+        );
         assert_eq!(view.context_usage.top_attachments.len(), 1);
         assert!(
             view.context_usage.top_attachments[0]

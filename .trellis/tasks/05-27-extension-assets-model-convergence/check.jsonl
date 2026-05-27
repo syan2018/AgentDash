@@ -1,0 +1,15 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "检查 Shared Library / Project Asset / source-status 契约是否同步更新"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 DTO mapper 与 snake_case contract 边界"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration、约束、repository 测试"}
+{"file": "packages/app-web/src/features/assets-panel/categories/extension/ExtensionCategoryPanel.test.tsx", "reason": "现有 Extension 类目测试需随 UI 收敛更新"}
+{"file": "packages/app-web/src/services/extensionPackage.test.ts", "reason": "Package import/download service mapper 回归测试"}
+{"file": "packages/app-web/src/services/extensionRuntime.test.ts", "reason": "Runtime projection service 不应继续承担管理事实源"}
+{"file": "crates/agentdash-application/src/extension_package.rs", "reason": "Archive validation/storage/read tests 覆盖 artifact ownership 改动"}
+{"file": "crates/agentdash-application/src/extension_runtime.rs", "reason": "Runtime projection 与 uninstall 行为回归测试"}
+{"file": "crates/agentdash-application/src/runtime_gateway/extension_actions.rs", "reason": "Executable extension package_artifact runtime 行为回归测试"}
+{"file": "packages/extension-dev/src/pack.test.js", "reason": "Extension package manifest/bundle digest authoring 测试"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "验收前端是否以 Project 事实源驱动 Assets 管理，runtime projection 仅用于运行态"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "验收 Assets 页面是否复用标准 primitive 与 surface，不再自建归档库 UI"}
+{"file": "crates/agentdash-local/src/handlers/extension.rs", "reason": "验收本机 host activation 对 package artifact 的执行前置校验"}
+{"file": "packages/app-web/src/features/assets-panel/categories/extension/extensionAggregation.test.ts", "reason": "验收 Extension asset 聚合逻辑移除 archive-library 心智"}

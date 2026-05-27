@@ -11,7 +11,10 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_application::extension_package::{digest_bytes, read_extension_package_archive_file};
+use agentdash_application::extension_package::{
+    ExtensionPackageArtifactStorageError, digest_bytes, read_extension_package_archive_file,
+    read_extension_package_archive_object,
+};
 use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
@@ -30,7 +33,6 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
-use crate::routes::extension_package_artifacts::read_storage_object;
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -155,7 +157,9 @@ pub async fn get_project_extension_webview_asset(
     let artifact = installation
         .package_artifact
         .ok_or_else(|| ApiError::Conflict("Extension webview 需要 packaged artifact".into()))?;
-    let archive_bytes = read_storage_object(&artifact.storage_ref).await?;
+    let archive_bytes = read_extension_package_archive_object(&artifact.storage_ref)
+        .await
+        .map_err(storage_error_to_api)?;
     let actual_digest = digest_bytes(&archive_bytes);
     if actual_digest != artifact.archive_digest {
         return Err(ApiError::Internal(format!(
@@ -296,6 +300,10 @@ fn content_type_for_path(path: &str) -> &'static str {
     } else {
         "application/octet-stream"
     }
+}
+
+fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
+    ApiError::Internal(error.to_string())
 }
 
 #[cfg(test)]

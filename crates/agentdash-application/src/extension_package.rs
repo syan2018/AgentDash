@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -46,6 +46,18 @@ pub struct InstallExtensionPackageArtifactInput {
     pub extension_key: Option<String>,
     pub display_name: Option<String>,
     pub overwrite: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ExtensionPackageArtifactStorageError {
+    #[error("artifact storage_ref 非法: {0}")]
+    InvalidStorageRef(String),
+    #[error("创建 artifact 存储目录失败: {0}")]
+    CreateDir(#[source] std::io::Error),
+    #[error("写入 artifact 存储失败: {0}")]
+    Write(#[source] std::io::Error),
+    #[error("读取 artifact 存储失败: {0}")]
+    Read(#[source] std::io::Error),
 }
 
 pub fn validate_extension_package_archive(
@@ -176,6 +188,73 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("sha256:{:x}", hasher.finalize())
+}
+
+pub fn extension_package_archive_storage_ref_for(
+    project_id: Uuid,
+    archive_digest: &str,
+) -> Result<String, DomainError> {
+    validate_sha256_digest("archive_digest", archive_digest)?;
+    let digest = archive_digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| DomainError::InvalidConfig("archive_digest 格式非法".to_string()))?;
+    Ok(format!(
+        "extension-packages/{project_id}/{digest}.agentdash-extension.tgz"
+    ))
+}
+
+pub async fn write_extension_package_archive_object(
+    storage_ref: &str,
+    bytes: &[u8],
+) -> Result<(), ExtensionPackageArtifactStorageError> {
+    let path = extension_package_storage_path(storage_ref)?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(ExtensionPackageArtifactStorageError::CreateDir)?;
+    }
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(ExtensionPackageArtifactStorageError::Write)?;
+    Ok(())
+}
+
+pub async fn read_extension_package_archive_object(
+    storage_ref: &str,
+) -> Result<Vec<u8>, ExtensionPackageArtifactStorageError> {
+    let path = extension_package_storage_path(storage_ref)?;
+    tokio::fs::read(&path)
+        .await
+        .map_err(ExtensionPackageArtifactStorageError::Read)
+}
+
+fn extension_package_storage_path(
+    storage_ref: &str,
+) -> Result<PathBuf, ExtensionPackageArtifactStorageError> {
+    let mut path = extension_package_storage_root();
+    for component in Path::new(storage_ref).components() {
+        match component {
+            Component::Normal(part) => path.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(ExtensionPackageArtifactStorageError::InvalidStorageRef(
+                    storage_ref.to_string(),
+                ));
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn extension_package_storage_root() -> PathBuf {
+    std::env::var_os("AGENTDASH_EXTENSION_ARTIFACT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::env::temp_dir())
+                .join(".agentdash")
+                .join("extension-artifacts")
+        })
 }
 
 fn read_tgz_files(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, DomainError> {
@@ -448,6 +527,20 @@ mod tests {
             ),
             ("dist/extension.js", bundle),
         ])
+    }
+
+    #[test]
+    fn storage_ref_uses_archive_digest() {
+        let project_id = Uuid::nil();
+        let storage_ref = extension_package_archive_storage_ref_for(
+            project_id,
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .expect("storage ref");
+        assert_eq!(
+            storage_ref,
+            "extension-packages/00000000-0000-0000-0000-000000000000/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.agentdash-extension.tgz"
+        );
     }
 
     fn canvas_panel_manifest() -> Value {

@@ -12,8 +12,10 @@ use agentdash_application::canvas::{
     build_runtime_snapshot_with_bindings,
 };
 use agentdash_application::extension_package::{
-    InstallExtensionPackageArtifactInput, StoreExtensionPackageArtifactInput,
+    ExtensionPackageArtifactStorageError, InstallExtensionPackageArtifactInput,
+    StoreExtensionPackageArtifactInput, extension_package_archive_storage_ref_for,
     install_extension_package_artifact, store_extension_package_artifact,
+    write_extension_package_archive_object,
 };
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
@@ -26,7 +28,6 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::CanvasResponse;
-use crate::routes::extension_package_artifacts::{storage_ref_for, write_storage_object};
 use crate::rpc::ApiError;
 use crate::session_use_cases::context_query::build_session_context_plan;
 
@@ -205,8 +206,11 @@ pub async fn promote_canvas_to_extension(
         },
     )?;
     let archive_bytes = package.archive_bytes;
-    let storage_ref = storage_ref_for(canvas.project_id, &package.archive_digest)?;
-    write_storage_object(&storage_ref, &archive_bytes).await?;
+    let storage_ref =
+        extension_package_archive_storage_ref_for(canvas.project_id, &package.archive_digest)?;
+    write_extension_package_archive_object(&storage_ref, &archive_bytes)
+        .await
+        .map_err(storage_error_to_api)?;
     let artifact = store_extension_package_artifact(
         &state.repos,
         StoreExtensionPackageArtifactInput {
@@ -361,6 +365,10 @@ fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
 
 fn default_promote_overwrite() -> bool {
     true
+}
+
+fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
+    ApiError::Internal(error.to_string())
 }
 
 async fn resolve_canvas_runtime_vfs(

@@ -710,6 +710,34 @@ impl ExtensionTemplatePayload {
         }
         Ok(())
     }
+
+    pub fn grants_local_profile_read(&self) -> bool {
+        self.permissions.iter().any(|permission| {
+            matches!(
+                permission,
+                ExtensionPermissionDeclaration::LocalProfile {
+                    access: ExtensionPermissionAccess::Read | ExtensionPermissionAccess::ReadWrite
+                }
+            )
+        })
+    }
+
+    pub fn action_declares_local_profile_read(&self, action_key: &str) -> bool {
+        self.runtime_actions
+            .iter()
+            .find(|action| action.action_key == action_key)
+            .map(|action| {
+                action
+                    .permissions
+                    .iter()
+                    .any(|permission| permission == "local.profile.read")
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn allows_local_profile_read_for_action(&self, action_key: &str) -> bool {
+        self.grants_local_profile_read() && self.action_declares_local_profile_read(action_key)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

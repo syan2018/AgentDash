@@ -2,8 +2,7 @@
 //!
 //! CLI 与后续 Tauri desktop 都应把这里作为本机能力入口；二进制入口只负责参数解析和宿主启动。
 
-mod extension_artifact_cache;
-mod extension_host;
+mod extensions;
 mod handlers;
 pub use handlers::browse_directory;
 pub mod local_backend_config;
@@ -18,14 +17,11 @@ mod ws_client;
 
 pub mod runtime;
 
-pub use extension_artifact_cache::{
+pub use extensions::{
     ExtensionArtifactCacheEntry, ExtensionArtifactCacheError, ExtensionArtifactDownloadRequest,
-    download_and_cache_extension_artifact,
-};
-pub use extension_host::{
     LocalExtensionHostActivation, LocalExtensionHostError, LocalExtensionHostHealth,
     LocalExtensionHostManager, LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot,
-    LocalTsExtensionHostConfig,
+    LocalTsExtensionHostConfig, download_and_cache_extension_artifact,
 };
 
 pub use runtime::{

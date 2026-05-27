@@ -2,10 +2,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 
-use agentdash_domain::shared_library::{
-    ExtensionBundleKind, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
-    ExtensionTemplatePayload,
-};
+use agentdash_domain::shared_library::{ExtensionBundleKind, ExtensionTemplatePayload};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -14,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
-use crate::extension_artifact_cache::ExtensionArtifactCacheEntry;
+use super::artifact_cache::ExtensionArtifactCacheEntry;
 
 #[derive(Debug, Clone)]
 pub struct LocalTsExtensionHostConfig {
@@ -583,26 +580,8 @@ fn local_username() -> String {
 }
 
 fn allows_local_profile(manifest: &ExtensionTemplatePayload, action_key: Option<&str>) -> bool {
-    manifest.permissions.iter().any(|permission| {
-        matches!(
-            permission,
-            ExtensionPermissionDeclaration::LocalProfile {
-                access: ExtensionPermissionAccess::Read | ExtensionPermissionAccess::ReadWrite
-            }
-        )
-    }) || action_key
-        .and_then(|key| {
-            manifest
-                .runtime_actions
-                .iter()
-                .find(|action| action.action_key == key)
-        })
-        .map(|action| {
-            action
-                .permissions
-                .iter()
-                .any(|permission| permission == "local.profile.read")
-        })
+    action_key
+        .map(|key| manifest.allows_local_profile_read_for_action(key))
         .unwrap_or(false)
 }
 
@@ -878,7 +857,7 @@ mod tests {
     #[tokio::test]
     async fn local_hello_profile_executes_in_host() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let package_dir = write_package(temp.path(), profile_bundle(), true)
+        let package_dir = write_package(temp.path(), profile_bundle(), true, true)
             .await
             .expect("package");
         let manager = test_manager(temp.path());
@@ -901,7 +880,7 @@ mod tests {
     #[tokio::test]
     async fn reload_updates_action_handler() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let package_dir = write_package(temp.path(), version_bundle(1), true)
+        let package_dir = write_package(temp.path(), version_bundle(1), true, true)
             .await
             .expect("package");
         let manager = test_manager(temp.path());
@@ -937,7 +916,26 @@ mod tests {
     #[tokio::test]
     async fn permission_denied_when_local_profile_is_not_declared() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let package_dir = write_package(temp.path(), profile_bundle(), false)
+        let package_dir = write_package(temp.path(), profile_bundle(), false, false)
+            .await
+            .expect("package");
+        let manager = test_manager(temp.path());
+        manager
+            .activate_dev_directory(&package_dir, activation())
+            .await
+            .expect("activate");
+        let err = manager
+            .invoke_action("local-hello.profile", Value::Null)
+            .await
+            .expect_err("permission denied");
+        assert!(err.to_string().contains("local.profile.read"));
+        manager.stop().await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn permission_denied_when_action_local_profile_is_not_declared() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let package_dir = write_package(temp.path(), profile_bundle(), true, false)
             .await
             .expect("package");
         let manager = test_manager(temp.path());
@@ -956,7 +954,7 @@ mod tests {
     #[tokio::test]
     async fn packaged_directory_verifies_bundle_digest() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let package_dir = write_package(temp.path(), version_bundle(7), true)
+        let package_dir = write_package(temp.path(), version_bundle(7), true, true)
             .await
             .expect("package");
         let cache_entry = ExtensionArtifactCacheEntry {
@@ -982,7 +980,7 @@ mod tests {
     #[tokio::test]
     async fn action_exception_does_not_stop_host_process() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let package_dir = write_package(temp.path(), throwing_bundle(), true)
+        let package_dir = write_package(temp.path(), throwing_bundle(), true, true)
             .await
             .expect("package");
         let manager = test_manager(temp.path());
@@ -1020,18 +1018,19 @@ mod tests {
     async fn write_package(
         root: &Path,
         bundle: String,
-        include_permission: bool,
+        include_top_level_permission: bool,
+        include_action_permission: bool,
     ) -> anyhow::Result<PathBuf> {
         let package_dir = root.join("package");
         tokio::fs::create_dir_all(package_dir.join("dist")).await?;
         write_bundle(&package_dir, bundle.clone()).await?;
         let digest = digest_bytes(bundle.as_bytes());
-        let permissions = if include_permission {
+        let permissions = if include_top_level_permission {
             json!([{ "kind": "local_profile", "access": "read" }])
         } else {
             json!([])
         };
-        let action_permissions = if include_permission {
+        let action_permissions = if include_action_permission {
             json!(["local.profile.read"])
         } else {
             json!([])

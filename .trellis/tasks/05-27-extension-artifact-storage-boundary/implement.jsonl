@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认 API route 与 application service 的职责边界。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认后端模块移动时依赖方向保持整洁架构。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 extension package/runtime DTO contract 不改变。"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "确认 packaged extension artifact 与 Project installation 语义保持一致。"}

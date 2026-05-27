@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查移动后 extension host/cache 行为与本机 runtime contract 一致。"}

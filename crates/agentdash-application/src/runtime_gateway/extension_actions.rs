@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_domain::shared_library::{
-    ExtensionPermissionAccess, ExtensionPermissionDeclaration, ExtensionRuntimeActionKind,
-    ProjectExtensionInstallationRepository,
+    ExtensionRuntimeActionKind, ProjectExtensionInstallationRepository,
 };
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, ExtensionPackageArtifactRelay,
@@ -235,14 +234,7 @@ fn validate_action_permissions(
 fn allows_local_profile(
     installation: &agentdash_domain::shared_library::ProjectExtensionInstallation,
 ) -> bool {
-    installation.manifest.permissions.iter().any(|permission| {
-        matches!(
-            permission,
-            ExtensionPermissionDeclaration::LocalProfile {
-                access: ExtensionPermissionAccess::Read | ExtensionPermissionAccess::ReadWrite
-            }
-        )
-    })
+    installation.manifest.grants_local_profile_read()
 }
 
 fn transport_error_to_invocation(
@@ -281,6 +273,7 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
+        ExtensionPermissionAccess, ExtensionPermissionDeclaration,
         ExtensionRuntimeActionDefinition, ExtensionTemplatePayload, InstalledAssetSource,
         ProjectExtensionInstallation,
     };

@@ -1,6 +1,5 @@
 //! Project Extension Package Artifact HTTP 路由。
 
-use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 use axum::Json;
@@ -12,9 +11,11 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::extension_package::{
-    InstallExtensionPackageArtifactInput, StoreExtensionPackageArtifactInput, digest_bytes,
-    install_extension_package_artifact, store_extension_package_artifact,
-    validate_extension_package_archive,
+    ExtensionPackageArtifactStorageError, InstallExtensionPackageArtifactInput,
+    StoreExtensionPackageArtifactInput, digest_bytes, extension_package_archive_storage_ref_for,
+    install_extension_package_artifact, read_extension_package_archive_object,
+    store_extension_package_artifact, validate_extension_package_archive,
+    write_extension_package_archive_object,
 };
 use agentdash_contracts::extension_package::{
     ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
@@ -111,8 +112,11 @@ pub async fn upload_extension_package_artifact(
     let archive_bytes =
         archive_bytes.ok_or_else(|| ApiError::BadRequest("缺少 archive 文件字段".into()))?;
     validate_extension_package_archive(&archive_bytes, expected_archive_digest.as_deref())?;
-    let storage_ref = storage_ref_for(project_id, &digest_bytes(&archive_bytes))?;
-    write_storage_object(&storage_ref, &archive_bytes).await?;
+    let storage_ref =
+        extension_package_archive_storage_ref_for(project_id, &digest_bytes(&archive_bytes))?;
+    write_extension_package_archive_object(&storage_ref, &archive_bytes)
+        .await
+        .map_err(storage_error_to_api)?;
 
     let artifact = store_extension_package_artifact(
         &state.repos,
@@ -230,7 +234,9 @@ async fn extension_package_archive_response(
             "Extension package artifact 不存在".into(),
         ));
     }
-    let bytes = read_storage_object(&artifact.storage_ref).await?;
+    let bytes = read_extension_package_archive_object(&artifact.storage_ref)
+        .await
+        .map_err(storage_error_to_api)?;
     let actual_digest = digest_bytes(&bytes);
     if actual_digest != artifact.archive_digest {
         return Err(ApiError::Internal(format!(
@@ -287,77 +293,6 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("{field} 非法")))
 }
 
-pub(crate) fn storage_ref_for(project_id: Uuid, archive_digest: &str) -> Result<String, ApiError> {
-    let digest = archive_digest
-        .strip_prefix("sha256:")
-        .ok_or_else(|| ApiError::BadRequest("archive_digest 格式非法".into()))?;
-    Ok(format!(
-        "extension-packages/{project_id}/{digest}.agentdash-extension.tgz"
-    ))
-}
-
-pub(crate) async fn write_storage_object(storage_ref: &str, bytes: &[u8]) -> Result<(), ApiError> {
-    let path = storage_path(storage_ref)?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|error| ApiError::Internal(format!("创建 artifact 存储目录失败: {error}")))?;
-    }
-    tokio::fs::write(&path, bytes)
-        .await
-        .map_err(|error| ApiError::Internal(format!("写入 artifact 存储失败: {error}")))?;
-    Ok(())
-}
-
-pub(crate) async fn read_storage_object(storage_ref: &str) -> Result<Vec<u8>, ApiError> {
-    let path = storage_path(storage_ref)?;
-    tokio::fs::read(&path)
-        .await
-        .map_err(|error| ApiError::Internal(format!("读取 artifact 存储失败: {error}")))
-}
-
-fn storage_path(storage_ref: &str) -> Result<PathBuf, ApiError> {
-    let mut path = storage_root();
-    for component in std::path::Path::new(storage_ref).components() {
-        match component {
-            Component::Normal(part) => path.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ApiError::Internal(format!(
-                    "artifact storage_ref 非法: {storage_ref}"
-                )));
-            }
-        }
-    }
-    Ok(path)
-}
-
-fn storage_root() -> PathBuf {
-    std::env::var_os("AGENTDASH_EXTENSION_ARTIFACT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::env::temp_dir())
-                .join(".agentdash")
-                .join("extension-artifacts")
-        })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn storage_ref_uses_archive_digest() {
-        let project_id = Uuid::nil();
-        let storage_ref = storage_ref_for(
-            project_id,
-            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        )
-        .expect("storage ref");
-        assert_eq!(
-            storage_ref,
-            "extension-packages/00000000-0000-0000-0000-000000000000/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.agentdash-extension.tgz"
-        );
-    }
+fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
+    ApiError::Internal(error.to_string())
 }

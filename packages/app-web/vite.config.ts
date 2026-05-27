@@ -27,7 +27,6 @@ function apiProxyConfig(): ProxyOptions {
         if (
           code === 'ECONNRESET' ||
           code === 'EPIPE' ||
-          code === 'ECONNREFUSED' ||
           code === 'ECONNABORTED'
         ) return
 
@@ -41,7 +40,10 @@ function apiProxyConfig(): ProxyOptions {
         if (anyRes?.writeHead && !anyRes.headersSent) {
           anyRes.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
         }
-        if (anyRes?.end) anyRes.end('Vite proxy error')
+        const message = code === 'ECONNREFUSED'
+          ? `Vite proxy target unavailable: ${apiProxyTarget}`
+          : 'Vite proxy error'
+        if (anyRes?.end) anyRes.end(message)
         else anyRes?.destroy?.()
       })
     },

@@ -12,10 +12,9 @@ use agentdash_application::canvas::{
     build_runtime_snapshot_with_bindings,
 };
 use agentdash_application::extension_package::{
-    ExtensionPackageArtifactStorageError, InstallExtensionPackageArtifactInput,
-    StoreExtensionPackageArtifactInput, extension_package_archive_storage_ref_for,
-    install_extension_package_artifact, store_extension_package_artifact,
-    write_extension_package_archive_object,
+    ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
+    StoreExtensionPackageArchiveInput, install_extension_package_artifact,
+    store_extension_package_archive,
 };
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
@@ -205,22 +204,17 @@ pub async fn promote_canvas_to_extension(
             asset_version: req.asset_version,
         },
     )?;
-    let archive_bytes = package.archive_bytes;
-    let storage_ref =
-        extension_package_archive_storage_ref_for(canvas.project_id, &package.archive_digest)?;
-    write_extension_package_archive_object(&storage_ref, &archive_bytes)
-        .await
-        .map_err(storage_error_to_api)?;
-    let artifact = store_extension_package_artifact(
+    let artifact = store_extension_package_archive(
         &state.repos,
-        StoreExtensionPackageArtifactInput {
+        state.services.extension_package_artifact_storage.as_ref(),
+        StoreExtensionPackageArchiveInput {
             project_id: canvas.project_id,
-            storage_ref,
-            archive_bytes,
+            archive_bytes: package.archive_bytes,
             expected_archive_digest: Some(package.archive_digest),
         },
     )
-    .await?;
+    .await
+    .map_err(extension_package_error_to_api)?;
     let installation = install_extension_package_artifact(
         &state.repos,
         InstallExtensionPackageArtifactInput {
@@ -367,8 +361,18 @@ fn default_promote_overwrite() -> bool {
     true
 }
 
-fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
-    ApiError::Internal(error.to_string())
+fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
+    match error {
+        ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
+        ExtensionPackageArtifactUseCaseError::Storage(error) => {
+            ApiError::Internal(error.to_string())
+        }
+        ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
+        ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),
+        ExtensionPackageArtifactUseCaseError::Forbidden(error) => ApiError::Forbidden(error),
+        ExtensionPackageArtifactUseCaseError::Conflict(error) => ApiError::Conflict(error),
+        ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
+    }
 }
 
 async fn resolve_canvas_runtime_vfs(

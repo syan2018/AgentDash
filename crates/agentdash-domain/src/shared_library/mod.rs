@@ -8,11 +8,12 @@ pub use project_extension::{ProjectExtensionInstallation, ProjectExtensionInstal
 pub use repository::{LibraryAssetListFilter, LibraryAssetRepository};
 pub use value_objects::{
     AgentMcpSlotTemplate, AgentTemplateConfig, AgentTemplatePayload, BuiltinSeed,
-    ExtensionAssetRef, ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
-    ExtensionCommandHandler, ExtensionFlagDefinition, ExtensionFlagType,
-    ExtensionMessageRendererDefinition, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
-    ExtensionRendererDeclaration, ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind,
-    ExtensionTemplatePayload, ExtensionWorkspaceTabDefinition,
+    EXTENSION_PERMISSION_LOCAL_PROFILE_READ, ExtensionAssetRef, ExtensionBundleKind,
+    ExtensionBundleRef, ExtensionCommandDefinition, ExtensionCommandHandler,
+    ExtensionFlagDefinition, ExtensionFlagType, ExtensionMessageRendererDefinition,
+    ExtensionPermissionAccess, ExtensionPermissionDecision, ExtensionPermissionDecisionReason,
+    ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionDefinition,
+    ExtensionRuntimeActionKind, ExtensionTemplatePayload, ExtensionWorkspaceTabDefinition,
     ExtensionWorkspaceTabRendererDeclaration, InlineMountFilePayload, InstalledAssetSource,
     LibraryAssetPayload, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
     McpServerTemplatePayload, PluginLibraryAssetSeed, ProjectAgentConfigOverride,

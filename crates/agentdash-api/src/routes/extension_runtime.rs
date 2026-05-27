@@ -1,6 +1,5 @@
 //! Project Extension Runtime HTTP 路由。
 
-use std::path::{Component, Path as StdPath};
 use std::sync::Arc;
 
 use axum::Json;
@@ -11,9 +10,14 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::app_state::AppState;
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
+use crate::routes::backend_access::ensure_project_backend_access;
+use crate::rpc::ApiError;
 use agentdash_application::extension_package::{
-    ExtensionPackageArtifactStorageError, digest_bytes, read_extension_package_archive_file,
-    read_extension_package_archive_object,
+    ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
+    read_extension_package_webview_asset,
 };
 use agentdash_application::extension_runtime::{
     UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
@@ -30,15 +34,6 @@ use agentdash_contracts::extension_runtime::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::session_binding::SessionBinding;
-use agentdash_domain::shared_library::{
-    ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
-};
-
-use crate::app_state::AppState;
-use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
-use crate::routes::backend_access::ensure_project_backend_access;
-use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimePath {
@@ -184,43 +179,24 @@ pub async fn get_project_extension_webview_asset(
         ProjectPermission::View,
     )
     .await?;
-    let asset_path = normalize_webview_asset_path(&path.asset_path)?;
-    let installation = state
-        .repos
-        .project_extension_installation_repo
-        .get_by_project_and_key(project_id, &path.extension_key)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Extension installation 不存在".into()))?;
-    if !installation.enabled {
-        return Err(ApiError::NotFound("Extension installation 不存在".into()));
-    }
-    if !webview_asset_allowed(&installation.manifest, &asset_path) {
-        return Err(ApiError::Forbidden(
-            "Extension webview asset 不属于已声明 panel 目录".into(),
-        ));
-    }
-    let artifact = installation
-        .package_artifact
-        .ok_or_else(|| ApiError::Conflict("Extension webview 需要 packaged artifact".into()))?;
-    let archive_bytes = read_extension_package_archive_object(&artifact.storage_ref)
-        .await
-        .map_err(storage_error_to_api)?;
-    let actual_digest = digest_bytes(&archive_bytes);
-    if actual_digest != artifact.archive_digest {
-        return Err(ApiError::Internal(format!(
-            "extension package artifact 存储 digest 不匹配: expected {}, actual {}",
-            artifact.archive_digest, actual_digest
-        )));
-    }
-    let bytes = read_extension_package_archive_file(&archive_bytes, &asset_path)?
-        .ok_or_else(|| ApiError::NotFound("Extension webview asset 不存在".into()))?;
-    let content_type = HeaderValue::from_static(content_type_for_path(&asset_path));
+    let asset = read_extension_package_webview_asset(
+        &state.repos,
+        state.services.extension_package_artifact_storage.as_ref(),
+        ReadExtensionPackageWebviewAssetInput {
+            project_id,
+            extension_key: path.extension_key,
+            asset_path: path.asset_path,
+        },
+    )
+    .await
+    .map_err(extension_package_error_to_api)?;
+    let content_type = HeaderValue::from_static(content_type_for_path(&asset.asset_path));
     Ok((
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
         ],
-        Bytes::from(bytes),
+        Bytes::from(asset.bytes),
     )
         .into_response())
 }
@@ -271,59 +247,6 @@ fn extension_runtime_invoke_response(
     }
 }
 
-fn normalize_webview_asset_path(raw: &str) -> Result<String, ApiError> {
-    let mut parts = Vec::new();
-    for component in StdPath::new(raw).components() {
-        match component {
-            Component::Normal(part) => {
-                let Some(value) = part.to_str() else {
-                    return Err(ApiError::BadRequest(
-                        "Extension webview asset path 必须是 UTF-8".into(),
-                    ));
-                };
-                if !value.is_empty() {
-                    parts.push(value.to_string());
-                }
-            }
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ApiError::BadRequest(
-                    "Extension webview asset path 非法".into(),
-                ));
-            }
-        }
-    }
-    if parts.is_empty() {
-        return Err(ApiError::BadRequest(
-            "Extension webview asset path 不能为空".into(),
-        ));
-    }
-    Ok(parts.join("/"))
-}
-
-fn webview_asset_allowed(manifest: &ExtensionTemplatePayload, asset_path: &str) -> bool {
-    manifest.workspace_tabs.iter().any(|tab| {
-        let entry = workspace_tab_renderer_entry(&tab.renderer);
-        let Ok(entry_path) = normalize_webview_asset_path(entry) else {
-            return false;
-        };
-        if asset_path == entry_path {
-            return true;
-        }
-        let Some((dir, _file)) = entry_path.rsplit_once('/') else {
-            return false;
-        };
-        asset_path.starts_with(&format!("{dir}/"))
-    })
-}
-
-fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclaration) -> &str {
-    match renderer {
-        ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
-        | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
-    }
-}
-
 fn content_type_for_path(path: &str) -> &'static str {
     let lower = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
     if lower.ends_with(".html") || lower.ends_with(".htm") {
@@ -347,39 +270,16 @@ fn content_type_for_path(path: &str) -> &'static str {
     }
 }
 
-fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
-    ApiError::Internal(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn webview_asset_path_rejects_traversal() {
-        let err = normalize_webview_asset_path("../dist/panel/index.html")
-            .expect_err("traversal should fail");
-        assert!(err.to_string().contains("path 非法"));
-    }
-
-    #[test]
-    fn webview_asset_allows_declared_panel_directory() {
-        let manifest = serde_json::from_value::<ExtensionTemplatePayload>(serde_json::json!({
-            "manifest_version": "2",
-            "extension_id": "local-hello",
-            "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
-            "asset_version": "0.1.0",
-            "workspace_tabs": [{
-                "type_id": "local-hello.panel",
-                "label": "Hello",
-                "uri_scheme": "local-hello",
-                "renderer": { "kind": "webview", "entry": "dist/panel/index.html" }
-            }]
-        }))
-        .expect("manifest");
-
-        assert!(webview_asset_allowed(&manifest, "dist/panel/index.html"));
-        assert!(webview_asset_allowed(&manifest, "dist/panel/app.js"));
-        assert!(!webview_asset_allowed(&manifest, "dist/extension.js"));
+fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
+    match error {
+        ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
+        ExtensionPackageArtifactUseCaseError::Storage(error) => {
+            ApiError::Internal(error.to_string())
+        }
+        ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
+        ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),
+        ExtensionPackageArtifactUseCaseError::Forbidden(error) => ApiError::Forbidden(error),
+        ExtensionPackageArtifactUseCaseError::Conflict(error) => ApiError::Conflict(error),
+        ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
     }
 }

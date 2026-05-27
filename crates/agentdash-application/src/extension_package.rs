@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use flate2::read::GzDecoder;
 use serde_json::Value;
@@ -14,6 +14,9 @@ use agentdash_domain::extension_package::{
 use agentdash_domain::shared_library::{
     ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
     ProjectExtensionInstallation,
+};
+pub use agentdash_spi::extension_package::{
+    ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
 };
 
 use crate::repository_set::RepositorySet;
@@ -40,6 +43,13 @@ pub struct StoreExtensionPackageArtifactInput {
 }
 
 #[derive(Debug, Clone)]
+pub struct StoreExtensionPackageArchiveInput {
+    pub project_id: Uuid,
+    pub archive_bytes: Vec<u8>,
+    pub expected_archive_digest: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct InstallExtensionPackageArtifactInput {
     pub project_id: Uuid,
     pub artifact_id: Uuid,
@@ -49,15 +59,46 @@ pub struct InstallExtensionPackageArtifactInput {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ExtensionPackageArtifactStorageError {
-    #[error("artifact storage_ref 非法: {0}")]
-    InvalidStorageRef(String),
-    #[error("创建 artifact 存储目录失败: {0}")]
-    CreateDir(#[source] std::io::Error),
-    #[error("写入 artifact 存储失败: {0}")]
-    Write(#[source] std::io::Error),
-    #[error("读取 artifact 存储失败: {0}")]
-    Read(#[source] std::io::Error),
+pub enum ExtensionPackageArtifactUseCaseError {
+    #[error(transparent)]
+    Domain(#[from] DomainError),
+    #[error(transparent)]
+    Storage(#[from] ExtensionPackageArtifactStorageError),
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{0}")]
+    Integrity(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadExtensionPackageArchiveInput {
+    pub project_id: Uuid,
+    pub artifact_id: Uuid,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionPackageArchiveObject {
+    pub artifact: ExtensionPackageArtifact,
+    pub archive_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReadExtensionPackageWebviewAssetInput {
+    pub project_id: Uuid,
+    pub extension_key: String,
+    pub asset_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionPackageWebviewAsset {
+    pub asset_path: String,
+    pub bytes: Vec<u8>,
 }
 
 pub fn validate_extension_package_archive(
@@ -140,6 +181,32 @@ pub async fn store_extension_package_artifact(
     Ok(artifact)
 }
 
+pub async fn store_extension_package_archive(
+    repos: &RepositorySet,
+    storage: &dyn ExtensionPackageArtifactStorage,
+    input: StoreExtensionPackageArchiveInput,
+) -> Result<ExtensionPackageArtifact, ExtensionPackageArtifactUseCaseError> {
+    let validated = validate_extension_package_archive(
+        &input.archive_bytes,
+        input.expected_archive_digest.as_deref(),
+    )?;
+    let storage_ref =
+        extension_package_archive_storage_ref_for(input.project_id, &validated.archive_digest)?;
+    storage
+        .write_archive_object(&storage_ref, &input.archive_bytes)
+        .await?;
+    Ok(store_extension_package_artifact(
+        repos,
+        StoreExtensionPackageArtifactInput {
+            project_id: input.project_id,
+            storage_ref,
+            archive_bytes: input.archive_bytes,
+            expected_archive_digest: input.expected_archive_digest,
+        },
+    )
+    .await?)
+}
+
 pub async fn install_extension_package_artifact(
     repos: &RepositorySet,
     input: InstallExtensionPackageArtifactInput,
@@ -184,6 +251,78 @@ pub async fn install_extension_package_artifact(
     upsert_extension_installation(repos, installation, input.overwrite).await
 }
 
+pub async fn read_extension_package_archive(
+    repos: &RepositorySet,
+    storage: &dyn ExtensionPackageArtifactStorage,
+    input: ReadExtensionPackageArchiveInput,
+) -> Result<ExtensionPackageArchiveObject, ExtensionPackageArtifactUseCaseError> {
+    let artifact = repos
+        .extension_package_artifact_repo
+        .get(input.artifact_id)
+        .await?
+        .ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension package artifact 不存在".to_string(),
+            )
+        })?;
+    if artifact.project_id != input.project_id {
+        return Err(ExtensionPackageArtifactUseCaseError::NotFound(
+            "Extension package artifact 不存在".to_string(),
+        ));
+    }
+    let archive_bytes =
+        read_verified_archive_bytes(storage, &artifact.storage_ref, &artifact.archive_digest)
+            .await?;
+
+    Ok(ExtensionPackageArchiveObject {
+        artifact,
+        archive_bytes,
+    })
+}
+
+pub async fn read_extension_package_webview_asset(
+    repos: &RepositorySet,
+    storage: &dyn ExtensionPackageArtifactStorage,
+    input: ReadExtensionPackageWebviewAssetInput,
+) -> Result<ExtensionPackageWebviewAsset, ExtensionPackageArtifactUseCaseError> {
+    let asset_path = normalize_webview_asset_path(&input.asset_path)?;
+    let installation = repos
+        .project_extension_installation_repo
+        .get_by_project_and_key(input.project_id, &input.extension_key)
+        .await?
+        .ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension installation 不存在".to_string(),
+            )
+        })?;
+    if !installation.enabled {
+        return Err(ExtensionPackageArtifactUseCaseError::NotFound(
+            "Extension installation 不存在".to_string(),
+        ));
+    }
+    if !webview_asset_allowed(&installation.manifest, &asset_path) {
+        return Err(ExtensionPackageArtifactUseCaseError::Forbidden(
+            "Extension webview asset 不属于已声明 panel 目录".to_string(),
+        ));
+    }
+    let artifact = installation.package_artifact.ok_or_else(|| {
+        ExtensionPackageArtifactUseCaseError::Conflict(
+            "Extension webview 需要 packaged artifact".to_string(),
+        )
+    })?;
+    let archive_bytes =
+        read_verified_archive_bytes(storage, &artifact.storage_ref, &artifact.archive_digest)
+            .await?;
+    let bytes =
+        read_extension_package_archive_file(&archive_bytes, &asset_path)?.ok_or_else(|| {
+            ExtensionPackageArtifactUseCaseError::NotFound(
+                "Extension webview asset 不存在".to_string(),
+            )
+        })?;
+
+    Ok(ExtensionPackageWebviewAsset { asset_path, bytes })
+}
+
 pub fn digest_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -201,60 +340,6 @@ pub fn extension_package_archive_storage_ref_for(
     Ok(format!(
         "extension-packages/{project_id}/{digest}.agentdash-extension.tgz"
     ))
-}
-
-pub async fn write_extension_package_archive_object(
-    storage_ref: &str,
-    bytes: &[u8],
-) -> Result<(), ExtensionPackageArtifactStorageError> {
-    let path = extension_package_storage_path(storage_ref)?;
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(ExtensionPackageArtifactStorageError::CreateDir)?;
-    }
-    tokio::fs::write(&path, bytes)
-        .await
-        .map_err(ExtensionPackageArtifactStorageError::Write)?;
-    Ok(())
-}
-
-pub async fn read_extension_package_archive_object(
-    storage_ref: &str,
-) -> Result<Vec<u8>, ExtensionPackageArtifactStorageError> {
-    let path = extension_package_storage_path(storage_ref)?;
-    tokio::fs::read(&path)
-        .await
-        .map_err(ExtensionPackageArtifactStorageError::Read)
-}
-
-fn extension_package_storage_path(
-    storage_ref: &str,
-) -> Result<PathBuf, ExtensionPackageArtifactStorageError> {
-    let mut path = extension_package_storage_root();
-    for component in Path::new(storage_ref).components() {
-        match component {
-            Component::Normal(part) => path.push(part),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(ExtensionPackageArtifactStorageError::InvalidStorageRef(
-                    storage_ref.to_string(),
-                ));
-            }
-        }
-    }
-    Ok(path)
-}
-
-fn extension_package_storage_root() -> PathBuf {
-    std::env::var_os("AGENTDASH_EXTENSION_ARTIFACT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::env::temp_dir())
-                .join(".agentdash")
-                .join("extension-artifacts")
-        })
 }
 
 fn read_tgz_files(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, DomainError> {
@@ -416,6 +501,67 @@ fn workspace_tab_renderer_entry(renderer: &ExtensionWorkspaceTabRendererDeclarat
         ExtensionWorkspaceTabRendererDeclaration::Webview { entry }
         | ExtensionWorkspaceTabRendererDeclaration::CanvasPanel { entry } => entry,
     }
+}
+
+async fn read_verified_archive_bytes(
+    storage: &dyn ExtensionPackageArtifactStorage,
+    storage_ref: &str,
+    expected_archive_digest: &str,
+) -> Result<Vec<u8>, ExtensionPackageArtifactUseCaseError> {
+    let archive_bytes = storage.read_archive_object(storage_ref).await?;
+    let actual_digest = digest_bytes(&archive_bytes);
+    if actual_digest != expected_archive_digest {
+        return Err(ExtensionPackageArtifactUseCaseError::Integrity(format!(
+            "extension package artifact 存储 digest 不匹配: expected {expected_archive_digest}, actual {actual_digest}"
+        )));
+    }
+    Ok(archive_bytes)
+}
+
+fn normalize_webview_asset_path(raw: &str) -> Result<String, ExtensionPackageArtifactUseCaseError> {
+    let mut parts = Vec::new();
+    for component in Path::new(raw).components() {
+        match component {
+            Component::Normal(part) => {
+                let Some(value) = part.to_str() else {
+                    return Err(ExtensionPackageArtifactUseCaseError::BadRequest(
+                        "Extension webview asset path 必须是 UTF-8".to_string(),
+                    ));
+                };
+                if !value.is_empty() {
+                    parts.push(value.to_string());
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(ExtensionPackageArtifactUseCaseError::BadRequest(
+                    "Extension webview asset path 非法".to_string(),
+                ));
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(ExtensionPackageArtifactUseCaseError::BadRequest(
+            "Extension webview asset path 不能为空".to_string(),
+        ));
+    }
+    Ok(parts.join("/"))
+}
+
+fn webview_asset_allowed(manifest: &ExtensionTemplatePayload, asset_path: &str) -> bool {
+    manifest.workspace_tabs.iter().any(|tab| {
+        let entry = workspace_tab_renderer_entry(&tab.renderer);
+        let Ok(entry_path) = normalize_webview_asset_path(entry) else {
+            return false;
+        };
+        if asset_path == entry_path {
+            return true;
+        }
+        let Some((dir, _file)) = entry_path.rsplit_once('/') else {
+            return false;
+        };
+        asset_path.starts_with(&format!("{dir}/"))
+    })
 }
 
 async fn upsert_extension_installation(
@@ -586,6 +732,34 @@ mod tests {
             .expect("file exists");
 
         assert_eq!(content, b"<main>hello</main>");
+    }
+
+    #[test]
+    fn webview_asset_path_rejects_traversal() {
+        let err = normalize_webview_asset_path("../dist/panel/index.html")
+            .expect_err("traversal should fail");
+        assert!(err.to_string().contains("path 非法"));
+    }
+
+    #[test]
+    fn webview_asset_allows_declared_panel_directory() {
+        let manifest = serde_json::from_value::<ExtensionTemplatePayload>(serde_json::json!({
+            "manifest_version": "2",
+            "extension_id": "local-hello",
+            "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
+            "asset_version": "0.1.0",
+            "workspace_tabs": [{
+                "type_id": "local-hello.panel",
+                "label": "Hello",
+                "uri_scheme": "local-hello",
+                "renderer": { "kind": "webview", "entry": "dist/panel/index.html" }
+            }]
+        }))
+        .expect("manifest");
+
+        assert!(webview_asset_allowed(&manifest, "dist/panel/index.html"));
+        assert!(webview_asset_allowed(&manifest, "dist/panel/app.js"));
+        assert!(!webview_asset_allowed(&manifest, "dist/extension.js"));
     }
 
     #[test]

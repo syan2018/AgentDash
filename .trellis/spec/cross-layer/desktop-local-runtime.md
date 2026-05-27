@@ -63,6 +63,7 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 ### Local TS Extension Host
 
 - `agentdash-local` 管理 Node-based extension host 子进程，通过 stdio JSON line 协议执行 activate / reload / invoke / health。
+- Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permissions.rs` 执行 host API 权限裁决、`runner.rs` 承载内嵌 JS runner，原因是本机插件执行、协议、权限和 runner 分发会独立演进。
 - Extension bundle 作为 trusted local extension 在 Node runner context 中加载 self-contained ESM，原因是当前执行面使用本机 Node host 子进程承载插件代码；Host API facade 提供产品权限、协议稳定性与审计入口，不把 Node `vm` 作为不受信代码的安全隔离边界。
 - `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
 - 本机 profile API 同时按 manifest `local_profile` capability 与当前 action `local.profile.read` permission 裁决，原因是顶层 capability 表达插件包可申请的能力范围，action permission 表达具体 runtime surface 的实际使用声明。

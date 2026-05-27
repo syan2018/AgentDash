@@ -11,11 +11,10 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::extension_package::{
-    ExtensionPackageArtifactStorageError, InstallExtensionPackageArtifactInput,
-    StoreExtensionPackageArtifactInput, digest_bytes, extension_package_archive_storage_ref_for,
-    install_extension_package_artifact, read_extension_package_archive_object,
-    store_extension_package_artifact, validate_extension_package_archive,
-    write_extension_package_archive_object,
+    ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
+    ReadExtensionPackageArchiveInput, StoreExtensionPackageArchiveInput,
+    install_extension_package_artifact, read_extension_package_archive,
+    store_extension_package_archive,
 };
 use agentdash_contracts::extension_package::{
     ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
@@ -111,23 +110,17 @@ pub async fn upload_extension_package_artifact(
 
     let archive_bytes =
         archive_bytes.ok_or_else(|| ApiError::BadRequest("缺少 archive 文件字段".into()))?;
-    validate_extension_package_archive(&archive_bytes, expected_archive_digest.as_deref())?;
-    let storage_ref =
-        extension_package_archive_storage_ref_for(project_id, &digest_bytes(&archive_bytes))?;
-    write_extension_package_archive_object(&storage_ref, &archive_bytes)
-        .await
-        .map_err(storage_error_to_api)?;
-
-    let artifact = store_extension_package_artifact(
+    let artifact = store_extension_package_archive(
         &state.repos,
-        StoreExtensionPackageArtifactInput {
+        state.services.extension_package_artifact_storage.as_ref(),
+        StoreExtensionPackageArchiveInput {
             project_id,
-            storage_ref,
             archive_bytes,
             expected_archive_digest,
         },
     )
-    .await?;
+    .await
+    .map_err(extension_package_error_to_api)?;
     Ok(Json(artifact_response(artifact)))
 }
 
@@ -222,28 +215,18 @@ async fn extension_package_archive_response(
     project_id: Uuid,
     artifact_id: Uuid,
 ) -> Result<Response, ApiError> {
-    let artifact = state
-        .repos
-        .extension_package_artifact_repo
-        .get(artifact_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound("Extension package artifact 不存在".into()))?;
-    if artifact.project_id != project_id {
-        return Err(ApiError::NotFound(
-            "Extension package artifact 不存在".into(),
-        ));
-    }
-    let bytes = read_extension_package_archive_object(&artifact.storage_ref)
-        .await
-        .map_err(storage_error_to_api)?;
-    let actual_digest = digest_bytes(&bytes);
-    if actual_digest != artifact.archive_digest {
-        return Err(ApiError::Internal(format!(
-            "extension package artifact 存储 digest 不匹配: expected {}, actual {}",
-            artifact.archive_digest, actual_digest
-        )));
-    }
+    let archive = read_extension_package_archive(
+        &state.repos,
+        state.services.extension_package_artifact_storage.as_ref(),
+        ReadExtensionPackageArchiveInput {
+            project_id,
+            artifact_id,
+        },
+    )
+    .await
+    .map_err(extension_package_error_to_api)?;
+    let artifact = archive.artifact;
+    let bytes = archive.archive_bytes;
 
     let filename = format!("{}.agentdash-extension.tgz", artifact.extension_id);
     let content_type = HeaderValue::from_static("application/vnd.agentdash.extension+gzip");
@@ -293,6 +276,16 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("{field} 非法")))
 }
 
-fn storage_error_to_api(error: ExtensionPackageArtifactStorageError) -> ApiError {
-    ApiError::Internal(error.to_string())
+fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
+    match error {
+        ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
+        ExtensionPackageArtifactUseCaseError::Storage(error) => {
+            ApiError::Internal(error.to_string())
+        }
+        ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
+        ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
+        ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),
+        ExtensionPackageArtifactUseCaseError::Forbidden(error) => ApiError::Forbidden(error),
+        ExtensionPackageArtifactUseCaseError::Conflict(error) => ApiError::Conflict(error),
+    }
 }

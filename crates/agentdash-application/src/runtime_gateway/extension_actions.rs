@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agentdash_domain::shared_library::{
-    ExtensionRuntimeActionKind, ProjectExtensionInstallationRepository,
+    EXTENSION_PERMISSION_LOCAL_PROFILE_READ, ExtensionPermissionDecision,
+    ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ProjectExtensionInstallation,
+    ProjectExtensionInstallationRepository,
 };
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, ExtensionPackageArtifactRelay,
@@ -126,7 +128,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
                 Some(request.trace.clone()),
             ));
         }
-        validate_action_permissions(installation, &action.permissions, &request)?;
+        let permission_decisions = validate_action_permissions(installation, action, &request)?;
 
         let relay_payload = CommandExtensionActionInvokePayload {
             extension_key: installation.extension_key.clone(),
@@ -163,6 +165,17 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
         );
         for (key, value) in response.metadata {
             metadata.insert(key, value);
+        }
+        if !permission_decisions.is_empty() {
+            metadata.insert(
+                "permission_decisions".to_string(),
+                serde_json::to_value(permission_decisions).map_err(|error| {
+                    RuntimeInvocationError::provider_failed(
+                        format!("序列化 extension permission decision 失败: {error}"),
+                        Some(request.trace.clone()),
+                    )
+                })?,
+            );
         }
 
         Ok(RuntimeInvocationOutput {
@@ -207,34 +220,39 @@ fn backend_target(request: &RuntimeInvocationRequest) -> Result<String, RuntimeI
 }
 
 fn validate_action_permissions(
-    installation: &agentdash_domain::shared_library::ProjectExtensionInstallation,
-    permissions: &[String],
+    installation: &ProjectExtensionInstallation,
+    action: &ExtensionRuntimeActionDefinition,
     request: &RuntimeInvocationRequest,
-) -> Result<(), RuntimeInvocationError> {
-    for permission in permissions {
-        match permission.as_str() {
-            "local.profile.read" if !allows_local_profile(installation) => {
-                return Err(RuntimeInvocationError::capability_denied(
-                    "extension action 缺少 local_profile read 权限声明",
-                    Some(request.trace.clone()),
-                ));
-            }
-            "local.profile.read" => {}
-            other => {
-                return Err(RuntimeInvocationError::capability_denied(
-                    format!("extension action 声明了未知权限: {other}"),
-                    Some(request.trace.clone()),
-                ));
-            }
+) -> Result<Vec<ExtensionPermissionDecision>, RuntimeInvocationError> {
+    let mut decisions = Vec::new();
+    for permission in &action.permissions {
+        let decision = installation
+            .manifest
+            .evaluate_action_permission(&action.action_key, permission);
+        if !decision.allowed {
+            return Err(RuntimeInvocationError::capability_denied(
+                decision.denial_message(),
+                Some(request.trace.clone()),
+            ));
         }
+        decisions.push(decision);
     }
-    Ok(())
-}
-
-fn allows_local_profile(
-    installation: &agentdash_domain::shared_library::ProjectExtensionInstallation,
-) -> bool {
-    installation.manifest.grants_local_profile_read()
+    if installation.manifest.grants_local_profile_read()
+        && !action
+            .permissions
+            .iter()
+            .any(|permission| permission == EXTENSION_PERMISSION_LOCAL_PROFILE_READ)
+    {
+        let decision = installation.manifest.evaluate_action_permission(
+            &action.action_key,
+            EXTENSION_PERMISSION_LOCAL_PROFILE_READ,
+        );
+        return Err(RuntimeInvocationError::capability_denied(
+            decision.denial_message(),
+            Some(request.trace.clone()),
+        ));
+    }
+    Ok(decisions)
 }
 
 fn transport_error_to_invocation(
@@ -387,6 +405,10 @@ mod tests {
         assert_eq!(result.output.output["username"], "local-user");
         assert_eq!(result.output.metadata["extension_id"], "local-hello");
         assert_eq!(result.output.metadata["backend_id"], "backend-1");
+        assert_eq!(
+            result.output.metadata["permission_decisions"][0]["requested_permission"],
+            "local.profile.read"
+        );
         let payload = transport
             .last_payload
             .lock()
@@ -425,6 +447,54 @@ mod tests {
             ExtensionRuntimeActionProvider::new(
                 Arc::new(FakeInstallationRepo {
                     installations: vec![installation(project_id, false, true)],
+                }),
+                Arc::new(FakeTransport {
+                    result: Ok(response_payload(json!({}))),
+                    last_payload: StdMutex::new(None),
+                }),
+            ),
+        ));
+
+        let err = gateway
+            .invoke(request(project_id, "local-hello.profile"))
+            .await
+            .expect_err("permission denied");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn missing_action_permission_is_rejected() {
+        let project_id = Uuid::new_v4();
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![installation(project_id, true, false)],
+                }),
+                Arc::new(FakeTransport {
+                    result: Ok(response_payload(json!({}))),
+                    last_payload: StdMutex::new(None),
+                }),
+            ),
+        ));
+
+        let err = gateway
+            .invoke(request(project_id, "local-hello.profile"))
+            .await
+            .expect_err("permission denied");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn unknown_action_permission_is_rejected() {
+        let project_id = Uuid::new_v4();
+        let mut installation = installation(project_id, true, true);
+        installation.manifest.runtime_actions[0].permissions = vec!["local.profile.admin".into()];
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![installation],
                 }),
                 Arc::new(FakeTransport {
                     result: Ok(response_payload(json!({}))),

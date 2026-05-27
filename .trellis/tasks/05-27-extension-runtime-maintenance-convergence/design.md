@@ -43,6 +43,10 @@ agentdash-application
     store artifact use case
     install artifact use case
     read archive / webview asset use case
+    consumes ExtensionPackageArtifactStorage port
+
+agentdash-spi
+  extension_package.rs
     trait ExtensionPackageArtifactStorage
 
 agentdash-infrastructure

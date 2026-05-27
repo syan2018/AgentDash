@@ -10,6 +10,8 @@ use crate::mcp_preset::{McpRoutePolicy, McpTransportConfig};
 use crate::skill_asset::SkillAssetFileKind;
 use crate::workflow::ToolCapabilityDirective;
 
+pub const EXTENSION_PERMISSION_LOCAL_PROFILE_READ: &str = "local.profile.read";
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LibraryAssetType {
@@ -736,8 +738,98 @@ impl ExtensionTemplatePayload {
     }
 
     pub fn allows_local_profile_read_for_action(&self, action_key: &str) -> bool {
-        self.grants_local_profile_read() && self.action_declares_local_profile_read(action_key)
+        self.evaluate_action_permission(action_key, EXTENSION_PERMISSION_LOCAL_PROFILE_READ)
+            .allowed
     }
+
+    pub fn evaluate_action_permission(
+        &self,
+        action_key: &str,
+        requested_permission: &str,
+    ) -> ExtensionPermissionDecision {
+        let action = self
+            .runtime_actions
+            .iter()
+            .find(|action| action.action_key == action_key);
+        match requested_permission {
+            EXTENSION_PERMISSION_LOCAL_PROFILE_READ => {
+                let has_extension_grant = self.grants_local_profile_read();
+                let has_action_declaration = action
+                    .map(|action| {
+                        action
+                            .permissions
+                            .iter()
+                            .any(|permission| permission == EXTENSION_PERMISSION_LOCAL_PROFILE_READ)
+                    })
+                    .unwrap_or(false);
+                let reason = if action.is_none() {
+                    ExtensionPermissionDecisionReason::MissingRuntimeAction
+                } else if !has_extension_grant {
+                    ExtensionPermissionDecisionReason::MissingExtensionGrant
+                } else if !has_action_declaration {
+                    ExtensionPermissionDecisionReason::MissingActionDeclaration
+                } else {
+                    ExtensionPermissionDecisionReason::Allowed
+                };
+                ExtensionPermissionDecision {
+                    requested_permission: requested_permission.to_string(),
+                    action_key: action_key.to_string(),
+                    allowed: reason == ExtensionPermissionDecisionReason::Allowed,
+                    reason,
+                }
+            }
+            _ => ExtensionPermissionDecision {
+                requested_permission: requested_permission.to_string(),
+                action_key: action_key.to_string(),
+                allowed: false,
+                reason: ExtensionPermissionDecisionReason::UnknownPermission,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct ExtensionPermissionDecision {
+    pub requested_permission: String,
+    pub action_key: String,
+    pub allowed: bool,
+    pub reason: ExtensionPermissionDecisionReason,
+}
+
+impl ExtensionPermissionDecision {
+    pub fn denial_message(&self) -> String {
+        match self.reason {
+            ExtensionPermissionDecisionReason::Allowed => "permission allowed".to_string(),
+            ExtensionPermissionDecisionReason::MissingRuntimeAction => {
+                format!("extension action `{}` 不存在", self.action_key)
+            }
+            ExtensionPermissionDecisionReason::MissingExtensionGrant => format!(
+                "extension 顶层未声明 {} capability",
+                self.requested_permission
+            ),
+            ExtensionPermissionDecisionReason::MissingActionDeclaration => format!(
+                "extension action `{}` 未声明 {}",
+                self.action_key, self.requested_permission
+            ),
+            ExtensionPermissionDecisionReason::UnknownPermission => {
+                format!(
+                    "extension action 声明了未知权限: {}",
+                    self.requested_permission
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionPermissionDecisionReason {
+    Allowed,
+    MissingRuntimeAction,
+    MissingExtensionGrant,
+    MissingActionDeclaration,
+    UnknownPermission,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1197,6 +1289,47 @@ mod tests {
     }
 
     #[test]
+    fn evaluates_local_profile_permission_contract() {
+        let top_and_action = extension_template_for_permission(true, true);
+        let decision = top_and_action.evaluate_action_permission(
+            "gitlab-review.prepare",
+            EXTENSION_PERMISSION_LOCAL_PROFILE_READ,
+        );
+        assert!(decision.allowed);
+        assert_eq!(decision.reason, ExtensionPermissionDecisionReason::Allowed);
+
+        let top_only = extension_template_for_permission(true, false);
+        let decision = top_only.evaluate_action_permission(
+            "gitlab-review.prepare",
+            EXTENSION_PERMISSION_LOCAL_PROFILE_READ,
+        );
+        assert!(!decision.allowed);
+        assert_eq!(
+            decision.reason,
+            ExtensionPermissionDecisionReason::MissingActionDeclaration
+        );
+
+        let action_only = extension_template_for_permission(false, true);
+        let decision = action_only.evaluate_action_permission(
+            "gitlab-review.prepare",
+            EXTENSION_PERMISSION_LOCAL_PROFILE_READ,
+        );
+        assert!(!decision.allowed);
+        assert_eq!(
+            decision.reason,
+            ExtensionPermissionDecisionReason::MissingExtensionGrant
+        );
+
+        let unknown = top_and_action
+            .evaluate_action_permission("gitlab-review.prepare", "local.profile.admin");
+        assert!(!unknown.allowed);
+        assert_eq!(
+            unknown.reason,
+            ExtensionPermissionDecisionReason::UnknownPermission
+        );
+    }
+
+    #[test]
     fn rejects_invalid_extension_runtime_contracts() {
         let bad_action = LibraryAssetPayload::from_value(
             LibraryAssetType::ExtensionTemplate,
@@ -1280,6 +1413,49 @@ mod tests {
         let result = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload);
 
         assert!(result.is_err());
+    }
+
+    fn extension_template_for_permission(
+        include_top_level_permission: bool,
+        include_action_permission: bool,
+    ) -> ExtensionTemplatePayload {
+        let permissions = if include_top_level_permission {
+            vec![ExtensionPermissionDeclaration::LocalProfile {
+                access: ExtensionPermissionAccess::Read,
+            }]
+        } else {
+            vec![]
+        };
+        let action_permissions = if include_action_permission {
+            vec![EXTENSION_PERMISSION_LOCAL_PROFILE_READ.to_string()]
+        } else {
+            vec![]
+        };
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: "gitlab-review".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "gitlab-review".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            asset_version: "0.1.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![ExtensionRuntimeActionDefinition {
+                action_key: "gitlab-review.prepare".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Prepare review".to_string(),
+                input_schema: json!({}),
+                output_schema: json!({}),
+                permissions: action_permissions,
+            }],
+            workspace_tabs: vec![],
+            permissions,
+            bundles: vec![],
+        }
     }
 
     #[test]

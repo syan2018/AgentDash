@@ -8,8 +8,8 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
 use agentdash_infrastructure::{
-    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository,
+    FilesystemExtensionPackageArtifactStorage, PostgresAuthSessionRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
     PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
@@ -20,11 +20,13 @@ use agentdash_infrastructure::{
     PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
     PostgresWorkspaceRepository,
 };
+use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
     pub auth_session_service: Arc<AuthSessionService>,
+    pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
 
 pub(crate) async fn build_repositories(
@@ -150,5 +152,8 @@ pub(crate) async fn build_repositories(
         repos,
         session_persistence: session_repo,
         auth_session_service,
+        extension_package_artifact_storage: Arc::new(
+            FilesystemExtensionPackageArtifactStorage::default(),
+        ),
     })
 }

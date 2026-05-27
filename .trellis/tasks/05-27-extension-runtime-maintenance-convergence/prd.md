@@ -63,6 +63,6 @@ Review 发现还有三个横切边界没有真正收口：
 - 不重做 WorkspacePanel 产品形态；前端只跟随 contract 或权限/信任状态需要做最小更新。
 - 不为旧 manifest / 旧数据库字段增加兼容层；当前项目仍按预研期正确形态推进，并通过 migration 处理 schema 变化。
 
-## Open Questions
+## Decisions
 
-- TS Extension Host 首版是否继续按 trusted local extension 明示，还是在本任务直接切到更强 isolated worker/process 模型？建议本任务先把 trusted 状态如实表达并把权限/审计收口，isolated execution 作为后续安全加固任务，除非实现中发现当前 runner 已经无法承载权限语义。
+- TS Extension Host 首版按 trusted local extension 明示。本任务不直接切到 isolated worker/process 模型，优先收口权限、审计、storage 与模块边界；isolated execution 作为后续安全加固任务单独推进。

@@ -1,0 +1,3 @@
+mod extension_package_artifact_fs;
+
+pub use extension_package_artifact_fs::FilesystemExtensionPackageArtifactStorage;

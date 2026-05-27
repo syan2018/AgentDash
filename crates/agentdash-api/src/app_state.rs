@@ -30,6 +30,7 @@ use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
+use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -82,6 +83,8 @@ pub struct ServiceSet {
     pub audit_bus: SharedContextAuditBus,
     /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
     pub runtime_gateway: Arc<RuntimeGateway>,
+    /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
+    pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
 
 /// 应用级配置
@@ -127,6 +130,8 @@ impl AppState {
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
+        let extension_package_artifact_storage =
+            repository_bootstrap.extension_package_artifact_storage;
 
         let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
             mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
@@ -297,6 +302,7 @@ impl AppState {
                 routine_executor: None,
                 audit_bus,
                 runtime_gateway,
+                extension_package_artifact_storage,
             },
             config: AppConfig {
                 platform_config,

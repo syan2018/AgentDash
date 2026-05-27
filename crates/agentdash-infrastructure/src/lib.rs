@@ -1,6 +1,7 @@
 pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
+pub mod storage;
 
 pub use persistence::postgres::PostgresAuthSessionRepository;
 pub use persistence::postgres::PostgresBackendExecutionLeaseRepository;
@@ -29,3 +30,4 @@ pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use persistence::sqlite::SqliteSessionRepository;
+pub use storage::FilesystemExtensionPackageArtifactStorage;

@@ -855,3 +855,46 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 52: 插件系统完整能力对齐收口
+
+**Date**: 2026-05-27
+**Task**: 插件系统完整能力对齐收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 TS extension host 能力对齐：协议 channel、Host API dispatcher、前端 bridge、protocol-demo 示例、文档、手工安装试用、runner 模块化与测试矩阵。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec4d0888` | (see git log) |
+| `685b4255` | (see git log) |
+| `abcd2f41` | (see git log) |
+| `d1480a00` | (see git log) |
+| `ac4d4ea4` | (see git log) |
+| `827a6993` | (see git log) |
+| `54b711a3` | (see git log) |
+| `6f733380` | (see git log) |
+| `7bf502af` | (see git log) |
+| `613bc4e7` | (see git log) |
+| `3ae20f11` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

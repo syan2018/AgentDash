@@ -788,3 +788,37 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: Extension Assets 前端面板与后端卸载收口
+
+**Date**: 2026-05-27
+**Task**: Extension Assets 前端面板与后端卸载收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+在 Assets 中心新增 Extension 类目，把 packaged extension 的上传 / 从归档安装 / 卸载 / 下载补成前端可用通路。后端补 DELETE installation 路由 + repo delete/get_by_project_and_id；契约新增 UninstallExtensionInstallationResponse 经 contract crate 标准链路生成。前端新增 ExtensionCategoryPanel + 三个 dialog + 两个 row + extensionPackage service + sha256 util + extensionAggregation 纯函数。E2E 走完上传→安装→卸载流程；spec 在 frontend/state-management.md 加 Projection Store 写后强制 refetch 约定。完整测试链路绿（cargo 后端 / pnpm 前端 typecheck+lint+vitest 245 测试 / playwright spec --list 通过）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `92740c52` | (see git log) |
+| `b8d665d3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,11 +1,13 @@
 import type {
   ExtensionBundleProjectionResponse,
   ExtensionCommandProjectionResponse,
+  ExtensionDependencyProjectionResponse,
   ExtensionFlagProjectionResponse,
   ExtensionInstallationProjectionResponse,
   ExtensionMessageRendererProjectionResponse,
   ExtensionPermissionDeclarationResponse,
   ExtensionPermissionProjectionResponse,
+  ExtensionProtocolChannelProjectionResponse,
   ExtensionRuntimeActionProjectionResponse,
   ExtensionRuntimeProjectionResponse,
   ExtensionWorkspaceTabProjectionResponse,
@@ -24,6 +26,8 @@ export interface InstalledExtensionRowVM {
   permissions: ExtensionPermissionDeclarationResponse[];
   workspaceTabs: ExtensionWorkspaceTabProjectionResponse[];
   runtimeActions: ExtensionRuntimeActionProjectionResponse[];
+  protocolChannels: ExtensionProtocolChannelProjectionResponse[];
+  extensionDependencies: ExtensionDependencyProjectionResponse[];
   commands: ExtensionCommandProjectionResponse[];
   flags: ExtensionFlagProjectionResponse[];
   messageRenderers: ExtensionMessageRendererProjectionResponse[];
@@ -67,6 +71,12 @@ export function aggregateInstalledExtensions(
     const runtimeActions = projection.runtime_actions.filter(
       (entry) => entry.extension_key === key,
     );
+    const protocolChannels = projection.protocol_channels.filter(
+      (entry) => entry.extension_key === key,
+    );
+    const extensionDependencies = projection.extension_dependencies.filter(
+      (entry) => entry.extension_key === key,
+    );
     const commands = projection.commands.filter(
       (entry) => entry.extension_key === key,
     );
@@ -84,6 +94,8 @@ export function aggregateInstalledExtensions(
       permissions,
       workspaceTabs,
       runtimeActions,
+      protocolChannels,
+      extensionDependencies,
       commands,
       flags,
       messageRenderers,

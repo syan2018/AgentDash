@@ -36,12 +36,35 @@ function toJsonValue(value) {
   return null;
 }
 
-function createExtensionContext() {
+function canonicalChannelKey(extensionKey, channelKey) {
+  if (typeof channelKey !== "string" || channelKey.trim() === "") {
+    throw new Error("channel_key is required");
+  }
+  return channelKey.includes(".") ? channelKey : `${extensionKey}.${channelKey}`;
+}
+
+function channelHandlerKey(channelKey, method) {
+  return `${channelKey}#${method}`;
+}
+
+function normalizeChannelMethods(methods) {
+  if (Array.isArray(methods)) {
+    return methods;
+  }
+  if (methods && typeof methods === "object") {
+    return Object.entries(methods).map(([name, method]) => ({ ...method, name: method.name ?? name }));
+  }
+  throw new Error("protocol channel methods must be an array or object");
+}
+
+function createExtensionContext(extensionKey) {
   const actions = new Map();
+  const channels = new Map();
   const contributions = {
     commands: [],
     flags: [],
     runtime_actions: [],
+    protocol_channels: [],
     workspace_panels: [],
     permissions: [],
   };
@@ -55,6 +78,80 @@ function createExtensionContext() {
       local: {
         async getProfile() {
           return await requestHostApi("local.get_profile", { action_key: currentActionKey });
+        },
+      },
+      http: {
+        async fetch(url, options = {}) {
+          return await requestHostApi("http.fetch", { action_key: currentActionKey, url, options: toJsonValue(options) });
+        },
+        async fetchJson(url, options = {}) {
+          const response = await requestHostApi("http.fetch", { action_key: currentActionKey, url, options: toJsonValue(options) });
+          if (response && typeof response === "object" && typeof response.body === "string") {
+            return JSON.parse(response.body);
+          }
+          return response;
+        },
+      },
+      workspace: {
+        async readText(path) {
+          return await requestHostApi("workspace.read_text", { action_key: currentActionKey, path });
+        },
+        async writeText(path, content) {
+          return await requestHostApi("workspace.write_text", { action_key: currentActionKey, path, content });
+        },
+        async list(path) {
+          return await requestHostApi("workspace.list", { action_key: currentActionKey, path });
+        },
+        async stat(path) {
+          return await requestHostApi("workspace.stat", { action_key: currentActionKey, path });
+        },
+      },
+      env: {
+        async get(name) {
+          return await requestHostApi("env.get", { action_key: currentActionKey, name });
+        },
+      },
+      process: {
+        async exec(command, args = [], options = {}) {
+          return await requestHostApi("process.exec", { action_key: currentActionKey, command, args: toJsonValue(args), options: toJsonValue(options) });
+        },
+        async shell(command, options = {}) {
+          return await requestHostApi("process.shell", { action_key: currentActionKey, command, options: toJsonValue(options) });
+        },
+      },
+      channels: {
+        async invoke(channelKey, method, input) {
+          const canonical = canonicalChannelKey(extensionKey, channelKey);
+          if (channels.has(channelHandlerKey(canonical, method))) {
+            return await invokeRegisteredChannel(channels, canonical, method, input);
+          }
+          return await requestHostApi("extension.channel_invoke", {
+            action_key: currentActionKey,
+            channel_key: channelKey,
+            method,
+            input: toJsonValue(input),
+          });
+        },
+        self(channelKey = "api") {
+          const canonical = canonicalChannelKey(extensionKey, channelKey);
+          return {
+            async invoke(method, input) {
+              return await invokeRegisteredChannel(channels, canonical, method, input);
+            },
+          };
+        },
+        from(alias, channelKey = null) {
+          return {
+            async invoke(method, input) {
+              return await requestHostApi("extension.channel_invoke", {
+                action_key: currentActionKey,
+                dependency_alias: alias,
+                channel_key: channelKey,
+                method,
+                input: toJsonValue(input),
+              });
+            },
+          };
         },
       },
     },
@@ -78,6 +175,32 @@ function createExtensionContext() {
         contributions.runtime_actions.push(toJsonValue(serializable));
       },
     },
+    channels: {
+      register(definition) {
+        if (!definition || typeof definition.channel_key !== "string") {
+          throw new Error("protocol channel must include channel_key");
+        }
+        const canonical = canonicalChannelKey(extensionKey, definition.channel_key);
+        const methods = normalizeChannelMethods(definition.methods);
+        if (methods.length === 0) {
+          throw new Error("protocol channel must include at least one method");
+        }
+        const serializableMethods = [];
+        for (const method of methods) {
+          if (!method || typeof method.name !== "string" || typeof method.invoke !== "function") {
+            throw new Error("protocol channel method must include name and invoke");
+          }
+          channels.set(channelHandlerKey(canonical, method.name), method);
+          const { invoke, ...serializable } = method;
+          serializableMethods.push(toJsonValue(serializable));
+        }
+        contributions.protocol_channels.push(toJsonValue({
+          ...definition,
+          channel_key: canonical,
+          methods: serializableMethods,
+        }));
+      },
+    },
     workspace: {
       registerPanel(definition) {
         contributions.workspace_panels.push(toJsonValue(definition));
@@ -90,7 +213,15 @@ function createExtensionContext() {
     },
     contributions,
   };
-  return { ctx, actions, contributions };
+  return { ctx, actions, channels, contributions };
+}
+
+async function invokeRegisteredChannel(channels, channelKey, method, input) {
+  const handler = channels.get(channelHandlerKey(channelKey, method));
+  if (!handler) {
+    throw new Error(`extension channel method is not registered: ${channelKey}.${method}`);
+  }
+  return toJsonValue(await handler.invoke(toJsonValue(input)));
 }
 
 async function requestHostApi(method, params) {
@@ -152,12 +283,13 @@ async function loadExtension(bundlePath) {
 
 async function activate(params) {
   const extension = await loadExtension(params.bundle_path);
-  const { ctx, actions, contributions } = createExtensionContext();
+  const { ctx, actions, channels, contributions } = createExtensionContext(params.extension_key);
   active = {
     extension,
     manifest: params.manifest,
     extensionKey: params.extension_key,
     actions,
+    channels,
     contributions,
   };
   if (typeof extension.activate === "function") {
@@ -188,11 +320,22 @@ async function invokeAction(params) {
   }
 }
 
+async function invokeChannel(params) {
+  if (!active) throw new Error("extension is not active");
+  const channelKey = canonicalChannelKey(active.extensionKey, params.channel_key);
+  const method = params.method;
+  if (typeof method !== "string" || method.trim() === "") {
+    throw new Error("extension channel method is required");
+  }
+  return await invokeRegisteredChannel(active.channels, channelKey, method, params.input);
+}
+
 function healthPayload() {
   return {
     active: Boolean(active),
     extension_id: active?.manifest?.extension_id ?? null,
     action_keys: active ? [...active.actions.keys()].sort() : [],
+    channel_keys: active ? [...new Set([...active.channels.keys()].map((key) => key.split('#')[0]))].sort() : [],
     pid: process.pid,
   };
 }
@@ -208,6 +351,8 @@ async function handleRequest(message) {
       return await deactivate();
     case "invoke_action":
       return await invokeAction(message.params ?? {});
+    case "invoke_channel":
+      return await invokeChannel(message.params ?? {});
     case "health":
       return healthPayload();
     default:

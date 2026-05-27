@@ -11,6 +11,8 @@ describe("createExtensionTabDescriptors", () => {
       flags: [],
       message_renderers: [],
       runtime_actions: [],
+      protocol_channels: [],
+      extension_dependencies: [],
       workspace_tabs: [{
         extension_key: "local-hello",
         extension_id: "local-hello",

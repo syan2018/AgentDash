@@ -1136,6 +1136,8 @@ mod tests {
                 output_schema: serde_json::json!({}),
                 permissions: vec!["local.profile.read".to_string()],
             }],
+            protocol_channels: vec![],
+            extension_dependencies: vec![],
             workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
                 type_id: "demo.profile-panel".to_string(),
                 label: "Profile".to_string(),

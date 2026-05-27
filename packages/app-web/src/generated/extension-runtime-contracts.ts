@@ -9,6 +9,10 @@ export type ExtensionCommandHandlerResponse = { "kind": "inject_message", conten
 
 export type ExtensionCommandProjectionResponse = { extension_key: string, extension_id: string, name: string, description: string, handler: ExtensionCommandHandlerResponse, };
 
+export type ExtensionDependencyDeclarationResponse = { alias: string, extension_id: string, version: string, channels: Array<string>, };
+
+export type ExtensionDependencyProjectionResponse = { extension_key: string, extension_id: string, dependency: ExtensionDependencyDeclarationResponse, };
+
 export type ExtensionFlagProjectionResponse = { extension_key: string, extension_id: string, name: string, flag_type: ExtensionFlagTypeResponse, default: JsonValue, description: string, };
 
 export type ExtensionFlagTypeResponse = "bool" | "string";
@@ -25,9 +29,15 @@ export type ExtensionPackageArtifactRefResponse = { artifact_id: string, package
 
 export type ExtensionPermissionAccessResponse = "read" | "write" | "read_write";
 
-export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, };
+export type ExtensionPermissionDeclarationResponse = { "kind": "local_profile", access: ExtensionPermissionAccessResponse, } | { "kind": "http", hosts: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "workspace", access: ExtensionPermissionAccessResponse, } | { "kind": "env", names: Array<string>, access: ExtensionPermissionAccessResponse, } | { "kind": "process", access: ExtensionProcessPermissionAccessResponse, } | { "kind": "runtime_action", action_key: string, } | { "kind": "extension_channel", channel_key: string, methods: Array<string>, };
 
 export type ExtensionPermissionProjectionResponse = { extension_key: string, extension_id: string, permission: ExtensionPermissionDeclarationResponse, };
+
+export type ExtensionProcessPermissionAccessResponse = "execute";
+
+export type ExtensionProtocolChannelMethodProjectionResponse = { name: string, description: string, input_schema: JsonValue, output_schema: JsonValue, permissions: Array<string>, };
+
+export type ExtensionProtocolChannelProjectionResponse = { extension_key: string, extension_id: string, channel_key: string, version: string, description: string, methods: Array<ExtensionProtocolChannelMethodProjectionResponse>, };
 
 export type ExtensionRuntimeActionKindResponse = "session_runtime" | "setup";
 
@@ -39,7 +49,7 @@ export type ExtensionRuntimeInvokeActionRequest = { session_id: string, backend_
 
 export type ExtensionRuntimeInvokeActionResponse = { action_key: string, trace: ExtensionRuntimeTraceResponse, output: ExtensionRuntimeInvocationOutputResponse, };
 
-export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, };
+export type ExtensionRuntimeProjectionResponse = { installations: Array<ExtensionInstallationProjectionResponse>, commands: Array<ExtensionCommandProjectionResponse>, flags: Array<ExtensionFlagProjectionResponse>, message_renderers: Array<ExtensionMessageRendererProjectionResponse>, runtime_actions: Array<ExtensionRuntimeActionProjectionResponse>, protocol_channels: Array<ExtensionProtocolChannelProjectionResponse>, extension_dependencies: Array<ExtensionDependencyProjectionResponse>, workspace_tabs: Array<ExtensionWorkspaceTabProjectionResponse>, permissions: Array<ExtensionPermissionProjectionResponse>, bundles: Array<ExtensionBundleProjectionResponse>, };
 
 export type ExtensionRuntimeTraceResponse = { trace_id: string, invocation_id: string, parent_trace_id?: string | null, created_at: string, };
 

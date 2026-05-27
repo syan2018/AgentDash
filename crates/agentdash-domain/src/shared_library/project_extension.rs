@@ -122,9 +122,5 @@ pub trait ProjectExtensionInstallationRepository: Send + Sync {
     ) -> Result<Vec<ProjectExtensionInstallation>, DomainError>;
     /// 删除指定 Project 下的 installation。返回 true 表示删除成功；
     /// 返回 false 表示该 (project_id, installation_id) 不存在。
-    async fn delete(
-        &self,
-        project_id: Uuid,
-        installation_id: Uuid,
-    ) -> Result<bool, DomainError>;
+    async fn delete(&self, project_id: Uuid, installation_id: Uuid) -> Result<bool, DomainError>;
 }

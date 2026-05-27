@@ -441,26 +441,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn undeclared_action_permission_is_rejected() {
+    async fn top_level_permission_summary_does_not_gate_declared_action_permission() {
         let project_id = Uuid::new_v4();
+        let transport = Arc::new(FakeTransport {
+            result: Ok(response_payload(json!({ "username": "local-user" }))),
+            last_payload: StdMutex::new(None),
+        });
         let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
             ExtensionRuntimeActionProvider::new(
                 Arc::new(FakeInstallationRepo {
                     installations: vec![installation(project_id, false, true)],
                 }),
-                Arc::new(FakeTransport {
-                    result: Ok(response_payload(json!({}))),
-                    last_payload: StdMutex::new(None),
-                }),
+                transport,
             ),
         ));
 
-        let err = gateway
+        let result = gateway
             .invoke(request(project_id, "local-hello.profile"))
             .await
-            .expect_err("permission denied");
+            .expect("invoke");
 
-        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+        assert_eq!(result.output.output["username"], "local-user");
     }
 
     #[tokio::test]
@@ -636,6 +637,8 @@ mod tests {
                     vec![]
                 },
             }],
+            protocol_channels: vec![],
+            extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions: if include_top_level_permission {
                 vec![ExtensionPermissionDeclaration::LocalProfile {

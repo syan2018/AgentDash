@@ -429,6 +429,8 @@ mod tests {
             capability_directives: vec![],
             asset_refs: vec![],
             runtime_actions: vec![],
+            protocol_channels: vec![],
+            extension_dependencies: vec![],
             workspace_tabs: vec![],
             permissions: vec![],
             bundles: vec![ExtensionBundleRef {

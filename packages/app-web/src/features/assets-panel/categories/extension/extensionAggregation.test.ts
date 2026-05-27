@@ -35,6 +35,8 @@ function emptyProjection(
     flags: [],
     message_renderers: [],
     runtime_actions: [],
+    protocol_channels: [],
+    extension_dependencies: [],
     workspace_tabs: [],
     permissions: [],
     bundles: [],
@@ -232,6 +234,36 @@ describe("aggregateInstalledExtensions joins related entries by extension_key", 
           permissions: [],
         },
       ],
+      protocol_channels: [
+        {
+          extension_key: "alpha",
+          extension_id: "alpha",
+          channel_key: "alpha.api",
+          version: "1.0.0",
+          description: "",
+          methods: [
+            {
+              name: "readProfile",
+              description: "",
+              input_schema: {},
+              output_schema: {},
+              permissions: [],
+            },
+          ],
+        },
+      ],
+      extension_dependencies: [
+        {
+          extension_key: "beta",
+          extension_id: "beta",
+          dependency: {
+            alias: "alpha",
+            extension_id: "alpha",
+            version: "^1.0.0",
+            channels: ["alpha.api"],
+          },
+        },
+      ],
       workspace_tabs: [
         {
           extension_key: "alpha",
@@ -275,6 +307,8 @@ describe("aggregateInstalledExtensions joins related entries by extension_key", 
     expect(alpha?.commands).toHaveLength(1);
     expect(alpha?.workspaceTabs).toHaveLength(1);
     expect(alpha?.runtimeActions).toHaveLength(1);
+    expect(alpha?.protocolChannels).toHaveLength(1);
+    expect(alpha?.extensionDependencies).toHaveLength(0);
     expect(alpha?.runtimeActions[0].action_key).toBe("alpha.action");
     expect(alpha?.permissions).toEqual([{ kind: "local_profile", access: "read" }]);
     expect(alpha?.bundle?.digest).toBe("sha256:bundle-alpha");
@@ -286,6 +320,8 @@ describe("aggregateInstalledExtensions joins related entries by extension_key", 
     expect(beta?.version).toBe("0.2.0");
     expect(beta?.flags).toHaveLength(1);
     expect(beta?.runtimeActions).toHaveLength(1);
+    expect(beta?.protocolChannels).toHaveLength(0);
+    expect(beta?.extensionDependencies).toHaveLength(1);
     expect(beta?.runtimeActions[0].action_key).toBe("beta.action");
     expect(beta?.workspaceTabs).toHaveLength(0);
     expect(beta?.bundle).toBeNull();
@@ -296,6 +332,8 @@ describe("aggregateInstalledExtensions joins related entries by extension_key", 
     expect(gamma?.version).toBe("");
     expect(gamma?.permissions).toHaveLength(0);
     expect(gamma?.workspaceTabs).toHaveLength(0);
+    expect(gamma?.protocolChannels).toHaveLength(0);
+    expect(gamma?.extensionDependencies).toHaveLength(0);
     expect(gamma?.bundle).toBeNull();
   });
 

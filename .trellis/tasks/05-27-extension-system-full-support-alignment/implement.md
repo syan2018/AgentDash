@@ -2,29 +2,29 @@
 
 ## Phase 0: Baseline Review
 
-- [ ] 阅读本任务 `prd.md`、`design.md`、`research/current-state-and-source-evidence.md`。
-- [ ] 复核原始规划：`.trellis/tasks/archive/2026-05/05-26-ts-extension-host-sdk/prd.md` 与 `design.md`。
-- [ ] 复核相关 spec：`desktop-local-runtime.md`、`shared-library-contract.md`、`runtime-gateway.md`、frontend architecture/type-safety/state-management。
-- [ ] 记录用户已确认的平台管理 per-extension worker/process 边界。
-- [ ] 记录 protocol channel 一等贡献要求：其它插件与 Canvas 都可作为 consumer 调用插件注册的 API 信道。
-- [ ] 记录 channel authoring sugar 要求：self-scope shortcut、dependency alias、Canvas binding alias。
-- [ ] 记录 process capability 产品定位：本机可信工具，首版通用 shell/process，不做 command allowlist 权限设计。
-- [ ] 记录权限模型收敛要求：清理过度门禁，保留安装摘要、依赖解析、可用性诊断、workspace 边界、secret redaction 和 trace 审计真正需要的声明。
-- [ ] 记录新增示例决策：新增独立 `examples/extensions/protocol-demo`，不把完整协议/channel 示例塞进 `local-hello`。
+- [x] 阅读本任务 `prd.md`、`design.md`、`research/current-state-and-source-evidence.md`。
+- [x] 复核原始规划：`.trellis/tasks/archive/2026-05/05-26-ts-extension-host-sdk/prd.md` 与 `design.md`。
+- [x] 复核相关 spec：`desktop-local-runtime.md`、`shared-library-contract.md`、`runtime-gateway.md`、frontend architecture/type-safety/state-management。
+- [x] 记录用户已确认的平台管理 per-extension worker/process 边界。
+- [x] 记录 protocol channel 一等贡献要求：其它插件与 Canvas 都可作为 consumer 调用插件注册的 API 信道。
+- [x] 记录 channel authoring sugar 要求：self-scope shortcut、dependency alias、Canvas binding alias。
+- [x] 记录 process capability 产品定位：本机可信工具，首版通用 shell/process，不做 command allowlist 权限设计。
+- [x] 记录权限模型收敛要求：清理过度门禁，保留安装摘要、依赖解析、可用性诊断、workspace 边界、secret redaction 和 trace 审计真正需要的声明。
+- [x] 记录新增示例决策：新增独立 `examples/extensions/protocol-demo`，不把完整协议/channel 示例塞进 `local-hello`。
 
 ## Phase 1: Contract and Permission Model
 
-- [ ] 扩展 `packages/extension-sdk` 的 Host API 类型：local、runtime、http、workspace/VFS、env/secret、process。
-- [ ] 扩展 `packages/extension-sdk` 的 channel API：provider 侧 `ctx.channels.register`，consumer 侧 `ctx.api.channels.invoke`。
+- [x] 扩展 `packages/extension-sdk` 的 Host API 类型：local、runtime、http、workspace/VFS、env/secret、process。
+- [x] 扩展 `packages/extension-sdk` 的 channel API：provider 侧 `ctx.channels.register`，consumer 侧 `ctx.api.channels.invoke`。
 - [ ] 增加 channel authoring sugar：`ctx.api.channels.self(...)`、dependency alias client、Canvas binding alias contract。
-- [ ] 扩展 `ExtensionPermissionDeclaration` TS 类型与 manifest schema。
-- [ ] 增加 `protocol_channels` 与 `extension_dependencies` manifest schema，并定义 channel key / method / version / schema validation。
-- [ ] 扩展 `packages/extension-dev/src/manifest.js` validation 和 tests，覆盖新增 permission/capability/runtime requirement。
-- [ ] 扩展 Rust domain `ExtensionTemplatePayload` permission enum、validator、permission evaluator 和 tests。
-- [ ] 审计现有 extension permission deny path，删除或降级不提供实际产品价值的重复门禁。
-- [ ] 更新 generated frontend/backend contracts 所需来源。
-- [ ] 确保保留下来的 action-level permission string 与 top-level capability 的映射集中维护。
-- [ ] 确保 channel-level method declaration、consumer dependency 与 action/panel/Canvas binding 的映射集中维护。
+- [x] 扩展 `ExtensionPermissionDeclaration` TS 类型与 manifest schema。
+- [x] 增加 `protocol_channels` 与 `extension_dependencies` manifest schema，并定义 channel key / method / version / schema validation。
+- [x] 扩展 `packages/extension-dev/src/manifest.js` validation 和 tests，覆盖新增 permission/capability/runtime requirement。
+- [x] 扩展 Rust domain `ExtensionTemplatePayload` permission enum、validator、permission evaluator 和 tests。
+- [x] 审计现有 extension permission deny path，删除或降级不提供实际产品价值的重复门禁。
+- [x] 更新 generated frontend/backend contracts 所需来源。
+- [x] 确保保留下来的 action-level permission string 与 top-level capability 的映射集中维护。
+- [x] 确保 channel-level method declaration、consumer dependency 与 action/panel/Canvas binding 的映射集中维护。
 
 Validation:
 
@@ -39,9 +39,9 @@ cargo test -p agentdash-domain extension
 - [ ] 为 TS Extension Host runner 建立独立源码维护位置。
 - [ ] 将当前 Rust raw string runner 的 context/actions/host api client/protocol 拆成可测试 JS/TS 模块。
 - [ ] 保持 Rust `LocalExtensionHostProcess` 协议不漂移，先用 golden tests 锁定 activate/invoke/host_api_request/host_api_response。
-- [ ] 在 runner context 中加入 channel handler registry，支持 activate 时收集 channel contributions，invoke 时路由到 method handler。
+- [x] 在 runner context 中加入 channel handler registry，支持 activate 时收集 channel contributions，invoke 时路由到 method handler。
 - [ ] 通过 build/embed 机制让 Rust 继续获得 runner 源码。
-- [ ] 保持 `local-hello.profile` 现有链路可跑。
+- [x] 保持 `local-hello.profile` 现有链路可跑。
 
 Validation:
 

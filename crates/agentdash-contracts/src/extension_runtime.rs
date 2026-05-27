@@ -28,6 +28,12 @@ pub enum ExtensionPermissionAccessResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ExtensionProcessPermissionAccessResponse {
+    Execute,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ExtensionBundleKindResponse {
     ExtensionHost,
 }
@@ -58,11 +64,26 @@ pub enum ExtensionPermissionDeclarationResponse {
     LocalProfile {
         access: ExtensionPermissionAccessResponse,
     },
+    Http {
+        hosts: Vec<String>,
+        access: ExtensionPermissionAccessResponse,
+    },
     Workspace {
         access: ExtensionPermissionAccessResponse,
     },
+    Env {
+        names: Vec<String>,
+        access: ExtensionPermissionAccessResponse,
+    },
+    Process {
+        access: ExtensionProcessPermissionAccessResponse,
+    },
     RuntimeAction {
         action_key: String,
+    },
+    ExtensionChannel {
+        channel_key: String,
+        methods: Vec<String>,
     },
 }
 
@@ -137,6 +158,40 @@ pub struct ExtensionRuntimeActionProjectionResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionProtocolChannelMethodProjectionResponse {
+    pub name: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub output_schema: Value,
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionProtocolChannelProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub channel_key: String,
+    pub version: String,
+    pub description: String,
+    pub methods: Vec<ExtensionProtocolChannelMethodProjectionResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionDependencyDeclarationResponse {
+    pub alias: String,
+    pub extension_id: String,
+    pub version: String,
+    pub channels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ExtensionDependencyProjectionResponse {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub dependency: ExtensionDependencyDeclarationResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionWorkspaceTabProjectionResponse {
     pub extension_key: String,
     pub extension_id: String,
@@ -169,6 +224,8 @@ pub struct ExtensionRuntimeProjectionResponse {
     pub flags: Vec<ExtensionFlagProjectionResponse>,
     pub message_renderers: Vec<ExtensionMessageRendererProjectionResponse>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjectionResponse>,
+    pub protocol_channels: Vec<ExtensionProtocolChannelProjectionResponse>,
+    pub extension_dependencies: Vec<ExtensionDependencyProjectionResponse>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjectionResponse>,
     pub permissions: Vec<ExtensionPermissionProjectionResponse>,
     pub bundles: Vec<ExtensionBundleProjectionResponse>,

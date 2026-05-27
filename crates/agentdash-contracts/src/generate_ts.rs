@@ -7,16 +7,19 @@ use agentdash_contracts::extension_package::{
 use agentdash_contracts::extension_runtime::{
     ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
     ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
+    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
     ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
     ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionRuntimeActionKindResponse, ExtensionRuntimeActionProjectionResponse,
-    ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
-    ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeProjectionResponse,
-    ExtensionRuntimeTraceResponse, ExtensionWorkspaceTabProjectionResponse,
-    ExtensionWorkspaceTabRendererResponse, UninstallExtensionInstallationResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
+    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
+    ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
+    UninstallExtensionInstallationResponse,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
@@ -158,6 +161,7 @@ fn main() {
             export_all::<ExtensionRuntimeActionKindResponse>(dir);
             export_all::<ExtensionFlagTypeResponse>(dir);
             export_all::<ExtensionPermissionAccessResponse>(dir);
+            export_all::<ExtensionProcessPermissionAccessResponse>(dir);
             export_all::<ExtensionBundleKindResponse>(dir);
             export_all::<ExtensionCommandHandlerResponse>(dir);
             export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
@@ -170,6 +174,10 @@ fn main() {
             export_all::<ExtensionFlagProjectionResponse>(dir);
             export_all::<ExtensionMessageRendererProjectionResponse>(dir);
             export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+            export_all::<ExtensionDependencyDeclarationResponse>(dir);
+            export_all::<ExtensionDependencyProjectionResponse>(dir);
             export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
             export_all::<ExtensionPermissionProjectionResponse>(dir);
             export_all::<ExtensionBundleProjectionResponse>(dir);

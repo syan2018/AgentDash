@@ -1,21 +1,24 @@
 use agentdash_application::extension_runtime::ExtensionRuntimeProjection;
 use agentdash_domain::shared_library::{
-    ExtensionBundleKind, ExtensionCommandHandler, ExtensionFlagType, ExtensionPermissionAccess,
-    ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
+    ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
+    ExtensionFlagType, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
+    ExtensionProcessPermissionAccess, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
     ExtensionWorkspaceTabRendererDeclaration,
 };
 
 pub use agentdash_contracts::extension_runtime::{
     ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
     ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
+    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
     ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
     ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
     ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
     ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
     ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
-    ExtensionRuntimeActionKindResponse, ExtensionRuntimeActionProjectionResponse,
-    ExtensionRuntimeProjectionResponse, ExtensionWorkspaceTabProjectionResponse,
-    ExtensionWorkspaceTabRendererResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
+    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeProjectionResponse,
+    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
 };
 
 pub fn extension_runtime_projection_response(
@@ -119,6 +122,37 @@ pub fn extension_runtime_projection_response(
                 permissions: action.permissions,
             })
             .collect(),
+        protocol_channels: projection
+            .protocol_channels
+            .into_iter()
+            .map(|channel| ExtensionProtocolChannelProjectionResponse {
+                extension_key: channel.extension_key,
+                extension_id: channel.extension_id,
+                channel_key: channel.channel_key,
+                version: channel.version,
+                description: channel.description,
+                methods: channel
+                    .methods
+                    .into_iter()
+                    .map(|method| ExtensionProtocolChannelMethodProjectionResponse {
+                        name: method.name,
+                        description: method.description,
+                        input_schema: method.input_schema,
+                        output_schema: method.output_schema,
+                        permissions: method.permissions,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        extension_dependencies: projection
+            .extension_dependencies
+            .into_iter()
+            .map(|dependency| ExtensionDependencyProjectionResponse {
+                extension_key: dependency.extension_key,
+                extension_id: dependency.extension_id,
+                dependency: extension_dependency_response(dependency.dependency),
+            })
+            .collect(),
         workspace_tabs: projection
             .workspace_tabs
             .into_iter()
@@ -174,14 +208,49 @@ fn extension_permission_response(
                 access: extension_permission_access_response(access),
             }
         }
+        ExtensionPermissionDeclaration::Http { hosts, access } => {
+            ExtensionPermissionDeclarationResponse::Http {
+                hosts,
+                access: extension_permission_access_response(access),
+            }
+        }
         ExtensionPermissionDeclaration::Workspace { access } => {
             ExtensionPermissionDeclarationResponse::Workspace {
                 access: extension_permission_access_response(access),
             }
         }
+        ExtensionPermissionDeclaration::Env { names, access } => {
+            ExtensionPermissionDeclarationResponse::Env {
+                names,
+                access: extension_permission_access_response(access),
+            }
+        }
+        ExtensionPermissionDeclaration::Process { access } => {
+            ExtensionPermissionDeclarationResponse::Process {
+                access: extension_process_permission_access_response(access),
+            }
+        }
         ExtensionPermissionDeclaration::RuntimeAction { action_key } => {
             ExtensionPermissionDeclarationResponse::RuntimeAction { action_key }
         }
+        ExtensionPermissionDeclaration::ExtensionChannel {
+            channel_key,
+            methods,
+        } => ExtensionPermissionDeclarationResponse::ExtensionChannel {
+            channel_key,
+            methods,
+        },
+    }
+}
+
+fn extension_dependency_response(
+    dependency: ExtensionDependencyDeclaration,
+) -> ExtensionDependencyDeclarationResponse {
+    ExtensionDependencyDeclarationResponse {
+        alias: dependency.alias,
+        extension_id: dependency.extension_id,
+        version: dependency.version,
+        channels: dependency.channels,
     }
 }
 
@@ -192,5 +261,15 @@ fn extension_permission_access_response(
         ExtensionPermissionAccess::Read => ExtensionPermissionAccessResponse::Read,
         ExtensionPermissionAccess::Write => ExtensionPermissionAccessResponse::Write,
         ExtensionPermissionAccess::ReadWrite => ExtensionPermissionAccessResponse::ReadWrite,
+    }
+}
+
+fn extension_process_permission_access_response(
+    access: ExtensionProcessPermissionAccess,
+) -> ExtensionProcessPermissionAccessResponse {
+    match access {
+        ExtensionProcessPermissionAccess::Execute => {
+            ExtensionProcessPermissionAccessResponse::Execute
+        }
     }
 }

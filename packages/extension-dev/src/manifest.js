@@ -83,6 +83,8 @@ export function validateManifest(manifest, errors) {
   validateCommandDefs(arrayField(manifest, "commands"), errors);
   validateFlagDefs(arrayField(manifest, "flags"), errors);
   validateRuntimeActions(arrayField(manifest, "runtime_actions"), errors);
+  validateProtocolChannels(arrayField(manifest, "protocol_channels"), errors);
+  validateExtensionDependencies(arrayField(manifest, "extension_dependencies"), errors);
   validateWorkspaceTabs(arrayField(manifest, "workspace_tabs"), errors);
   validatePermissions(arrayField(manifest, "permissions"), errors);
   validateBundleDefs(arrayField(manifest, "bundles"), errors);
@@ -243,6 +245,86 @@ function validateRuntimeActions(actions, errors) {
     if (kind !== "session_runtime" && kind !== "setup") {
       errors.push("runtime_actions[].kind 必须是 session_runtime 或 setup");
     }
+    validateJsonSchemaField(record, "input_schema", "runtime_actions[].input_schema", errors);
+    validateJsonSchemaField(record, "output_schema", "runtime_actions[].output_schema", errors);
+    validatePermissionStrings(arrayField(record, "permissions"), "runtime_actions[].permissions[]", errors);
+  }
+}
+
+/**
+ * @param {unknown[]} channels
+ * @param {string[]} errors
+ */
+function validateProtocolChannels(channels, errors) {
+  for (const channel of channels) {
+    const record = asRecord(channel);
+    if (!record) {
+      errors.push("protocol_channels[] 必须是对象");
+      continue;
+    }
+    validateNamespacedKey(record, "channel_key", "protocol_channels[].channel_key", errors);
+    requireString(record, "version", errors, "protocol_channels[].version");
+    requireString(record, "description", errors, "protocol_channels[].description");
+    const methods = record.methods;
+    if (!Array.isArray(methods) || methods.length === 0) {
+      errors.push("protocol_channels[].methods 必须是非空数组");
+      continue;
+    }
+    for (const method of methods) {
+      const methodRecord = asRecord(method);
+      if (!methodRecord) {
+        errors.push("protocol_channels[].methods[] 必须是对象");
+        continue;
+      }
+      validateMethodName(methodRecord, "name", "protocol_channels[].methods[].name", errors);
+      requireString(methodRecord, "description", errors, "protocol_channels[].methods[].description");
+      validateJsonSchemaField(
+        methodRecord,
+        "input_schema",
+        "protocol_channels[].methods[].input_schema",
+        errors,
+      );
+      validateJsonSchemaField(
+        methodRecord,
+        "output_schema",
+        "protocol_channels[].methods[].output_schema",
+        errors,
+      );
+      validatePermissionStrings(
+        arrayField(methodRecord, "permissions"),
+        "protocol_channels[].methods[].permissions[]",
+        errors,
+      );
+    }
+  }
+}
+
+/**
+ * @param {unknown[]} dependencies
+ * @param {string[]} errors
+ */
+function validateExtensionDependencies(dependencies, errors) {
+  for (const dependency of dependencies) {
+    const record = asRecord(dependency);
+    if (!record) {
+      errors.push("extension_dependencies[] 必须是对象");
+      continue;
+    }
+    validateAlias(record, "alias", "extension_dependencies[].alias", errors);
+    validatePackageKey(record, "extension_id", "extension_dependencies[].extension_id", errors);
+    requireString(record, "version", errors, "extension_dependencies[].version");
+    const channels = record.channels;
+    if (!Array.isArray(channels) || channels.length === 0) {
+      errors.push("extension_dependencies[].channels 必须是非空数组");
+      continue;
+    }
+    for (const channel of channels) {
+      validateNamespacedKeyValue(
+        channel,
+        "extension_dependencies[].channels[]",
+        errors,
+      );
+    }
   }
 }
 
@@ -292,8 +374,34 @@ function validatePermissions(permissions, errors) {
       if (access !== "read" && access !== "write" && access !== "read_write") {
         errors.push("permissions[].access 必须是 read、write 或 read_write");
       }
+    } else if (kind === "http") {
+      validateStringList(record, "hosts", "permissions[].hosts", errors);
+      const access = stringField(record, "access");
+      if (access !== "read" && access !== "write" && access !== "read_write") {
+        errors.push("permissions[].access 必须是 read、write 或 read_write");
+      }
+    } else if (kind === "env") {
+      validateStringList(record, "names", "permissions[].names", errors);
+      const access = stringField(record, "access");
+      if (access !== "read" && access !== "write" && access !== "read_write") {
+        errors.push("permissions[].access 必须是 read、write 或 read_write");
+      }
+    } else if (kind === "process") {
+      if (stringField(record, "access") !== "execute") {
+        errors.push("permissions[].access 必须是 execute");
+      }
     } else if (kind === "runtime_action") {
       validateQualifiedKey(record, "action_key", "permissions[].action_key", errors);
+    } else if (kind === "extension_channel") {
+      validateNamespacedKey(record, "channel_key", "permissions[].channel_key", errors);
+      const methods = record.methods;
+      if (!Array.isArray(methods) || methods.length === 0) {
+        errors.push("permissions[].methods 必须是非空数组");
+      } else {
+        for (const method of methods) {
+          validateMethodNameValue(method, "permissions[].methods[]", errors);
+        }
+      }
     } else {
       errors.push("permissions[].kind 非法");
     }
@@ -332,6 +440,123 @@ function validateQualifiedKey(record, field, label, errors) {
   const value = stringField(record, field);
   if (!value || !value.split(".").every((segment) => /^[a-z0-9_-]+$/.test(segment))) {
     errors.push(`${label} 必须由小写字母、数字、下划线、短横线和点分段组成`);
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateNamespacedKey(record, field, label, errors) {
+  validateNamespacedKeyValue(record[field], label, errors);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateNamespacedKeyValue(value, label, errors) {
+  if (typeof value !== "string" || !value.includes(".")) {
+    errors.push(`${label} 必须包含 provider namespace`);
+    return;
+  }
+  if (!value.split(".").every((segment) => /^[a-z0-9_-]+$/.test(segment))) {
+    errors.push(`${label} 必须由小写字母、数字、下划线、短横线和点分段组成`);
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validatePackageKey(record, field, label, errors) {
+  const value = stringField(record, field);
+  if (!value || !/^[a-z0-9_-]+$/.test(value)) {
+    errors.push(`${label} 必须由小写字母、数字、下划线和短横线组成`);
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateAlias(record, field, label, errors) {
+  const value = stringField(record, field);
+  if (!value || !/^[a-z][a-z0-9_-]*$/.test(value)) {
+    errors.push(`${label} 必须以小写字母开头，并只包含小写字母、数字、下划线和短横线`);
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateMethodName(record, field, label, errors) {
+  validateMethodNameValue(record[field], label, errors);
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateMethodNameValue(value, label, errors) {
+  if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9_]*$/.test(value)) {
+    errors.push(`${label} 必须是合法 method 名称`);
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateJsonSchemaField(record, field, label, errors) {
+  const value = record[field];
+  if (value == null || typeof value === "boolean" || asRecord(value)) return;
+  errors.push(`${label} 必须是 JSON Schema 对象或布尔值`);
+}
+
+/**
+ * @param {unknown[]} permissions
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validatePermissionStrings(permissions, label, errors) {
+  for (const permission of permissions) {
+    if (typeof permission !== "string" || !/^[A-Za-z0-9._:*=-]+$/.test(permission)) {
+      errors.push(`${label} 必须是稳定 permission key`);
+    }
+  }
+}
+
+/**
+ * @param {UnknownRecord} record
+ * @param {string} field
+ * @param {string} label
+ * @param {string[]} errors
+ */
+function validateStringList(record, field, label, errors) {
+  const values = record[field];
+  if (!Array.isArray(values) || values.length === 0) {
+    errors.push(`${label} 必须是非空字符串数组`);
+    return;
+  }
+  for (const value of values) {
+    if (typeof value !== "string" || value.trim() === "") {
+      errors.push(`${label} 必须是非空字符串数组`);
+      return;
+    }
   }
 }
 

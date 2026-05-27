@@ -8,18 +8,21 @@ pub use project_extension::{ProjectExtensionInstallation, ProjectExtensionInstal
 pub use repository::{LibraryAssetListFilter, LibraryAssetRepository};
 pub use value_objects::{
     AgentMcpSlotTemplate, AgentTemplateConfig, AgentTemplatePayload, BuiltinSeed,
-    EXTENSION_PERMISSION_LOCAL_PROFILE_READ, ExtensionAssetRef, ExtensionBundleKind,
-    ExtensionBundleRef, ExtensionCommandDefinition, ExtensionCommandHandler,
-    ExtensionFlagDefinition, ExtensionFlagType, ExtensionMessageRendererDefinition,
-    ExtensionPermissionAccess, ExtensionPermissionDecision, ExtensionPermissionDecisionReason,
-    ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionDefinition,
-    ExtensionRuntimeActionKind, ExtensionTemplatePayload, ExtensionWorkspaceTabDefinition,
-    ExtensionWorkspaceTabRendererDeclaration, InlineMountFilePayload, InstalledAssetSource,
-    LibraryAssetPayload, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
-    McpServerTemplatePayload, PluginLibraryAssetSeed, ProjectAgentConfigOverride,
-    SharedLibrarySourceStatus, SkillTemplateFilePayload, SkillTemplatePayload,
-    VfsMountTemplatePayload, WorkflowTemplatePayload, normalize_workflow_lifecycle_value,
-    normalize_workflow_template_payload_value, normalize_workflow_template_value,
+    EXTENSION_PERMISSION_LOCAL_PROFILE_READ, EXTENSION_PERMISSION_PROCESS_EXECUTE,
+    ExtensionAssetRef, ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
+    ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
+    ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
+    ExtensionPermissionDecision, ExtensionPermissionDecisionReason, ExtensionPermissionDeclaration,
+    ExtensionProcessPermissionAccess, ExtensionProtocolChannelDefinition,
+    ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
+    ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+    ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
+    InlineMountFilePayload, InstalledAssetSource, LibraryAssetPayload, LibraryAssetScope,
+    LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, PluginLibraryAssetSeed,
+    ProjectAgentConfigOverride, SharedLibrarySourceStatus, SkillTemplateFilePayload,
+    SkillTemplatePayload, VfsMountTemplatePayload, WorkflowTemplatePayload,
+    normalize_workflow_lifecycle_value, normalize_workflow_template_payload_value,
+    normalize_workflow_template_value,
 };
 
 pub fn seed_digest(payload: &serde_json::Value) -> Result<String, crate::DomainError> {

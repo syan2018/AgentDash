@@ -20,6 +20,20 @@ test("validateProject accepts canvas panel renderer", async () => {
   assert.deepEqual(result.errors, []);
 });
 
+test("validateProject accepts protocol channels, dependencies, and trusted host capabilities", async () => {
+  const root = await fixtureProject({ withProtocol: true });
+  const result = await validateProject(root);
+  assert.deepEqual(result.errors, []);
+});
+
+test("validateProject rejects invalid protocol channel declarations", async () => {
+  const root = await fixtureProject({ withInvalidProtocol: true });
+  const result = await validateProject(root);
+  assert.match(result.errors.join("\n"), /protocol_channels\[\]\.channel_key/);
+  assert.match(result.errors.join("\n"), /protocol_channels\[\]\.methods\[\]\.name/);
+  assert.match(result.errors.join("\n"), /extension_dependencies\[\]\.alias/);
+});
+
 test("validateProject rejects lifecycle scripts and package mismatch", async () => {
   const root = await fixtureProject({
     packageName: "@agentdash/other",
@@ -42,7 +56,7 @@ test("validateProject rejects non self-contained dependencies and native constra
 });
 
 /**
- * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel" }} [options]
+ * @param {{ packageName?: string, scripts?: Record<string, string>, dependencies?: Record<string, string>, nativeFields?: Record<string, unknown>, rendererKind?: "webview" | "canvas_panel", withProtocol?: boolean, withInvalidProtocol?: boolean }} [options]
  * @returns {Promise<string>}
  */
 async function fixtureProject(options = {}) {
@@ -73,8 +87,57 @@ async function fixtureProject(options = {}) {
           description: "Read profile",
           input_schema: {},
           output_schema: {},
+          permissions: options.withProtocol
+            ? ["local.profile.read", "http.fetch:example.com", "env.read:DEMO_TOKEN", "process.execute"]
+            : ["local.profile.read"],
         },
       ],
+      protocol_channels: options.withProtocol
+        ? [
+            {
+              channel_key: "local-hello.api",
+              version: "1.0.0",
+              description: "Local hello protocol channel",
+              methods: [
+                {
+                  name: "readProfile",
+                  description: "Read local profile through the provider channel",
+                  input_schema: true,
+                  output_schema: true,
+                  permissions: ["local.profile.read"],
+                },
+              ],
+            },
+          ]
+        : options.withInvalidProtocol
+          ? [
+              {
+                channel_key: "api",
+                version: "1.0.0",
+                description: "Invalid channel",
+                methods: [{ name: "bad-name", description: "bad" }],
+              },
+            ]
+          : undefined,
+      extension_dependencies: options.withProtocol
+        ? [
+            {
+              alias: "hello",
+              extension_id: "local-hello",
+              version: "^1.0.0",
+              channels: ["local-hello.api"],
+            },
+          ]
+        : options.withInvalidProtocol
+          ? [
+              {
+                alias: "BadAlias",
+                extension_id: "local-hello",
+                version: "^1.0.0",
+                channels: ["api"],
+              },
+            ]
+          : undefined,
       workspace_tabs: [
         {
           type_id: "local-hello.panel",
@@ -83,7 +146,15 @@ async function fixtureProject(options = {}) {
           renderer: { kind: options.rendererKind ?? "webview", entry: "dist/panel/index.html" },
         },
       ],
-      permissions: [{ kind: "local_profile", access: "read" }],
+      permissions: options.withProtocol
+        ? [
+            { kind: "local_profile", access: "read" },
+            { kind: "http", hosts: ["example.com"], access: "read" },
+            { kind: "env", names: ["DEMO_TOKEN"], access: "read" },
+            { kind: "process", access: "execute" },
+            { kind: "extension_channel", channel_key: "local-hello.api", methods: ["readProfile"] },
+          ]
+        : [{ kind: "local_profile", access: "read" }],
       bundles: [
         {
           kind: "extension_host",

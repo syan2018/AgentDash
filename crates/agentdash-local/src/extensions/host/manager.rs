@@ -131,6 +131,30 @@ impl LocalExtensionHostManager {
         result
     }
 
+    pub async fn invoke_channel(
+        &self,
+        channel_key: &str,
+        method: &str,
+        input: Value,
+    ) -> Result<Value, LocalExtensionHostError> {
+        let mut guard = self.process.lock().await;
+        let process = guard
+            .as_mut()
+            .ok_or_else(|| LocalExtensionHostError::Process("extension host 尚未启动".into()))?;
+        let result = process
+            .call(
+                "invoke_channel",
+                json!({
+                    "channel_key": channel_key,
+                    "method": method,
+                    "input": input,
+                }),
+            )
+            .await;
+        reset_after_process_exit(&mut guard, &result);
+        result
+    }
+
     pub async fn health(&self) -> Result<LocalExtensionHostHealth, LocalExtensionHostError> {
         let mut guard = self.process.lock().await;
         let process = guard

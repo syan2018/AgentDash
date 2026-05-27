@@ -5,6 +5,8 @@ import type {
   ExtensionBundleProjectionResponse,
   ExtensionCommandHandlerResponse,
   ExtensionCommandProjectionResponse,
+  ExtensionDependencyDeclarationResponse,
+  ExtensionDependencyProjectionResponse,
   ExtensionFlagProjectionResponse,
   ExtensionFlagTypeResponse,
   ExtensionInstallationProjectionResponse,
@@ -15,6 +17,9 @@ import type {
   ExtensionPermissionAccessResponse,
   ExtensionPermissionDeclarationResponse,
   ExtensionPermissionProjectionResponse,
+  ExtensionProcessPermissionAccessResponse,
+  ExtensionProtocolChannelMethodProjectionResponse,
+  ExtensionProtocolChannelProjectionResponse,
   ExtensionRuntimeActionKindResponse,
   ExtensionRuntimeActionProjectionResponse,
   ExtensionRuntimeInvocationOutputResponse,
@@ -95,6 +100,11 @@ function mapFlagType(raw: unknown): ExtensionFlagTypeResponse {
 function mapPermissionAccess(raw: unknown): ExtensionPermissionAccessResponse {
   if (raw === "read" || raw === "write" || raw === "read_write") return raw;
   throw new Error(`未知的 extension permission access: ${String(raw ?? "")}`);
+}
+
+function mapProcessPermissionAccess(raw: unknown): ExtensionProcessPermissionAccessResponse {
+  if (raw === "execute") return raw;
+  throw new Error(`未知的 extension process permission access: ${String(raw ?? "")}`);
 }
 
 function mapBundleKind(raw: unknown): ExtensionBundleKindResponse {
@@ -178,15 +188,38 @@ function mapPermission(raw: unknown): ExtensionPermissionDeclarationResponse {
         kind: "local_profile",
         access: mapPermissionAccess(value.access),
       };
+    case "http":
+      return {
+        kind: "http",
+        hosts: mapStringArray(value.hosts, "extension permission hosts"),
+        access: mapPermissionAccess(value.access),
+      };
     case "workspace":
       return {
         kind: "workspace",
         access: mapPermissionAccess(value.access),
       };
+    case "env":
+      return {
+        kind: "env",
+        names: mapStringArray(value.names, "extension permission names"),
+        access: mapPermissionAccess(value.access),
+      };
+    case "process":
+      return {
+        kind: "process",
+        access: mapProcessPermissionAccess(value.access),
+      };
     case "runtime_action":
       return {
         kind: "runtime_action",
         action_key: requireStringField(value, "action_key"),
+      };
+    case "extension_channel":
+      return {
+        kind: "extension_channel",
+        channel_key: requireStringField(value, "channel_key"),
+        methods: mapStringArray(value.methods, "extension permission methods"),
       };
     default:
       throw new Error(`未知的 extension permission kind: ${String(value.kind ?? "")}`);
@@ -205,6 +238,18 @@ function mapInstallation(raw: unknown): ExtensionInstallationProjectionResponse 
     installed_source: installedSource === null ? null : mapInstalledSource(installedSource),
     package_artifact: packageArtifact === null ? null : mapPackageArtifactRef(packageArtifact),
   };
+}
+
+function mapStringArray(raw: unknown, label: string): string[] {
+  if (!Array.isArray(raw)) {
+    throw new Error(`${label} 不是数组`);
+  }
+  return raw.map((item, index) => {
+    if (typeof item !== "string" || item.trim() === "") {
+      throw new Error(`${label}[${index}] 不是非空字符串`);
+    }
+    return item;
+  });
 }
 
 function mapCommand(raw: unknown): ExtensionCommandProjectionResponse {
@@ -260,6 +305,56 @@ function mapRuntimeAction(raw: unknown): ExtensionRuntimeActionProjectionRespons
   };
 }
 
+function mapProtocolChannelMethod(raw: unknown): ExtensionProtocolChannelMethodProjectionResponse {
+  const value = recordOrThrow(raw, "extension protocol channel method");
+  return {
+    name: requireStringField(value, "name"),
+    description: requireStringField(value, "description"),
+    input_schema: mapJsonValue(value.input_schema, "extension protocol channel method input_schema"),
+    output_schema: mapJsonValue(
+      value.output_schema,
+      "extension protocol channel method output_schema",
+    ),
+    permissions: optionalArray(value, "permissions").map((permission) => {
+      if (typeof permission !== "string" || permission.trim() === "") {
+        throw new Error("extension protocol channel method permission 非法");
+      }
+      return permission;
+    }),
+  };
+}
+
+function mapProtocolChannel(raw: unknown): ExtensionProtocolChannelProjectionResponse {
+  const value = recordOrThrow(raw, "extension protocol channel");
+  return {
+    extension_key: requireStringField(value, "extension_key"),
+    extension_id: requireStringField(value, "extension_id"),
+    channel_key: requireStringField(value, "channel_key"),
+    version: requireStringField(value, "version"),
+    description: requireStringField(value, "description"),
+    methods: optionalArray(value, "methods").map(mapProtocolChannelMethod),
+  };
+}
+
+function mapExtensionDependency(raw: unknown): ExtensionDependencyDeclarationResponse {
+  const value = recordOrThrow(raw, "extension dependency");
+  return {
+    alias: requireStringField(value, "alias"),
+    extension_id: requireStringField(value, "extension_id"),
+    version: requireStringField(value, "version"),
+    channels: mapStringArray(value.channels, "extension dependency channels"),
+  };
+}
+
+function mapExtensionDependencyProjection(raw: unknown): ExtensionDependencyProjectionResponse {
+  const value = recordOrThrow(raw, "extension dependency projection");
+  return {
+    extension_key: requireStringField(value, "extension_key"),
+    extension_id: requireStringField(value, "extension_id"),
+    dependency: mapExtensionDependency(value.dependency),
+  };
+}
+
 function mapWorkspaceTab(raw: unknown): ExtensionWorkspaceTabProjectionResponse {
   const value = recordOrThrow(raw, "extension workspace tab");
   return {
@@ -300,6 +395,10 @@ export function mapExtensionRuntimeProjection(raw: unknown): ExtensionRuntimePro
     flags: optionalArray(value, "flags").map(mapFlag),
     message_renderers: optionalArray(value, "message_renderers").map(mapMessageRendererProjection),
     runtime_actions: optionalArray(value, "runtime_actions").map(mapRuntimeAction),
+    protocol_channels: optionalArray(value, "protocol_channels").map(mapProtocolChannel),
+    extension_dependencies: optionalArray(value, "extension_dependencies").map(
+      mapExtensionDependencyProjection,
+    ),
     workspace_tabs: optionalArray(value, "workspace_tabs").map(mapWorkspaceTab),
     permissions: optionalArray(value, "permissions").map(mapPermissionProjection),
     bundles: optionalArray(value, "bundles").map(mapBundle),

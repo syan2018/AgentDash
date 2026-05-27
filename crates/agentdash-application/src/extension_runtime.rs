@@ -4,10 +4,11 @@ use std::sync::Arc;
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
 use agentdash_domain::shared_library::{
-    ExtensionBundleKind, ExtensionCommandHandler, ExtensionFlagType,
-    ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
-    ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource, ProjectExtensionInstallation,
-    ProjectExtensionInstallationRepository,
+    ExtensionBundleKind, ExtensionCommandHandler, ExtensionDependencyDeclaration,
+    ExtensionFlagType, ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
+    ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
+    ExtensionRuntimeActionKind, ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource,
+    ProjectExtensionInstallation, ProjectExtensionInstallationRepository,
 };
 use uuid::Uuid;
 
@@ -20,6 +21,8 @@ pub struct ExtensionRuntimeProjection {
     pub flags: Vec<ExtensionFlagProjection>,
     pub message_renderers: Vec<ExtensionMessageRendererProjection>,
     pub runtime_actions: Vec<ExtensionRuntimeActionProjection>,
+    pub protocol_channels: Vec<ExtensionProtocolChannelProjection>,
+    pub extension_dependencies: Vec<ExtensionDependencyProjection>,
     pub workspace_tabs: Vec<ExtensionWorkspaceTabProjection>,
     pub permissions: Vec<ExtensionPermissionProjection>,
     pub bundles: Vec<ExtensionBundleProjection>,
@@ -74,6 +77,32 @@ pub struct ExtensionRuntimeActionProjection {
     pub permissions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionProtocolChannelProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub channel_key: String,
+    pub version: String,
+    pub description: String,
+    pub methods: Vec<ExtensionProtocolChannelMethodProjection>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtensionProtocolChannelMethodProjection {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub output_schema: serde_json::Value,
+    pub permissions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtensionDependencyProjection {
+    pub extension_key: String,
+    pub extension_id: String,
+    pub dependency: ExtensionDependencyDeclaration,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtensionWorkspaceTabProjection {
     pub extension_key: String,
@@ -105,6 +134,7 @@ pub fn extension_runtime_projection_from_installations(
 ) -> Result<ExtensionRuntimeProjection, DomainError> {
     let mut projection = ExtensionRuntimeProjection::default();
     let mut action_keys = BTreeMap::new();
+    let mut channel_keys = BTreeMap::new();
     let mut workspace_tab_type_ids = BTreeMap::new();
     let mut uri_schemes = BTreeMap::new();
     for installation in installations {
@@ -116,6 +146,14 @@ pub fn extension_runtime_projection_from_installations(
                 &mut action_keys,
                 "runtime action key",
                 &action.action_key,
+                &extension_key,
+            )?;
+        }
+        for channel in &manifest.protocol_channels {
+            claim_unique_extension_runtime_key(
+                &mut channel_keys,
+                "protocol channel key",
+                &channel.channel_key,
                 &extension_key,
             )?;
         }
@@ -194,6 +232,24 @@ pub fn extension_runtime_projection_from_installations(
                     permissions: action.permissions,
                 }
             }));
+        projection.protocol_channels.extend(
+            manifest
+                .protocol_channels
+                .into_iter()
+                .map(|channel| protocol_channel_projection(&extension_key, &extension_id, channel)),
+        );
+        projection
+            .extension_dependencies
+            .extend(
+                manifest
+                    .extension_dependencies
+                    .into_iter()
+                    .map(|dependency| ExtensionDependencyProjection {
+                        extension_key: extension_key.clone(),
+                        extension_id: extension_id.clone(),
+                        dependency,
+                    }),
+            );
         projection
             .workspace_tabs
             .extend(manifest.workspace_tabs.into_iter().map(|tab| {
@@ -233,6 +289,37 @@ pub fn extension_runtime_projection_from_installations(
     Ok(projection)
 }
 
+fn protocol_channel_projection(
+    extension_key: &str,
+    extension_id: &str,
+    channel: ExtensionProtocolChannelDefinition,
+) -> ExtensionProtocolChannelProjection {
+    ExtensionProtocolChannelProjection {
+        extension_key: extension_key.to_string(),
+        extension_id: extension_id.to_string(),
+        channel_key: channel.channel_key,
+        version: channel.version,
+        description: channel.description,
+        methods: channel
+            .methods
+            .into_iter()
+            .map(protocol_channel_method_projection)
+            .collect(),
+    }
+}
+
+fn protocol_channel_method_projection(
+    method: ExtensionProtocolChannelMethodDefinition,
+) -> ExtensionProtocolChannelMethodProjection {
+    ExtensionProtocolChannelMethodProjection {
+        name: method.name,
+        description: method.description,
+        input_schema: method.input_schema,
+        output_schema: method.output_schema,
+        permissions: method.permissions,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct UninstallExtensionInstallationInput {
     pub project_id: Uuid,
@@ -249,11 +336,8 @@ pub async fn uninstall_extension_installation(
     repos: &RepositorySet,
     input: UninstallExtensionInstallationInput,
 ) -> Result<UninstallExtensionInstallationOutput, DomainError> {
-    uninstall_extension_installation_with_repo(
-        &repos.project_extension_installation_repo,
-        input,
-    )
-    .await
+    uninstall_extension_installation_with_repo(&repos.project_extension_installation_repo, input)
+        .await
 }
 
 async fn uninstall_extension_installation_with_repo(
@@ -268,9 +352,7 @@ async fn uninstall_extension_installation_with_repo(
             id: input.installation_id.to_string(),
         })?;
     let extension_key = installation.extension_key.clone();
-    let deleted = repo
-        .delete(input.project_id, input.installation_id)
-        .await?;
+    let deleted = repo.delete(input.project_id, input.installation_id).await?;
     if !deleted {
         return Err(DomainError::NotFound {
             entity: "project_extension_installation",
@@ -308,9 +390,10 @@ mod tests {
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
-        ExtensionCommandHandler, ExtensionFlagDefinition, ExtensionFlagType,
-        ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
-        ExtensionPermissionDeclaration, ExtensionRendererDeclaration,
+        ExtensionCommandHandler, ExtensionDependencyDeclaration, ExtensionFlagDefinition,
+        ExtensionFlagType, ExtensionMessageRendererDefinition, ExtensionPermissionAccess,
+        ExtensionPermissionDeclaration, ExtensionProtocolChannelDefinition,
+        ExtensionProtocolChannelMethodDefinition, ExtensionRendererDeclaration,
         ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
         ExtensionWorkspaceTabDefinition, ExtensionWorkspaceTabRendererDeclaration,
         InstalledAssetSource, ProjectExtensionInstallation,
@@ -368,6 +451,24 @@ mod tests {
                 output_schema: serde_json::json!({}),
                 permissions: vec!["local.profile.read".to_string()],
             }],
+            protocol_channels: vec![ExtensionProtocolChannelDefinition {
+                channel_key: format!("{extension_id}.api"),
+                version: "1.0.0".to_string(),
+                description: "demo API channel".to_string(),
+                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                    name: "readProfile".to_string(),
+                    description: "read profile through channel".to_string(),
+                    input_schema: serde_json::json!({}),
+                    output_schema: serde_json::json!({}),
+                    permissions: vec!["local.profile.read".to_string()],
+                }],
+            }],
+            extension_dependencies: vec![ExtensionDependencyDeclaration {
+                alias: "self_api".to_string(),
+                extension_id: extension_id.to_string(),
+                version: "^1.0.0".to_string(),
+                channels: vec![format!("{extension_id}.api")],
+            }],
             workspace_tabs: vec![ExtensionWorkspaceTabDefinition {
                 type_id: tab_type_id.to_string(),
                 label: "Profile".to_string(),
@@ -419,6 +520,15 @@ mod tests {
         assert_eq!(projection.flags[0].name, "demo.verbose");
         assert_eq!(projection.message_renderers[0].custom_type, "demo.card");
         assert_eq!(projection.runtime_actions[0].action_key, "demo.profile");
+        assert_eq!(projection.protocol_channels[0].channel_key, "demo.api");
+        assert_eq!(
+            projection.protocol_channels[0].methods[0].name,
+            "readProfile"
+        );
+        assert_eq!(
+            projection.extension_dependencies[0].dependency.alias,
+            "self_api"
+        );
         assert_eq!(projection.workspace_tabs[0].type_id, "demo.profile-panel");
         assert_eq!(projection.permissions.len(), 1);
         assert_eq!(projection.bundles[0].entry, "dist/extension.js");
@@ -435,7 +545,10 @@ mod tests {
             &self,
             installation: &ProjectExtensionInstallation,
         ) -> Result<(), DomainError> {
-            self.installations.lock().unwrap().push(installation.clone());
+            self.installations
+                .lock()
+                .unwrap()
+                .push(installation.clone());
             Ok(())
         }
 
@@ -640,6 +753,12 @@ mod tests {
             installation("beta", "beta.action", "shared.panel", "beta"),
         ]);
         assert!(duplicate_tab.is_err());
+
+        let duplicate_channel = extension_runtime_projection_from_installations(vec![
+            installation("alpha", "alpha.action", "alpha.panel", "alpha"),
+            installation("alpha", "alpha.other", "alpha.other-panel", "alpha-other"),
+        ]);
+        assert!(duplicate_channel.is_err());
 
         let duplicate_scheme = extension_runtime_projection_from_installations(vec![
             installation("alpha", "alpha.action", "alpha.panel", "shared"),

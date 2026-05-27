@@ -66,6 +66,33 @@ async fn reload_updates_action_handler() {
 }
 
 #[tokio::test]
+async fn protocol_channel_registers_and_self_invokes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), channel_bundle(), false, false)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    let health = manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+    assert_eq!(health.channel_keys, vec!["local-hello.api".to_string()]);
+
+    let action_result = manager
+        .invoke_action("local-hello.profile", json!({ "source": "action" }))
+        .await
+        .expect("invoke action");
+    assert_eq!(action_result["echoed"]["source"], "action");
+
+    let channel_result = manager
+        .invoke_channel("local-hello.api", "echo", json!({ "source": "direct" }))
+        .await
+        .expect("invoke channel");
+    assert_eq!(channel_result["echoed"]["source"], "direct");
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn permission_denied_when_local_profile_is_not_declared() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), profile_bundle(), false, false)
@@ -100,6 +127,25 @@ async fn permission_denied_when_action_local_profile_is_not_declared() {
         .await
         .expect_err("permission denied");
     assert!(err.to_string().contains("local.profile.read"));
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn top_level_local_profile_summary_does_not_gate_action_call() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), profile_bundle(), false, true)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+    let result = manager
+        .invoke_action("local-hello.profile", Value::Null)
+        .await
+        .expect("invoke");
+    assert_eq!(result["backend_id"], "backend-1");
     manager.stop().await.expect("stop");
 }
 
@@ -267,6 +313,37 @@ export default {
       description: "Throw",
       invoke() {
         throw new Error("boom");
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn channel_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.channels.register({
+      channel_key: "api",
+      version: "1.0.0",
+      description: "Echo channel",
+      methods: {
+        echo: {
+          description: "Echo input",
+          invoke(input) {
+            return { echoed: input };
+          },
+        },
+      },
+    });
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Invoke own channel",
+      async invoke(input) {
+        return await ctx.api.channels.self("api").invoke("echo", input);
       },
     });
   },

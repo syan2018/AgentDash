@@ -94,7 +94,7 @@ async fn resolve_workspace_read_text(
     require_declared_permission(active, params, &["workspace.vfs.read".to_string()])?;
     let path = require_string(params, "path")?;
     let workspace_root = resolve_workspace_root(active, params)?;
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     let content = executor
         .file_read(&path, &workspace_root)
         .await
@@ -110,7 +110,7 @@ async fn resolve_workspace_write_text(
     let path = require_string(params, "path")?;
     let content = require_string(params, "content")?;
     let workspace_root = resolve_workspace_root(active, params)?;
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     executor
         .file_write(&path, &content, &workspace_root)
         .await
@@ -125,7 +125,7 @@ async fn resolve_workspace_list(
     require_declared_permission(active, params, &["workspace.vfs.list".to_string()])?;
     let path = optional_string(params, "path").unwrap_or_else(|| ".".to_string());
     let workspace_root = resolve_workspace_root(active, params)?;
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     let entries = executor
         .file_list(&path, &workspace_root, None, false)
         .await
@@ -148,7 +148,7 @@ async fn resolve_workspace_stat(
     require_declared_permission(active, params, &["workspace.vfs.read".to_string()])?;
     let path = require_string(params, "path")?;
     let workspace_root = resolve_workspace_root(active, params)?;
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     let full_path = executor
         .resolve_existing_path(&path, &workspace_root)
         .map_err(host_api_tool_error)?;
@@ -183,7 +183,7 @@ async fn resolve_process_shell(
     let timeout_ms = optional_u64(options, "timeout_ms").unwrap_or(DEFAULT_HOST_API_TIMEOUT_MS);
     let max_output_bytes =
         optional_u64(options, "max_output_bytes").unwrap_or(DEFAULT_OUTPUT_LIMIT_BYTES as u64);
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     match executor
         .shell_exec(&command, &workspace_root, cwd.as_deref(), Some(timeout_ms))
         .await
@@ -230,7 +230,7 @@ async fn resolve_process_exec(
     let timeout_ms = optional_u64(options, "timeout_ms").unwrap_or(DEFAULT_HOST_API_TIMEOUT_MS);
     let max_output_bytes =
         optional_u64(options, "max_output_bytes").unwrap_or(DEFAULT_OUTPUT_LIMIT_BYTES as u64);
-    let executor = ToolExecutor::new(active.workspace_roots.clone());
+    let executor = ToolExecutor::new(executor_workspace_roots(active));
     let cwd = executor
         .resolve_shell_cwd(&workspace_root, optional_string(options, "cwd").as_deref())
         .map_err(host_api_tool_error)?;
@@ -444,23 +444,34 @@ fn resolve_workspace_root(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<String, LocalExtensionHostError> {
-    optional_string(params, "workspace_root")
-        .map_or_else(|| default_workspace_root(&active.workspace_roots), Ok)
+    optional_string(params, "workspace_root").map_or_else(|| default_workspace_root(active), Ok)
 }
 
 fn resolve_workspace_root_from_options(
     active: &ActiveExtension,
     options: &Value,
 ) -> Result<String, LocalExtensionHostError> {
-    optional_string(options, "workspace_root")
-        .map_or_else(|| default_workspace_root(&active.workspace_roots), Ok)
+    optional_string(options, "workspace_root").map_or_else(|| default_workspace_root(active), Ok)
 }
 
-fn default_workspace_root(roots: &[PathBuf]) -> Result<String, LocalExtensionHostError> {
-    roots
-        .first()
+fn default_workspace_root(active: &ActiveExtension) -> Result<String, LocalExtensionHostError> {
+    active
+        .default_workspace_root
+        .as_ref()
         .map(|root| root.to_string_lossy().to_string())
-        .ok_or_else(|| LocalExtensionHostError::Host("extension host 未绑定 workspace root".into()))
+        .ok_or_else(|| {
+            LocalExtensionHostError::Host("extension host 未绑定 session workspace root".into())
+        })
+}
+
+fn executor_workspace_roots(active: &ActiveExtension) -> Vec<PathBuf> {
+    let mut roots = active.workspace_roots.clone();
+    if let Some(default_root) = active.default_workspace_root.as_ref()
+        && !roots.iter().any(|root| root == default_root)
+    {
+        roots.push(default_root.clone());
+    }
+    roots
 }
 
 fn process_result_value(result: ShellResult, timed_out: bool, max_output_bytes: usize) -> Value {
@@ -745,6 +756,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_host_apis_use_session_root_without_registered_roots() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let active = active_extension_with_roots(
+            Some(temp.path()),
+            Vec::new(),
+            &["workspace.vfs.write", "workspace.vfs.read"],
+            &[],
+        );
+
+        resolve_host_api(
+            Some(&active),
+            "workspace.write_text",
+            &action_params(json!({
+                "path": "notes/session-root.txt",
+                "content": "session-root",
+            })),
+        )
+        .await
+        .expect("write through session root");
+
+        let text = resolve_host_api(
+            Some(&active),
+            "workspace.read_text",
+            &action_params(json!({ "path": "notes/session-root.txt" })),
+        )
+        .await
+        .expect("read through session root");
+
+        assert_eq!(text, "session-root");
+    }
+
+    #[tokio::test]
+    async fn workspace_host_apis_do_not_fallback_to_registered_roots() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let active = active_extension_with_roots(
+            None,
+            vec![temp.path().to_path_buf()],
+            &["workspace.vfs.list"],
+            &[],
+        );
+
+        let error = resolve_host_api(
+            Some(&active),
+            "workspace.list",
+            &action_params(json!({ "path": "." })),
+        )
+        .await
+        .expect_err("missing session root");
+
+        assert_contains(&error, "extension host 未绑定 session workspace root");
+    }
+
+    #[tokio::test]
     async fn http_host_api_covers_allowed_denied_and_param_errors() {
         let temp = tempfile::tempdir().expect("tempdir");
         let (url, server) = http_ok_server().await;
@@ -825,6 +889,32 @@ mod tests {
         action_permissions: &[&str],
         channel_permissions: &[&str],
     ) -> ActiveExtension {
+        active_extension_with_roots(
+            Some(workspace_root),
+            vec![workspace_root.to_path_buf()],
+            action_permissions,
+            channel_permissions,
+        )
+    }
+
+    fn active_extension_with_roots(
+        default_workspace_root: Option<&Path>,
+        workspace_roots: Vec<PathBuf>,
+        action_permissions: &[&str],
+        channel_permissions: &[&str],
+    ) -> ActiveExtension {
+        let profile_workspace_roots = workspace_roots
+            .iter()
+            .enumerate()
+            .map(|(index, root)| LocalExtensionHostWorkspaceRoot {
+                index,
+                name: root
+                    .file_name()
+                    .map(|value| value.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("workspace-{index}")),
+                display_path: root.display().to_string(),
+            })
+            .collect();
         ActiveExtension {
             extension_key: "local-hello".to_string(),
             manifest: manifest(action_permissions, channel_permissions),
@@ -835,13 +925,10 @@ mod tests {
                 backend_id: "backend-1".to_string(),
                 project_id: Some("project-1".to_string()),
                 session_id: Some("session-1".to_string()),
-                workspace_roots: vec![LocalExtensionHostWorkspaceRoot {
-                    index: 0,
-                    name: "workspace".to_string(),
-                    display_path: workspace_root.display().to_string(),
-                }],
+                workspace_roots: profile_workspace_roots,
             },
-            workspace_roots: vec![workspace_root.to_path_buf()],
+            default_workspace_root: default_workspace_root.map(Path::to_path_buf),
+            workspace_roots,
         }
     }
 

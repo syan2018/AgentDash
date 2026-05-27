@@ -464,6 +464,7 @@ fn activation_with_root(workspace_root: PathBuf) -> LocalExtensionHostActivation
         backend_id: "backend-1".to_string(),
         project_id: Some("project-1".to_string()),
         session_id: Some("session-1".to_string()),
+        default_workspace_root: Some(workspace_root.clone()),
         workspace_roots: vec![workspace_root],
     }
 }

@@ -17,6 +17,7 @@ pub struct LocalExtensionHostActivation {
     pub backend_id: String,
     pub project_id: Option<String>,
     pub session_id: Option<String>,
+    pub default_workspace_root: Option<PathBuf>,
     pub workspace_roots: Vec<PathBuf>,
 }
 

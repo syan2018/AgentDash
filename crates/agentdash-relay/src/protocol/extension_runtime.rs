@@ -26,6 +26,12 @@ pub struct ExtensionChannelConsumerRelay {
     pub dependency_alias: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionInvocationWorkspaceRelay {
+    pub mount_id: String,
+    pub root_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CommandExtensionActionInvokePayload {
     pub extension_key: String,
@@ -39,6 +45,8 @@ pub struct CommandExtensionActionInvokePayload {
     pub package_artifact: Option<ExtensionPackageArtifactRelay>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_extensions: Vec<ExtensionRuntimeHostRelay>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ExtensionInvocationWorkspaceRelay>,
     pub trace_id: String,
     pub invocation_id: String,
 }
@@ -66,6 +74,8 @@ pub struct CommandExtensionChannelInvokePayload {
     pub input: Value,
     pub package_artifact: ExtensionPackageArtifactRelay,
     pub consumer: ExtensionChannelConsumerRelay,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<ExtensionInvocationWorkspaceRelay>,
     pub trace_id: String,
     pub invocation_id: String,
 }

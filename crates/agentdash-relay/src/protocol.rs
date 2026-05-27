@@ -740,6 +740,10 @@ mod tests {
                             .to_string(),
                 }),
                 runtime_extensions: vec![],
+                workspace: Some(ExtensionInvocationWorkspaceRelay {
+                    mount_id: "main".to_string(),
+                    root_ref: "D:/Workspaces/demo".to_string(),
+                }),
                 trace_id: "trace-1".to_string(),
                 invocation_id: "rtinv-1".to_string(),
             },
@@ -747,6 +751,7 @@ mod tests {
         let json = serde_json::to_value(&msg).expect("serialize");
         assert_eq!(json["type"], "command.extension_action_invoke");
         assert_eq!(json["payload"]["action_key"], "local-hello.profile");
+        assert_eq!(json["payload"]["workspace"]["mount_id"], "main");
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "ext-1");
@@ -797,6 +802,10 @@ mod tests {
                     extension_id: Some("protocol-demo".to_string()),
                     dependency_alias: Some("self".to_string()),
                 },
+                workspace: Some(ExtensionInvocationWorkspaceRelay {
+                    mount_id: "main".to_string(),
+                    root_ref: "D:/Workspaces/demo".to_string(),
+                }),
                 trace_id: "trace-1".to_string(),
                 invocation_id: "rtinv-1".to_string(),
             },
@@ -805,6 +814,10 @@ mod tests {
         assert_eq!(json["type"], "command.extension_channel_invoke");
         assert_eq!(json["payload"]["channel_key"], "protocol-demo.api");
         assert_eq!(json["payload"]["method"], "echo");
+        assert_eq!(
+            json["payload"]["workspace"]["root_ref"],
+            "D:/Workspaces/demo"
+        );
 
         let deser: RelayMessage = serde_json::from_value(json).expect("deserialize");
         assert_eq!(deser.id(), "ext-channel-1");

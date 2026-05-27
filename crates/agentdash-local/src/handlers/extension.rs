@@ -1,7 +1,10 @@
+use std::path::PathBuf;
+
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload,
-    ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay, RelayError, RelayMessage,
-    ResponseExtensionActionInvokePayload, ResponseExtensionChannelInvokePayload,
+    ExtensionInvocationWorkspaceRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
+    RelayError, RelayMessage, ResponseExtensionActionInvokePayload,
+    ResponseExtensionChannelInvokePayload,
 };
 use serde_json::{Map, json};
 
@@ -30,6 +33,7 @@ impl CommandHandler {
                 &payload.project_id,
                 &payload.session_id,
                 &payload.runtime_extensions,
+                payload.workspace.as_ref(),
             )
             .await
         {
@@ -88,6 +92,7 @@ impl CommandHandler {
                 &payload.session_id,
                 &payload.provider_extension_key,
                 &payload.package_artifact,
+                payload.workspace.as_ref(),
             )
             .await
         {
@@ -176,6 +181,7 @@ impl CommandHandler {
                     backend_id: self.backend_id.clone(),
                     project_id: Some(payload.project_id.clone()),
                     session_id: Some(payload.session_id.clone()),
+                    default_workspace_root: workspace_root_from_relay(payload.workspace.as_ref()),
                     workspace_roots: self.workspace_roots.clone(),
                 },
             )
@@ -189,6 +195,7 @@ impl CommandHandler {
         project_id: &str,
         session_id: &str,
         runtime_extensions: &[ExtensionRuntimeHostRelay],
+        workspace: Option<&ExtensionInvocationWorkspaceRelay>,
     ) -> Result<(), String> {
         for extension in runtime_extensions {
             let Some(artifact) = extension.package_artifact.as_ref() else {
@@ -199,6 +206,7 @@ impl CommandHandler {
                 session_id,
                 &extension.extension_key,
                 artifact,
+                workspace,
             )
             .await?;
         }
@@ -211,6 +219,7 @@ impl CommandHandler {
         session_id: &str,
         extension_key: &str,
         artifact: &ExtensionPackageArtifactRelay,
+        workspace: Option<&ExtensionInvocationWorkspaceRelay>,
     ) -> Result<(), String> {
         let cache_entry = download_and_cache_extension_artifact(ExtensionArtifactDownloadRequest {
             api_base_url: self.extension_artifact_api_base_url.clone(),
@@ -231,6 +240,7 @@ impl CommandHandler {
                     backend_id: self.backend_id.clone(),
                     project_id: Some(project_id.to_string()),
                     session_id: Some(session_id.to_string()),
+                    default_workspace_root: workspace_root_from_relay(workspace),
                     workspace_roots: self.workspace_roots.clone(),
                 },
             )
@@ -238,4 +248,17 @@ impl CommandHandler {
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+fn workspace_root_from_relay(
+    workspace: Option<&ExtensionInvocationWorkspaceRelay>,
+) -> Option<PathBuf> {
+    workspace.and_then(|workspace| {
+        let root_ref = workspace.root_ref.trim();
+        if root_ref.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(root_ref))
+        }
+    })
 }

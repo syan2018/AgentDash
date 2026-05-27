@@ -181,6 +181,7 @@ impl LocalExtensionHostManager {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
+            default_workspace_root: activation.default_workspace_root.clone(),
             workspace_roots: activation.workspace_roots.clone(),
         };
         process
@@ -218,6 +219,7 @@ impl LocalExtensionHostManager {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
+            default_workspace_root: activation.default_workspace_root.clone(),
             workspace_roots: activation.workspace_roots.clone(),
         };
         process

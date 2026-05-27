@@ -27,6 +27,7 @@ pub(super) struct ActiveExtension {
     pub extension_key: String,
     pub manifest: ExtensionTemplatePayload,
     pub profile: LocalExtensionHostProfile,
+    pub default_workspace_root: Option<PathBuf>,
     pub workspace_roots: Vec<PathBuf>,
 }
 

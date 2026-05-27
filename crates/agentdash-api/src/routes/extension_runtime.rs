@@ -15,6 +15,7 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
+use crate::session_use_cases::context_query::build_session_context_plan;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -24,10 +25,11 @@ use agentdash_application::extension_runtime::{
     uninstall_extension_installation,
 };
 use agentdash_application::runtime_gateway::{
-    ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
-    ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker, RuntimeActionKey,
-    RuntimeActor, RuntimeContext, RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget,
-    RuntimeTrace,
+    ExtensionInvocationWorkspaceContext, ExtensionRuntimeChannelConsumer,
+    ExtensionRuntimeChannelInvokeRequest, ExtensionRuntimeChannelInvokeResult,
+    ExtensionRuntimeChannelInvoker, RuntimeActionKey, RuntimeActor, RuntimeContext,
+    RuntimeInvocationRequest, RuntimeInvocationResult, RuntimeTarget, RuntimeTrace,
+    attach_extension_invocation_workspace,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
@@ -38,6 +40,8 @@ use agentdash_contracts::extension_runtime::{
 };
 use agentdash_domain::DomainError;
 use agentdash_domain::session_binding::SessionBinding;
+use agentdash_plugin_api::AuthIdentity;
+use agentdash_spi::Vfs;
 
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimePath {
@@ -109,8 +113,16 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 backend_id".into(),
         ));
     }
-    ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
+    let bindings = ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
     ensure_project_backend_access(&state, project_id, backend_id).await?;
+    let workspace = resolve_extension_invocation_workspace(
+        &state,
+        &current_user,
+        session_id,
+        backend_id,
+        &bindings,
+    )
+    .await?;
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -118,7 +130,7 @@ pub async fn invoke_project_extension_runtime_action(
         action_key,
         RuntimeActor::SessionUser {
             session_id: session_id.to_string(),
-            user_id: Some(current_user.user_id),
+            user_id: Some(current_user.user_id.clone()),
         },
         RuntimeContext::Session {
             session_id: session_id.to_string(),
@@ -130,6 +142,7 @@ pub async fn invoke_project_extension_runtime_action(
     request.target = Some(RuntimeTarget::Backend {
         backend_id: backend_id.to_string(),
     });
+    attach_extension_invocation_workspace(&mut request, workspace);
 
     let result = state.services.runtime_gateway.invoke(request).await?;
     Ok(Json(extension_runtime_invoke_response(result)))
@@ -173,8 +186,16 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 method".into(),
         ));
     }
-    ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
+    let bindings = ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
     ensure_project_backend_access(&state, project_id, backend_id).await?;
+    let workspace = resolve_extension_invocation_workspace(
+        &state,
+        &current_user,
+        session_id,
+        backend_id,
+        &bindings,
+    )
+    .await?;
 
     let consumer = req
         .consumer_extension_key
@@ -194,6 +215,7 @@ pub async fn invoke_project_extension_runtime_channel(
             project_id,
             session_id: session_id.to_string(),
             backend_id: backend_id.to_string(),
+            workspace,
             consumer,
             channel_key: req.channel_key,
             dependency_alias: req.dependency_alias,
@@ -301,6 +323,124 @@ async fn ensure_project_session_scope(
         ));
     }
     Ok(bindings)
+}
+
+async fn resolve_extension_invocation_workspace(
+    state: &Arc<AppState>,
+    current_user: &AuthIdentity,
+    session_id: &str,
+    backend_id: &str,
+    bindings: &[SessionBinding],
+) -> Result<Option<ExtensionInvocationWorkspaceContext>, ApiError> {
+    let Some(plan) = build_session_context_plan(state, current_user, session_id, bindings).await?
+    else {
+        return Ok(None);
+    };
+    let Some(vfs) = plan.surface.vfs.as_ref() else {
+        return Ok(None);
+    };
+    Ok(select_extension_invocation_workspace(vfs, backend_id))
+}
+
+fn select_extension_invocation_workspace(
+    vfs: &Vfs,
+    backend_id: &str,
+) -> Option<ExtensionInvocationWorkspaceContext> {
+    let backend_id = backend_id.trim();
+    if backend_id.is_empty() {
+        return None;
+    }
+    if let Some(default_mount_id) = vfs.default_mount_id.as_deref()
+        && let Some(mount) = vfs.mounts.iter().find(|mount| {
+            mount.id == default_mount_id
+                && mount.backend_id == backend_id
+                && !mount.root_ref.trim().is_empty()
+        })
+    {
+        return Some(ExtensionInvocationWorkspaceContext::new(
+            mount.id.clone(),
+            mount.root_ref.trim().to_string(),
+        ));
+    }
+    vfs.mounts
+        .iter()
+        .find(|mount| mount.backend_id == backend_id && !mount.root_ref.trim().is_empty())
+        .map(|mount| {
+            ExtensionInvocationWorkspaceContext::new(
+                mount.id.clone(),
+                mount.root_ref.trim().to_string(),
+            )
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use agentdash_domain::common::{Mount, MountCapability};
+
+    use super::*;
+
+    #[test]
+    fn extension_invocation_workspace_uses_backend_default_mount() {
+        let vfs = Vfs {
+            mounts: vec![mount("main", "backend-1", "D:/Workspaces/main")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let workspace =
+            select_extension_invocation_workspace(&vfs, "backend-1").expect("workspace");
+
+        assert_eq!(workspace.mount_id, "main");
+        assert_eq!(workspace.root_ref, "D:/Workspaces/main");
+    }
+
+    #[test]
+    fn extension_invocation_workspace_falls_back_to_matching_backend_mount() {
+        let vfs = Vfs {
+            mounts: vec![
+                mount("main", "backend-2", "D:/Workspaces/other"),
+                mount("local", "backend-1", "D:/Workspaces/local"),
+            ],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let workspace =
+            select_extension_invocation_workspace(&vfs, "backend-1").expect("workspace");
+
+        assert_eq!(workspace.mount_id, "local");
+        assert_eq!(workspace.root_ref, "D:/Workspaces/local");
+    }
+
+    #[test]
+    fn extension_invocation_workspace_requires_backend_match() {
+        let vfs = Vfs {
+            mounts: vec![mount("main", "backend-2", "D:/Workspaces/other")],
+            default_mount_id: Some("main".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        assert!(select_extension_invocation_workspace(&vfs, "backend-1").is_none());
+    }
+
+    fn mount(id: &str, backend_id: &str, root_ref: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: "relay_fs".to_string(),
+            backend_id: backend_id.to_string(),
+            root_ref: root_ref.to_string(),
+            capabilities: vec![MountCapability::Read, MountCapability::Write],
+            default_write: true,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
+        }
+    }
 }
 
 fn extension_runtime_invoke_response(

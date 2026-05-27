@@ -9,10 +9,12 @@ use agentdash_domain::shared_library::{
 };
 use agentdash_relay::{
     CommandExtensionActionInvokePayload, CommandExtensionChannelInvokePayload,
-    ExtensionChannelConsumerRelay, ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay,
-    ResponseExtensionActionInvokePayload, ResponseExtensionChannelInvokePayload,
+    ExtensionChannelConsumerRelay, ExtensionInvocationWorkspaceRelay,
+    ExtensionPackageArtifactRelay, ExtensionRuntimeHostRelay, ResponseExtensionActionInvokePayload,
+    ResponseExtensionChannelInvokePayload,
 };
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -50,6 +52,52 @@ pub trait ExtensionRuntimeChannelTransport: Send + Sync {
         backend_id: &str,
         payload: CommandExtensionChannelInvokePayload,
     ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>;
+}
+
+pub const EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY: &str = "extension_invocation_workspace";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionInvocationWorkspaceContext {
+    pub mount_id: String,
+    pub root_ref: String,
+}
+
+impl ExtensionInvocationWorkspaceContext {
+    pub fn new(mount_id: impl Into<String>, root_ref: impl Into<String>) -> Self {
+        Self {
+            mount_id: mount_id.into(),
+            root_ref: root_ref.into(),
+        }
+    }
+
+    fn into_relay(self) -> ExtensionInvocationWorkspaceRelay {
+        ExtensionInvocationWorkspaceRelay {
+            mount_id: self.mount_id,
+            root_ref: self.root_ref,
+        }
+    }
+}
+
+pub fn attach_extension_invocation_workspace(
+    request: &mut RuntimeInvocationRequest,
+    workspace: Option<ExtensionInvocationWorkspaceContext>,
+) {
+    match workspace {
+        Some(workspace) => {
+            request.metadata.insert(
+                EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY.to_string(),
+                json!({
+                    "mount_id": workspace.mount_id,
+                    "root_ref": workspace.root_ref,
+                }),
+            );
+        }
+        None => {
+            request
+                .metadata
+                .remove(EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY);
+        }
+    }
 }
 
 pub struct ExtensionRuntimeActionProvider {
@@ -140,6 +188,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
             ));
         }
         let permission_decisions = validate_action_permissions(installation, action, &request)?;
+        let workspace = extension_invocation_workspace_from_metadata(&request)?;
 
         let relay_payload = CommandExtensionActionInvokePayload {
             extension_key: installation.extension_key.clone(),
@@ -155,6 +204,7 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
                 }
             }),
             runtime_extensions: runtime_host_relays(&installations),
+            workspace: workspace.map(ExtensionInvocationWorkspaceContext::into_relay),
             trace_id: request.trace.trace_id.clone(),
             invocation_id: request.trace.invocation_id.clone(),
         };
@@ -252,6 +302,25 @@ fn validate_action_permissions(
     Ok(decisions)
 }
 
+fn extension_invocation_workspace_from_metadata(
+    request: &RuntimeInvocationRequest,
+) -> Result<Option<ExtensionInvocationWorkspaceContext>, RuntimeInvocationError> {
+    let Some(value) = request
+        .metadata
+        .get(EXTENSION_INVOCATION_WORKSPACE_METADATA_KEY)
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(value.clone())
+        .map(Some)
+        .map_err(|error| {
+            RuntimeInvocationError::invalid_request(
+                format!("extension invocation workspace metadata 非法: {error}"),
+                Some(request.trace.clone()),
+            )
+        })
+}
+
 fn runtime_host_relays(
     installations: &[ProjectExtensionInstallation],
 ) -> Vec<ExtensionRuntimeHostRelay> {
@@ -278,6 +347,7 @@ pub struct ExtensionRuntimeChannelInvokeRequest {
     pub project_id: Uuid,
     pub session_id: String,
     pub backend_id: String,
+    pub workspace: Option<ExtensionInvocationWorkspaceContext>,
     pub consumer: ExtensionRuntimeChannelConsumer,
     pub channel_key: String,
     pub dependency_alias: Option<String>,
@@ -358,6 +428,10 @@ impl ExtensionRuntimeChannelInvoker {
                 resolved.consumer_installation,
                 resolved.dependency_alias,
             ),
+            workspace: request
+                .workspace
+                .clone()
+                .map(ExtensionInvocationWorkspaceContext::into_relay),
             trace_id: request.trace.trace_id.clone(),
             invocation_id: request.trace.invocation_id.clone(),
         };
@@ -912,6 +986,13 @@ mod tests {
             .expect("payload");
         assert_eq!(payload.trace_id, result.trace.trace_id);
         assert_eq!(payload.action_key, "local-hello.profile");
+        assert_eq!(
+            payload
+                .workspace
+                .as_ref()
+                .map(|workspace| (workspace.mount_id.as_str(), workspace.root_ref.as_str())),
+            Some(("main", "D:/Workspaces/demo"))
+        );
     }
 
     #[tokio::test]
@@ -1071,6 +1152,13 @@ mod tests {
             payload.consumer.dependency_alias.as_deref(),
             Some("provider")
         );
+        assert_eq!(
+            payload
+                .workspace
+                .as_ref()
+                .map(|workspace| (workspace.mount_id.as_str(), workspace.root_ref.as_str())),
+            Some(("main", "D:/Workspaces/demo"))
+        );
     }
 
     #[tokio::test]
@@ -1178,6 +1266,13 @@ mod tests {
         request.target = Some(RuntimeTarget::Backend {
             backend_id: "backend-1".to_string(),
         });
+        attach_extension_invocation_workspace(
+            &mut request,
+            Some(ExtensionInvocationWorkspaceContext::new(
+                "main",
+                "D:/Workspaces/demo",
+            )),
+        );
         request
     }
 
@@ -1213,6 +1308,10 @@ mod tests {
             project_id,
             session_id: "session-1".to_string(),
             backend_id: "backend-1".to_string(),
+            workspace: Some(ExtensionInvocationWorkspaceContext::new(
+                "main",
+                "D:/Workspaces/demo",
+            )),
             consumer: ExtensionRuntimeChannelConsumer::ExtensionPanel {
                 extension_key: "consumer".to_string(),
             },

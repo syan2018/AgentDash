@@ -193,6 +193,7 @@ mod tests {
             input: json!({}),
             package_artifact: None,
             runtime_extensions: vec![],
+            workspace: None,
             trace_id: "trace-1".to_string(),
             invocation_id: "rtinv-1".to_string(),
         }

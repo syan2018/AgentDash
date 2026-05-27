@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use agentdash_domain::shared_library::{
     EXTENSION_PERMISSION_LOCAL_PROFILE_READ, EXTENSION_PERMISSION_PROCESS_EXECUTE,
+    ExtensionPermissionDecision, ExtensionPermissionDecisionReason,
 };
 use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -338,27 +339,20 @@ fn require_declared_permission(
         .map(String::as_str)
         .unwrap_or("unknown.permission");
     if let Some(action_key) = optional_string(params, "action_key") {
-        let Some(action) = active
-            .manifest
-            .runtime_actions
+        let decisions = permissions
             .iter()
-            .find(|action| action.action_key == action_key)
-        else {
-            return Err(LocalExtensionHostError::PermissionDenied(format!(
-                "extension action `{action_key}` 不存在"
-            )));
-        };
-        if permissions.iter().any(|permission| {
-            action
-                .permissions
-                .iter()
-                .any(|declared| declared == permission)
-        }) {
+            .map(|permission| {
+                active
+                    .manifest
+                    .evaluate_action_permission(&action_key, permission)
+            })
+            .collect::<Vec<_>>();
+        if decisions.iter().any(|decision| decision.allowed) {
             return Ok(());
         }
         return Err(LocalExtensionHostError::PermissionDenied(format!(
-            "extension action `{action_key}` 未声明 {}",
-            permissions.join(" 或 ")
+            "{}",
+            action_permission_denial_message(&action_key, permissions, &decisions)
         )));
     }
 
@@ -402,6 +396,25 @@ fn require_declared_permission(
     Err(LocalExtensionHostError::PermissionDenied(format!(
         "{requested} 缺少 action 或 channel invocation context"
     )))
+}
+
+fn action_permission_denial_message(
+    action_key: &str,
+    permissions: &[String],
+    decisions: &[ExtensionPermissionDecision],
+) -> String {
+    if decisions.iter().all(|decision| {
+        decision.reason == ExtensionPermissionDecisionReason::MissingActionDeclaration
+    }) {
+        return format!(
+            "extension action `{action_key}` 未声明 {}",
+            permissions.join(" 或 ")
+        );
+    }
+    decisions
+        .first()
+        .map(ExtensionPermissionDecision::denial_message)
+        .unwrap_or_else(|| format!("extension action `{action_key}` 未声明权限"))
 }
 
 fn require_string(params: &Value, field: &str) -> Result<String, LocalExtensionHostError> {

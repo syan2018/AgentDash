@@ -37,8 +37,8 @@ cargo test -p agentdash-domain extension
 ## Phase 2: Runner Runtime Extraction
 
 - [x] 为 TS Extension Host runner 建立独立源码维护位置。
-- [ ] 将当前 Rust raw string runner 的 context/actions/host api client/protocol 拆成可测试 JS/TS 模块。
-- [ ] 保持 Rust `LocalExtensionHostProcess` 协议不漂移，先用 golden tests 锁定 activate/invoke/host_api_request/host_api_response。
+- [x] 将当前 Rust raw string runner 的 context/actions/host api client/protocol 拆成可测试 JS/TS 模块。
+- [x] 保持 Rust `LocalExtensionHostProcess` 协议不漂移，先用 golden tests 锁定 activate/invoke/host_api_request/host_api_response。
 - [x] 在 runner context 中加入 channel handler registry，支持 activate 时收集 channel contributions，invoke 时路由到 method handler。
 - [x] 通过 build/embed 机制让 Rust 继续获得 runner 源码。
 - [x] 保持 `local-hello.profile` 现有链路可跑。
@@ -76,7 +76,7 @@ cargo test -p agentdash-domain extension
 - [x] 更新 extension runtime projection，让新增 capability/permission/protocol channel/dependency 可被前端、Canvas 和 admission 使用。
 - [x] RuntimeGateway extension provider 在 action invocation 阶段校验 Project installation、action declaration、package artifact、backend target 和 permission summary。
 - [x] RuntimeGateway extension provider 在 channel invocation 阶段校验 provider installation、consumer identity、dependency declaration、channel method declaration、package artifact、backend target 和 permission summary。
-- [ ] Gateway 与 local host 使用同一 domain evaluator 或同构 helper，避免同一 manifest 两边裁决不同。
+- [x] Gateway 与 local host 使用同一 domain evaluator 或同构 helper，避免同一 manifest 两边裁决不同。
 - [x] 输出 metadata/trace 包含 provider extension key/id、consumer identity、action/channel key、method、capability family、backend id、invocation id。
 - [x] trace 同时记录 channel alias 与 canonical provider extension/channel，确保 sugar 不影响审计。
 - [x] 为 Canvas runtime bridge 定义 extension channel consumer contract，确保 Canvas 能按 Project/session context 调用插件信道。

@@ -4,14 +4,14 @@ use std::process::Stdio;
 
 use agentdash_domain::shared_library::ExtensionTemplatePayload;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
 use super::manager::LocalTsExtensionHostConfig;
 use super::permissions::resolve_host_api;
-use super::protocol::{RunnerMessage, RunnerRequest};
-use super::runner::EXTENSION_HOST_RUNNER;
+use super::protocol::{RunnerHostApiResponse, RunnerMessage, RunnerRequest};
+use super::runner::{EXTENSION_HOST_RUNNER_ENTRY, EXTENSION_HOST_RUNNER_FILES};
 use super::{LocalExtensionHostError, LocalExtensionHostProfile};
 
 pub(super) struct ExtensionHostProcess {
@@ -35,10 +35,10 @@ impl ExtensionHostProcess {
         config: &LocalTsExtensionHostConfig,
     ) -> Result<Self, LocalExtensionHostError> {
         tokio::fs::create_dir_all(&config.runner_dir).await?;
-        let runner_path = config
-            .runner_dir
-            .join("agentdash-extension-host-runner.mjs");
-        tokio::fs::write(&runner_path, EXTENSION_HOST_RUNNER).await?;
+        for (file_name, source) in EXTENSION_HOST_RUNNER_FILES {
+            tokio::fs::write(config.runner_dir.join(file_name), source).await?;
+        }
+        let runner_path = config.runner_dir.join(EXTENSION_HOST_RUNNER_ENTRY);
         let mut child = Command::new(&config.node_command)
             .arg("--experimental-vm-modules")
             .arg(&runner_path)
@@ -129,10 +129,8 @@ impl ExtensionHostProcess {
         let params = message.params.unwrap_or(Value::Null);
         let active = active_extension_for_request(&self.active_extensions, &params);
         let response = match resolve_host_api(active, &method, &params).await {
-            Ok(result) => json!({ "kind": "host_api_response", "id": id, "result": result }),
-            Err(error) => {
-                json!({ "kind": "host_api_response", "id": id, "error": error.to_string() })
-            }
+            Ok(result) => RunnerHostApiResponse::result(&id, result),
+            Err(error) => RunnerHostApiResponse::error(&id, error.to_string()),
         };
         self.write_json(&response).await
     }

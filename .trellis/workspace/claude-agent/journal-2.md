@@ -898,3 +898,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 53: Extension SDK 开发体验落地
+
+**Date**: 2026-05-27
+**Task**: Extension SDK 开发体验落地
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 agentdash-ext dev 本地 Extension Preview 与 TS host dispatcher：Vite 服务 panel 和 preview scaffold，本地加载 src/extension.ts，支持 action/channel/self/dependency alias 与 dev mock Host API；补充 examples/docs、自动化测试和浏览器验收证据。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec9d8b96` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

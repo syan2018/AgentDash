@@ -214,18 +214,68 @@ await bridge.openWorkspaceTab("protocol-demo.panel", "protocol-demo://demo");
 
 Canvas/panel 直接 channel bridge 使用同一 `extension.invoke_channel` contract 接入。Canvas 代码面向 binding/alias 调用，宿主按 Project runtime projection 解析到 canonical provider extension/channel/method。
 
-## 打包、安装和试用
+## 本地开发流程
 
-常用命令：
+插件开发的最快反馈路径是 `agentdash-ext dev`。它会在插件项目内启动本地 Extension Preview，让 panel 继续使用 `@agentdash/extension-ui` 的真实 bridge contract，同时把请求交给本地加载的 `src/extension.ts` handler：
 
 ```powershell
 pnpm --dir examples/extensions/protocol-demo run dev
+```
+
+启动成功后 CLI 会输出两个 URL：
+
+```text
+preview: http://127.0.0.1:6200/__agentdash_preview
+panel:   http://127.0.0.1:6200/src/panel/index.html
+runtime: local extension host dispatcher
+```
+
+日常开发优先打开 `preview`。Preview 页面提供接近 WorkspacePanel 的 iframe 容器和 bridge request log；iframe 内加载真实 panel 页面，父页面负责接收 `agentdash.extension` postMessage 请求，再通过本地 dispatcher 调用 extension host。这样 panel 代码在开发态和安装态使用同一套调用方式：
+
+```ts
+const bridge = createExtensionBridge();
+
+await bridge.invokeAction("protocol-demo.greet", { name: "AgentDash" });
+await bridge.invokeChannel("api", "greet", { name: "AgentDash" });
+```
+
+开发态 dispatcher 会 bundle 并加载 `src/extension.ts`，执行 `activate(ctx)`，收集 `ctx.runtime.registerAction()` 和 `ctx.channels.register()` 注册的 handler。Panel 发出的 `metadata.get_context`、`runtime.invoke_action`、`extension.invoke_channel` 会在同一个本地进程中完成路由；同插件 self channel 和 manifest 中声明的 dependency alias 也会按当前 extension scope 解析。
+
+Panel 前端由 Vite 服务，支持 HMR 和 sourcemap。修改 `src/panel/**` 后浏览器会刷新对应模块；修改 `src/extension.ts` 或它引用的 TS 模块后，下一次 bridge 调用会重新加载 extension bundle，适合快速验证 TS panel 到 TS host 的自通信。
+
+开发态提供轻量本地 Host API 行为，用来支撑 authoring loop：
+
+- `metadata.get_context` 返回固定 dev Project/session/extension context。
+- `ctx.api.local.getProfile()` 返回本地 dev profile 摘要。
+- `ctx.api.workspace.*` 使用内存 workspace，适合验证读写/list/stat 交互形状。
+- `ctx.api.env.get()` 和 `ctx.api.process.*` 使用当前本机 Node 进程能力。
+- `ctx.api.http.*` 使用标准 `fetch`。
+
+这些能力让纯 TS action、protocol channel、self/dependency channel 和常见 facade 调用可以在单一开发环境内跑通。真实 Project 安装、artifact 校验、local relay、Rust-backed workspace/process 审计和权限投影仍由安装态 runtime 负责。
+
+推荐开发循环：
+
+```powershell
+pnpm --dir examples/extensions/protocol-demo run dev
+# 在 preview 中调试 panel 和 bridge
 pnpm --dir examples/extensions/protocol-demo run validate
 pnpm --dir examples/extensions/protocol-demo run test
 pnpm --dir examples/extensions/protocol-demo run pack
 ```
 
-`agentdash-ext dev` 启动本地 Extension Preview：Vite 提供 panel HMR 与 sourcemap，preview scaffold 作为 iframe parent 复用 `agentdash.extension` bridge contract，并把 `runtime.invoke_action` / `extension.invoke_channel` 请求路由到本地加载的 `src/extension.ts`。这个开发态用于快速验证 TS panel 与 TS extension host 的自通信，导出和安装仍以 packaged artifact 为事实源。
+`protocol-demo` 是完整开发样例：点击 Preview 中的 Run 会同时验证 pure TS action、workspace/process facade、provider channel、self channel、dependency alias 和 panel channel bridge。`local-hello` 是最小样例，适合确认 manifest、panel 和 built-in Host API 的基础闭环。
+
+## 打包、安装和试用
+
+常用命令：
+
+```powershell
+pnpm --dir examples/extensions/protocol-demo run validate
+pnpm --dir examples/extensions/protocol-demo run test
+pnpm --dir examples/extensions/protocol-demo run pack
+```
+
+`agentdash-ext pack` 仍是导出事实源。它会生成自包含 `.agentdash-extension.tgz`，其中包含 manifest、`package.json`、`dist/extension.js` 和 `dist/panel/**`，并把 bundle digest 写回 manifest。安装态只读取这个 artifact。
 
 安装到 Project：
 

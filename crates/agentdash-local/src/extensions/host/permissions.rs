@@ -72,7 +72,7 @@ fn resolve_runtime_invoke(
     active: &ActiveExtension,
     params: &Value,
 ) -> Result<Value, LocalExtensionHostError> {
-    let action_key = require_string(params, "action_key")?;
+    let action_key = require_string(params, "target_action_key")?;
     require_declared_permission(
         active,
         params,
@@ -494,4 +494,399 @@ fn parse_headers(headers: &Map<String, Value>) -> Result<HeaderMap, LocalExtensi
         map.insert(name, value);
     }
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::shared_library::{
+        ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
+        ExtensionRuntimeActionDefinition, ExtensionRuntimeActionKind, ExtensionTemplatePayload,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+    use crate::extensions::host::{LocalExtensionHostProfile, LocalExtensionHostWorkspaceRoot};
+
+    #[tokio::test]
+    async fn host_api_permission_and_param_errors_are_diagnostic() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let active = active_extension(
+            temp.path(),
+            &[
+                "local.profile.read",
+                "env.read:PATH",
+                "runtime.invoke:provider.echo",
+            ],
+            &["env.read:PATH"],
+        );
+
+        let profile = resolve_host_api(
+            Some(&active),
+            "local.get_profile",
+            &action_params(json!({})),
+        )
+        .await
+        .expect("profile");
+        assert_eq!(profile["backend_id"], "backend-1");
+
+        let env_value = resolve_host_api(
+            Some(&active),
+            "env.get",
+            &action_params(json!({ "name": "PATH" })),
+        )
+        .await
+        .expect("env");
+        assert!(env_value.is_string() || env_value.is_null());
+
+        let channel_env = resolve_host_api(
+            Some(&active),
+            "env.get",
+            &channel_params(json!({ "name": "PATH" })),
+        )
+        .await
+        .expect("channel env");
+        assert!(channel_env.is_string() || channel_env.is_null());
+
+        let missing_name = resolve_host_api(Some(&active), "env.get", &action_params(json!({})))
+            .await
+            .expect_err("missing env name");
+        assert_contains(&missing_name, "host api 参数 `name` 不能为空");
+
+        let denied = resolve_host_api(
+            Some(&active_extension(temp.path(), &[], &[])),
+            "env.get",
+            &action_params(json!({ "name": "PATH" })),
+        )
+        .await
+        .expect_err("env denied");
+        assert_contains(
+            &denied,
+            "extension action `local-hello.profile` 未声明 env.read 或 env.read:PATH",
+        );
+
+        let runtime = resolve_host_api(
+            Some(&active),
+            "runtime.invoke",
+            &action_params(json!({ "target_action_key": "provider.echo" })),
+        )
+        .await
+        .expect_err("runtime not preloaded");
+        assert_contains(
+            &runtime,
+            "runtime.invoke 目标 action `provider.echo` 未在当前 Project extension host 预加载",
+        );
+
+        let channel_route = resolve_host_api(
+            Some(&active),
+            "extension.channel_invoke",
+            &action_params(json!({ "channel_key": "provider.api", "method": "echo" })),
+        )
+        .await
+        .expect_err("channel route");
+        assert_contains(
+            &channel_route,
+            "extension channel provider routing 尚未接入 Project registry",
+        );
+
+        let unknown = resolve_host_api(Some(&active), "unknown.api", &action_params(json!({})))
+            .await
+            .expect_err("unknown");
+        assert_contains(&unknown, "未知 host api: unknown.api");
+    }
+
+    #[tokio::test]
+    async fn workspace_host_apis_cover_allowed_denied_and_param_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let active = active_extension(
+            temp.path(),
+            &[
+                "workspace.vfs.write",
+                "workspace.vfs.read",
+                "workspace.vfs.list",
+            ],
+            &[],
+        );
+
+        resolve_host_api(
+            Some(&active),
+            "workspace.write_text",
+            &action_params(json!({
+                "path": "notes/hello.txt",
+                "content": "hello",
+            })),
+        )
+        .await
+        .expect("write");
+
+        let text = resolve_host_api(
+            Some(&active),
+            "workspace.read_text",
+            &action_params(json!({ "path": "notes/hello.txt" })),
+        )
+        .await
+        .expect("read");
+        assert_eq!(text, "hello");
+
+        let entries = resolve_host_api(
+            Some(&active),
+            "workspace.list",
+            &action_params(json!({ "path": "notes" })),
+        )
+        .await
+        .expect("list");
+        assert_eq!(entries[0]["path"], "notes/hello.txt");
+
+        let stat = resolve_host_api(
+            Some(&active),
+            "workspace.stat",
+            &action_params(json!({ "path": "notes/hello.txt" })),
+        )
+        .await
+        .expect("stat");
+        assert_eq!(stat["kind"], "file");
+
+        let denied = resolve_host_api(
+            Some(&active_extension(temp.path(), &[], &[])),
+            "workspace.read_text",
+            &action_params(json!({ "path": "notes/hello.txt" })),
+        )
+        .await
+        .expect_err("workspace denied");
+        assert_contains(
+            &denied,
+            "extension action `local-hello.profile` 未声明 workspace.vfs.read",
+        );
+
+        let missing_path = resolve_host_api(
+            Some(&active),
+            "workspace.read_text",
+            &action_params(json!({})),
+        )
+        .await
+        .expect_err("missing path");
+        assert_contains(&missing_path, "host api 参数 `path` 不能为空");
+    }
+
+    #[tokio::test]
+    async fn process_host_apis_cover_allowed_denied_and_param_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let active = active_extension(temp.path(), &["process.execute"], &[]);
+
+        let shell = resolve_host_api(
+            Some(&active),
+            "process.shell",
+            &action_params(json!({
+                "command": "node -e \"console.log('shell-ok')\"",
+                "options": { "timeout_ms": 5000, "max_output_bytes": 1024 },
+            })),
+        )
+        .await
+        .expect("shell");
+        assert_eq!(shell["exit_code"], 0);
+        assert!(
+            shell["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("shell-ok")
+        );
+
+        let exec = resolve_host_api(
+            Some(&active),
+            "process.exec",
+            &action_params(json!({
+                "command": "node",
+                "args": ["-e", "console.log('exec-ok')"],
+                "options": { "timeout_ms": 5000, "max_output_bytes": 1024 },
+            })),
+        )
+        .await
+        .expect("exec");
+        assert_eq!(exec["exit_code"], 0);
+        assert!(
+            exec["stdout"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("exec-ok")
+        );
+
+        let denied = resolve_host_api(
+            Some(&active_extension(temp.path(), &[], &[])),
+            "process.exec",
+            &action_params(json!({ "command": "node" })),
+        )
+        .await
+        .expect_err("process denied");
+        assert_contains(
+            &denied,
+            "extension action `local-hello.profile` 未声明 process.execute",
+        );
+
+        let missing_command =
+            resolve_host_api(Some(&active), "process.exec", &action_params(json!({})))
+                .await
+                .expect_err("missing command");
+        assert_contains(&missing_command, "host api 参数 `command` 不能为空");
+    }
+
+    #[tokio::test]
+    async fn http_host_api_covers_allowed_denied_and_param_errors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (url, server) = http_ok_server().await;
+        let active = active_extension(temp.path(), &["http.fetch:127.0.0.1"], &[]);
+
+        let response = resolve_host_api(
+            Some(&active),
+            "http.fetch",
+            &action_params(json!({ "url": url })),
+        )
+        .await
+        .expect("http fetch");
+        server.await.expect("server task");
+        assert_eq!(response["status"], 200);
+        assert_eq!(response["body"], "ok");
+
+        let denied = resolve_host_api(
+            Some(&active_extension(temp.path(), &[], &[])),
+            "http.fetch",
+            &action_params(json!({ "url": "https://example.com" })),
+        )
+        .await
+        .expect_err("http denied");
+        assert_contains(
+            &denied,
+            "extension action `local-hello.profile` 未声明 http.fetch 或 http.fetch:example.com",
+        );
+
+        let invalid_scheme = resolve_host_api(
+            Some(&active),
+            "http.fetch",
+            &action_params(json!({ "url": "file:///tmp/demo" })),
+        )
+        .await
+        .expect_err("invalid scheme");
+        assert_contains(&invalid_scheme, "http.fetch 不支持 URL scheme: file");
+
+        let missing_url = resolve_host_api(Some(&active), "http.fetch", &action_params(json!({})))
+            .await
+            .expect_err("missing url");
+        assert_contains(&missing_url, "host api 参数 `url` 不能为空");
+    }
+
+    fn action_params(mut params: Value) -> Value {
+        params
+            .as_object_mut()
+            .expect("params object")
+            .insert("action_key".to_string(), json!("local-hello.profile"));
+        params
+    }
+
+    fn channel_params(mut params: Value) -> Value {
+        let object = params.as_object_mut().expect("params object");
+        object.insert("channel_key".to_string(), json!("local-hello.api"));
+        object.insert("channel_method".to_string(), json!("readEnv"));
+        params
+    }
+
+    async fn http_ok_server() -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0_u8; 1024];
+            let _ = socket.read(&mut buffer).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .await
+                .expect("write response");
+        });
+        (format!("http://{addr}/demo"), handle)
+    }
+
+    fn active_extension(
+        workspace_root: &Path,
+        action_permissions: &[&str],
+        channel_permissions: &[&str],
+    ) -> ActiveExtension {
+        ActiveExtension {
+            extension_key: "local-hello".to_string(),
+            manifest: manifest(action_permissions, channel_permissions),
+            profile: LocalExtensionHostProfile {
+                username: "user".to_string(),
+                platform: "windows".to_string(),
+                arch: "x64".to_string(),
+                backend_id: "backend-1".to_string(),
+                project_id: Some("project-1".to_string()),
+                session_id: Some("session-1".to_string()),
+                workspace_roots: vec![LocalExtensionHostWorkspaceRoot {
+                    index: 0,
+                    name: "workspace".to_string(),
+                    display_path: workspace_root.display().to_string(),
+                }],
+            },
+            workspace_roots: vec![workspace_root.to_path_buf()],
+        }
+    }
+
+    fn manifest(
+        action_permissions: &[&str],
+        channel_permissions: &[&str],
+    ) -> ExtensionTemplatePayload {
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: "local-hello".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "@agentdash/local-hello".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            asset_version: "0.1.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![ExtensionRuntimeActionDefinition {
+                action_key: "local-hello.profile".to_string(),
+                kind: ExtensionRuntimeActionKind::SessionRuntime,
+                description: "Profile".to_string(),
+                input_schema: json!(true),
+                output_schema: json!(true),
+                permissions: action_permissions
+                    .iter()
+                    .map(|item| item.to_string())
+                    .collect(),
+            }],
+            protocol_channels: vec![ExtensionProtocolChannelDefinition {
+                channel_key: "local-hello.api".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Local API".to_string(),
+                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                    name: "readEnv".to_string(),
+                    description: "Read env".to_string(),
+                    input_schema: json!(true),
+                    output_schema: json!(true),
+                    permissions: channel_permissions
+                        .iter()
+                        .map(|item| item.to_string())
+                        .collect(),
+                }],
+            }],
+            extension_dependencies: vec![],
+            workspace_tabs: vec![],
+            permissions: vec![],
+            bundles: vec![],
+        }
+    }
+
+    fn assert_contains(error: &LocalExtensionHostError, expected: &str) {
+        let message = error.to_string();
+        assert!(
+            message.contains(expected),
+            "expected `{message}` to contain `{expected}`"
+        );
+    }
 }

@@ -60,7 +60,7 @@ pnpm --dir examples/extensions/local-hello run test
 - [x] 实现 workspace/VFS entry，复用现有 workspace root/path safety helper。
 - [x] 实现 env/secret entry，显式 allowlist、redaction 和 missing secret 错误。
 - [x] 实现 process entry，支持通用 shell/process command、cwd boundary、timeout、output size limit、exit code capture。
-- [ ] 为每个 entry 增加 permission allowed/denied tests、参数非法 tests 和错误消息 tests。
+- [x] 为每个 entry 增加 permission allowed/denied tests、参数非法 tests 和错误消息 tests。
 - [x] 为 channel invocation 增加 provider missing、dependency missing、version mismatch、permission denied、recursive call depth tests。
 - [x] 将 permission denied 测试聚焦在仍有产品价值的边界上；对已清理的过度门禁删除对应测试。
 

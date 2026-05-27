@@ -80,7 +80,7 @@ function createExtensionContext(extensionKey) {
             return await invokeRegisteredAction(local.extensionKey, local.action, input);
           }
           ensureRuntimeInvokeAllowed(extensionKey, null, actionKey);
-          return await requestHostApi("runtime.invoke", { action_key: actionKey, input: toJsonValue(input) }, extensionKey);
+          return await requestHostApi("runtime.invoke", { target_action_key: actionKey, input: toJsonValue(input) }, extensionKey);
         },
       },
       local: {

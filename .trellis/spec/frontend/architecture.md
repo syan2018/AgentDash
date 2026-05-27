@@ -42,6 +42,8 @@
 - `@agentdash/extension-ui` 的 webview bridge 只让 panel 传递 method 与 JSON params；Project、session、backend、consumer extension 和 trace context 由 `ExtensionWebviewPanel` 组装，原因是 panel 运行在 iframe 中，不应成为 Project runtime routing 的事实源。
 - Extension panel 的 bridge request surface 包含 `metadata.get_context`、`workspace.open_tab`、`runtime.invoke_action`、`extension.invoke_channel`、`vfs.read` 和 `vfs.write`；`events` 是 panel-local event bus，原因是 workspace-level 或 extension-runtime-level event 需要后端路由和订阅模型，不能混入本地 helper。
 - Canvas runtime 如需消费 extension protocol channel，通过父页面注入的 `extensionChannelBridge` 进入同一 Project extension channel invocation service，原因是 Canvas 与 webview panel 都应依赖 Project runtime projection 和 Gateway admission，而不是在 iframe 里硬编码 provider extension key。
+- Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
+- Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 
 ## Contract Appendices
 

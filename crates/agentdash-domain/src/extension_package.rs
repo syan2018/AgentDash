@@ -5,6 +5,67 @@ use uuid::Uuid;
 use crate::DomainError;
 use crate::shared_library::ExtensionTemplatePayload;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionPackageArtifactOwnerKind {
+    Project,
+    LibraryAsset,
+}
+
+impl ExtensionPackageArtifactOwnerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::LibraryAsset => "library_asset",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self, DomainError> {
+        match raw {
+            "project" => Ok(Self::Project),
+            "library_asset" => Ok(Self::LibraryAsset),
+            other => Err(DomainError::InvalidConfig(format!(
+                "extension_package_artifacts.owner_kind 非法: {other}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionPackageArtifactOwner {
+    pub kind: ExtensionPackageArtifactOwnerKind,
+    pub id: Uuid,
+}
+
+impl ExtensionPackageArtifactOwner {
+    pub fn project(project_id: Uuid) -> Self {
+        Self {
+            kind: ExtensionPackageArtifactOwnerKind::Project,
+            id: project_id,
+        }
+    }
+
+    pub fn library_asset(library_asset_id: Uuid) -> Self {
+        Self {
+            kind: ExtensionPackageArtifactOwnerKind::LibraryAsset,
+            id: library_asset_id,
+        }
+    }
+
+    pub fn is_project(&self, project_id: Uuid) -> bool {
+        self.kind == ExtensionPackageArtifactOwnerKind::Project && self.id == project_id
+    }
+
+    pub fn validate(&self) -> Result<(), DomainError> {
+        if self.id.is_nil() {
+            return Err(DomainError::InvalidConfig(
+                "extension_package_artifacts.owner_id 不能为空".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtensionPackageMetadata {
     pub name: String,
@@ -79,7 +140,7 @@ impl ExtensionPackageArtifactRef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtensionPackageArtifact {
     pub id: Uuid,
-    pub project_id: Uuid,
+    pub owner: ExtensionPackageArtifactOwner,
     pub extension_id: String,
     pub package_name: String,
     pub package_version: String,
@@ -96,13 +157,14 @@ pub struct ExtensionPackageArtifact {
 
 impl ExtensionPackageArtifact {
     pub fn new(
-        project_id: Uuid,
+        owner: ExtensionPackageArtifactOwner,
         storage_ref: impl Into<String>,
         archive_digest: impl Into<String>,
         manifest_digest: impl Into<String>,
         manifest: ExtensionTemplatePayload,
         byte_size: i64,
     ) -> Result<Self, DomainError> {
+        owner.validate()?;
         manifest.validate()?;
         let storage_ref = storage_ref.into();
         require_non_empty("extension_package_artifacts.storage_ref", &storage_ref)?;
@@ -125,7 +187,7 @@ impl ExtensionPackageArtifact {
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
-            project_id,
+            owner,
             extension_id: manifest.extension_id.clone(),
             package_name: manifest.package.name.clone(),
             package_version: manifest.package.version.clone(),
@@ -150,14 +212,14 @@ impl ExtensionPackageArtifact {
 pub trait ExtensionPackageArtifactRepository: Send + Sync {
     async fn create(&self, artifact: &ExtensionPackageArtifact) -> Result<(), DomainError>;
     async fn get(&self, id: Uuid) -> Result<Option<ExtensionPackageArtifact>, DomainError>;
-    async fn get_by_project_and_digest(
+    async fn get_by_owner_and_digest(
         &self,
-        project_id: Uuid,
+        owner: &ExtensionPackageArtifactOwner,
         archive_digest: &str,
     ) -> Result<Option<ExtensionPackageArtifact>, DomainError>;
-    async fn list_by_project(
+    async fn list_by_owner(
         &self,
-        project_id: Uuid,
+        owner: &ExtensionPackageArtifactOwner,
     ) -> Result<Vec<ExtensionPackageArtifact>, DomainError>;
 }
 

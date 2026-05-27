@@ -5,7 +5,8 @@ use ts_rs::TS;
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ExtensionPackageArtifactResponse {
     pub id: String,
-    pub project_id: String,
+    pub owner_kind: String,
+    pub owner_id: String,
     pub extension_id: String,
     pub package_name: String,
     pub package_version: String,
@@ -34,4 +35,10 @@ pub struct ExtensionPackageInstallationResponse {
     pub extension_id: String,
     pub package_artifact_id: String,
     pub archive_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ImportExtensionPackageResponse {
+    pub artifact: ExtensionPackageArtifactResponse,
+    pub installation: ExtensionPackageInstallationResponse,
 }

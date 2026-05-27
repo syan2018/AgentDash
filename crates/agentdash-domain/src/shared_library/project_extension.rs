@@ -57,6 +57,24 @@ impl ProjectExtensionInstallation {
         )
     }
 
+    pub fn new_from_library_package(
+        project_id: Uuid,
+        extension_key: impl Into<String>,
+        display_name: impl Into<String>,
+        manifest: ExtensionTemplatePayload,
+        installed_source: InstalledAssetSource,
+        package_artifact: ExtensionPackageArtifactRef,
+    ) -> Result<Self, DomainError> {
+        Self::build(
+            project_id,
+            extension_key,
+            display_name,
+            manifest,
+            Some(installed_source),
+            Some(package_artifact),
+        )
+    }
+
     fn build(
         project_id: Uuid,
         extension_key: impl Into<String>,

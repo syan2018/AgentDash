@@ -21,7 +21,9 @@ use agentdash_contracts::extension_package::{
     InstallExtensionPackageArtifactRequest,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::extension_package::ExtensionPackageArtifact;
+use agentdash_domain::extension_package::{
+    ExtensionPackageArtifact, ExtensionPackageArtifactOwner,
+};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -55,7 +57,7 @@ pub async fn list_extension_package_artifacts(
     let artifacts = state
         .repos
         .extension_package_artifact_repo
-        .list_by_project(project_id)
+        .list_by_owner(&ExtensionPackageArtifactOwner::project(project_id))
         .await
         .map_err(ApiError::from)?;
     Ok(Json(artifacts.into_iter().map(artifact_response).collect()))
@@ -253,10 +255,13 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         })
 }
 
-fn artifact_response(artifact: ExtensionPackageArtifact) -> ExtensionPackageArtifactResponse {
+pub(crate) fn artifact_response(
+    artifact: ExtensionPackageArtifact,
+) -> ExtensionPackageArtifactResponse {
     ExtensionPackageArtifactResponse {
         id: artifact.id.to_string(),
-        project_id: artifact.project_id.to_string(),
+        owner_kind: artifact.owner.kind.as_str().to_string(),
+        owner_id: artifact.owner.id.to_string(),
         extension_id: artifact.extension_id,
         package_name: artifact.package_name,
         package_version: artifact.package_version,
@@ -276,7 +281,9 @@ fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest(format!("{field} 非法")))
 }
 
-fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
+pub(crate) fn extension_package_error_to_api(
+    error: ExtensionPackageArtifactUseCaseError,
+) -> ApiError {
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {

@@ -9,6 +9,10 @@
 
 import { useEffect, useMemo } from "react";
 import type { LibraryAssetDto, LibraryAssetType, SharedLibrarySourceStatus } from "../../../types";
+import {
+  getMarketplaceInstallBlocker,
+  parseExtensionTemplateMarketplacePayload,
+} from "./extension/extensionTemplateMarketplace";
 
 const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   agent_template: "Agent Template",
@@ -63,6 +67,7 @@ export function MarketplaceAssetDrawer({
   const isInstalled = status === "up_to_date";
   const hasUpdate = status === "update_available";
   const sourceMissing = status === "source_missing";
+  const installBlocker = getMarketplaceInstallBlocker(asset);
 
   return (
     <>
@@ -85,6 +90,14 @@ export function MarketplaceAssetDrawer({
               {asset.deprecated && (
                 <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
                   已废弃
+                </span>
+              )}
+              {installBlocker && (
+                <span
+                  className="rounded-[6px] border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                  title={installBlocker}
+                >
+                  包缺失
                 </span>
               )}
             </div>
@@ -128,10 +141,12 @@ export function MarketplaceAssetDrawer({
           <button
             type="button"
             onClick={() => onInstall(hasUpdate)}
-            disabled={busy || asset.deprecated || isInstalled || sourceMissing}
+            disabled={busy || asset.deprecated || isInstalled || sourceMissing || installBlocker !== null}
             className="agentdash-button-primary"
             title={
-              sourceMissing
+              installBlocker
+                ? installBlocker
+                : sourceMissing
                 ? "市场来源已废弃或不可用"
                 : isInstalled
                   ? "项目已是最新版本"
@@ -144,7 +159,9 @@ export function MarketplaceAssetDrawer({
                 ? "已废弃"
                 : sourceMissing
                   ? "来源缺失"
-                  : isInstalled
+                  : installBlocker
+                    ? "包缺失"
+                    : isInstalled
                     ? "已是最新"
                     : hasUpdate
                       ? `更新到 v${asset.version}`
@@ -228,7 +245,7 @@ function TypeSpecificBody({ asset }: { asset: LibraryAssetDto }) {
     case "agent_template":
       return <AgentTemplateBody payload={asset.payload} />;
     case "extension_template":
-      return <ExtensionTemplateBody payload={asset.payload} />;
+      return <ExtensionTemplateBody asset={asset} />;
     default:
       return <RawPayloadFallback payload={asset.payload} />;
   }
@@ -617,9 +634,13 @@ function parseAgentPayload(raw: unknown): AgentParsed | null {
 
 /* Extension */
 
-function ExtensionTemplateBody({ payload }: { payload: unknown }) {
-  const parsed = useMemo(() => parseExtensionPayload(payload), [payload]);
-  if (!parsed) return <RawPayloadFallback payload={payload} />;
+function ExtensionTemplateBody({ asset }: { asset: LibraryAssetDto }) {
+  const parsed = useMemo(
+    () => parseExtensionTemplateMarketplacePayload(asset.payload),
+    [asset.payload],
+  );
+  if (!parsed) return <RawPayloadFallback payload={asset.payload} />;
+  const packageArtifact = asset.extension_package_artifact ?? null;
   return (
     <section className="space-y-3">
       <SectionLabel>Extension 模板</SectionLabel>
@@ -627,10 +648,44 @@ function ExtensionTemplateBody({ payload }: { payload: unknown }) {
         <MetaChip>{parsed.commands.length} command</MetaChip>
         <MetaChip>{parsed.flags.length} flag</MetaChip>
         <MetaChip>{parsed.renderers.length} renderer</MetaChip>
+        {parsed.runtimeActions.length > 0 && (
+          <MetaChip>{parsed.runtimeActions.length} runtime action</MetaChip>
+        )}
+        {parsed.protocolChannels.length > 0 && (
+          <MetaChip>{parsed.protocolChannels.length} protocol channel</MetaChip>
+        )}
+        {parsed.workspaceTabs.length > 0 && (
+          <MetaChip>{parsed.workspaceTabs.length} workspace tab</MetaChip>
+        )}
+        {parsed.bundles.length > 0 && <MetaChip>{parsed.bundles.length} bundle</MetaChip>}
+        {!parsed.requiresPackageArtifact && <MetaChip>declaration-only</MetaChip>}
       </div>
       <p className="font-mono text-[11px] text-muted-foreground">
         {parsed.extensionId} · manifest v{parsed.manifestVersion}
       </p>
+      {parsed.requiresPackageArtifact && packageArtifact && (
+        <div className="rounded-[8px] border border-border bg-secondary/20 p-3">
+          <p className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+            package artifact
+          </p>
+          <div className="mt-2 grid gap-1.5 text-xs text-foreground/85">
+            <span className="font-mono">
+              {packageArtifact.package_name}@{packageArtifact.package_version}
+            </span>
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {packageArtifact.manifest_digest}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {formatBytes(packageArtifact.byte_size)}
+            </span>
+          </div>
+        </div>
+      )}
+      {parsed.requiresPackageArtifact && !packageArtifact && (
+        <div className="rounded-[8px] border border-destructive/30 bg-destructive/10 p-3 text-xs leading-5 text-destructive">
+          这个 Extension 模板声明了运行包能力，但资源市场没有对应的 package_artifact。
+        </div>
+      )}
       {parsed.commands.length > 0 && (
         <CompactList
           title="commands"
@@ -661,56 +716,18 @@ function ExtensionTemplateBody({ payload }: { payload: unknown }) {
           }))}
         />
       )}
+      {parsed.runtimeActions.length > 0 && (
+        <CompactList
+          title="runtime actions"
+          items={parsed.runtimeActions.map((action) => ({
+            key: action.name,
+            meta: action.kind,
+            description: action.description,
+          }))}
+        />
+      )}
     </section>
   );
-}
-
-interface ExtensionParsed {
-  manifestVersion: string;
-  extensionId: string;
-  commands: Array<{ name: string; description: string; handlerKind: string }>;
-  flags: Array<{ name: string; type: string; defaultValue: string; description: string }>;
-  renderers: Array<{ customType: string; kind: string }>;
-}
-
-function parseExtensionPayload(raw: unknown): ExtensionParsed | null {
-  if (!isObject(raw)) return null;
-  const manifestVersion = asString(raw.manifest_version);
-  const extensionId = asString(raw.extension_id);
-  if (!manifestVersion || !extensionId) return null;
-  const commandsRaw = Array.isArray(raw.commands) ? raw.commands : [];
-  const commands = commandsRaw.flatMap((item) => {
-    if (!isObject(item)) return [];
-    const name = asString(item.name);
-    if (!name) return [];
-    const handler = isObject(item.handler) ? item.handler : null;
-    return [{
-      name,
-      description: asString(item.description) ?? "",
-      handlerKind: handler ? asString(handler.kind) ?? "unknown" : "unknown",
-    }];
-  });
-  const flagsRaw = Array.isArray(raw.flags) ? raw.flags : [];
-  const flags = flagsRaw.flatMap((item) => {
-    if (!isObject(item)) return [];
-    const name = asString(item.name);
-    if (!name) return [];
-    return [{
-      name,
-      type: asString(item.type) ?? "unknown",
-      defaultValue: stringifyLite(item.default),
-      description: asString(item.description) ?? "",
-    }];
-  });
-  const renderersRaw = Array.isArray(raw.message_renderers) ? raw.message_renderers : [];
-  const renderers = renderersRaw.flatMap((item) => {
-    if (!isObject(item)) return [];
-    const customType = asString(item.custom_type);
-    const renderer = isObject(item.renderer) ? item.renderer : null;
-    if (!customType) return [];
-    return [{ customType, kind: renderer ? asString(renderer.kind) ?? "unknown" : "unknown" }];
-  });
-  return { manifestVersion, extensionId, commands, flags, renderers };
 }
 
 function CompactList({
@@ -742,13 +759,6 @@ function CompactList({
       </ul>
     </div>
   );
-}
-
-function stringifyLite(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  if (value == null) return "null";
-  return "json";
 }
 
 function sourceLabel(source: LibraryAssetDto["source"]): string {
@@ -818,10 +828,11 @@ function truncate(text: string, max: number): string {
   return `${text.slice(0, max)}\n…（已截断 ${text.length - max} 字符）`;
 }
 
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+function formatBytes(value: number | bigint): string {
+  const numericValue = typeof value === "bigint" ? Number(value) : value;
+  if (numericValue < 1024) return `${numericValue} B`;
+  if (numericValue < 1024 * 1024) return `${(numericValue / 1024).toFixed(1)} KB`;
+  return `${(numericValue / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /* ─── ConfirmOverwriteDialog ─── */

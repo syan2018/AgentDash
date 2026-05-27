@@ -4,7 +4,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::{
-    ExtensionPackageArtifact, ExtensionPackageArtifactRepository,
+    ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactOwnerKind,
+    ExtensionPackageArtifactRepository,
 };
 use agentdash_domain::shared_library::ExtensionTemplatePayload;
 
@@ -26,7 +27,7 @@ impl PostgresExtensionPackageArtifactRepository {
     }
 }
 
-const COLS: &str = "id,project_id,extension_id,package_name,package_version,asset_version,source_version,storage_ref,archive_digest,manifest_digest,manifest,byte_size,created_at,updated_at";
+const COLS: &str = "id,owner_kind,owner_id,extension_id,package_name,package_version,asset_version,source_version,storage_ref,archive_digest,manifest_digest,manifest,byte_size,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepository {
@@ -35,10 +36,11 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
         let manifest =
             serde_json::to_value(&artifact.manifest).map_err(DomainError::Serialization)?;
         sqlx::query(&format!(
-            "INSERT INTO extension_package_artifacts ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"
+            "INSERT INTO extension_package_artifacts ({COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"
         ))
         .bind(artifact.id.to_string())
-        .bind(artifact.project_id.to_string())
+        .bind(artifact.owner.kind.as_str())
+        .bind(artifact.owner.id.to_string())
         .bind(&artifact.extension_id)
         .bind(&artifact.package_name)
         .bind(&artifact.package_version)
@@ -69,15 +71,17 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
         .transpose()
     }
 
-    async fn get_by_project_and_digest(
+    async fn get_by_owner_and_digest(
         &self,
-        project_id: Uuid,
+        owner: &ExtensionPackageArtifactOwner,
         archive_digest: &str,
     ) -> Result<Option<ExtensionPackageArtifact>, DomainError> {
+        owner.validate()?;
         sqlx::query(&format!(
-            "SELECT {COLS} FROM extension_package_artifacts WHERE project_id = $1 AND archive_digest = $2"
+            "SELECT {COLS} FROM extension_package_artifacts WHERE owner_kind = $1 AND owner_id = $2 AND archive_digest = $3"
         ))
-        .bind(project_id.to_string())
+        .bind(owner.kind.as_str())
+        .bind(owner.id.to_string())
         .bind(archive_digest)
         .fetch_optional(&self.pool)
         .await
@@ -86,14 +90,16 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
         .transpose()
     }
 
-    async fn list_by_project(
+    async fn list_by_owner(
         &self,
-        project_id: Uuid,
+        owner: &ExtensionPackageArtifactOwner,
     ) -> Result<Vec<ExtensionPackageArtifact>, DomainError> {
+        owner.validate()?;
         let rows = sqlx::query(&format!(
-            "SELECT {COLS} FROM extension_package_artifacts WHERE project_id = $1 ORDER BY created_at DESC, id ASC"
+            "SELECT {COLS} FROM extension_package_artifacts WHERE owner_kind = $1 AND owner_id = $2 ORDER BY created_at DESC, id ASC"
         ))
-        .bind(project_id.to_string())
+        .bind(owner.kind.as_str())
+        .bind(owner.id.to_string())
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?;
@@ -109,7 +115,14 @@ fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifac
 
     let artifact = ExtensionPackageArtifact {
         id: parse_uuid(&row, "id")?,
-        project_id: parse_uuid(&row, "project_id")?,
+        owner: ExtensionPackageArtifactOwner {
+            kind: ExtensionPackageArtifactOwnerKind::parse(
+                row.try_get::<String, _>("owner_kind")
+                    .map_err(db_err)?
+                    .as_str(),
+            )?,
+            id: parse_uuid(&row, "owner_id")?,
+        },
         extension_id: row.try_get("extension_id").map_err(db_err)?,
         package_name: row.try_get("package_name").map_err(db_err)?,
         package_version: row.try_get("package_version").map_err(db_err)?,
@@ -150,7 +163,9 @@ fn db_err(error: sqlx::Error) -> DomainError {
 
 #[cfg(test)]
 mod tests {
-    use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::extension_package::{
+        ExtensionPackageArtifactOwner, ExtensionPackageMetadata,
+    };
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionTemplatePayload,
     };
@@ -197,7 +212,7 @@ mod tests {
 
     fn sample_artifact(project_id: Uuid) -> ExtensionPackageArtifact {
         ExtensionPackageArtifact::new(
-            project_id,
+            ExtensionPackageArtifactOwner::project(project_id),
             format!(
                 "extension-packages/{project_id}/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.agentdash-extension.tgz"
             ),
@@ -220,19 +235,25 @@ mod tests {
         repo.create(&artifact).await.expect("create artifact");
 
         let loaded = repo.get(artifact.id).await.expect("get").expect("exists");
-        assert_eq!(loaded.project_id, project_id);
+        assert_eq!(
+            loaded.owner,
+            ExtensionPackageArtifactOwner::project(project_id)
+        );
         assert_eq!(loaded.package_name, "@agentdash/local-hello");
         assert_eq!(loaded.manifest.package.version, "0.1.0");
 
         let by_digest = repo
-            .get_by_project_and_digest(project_id, &artifact.archive_digest)
+            .get_by_owner_and_digest(
+                &ExtensionPackageArtifactOwner::project(project_id),
+                &artifact.archive_digest,
+            )
             .await
             .expect("get by digest")
             .expect("digest match");
         assert_eq!(by_digest.id, artifact.id);
 
         let listed = repo
-            .list_by_project(project_id)
+            .list_by_owner(&ExtensionPackageArtifactOwner::project(project_id))
             .await
             .expect("list project");
         assert_eq!(

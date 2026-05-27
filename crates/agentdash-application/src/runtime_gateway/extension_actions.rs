@@ -187,6 +187,15 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
                 Some(request.trace.clone()),
             ));
         }
+        let artifact = installation.package_artifact.as_ref().ok_or_else(|| {
+            RuntimeInvocationError::conflict(
+                format!(
+                    "extension runtime action `{action_key}` 所属安装 `{}` 缺少 package artifact",
+                    installation.extension_key
+                ),
+                Some(request.trace.clone()),
+            )
+        })?;
         let permission_decisions = validate_action_permissions(installation, action, &request)?;
         let workspace = extension_invocation_workspace_from_metadata(&request)?;
 
@@ -197,11 +206,9 @@ impl RuntimeProvider for ExtensionRuntimeActionProvider {
             project_id: project_id.to_string(),
             session_id,
             input: request.input.clone(),
-            package_artifact: installation.package_artifact.as_ref().map(|artifact| {
-                ExtensionPackageArtifactRelay {
-                    artifact_id: artifact.artifact_id.to_string(),
-                    archive_digest: artifact.archive_digest.clone(),
-                }
+            package_artifact: Some(ExtensionPackageArtifactRelay {
+                artifact_id: artifact.artifact_id.to_string(),
+                archive_digest: artifact.archive_digest.clone(),
             }),
             runtime_extensions: runtime_host_relays(&installations),
             workspace: workspace.map(ExtensionInvocationWorkspaceContext::into_relay),
@@ -1017,6 +1024,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_action_requires_package_artifact() {
+        let project_id = Uuid::new_v4();
+        let transport = Arc::new(FakeTransport {
+            result: Ok(response_payload(json!({ "ok": true }))),
+            last_payload: StdMutex::new(None),
+        });
+        let gateway = RuntimeGateway::new().with_dynamic_provider(Arc::new(
+            ExtensionRuntimeActionProvider::new(
+                Arc::new(FakeInstallationRepo {
+                    installations: vec![missing_package_installation(project_id)],
+                }),
+                transport.clone(),
+            ),
+        ));
+
+        let err = gateway
+            .invoke(request(project_id, "local-hello.profile"))
+            .await
+            .expect_err("missing artifact");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::Conflict);
+        assert!(transport.last_payload.lock().expect("lock").is_none());
+    }
+
+    #[tokio::test]
     async fn top_level_permission_summary_does_not_gate_declared_action_permission() {
         let project_id = Uuid::new_v4();
         let transport = Arc::new(FakeTransport {
@@ -1373,19 +1405,36 @@ mod tests {
     ) -> ProjectExtensionInstallation {
         let manifest = manifest(include_top_level_permission, include_action_permission);
         manifest.validate().expect("manifest");
+        ProjectExtensionInstallation::new_from_library_package(
+            project_id,
+            "local-hello",
+            "Local Hello",
+            manifest,
+            installed_source(),
+            artifact_ref("local-hello"),
+        )
+        .expect("installation")
+    }
+
+    fn missing_package_installation(project_id: Uuid) -> ProjectExtensionInstallation {
+        let manifest = manifest(true, true);
         ProjectExtensionInstallation::new(
             project_id,
             "local-hello",
             "Local Hello",
             manifest,
-            InstalledAssetSource::new(
-                Uuid::new_v4(),
-                "plugin:test:extension_template:local-hello",
-                "0.1.0",
-                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ),
+            installed_source(),
         )
         .expect("installation")
+    }
+
+    fn installed_source() -> InstalledAssetSource {
+        InstalledAssetSource::new(
+            Uuid::new_v4(),
+            "plugin:test:extension_template:local-hello",
+            "0.1.0",
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
     }
 
     fn manifest(

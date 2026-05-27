@@ -88,15 +88,15 @@
 ## Acceptance Criteria
 
 - [ ] AC1: Marketplace 安装一个带 runtime action / workspace tab 的 packaged Extension 后，Project installation 同时包含 `installed_source` 与 `package_artifact`，WorkspacePanel 能出现对应 tab，runtime action 能通过本机 host 执行。
-- [ ] AC2: Marketplace 安装一个声明了 executable surface 但缺少 package artifact 的 ExtensionTemplate 时，后端拒绝安装并返回明确错误；前端 Marketplace 不显示为可正常安装。
-- [ ] AC3: 从 Assets Extension 类目执行“从本地包安装”后，页面只出现一个 Project Extension 资产实例；页面不再出现顶层“归档库”section。
+- [x] AC2: Marketplace 安装一个声明了 executable surface 但缺少 package artifact 的 ExtensionTemplate 时，后端拒绝安装并返回明确错误；前端 Marketplace 不显示为可正常安装。
+- [x] AC3: 从 Assets Extension 类目执行“从本地包安装”后，页面只出现一个 Project Extension 资产实例；页面不再出现顶层“归档库”section。
 - [ ] AC4: Project Extension installation 可以发布为 `extension_template` 到 Marketplace；另一个 Project 从 Marketplace 安装后可运行，并在 source-status 中显示 `up_to_date`。
 - [ ] AC5: 已发布 Extension 更新版本后，安装方 Project 的 Extension 类目和 Marketplace 卡片均显示 `update_available`，用户手动更新后 source-status 回到 `up_to_date`。
-- [ ] AC6: Extension 类目使用标准 Assets UI 心智：来源徽标、发布徽标、详情抽屉、CardMenu/ConfirmDialog/Notice 等既有 primitive 或同等项目内模式；不再维护独立来源 badge/归档库列表。
-- [ ] AC7: Local runtime 下载和激活 package artifact 仍校验 archive digest；artifact ownership 重构不降低下载鉴权与 project/backend access 校验。
-- [ ] AC8: 数据库 migration 可在当前开发库上运行；迁移后现有 Project extension installations 和 package artifacts 能被新 repository/API 正确读取。
-- [ ] AC9: `cargo test` 覆盖 domain/application/API 关键路径，`pnpm --filter @agentdash/app-web run typecheck` 和相关 vitest 通过，contracts 生成与检查通过。
-- [ ] AC10: 相关 spec 更新说明 ExtensionTemplate、ProjectExtensionInstallation、ExtensionPackageArtifact 三者关系以及 Marketplace install/publish/source-status 的事实源。
+- [x] AC6: Extension 类目使用标准 Assets UI 心智：来源徽标、发布徽标、详情抽屉、CardMenu/ConfirmDialog/Notice 等既有 primitive 或同等项目内模式；不再维护独立来源 badge/归档库列表。
+- [x] AC7: Local runtime 下载和激活 package artifact 仍校验 archive digest；artifact ownership 重构不降低下载鉴权与 project/backend access 校验。
+- [x] AC8: 数据库 migration 可在当前开发库上运行；迁移后现有 Project extension installations 和 package artifacts 能被新 repository/API 正确读取。
+- [x] AC9: `cargo test` 覆盖 domain/application/API 关键路径，`pnpm --filter app-web run typecheck` 和相关 vitest 通过，contracts 生成与检查通过。
+- [x] AC10: 相关 spec 更新说明 ExtensionTemplate、ProjectExtensionInstallation、ExtensionPackageArtifact 三者关系以及 Marketplace install/publish/source-status 的事实源。
 
 ## Scope Boundaries
 

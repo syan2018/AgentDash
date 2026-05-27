@@ -175,11 +175,7 @@ impl ProjectExtensionInstallationRepository for PostgresProjectExtensionInstalla
         rows.into_iter().map(row_to_installation).collect()
     }
 
-    async fn delete(
-        &self,
-        project_id: Uuid,
-        installation_id: Uuid,
-    ) -> Result<bool, DomainError> {
+    async fn delete(&self, project_id: Uuid, installation_id: Uuid) -> Result<bool, DomainError> {
         let result = sqlx::query(
             "DELETE FROM project_extension_installations
              WHERE id = $1 AND project_id = $2",

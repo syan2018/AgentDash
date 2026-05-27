@@ -14,6 +14,7 @@ pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
+pub mod project_extensions;
 pub mod project_sessions;
 pub mod project_vfs_mounts;
 pub mod projects;
@@ -470,6 +471,16 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
             get(extension_runtime::get_project_extension_webview_asset),
+        )
+        .route(
+            "/projects/{project_id}/extensions",
+            get(project_extensions::list_project_extensions),
+        )
+        .route(
+            "/projects/{project_id}/extensions/import-package",
+            post(project_extensions::import_extension_package).layer(DefaultBodyLimit::max(
+                EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES,
+            )),
         )
         .route(
             "/projects/{project_id}/extensions/{installation_id}",

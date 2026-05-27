@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::{
-    ExtensionPackageArtifact, ExtensionPackageArtifactRef, validate_sha256_digest,
+    ExtensionPackageArtifact, ExtensionPackageArtifactOwner, ExtensionPackageArtifactRef,
+    validate_sha256_digest,
 };
 use agentdash_domain::shared_library::{
     ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
@@ -36,7 +37,7 @@ pub struct ValidatedExtensionPackageArchive {
 
 #[derive(Debug, Clone)]
 pub struct StoreExtensionPackageArtifactInput {
-    pub project_id: Uuid,
+    pub owner: ExtensionPackageArtifactOwner,
     pub storage_ref: String,
     pub archive_bytes: Vec<u8>,
     pub expected_archive_digest: Option<String>,
@@ -160,14 +161,14 @@ pub async fn store_extension_package_artifact(
     )?;
     if let Some(existing) = repos
         .extension_package_artifact_repo
-        .get_by_project_and_digest(input.project_id, &validated.archive_digest)
+        .get_by_owner_and_digest(&input.owner, &validated.archive_digest)
         .await?
     {
         return Ok(existing);
     }
 
     let artifact = ExtensionPackageArtifact::new(
-        input.project_id,
+        input.owner,
         input.storage_ref,
         validated.archive_digest,
         validated.manifest_digest,
@@ -190,15 +191,15 @@ pub async fn store_extension_package_archive(
         &input.archive_bytes,
         input.expected_archive_digest.as_deref(),
     )?;
-    let storage_ref =
-        extension_package_archive_storage_ref_for(input.project_id, &validated.archive_digest)?;
+    let owner = ExtensionPackageArtifactOwner::project(input.project_id);
+    let storage_ref = extension_package_archive_storage_ref_for(&owner, &validated.archive_digest)?;
     storage
         .write_archive_object(&storage_ref, &input.archive_bytes)
         .await?;
     Ok(store_extension_package_artifact(
         repos,
         StoreExtensionPackageArtifactInput {
-            project_id: input.project_id,
+            owner,
             storage_ref,
             archive_bytes: input.archive_bytes,
             expected_archive_digest: input.expected_archive_digest,
@@ -219,7 +220,7 @@ pub async fn install_extension_package_artifact(
             entity: "extension_package_artifact",
             id: input.artifact_id.to_string(),
         })?;
-    if artifact.project_id != input.project_id {
+    if !artifact.owner.is_project(input.project_id) {
         return Err(DomainError::NotFound {
             entity: "extension_package_artifact",
             id: input.artifact_id.to_string(),
@@ -265,7 +266,7 @@ pub async fn read_extension_package_archive(
                 "Extension package artifact 不存在".to_string(),
             )
         })?;
-    if artifact.project_id != input.project_id {
+    if !project_can_access_extension_artifact(repos, input.project_id, &artifact).await? {
         return Err(ExtensionPackageArtifactUseCaseError::NotFound(
             "Extension package artifact 不存在".to_string(),
         ));
@@ -278,6 +279,26 @@ pub async fn read_extension_package_archive(
         artifact,
         archive_bytes,
     })
+}
+
+async fn project_can_access_extension_artifact(
+    repos: &RepositorySet,
+    project_id: Uuid,
+    artifact: &ExtensionPackageArtifact,
+) -> Result<bool, DomainError> {
+    if artifact.owner.is_project(project_id) {
+        return Ok(true);
+    }
+    let installations = repos
+        .project_extension_installation_repo
+        .list_by_project(project_id)
+        .await?;
+    Ok(installations.iter().any(|installation| {
+        installation
+            .package_artifact
+            .as_ref()
+            .is_some_and(|package| package.artifact_id == artifact.id)
+    }))
 }
 
 pub async fn read_extension_package_webview_asset(
@@ -330,15 +351,18 @@ pub fn digest_bytes(bytes: &[u8]) -> String {
 }
 
 pub fn extension_package_archive_storage_ref_for(
-    project_id: Uuid,
+    owner: &ExtensionPackageArtifactOwner,
     archive_digest: &str,
 ) -> Result<String, DomainError> {
+    owner.validate()?;
     validate_sha256_digest("archive_digest", archive_digest)?;
     let digest = archive_digest
         .strip_prefix("sha256:")
         .ok_or_else(|| DomainError::InvalidConfig("archive_digest 格式非法".to_string()))?;
     Ok(format!(
-        "extension-packages/{project_id}/{digest}.agentdash-extension.tgz"
+        "extension-packages/{}/{}/{digest}.agentdash-extension.tgz",
+        owner.kind.as_str(),
+        owner.id
     ))
 }
 
@@ -679,15 +703,16 @@ mod tests {
 
     #[test]
     fn storage_ref_uses_archive_digest() {
-        let project_id = Uuid::nil();
+        let project_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").expect("uuid");
+        let owner = ExtensionPackageArtifactOwner::project(project_id);
         let storage_ref = extension_package_archive_storage_ref_for(
-            project_id,
+            &owner,
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )
         .expect("storage ref");
         assert_eq!(
             storage_ref,
-            "extension-packages/00000000-0000-0000-0000-000000000000/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.agentdash-extension.tgz"
+            "extension-packages/project/11111111-1111-1111-1111-111111111111/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.agentdash-extension.tgz"
         );
     }
 

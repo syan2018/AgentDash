@@ -11,6 +11,8 @@ import { useWorkflowStore } from "../../../stores/workflowStore";
 import { fetchProjectMcpPresets } from "../../../services/mcpPreset";
 import { fetchProjectSkillAssets } from "../../../services/skillAsset";
 import { listProjectVfsMounts } from "../../../services/projectVfsMounts";
+import { fetchProjectExtensions } from "../../../services/extensionManagement";
+import type { ProjectExtensionManagementItemResponse } from "../../../generated/extension-management-contracts";
 import type {
   ActivityLifecycleDefinition,
   McpPresetDto,
@@ -44,6 +46,7 @@ const KIND_OPTIONS: Array<{ value: PublishLibraryAssetKind; label: string; hint:
   { value: "workflow_bundle", label: "Workflow", hint: "Project Lifecycle bundle → workflow_template" },
   { value: "skill_asset", label: "Skill", hint: "Project Skill 资产 → skill_template" },
   { value: "vfs_mount", label: "VFS Mount", hint: "Project VFS Mount → vfs_mount_template" },
+  { value: "extension_installation", label: "Extension", hint: "Project Extension → extension_template" },
 ];
 
 export function AssetPickerDrawer({
@@ -164,6 +167,9 @@ function AssetStep({
       )}
       {kind === "vfs_mount" && (
         <VfsMountList projectId={projectId} onPick={onPick} />
+      )}
+      {kind === "extension_installation" && (
+        <ExtensionList projectId={projectId} onPick={onPick} />
       )}
     </section>
   );
@@ -426,6 +432,65 @@ function VfsMountList({
             key: item.mount_id,
             display_name: item.display_name,
             description: item.description ?? null,
+          },
+        })
+      }
+    />
+  );
+}
+
+function ExtensionList({
+  projectId,
+  onPick,
+}: {
+  projectId: string;
+  onPick: (s: AssetPickerSelection) => void;
+}) {
+  const [items, setItems] = useState<ProjectExtensionManagementItemResponse[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchProjectExtensions(projectId)
+      .then((result) => {
+        if (cancelled) return;
+        setItems(result.extensions);
+        setError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "加载失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const visible = useMemo(
+    () => (items ?? []).filter((item) => item.package_mode !== "invalid_missing_artifact"),
+    [items],
+  );
+
+  if (error) return <Hint message={error} tone="danger" />;
+  if (items === null) return <Hint message="正在加载 Extension…" />;
+  if (visible.length === 0) {
+    return <Hint message="项目内暂无可发布的 Extension。" />;
+  }
+  return (
+    <PickList
+      items={visible}
+      keyOf={(item) => item.installation_id}
+      titleOf={(item) => item.display_name}
+      hintOf={(item) =>
+        `${item.extension_key} · ${item.package_mode === "packaged" ? "Packaged" : "Declaration"}`
+      }
+      onPick={(extension) =>
+        onPick({
+          assetKind: "extension_installation",
+          projectAssetId: extension.installation_id,
+          defaults: {
+            key: extension.extension_key,
+            display_name: extension.display_name,
+            description: null,
           },
         })
       }

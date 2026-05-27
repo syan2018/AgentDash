@@ -13,8 +13,9 @@ use agentdash_application::shared_library::{
     SeedBuiltinLibraryAssetsInput, SharedLibraryService, install_library_asset_to_project,
     list_project_asset_source_status, publish_project_asset_to_library,
 };
+use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
 use agentdash_domain::shared_library::{
-    LibraryAssetListFilter, LibraryAssetScope, LibraryAssetType,
+    LibraryAsset, LibraryAssetListFilter, LibraryAssetScope, LibraryAssetType,
 };
 
 use crate::app_state::AppState;
@@ -23,7 +24,7 @@ use crate::dto::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, LibraryAssetDto,
     ListLibraryAssetsQuery, ProjectAssetSourceStatusDto, ProjectAssetSourceStatusItemDto,
     PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest, library_asset_response,
-    parse_asset_scope, parse_asset_type,
+    library_asset_response_with_extension_package, parse_asset_scope, parse_asset_type,
 };
 use crate::rpc::ApiError;
 
@@ -51,9 +52,11 @@ pub async fn list_library_assets(
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.list(filter).await?;
-    Ok(Json(
-        assets.into_iter().map(library_asset_response).collect(),
-    ))
+    let mut response = Vec::with_capacity(assets.len());
+    for asset in assets {
+        response.push(library_asset_response_for_api(state.as_ref(), asset).await?);
+    }
+    Ok(Json(response))
 }
 
 /// GET `/api/shared-library/assets/:id`
@@ -64,7 +67,10 @@ pub async fn get_library_asset(
 ) -> Result<Json<LibraryAssetDto>, ApiError> {
     let id = parse_library_asset_id(&path.id)?;
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
-    Ok(Json(library_asset_response(service.get(id).await?)))
+    let asset = service.get(id).await?;
+    Ok(Json(
+        library_asset_response_for_api(state.as_ref(), asset).await?,
+    ))
 }
 
 /// POST `/api/shared-library/assets/seed-builtin`
@@ -79,9 +85,11 @@ pub async fn seed_builtin_library_assets(
     };
     let service = SharedLibraryService::new(state.repos.shared_library_repo.as_ref());
     let assets = service.seed_builtin_assets(input).await?;
-    Ok(Json(
-        assets.into_iter().map(library_asset_response).collect(),
-    ))
+    let mut response = Vec::with_capacity(assets.len());
+    for asset in assets {
+        response.push(library_asset_response_for_api(state.as_ref(), asset).await?);
+    }
+    Ok(Json(response))
 }
 
 /// POST `/api/projects/:project_id/shared-library/install`
@@ -145,7 +153,9 @@ pub async fn publish_library_asset(
         overwrite: req.overwrite,
     };
     let asset = publish_project_asset_to_library(&state.repos, input).await?;
-    Ok(Json(library_asset_response(asset)))
+    Ok(Json(
+        library_asset_response_for_api(state.as_ref(), asset).await?,
+    ))
 }
 
 /// GET `/api/projects/:project_id/shared-library/source-status`
@@ -172,6 +182,29 @@ fn parse_library_asset_id(raw: &str) -> Result<Uuid, ApiError> {
 
 fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
+}
+
+async fn library_asset_response_for_api(
+    state: &AppState,
+    asset: LibraryAsset,
+) -> Result<LibraryAssetDto, ApiError> {
+    if !matches!(asset.asset_type, LibraryAssetType::ExtensionTemplate) {
+        return Ok(library_asset_response(asset));
+    }
+
+    let owner = ExtensionPackageArtifactOwner::library_asset(asset.id);
+    let extension_package_artifact = state
+        .repos
+        .extension_package_artifact_repo
+        .list_by_owner(&owner)
+        .await?
+        .into_iter()
+        .find(|artifact| artifact.manifest_digest == asset.payload_digest);
+
+    Ok(library_asset_response_with_extension_package(
+        asset,
+        extension_package_artifact,
+    ))
 }
 
 fn parse_optional_asset_type(raw: Option<String>) -> Result<Option<LibraryAssetType>, ApiError> {
@@ -225,6 +258,7 @@ fn parse_publish_asset_kind(raw: &str) -> Result<ProjectAssetPublishKind, ApiErr
         "workflow_bundle" => Ok(ProjectAssetPublishKind::WorkflowBundle),
         "skill_asset" => Ok(ProjectAssetPublishKind::SkillAsset),
         "vfs_mount" | "project_vfs_mount" => Ok(ProjectAssetPublishKind::VfsMount),
+        "extension_installation" => Ok(ProjectAssetPublishKind::ExtensionInstallation),
         other => Err(ApiError::BadRequest(format!(
             "未知 publish asset_kind: {other}"
         ))),

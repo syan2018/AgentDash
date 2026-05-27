@@ -30,7 +30,8 @@ export async function fetchLibraryAssets(query: Partial<ListLibraryAssetsQuery> 
   if (query.owner_id) params.set("owner_id", query.owner_id);
   if (query.include_deprecated) params.set("include_deprecated", "true");
   const qs = params.toString() ? `?${params}` : "";
-  return api.get<LibraryAssetDto[]>(`/shared-library/assets${qs}`);
+  const assets = await api.get<LibraryAssetDto[]>(`/shared-library/assets${qs}`);
+  return assets.map(normalizeLibraryAsset);
 }
 
 export async function installLibraryAsset(
@@ -47,10 +48,11 @@ export async function publishLibraryAsset(
   projectId: string,
   input: PublishLibraryAssetRequest,
 ): Promise<LibraryAssetDto> {
-  return api.post<LibraryAssetDto>(
+  const asset = await api.post<LibraryAssetDto>(
     `/projects/${encodeURIComponent(projectId)}/shared-library/publish`,
     input,
   );
+  return normalizeLibraryAsset(asset);
 }
 
 export async function fetchProjectAssetSourceStatus(
@@ -59,4 +61,15 @@ export async function fetchProjectAssetSourceStatus(
   return api.get<ProjectAssetSourceStatusDto>(
     `/projects/${encodeURIComponent(projectId)}/shared-library/source-status`,
   );
+}
+
+function normalizeLibraryAsset(asset: LibraryAssetDto): LibraryAssetDto {
+  if (!asset.extension_package_artifact) return asset;
+  return {
+    ...asset,
+    extension_package_artifact: {
+      ...asset.extension_package_artifact,
+      byte_size: BigInt(asset.extension_package_artifact.byte_size),
+    },
+  };
 }

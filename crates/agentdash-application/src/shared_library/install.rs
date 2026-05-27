@@ -4,6 +4,7 @@ use uuid::Uuid;
 use agentdash_domain::DomainError;
 use agentdash_domain::agent::ProjectAgent;
 use agentdash_domain::common::AgentPresetConfig;
+use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
 use agentdash_domain::mcp_preset::{McpPreset, McpPresetSource};
 use agentdash_domain::project_vfs_mount::{ProjectVfsMount, ProjectVfsMountContent};
@@ -135,15 +136,51 @@ pub async fn install_library_asset_to_project(
         LibraryAssetPayload::ExtensionTemplate(payload) => {
             let key = target_key_or_asset_key(input.target_key.as_deref(), &asset.key);
             let installed_source = installed_source_from_asset(&asset);
-            let installation = ProjectExtensionInstallation::new(
-                input.project_id,
-                key,
-                asset.display_name.clone(),
-                payload,
-                installed_source,
-            )?;
+            let package_artifact =
+                extension_template_package_artifact_for_install(repos, &asset, &payload).await?;
+            let installation = if let Some(package_artifact) = package_artifact {
+                ProjectExtensionInstallation::new_from_library_package(
+                    input.project_id,
+                    key,
+                    asset.display_name.clone(),
+                    payload,
+                    installed_source,
+                    package_artifact.package_ref(),
+                )?
+            } else {
+                ProjectExtensionInstallation::new(
+                    input.project_id,
+                    key,
+                    asset.display_name.clone(),
+                    payload,
+                    installed_source,
+                )?
+            };
             upsert_extension_installation(repos, installation, input.overwrite).await
         }
+    }
+}
+
+async fn extension_template_package_artifact_for_install(
+    repos: &RepositorySet,
+    asset: &LibraryAsset,
+    payload: &agentdash_domain::shared_library::ExtensionTemplatePayload,
+) -> Result<Option<agentdash_domain::extension_package::ExtensionPackageArtifact>, DomainError> {
+    let owner = ExtensionPackageArtifactOwner::library_asset(asset.id);
+    let artifacts = repos
+        .extension_package_artifact_repo
+        .list_by_owner(&owner)
+        .await?;
+    let artifact = artifacts
+        .into_iter()
+        .find(|artifact| artifact.manifest_digest == asset.payload_digest);
+    match (payload.requires_package_artifact(), artifact) {
+        (_, Some(artifact)) => Ok(Some(artifact)),
+        (false, None) => Ok(None),
+        (true, None) => Err(DomainError::InvalidConfig(format!(
+            "ExtensionTemplate `{}` 需要 package artifact，但 LibraryAsset 未关联可用包工件",
+            asset.key
+        ))),
     }
 }
 

@@ -1,21 +1,9 @@
-/**
- * UploadExtensionDialog — 选择本地 .agentdash-extension.tgz / .tgz，
- * 计算 sha256，再以 multipart 上传到当前 Project 的 extension-artifacts。
- *
- * 流程：
- * 1. 文件选择 + 客户端校验（扩展名、字节数）
- * 2. 计算 digest（loading）
- * 3. 上传（loading）
- * 4. 成功后 onUploaded 把 artifact 交给父组件
- */
-
 import { useEffect, useId, useState } from "react";
 
-import { Button, TextInput } from "@agentdash/ui";
+import { Button, CheckboxField, TextInput } from "@agentdash/ui";
 
+import { importExtensionPackage } from "../../../../services/extensionPackage";
 import { sha256OfBlob } from "../../../../utils/sha256";
-import { uploadExtensionArtifact } from "../../../../services/extensionPackage";
-import type { ExtensionPackageArtifactResponse } from "../../../../generated/extension-package-contracts";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const ACCEPT = ".tgz,.gz,application/gzip,application/x-gzip";
@@ -24,17 +12,27 @@ interface Props {
   projectId: string;
   open: boolean;
   onClose: () => void;
-  onUploaded: (artifact: ExtensionPackageArtifactResponse) => void;
+  onInstalled: (extensionKey: string) => void;
 }
 
-type Phase = "idle" | "hashing" | "uploading";
+type Phase = "idle" | "hashing" | "installing";
 
-export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: Props) {
+export function InstallExtensionPackageDialog({
+  projectId,
+  open,
+  onClose,
+  onInstalled,
+}: Props) {
   const titleId = useId();
-  const inputId = useId();
+  const fileInputId = useId();
+  const keyInputId = useId();
+  const nameInputId = useId();
   const [file, setFile] = useState<File | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [extensionKey, setExtensionKey] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [overwrite, setOverwrite] = useState(true);
   const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -57,7 +55,7 @@ export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: 
     }
     const lower = picked.name.toLowerCase();
     if (!(lower.endsWith(".tgz") || lower.endsWith(".tar.gz"))) {
-      setError("仅支持 .tgz / .agentdash-extension.tgz 归档");
+      setError("仅支持 .tgz / .agentdash-extension.tgz 包");
       setFile(null);
       return;
     }
@@ -75,12 +73,16 @@ export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: 
     try {
       setPhase("hashing");
       const digest = await sha256OfBlob(file);
-      setPhase("uploading");
-      const artifact = await uploadExtensionArtifact(projectId, file, digest);
-      onUploaded(artifact);
+      setPhase("installing");
+      const result = await importExtensionPackage(projectId, file, digest, {
+        extension_key: extensionKey,
+        display_name: displayName,
+        overwrite,
+      });
+      onInstalled(result.installation.extension_key);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "上传归档失败");
+      setError(err instanceof Error ? err.message : "安装扩展包失败");
       setPhase("idle");
     }
   }
@@ -104,12 +106,12 @@ export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: 
         >
           <header className="border-b border-border px-5 py-4">
             <h4 id={titleId} className="text-base font-semibold text-foreground">
-              上传扩展归档
+              从本地包安装
             </h4>
           </header>
           <div className="space-y-3 p-5">
             <TextInput
-              id={inputId}
+              id={fileInputId}
               type="file"
               accept={ACCEPT}
               disabled={busy}
@@ -124,11 +126,31 @@ export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: 
                 <p className="mt-0.5">{formatBytes(file.size)}</p>
               </div>
             )}
+            <TextInput
+              id={keyInputId}
+              value={extensionKey}
+              placeholder="extension_key"
+              disabled={busy}
+              onChange={(event) => setExtensionKey(event.target.value)}
+            />
+            <TextInput
+              id={nameInputId}
+              value={displayName}
+              placeholder="显示名称"
+              disabled={busy}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <CheckboxField
+              label="覆盖同名 Extension"
+              checked={overwrite}
+              disabled={busy}
+              onChange={(event) => setOverwrite(event.target.checked)}
+            />
             {phase === "hashing" && (
-              <p className="text-xs text-muted-foreground">计算 digest…</p>
+              <p className="text-xs text-muted-foreground">计算 digest...</p>
             )}
-            {phase === "uploading" && (
-              <p className="text-xs text-muted-foreground">上传中…</p>
+            {phase === "installing" && (
+              <p className="text-xs text-muted-foreground">安装中...</p>
             )}
             {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
@@ -142,10 +164,10 @@ export function UploadExtensionDialog({ projectId, open, onClose, onUploaded }: 
               disabled={!file || busy}
             >
               {phase === "hashing"
-                ? "计算 digest…"
-                : phase === "uploading"
-                  ? "上传中…"
-                  : "上传"}
+                ? "计算 digest..."
+                : phase === "installing"
+                  ? "安装中..."
+                  : "安装"}
             </Button>
           </footer>
         </section>
@@ -160,4 +182,4 @@ function formatBytes(value: number): string {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default UploadExtensionDialog;
+export default InstallExtensionPackageDialog;

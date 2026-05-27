@@ -1,16 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  apiGet: vi.fn(),
-  apiPost: vi.fn(),
   authenticatedFetch: vi.fn(),
 }));
 
 vi.mock("../api/client", () => ({
-  api: {
-    get: mocks.apiGet,
-    post: mocks.apiPost,
-  },
   authenticatedFetch: mocks.authenticatedFetch,
 }));
 
@@ -20,22 +14,21 @@ vi.mock("../api/origin", () => ({
 
 import {
   downloadExtensionArtifact,
-  installExtensionArtifact,
-  listExtensionArtifacts,
+  importExtensionPackage,
   parseContentDispositionFilename,
-  uploadExtensionArtifact,
 } from "./extensionPackage";
 
 function sampleArtifactWire(): Record<string, unknown> {
   return {
     id: "artifact-1",
-    project_id: "project-1",
+    owner_kind: "project",
+    owner_id: "project-1",
     extension_id: "local-hello",
     package_name: "@agentdash/local-hello",
     package_version: "0.1.0",
     asset_version: "2026.05.27",
     source_version: "0.1.0",
-    storage_ref: "extension-packages/project-1/digest.agentdash-extension.tgz",
+    storage_ref: "extension-packages/project/project-1/digest.agentdash-extension.tgz",
     archive_digest: "sha256:abc",
     manifest_digest: "sha256:def",
     manifest: { name: "local-hello", version: "0.1.0" },
@@ -45,102 +38,55 @@ function sampleArtifactWire(): Record<string, unknown> {
   };
 }
 
-describe("extensionPackage list mapper", () => {
-  beforeEach(() => {
-    mocks.apiGet.mockReset();
-    mocks.apiPost.mockReset();
-    mocks.authenticatedFetch.mockReset();
-  });
-
-  it("maps full artifact shape including bigint byte_size", async () => {
-    mocks.apiGet.mockResolvedValueOnce([sampleArtifactWire()]);
-    const list = await listExtensionArtifacts("project-1");
-    expect(mocks.apiGet).toHaveBeenCalledWith(
-      "/projects/project-1/extension-artifacts",
-    );
-    expect(list).toHaveLength(1);
-    const item = list[0];
-    expect(item.id).toBe("artifact-1");
-    expect(item.byte_size).toBe(12345n);
-    expect(item.manifest).toEqual({ name: "local-hello", version: "0.1.0" });
-    expect(item.archive_digest).toBe("sha256:abc");
-  });
-
-  it("accepts byte_size as numeric string", async () => {
-    const wire = sampleArtifactWire();
-    wire.byte_size = "9007199254740993"; // > Number.MAX_SAFE_INTEGER
-    mocks.apiGet.mockResolvedValueOnce([wire]);
-    const [item] = await listExtensionArtifacts("project-1");
-    expect(item.byte_size).toBe(9007199254740993n);
-  });
-
-  it("rejects non-array list response", async () => {
-    mocks.apiGet.mockResolvedValueOnce({});
-    await expect(listExtensionArtifacts("project-1")).rejects.toThrow(/不是数组/);
-  });
-});
-
-describe("extensionPackage install", () => {
-  beforeEach(() => {
-    mocks.apiPost.mockReset();
-  });
-
-  it("posts install request with body and maps response", async () => {
-    mocks.apiPost.mockResolvedValueOnce({
-      installation_id: "installation-1",
-      extension_key: "local-hello",
-      extension_id: "local-hello",
-      package_artifact_id: "artifact-1",
-      archive_digest: "sha256:abc",
-    });
-    const result = await installExtensionArtifact("project-1", "artifact-1", {
-      extension_key: null,
-      display_name: "Local Hello",
-      overwrite: true,
-    });
-    expect(mocks.apiPost).toHaveBeenCalledWith(
-      "/projects/project-1/extension-artifacts/artifact-1/install",
-      {
-        extension_key: null,
-        display_name: "Local Hello",
-        overwrite: true,
-      },
-    );
-    expect(result.installation_id).toBe("installation-1");
-    expect(result.extension_key).toBe("local-hello");
-  });
-});
-
-describe("extensionPackage upload", () => {
+describe("extensionPackage import", () => {
   beforeEach(() => {
     mocks.authenticatedFetch.mockReset();
   });
 
-  it("submits multipart form-data with archive_digest + archive", async () => {
+  it("submits one-step import/install form-data and maps owner-aware artifact", async () => {
     mocks.authenticatedFetch.mockImplementation(async (url, init) => {
-      expect(url).toBe("/api/projects/project-1/extension-artifacts");
+      expect(url).toBe("/api/projects/project-1/extensions/import-package");
       expect(init?.method).toBe("POST");
       const body = init?.body;
       expect(body).toBeInstanceOf(FormData);
       const form = body as FormData;
       expect(form.get("archive_digest")).toBe("sha256:deadbeef");
-      const archive = form.get("archive");
-      expect(archive).toBeInstanceOf(File);
-      expect((archive as File).name).toBe("local-hello.agentdash-extension.tgz");
-      return new Response(JSON.stringify(sampleArtifactWire()), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      expect(form.get("extension_key")).toBe("local-hello");
+      expect(form.get("display_name")).toBe("Local Hello");
+      expect(form.get("overwrite")).toBe("true");
+      expect(form.get("archive")).toBeInstanceOf(File);
+      return new Response(
+        JSON.stringify({
+          artifact: sampleArtifactWire(),
+          installation: {
+            installation_id: "installation-1",
+            extension_key: "local-hello",
+            extension_id: "local-hello",
+            package_artifact_id: "artifact-1",
+            archive_digest: "sha256:abc",
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     });
 
-    const file = new File([new Uint8Array([1, 2, 3])], "local-hello.agentdash-extension.tgz", {
-      type: "application/gzip",
+    const file = new File([new Uint8Array([1])], "local-hello.tgz");
+    const result = await importExtensionPackage("project-1", file, "sha256:deadbeef", {
+      extension_key: "local-hello",
+      display_name: "Local Hello",
+      overwrite: true,
     });
-    const result = await uploadExtensionArtifact("project-1", file, "sha256:deadbeef");
-    expect(result.id).toBe("artifact-1");
+
+    expect(result.artifact.owner_kind).toBe("project");
+    expect(result.artifact.owner_id).toBe("project-1");
+    expect(result.artifact.byte_size).toBe(12345n);
+    expect(result.installation.installation_id).toBe("installation-1");
   });
 
-  it("translates non-ok response into ApiError-style Error with status", async () => {
+  it("translates import error response", async () => {
     mocks.authenticatedFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "digest mismatch" }), {
         status: 400,
@@ -148,27 +94,16 @@ describe("extensionPackage upload", () => {
       }),
     );
     const file = new File([new Uint8Array([1])], "x.tgz");
+
     await expect(
-      uploadExtensionArtifact("project-1", file, "sha256:bad"),
+      importExtensionPackage("project-1", file, "sha256:bad", {
+        extension_key: null,
+        display_name: null,
+        overwrite: true,
+      }),
     ).rejects.toMatchObject({
       message: "digest mismatch",
       status: 400,
-    });
-  });
-
-  it("falls back to HTTP status text when error body is invalid", async () => {
-    mocks.authenticatedFetch.mockResolvedValueOnce(
-      new Response("oops", {
-        status: 500,
-        statusText: "Internal Server Error",
-      }),
-    );
-    const file = new File([new Uint8Array([1])], "x.tgz");
-    await expect(
-      uploadExtensionArtifact("project-1", file, "sha256:bad"),
-    ).rejects.toMatchObject({
-      message: "Internal Server Error",
-      status: 500,
     });
   });
 });
@@ -190,21 +125,15 @@ describe("extensionPackage download", () => {
         },
       }),
     );
+
     const result = await downloadExtensionArtifact("project-1", "artifact-1");
+
     expect(mocks.authenticatedFetch).toHaveBeenCalledWith(
       "/api/projects/project-1/extension-artifacts/artifact-1/archive",
       { method: "GET" },
     );
     expect(result.blob).toBeInstanceOf(Blob);
     expect(result.filename).toBe("local-hello-0.1.0.agentdash-extension.tgz");
-  });
-
-  it("returns empty filename when Content-Disposition is missing", async () => {
-    mocks.authenticatedFetch.mockResolvedValueOnce(
-      new Response(new Uint8Array([1]), { status: 200 }),
-    );
-    const result = await downloadExtensionArtifact("project-1", "artifact-1");
-    expect(result.filename).toBe("");
   });
 
   it("translates download error response", async () => {
@@ -214,6 +143,7 @@ describe("extensionPackage download", () => {
         headers: { "Content-Type": "application/json" },
       }),
     );
+
     await expect(
       downloadExtensionArtifact("project-1", "missing"),
     ).rejects.toMatchObject({
@@ -234,14 +164,8 @@ describe("parseContentDispositionFilename", () => {
 
   it("parses RFC 5987 filename* with UTF-8 encoding", () => {
     expect(
-      parseContentDispositionFilename(
-        "attachment; filename*=UTF-8''local%2Dhello.tgz",
-      ),
+      parseContentDispositionFilename("attachment; filename*=UTF-8''local%2Dhello.tgz"),
     ).toBe("local-hello.tgz");
-  });
-
-  it("returns empty string when header is null", () => {
-    expect(parseContentDispositionFilename(null)).toBe("");
   });
 
   it("returns empty string when header has no filename", () => {

@@ -11,6 +11,7 @@ Shared Library / Marketplace / Project Asset 是 AgentDash 公共配置资产的
 | `LibraryAsset` | 资源库资产 | Shared Library 中的统一资产 |
 | `ProjectAsset` | 项目资源 | 安装到 Project 后可运行、可编辑的副本 |
 | `InstalledAssetSource` | 安装来源 | Project 资源的来源版本元数据 |
+| `ExtensionPackageArtifact` | Extension 运行包工件 | `.agentdash-extension.tgz` 的可校验运行产物，可由 Project 或 LibraryAsset 拥有 |
 
 ## Naming
 
@@ -51,6 +52,7 @@ Project 内运行资源使用 Project 前缀或既有项目资源名：
 - `payload_digest`
 - `deprecated`
 - `payload`
+- `extension_package_artifact`：仅 `extension_template` 在存在匹配 LibraryAsset-owned package artifact 时返回摘要
 - `created_at`
 - `updated_at`
 
@@ -199,6 +201,8 @@ Extension package 中 `protocol_channels` 表达 provider 插件导出的 Projec
 
 Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.execute`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
 
+ExtensionTemplate 的 package requirement 由后端统一计算：`runtime_actions`、`protocol_channels`、`workspace_tabs`、`bundles` 任一非空时需要 package artifact；仅声明 `commands`、`flags`、`message_renderers`、`capability_directives` 或 `asset_refs` 时可作为 declaration-only template 安装。
+
 ## Install Summary
 
 前端 Marketplace 卡片展示同一 `LibraryAsset` 在项目内的安装状态时，必须把 `source-status` 返回的数组按 `installed_source.library_asset_id` flatten + group。
@@ -229,7 +233,7 @@ Update:
 
 ExtensionTemplate 安装后，`LibraryAsset` 本身不直接影响会话；只有安装成 Project extension installation 后才可能被 session construction 读取。
 
-正式 packaged extension 安装以平台 artifact 为事实源。`ExtensionTemplate` 可以作为 marketplace/template payload，`.agentdash-extension.tgz` 上传后由后端校验 archive digest、manifest digest、package metadata 和 bundle digest，并保存为 Project scoped package artifact。Project extension installation 可以记录 `package_artifact`，此时 `installed_source` 为空；Shared Library source-status 只表达由 `InstalledAssetSource` 追踪的 marketplace/template 来源。
+Packaged Extension 安装以平台 artifact 为事实源。`ExtensionPackageArtifact` 使用 `owner_kind + owner_id` 表达归属：本地导入保存为 Project-owned artifact，发布到 Marketplace 后保存为 LibraryAsset-owned artifact。Marketplace packaged install 写入 `installed_source + package_artifact`；本地包导入写入 Project-owned `package_artifact` 且 `installed_source = None`。Shared Library source-status 只比较 `InstalledAssetSource` 的版本与 digest，包完整性由 install/publish/runtime download contract 负责。
 
 Canvas 发布为插件时生成同款 packaged extension artifact。其 workspace tab 使用 `canvas_panel` renderer，`entry` 指向包内 Canvas runtime snapshot；安装、覆盖和 source-status 仍按 packaged extension installation 处理。
 
@@ -244,6 +248,8 @@ Project Assets 发布行为：
 5. Marketplace 通过 list/install/source-status 流程处理该资产。
 
 发布请求禁止前端传 raw payload。Project 资源中带 credential、header、env、本机路径、localhost 或私网 URL 的 MCP 连接材料必须在后端 mapper 阶段拒绝。
+
+Extension 发布使用 `asset_kind = extension_installation`，后端从 `ProjectExtensionInstallation` 读取 manifest 并创建 `LibraryAsset(asset_type = extension_template)`。需要 package artifact 的安装必须携带 `package_artifact` 才能发布；发布成功后 LibraryAsset DTO 可携带匹配 manifest digest 的 `extension_package_artifact` 摘要，Marketplace 用它判断 packaged template 是否可安装。
 
 ## Source Status Contract
 

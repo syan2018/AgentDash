@@ -1,10 +1,10 @@
-import { api, authenticatedFetch, type ApiHttpError } from "../api/client";
+import { authenticatedFetch, type ApiHttpError } from "../api/client";
 import { buildApiPath } from "../api/origin";
 import { asRecord, requireStringField } from "../api/mappers";
 import type {
   ExtensionPackageArtifactResponse,
   ExtensionPackageInstallationResponse,
-  InstallExtensionPackageArtifactRequest,
+  ImportExtensionPackageResponse,
   JsonValue,
 } from "../generated/extension-package-contracts";
 
@@ -69,7 +69,8 @@ function mapPackageArtifact(raw: unknown): ExtensionPackageArtifactResponse {
   const value = recordOrThrow(raw, "extension package artifact");
   return {
     id: requireStringField(value, "id"),
-    project_id: requireStringField(value, "project_id"),
+    owner_kind: requireStringField(value, "owner_kind"),
+    owner_id: requireStringField(value, "owner_id"),
     extension_id: requireStringField(value, "extension_id"),
     package_name: requireStringField(value, "package_name"),
     package_version: requireStringField(value, "package_version"),
@@ -85,6 +86,14 @@ function mapPackageArtifact(raw: unknown): ExtensionPackageArtifactResponse {
   };
 }
 
+function mapPackageImport(raw: unknown): ImportExtensionPackageResponse {
+  const value = recordOrThrow(raw, "extension package import");
+  return {
+    artifact: mapPackageArtifact(value.artifact),
+    installation: mapPackageInstallation(value.installation),
+  };
+}
+
 function mapPackageInstallation(raw: unknown): ExtensionPackageInstallationResponse {
   const value = recordOrThrow(raw, "extension package installation");
   return {
@@ -94,30 +103,6 @@ function mapPackageInstallation(raw: unknown): ExtensionPackageInstallationRespo
     package_artifact_id: requireStringField(value, "package_artifact_id"),
     archive_digest: requireStringField(value, "archive_digest"),
   };
-}
-
-export async function listExtensionArtifacts(
-  projectId: string,
-): Promise<ExtensionPackageArtifactResponse[]> {
-  const raw = await api.get<unknown>(
-    `/projects/${encodeURIComponent(projectId)}/extension-artifacts`,
-  );
-  if (!Array.isArray(raw)) {
-    throw new Error("extension artifacts 响应不是数组");
-  }
-  return raw.map(mapPackageArtifact);
-}
-
-export async function installExtensionArtifact(
-  projectId: string,
-  artifactId: string,
-  body: InstallExtensionPackageArtifactRequest,
-): Promise<ExtensionPackageInstallationResponse> {
-  const raw = await api.post<unknown>(
-    `/projects/${encodeURIComponent(projectId)}/extension-artifacts/${encodeURIComponent(artifactId)}/install`,
-    body,
-  );
-  return mapPackageInstallation(raw);
 }
 
 async function throwApiError(response: Response): Promise<never> {
@@ -132,16 +117,30 @@ async function throwApiError(response: Response): Promise<never> {
   throw error;
 }
 
-export async function uploadExtensionArtifact(
+export interface ImportExtensionPackageOptions {
+  extension_key?: string | null;
+  display_name?: string | null;
+  overwrite: boolean;
+}
+
+export async function importExtensionPackage(
   projectId: string,
   file: File,
   archiveDigest: string,
-): Promise<ExtensionPackageArtifactResponse> {
+  options: ImportExtensionPackageOptions,
+): Promise<ImportExtensionPackageResponse> {
   const form = new FormData();
   form.append("archive_digest", archiveDigest);
   form.append("archive", file, file.name);
+  form.append("overwrite", options.overwrite ? "true" : "false");
+  if (options.extension_key && options.extension_key.trim() !== "") {
+    form.append("extension_key", options.extension_key);
+  }
+  if (options.display_name && options.display_name.trim() !== "") {
+    form.append("display_name", options.display_name);
+  }
   const response = await authenticatedFetch(
-    buildApiPath(`/projects/${encodeURIComponent(projectId)}/extension-artifacts`),
+    buildApiPath(`/projects/${encodeURIComponent(projectId)}/extensions/import-package`),
     {
       method: "POST",
       body: form,
@@ -151,7 +150,7 @@ export async function uploadExtensionArtifact(
     await throwApiError(response);
   }
   const raw = await response.json();
-  return mapPackageArtifact(raw);
+  return mapPackageImport(raw);
 }
 
 export interface ExtensionArtifactDownload {

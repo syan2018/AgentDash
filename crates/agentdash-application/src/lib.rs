@@ -6,6 +6,7 @@ pub mod canvas;
 pub mod capability;
 pub mod companion;
 pub mod context;
+pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod hooks;

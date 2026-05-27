@@ -19,4 +19,5 @@ export type PublishLibraryAssetKind =
   | "mcp_preset"
   | "workflow_bundle"
   | "skill_asset"
-  | "vfs_mount";
+  | "vfs_mount"
+  | "extension_installation";

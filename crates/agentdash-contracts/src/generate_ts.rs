@@ -1,8 +1,13 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::extension_management::{
+    ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
+    ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
+    ProjectExtensionPackageArtifactRefResponse, ProjectExtensionPackageModeResponse,
+};
 use agentdash_contracts::extension_package::{
     ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
-    InstallExtensionPackageArtifactRequest,
+    ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
 };
 use agentdash_contracts::extension_runtime::{
     ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
@@ -41,8 +46,8 @@ use agentdash_contracts::session::{
 };
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
-    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
@@ -194,6 +199,20 @@ fn main() {
     );
 
     write_domain(
+        &generated_dir.join("extension-management-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ProjectExtensionPackageModeResponse>(dir);
+            export_all::<ProjectExtensionInstalledSourceResponse>(dir);
+            export_all::<ProjectExtensionPackageArtifactRefResponse>(dir);
+            export_all::<ProjectExtensionCapabilitySummaryResponse>(dir);
+            export_all::<ProjectExtensionManagementItemResponse>(dir);
+            export_all::<ProjectExtensionManagementListResponse>(dir);
+        },
+    );
+
+    write_domain(
         &generated_dir.join("extension-package-contracts.ts"),
         &[],
         check,
@@ -201,6 +220,7 @@ fn main() {
             export_all::<ExtensionPackageArtifactResponse>(dir);
             export_all::<InstallExtensionPackageArtifactRequest>(dir);
             export_all::<ExtensionPackageInstallationResponse>(dir);
+            export_all::<ImportExtensionPackageResponse>(dir);
         },
     );
 
@@ -210,6 +230,7 @@ fn main() {
         check,
         |dir| {
             export_all::<InstalledAssetSourceDto>(dir);
+            export_all::<LibraryExtensionPackageArtifactDto>(dir);
             export_all::<LibraryAssetDto>(dir);
             export_all::<ListLibraryAssetsQuery>(dir);
             export_all::<SeedBuiltinLibraryAssetsRequest>(dir);

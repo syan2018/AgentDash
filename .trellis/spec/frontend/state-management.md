@@ -66,12 +66,12 @@ HTTP-only projection store（如 `extensionRuntimeStore` 缓存的 `ExtensionRun
 **典型形态**（写入处复制此模式）：
 
 ```ts
-async function handleInstall() {
+async function handleUninstall() {
   setBusy(true);
   try {
-    await installExtensionArtifact(projectId, artifactId, body);
+    await uninstallExtensionInstallation(projectId, installationId);
     await useExtensionRuntimeStore.getState().fetchProject(projectId); // 必填
-    setNotice({ tone: "success", message: "安装成功" });
+    setNotice({ tone: "success", message: "已更新 Extension runtime projection" });
   } catch (err) {
     setNotice({ tone: "danger", message: extractMessage(err) });
   } finally {

@@ -724,6 +724,13 @@ impl ExtensionTemplatePayload {
         Ok(())
     }
 
+    pub fn requires_package_artifact(&self) -> bool {
+        !self.runtime_actions.is_empty()
+            || !self.protocol_channels.is_empty()
+            || !self.workspace_tabs.is_empty()
+            || !self.bundles.is_empty()
+    }
+
     pub fn grants_local_profile_read(&self) -> bool {
         self.permissions.iter().any(|permission| {
             matches!(
@@ -1597,6 +1604,69 @@ mod tests {
     }
 
     #[test]
+    fn classifies_extension_template_package_requirement() {
+        let declaration_only = extension_template_from_json(json!({
+            "commands": [{
+                "name": "demo.say",
+                "description": "Say hello",
+                "handler": { "kind": "inject_message", "content": "hello" }
+            }],
+            "flags": [{
+                "name": "demo.enabled",
+                "type": "bool",
+                "default": true,
+                "description": "Enabled"
+            }]
+        }));
+        assert!(!declaration_only.requires_package_artifact());
+
+        let runtime_action = extension_template_from_json(json!({
+            "runtime_actions": [{
+                "action_key": "demo.run",
+                "kind": "session_runtime",
+                "description": "Run demo",
+                "input_schema": {},
+                "output_schema": {}
+            }]
+        }));
+        assert!(runtime_action.requires_package_artifact());
+
+        let protocol_channel = extension_template_from_json(json!({
+            "protocol_channels": [{
+                "channel_key": "demo.api",
+                "version": "1.0.0",
+                "description": "Demo API",
+                "methods": [{
+                    "name": "ping",
+                    "description": "Ping",
+                    "input_schema": {},
+                    "output_schema": {}
+                }]
+            }]
+        }));
+        assert!(protocol_channel.requires_package_artifact());
+
+        let workspace_tab = extension_template_from_json(json!({
+            "workspace_tabs": [{
+                "type_id": "demo.panel",
+                "label": "Demo",
+                "uri_scheme": "demo",
+                "renderer": { "kind": "webview", "entry": "dist/panel/index.html" }
+            }]
+        }));
+        assert!(workspace_tab.requires_package_artifact());
+
+        let bundle = extension_template_from_json(json!({
+            "bundles": [{
+                "kind": "extension_host",
+                "entry": "dist/extension.js",
+                "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            }]
+        }));
+        assert!(bundle.requires_package_artifact());
+    }
+
+    #[test]
     fn evaluates_local_profile_permission_contract() {
         let top_and_action = extension_template_for_permission(true, true);
         let decision = top_and_action.evaluate_action_permission(
@@ -1719,6 +1789,30 @@ mod tests {
         let result = LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload);
 
         assert!(result.is_err());
+    }
+
+    fn extension_template_from_json(extra: serde_json::Value) -> ExtensionTemplatePayload {
+        let mut payload = json!({
+            "manifest_version": "2",
+            "extension_id": "demo",
+            "package": {
+                "name": "@agentdash/demo",
+                "version": "0.1.0"
+            },
+            "asset_version": "0.1.0"
+        });
+        let payload_object = payload.as_object_mut().expect("payload object");
+        let extra_object = extra.as_object().expect("extra object");
+        for (key, value) in extra_object {
+            payload_object.insert(key.clone(), value.clone());
+        }
+
+        match LibraryAssetPayload::from_value(LibraryAssetType::ExtensionTemplate, payload)
+            .expect("valid extension template")
+        {
+            LibraryAssetPayload::ExtensionTemplate(payload) => payload,
+            other => panic!("unexpected payload: {other:?}"),
+        }
     }
 
     fn extension_template_for_permission(

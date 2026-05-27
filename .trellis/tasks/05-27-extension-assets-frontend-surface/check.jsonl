@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 typecheck / lint / test 一致性入口"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "service mapper 不得引入字段别名兼容；DTO 形态必须来自 generated"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "panel / dialog 是否复用既有 primitive，是否引入冗余 helper text（参考 [[feedback_no_ui_helper_text]]）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "本地 state vs store 边界（artifacts 不进 store）"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "Uninstall DTO 必须来自 contract crate 生成；不得在前端手写"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "multipart 上传 + Authorization 流转、blob 下载与 Bearer 头一致性"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端测试覆盖、错误码一致性"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "404 / 401 / 403 / 跨 project 行为对齐 install route"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "Repo 层新方法的 SQL / 测试位置、不要泄漏实现到 application"}
+{"file": "C:/Users/yihao.liao/.claude/projects/d--ABCTools-Dev-AgentDashboard/memory/feedback_no_hacks_in_connectors.md", "reason": "service / mapper 别在 panel 里直接拼 multipart hack，统一封装"}
+{"file": "C:/Users/yihao.liao/.claude/projects/d--ABCTools-Dev-AgentDashboard/memory/feedback_fs_tools_align_with_claude_code.md", "reason": "新增工具/服务命名行为对齐已有同类（参考 services/extensionRuntime.ts 风格）"}

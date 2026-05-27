@@ -13,6 +13,8 @@ pnpm --dir examples/extensions/local-hello run pack
 pnpm --dir examples/extensions/local-hello run test
 ```
 
+`dev` 会启动本地 Extension Preview，panel 继续使用 `@agentdash/extension-ui` bridge，请求由本地 extension host dispatcher 路由到 `src/extension.ts` 注册的 handler。这个开发态用于快速查看接近 WorkspacePanel 的渲染效果，并验证 TS panel 到 TS host 的自通信。
+
 安装到本地 AgentDash Project 时，传入平台 API、Project ID 和 token：
 
 ```powershell

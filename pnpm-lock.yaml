@@ -305,9 +305,15 @@ importers:
       '@agentdash/extension-ui':
         specifier: workspace:*
         version: link:../extension-ui
+      '@vitejs/plugin-react':
+        specifier: ^5.1.1
+        version: 5.1.4(vite@7.3.1(@types/node@24.10.13)(jiti@2.6.1)(lightningcss@1.31.1))
       esbuild:
         specifier: ^0.27.3
         version: 0.27.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@24.10.13)(jiti@2.6.1)(lightningcss@1.31.1)
     devDependencies:
       '@types/node':
         specifier: ^24.10.1

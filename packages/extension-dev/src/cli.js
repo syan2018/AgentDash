@@ -6,7 +6,8 @@ import process from "node:process";
 import { initProject } from "./init.js";
 import { installProject } from "./install.js";
 import { validateProject } from "./manifest.js";
-import { packProject, watchProject } from "./pack.js";
+import { packProject } from "./pack.js";
+import { startDevProject } from "./dev-server.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "help";
@@ -33,8 +34,14 @@ try {
     console.log(JSON.stringify(packed, null, 2));
   } else if (command === "dev") {
     const cwd = optionValue(args, "--cwd") ?? process.cwd();
-    await watchProject(cwd);
-    console.log("AgentDash extension dev watcher started");
+    const dev = await startDevProject(cwd, {
+      host: optionValue(args, "--host") ?? undefined,
+      port: numberOption(args, "--port"),
+    });
+    console.log("AgentDash extension dev ready");
+    console.log(`  preview: ${dev.previewUrl}`);
+    console.log(`  panel:   ${dev.panelUrl}`);
+    console.log("  runtime: local extension host dispatcher");
   } else if (command === "install") {
     const cwd = optionValue(args, "--cwd") ?? process.cwd();
     const apiUrl = requiredOption(args, "--api-url");
@@ -91,6 +98,21 @@ function hasFlag(values, name) {
   return values.includes(name);
 }
 
+/**
+ * @param {string[]} values
+ * @param {string} name
+ * @returns {number | undefined}
+ */
+function numberOption(values, name) {
+  const value = optionValue(values, name);
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} 必须是正整数`);
+  }
+  return parsed;
+}
+
 function printHelp() {
   console.log(`agentdash-ext <command>
 
@@ -98,7 +120,7 @@ Commands:
   init [target] [--package <name>] [--extension-id <id>]
   validate [--cwd <path>] [--strict-bundles]
   pack [--cwd <path>] [--out-dir <path>]
-  dev [--cwd <path>]
+  dev [--cwd <path>] [--host <host>] [--port <port>]
   install --api-url <url> --project <id> --token <token> [--archive <path>] [--overwrite]
 `);
 }

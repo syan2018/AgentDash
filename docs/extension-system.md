@@ -219,10 +219,13 @@ Canvas/panel 直接 channel bridge 使用同一 `extension.invoke_channel` contr
 常用命令：
 
 ```powershell
+pnpm --dir examples/extensions/protocol-demo run dev
 pnpm --dir examples/extensions/protocol-demo run validate
 pnpm --dir examples/extensions/protocol-demo run test
 pnpm --dir examples/extensions/protocol-demo run pack
 ```
+
+`agentdash-ext dev` 启动本地 Extension Preview：Vite 提供 panel HMR 与 sourcemap，preview scaffold 作为 iframe parent 复用 `agentdash.extension` bridge contract，并把 `runtime.invoke_action` / `extension.invoke_channel` 请求路由到本地加载的 `src/extension.ts`。这个开发态用于快速验证 TS panel 与 TS extension host 的自通信，导出和安装仍以 packaged artifact 为事实源。
 
 安装到 Project：
 

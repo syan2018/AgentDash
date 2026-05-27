@@ -111,7 +111,7 @@ export async function watchProject(projectRoot) {
 /**
  * @returns {import("esbuild").Plugin}
  */
-function agentdashSdkPackagesPlugin() {
+export function agentdashSdkPackagesPlugin() {
   return {
     name: "agentdash-sdk-packages",
     setup(buildConfig) {

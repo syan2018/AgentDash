@@ -7,10 +7,13 @@
 ## 开发命令
 
 ```powershell
+pnpm --dir examples/extensions/protocol-demo run dev
 pnpm --dir examples/extensions/protocol-demo run validate
 pnpm --dir examples/extensions/protocol-demo run test
 pnpm --dir examples/extensions/protocol-demo run pack
 ```
+
+`dev` 会启动本地 Extension Preview，panel 通过现有 `@agentdash/extension-ui` bridge 调用本地 extension host dispatcher。`Protocol Demo` 可在不 pack、不安装 Project 的情况下验证纯 TS action、provider channel、自有 channel 与 dependency alias 调用。
 
 安装到本地 AgentDash Project：
 

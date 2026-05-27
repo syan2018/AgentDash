@@ -13,7 +13,9 @@
   "dependencies": {
     "@agentdash/extension-sdk": "workspace:*",
     "@agentdash/extension-ui": "workspace:*",
-    "esbuild": "^0.27.3"
+    "@vitejs/plugin-react": "^5.1.1",
+    "esbuild": "^0.27.3",
+    "vite": "^7.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

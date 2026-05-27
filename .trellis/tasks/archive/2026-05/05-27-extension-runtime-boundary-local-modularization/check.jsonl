@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 route 层是否只保留接口职责，artifact storage 是否回到 application/infrastructure 边界。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查 Gateway invocation、surface 与 extension action 权限裁决是否符合运行时约束。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "检查 local TS Extension Host、artifact cache 与 relay handler 的行为是否符合本机 runtime contract。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 DTO 与 generated TypeScript 是否保持 wire contract 一致。"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "检查 packaged extension artifact、Canvas promote 与 Project installation 语义是否仍然一致。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查权限、信任模型和 runtime projection 是否跨层一致，没有只在单层生效。"}

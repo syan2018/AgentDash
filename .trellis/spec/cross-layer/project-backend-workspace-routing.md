@@ -45,6 +45,7 @@ registerBackendWorkspaceInventory(
 - Workspace binding / inventory 只表达目录事实与已确认 workspace root，不表达执行空闲状态。session 执行 backend placement 由 backend execution lease / allocator 维护，原因是同一个 workspace root 的 backend 可能正在执行其它 session。
 - `workspace_roots` 为空不表示本机不能浏览或不能 detect；空集合表示本机没有显式预登记 roots，执行类能力以 session `mount_root_ref` 自身作为当前 workspace 边界。
 - Frontend 展示 backend 是否可分配时读取 `/backends/runtime-summary` 的 `active_session_count`、executor `active_session_count` 与 `allocatable`，原因是该投影已经合并 runtime health、registry executor snapshot 与 active backend execution leases。
+- WorkspacePanel extension webview 的 action target 可由 Project workspace binding 提供；前端按 session/story/project default workspace 解析当前 workspace，再读取其默认 binding 与在线状态，原因是插件 tab 属于 Project runtime projection，而可执行本机 host 由 Project workspace/backend 授权关系承载。
 
 ## Validation And Errors
 

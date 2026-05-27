@@ -4,10 +4,12 @@ use uuid::Uuid;
 
 pub use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
-    ProjectAssetSourceStatusItemDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    ProjectAssetSourceStatusDto, ProjectAssetSourceStatusItemDto, PublishLibraryAssetRequest,
+    SeedBuiltinLibraryAssetsRequest,
     SharedLibrarySourceStatus as ContractSharedLibrarySourceStatus,
 };
+use agentdash_domain::extension_package::ExtensionPackageArtifact;
 use agentdash_domain::shared_library::{
     InstalledAssetSource, LibraryAsset, LibraryAssetScope, LibraryAssetSource, LibraryAssetType,
     SharedLibrarySourceStatus,
@@ -40,6 +42,13 @@ impl From<InstalledAssetSource> for InstalledAssetSourceResponse {
 }
 
 pub fn library_asset_response(asset: LibraryAsset) -> LibraryAssetDto {
+    library_asset_response_with_extension_package(asset, None)
+}
+
+pub fn library_asset_response_with_extension_package(
+    asset: LibraryAsset,
+    extension_package_artifact: Option<ExtensionPackageArtifact>,
+) -> LibraryAssetDto {
     LibraryAssetDto {
         id: asset.id.to_string(),
         asset_type: contract_asset_type(asset.asset_type),
@@ -54,8 +63,26 @@ pub fn library_asset_response(asset: LibraryAsset) -> LibraryAssetDto {
         payload_digest: asset.payload_digest,
         deprecated: asset.deprecated,
         payload: asset.payload,
+        extension_package_artifact: extension_package_artifact
+            .map(library_extension_package_artifact_response),
         created_at: asset.created_at.to_rfc3339(),
         updated_at: asset.updated_at.to_rfc3339(),
+    }
+}
+
+pub fn library_extension_package_artifact_response(
+    artifact: ExtensionPackageArtifact,
+) -> LibraryExtensionPackageArtifactDto {
+    LibraryExtensionPackageArtifactDto {
+        id: artifact.id.to_string(),
+        package_name: artifact.package_name,
+        package_version: artifact.package_version,
+        asset_version: artifact.asset_version,
+        source_version: artifact.source_version,
+        archive_digest: artifact.archive_digest,
+        manifest_digest: artifact.manifest_digest,
+        byte_size: artifact.byte_size,
+        created_at: artifact.created_at.to_rfc3339(),
     }
 }
 

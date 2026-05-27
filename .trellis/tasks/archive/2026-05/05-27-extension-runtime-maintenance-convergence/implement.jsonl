@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层、repository、migration、runtime gateway 规范入口"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "application/domain/infrastructure/API route 边界"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway provider 与 invocation 权限边界"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "storage/repository port 所有权与注入方式"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "DTO/TS contract 变更与 drift check"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "cloud/local/relay 本机运行时边界"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "Project extension installation 与 Shared Library 事实源"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 projection mapper 与运行时验证规则"}

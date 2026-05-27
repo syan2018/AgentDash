@@ -22,6 +22,7 @@ const ORIGIN_TONE_MAP: Record<string, OriginBadgeMeta> = {
   skills_sh: { label: "skills.sh", tone: "warning" },
   cloned: { label: "cloned", tone: "info" },
   marketplace: { label: "marketplace", tone: "success" },
+  local_package: { label: "local", tone: "info" },
 };
 
 const FALLBACK: OriginBadgeMeta = { label: "user", tone: "accent" };

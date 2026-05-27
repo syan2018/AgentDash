@@ -10,6 +10,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "canvas_bindings",
     "canvas_files",
     "canvases",
+    "extension_package_artifacts",
     "group_memberships",
     "groups",
     "inline_fs_files",

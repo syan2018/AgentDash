@@ -1,5 +1,6 @@
 pub mod connector;
 pub mod context;
+pub mod extension_package;
 pub mod hooks;
 pub mod platform;
 pub mod session_persistence;
@@ -55,6 +56,12 @@ pub use context::capability::{
     CompanionAgentEntry, CompanionSliceMode, SessionBaselineCapabilities, SkillEntry,
 };
 pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
+
+// ─── extension package storage ──────────────────────────────
+
+pub use extension_package::{
+    ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
+};
 
 // ─── hooks ──────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@
 //! - `terminal`：交互式终端 spawn / input / resize / kill
 //! - `relay_mcp_servers`：relay MCP Server 配置解析
 
+mod extension;
 mod materialization;
 mod mcp_relay;
 mod prompt;
@@ -19,11 +20,13 @@ mod workspace;
 pub use workspace::browse_directory;
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_relay::*;
 use tokio::sync::{Mutex, mpsc};
 
+use crate::LocalExtensionHostManager;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::materialization::MaterializationStore;
 use crate::mcp_client_manager::McpClientManager;
@@ -35,6 +38,8 @@ use agentdash_spi::AgentConnector;
 /// 命令处理器，路由云端命令到本地执行组件
 #[derive(Clone)]
 pub struct CommandHandler {
+    pub(crate) backend_id: String,
+    pub(crate) workspace_roots: Vec<PathBuf>,
     pub(crate) tool_executor: ToolExecutor,
     pub(crate) session_runtime: Option<SessionRuntimeServices>,
     pub(crate) connector: Option<Arc<dyn AgentConnector>>,
@@ -44,21 +49,32 @@ pub struct CommandHandler {
     pub(crate) terminal_manager: Arc<TerminalManager>,
     pub(crate) materialization_store: Arc<MaterializationStore>,
     pub(crate) session_forwarders: Arc<Mutex<HashSet<String>>>,
+    pub(crate) extension_host: LocalExtensionHostManager,
+    pub(crate) extension_artifact_api_base_url: String,
+    pub(crate) extension_artifact_access_token: String,
+    pub(crate) extension_artifact_cache_root: PathBuf,
 }
 
 impl CommandHandler {
     pub fn new(
         backend_id: String,
+        workspace_roots: Vec<PathBuf>,
         tool_executor: ToolExecutor,
         session_runtime: Option<SessionRuntimeServices>,
         connector: Option<Arc<dyn AgentConnector>>,
         mcp_manager: Option<Arc<McpClientManager>>,
         workspace_contract_config: WorkspaceContractRuntimeConfig,
+        extension_host: LocalExtensionHostManager,
+        extension_artifact_api_base_url: String,
+        extension_artifact_access_token: String,
+        extension_artifact_cache_root: PathBuf,
         event_tx: mpsc::UnboundedSender<RelayMessage>,
     ) -> Self {
         let terminal_manager = Arc::new(TerminalManager::new(event_tx.clone()));
-        let materialization_store = Arc::new(MaterializationStore::new(backend_id));
+        let materialization_store = Arc::new(MaterializationStore::new(backend_id.clone()));
         Self {
+            backend_id,
+            workspace_roots,
             tool_executor,
             session_runtime,
             connector,
@@ -68,6 +84,10 @@ impl CommandHandler {
             terminal_manager,
             materialization_store,
             session_forwarders: Arc::new(Mutex::new(HashSet::new())),
+            extension_host,
+            extension_artifact_api_base_url,
+            extension_artifact_access_token,
+            extension_artifact_cache_root,
         }
     }
 
@@ -170,6 +190,13 @@ impl CommandHandler {
             }
             RelayMessage::CommandMcpClose { id, payload } => {
                 vec![self.handle_mcp_close(id, payload).await]
+            }
+
+            RelayMessage::CommandExtensionActionInvoke { id, payload } => {
+                vec![self.handle_extension_action_invoke(id, payload).await]
+            }
+            RelayMessage::CommandExtensionChannelInvoke { id, payload } => {
+                vec![self.handle_extension_channel_invoke(id, payload).await]
             }
 
             // ── 交互式终端 ──

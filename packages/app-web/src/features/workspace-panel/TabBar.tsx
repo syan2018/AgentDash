@@ -21,7 +21,11 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { tabTypeRegistry, type TabInstance } from "./tab-type-registry";
+import {
+  tabTypeRegistry,
+  useTabTypeRegistrySnapshot,
+  type TabInstance,
+} from "./tab-type-registry";
 import { AddTabMenu } from "./AddTabMenu";
 
 // ─── Props ──────────────────────────────────────────────
@@ -45,6 +49,7 @@ export function TabBar({
   onReorder,
   onAddTab,
 }: TabBarProps) {
+  useTabTypeRegistrySnapshot();
   const pinnedTabs = useMemo(() => tabs.filter((t) => t.pinned), [tabs]);
   const dynamicTabs = useMemo(() => tabs.filter((t) => !t.pinned), [tabs]);
   const dynamicIds = useMemo(() => dynamicTabs.map((t) => t.id), [dynamicTabs]);

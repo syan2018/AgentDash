@@ -7,13 +7,20 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::canvas::{
-    CanvasMutationInput, CanvasRuntimeBridgeSnapshot, apply_canvas_mutation, build_canvas,
+    CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
+    apply_canvas_mutation, build_canvas, build_canvas_extension_package,
     build_runtime_snapshot_with_bindings,
+};
+use agentdash_application::extension_package::{
+    ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
+    StoreExtensionPackageArchiveInput, install_extension_package_artifact,
+    store_extension_package_archive,
 };
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult,
 };
+use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
@@ -60,6 +67,16 @@ pub struct CanvasRuntimeInvokeRequest {
     pub action_key: String,
     #[serde(default)]
     pub input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromoteCanvasToExtensionRequest {
+    pub extension_key: Option<String>,
+    pub display_name: Option<String>,
+    pub package_version: Option<String>,
+    pub asset_version: Option<String>,
+    #[serde(default = "default_promote_overwrite")]
+    pub overwrite: bool,
 }
 
 pub async fn list_project_canvases(
@@ -169,6 +186,59 @@ pub async fn delete_canvas(
     state.repos.canvas_repo.delete(canvas.id).await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
+}
+
+pub async fn promote_canvas_to_extension(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+    Json(req): Json<PromoteCanvasToExtensionRequest>,
+) -> Result<Json<ExtensionPackageInstallationResponse>, ApiError> {
+    let canvas =
+        load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
+            .await?;
+    let package = build_canvas_extension_package(
+        &canvas,
+        CanvasExtensionPackageInput {
+            package_version: req.package_version,
+            asset_version: req.asset_version,
+        },
+    )?;
+    let artifact = store_extension_package_archive(
+        &state.repos,
+        state.services.extension_package_artifact_storage.as_ref(),
+        StoreExtensionPackageArchiveInput {
+            project_id: canvas.project_id,
+            archive_bytes: package.archive_bytes,
+            expected_archive_digest: Some(package.archive_digest),
+        },
+    )
+    .await
+    .map_err(extension_package_error_to_api)?;
+    let installation = install_extension_package_artifact(
+        &state.repos,
+        InstallExtensionPackageArtifactInput {
+            project_id: canvas.project_id,
+            artifact_id: artifact.id,
+            extension_key: req.extension_key,
+            display_name: req
+                .display_name
+                .or_else(|| Some(canvas.title.trim().to_string())),
+            overwrite: req.overwrite,
+        },
+    )
+    .await?;
+    let artifact = installation.package_artifact.ok_or_else(|| {
+        ApiError::Internal("Canvas promoted extension installation 缺少 artifact 引用".into())
+    })?;
+
+    Ok(Json(ExtensionPackageInstallationResponse {
+        installation_id: installation.id.to_string(),
+        extension_key: installation.extension_key,
+        extension_id: installation.manifest.extension_id,
+        package_artifact_id: artifact.artifact_id.to_string(),
+        archive_digest: artifact.archive_digest,
+    }))
 }
 
 pub async fn get_canvas_runtime_snapshot(
@@ -285,6 +355,24 @@ async fn load_canvas_with_permission(
 
 fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw_project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
+}
+
+fn default_promote_overwrite() -> bool {
+    true
+}
+
+fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
+    match error {
+        ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
+        ExtensionPackageArtifactUseCaseError::Storage(error) => {
+            ApiError::Internal(error.to_string())
+        }
+        ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
+        ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),
+        ExtensionPackageArtifactUseCaseError::Forbidden(error) => ApiError::Forbidden(error),
+        ExtensionPackageArtifactUseCaseError::Conflict(error) => ApiError::Conflict(error),
+        ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
+    }
 }
 
 async fn resolve_canvas_runtime_vfs(

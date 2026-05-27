@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use agentdash_relay::*;
 
+use crate::LocalExtensionHostManager;
 use crate::handlers::CommandHandler;
 use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
@@ -22,6 +23,7 @@ use agentdash_spi::AgentConnector;
 pub struct Config {
     pub cloud_url: String,
     pub token: String,
+    pub api_base_url: String,
     pub backend_id: String,
     pub name: String,
     pub workspace_roots: Vec<PathBuf>,
@@ -30,6 +32,8 @@ pub struct Config {
     pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,
+    pub extension_host: LocalExtensionHostManager,
+    pub extension_artifact_cache_root: PathBuf,
 }
 
 /// 主循环：连接 → 注册 → 消息处理 → 断线 → 重连
@@ -97,11 +101,16 @@ async fn run_session(
 
     let handler = CommandHandler::new(
         config.backend_id.clone(),
+        config.workspace_roots.clone(),
         config.tool_executor.clone(),
         config.session_runtime.clone(),
         config.connector.clone(),
         config.mcp_manager.clone(),
         config.workspace_contract_config.clone(),
+        config.extension_host.clone(),
+        config.api_base_url.clone(),
+        config.token.clone(),
+        config.extension_artifact_cache_root.clone(),
         event_tx,
     );
 

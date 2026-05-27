@@ -513,6 +513,17 @@ mod tests {
         }
     }
 
+    fn message_refs(count: usize) -> Vec<Option<MessageRef>> {
+        (0..count)
+            .map(|index| {
+                Some(MessageRef {
+                    turn_id: format!("t-{index}"),
+                    entry_index: 0,
+                })
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn execute_compaction_skips_existing_summary_when_building_new_summary() {
         let bridge = RecordingBridge;
@@ -525,6 +536,7 @@ mod tests {
 
         let result = execute_compaction(
             &messages,
+            &message_refs(messages.len()),
             &compaction_params(1, 16_384),
             &bridge,
             &CancellationToken::new(),
@@ -573,6 +585,7 @@ mod tests {
 
         let error = execute_compaction(
             &messages,
+            &message_refs(messages.len()),
             &CompactionParams {
                 custom_summary: None,
                 ..compaction_params(1, 16_384)

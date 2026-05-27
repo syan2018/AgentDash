@@ -14,6 +14,7 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio::sync::{Mutex, watch};
 
+use crate::LocalExtensionHostManager;
 use crate::local_backend_config::{self, McpLocalServerEntry};
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
@@ -484,6 +485,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
     Ok(ws_client::Config {
         cloud_url: config.cloud_url.clone(),
         token: config.token.clone(),
+        api_base_url: api_base_url_from_cloud_url(&config.cloud_url)?,
         backend_id: config.backend_id.clone(),
         name: config.name.clone(),
         workspace_roots: config.workspace_roots.clone(),
@@ -492,6 +494,10 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         connector,
         mcp_manager,
         workspace_contract_config: local_backend_config.workspace_contract,
+        extension_host: LocalExtensionHostManager::with_default_config(),
+        extension_artifact_cache_root: local_runtime_data_dir()?
+            .join("extension-artifact-cache")
+            .join(local_runtime_backend_key(&config.backend_id)),
     })
 }
 
@@ -505,7 +511,13 @@ fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
 }
 
 fn local_runtime_session_db_path(backend_id: &str) -> anyhow::Result<PathBuf> {
-    let backend_key = backend_id
+    Ok(local_runtime_data_dir()?
+        .join(local_runtime_backend_key(backend_id))
+        .join("agentdash-local.db"))
+}
+
+fn local_runtime_backend_key(backend_id: &str) -> String {
+    backend_id
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
@@ -514,10 +526,25 @@ fn local_runtime_session_db_path(backend_id: &str) -> anyhow::Result<PathBuf> {
                 '_'
             }
         })
-        .collect::<String>();
-    Ok(local_runtime_data_dir()?
-        .join(backend_key)
-        .join("agentdash-local.db"))
+        .collect::<String>()
+}
+
+fn api_base_url_from_cloud_url(cloud_url: &str) -> anyhow::Result<String> {
+    let trimmed = cloud_url.trim();
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("ws://") {
+        ("http", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("wss://") {
+        ("https", rest)
+    } else {
+        anyhow::bail!("cloud_url 必须使用 ws:// 或 wss://: {cloud_url}");
+    };
+    let authority = rest
+        .split('/')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("cloud_url 缺少 host: {cloud_url}"))?;
+    Ok(format!("{scheme}://{authority}"))
 }
 
 fn local_runtime_data_dir() -> anyhow::Result<PathBuf> {

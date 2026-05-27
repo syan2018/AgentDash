@@ -7,6 +7,7 @@ pub mod companion;
 pub mod context_container;
 pub mod context_source;
 pub mod embedded_skill;
+pub mod extension_package;
 pub mod identity;
 pub mod inline_file;
 pub mod llm_provider;

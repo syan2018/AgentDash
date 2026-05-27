@@ -208,8 +208,13 @@ mod tests {
                 description: None,
                 version: "0.1.0".to_string(),
                 payload: json!({
-                    "manifest_version": "1",
+                    "manifest_version": "2",
                     "extension_id": "seed-extension",
+                    "package": {
+                        "name": "seed-extension",
+                        "version": "0.1.0"
+                    },
+                    "asset_version": "0.1.0",
                     "commands": [{
                         "name": "seed-extension:run",
                         "description": "run",

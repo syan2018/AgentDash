@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 artifact storage 是否离开 API route 业务 helper。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 route 改造未改变前后端 wire contract。"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "检查 packaged extension artifact 仍是安装事实源。"}

@@ -788,3 +788,146 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 50: Extension Assets 前端面板与后端卸载收口
+
+**Date**: 2026-05-27
+**Task**: Extension Assets 前端面板与后端卸载收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+在 Assets 中心新增 Extension 类目，把 packaged extension 的上传 / 从归档安装 / 卸载 / 下载补成前端可用通路。后端补 DELETE installation 路由 + repo delete/get_by_project_and_id；契约新增 UninstallExtensionInstallationResponse 经 contract crate 标准链路生成。前端新增 ExtensionCategoryPanel + 三个 dialog + 两个 row + extensionPackage service + sha256 util + extensionAggregation 纯函数。E2E 走完上传→安装→卸载流程；spec 在 frontend/state-management.md 加 Projection Store 写后强制 refetch 约定。完整测试链路绿（cargo 后端 / pnpm 前端 typecheck+lint+vitest 245 测试 / playwright spec --list 通过）。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `92740c52` | (see git log) |
+| `b8d665d3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 51: Extension Runtime 收口维护
+
+**Date**: 2026-05-27
+**Task**: Extension Runtime 收口维护
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+收口 Extension Runtime 权限 evaluator、package artifact storage port 与 local TS extension host 模块边界；归档维护任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c354af06` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 52: 插件系统完整能力对齐收口
+
+**Date**: 2026-05-27
+**Task**: 插件系统完整能力对齐收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 TS extension host 能力对齐：协议 channel、Host API dispatcher、前端 bridge、protocol-demo 示例、文档、手工安装试用、runner 模块化与测试矩阵。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec4d0888` | (see git log) |
+| `685b4255` | (see git log) |
+| `abcd2f41` | (see git log) |
+| `d1480a00` | (see git log) |
+| `ac4d4ea4` | (see git log) |
+| `827a6993` | (see git log) |
+| `54b711a3` | (see git log) |
+| `6f733380` | (see git log) |
+| `7bf502af` | (see git log) |
+| `613bc4e7` | (see git log) |
+| `3ae20f11` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 53: Extension SDK 开发体验落地
+
+**Date**: 2026-05-27
+**Task**: Extension SDK 开发体验落地
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 agentdash-ext dev 本地 Extension Preview 与 TS host dispatcher：Vite 服务 panel 和 preview scaffold，本地加载 src/extension.ts，支持 action/channel/self/dependency alias 与 dev mock Host API；补充 examples/docs、自动化测试和浏览器验收证据。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ec9d8b96` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

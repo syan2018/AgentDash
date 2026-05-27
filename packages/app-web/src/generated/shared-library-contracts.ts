@@ -9,13 +9,15 @@ export type InstalledAssetSourceDto = { library_asset_id: string, source_ref: st
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 
-export type LibraryAssetDto = { id: string, asset_type: LibraryAssetType, scope: LibraryAssetScope, owner_id?: string, key: string, display_name: string, description?: string, version: string, source: LibraryAssetSource, source_ref?: string, payload_digest: string, deprecated: boolean, payload: JsonValue, created_at: string, updated_at: string, };
+export type LibraryAssetDto = { id: string, asset_type: LibraryAssetType, scope: LibraryAssetScope, owner_id?: string, key: string, display_name: string, description?: string, version: string, source: LibraryAssetSource, source_ref?: string, payload_digest: string, deprecated: boolean, payload: JsonValue, extension_package_artifact?: LibraryExtensionPackageArtifactDto, created_at: string, updated_at: string, };
 
 export type LibraryAssetScope = "builtin" | "system" | "org" | "user";
 
 export type LibraryAssetSource = "builtin" | "user_authored" | "remote_imported" | "plugin_embedded";
 
 export type LibraryAssetType = "agent_template" | "mcp_server_template" | "workflow_template" | "skill_template" | "vfs_mount_template" | "extension_template";
+
+export type LibraryExtensionPackageArtifactDto = { id: string, package_name: string, package_version: string, asset_version: string, source_version: string, archive_digest: string, manifest_digest: string, byte_size: bigint, created_at: string, };
 
 export type ListLibraryAssetsQuery = { asset_type?: string, scope?: string, owner_id?: string, include_deprecated: boolean, };
 

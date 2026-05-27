@@ -49,6 +49,19 @@ pub struct InstalledAssetSourceDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct LibraryExtensionPackageArtifactDto {
+    pub id: String,
+    pub package_name: String,
+    pub package_version: String,
+    pub asset_version: String,
+    pub source_version: String,
+    pub archive_digest: String,
+    pub manifest_digest: String,
+    pub byte_size: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct LibraryAssetDto {
     pub id: String,
     pub asset_type: LibraryAssetType,
@@ -69,6 +82,9 @@ pub struct LibraryAssetDto {
     pub payload_digest: String,
     pub deprecated: bool,
     pub payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub extension_package_artifact: Option<LibraryExtensionPackageArtifactDto>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -116,6 +132,7 @@ pub enum PublishLibraryAssetKind {
     WorkflowBundle,
     SkillAsset,
     VfsMount,
+    ExtensionInstallation,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

@@ -967,3 +967,37 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: Canvas Promote Extension 与 TS Extension SDK 收口
+
+**Date**: 2026-05-27
+**Task**: Canvas Promote Extension 与 TS Extension SDK 收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 Canvas promote to packaged extension 链路，补齐 canvas_panel renderer、前后端 API/mapper、package validation 与 E2E；父任务 8/8 子任务完成并归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4171ded7` | (see git log) |
+| `e53f69a5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
-- **Last Active**: 2026-05-26
+- **Total Sessions**: 24
+- **Last Active**: 2026-05-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~969 | Active |
+| `journal-1.md` | ~1003 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-05-27 | Canvas Promote Extension 与 TS Extension SDK 收口 | `4171ded7`, `e53f69a5` | `codex/extension-sdk` |
 | 23 | 2026-05-26 | Companion 通用交互能力申请 MVP | `4cada192` | `main` |
 | 22 | 2026-05-26 | 上下文压缩基建落地 | `1d36cbe1`, `ff6ac916`, `aadb7db9`, `596a8d1d`, `894f766c`, `0c31e8cd`, `cdc2ef05`, `cd6472e3`, `f89746ea`, `baabaa72`, `600db8f6` | `main` |
 | 21 | 2026-05-24 | Auth 身份与权限链路收口 | `33f1de73` | `main` |

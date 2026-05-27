@@ -1,5 +1,32 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::extension_management::{
+    ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
+    ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
+    ProjectExtensionPackageArtifactRefResponse, ProjectExtensionPackageModeResponse,
+};
+use agentdash_contracts::extension_package::{
+    ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
+    ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
+};
+use agentdash_contracts::extension_runtime::{
+    ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
+    ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
+    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
+    ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
+    ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
+    ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
+    ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
+    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
+    ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
+    ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
+    UninstallExtensionInstallationResponse,
+};
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
@@ -19,8 +46,8 @@ use agentdash_contracts::session::{
 };
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
-    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
@@ -133,11 +160,77 @@ fn main() {
     });
 
     write_domain(
+        &generated_dir.join("extension-runtime-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ExtensionRuntimeActionKindResponse>(dir);
+            export_all::<ExtensionFlagTypeResponse>(dir);
+            export_all::<ExtensionPermissionAccessResponse>(dir);
+            export_all::<ExtensionProcessPermissionAccessResponse>(dir);
+            export_all::<ExtensionBundleKindResponse>(dir);
+            export_all::<ExtensionCommandHandlerResponse>(dir);
+            export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
+            export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+            export_all::<ExtensionPermissionDeclarationResponse>(dir);
+            export_all::<ExtensionInstalledAssetSourceResponse>(dir);
+            export_all::<ExtensionPackageArtifactRefResponse>(dir);
+            export_all::<ExtensionInstallationProjectionResponse>(dir);
+            export_all::<ExtensionCommandProjectionResponse>(dir);
+            export_all::<ExtensionFlagProjectionResponse>(dir);
+            export_all::<ExtensionMessageRendererProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+            export_all::<ExtensionDependencyDeclarationResponse>(dir);
+            export_all::<ExtensionDependencyProjectionResponse>(dir);
+            export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
+            export_all::<ExtensionPermissionProjectionResponse>(dir);
+            export_all::<ExtensionBundleProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeTraceResponse>(dir);
+            export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<UninstallExtensionInstallationResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("extension-management-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ProjectExtensionPackageModeResponse>(dir);
+            export_all::<ProjectExtensionInstalledSourceResponse>(dir);
+            export_all::<ProjectExtensionPackageArtifactRefResponse>(dir);
+            export_all::<ProjectExtensionCapabilitySummaryResponse>(dir);
+            export_all::<ProjectExtensionManagementItemResponse>(dir);
+            export_all::<ProjectExtensionManagementListResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("extension-package-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ExtensionPackageArtifactResponse>(dir);
+            export_all::<InstallExtensionPackageArtifactRequest>(dir);
+            export_all::<ExtensionPackageInstallationResponse>(dir);
+            export_all::<ImportExtensionPackageResponse>(dir);
+        },
+    );
+
+    write_domain(
         &generated_dir.join("shared-library-contracts.ts"),
         &[],
         check,
         |dir| {
             export_all::<InstalledAssetSourceDto>(dir);
+            export_all::<LibraryExtensionPackageArtifactDto>(dir);
             export_all::<LibraryAssetDto>(dir);
             export_all::<ListLibraryAssetsQuery>(dir);
             export_all::<SeedBuiltinLibraryAssetsRequest>(dir);

@@ -9,7 +9,11 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { useWorkspaceTabStore } from "../../stores/workspaceTabStore";
-import { tabTypeRegistry } from "./tab-type-registry";
+import {
+  tabTypeRegistry,
+  useTabTypeRegistrySnapshot,
+} from "./tab-type-registry";
+import { createExtensionTabDescriptors } from "../extension-runtime";
 import { registerBuiltinTabTypes } from "./tab-types";
 import { WorkspaceDataProvider, type WorkspaceData } from "./workspace-data-context";
 import { TabBar } from "./TabBar";
@@ -21,11 +25,12 @@ registerBuiltinTabTypes();
 export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelProps>(
   function WorkspacePanel(props, ref) {
     const { runtimeData } = props;
-    const { sessionId, activeCanvasId } = runtimeData;
+    const { projectId, sessionId, activeCanvasId, extensionRuntime } = runtimeData;
 
     const tabs = useWorkspaceTabStore((s) => s.tabs);
     const activeTabId = useWorkspaceTabStore((s) => s.activeTabId);
     const storeSessionId = useWorkspaceTabStore((s) => s.sessionId);
+    const registrySnapshot = useTabTypeRegistrySnapshot();
 
     const prevCanvasIdRef = useRef<string | null>(null);
 
@@ -35,6 +40,21 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
         useWorkspaceTabStore.getState().initialize(sessionId);
       }
     }, [sessionId, storeSessionId]);
+
+    useEffect(() => {
+      if (
+        !projectId
+        || (extensionRuntime.status !== "ready" && extensionRuntime.status !== "refreshing")
+      ) {
+        return;
+      }
+      const ownerKey = `project-extension-runtime:${projectId}`;
+      const descriptors = createExtensionTabDescriptors({
+        projection: extensionRuntime.projection,
+      });
+      tabTypeRegistry.registerContribution(ownerKey, descriptors);
+      return () => tabTypeRegistry.unregisterContribution(ownerKey);
+    }, [extensionRuntime.projection, extensionRuntime.status, projectId]);
 
     // 外部命令式 API：按类型打开或激活 Tab
     useImperativeHandle(ref, () => ({
@@ -86,15 +106,22 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     // 渲染当前激活 Tab 的内容
     const activeContent = useMemo(() => {
       if (!activeTab) return null;
-      const type = tabTypeRegistry.getType(activeTab.typeId);
-      if (!type) return null;
+      const type = registrySnapshot.find((descriptor) => descriptor.typeId === activeTab.typeId);
+      if (!type) {
+        return (
+          <UnavailableTabState
+            typeId={activeTab.typeId}
+            uri={activeTab.uri}
+          />
+        );
+      }
       return type.renderContent({
         uri: activeTab.uri,
         tabId: activeTab.id,
         sessionId,
         isActive: true,
       });
-    }, [activeTab, sessionId]);
+    }, [activeTab, registrySnapshot, sessionId]);
 
     return (
       <WorkspaceDataProvider value={workspaceData}>
@@ -116,3 +143,17 @@ export const WorkspacePanel = forwardRef<WorkspacePanelHandle, WorkspacePanelPro
     );
   },
 );
+
+function UnavailableTabState({ typeId, uri }: { typeId: string; uri: string }) {
+  return (
+    <div className="flex h-full min-h-[180px] items-center justify-center bg-background p-6">
+      <div className="max-w-sm rounded-[8px] border border-border bg-secondary/25 px-4 py-3 text-sm">
+        <p className="font-medium text-foreground">Workspace tab 不可用</p>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          {typeId} 没有可用的 tab descriptor，可能对应插件已停用或尚未加载。
+        </p>
+        <p className="mt-2 truncate font-mono text-[11px] text-muted-foreground">{uri}</p>
+      </div>
+    </div>
+  );
+}

@@ -32,6 +32,7 @@ import {
   type AssetPickerSelection,
 } from "../publish/AssetPickerDrawer";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
+import { getMarketplaceInstallBlocker } from "./extension/extensionTemplateMarketplace";
 import {
   ConfirmOverwriteDialog,
   InstallStatusChip,
@@ -495,7 +496,9 @@ function MarketplaceAssetCard({
   const isInstalled = status === "up_to_date";
   const hasUpdate = status === "update_available";
   const sourceMissing = status === "source_missing";
-  const installDisabled = busy || asset.deprecated || isInstalled || sourceMissing;
+  const installBlocker = getMarketplaceInstallBlocker(asset);
+  const installDisabled =
+    busy || asset.deprecated || isInstalled || sourceMissing || installBlocker !== null;
 
   return (
     <article className="flex flex-col rounded-[8px] border border-border bg-background p-4 transition-colors hover:border-primary/25">
@@ -513,6 +516,14 @@ function MarketplaceAssetCard({
           {asset.deprecated && (
             <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
               已废弃
+            </span>
+          )}
+          {installBlocker && (
+            <span
+              className="rounded-[6px] border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+              title={installBlocker}
+            >
+              包缺失
             </span>
           )}
         </div>
@@ -536,7 +547,9 @@ function MarketplaceAssetCard({
             disabled={installDisabled}
             className="agentdash-button-primary h-7 px-3 text-xs"
             title={
-              sourceMissing
+              installBlocker
+                ? installBlocker
+                : sourceMissing
                 ? "市场来源已废弃或不可用"
                 : isInstalled
                   ? "项目已是最新版本"
@@ -549,7 +562,9 @@ function MarketplaceAssetCard({
                 ? "已废弃"
                 : sourceMissing
                   ? "来源缺失"
-                  : isInstalled
+                  : installBlocker
+                    ? "包缺失"
+                    : isInstalled
                     ? "已安装"
                     : hasUpdate
                       ? "更新"

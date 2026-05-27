@@ -39,6 +39,8 @@ mapper 不负责：
 
 前端把 `src/generated/*` 当作 wire DTO 事实源。Feature 可以定义 view model，但 view model 必须由 generated DTO 显式转换而来，原因是 UI 形态与 transport 形态有不同变化节奏。
 
+Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，由 `services/extensionRuntime.ts` 做 `unknown -> ExtensionRuntimeProjectionResponse` / invoke response 的运行时校验与空值归一化。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
+
 新增或修改跨层 DTO 时同步运行：
 
 ```powershell

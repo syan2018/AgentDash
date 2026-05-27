@@ -22,8 +22,9 @@ export function SessionUsageCard({ event }: SessionUsageCardProps) {
 
   const usage = event.payload.tokenUsage;
   const total = usage.total;
-  const maxTokens = usage.modelContextWindow ?? undefined;
-  const used = total.totalTokens;
+  const context = usage.context;
+  const maxTokens = context.effectiveContextWindow ?? context.modelContextWindow ?? usage.modelContextWindow ?? undefined;
+  const used = context.currentContextTokens;
 
   const usedPercent = (maxTokens != null && used > 0 && maxTokens > 0)
     ? Math.round((used / maxTokens) * 100)
@@ -35,7 +36,7 @@ export function SessionUsageCard({ event }: SessionUsageCardProps) {
         TOKENS
       </span>
       <span>
-        上下文: <span className="font-medium text-foreground/70">{formatTokenCount(used)}</span>
+        当前上下文: <span className="font-medium text-foreground/70">{formatTokenCount(used)}</span>
         {maxTokens != null && <span className="text-muted-foreground/60">/{formatTokenCount(maxTokens)}</span>}
       </span>
       {usedPercent != null && (
@@ -49,8 +50,9 @@ export function SessionUsageCard({ event }: SessionUsageCardProps) {
           <span className="text-muted-foreground/60 tabular-nums">{usedPercent}%</span>
         </div>
       )}
-      <span>输入: <span className="font-medium text-foreground/70">{formatTokenCount(total.inputTokens)}</span></span>
-      <span>输出: <span className="font-medium text-foreground/70">{formatTokenCount(total.outputTokens)}</span></span>
+      <span>累计: <span className="font-medium text-foreground/70">{formatTokenCount(context.cumulativeTotalTokens)}</span></span>
+      <span>最近输入: <span className="font-medium text-foreground/70">{formatTokenCount(usage.last.inputTokens)}</span></span>
+      <span>累计输出: <span className="font-medium text-foreground/70">{formatTokenCount(total.outputTokens)}</span></span>
       {total.cachedInputTokens > 0 && (
         <span>缓存: <span className="font-medium text-foreground/70">{formatTokenCount(total.cachedInputTokens)}</span></span>
       )}

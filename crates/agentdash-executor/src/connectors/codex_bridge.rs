@@ -451,9 +451,13 @@ async fn handle_server_notification(
         }
         "thread/tokenUsage/updated" => {
             if let Some(params) = notification.params
-                && let Ok(p) = serde_json::from_value(params)
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::ThreadTokenUsageUpdatedNotification,
+                >(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p.into()))))
+                    .await;
             }
         }
         "thread/status/changed" => {

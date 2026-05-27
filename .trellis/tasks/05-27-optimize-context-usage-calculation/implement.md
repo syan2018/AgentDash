@@ -2,22 +2,22 @@
 
 ## Checklist
 
-- [ ] 阅读相关 Trellis spec：agent protocol、executor、application session、agent compaction、frontend session。
-- [ ] 梳理当前 usage event 的 Rust 与 TypeScript 类型生成链路。
-- [ ] Milestone 1：设计并实现规范化 usage 数据结构，明确 provider context、pending estimate、current context、cumulative usage。
-- [ ] Milestone 1：更新 Codex bridge 的 token usage 映射，保留 total/last 语义。
-- [ ] Milestone 1：更新 session stream extraction 与前端 `TokenUsageInfo`。
-- [ ] Milestone 1：更新 `ContextUsageRing` 与 usage card 的字段来源和展示文案。
-- [ ] Milestone 2：集中后端 token estimate helper，替换 streaming、compaction、projection 中的重复估算。
-- [ ] Milestone 2：更新 compaction evaluation，使用 current context pressure 与 effective context window。
-- [ ] Milestone 3：在后端或 session model 中提供上下文构成 segments 与 details，避免前端重复计算 token。
-- [ ] Milestone 3：为上下文查看窗口补齐 Claude Code 对齐粒度：主分类、二级详情、message breakdown、top tools、top attachments。
-- [ ] Milestone 3：设计并实现上下文查看窗口的前端入口、窗口结构和状态展示。
-- [ ] 补充后端单元测试。
-- [ ] 补充前端模型与 UI 计算测试。
-- [ ] 验证没有新增 `/context` slash command 入口。
-- [ ] 根据实际改动更新 Trellis spec。
-- [ ] 运行 lint、type-check、测试与必要的前端验证。
+- [x] 阅读相关 Trellis spec：agent protocol、executor、application session、agent compaction、frontend session。
+- [x] 梳理当前 usage event 的 Rust 与 TypeScript 类型生成链路。
+- [x] Milestone 1：设计并实现规范化 usage 数据结构，明确 provider context、pending estimate、current context、cumulative usage。
+- [x] Milestone 1：更新 Codex bridge 的 token usage 映射，保留 total/last 语义。
+- [x] Milestone 1：更新 session stream extraction 与前端 `TokenUsageInfo`。
+- [x] Milestone 1：更新 `ContextUsageRing` 与 usage card 的字段来源和展示文案。
+- [x] Milestone 2：集中后端 token estimate helper，替换 streaming、compaction、projection 中的重复估算。
+- [x] Milestone 2：更新 compaction evaluation，使用 current context pressure 与 effective context window。
+- [x] Milestone 3：在后端或 session model 中提供上下文构成 segments 与 details，避免前端重复计算 token。
+- [x] Milestone 3：为上下文查看窗口补齐 Claude Code 对齐粒度：主分类、二级详情、message breakdown、top tools、top attachments。
+- [x] Milestone 3：设计并实现上下文查看窗口的前端入口、窗口结构和状态展示。
+- [x] 补充后端单元测试。
+- [x] 补充前端模型与 UI 计算测试。
+- [x] 验证没有新增 `/context` slash command 入口。
+- [x] 根据实际改动更新 Trellis spec。
+- [x] 运行 lint、type-check、测试与必要的前端验证。
 
 ## Key Files
 

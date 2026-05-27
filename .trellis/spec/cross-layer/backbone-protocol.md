@@ -39,7 +39,7 @@ pub enum BackboneEvent {
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
     TurnPlanUpdated(codex::TurnPlanUpdatedNotification),
     PlanDelta(codex::PlanDeltaNotification),
-    TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
+    TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
     ExecutorContextCompacted(codex::ContextCompactedNotification),
     ApprovalRequest(ApprovalRequest),
@@ -49,6 +49,20 @@ pub enum BackboneEvent {
 ```
 
 序列化采用 `#[serde(tag = "type", content = "payload", rename_all = "snake_case")]`。
+
+## Token Usage Semantics
+
+`TokenUsageUpdated` 使用 AgentDash 自有的 normalized payload 包装 provider usage。该 payload 保留 Codex `ThreadTokenUsage.last` 与 `ThreadTokenUsage.total` 的差异，并额外给出 `context`：
+
+- `provider_context_tokens` 表示最近一次 provider usage 可确认的模型可见输入压力。
+- `pending_estimate_tokens` 表示最近一次 provider usage 之后新增上下文的本地估算。
+- `current_context_tokens` 是状态栏、上下文环和压缩判断共同使用的当前压力值。
+- `cumulative_total_tokens` 表示 session 累计消耗，只服务统计与成本类展示。
+- `model_context_window` 表示 provider/model 暴露的原始窗口。
+- `effective_context_window` 表示扣除策略预算后用于判断的窗口。
+- `reserve_tokens` 表示输出、工具调用或摘要预留预算。
+
+这些字段在 Backbone 层拆开，是因为 provider usage 同时承载 billing、cache、最近一次请求和累计 session 信息。进入主事件流后，展示层和决策层必须能选择正确口径，而不是从累计值反推当前上下文压力。
 
 ## Thread Items
 

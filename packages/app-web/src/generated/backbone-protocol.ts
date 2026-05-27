@@ -143,6 +143,8 @@ export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "de
  */
 export type ContextCompactedNotification = { threadId: string, turnId: string, };
 
+export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
+
 export type DynamicToolCallOutputContentItem = { "type": "inputText", text: string, } | { "type": "inputImage", imageUrl: string, };
 
 export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
@@ -242,6 +244,8 @@ export type NetworkPolicyAmendment = { host: string, action: NetworkPolicyRuleAc
 export type NetworkPolicyRuleAction = "allow" | "deny";
 
 export type NonSteerableTurnKind = "review" | "compact";
+
+export type NormalizedContextUsage = { providerContextTokens: number, pendingEstimateTokens: number, currentContextTokens: number, cumulativeTotalTokens: number, modelContextWindow: number | null, effectiveContextWindow: number | null, reserveTokens: number, source: ContextUsageSource, };
 
 export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined";
 
@@ -375,7 +379,7 @@ export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "typ
 
 export type ThreadStatusChangedNotification = { threadId: string, status: ThreadStatus, };
 
-export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, };
+export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, context: NormalizedContextUsage, };
 
 export type ThreadTokenUsageUpdatedNotification = { threadId: string, turnId: string, tokenUsage: ThreadTokenUsage, };
 

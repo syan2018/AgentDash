@@ -5,7 +5,8 @@ use ts_rs::TS;
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentInputMessage, AgentMessage, MessageRef, ProjectionSourceRange,
+    AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef,
+    ProjectionSourceRange, estimate_content_tokens, estimate_message_tokens,
 };
 use agentdash_spi::session_persistence::{
     PersistedSessionEvent, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
@@ -169,7 +170,70 @@ pub struct SessionProjectionSegmentViewResponse {
     #[ts(optional)]
     pub projection_segment_id: Option<String>,
     pub preview: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub token_estimate: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[ts(type = "number")]
+    pub attachment_tokens: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_names: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_names: Vec<String>,
     pub provenance: SessionProjectionSegmentProvenanceResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionContextUsageCategoryResponse {
+    pub kind: String,
+    pub label: String,
+    #[ts(type = "number")]
+    pub token_estimate: u64,
+    pub source: String,
+    pub deferred: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionMessageContextBreakdownResponse {
+    #[ts(type = "number")]
+    pub user_message_tokens: u64,
+    #[ts(type = "number")]
+    pub assistant_message_tokens: u64,
+    #[ts(type = "number")]
+    pub tool_call_tokens: u64,
+    #[ts(type = "number")]
+    pub tool_result_tokens: u64,
+    #[ts(type = "number")]
+    pub attachment_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionToolContextContributionResponse {
+    pub name: String,
+    #[ts(type = "number")]
+    pub call_tokens: u64,
+    #[ts(type = "number")]
+    pub result_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionAttachmentContextContributionResponse {
+    pub name: String,
+    #[ts(type = "number")]
+    pub tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionContextUsageAnalysisResponse {
+    pub categories: Vec<SessionContextUsageCategoryResponse>,
+    pub messages: SessionMessageContextBreakdownResponse,
+    pub top_tools: Vec<SessionToolContextContributionResponse>,
+    pub top_attachments: Vec<SessionAttachmentContextContributionResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -190,6 +254,7 @@ pub struct SessionProjectionViewResponse {
     #[ts(type = "number")]
     pub message_count: u64,
     pub segments: Vec<SessionProjectionSegmentViewResponse>,
+    pub context_usage: SessionContextUsageAnalysisResponse,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
@@ -380,12 +445,13 @@ pub struct SessionProjectionRollbackResponse {
 impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
     fn from(envelope: AgentContextEnvelope) -> Self {
         let message_count = u64::try_from(envelope.messages.len()).unwrap_or(u64::MAX);
-        let segments = envelope
+        let segments: Vec<_> = envelope
             .messages
             .into_iter()
             .enumerate()
             .map(|(index, message)| projection_segment_from_message(index, message))
             .collect();
+        let context_usage = context_usage_analysis(&segments);
         Self {
             session_id: envelope.session_id,
             projection_kind: envelope.projection_kind.as_str().to_string(),
@@ -395,6 +461,7 @@ impl From<AgentContextEnvelope> for SessionProjectionViewResponse {
             token_estimate: envelope.token_estimate,
             message_count,
             segments,
+            context_usage,
         }
     }
 }
@@ -419,6 +486,10 @@ fn projection_segment_from_message(
     let sort_order = u32::try_from(index).unwrap_or(u32::MAX);
     let role = message_role(&message.message).to_string();
     let preview = message_preview(&message.message);
+    let token_estimate = Some(estimate_message_tokens(&message.message));
+    let tool_names = message_tool_names(&message.message);
+    let attachment_tokens = message_attachment_tokens(&message.message);
+    let attachment_names = message_attachment_names(&message.message);
     SessionProjectionSegmentViewResponse {
         id,
         sort_order,
@@ -435,6 +506,10 @@ fn projection_segment_from_message(
         source_range: message.source_range.map(Into::into),
         projection_segment_id: message.projection_segment_id,
         preview,
+        token_estimate,
+        attachment_tokens,
+        attachment_names,
+        tool_names,
         provenance,
     }
 }
@@ -470,6 +545,221 @@ fn message_role(message: &AgentMessage) -> &'static str {
         AgentMessage::ToolResult { .. } => "tool_result",
         AgentMessage::CompactionSummary { .. } => "compaction_summary",
     }
+}
+
+fn message_tool_names(message: &AgentMessage) -> Vec<String> {
+    match message {
+        AgentMessage::Assistant { tool_calls, .. } => tool_calls
+            .iter()
+            .map(|call| call.name.trim())
+            .filter(|name| !name.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        AgentMessage::ToolResult { tool_name, .. } => tool_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(|name| vec![name.to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn message_attachment_tokens(message: &AgentMessage) -> u64 {
+    let content = match message {
+        AgentMessage::User { content, .. }
+        | AgentMessage::Assistant { content, .. }
+        | AgentMessage::ToolResult { content, .. } => content,
+        AgentMessage::CompactionSummary { .. } => return 0,
+    };
+    content
+        .iter()
+        .filter(|part| matches!(part, ContentPart::Image { .. }))
+        .map(|part| estimate_content_tokens(std::slice::from_ref(part)))
+        .fold(0_u64, u64::saturating_add)
+}
+
+fn message_attachment_names(message: &AgentMessage) -> Vec<String> {
+    let content = match message {
+        AgentMessage::User { content, .. }
+        | AgentMessage::Assistant { content, .. }
+        | AgentMessage::ToolResult { content, .. } => content,
+        AgentMessage::CompactionSummary { .. } => return Vec::new(),
+    };
+    content
+        .iter()
+        .enumerate()
+        .filter_map(|(index, part)| match part {
+            ContentPart::Image { mime_type, .. } => Some(format!("{mime_type} image #{index}")),
+            _ => None,
+        })
+        .collect()
+}
+
+fn context_usage_analysis(
+    segments: &[SessionProjectionSegmentViewResponse],
+) -> SessionContextUsageAnalysisResponse {
+    let summary_tokens = sum_segment_tokens(segments, |segment| {
+        segment.role == "compaction_summary" || segment.origin == "projection"
+    });
+    let message_tokens = sum_segment_tokens(segments, |segment| {
+        segment.role != "compaction_summary" && segment.origin != "projection"
+    });
+    let attachment_tokens = segments
+        .iter()
+        .map(|segment| segment.attachment_tokens)
+        .fold(0_u64, u64::saturating_add);
+    let categories = vec![
+        context_category(
+            "system_developer",
+            "System / Developer",
+            0,
+            "not_loaded",
+            true,
+        ),
+        context_category("system_tools", "System Tools", 0, "not_loaded", true),
+        context_category("mcp_tools", "MCP Tools", 0, "not_loaded", true),
+        context_category("agents", "Agents", 0, "not_loaded", true),
+        context_category("memory", "Memory", 0, "not_loaded", true),
+        context_category("skills", "Skills", 0, "not_loaded", true),
+        context_category(
+            "messages",
+            "Messages",
+            message_tokens,
+            "local_estimate",
+            false,
+        ),
+        context_category(
+            "attachments",
+            "Attachments",
+            attachment_tokens,
+            "local_estimate",
+            false,
+        ),
+        context_category(
+            "compaction_summary",
+            "Compaction Summary",
+            summary_tokens,
+            "projected",
+            false,
+        ),
+    ];
+    SessionContextUsageAnalysisResponse {
+        categories,
+        messages: message_context_breakdown(segments),
+        top_tools: top_tools(segments),
+        top_attachments: top_attachments(segments),
+    }
+}
+
+fn context_category(
+    kind: &str,
+    label: &str,
+    token_estimate: u64,
+    source: &str,
+    deferred: bool,
+) -> SessionContextUsageCategoryResponse {
+    SessionContextUsageCategoryResponse {
+        kind: kind.to_string(),
+        label: label.to_string(),
+        token_estimate,
+        source: source.to_string(),
+        deferred,
+    }
+}
+
+fn sum_segment_tokens(
+    segments: &[SessionProjectionSegmentViewResponse],
+    predicate: impl Fn(&SessionProjectionSegmentViewResponse) -> bool,
+) -> u64 {
+    segments
+        .iter()
+        .filter(|segment| predicate(segment))
+        .filter_map(|segment| segment.token_estimate)
+        .fold(0_u64, u64::saturating_add)
+}
+
+fn message_context_breakdown(
+    segments: &[SessionProjectionSegmentViewResponse],
+) -> SessionMessageContextBreakdownResponse {
+    SessionMessageContextBreakdownResponse {
+        user_message_tokens: sum_segment_tokens(segments, |segment| segment.role == "user"),
+        assistant_message_tokens: sum_segment_tokens(segments, |segment| {
+            segment.role == "assistant"
+        }),
+        tool_call_tokens: sum_tool_call_tokens(segments),
+        tool_result_tokens: sum_segment_tokens(segments, |segment| segment.role == "tool_result"),
+        attachment_tokens: segments
+            .iter()
+            .map(|segment| segment.attachment_tokens)
+            .fold(0_u64, u64::saturating_add),
+    }
+}
+
+fn sum_tool_call_tokens(segments: &[SessionProjectionSegmentViewResponse]) -> u64 {
+    segments
+        .iter()
+        .filter(|segment| segment.role == "assistant" && !segment.tool_names.is_empty())
+        .filter_map(|segment| segment.token_estimate)
+        .fold(0_u64, u64::saturating_add)
+}
+
+fn top_tools(
+    segments: &[SessionProjectionSegmentViewResponse],
+) -> Vec<SessionToolContextContributionResponse> {
+    let mut values: Vec<SessionToolContextContributionResponse> = Vec::new();
+    for segment in segments {
+        let Some(tokens) = segment.token_estimate else {
+            continue;
+        };
+        for name in &segment.tool_names {
+            let Some(row) = values.iter_mut().find(|row| row.name == *name) else {
+                values.push(SessionToolContextContributionResponse {
+                    name: name.clone(),
+                    call_tokens: if segment.role == "assistant" {
+                        tokens
+                    } else {
+                        0
+                    },
+                    result_tokens: if segment.role == "tool_result" {
+                        tokens
+                    } else {
+                        0
+                    },
+                });
+                continue;
+            };
+            if segment.role == "assistant" {
+                row.call_tokens = row.call_tokens.saturating_add(tokens);
+            } else if segment.role == "tool_result" {
+                row.result_tokens = row.result_tokens.saturating_add(tokens);
+            }
+        }
+    }
+    values.sort_by_key(|row| std::cmp::Reverse(row.call_tokens.saturating_add(row.result_tokens)));
+    values.truncate(5);
+    values
+}
+
+fn top_attachments(
+    segments: &[SessionProjectionSegmentViewResponse],
+) -> Vec<SessionAttachmentContextContributionResponse> {
+    let mut values = Vec::new();
+    for segment in segments {
+        for name in &segment.attachment_names {
+            values.push(SessionAttachmentContextContributionResponse {
+                name: name.clone(),
+                tokens: segment.attachment_tokens,
+            });
+        }
+    }
+    values.sort_by_key(|row| std::cmp::Reverse(row.tokens));
+    values.truncate(5);
+    values
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 fn message_preview(message: &AgentMessage) -> String {
@@ -512,8 +802,8 @@ fn truncate_preview(value: &str) -> String {
 #[cfg(test)]
 mod projection_tests {
     use agentdash_agent_types::{
-        AgentContextEnvelope, AgentInputMessage, AgentMessage, MessageRef, ProjectionKind,
-        ProjectionOrigin, ProjectionSourceRange,
+        AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, MessageRef,
+        ProjectionKind, ProjectionOrigin, ProjectionSourceRange,
     };
 
     use super::SessionProjectionViewResponse;
@@ -561,9 +851,62 @@ mod projection_tests {
         assert_eq!(view.segments[0].origin, "projection");
         assert!(view.segments[0].synthetic);
         assert_eq!(view.segments[0].segment_type, "summary_chunk");
+        assert!(view.segments[0].token_estimate.is_some());
+        assert!(
+            view.context_usage
+                .categories
+                .iter()
+                .any(|category| category.kind == "compaction_summary")
+        );
+        assert_eq!(view.context_usage.messages.user_message_tokens, 0);
         assert_eq!(
             view.segments[0].provenance.compaction_id.as_deref(),
             Some("compaction-1")
+        );
+    }
+
+    #[test]
+    fn projection_view_reports_attachment_breakdown_from_image_parts() {
+        let envelope = AgentContextEnvelope {
+            session_id: "sess-1".to_string(),
+            projection_kind: ProjectionKind::ModelContext,
+            projection_version: 0,
+            head_event_seq: 1,
+            active_compaction_id: None,
+            token_estimate: None,
+            messages: vec![AgentInputMessage {
+                message_ref: MessageRef {
+                    turn_id: "turn-1".to_string(),
+                    entry_index: 0,
+                },
+                projection_kind: ProjectionKind::ModelContext,
+                message: AgentMessage::User {
+                    content: vec![
+                        ContentPart::text("看这张图"),
+                        ContentPart::Image {
+                            mime_type: "image/png".to_string(),
+                            data: "AAECAw==".to_string(),
+                        },
+                    ],
+                    timestamp: None,
+                },
+                origin: ProjectionOrigin::Event,
+                synthetic: false,
+                source_event_seq: Some(1),
+                source_range: None,
+                projection_segment_id: None,
+                provenance: serde_json::Value::Null,
+            }],
+        };
+
+        let view = SessionProjectionViewResponse::from(envelope);
+
+        assert!(view.context_usage.messages.attachment_tokens > 0);
+        assert_eq!(view.context_usage.top_attachments.len(), 1);
+        assert!(
+            view.context_usage.top_attachments[0]
+                .name
+                .contains("image/png")
         );
     }
 }

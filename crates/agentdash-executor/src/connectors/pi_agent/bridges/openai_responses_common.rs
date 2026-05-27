@@ -428,6 +428,7 @@ async fn process_responses_sse_event(
                     .and_then(|value| value.as_u64())
                     .unwrap_or(0);
                 state.usage.input = input_tokens.saturating_sub(cached);
+                state.usage.cache_read_input = cached;
                 state.usage.output = usage
                     .get("output_tokens")
                     .and_then(|value| value.as_u64())

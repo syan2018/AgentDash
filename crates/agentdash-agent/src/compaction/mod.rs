@@ -6,7 +6,10 @@
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
-use crate::types::{AgentError, AgentMessage, CompactionParams, CompactionResult, MessageRef};
+use crate::types::{
+    AgentError, AgentMessage, CompactionParams, CompactionResult, MessageRef,
+    estimate_message_tokens,
+};
 
 /// 默认摘要 system prompt
 const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
@@ -249,55 +252,6 @@ fn previously_compacted_count(messages: &[AgentMessage]) -> u32 {
             _ => None,
         })
         .unwrap_or(0)
-}
-
-fn estimate_message_tokens(message: &AgentMessage) -> u64 {
-    let chars = match message {
-        AgentMessage::User { content, .. } => content_chars(content),
-        AgentMessage::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let tool_chars = tool_calls
-                .iter()
-                .map(|tool_call| tool_call.name.len() + tool_call.arguments.to_string().len())
-                .sum::<usize>();
-            content_chars(content) + tool_chars
-        }
-        AgentMessage::ToolResult {
-            tool_name,
-            content,
-            details,
-            ..
-        } => {
-            let details_chars = details
-                .as_ref()
-                .map(|value| value.to_string().len())
-                .unwrap_or_default();
-            tool_name.as_deref().unwrap_or_default().len() + content_chars(content) + details_chars
-        }
-        AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
-    };
-    chars_to_tokens(chars)
-}
-
-fn content_chars(content: &[crate::types::ContentPart]) -> usize {
-    content
-        .iter()
-        .map(|part| match part {
-            crate::types::ContentPart::Text { text } => text.chars().count(),
-            crate::types::ContentPart::Reasoning { text, .. } => text.chars().count(),
-            crate::types::ContentPart::Image { data, .. } => data.len() / 4,
-        })
-        .sum()
-}
-
-fn chars_to_tokens(chars: usize) -> u64 {
-    // 粗略估算：多数 provider 的自然语言 / JSON 输入约 3-4 chars/token。
-    // 向上取整并给每条消息一个最小结构成本。
-    let body = u64::try_from(chars).unwrap_or(u64::MAX);
-    body.saturating_add(3) / 4 + 4
 }
 
 /// 将消息序列化为文本，用于发给摘要 LLM

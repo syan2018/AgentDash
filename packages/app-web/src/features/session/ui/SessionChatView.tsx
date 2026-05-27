@@ -181,12 +181,20 @@ function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
   const [showDetail, setShowDetail] = useState(false);
   if (!usage) return null;
 
-  const { totalTokens, maxTokens, inputTokens, outputTokens } = usage;
-  const hasAny = totalTokens != null || inputTokens != null || outputTokens != null;
+  const {
+    currentContextTokens,
+    effectiveContextWindow,
+    modelContextWindow,
+    pendingEstimateTokens,
+    total,
+    last,
+  } = usage;
+  const maxTokens = effectiveContextWindow ?? modelContextWindow;
+  const hasAny = currentContextTokens > 0 || total.totalTokens > 0 || last.totalTokens > 0;
   if (!hasAny) return null;
 
-  const percent = (maxTokens && totalTokens)
-    ? Math.min(Math.round((totalTokens / maxTokens) * 100), 100)
+  const percent = maxTokens
+    ? Math.min(Math.round((currentContextTokens / maxTokens) * 100), 100)
     : undefined;
   const radius = 7;
   const circumference = 2 * Math.PI * radius;
@@ -214,15 +222,16 @@ function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
       {showDetail && (
         <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
           {percent != null && <span className="font-medium">{percent}% 上下文</span>}
-          {totalTokens != null && maxTokens != null && (
-            <span className="text-muted-foreground"> ({formatTokens(totalTokens)}/{formatTokens(maxTokens)})</span>
+          {maxTokens != null && (
+            <span className="text-muted-foreground"> ({formatTokens(currentContextTokens)}/{formatTokens(maxTokens)})</span>
           )}
-          {(inputTokens != null || outputTokens != null) && (
+          {(last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0) && (
             <span className="text-muted-foreground">
               {percent != null ? " · " : ""}
-              {inputTokens != null && `↑${formatTokens(inputTokens)}`}
-              {inputTokens != null && outputTokens != null && " "}
-              {outputTokens != null && `↓${formatTokens(outputTokens)}`}
+              {last.inputTokens > 0 && `↑${formatTokens(last.inputTokens)}`}
+              {last.inputTokens > 0 && last.outputTokens > 0 && " "}
+              {last.outputTokens > 0 && `↓${formatTokens(last.outputTokens)}`}
+              {pendingEstimateTokens > 0 && ` +${formatTokens(pendingEstimateTokens)}估算`}
             </span>
           )}
         </span>
@@ -796,7 +805,7 @@ export function SessionChatView({
                     : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
                 }`}
               >
-                模型上下文
+                上下文
               </button>
             </>
           )}
@@ -814,6 +823,7 @@ export function SessionChatView({
         <SessionProjectionView
           sessionId={sessionId}
           refreshKey={projectionRefreshKey}
+          tokenUsage={tokenUsage}
         />
       )}
 

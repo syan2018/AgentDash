@@ -78,6 +78,17 @@ session_projection_heads(model_context)
 
 API `GET /sessions/{id}/context/projection` 返回当前 `model_context` projection view，前端 Context panel 用它展示模型当前可见 segments。Timeline 继续消费真实事件流，两者不互相替代。
 
+projection view 同时返回 `context_usage` 分析数据，用于上下文查看窗口展示 Claude Code 粒度的主分类与二级详情。分类估算来自 `AgentContextEnvelope` 中的 projection segments 与统一 token estimation helper；provider usage 仍是总量和窗口压力的权威来源。这个拆分让窗口能够解释“当前模型可见内容的构成”，同时避免前端重复实现 message/tool/summary token 估算。
+
+压缩触发统计使用当前 provider-visible context pressure 与 effective window：
+
+```text
+context_pressure = current_context_tokens
+threshold = effective_context_window - reserve_tokens
+```
+
+Anthropic/Claude 类 provider 的当前上下文输入需要把 cache read 与 cache creation input 纳入压力值，因为这些 token 仍然占用本轮模型可见上下文。provider usage 尚未返回时，runtime 可以使用本地 request estimate 作为 pending estimate，使状态提示与压缩判断在两次真实 usage 之间保持连续。
+
 ## Branch Baseline
 
 fork / rollback / lineage 消费 `session_compactions` 的 checkpoint surface 与 `session_projection_heads`，并通过 `session_lineage` 记录跨 session 的父子关系。Projection head 表示“该 session 当前模型可见到哪里”，lineage edge 表示“该 session 从哪里来”；两者分离后，rollback 可以移动当前 head，fork 可以 materialize child initial projection，而不会让 projection store 同时承担 session tree 的职责。

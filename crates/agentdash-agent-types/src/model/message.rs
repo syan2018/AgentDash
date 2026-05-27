@@ -52,7 +52,19 @@ pub struct TokenUsage {
     #[serde(default)]
     pub input: u64,
     #[serde(default)]
+    pub cache_read_input: u64,
+    #[serde(default)]
+    pub cache_creation_input: u64,
+    #[serde(default)]
     pub output: u64,
+}
+
+impl TokenUsage {
+    pub fn context_input_tokens(&self) -> u64 {
+        self.input
+            .saturating_add(self.cache_read_input)
+            .saturating_add(self.cache_creation_input)
+    }
 }
 
 // ─── AgentMessage ───────────────────────────────────────────

@@ -13,7 +13,7 @@ pub use agentdash_agent_types::{
     ProjectedTranscript, ProjectionKind, ProviderVisibleContextStats, StopDecision, StopReason,
     TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo,
     ToolDefinition, ToolUpdateCallback, TransformContextInput, TransformContextOutput,
-    TurnControlDecision, now_millis,
+    TurnControlDecision, estimate_message_tokens, estimate_request_tokens, now_millis,
 };
 pub use agentdash_domain::common::ThinkingLevel;
 

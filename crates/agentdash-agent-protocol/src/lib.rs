@@ -11,6 +11,10 @@ pub use backbone::platform::{
     HookTraceCompletion, HookTraceData, HookTraceDiagnostic, HookTraceInjection, HookTracePayload,
     HookTraceSeverity, HookTraceTrigger, PlatformEvent,
 };
+pub use backbone::usage::{
+    ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown,
+};
 
 pub use compat::{envelope_to_session_notification, session_notification_to_envelope};
 

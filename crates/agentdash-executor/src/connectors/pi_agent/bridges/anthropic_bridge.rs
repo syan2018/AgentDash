@@ -435,6 +435,14 @@ async fn process_anthropic_event(
                     .get("input_tokens")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
+                state.usage.cache_read_input = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                state.usage.cache_creation_input = usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
             }
         }
 
@@ -588,5 +596,25 @@ mod tests {
         assert_eq!(blocks[1]["source"]["type"], "base64");
         assert_eq!(blocks[1]["source"]["media_type"], "image/png");
         assert_eq!(blocks[1]["source"]["data"], "AAECAw==");
+    }
+
+    #[tokio::test]
+    async fn message_start_usage_keeps_anthropic_cache_tokens() {
+        let mut state = StreamState::default();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+
+        process_anthropic_event(
+            "message_start",
+            r#"{"message":{"usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}}"#,
+            &mut state,
+            &tx,
+        )
+        .await
+        .expect("usage event should parse");
+
+        assert_eq!(state.usage.input, 10);
+        assert_eq!(state.usage.cache_read_input, 20);
+        assert_eq!(state.usage.cache_creation_input, 30);
+        assert_eq!(state.usage.context_input_tokens(), 60);
     }
 }

@@ -283,8 +283,12 @@ impl HookRuntimeDelegate {
                 .unwrap_or(0);
 
             self.hook_session.update_token_stats(ContextTokenStats {
-                last_input_tokens: usage.input,
+                last_input_tokens: usage.context_input_tokens(),
+                current_context_tokens: usage.context_input_tokens(),
+                pending_estimate_tokens: 0,
                 context_window,
+                effective_context_window: context_window,
+                reserve_tokens: 0,
             });
         }
     }
@@ -346,6 +350,7 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .and_then(|m| m.extra.get("model_context_window"))
             .and_then(|v| v.as_u64())
             .unwrap_or(last_usage.context_window);
+        let effective_context_window = context_window;
         let provider_estimate = input
             .provider_visible
             .as_ref()
@@ -354,7 +359,11 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
             .unwrap_or(last_usage.last_input_tokens);
         let live_token_stats = ContextTokenStats {
             last_input_tokens: provider_estimate,
+            current_context_tokens: provider_estimate,
+            pending_estimate_tokens: 0,
             context_window,
+            effective_context_window,
+            reserve_tokens: default_reserve_tokens,
         };
         if provider_estimate > 0 || context_window > 0 {
             self.hook_session
@@ -416,8 +425,8 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                     custom_summary: compaction.custom_summary.clone(),
                     custom_prompt: compaction.custom_prompt.clone(),
                     trigger_stats: CompactionTriggerStats {
-                        input_tokens: live_token_stats.last_input_tokens,
-                        context_window,
+                        input_tokens: live_token_stats.current_context_tokens,
+                        context_window: live_token_stats.effective_context_window,
                         reserve_tokens: compaction.reserve_tokens.unwrap_or(default_reserve_tokens),
                     },
                 })
@@ -828,7 +837,11 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
                 })),
                 Some(ContextTokenStats {
                     last_input_tokens: input.estimated_input_tokens,
+                    current_context_tokens: input.estimated_input_tokens,
+                    pending_estimate_tokens: 0,
                     context_window: input.context_window,
+                    effective_context_window: input.context_window,
+                    reserve_tokens: input.reserve_tokens,
                 }),
             )
             .await?;
@@ -1436,7 +1449,11 @@ mod tests {
         ));
         hook_session.update_token_stats(ContextTokenStats {
             last_input_tokens: 50_000,
+            current_context_tokens: 50_000,
+            pending_estimate_tokens: 0,
             context_window: 64_000,
+            effective_context_window: 64_000,
+            reserve_tokens: 16_384,
         });
         let delegate = HookRuntimeDelegate::new(hook_session);
 
@@ -1454,6 +1471,8 @@ mod tests {
                                 error_message: None,
                                 usage: Some(TokenUsage {
                                     input: 50_000,
+                                    cache_read_input: 0,
+                                    cache_creation_input: 0,
                                     output: 1_200,
                                 }),
                                 timestamp: None,

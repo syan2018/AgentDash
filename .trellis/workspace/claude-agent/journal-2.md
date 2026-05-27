@@ -822,3 +822,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 51: Extension Runtime 收口维护
+
+**Date**: 2026-05-27
+**Task**: Extension Runtime 收口维护
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+收口 Extension Runtime 权限 evaluator、package artifact storage port 与 local TS extension host 模块边界；归档维护任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c354af06` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

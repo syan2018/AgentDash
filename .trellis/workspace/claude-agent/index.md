@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 50
+- **Total Sessions**: 51
 - **Last Active**: 2026-05-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~824 | Active |
+| `journal-2.md` | ~857 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 51 | 2026-05-27 | Extension Runtime 收口维护 | `c354af06` | `codex/extension-sdk` |
 | 50 | 2026-05-27 | Extension Assets 前端面板与后端卸载收口 | `92740c52`, `b8d665d3` | `codex/extension-sdk` |
 | 49 | 2026-05-22 | Capability维度管线标准化收口 | `31a1339f` | `codex/capability-intent-pipeline-standardization` |
 | 48 | 2026-05-22 | Runtime Context Patch Typed Intent 标准化 | `8f2d8a37` | `main` |

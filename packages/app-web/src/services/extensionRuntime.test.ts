@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   mapExtensionRuntimeInvokeActionResponse,
   mapExtensionRuntimeProjection,
+  mapUninstallExtensionInstallationResponse,
 } from "./extensionRuntime";
 
 describe("extension runtime mapper", () => {
@@ -142,6 +143,21 @@ describe("extension runtime mapper", () => {
         output_schema: {},
       }],
     })).toThrow(/action kind/);
+  });
+
+  it("解析 uninstall extension installation 响应", () => {
+    const response = mapUninstallExtensionInstallationResponse({
+      installation_id: "installation-1",
+      extension_key: "local-hello",
+    });
+    expect(response.installation_id).toBe("installation-1");
+    expect(response.extension_key).toBe("local-hello");
+  });
+
+  it("uninstall 响应缺字段时拒绝", () => {
+    expect(() =>
+      mapUninstallExtensionInstallationResponse({ installation_id: "x" }),
+    ).toThrow();
   });
 
   it("解析 extension runtime invoke response 并归一化 metadata", () => {

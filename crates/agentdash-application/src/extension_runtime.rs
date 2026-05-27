@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, btree_map::Entry};
+use std::sync::Arc;
 
 use agentdash_domain::DomainError;
 use agentdash_domain::extension_package::ExtensionPackageArtifactRef;
@@ -6,8 +7,11 @@ use agentdash_domain::shared_library::{
     ExtensionBundleKind, ExtensionCommandHandler, ExtensionFlagType,
     ExtensionPermissionDeclaration, ExtensionRendererDeclaration, ExtensionRuntimeActionKind,
     ExtensionWorkspaceTabRendererDeclaration, InstalledAssetSource, ProjectExtensionInstallation,
+    ProjectExtensionInstallationRepository,
 };
 use uuid::Uuid;
+
+use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExtensionRuntimeProjection {
@@ -229,6 +233,56 @@ pub fn extension_runtime_projection_from_installations(
     Ok(projection)
 }
 
+#[derive(Debug, Clone)]
+pub struct UninstallExtensionInstallationInput {
+    pub project_id: Uuid,
+    pub installation_id: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UninstallExtensionInstallationOutput {
+    pub installation_id: Uuid,
+    pub extension_key: String,
+}
+
+pub async fn uninstall_extension_installation(
+    repos: &RepositorySet,
+    input: UninstallExtensionInstallationInput,
+) -> Result<UninstallExtensionInstallationOutput, DomainError> {
+    uninstall_extension_installation_with_repo(
+        &repos.project_extension_installation_repo,
+        input,
+    )
+    .await
+}
+
+async fn uninstall_extension_installation_with_repo(
+    repo: &Arc<dyn ProjectExtensionInstallationRepository>,
+    input: UninstallExtensionInstallationInput,
+) -> Result<UninstallExtensionInstallationOutput, DomainError> {
+    let installation = repo
+        .get_by_project_and_id(input.project_id, input.installation_id)
+        .await?
+        .ok_or_else(|| DomainError::NotFound {
+            entity: "project_extension_installation",
+            id: input.installation_id.to_string(),
+        })?;
+    let extension_key = installation.extension_key.clone();
+    let deleted = repo
+        .delete(input.project_id, input.installation_id)
+        .await?;
+    if !deleted {
+        return Err(DomainError::NotFound {
+            entity: "project_extension_installation",
+            id: input.installation_id.to_string(),
+        });
+    }
+    Ok(UninstallExtensionInstallationOutput {
+        installation_id: input.installation_id,
+        extension_key,
+    })
+}
+
 fn claim_unique_extension_runtime_key(
     index: &mut BTreeMap<String, String>,
     field: &str,
@@ -249,6 +303,8 @@ fn claim_unique_extension_runtime_key(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
@@ -366,6 +422,209 @@ mod tests {
         assert_eq!(projection.workspace_tabs[0].type_id, "demo.profile-panel");
         assert_eq!(projection.permissions.len(), 1);
         assert_eq!(projection.bundles[0].entry, "dist/extension.js");
+    }
+
+    #[derive(Default)]
+    struct FakeUninstallRepo {
+        installations: Mutex<Vec<ProjectExtensionInstallation>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProjectExtensionInstallationRepository for FakeUninstallRepo {
+        async fn create(
+            &self,
+            installation: &ProjectExtensionInstallation,
+        ) -> Result<(), DomainError> {
+            self.installations.lock().unwrap().push(installation.clone());
+            Ok(())
+        }
+
+        async fn update(
+            &self,
+            _installation: &ProjectExtensionInstallation,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        async fn get_by_project_and_key(
+            &self,
+            project_id: Uuid,
+            extension_key: &str,
+        ) -> Result<Option<ProjectExtensionInstallation>, DomainError> {
+            Ok(self
+                .installations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|installation| {
+                    installation.project_id == project_id
+                        && installation.extension_key == extension_key
+                })
+                .cloned())
+        }
+
+        async fn get_by_project_and_id(
+            &self,
+            project_id: Uuid,
+            installation_id: Uuid,
+        ) -> Result<Option<ProjectExtensionInstallation>, DomainError> {
+            Ok(self
+                .installations
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|installation| {
+                    installation.project_id == project_id && installation.id == installation_id
+                })
+                .cloned())
+        }
+
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectExtensionInstallation>, DomainError> {
+            Ok(self
+                .installations
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|installation| installation.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn list_enabled_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<ProjectExtensionInstallation>, DomainError> {
+            Ok(self
+                .installations
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|installation| {
+                    installation.project_id == project_id && installation.enabled
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn delete(
+            &self,
+            project_id: Uuid,
+            installation_id: Uuid,
+        ) -> Result<bool, DomainError> {
+            let mut guard = self.installations.lock().unwrap();
+            let before = guard.len();
+            guard.retain(|installation| {
+                !(installation.project_id == project_id && installation.id == installation_id)
+            });
+            Ok(guard.len() < before)
+        }
+    }
+
+    fn install_into_repo(
+        repo: &FakeUninstallRepo,
+        project_id: Uuid,
+        extension_key: &str,
+    ) -> ProjectExtensionInstallation {
+        let manifest = manifest(
+            extension_key,
+            &format!("{extension_key}.action"),
+            &format!("{extension_key}.panel"),
+            extension_key,
+        );
+        let installation = ProjectExtensionInstallation::new(
+            project_id,
+            extension_key,
+            format!("{extension_key} Extension"),
+            manifest,
+            source(),
+        )
+        .expect("valid installation");
+        repo.installations
+            .lock()
+            .unwrap()
+            .push(installation.clone());
+        installation
+    }
+
+    #[tokio::test]
+    async fn uninstall_extension_installation_returns_extension_key_and_removes_row() {
+        let repo_inner = Arc::new(FakeUninstallRepo::default());
+        let repo: Arc<dyn ProjectExtensionInstallationRepository> = repo_inner.clone();
+        let project_id = Uuid::new_v4();
+        let installation = install_into_repo(repo_inner.as_ref(), project_id, "demo");
+
+        let output = uninstall_extension_installation_with_repo(
+            &repo,
+            UninstallExtensionInstallationInput {
+                project_id,
+                installation_id: installation.id,
+            },
+        )
+        .await
+        .expect("uninstall happy path");
+        assert_eq!(output.installation_id, installation.id);
+        assert_eq!(output.extension_key, "demo");
+
+        let remaining = repo
+            .list_by_project(project_id)
+            .await
+            .expect("list after uninstall");
+        assert!(remaining.is_empty());
+    }
+
+    #[tokio::test]
+    async fn uninstall_extension_installation_returns_not_found_for_missing_id() {
+        let repo: Arc<dyn ProjectExtensionInstallationRepository> =
+            Arc::new(FakeUninstallRepo::default());
+        let project_id = Uuid::new_v4();
+        let installation_id = Uuid::new_v4();
+
+        let err = uninstall_extension_installation_with_repo(
+            &repo,
+            UninstallExtensionInstallationInput {
+                project_id,
+                installation_id,
+            },
+        )
+        .await
+        .expect_err("missing installation");
+        match err {
+            DomainError::NotFound { entity, id } => {
+                assert_eq!(entity, "project_extension_installation");
+                assert_eq!(id, installation_id.to_string());
+            }
+            other => panic!("expected NotFound, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn uninstall_extension_installation_rejects_cross_project_access() {
+        let repo_inner = Arc::new(FakeUninstallRepo::default());
+        let repo: Arc<dyn ProjectExtensionInstallationRepository> = repo_inner.clone();
+        let project_a = Uuid::new_v4();
+        let project_b = Uuid::new_v4();
+        let installation = install_into_repo(repo_inner.as_ref(), project_a, "demo");
+
+        let err = uninstall_extension_installation_with_repo(
+            &repo,
+            UninstallExtensionInstallationInput {
+                project_id: project_b,
+                installation_id: installation.id,
+            },
+        )
+        .await
+        .expect_err("cross project should be NotFound");
+        assert!(matches!(err, DomainError::NotFound { .. }));
+
+        // Original installation must still exist for project A.
+        let still_there = repo
+            .get_by_project_and_id(project_a, installation.id)
+            .await
+            .expect("get after rejected uninstall");
+        assert!(still_there.is_some());
     }
 
     #[test]

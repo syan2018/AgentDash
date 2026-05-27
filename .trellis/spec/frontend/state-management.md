@@ -57,6 +57,33 @@
 
 ---
 
+## Projection Store 写后刷新
+
+HTTP-only projection store（如 `extensionRuntimeStore` 缓存的 `ExtensionRuntimeProjectionResponse`）没有 SSE / NDJSON 失效流。**任何会改变底层实体的写操作（HTTP POST/DELETE 等），调用方必须在 success 分支显式调 `store.fetchProject(projectId)` 触发重拉**，不能依赖局部 patch 或 optimistic update。
+
+**为什么**：projection 由后端聚合多张表（installation / artifact / runtime action / workspace tab / permission / bundle）派生，前端无法本地推导；漏 refetch 会造成"写完了但 UI 还是旧数据"，或更糟：不同入口看到的投影不一致。
+
+**典型形态**（写入处复制此模式）：
+
+```ts
+async function handleInstall() {
+  setBusy(true);
+  try {
+    await installExtensionArtifact(projectId, artifactId, body);
+    await useExtensionRuntimeStore.getState().fetchProject(projectId); // 必填
+    setNotice({ tone: "success", message: "安装成功" });
+  } catch (err) {
+    setNotice({ tone: "danger", message: extractMessage(err) });
+  } finally {
+    setBusy(false);
+  }
+}
+```
+
+适用范围：写后无 stream invalidation 的 store。如果 store 已订阅事件流（`eventStore`、`sessionHistoryStore` 这类），由 reducer 接管失效，不需要手动 refetch。新建此类 store 时把"写操作的入口在哪里 fetch"写在 store 顶部注释里，避免漏配。
+
+---
+
 ## 常见错误
 
 | 错误 | 正确做法 |

@@ -48,3 +48,5 @@ export type ExtensionWorkspaceTabProjectionResponse = { extension_key: string, e
 export type ExtensionWorkspaceTabRendererResponse = { "kind": "webview", entry: string, } | { "kind": "canvas_panel", entry: string, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
+
+export type UninstallExtensionInstallationResponse = { installation_id: string, extension_key: string, };

@@ -468,6 +468,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(extension_runtime::get_project_extension_webview_asset),
         )
         .route(
+            "/projects/{project_id}/extensions/{installation_id}",
+            delete(extension_runtime::uninstall_extension_installation_route),
+        )
+        .route(
             "/projects/{project_id}/extension-artifacts",
             get(extension_package_artifacts::list_extension_package_artifacts)
                 .post(extension_package_artifacts::upload_extension_package_artifact)

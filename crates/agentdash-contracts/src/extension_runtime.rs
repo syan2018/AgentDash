@@ -206,3 +206,9 @@ pub struct ExtensionRuntimeInvokeActionResponse {
     pub trace: ExtensionRuntimeTraceResponse,
     pub output: ExtensionRuntimeInvocationOutputResponse,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct UninstallExtensionInstallationResponse {
+    pub installation_id: String,
+    pub extension_key: String,
+}

@@ -25,6 +25,7 @@ import type {
   ExtensionWorkspaceTabProjectionResponse,
   ExtensionWorkspaceTabRendererResponse,
   JsonValue,
+  UninstallExtensionInstallationResponse,
 } from "../generated/extension-runtime-contracts";
 import { buildApiPath } from "../api/origin";
 
@@ -362,6 +363,26 @@ export async function invokeProjectExtensionRuntimeAction(
     request,
   );
   return mapExtensionRuntimeInvokeActionResponse(raw);
+}
+
+export function mapUninstallExtensionInstallationResponse(
+  raw: unknown,
+): UninstallExtensionInstallationResponse {
+  const value = recordOrThrow(raw, "extension uninstall response");
+  return {
+    installation_id: requireStringField(value, "installation_id"),
+    extension_key: requireStringField(value, "extension_key"),
+  };
+}
+
+export async function uninstallExtensionInstallation(
+  projectId: string,
+  installationId: string,
+): Promise<UninstallExtensionInstallationResponse> {
+  const raw = await api.delete<unknown>(
+    `/projects/${encodeURIComponent(projectId)}/extensions/${encodeURIComponent(installationId)}`,
+  );
+  return mapUninstallExtensionInstallationResponse(raw);
 }
 
 export function buildExtensionWebviewAssetUrl(

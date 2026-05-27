@@ -107,6 +107,11 @@ pub trait ProjectExtensionInstallationRepository: Send + Sync {
         project_id: Uuid,
         extension_key: &str,
     ) -> Result<Option<ProjectExtensionInstallation>, DomainError>;
+    async fn get_by_project_and_id(
+        &self,
+        project_id: Uuid,
+        installation_id: Uuid,
+    ) -> Result<Option<ProjectExtensionInstallation>, DomainError>;
     async fn list_by_project(
         &self,
         project_id: Uuid,
@@ -115,4 +120,11 @@ pub trait ProjectExtensionInstallationRepository: Send + Sync {
         &self,
         project_id: Uuid,
     ) -> Result<Vec<ProjectExtensionInstallation>, DomainError>;
+    /// 删除指定 Project 下的 installation。返回 true 表示删除成功；
+    /// 返回 false 表示该 (project_id, installation_id) 不存在。
+    async fn delete(
+        &self,
+        project_id: Uuid,
+        installation_id: Uuid,
+    ) -> Result<bool, DomainError>;
 }

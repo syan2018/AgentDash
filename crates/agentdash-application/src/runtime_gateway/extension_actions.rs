@@ -313,6 +313,14 @@ mod tests {
             Ok(None)
         }
 
+        async fn get_by_project_and_id(
+            &self,
+            _project_id: Uuid,
+            _installation_id: Uuid,
+        ) -> Result<Option<ProjectExtensionInstallation>, DomainError> {
+            Ok(None)
+        }
+
         async fn list_by_project(
             &self,
             _project_id: Uuid,
@@ -325,6 +333,14 @@ mod tests {
             _project_id: Uuid,
         ) -> Result<Vec<ProjectExtensionInstallation>, DomainError> {
             Ok(self.installations.clone())
+        }
+
+        async fn delete(
+            &self,
+            _project_id: Uuid,
+            _installation_id: Uuid,
+        ) -> Result<bool, DomainError> {
+            Ok(false)
         }
     }
 

@@ -15,7 +15,10 @@ use agentdash_application::extension_package::{
     ExtensionPackageArtifactStorageError, digest_bytes, read_extension_package_archive_file,
     read_extension_package_archive_object,
 };
-use agentdash_application::extension_runtime::extension_runtime_projection_from_installations;
+use agentdash_application::extension_runtime::{
+    UninstallExtensionInstallationInput, extension_runtime_projection_from_installations,
+    uninstall_extension_installation,
+};
 use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult, RuntimeTarget,
@@ -23,7 +26,9 @@ use agentdash_application::runtime_gateway::{
 use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
     ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeTraceResponse,
+    UninstallExtensionInstallationResponse,
 };
+use agentdash_domain::DomainError;
 use agentdash_domain::session_binding::SessionBinding;
 use agentdash_domain::shared_library::{
     ExtensionTemplatePayload, ExtensionWorkspaceTabRendererDeclaration,
@@ -45,6 +50,12 @@ pub struct ProjectExtensionRuntimeWebviewPath {
     pub project_id: String,
     pub extension_key: String,
     pub asset_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProjectExtensionInstallationPath {
+    pub project_id: String,
+    pub installation_id: String,
 }
 
 /// GET `/api/projects/:project_id/extension-runtime`
@@ -123,6 +134,40 @@ pub async fn invoke_project_extension_runtime_action(
 
     let result = state.services.runtime_gateway.invoke(request).await?;
     Ok(Json(extension_runtime_invoke_response(result)))
+}
+
+/// DELETE `/api/projects/:project_id/extensions/:installation_id`
+pub async fn uninstall_extension_installation_route(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(path): Path<ProjectExtensionInstallationPath>,
+) -> Result<Json<UninstallExtensionInstallationResponse>, ApiError> {
+    let project_id = parse_project_id(&path.project_id)?;
+    let installation_id = Uuid::parse_str(&path.installation_id)
+        .map_err(|_| ApiError::BadRequest("无效的 Installation ID".into()))?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+    let output = uninstall_extension_installation(
+        &state.repos,
+        UninstallExtensionInstallationInput {
+            project_id,
+            installation_id,
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        DomainError::NotFound { .. } => ApiError::NotFound("Extension installation 不存在".into()),
+        other => ApiError::from(other),
+    })?;
+    Ok(Json(UninstallExtensionInstallationResponse {
+        installation_id: output.installation_id.to_string(),
+        extension_key: output.extension_key,
+    }))
 }
 
 /// GET `/api/projects/:project_id/extension-runtime/webviews/:extension_key/*asset_path`

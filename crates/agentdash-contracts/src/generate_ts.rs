@@ -16,7 +16,7 @@ use agentdash_contracts::extension_runtime::{
     ExtensionRuntimeInvocationOutputResponse, ExtensionRuntimeInvokeActionRequest,
     ExtensionRuntimeInvokeActionResponse, ExtensionRuntimeProjectionResponse,
     ExtensionRuntimeTraceResponse, ExtensionWorkspaceTabProjectionResponse,
-    ExtensionWorkspaceTabRendererResponse,
+    ExtensionWorkspaceTabRendererResponse, UninstallExtensionInstallationResponse,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
@@ -178,6 +178,7 @@ fn main() {
             export_all::<ExtensionRuntimeTraceResponse>(dir);
             export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
             export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
+            export_all::<UninstallExtensionInstallationResponse>(dir);
         },
     );
 

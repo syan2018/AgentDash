@@ -143,6 +143,23 @@ impl ProjectExtensionInstallationRepository for PostgresProjectExtensionInstalla
         row.map(row_to_installation).transpose()
     }
 
+    async fn get_by_project_and_id(
+        &self,
+        project_id: Uuid,
+        installation_id: Uuid,
+    ) -> Result<Option<ProjectExtensionInstallation>, DomainError> {
+        let row = sqlx::query(
+            "SELECT * FROM project_extension_installations
+             WHERE project_id = $1 AND id = $2",
+        )
+        .bind(project_id.to_string())
+        .bind(installation_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?;
+        row.map(row_to_installation).transpose()
+    }
+
     async fn list_by_project(
         &self,
         project_id: Uuid,
@@ -156,6 +173,23 @@ impl ProjectExtensionInstallationRepository for PostgresProjectExtensionInstalla
         .await
         .map_err(db_err)?;
         rows.into_iter().map(row_to_installation).collect()
+    }
+
+    async fn delete(
+        &self,
+        project_id: Uuid,
+        installation_id: Uuid,
+    ) -> Result<bool, DomainError> {
+        let result = sqlx::query(
+            "DELETE FROM project_extension_installations
+             WHERE id = $1 AND project_id = $2",
+        )
+        .bind(installation_id.to_string())
+        .bind(project_id.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(db_err)?;
+        Ok(result.rows_affected() > 0)
     }
 
     async fn list_enabled_by_project(
@@ -423,6 +457,64 @@ mod tests {
                 "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
                     .to_string(),
         }
+    }
+
+    #[tokio::test]
+    async fn get_by_project_and_id_and_delete_round_trip() {
+        let Some(repo) = new_repo().await else {
+            return;
+        };
+        let project_id = Uuid::new_v4();
+        let other_project_id = Uuid::new_v4();
+        let artifact_id = Uuid::new_v4();
+        let installation = ProjectExtensionInstallation::new_packaged(
+            project_id,
+            format!("local-hello-{artifact_id}"),
+            "Local Hello",
+            sample_manifest(),
+            sample_package_ref(artifact_id),
+        )
+        .expect("valid packaged installation");
+        repo.create(&installation)
+            .await
+            .expect("create packaged installation");
+
+        let loaded = repo
+            .get_by_project_and_id(project_id, installation.id)
+            .await
+            .expect("get_by_project_and_id");
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().id, installation.id);
+
+        let cross_project = repo
+            .get_by_project_and_id(other_project_id, installation.id)
+            .await
+            .expect("get_by_project_and_id cross project");
+        assert!(cross_project.is_none());
+
+        let cross_delete = repo
+            .delete(other_project_id, installation.id)
+            .await
+            .expect("delete cross project");
+        assert!(!cross_delete);
+
+        let deleted = repo
+            .delete(project_id, installation.id)
+            .await
+            .expect("delete happy");
+        assert!(deleted);
+
+        let after = repo
+            .get_by_project_and_id(project_id, installation.id)
+            .await
+            .expect("get after delete");
+        assert!(after.is_none());
+
+        let again = repo
+            .delete(project_id, installation.id)
+            .await
+            .expect("delete missing");
+        assert!(!again);
     }
 
     #[tokio::test]

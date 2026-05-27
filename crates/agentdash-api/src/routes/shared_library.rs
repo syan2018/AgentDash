@@ -15,7 +15,7 @@ use agentdash_application::shared_library::{
 };
 use agentdash_domain::extension_package::ExtensionPackageArtifactOwner;
 use agentdash_domain::shared_library::{
-    LibraryAsset, LibraryAssetListFilter, LibraryAssetScope, LibraryAssetType,
+    LibraryAsset, LibraryAssetListFilter, LibraryAssetPayload, LibraryAssetScope, LibraryAssetType,
 };
 
 use crate::app_state::AppState;
@@ -193,13 +193,17 @@ async fn library_asset_response_for_api(
     }
 
     let owner = ExtensionPackageArtifactOwner::library_asset(asset.id);
+    let payload = match asset.typed_payload()? {
+        LibraryAssetPayload::ExtensionTemplate(payload) => payload,
+        _ => return Ok(library_asset_response(asset)),
+    };
     let extension_package_artifact = state
         .repos
         .extension_package_artifact_repo
         .list_by_owner(&owner)
         .await?
         .into_iter()
-        .find(|artifact| artifact.manifest_digest == asset.payload_digest);
+        .find(|artifact| artifact.matches_extension_template(&payload));
 
     Ok(library_asset_response_with_extension_package(
         asset,

@@ -249,7 +249,7 @@ Project Assets 发布行为：
 
 发布请求禁止前端传 raw payload。Project 资源中带 credential、header、env、本机路径、localhost 或私网 URL 的 MCP 连接材料必须在后端 mapper 阶段拒绝。
 
-Extension 发布使用 `asset_kind = extension_installation`，后端从 `ProjectExtensionInstallation` 读取 manifest 并创建 `LibraryAsset(asset_type = extension_template)`。需要 package artifact 的安装必须携带 `package_artifact` 才能发布；发布成功后 LibraryAsset DTO 可携带匹配 manifest digest 的 `extension_package_artifact` 摘要，Marketplace 用它判断 packaged template 是否可安装。
+Extension 发布使用 `asset_kind = extension_installation`，后端从 `ProjectExtensionInstallation` 读取 manifest 并创建 `LibraryAsset(asset_type = extension_template)`。需要 package artifact 的安装必须携带 `package_artifact` 才能发布；发布成功后 LibraryAsset DTO 可携带同一 LibraryAsset owner 下、与 ExtensionTemplate typed manifest/package identity 匹配的 `extension_package_artifact` 摘要，Marketplace 用它判断 packaged template 是否可安装。关联键使用 owner 与 typed package identity，原因是 manifest digest 描述包内 manifest，payload digest 描述 LibraryAsset payload，二者属于不同摘要域。
 
 ## Source Status Contract
 

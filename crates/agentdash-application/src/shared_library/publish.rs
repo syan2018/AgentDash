@@ -260,7 +260,7 @@ async fn publish_extension_package_artifact(
             entity: "project_extension_installation",
             id: input.project_asset_id.to_string(),
         })?;
-    let Some(package_ref) = installation.package_artifact else {
+    let Some(package_ref) = installation.package_artifact.as_ref() else {
         if installation.manifest.requires_package_artifact() {
             return Err(PublishLibraryAssetError::BadRequest(
                 "可执行 Project Extension 缺少 package artifact，不能发布".to_string(),
@@ -268,16 +268,6 @@ async fn publish_extension_package_artifact(
         }
         return Ok(());
     };
-
-    let manifest_value = serde_json::to_value(&installation.manifest)
-        .map_err(|error| PublishLibraryAssetError::Domain(DomainError::Serialization(error)))?;
-    let manifest_digest = seed_digest(&manifest_value)?;
-    if manifest_digest != package_ref.manifest_digest {
-        return Err(PublishLibraryAssetError::BadRequest(format!(
-            "Project Extension package artifact manifest digest 不一致: expected {}, actual {manifest_digest}",
-            package_ref.manifest_digest
-        )));
-    }
 
     let source_artifact = repos
         .extension_package_artifact_repo
@@ -287,6 +277,8 @@ async fn publish_extension_package_artifact(
             entity: "extension_package_artifact",
             id: package_ref.artifact_id.to_string(),
         })?;
+    validate_extension_package_source(&installation, &package_ref, &source_artifact)?;
+
     let owner = ExtensionPackageArtifactOwner::library_asset(library_asset.id);
     if repos
         .extension_package_artifact_repo
@@ -302,13 +294,31 @@ async fn publish_extension_package_artifact(
         source_artifact.storage_ref,
         source_artifact.archive_digest,
         source_artifact.manifest_digest,
-        installation.manifest,
+        source_artifact.manifest,
         source_artifact.byte_size,
     )?;
     repos
         .extension_package_artifact_repo
         .create(&library_artifact)
         .await?;
+    Ok(())
+}
+
+fn validate_extension_package_source(
+    installation: &agentdash_domain::shared_library::ProjectExtensionInstallation,
+    package_ref: &agentdash_domain::extension_package::ExtensionPackageArtifactRef,
+    source_artifact: &ExtensionPackageArtifact,
+) -> Result<(), PublishLibraryAssetError> {
+    if !package_ref.matches_artifact(source_artifact) {
+        return Err(PublishLibraryAssetError::BadRequest(
+            "Project Extension package artifact 引用与 artifact 记录不一致".to_string(),
+        ));
+    }
+    if !source_artifact.matches_extension_template(&installation.manifest) {
+        return Err(PublishLibraryAssetError::BadRequest(
+            "Project Extension package artifact manifest 与安装 manifest 不一致".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -672,9 +682,38 @@ fn reject_local_path_like_value(field: &str, value: &str) -> Result<(), PublishL
 
 #[cfg(test)]
 mod tests {
+    use agentdash_domain::extension_package::{
+        ExtensionPackageArtifactOwner, ExtensionPackageMetadata,
+    };
     use agentdash_domain::mcp_preset::McpHttpHeader;
+    use agentdash_domain::shared_library::{
+        ExtensionTemplatePayload, ProjectExtensionInstallation,
+    };
 
     use super::*;
+
+    fn sample_extension_manifest() -> ExtensionTemplatePayload {
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: "sample-extension".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "@agentdash/sample-extension".to_string(),
+                version: "0.1.0".to_string(),
+            },
+            asset_version: "0.1.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![],
+            protocol_channels: vec![],
+            extension_dependencies: vec![],
+            workspace_tabs: vec![],
+            permissions: vec![],
+            bundles: vec![],
+        }
+    }
 
     #[test]
     fn mcp_publish_rejects_headers() {
@@ -728,5 +767,31 @@ mod tests {
         let error = sanitize_mcp_transport(&transport).expect_err("local path rejected");
 
         assert!(error.to_string().contains("本机路径"));
+    }
+
+    #[test]
+    fn extension_package_source_validation_uses_artifact_identity() {
+        let project_id = Uuid::new_v4();
+        let manifest = sample_extension_manifest();
+        let artifact = ExtensionPackageArtifact::new(
+            ExtensionPackageArtifactOwner::project(project_id),
+            "extension-packages/project/sample.tgz",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            manifest.clone(),
+            128,
+        )
+        .expect("artifact");
+        let installation = ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "sample-extension",
+            "Sample Extension",
+            manifest,
+            artifact.package_ref(),
+        )
+        .expect("installation");
+
+        validate_extension_package_source(&installation, &artifact.package_ref(), &artifact)
+            .expect("valid source");
     }
 }

@@ -149,6 +149,18 @@ pnpm run contracts:check
 
 未执行完整 `pnpm dev` 手工链路；AC1/AC4/AC5 仍保留给后续带真实 Project/Backend/Workspace 的端到端验证。
 
+## Follow-up Validation Evidence
+
+- `cargo fmt`
+- `cargo test -p agentdash-domain extension_template`
+- `cargo test -p agentdash-application extension_package_source_validation_uses_artifact_identity`
+- `cargo test -p agentdash-application shared_library`
+- `cargo check -p agentdash-api`
+- `pnpm --filter app-web run typecheck`
+- `pnpm --filter app-web run lint`
+- `pnpm --filter app-web exec vitest run src/features/assets-panel/categories/extension/ExtensionCategoryPanel.test.tsx src/services/extensionManagement.test.ts src/services/sharedLibrary.test.ts`
+- `git diff --check`
+
 ## Risky Files And Rollback Points
 
 - `crates/agentdash-infrastructure/migrations/*`

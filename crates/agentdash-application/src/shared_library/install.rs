@@ -173,7 +173,7 @@ async fn extension_template_package_artifact_for_install(
         .await?;
     let artifact = artifacts
         .into_iter()
-        .find(|artifact| artifact.manifest_digest == asset.payload_digest);
+        .find(|artifact| artifact.matches_extension_template(payload));
     match (payload.requires_package_artifact(), artifact) {
         (_, Some(artifact)) => Ok(Some(artifact)),
         (false, None) => Ok(None),

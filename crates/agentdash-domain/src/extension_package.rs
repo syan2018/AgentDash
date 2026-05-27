@@ -135,6 +135,10 @@ impl ExtensionPackageArtifactRef {
             &self.manifest_digest,
         )
     }
+
+    pub fn matches_artifact(&self, artifact: &ExtensionPackageArtifact) -> bool {
+        self == &ExtensionPackageArtifactRef::from_artifact(artifact)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,6 +209,14 @@ impl ExtensionPackageArtifact {
 
     pub fn package_ref(&self) -> ExtensionPackageArtifactRef {
         ExtensionPackageArtifactRef::from_artifact(self)
+    }
+
+    pub fn matches_extension_template(&self, template: &ExtensionTemplatePayload) -> bool {
+        self.extension_id == template.extension_id
+            && self.package_name == template.package.name
+            && self.package_version == template.package.version
+            && self.asset_version == template.asset_version
+            && self.manifest == *template
     }
 }
 

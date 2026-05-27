@@ -10,8 +10,19 @@ vi.mock("../../../../stores/projectStore", () => ({
     selector({ currentProjectId: projectStoreState.currentProjectId }),
 }));
 
+vi.mock("../../../../stores/currentUserStore", () => ({
+  useCurrentUserStore: (
+    selector: (state: { currentUser: { user_id: string } | null }) => unknown,
+  ) => selector({ currentUser: { user_id: "user-1" } }),
+}));
+
 vi.mock("../../../../services/extensionManagement", () => ({
   fetchProjectExtensions: vi.fn(async () => ({ extensions: [] })),
+}));
+
+vi.mock("../../../../services/sharedLibrary", () => ({
+  fetchLibraryAssets: vi.fn(async () => []),
+  publishLibraryAsset: vi.fn(),
 }));
 
 vi.mock("../../../../services/extensionPackage", () => ({
@@ -45,8 +56,8 @@ describe("ExtensionCategoryPanel", () => {
   it("renders management-first empty state without archive-library language", () => {
     const html = renderToStaticMarkup(<ExtensionCategoryPanel />);
 
-    expect(html).toContain("Project Extensions");
-    expect(html).toContain("从本地包安装");
-    expect(html).toContain("当前项目还未安装 Extension");
+    expect(html).toContain("Extension 资产");
+    expect(html).toContain("本地包");
+    expect(html).toContain("暂无 Extension 资产");
   });
 });

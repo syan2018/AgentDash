@@ -14,7 +14,7 @@ pub struct LifecyclePathEntry {
     pub virtual_entry: bool,
 }
 
-const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含当前 node/session 投影、tool call 索引、port 产出和可写 records overlay";
+const DIRECTORY_HINT_DESCRIPTION: &str = "Lifecycle journey VFS，包含当前 node/session item 索引、compaction summary 留档、port 产出和可写 records overlay";
 
 pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     LifecyclePathEntry {
@@ -90,6 +90,66 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
         virtual_entry: true,
     },
     LifecyclePathEntry {
+        path: "session/items",
+        description: "当前 node session 全量 item 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/items/{item_file}",
+        description: "指定 session item 的完整投影",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/messages",
+        description: "当前 node session 用户与 Agent 消息索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/messages/{message_file}",
+        description: "指定用户或 Agent 消息原文",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/tools",
+        description: "当前 node session 工具 ThreadItem 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/tools/{tool_file}",
+        description: "指定工具原始 ThreadItem JSON",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/writes",
+        description: "当前 node session 成功写入类工具 ThreadItem 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/writes/{write_file}",
+        description: "指定成功写入类工具原始 ThreadItem JSON",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/summaries",
+        description: "当前 node session 每轮上下文压缩摘要留档",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "session/summaries/{summary_file}",
+        description: "指定上下文压缩摘要 markdown",
+        kind: LifecyclePathKind::File,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
         path: "session/terminal",
         description: "当前 node session 终端输出聚合",
         kind: LifecyclePathKind::File,
@@ -104,42 +164,6 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     LifecyclePathEntry {
         path: "session/turns/{turn_id}/events.json",
         description: "当前 node 单 turn 原始事件投影",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "tool-calls",
-        description: "当前 node session 的 tool call 索引；MCP 也是 tool call",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "tool-calls/{tool_call_id}/raw.json",
-        description: "指定 tool call 的原始事件投影",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "tool-calls/{tool_call_id}/request.json",
-        description: "指定 tool call 的请求结构",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "tool-calls/{tool_call_id}/result.json",
-        description: "指定 tool call 的结果结构",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "tool-calls/{tool_call_id}/stdout.txt",
-        description: "指定 tool call 的输出文本",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "writes",
-        description: "当前 node session 的写入类 tool call 索引",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
@@ -180,6 +204,36 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
         virtual_entry: true,
     },
     LifecyclePathEntry {
+        path: "nodes/{step_key}/session/items",
+        description: "指定 node session 全量 item 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "nodes/{step_key}/session/messages",
+        description: "指定 node session 用户与 Agent 消息索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "nodes/{step_key}/session/tools",
+        description: "指定 node session 工具 ThreadItem 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "nodes/{step_key}/session/writes",
+        description: "指定 node session 成功写入类工具 ThreadItem 索引",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
+        path: "nodes/{step_key}/session/summaries",
+        description: "指定 node session 每轮上下文压缩摘要留档",
+        kind: LifecyclePathKind::Dir,
+        virtual_entry: true,
+    },
+    LifecyclePathEntry {
         path: "nodes/{step_key}/session/terminal",
         description: "指定 node session 终端输出聚合",
         kind: LifecyclePathKind::File,
@@ -194,18 +248,6 @@ pub const LIFECYCLE_PATH_CATALOG: &[LifecyclePathEntry] = &[
     LifecyclePathEntry {
         path: "nodes/{step_key}/session/turns/{turn_id}/events.json",
         description: "指定 node 单 turn 原始事件投影",
-        kind: LifecyclePathKind::File,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{step_key}/session/tool-calls",
-        description: "指定 node session 的 tool call 索引",
-        kind: LifecyclePathKind::Dir,
-        virtual_entry: true,
-    },
-    LifecyclePathEntry {
-        path: "nodes/{step_key}/session/writes",
-        description: "指定 node session 的写入类 tool call 索引",
         kind: LifecyclePathKind::File,
         virtual_entry: true,
     },
@@ -242,8 +284,6 @@ pub fn lifecycle_root_entries(include_skills: bool) -> Vec<RuntimeFileEntry> {
         RuntimeFileEntry::dir("artifacts"),
         RuntimeFileEntry::file("state").as_virtual(),
         RuntimeFileEntry::dir("session").as_virtual(),
-        RuntimeFileEntry::dir("tool-calls").as_virtual(),
-        RuntimeFileEntry::file("writes").as_virtual(),
         RuntimeFileEntry::dir("records"),
         RuntimeFileEntry::dir("nodes").as_virtual(),
         RuntimeFileEntry::dir("runs").as_virtual(),
@@ -280,7 +320,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(paths.contains(&"session/conclusions"));
+        assert!(paths.contains(&"session/items"));
+        assert!(paths.contains(&"session/summaries"));
         assert!(paths.contains(&"nodes/{step_key}/session/conclusions"));
+        assert!(paths.contains(&"nodes/{step_key}/session/tools"));
         assert_eq!(paths.len(), LIFECYCLE_PATH_CATALOG.len());
     }
 

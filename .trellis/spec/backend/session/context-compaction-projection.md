@@ -78,6 +78,20 @@ session_projection_heads(model_context)
 
 API `GET /sessions/{id}/context/projection` 返回当前 `model_context` projection view，前端 Context panel 用它展示模型当前可见 segments。Timeline 继续消费真实事件流，两者不互相替代。
 
+## Lifecycle Recall Surface
+
+Compaction summary 是模型可见的交接文本，但原始意图与工具细节仍以 session events / ThreadItem 为事实源。Lifecycle VFS 因此提供 session 级回看文件面：
+
+| Path | 职责 |
+| --- | --- |
+| `session/items` | 全量 item 索引，包括用户消息、Agent 消息、reasoning、工具 item 与 context compaction item |
+| `session/messages` | 用户消息与 Agent 消息视图，文件名携带 item id、role 与内容预览 |
+| `session/tools` | 工具类 ThreadItem 视图，文件内容保留原始 ThreadItem JSON |
+| `session/writes` | 成功写入类工具 item 子集，文件名携带写入目标 |
+| `session/summaries` | 每轮 context compaction summary 的标准留档 |
+
+这些文件名直接作为低成本索引提供给 summarizer，原因是后续 Agent 需要先扫目录确定值得回看的原文，再按需读取具体文件；summary 文本只承担交接和引用职责，不替代原始事件审计。
+
 ## Branch Baseline
 
 fork / rollback / lineage 消费 `session_compactions` 的 checkpoint surface 与 `session_projection_heads`，并通过 `session_lineage` 记录跨 session 的父子关系。Projection head 表示“该 session 当前模型可见到哪里”，lineage edge 表示“该 session 从哪里来”；两者分离后，rollback 可以移动当前 head，fork 可以 materialize child initial projection，而不会让 projection store 同时承担 session tree 的职责。

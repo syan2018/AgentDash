@@ -90,7 +90,8 @@
           "input_schema": true,
           "output_schema": true,
           "permissions": [
-            "process.execute"
+            "process.execute",
+            "env.read:PATH"
           ]
         }
       ]
@@ -154,7 +155,7 @@
     {
       "kind": "extension_host",
       "entry": "dist/extension.js",
-      "digest": "sha256:e3b1793171105cdfe87fb080b28e62e7ead473576d1eb36d1ca777018824f2ef"
+      "digest": "sha256:78a674883eaf1f41c214bb8742a6cee91019d0e8737f8b17987e05de25108489"
     }
   ]
 }

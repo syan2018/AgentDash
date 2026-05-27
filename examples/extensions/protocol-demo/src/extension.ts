@@ -49,7 +49,7 @@ export default defineExtension({
         },
         runShell: {
           description: "Run a trusted local shell command through the provider channel",
-          permissions: ["process.execute"],
+          permissions: ["process.execute", "env.read:PATH"],
           invoke(input: JsonValue) {
             return client.runShell(asRecord(input));
           },

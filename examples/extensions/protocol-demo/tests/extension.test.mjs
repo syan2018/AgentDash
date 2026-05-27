@@ -16,6 +16,10 @@ test("manifest declares protocol channel provider and consumer dependency surfac
     manifest.protocol_channels[0].methods.map((method) => method.name),
     ["greet", "inspectWorkspace", "runShell"],
   );
+  assert.deepEqual(
+    manifest.protocol_channels[0].methods.find((method) => method.name === "runShell").permissions,
+    ["process.execute", "env.read:PATH"],
+  );
   assert.deepEqual(manifest.extension_dependencies[0], {
     alias: "demo",
     extension_id: "protocol-demo",

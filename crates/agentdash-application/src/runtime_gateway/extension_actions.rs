@@ -762,9 +762,12 @@ mod tests {
     use std::sync::Mutex as StdMutex;
 
     use agentdash_domain::DomainError;
-    use agentdash_domain::extension_package::ExtensionPackageMetadata;
+    use agentdash_domain::extension_package::{
+        ExtensionPackageArtifactRef, ExtensionPackageMetadata,
+    };
     use agentdash_domain::shared_library::{
-        ExtensionPermissionAccess, ExtensionPermissionDeclaration,
+        ExtensionDependencyDeclaration, ExtensionPermissionAccess, ExtensionPermissionDeclaration,
+        ExtensionProtocolChannelDefinition, ExtensionProtocolChannelMethodDefinition,
         ExtensionRuntimeActionDefinition, ExtensionTemplatePayload, InstalledAssetSource,
         ProjectExtensionInstallation,
     };
@@ -772,7 +775,7 @@ mod tests {
 
     use super::*;
     use crate::runtime_gateway::{
-        RuntimeActor, RuntimeGateway, RuntimeInvocationErrorKind, RuntimeTarget,
+        RuntimeActor, RuntimeGateway, RuntimeInvocationErrorKind, RuntimeTarget, RuntimeTrace,
     };
 
     #[derive(Default)]
@@ -847,6 +850,25 @@ mod tests {
             backend_id: &str,
             payload: CommandExtensionActionInvokePayload,
         ) -> Result<ResponseExtensionActionInvokePayload, ExtensionRuntimeActionTransportError>
+        {
+            assert_eq!(backend_id, "backend-1");
+            *self.last_payload.lock().expect("lock") = Some(payload);
+            self.result.clone()
+        }
+    }
+
+    struct FakeChannelTransport {
+        result: Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>,
+        last_payload: StdMutex<Option<CommandExtensionChannelInvokePayload>>,
+    }
+
+    #[async_trait]
+    impl ExtensionRuntimeChannelTransport for FakeChannelTransport {
+        async fn invoke_extension_channel(
+            &self,
+            backend_id: &str,
+            payload: CommandExtensionChannelInvokePayload,
+        ) -> Result<ResponseExtensionChannelInvokePayload, ExtensionRuntimeActionTransportError>
         {
             assert_eq!(backend_id, "backend-1");
             *self.last_payload.lock().expect("lock") = Some(payload);
@@ -1012,6 +1034,114 @@ mod tests {
         assert_eq!(err.kind(), RuntimeInvocationErrorKind::Conflict);
     }
 
+    #[tokio::test]
+    async fn channel_invoker_routes_dependency_alias() {
+        let project_id = Uuid::new_v4();
+        let transport = Arc::new(FakeChannelTransport {
+            result: Ok(channel_response_payload(json!({ "ok": true }))),
+            last_payload: StdMutex::new(None),
+        });
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![
+                    provider_channel_installation(project_id),
+                    consumer_channel_installation(project_id, "^1.0.0", true),
+                ],
+            }),
+            transport.clone(),
+        );
+
+        let result = invoker
+            .invoke(channel_request(project_id, "api", Some("provider")))
+            .await
+            .expect("invoke channel");
+
+        assert_eq!(result.output.output["ok"], true);
+        assert_eq!(result.output.metadata["provider_extension_key"], "provider");
+        assert_eq!(result.output.metadata["dependency_alias"], "provider");
+        let payload = transport
+            .last_payload
+            .lock()
+            .expect("lock")
+            .clone()
+            .expect("payload");
+        assert_eq!(payload.provider_extension_key, "provider");
+        assert_eq!(payload.channel_key, "provider.api");
+        assert_eq!(
+            payload.consumer.dependency_alias.as_deref(),
+            Some("provider")
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_invoker_rejects_missing_provider() {
+        let project_id = Uuid::new_v4();
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![consumer_channel_installation(project_id, "^1.0.0", true)],
+            }),
+            Arc::new(FakeChannelTransport {
+                result: Ok(channel_response_payload(json!({}))),
+                last_payload: StdMutex::new(None),
+            }),
+        );
+
+        let err = invoker
+            .invoke(channel_request(project_id, "api", Some("provider")))
+            .await
+            .expect_err("missing provider");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn channel_invoker_rejects_missing_dependency() {
+        let project_id = Uuid::new_v4();
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![
+                    provider_channel_installation(project_id),
+                    consumer_channel_installation(project_id, "^1.0.0", false),
+                ],
+            }),
+            Arc::new(FakeChannelTransport {
+                result: Ok(channel_response_payload(json!({}))),
+                last_payload: StdMutex::new(None),
+            }),
+        );
+
+        let err = invoker
+            .invoke(channel_request(project_id, "provider.api", None))
+            .await
+            .expect_err("missing dependency");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn channel_invoker_rejects_dependency_version_mismatch() {
+        let project_id = Uuid::new_v4();
+        let invoker = ExtensionRuntimeChannelInvoker::new(
+            Arc::new(FakeInstallationRepo {
+                installations: vec![
+                    provider_channel_installation(project_id),
+                    consumer_channel_installation(project_id, "^2.0.0", true),
+                ],
+            }),
+            Arc::new(FakeChannelTransport {
+                result: Ok(channel_response_payload(json!({}))),
+                last_payload: StdMutex::new(None),
+            }),
+        );
+
+        let err = invoker
+            .invoke(channel_request(project_id, "api", Some("provider")))
+            .await
+            .expect_err("version mismatch");
+
+        assert_eq!(err.kind(), RuntimeInvocationErrorKind::CapabilityDenied);
+    }
+
     #[test]
     fn provider_supports_session_extension_action_shape() {
         let provider = ExtensionRuntimeActionProvider::new(
@@ -1058,6 +1188,82 @@ mod tests {
             action_key: "local-hello.profile".to_string(),
             output,
             metadata: Default::default(),
+        }
+    }
+
+    fn channel_response_payload(
+        output: serde_json::Value,
+    ) -> ResponseExtensionChannelInvokePayload {
+        ResponseExtensionChannelInvokePayload {
+            provider_extension_key: "provider".to_string(),
+            provider_extension_id: "provider".to_string(),
+            channel_key: "provider.api".to_string(),
+            method: "echo".to_string(),
+            output,
+            metadata: Default::default(),
+        }
+    }
+
+    fn channel_request(
+        project_id: Uuid,
+        channel_key: &str,
+        dependency_alias: Option<&str>,
+    ) -> ExtensionRuntimeChannelInvokeRequest {
+        ExtensionRuntimeChannelInvokeRequest {
+            project_id,
+            session_id: "session-1".to_string(),
+            backend_id: "backend-1".to_string(),
+            consumer: ExtensionRuntimeChannelConsumer::ExtensionPanel {
+                extension_key: "consumer".to_string(),
+            },
+            channel_key: channel_key.to_string(),
+            dependency_alias: dependency_alias.map(str::to_string),
+            method: "echo".to_string(),
+            input: json!({ "source": "test" }),
+            trace: RuntimeTrace::new(),
+        }
+    }
+
+    fn provider_channel_installation(project_id: Uuid) -> ProjectExtensionInstallation {
+        ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "provider",
+            "Provider",
+            provider_channel_manifest(),
+            artifact_ref("provider"),
+        )
+        .expect("provider installation")
+    }
+
+    fn consumer_channel_installation(
+        project_id: Uuid,
+        version: &str,
+        include_dependency: bool,
+    ) -> ProjectExtensionInstallation {
+        ProjectExtensionInstallation::new_packaged(
+            project_id,
+            "consumer",
+            "Consumer",
+            consumer_channel_manifest(version, include_dependency),
+            artifact_ref("consumer"),
+        )
+        .expect("consumer installation")
+    }
+
+    fn artifact_ref(extension_id: &str) -> ExtensionPackageArtifactRef {
+        ExtensionPackageArtifactRef {
+            artifact_id: Uuid::new_v4(),
+            package_name: format!("@agentdash/{extension_id}"),
+            package_version: "1.0.0".to_string(),
+            asset_version: "1.0.0".to_string(),
+            source_version: "1.0.0".to_string(),
+            storage_ref: format!("extensions/{extension_id}.agentdash-extension.tgz"),
+            archive_digest:
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            manifest_digest:
+                "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                    .to_string(),
         }
     }
 
@@ -1122,6 +1328,75 @@ mod tests {
             } else {
                 vec![]
             },
+            bundles: vec![],
+        }
+    }
+
+    fn provider_channel_manifest() -> ExtensionTemplatePayload {
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: "provider".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "@agentdash/provider".to_string(),
+                version: "1.0.0".to_string(),
+            },
+            asset_version: "1.0.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![],
+            protocol_channels: vec![ExtensionProtocolChannelDefinition {
+                channel_key: "provider.api".to_string(),
+                version: "1.0.0".to_string(),
+                description: "Provider API".to_string(),
+                methods: vec![ExtensionProtocolChannelMethodDefinition {
+                    name: "echo".to_string(),
+                    description: "Echo input".to_string(),
+                    input_schema: json!({}),
+                    output_schema: json!({}),
+                    permissions: vec![],
+                }],
+            }],
+            extension_dependencies: vec![],
+            workspace_tabs: vec![],
+            permissions: vec![],
+            bundles: vec![],
+        }
+    }
+
+    fn consumer_channel_manifest(
+        version: &str,
+        include_dependency: bool,
+    ) -> ExtensionTemplatePayload {
+        ExtensionTemplatePayload {
+            manifest_version: "2".to_string(),
+            extension_id: "consumer".to_string(),
+            package: ExtensionPackageMetadata {
+                name: "@agentdash/consumer".to_string(),
+                version: "1.0.0".to_string(),
+            },
+            asset_version: "1.0.0".to_string(),
+            commands: vec![],
+            flags: vec![],
+            message_renderers: vec![],
+            capability_directives: vec![],
+            asset_refs: vec![],
+            runtime_actions: vec![],
+            protocol_channels: vec![],
+            extension_dependencies: if include_dependency {
+                vec![ExtensionDependencyDeclaration {
+                    alias: "provider".to_string(),
+                    extension_id: "provider".to_string(),
+                    version: version.to_string(),
+                    channels: vec!["provider.api".to_string()],
+                }]
+            } else {
+                vec![]
+            },
+            workspace_tabs: vec![],
+            permissions: vec![],
             bundles: vec![],
         }
     }

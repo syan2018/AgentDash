@@ -61,8 +61,8 @@ pnpm --dir examples/extensions/local-hello run test
 - [x] 实现 env/secret entry，显式 allowlist、redaction 和 missing secret 错误。
 - [x] 实现 process entry，支持通用 shell/process command、cwd boundary、timeout、output size limit、exit code capture。
 - [ ] 为每个 entry 增加 permission allowed/denied tests、参数非法 tests 和错误消息 tests。
-- [ ] 为 channel invocation 增加 provider missing、dependency missing、version mismatch、permission denied、recursive call depth tests。
-- [ ] 将 permission denied 测试聚焦在仍有产品价值的边界上；对已清理的过度门禁删除对应测试。
+- [x] 为 channel invocation 增加 provider missing、dependency missing、version mismatch、permission denied、recursive call depth tests。
+- [x] 将 permission denied 测试聚焦在仍有产品价值的边界上；对已清理的过度门禁删除对应测试。
 
 Validation:
 
@@ -118,7 +118,7 @@ pnpm --filter app-web typecheck
 - [x] 示例代码使用 self-channel shortcut 和 dependency alias，避免在闭合调用里手写自己的插件名。
 - [x] 示例 panel 调用多个 action，并展示成功/错误状态。
 - [x] 示例 tests 覆盖 pure TS action、protocol adapter mock、channel provider/consumer、permission declaration。
-- [ ] `pack` 后 archive 可通过前端 Assets 页安装，并在 session WorkspacePanel 打开试用。
+- [x] `pack` 后 archive 可通过前端 Assets 页安装，并在 session WorkspacePanel 打开试用。
 
 Validation:
 
@@ -131,12 +131,12 @@ pnpm dev
 
 Manual check:
 
-- [ ] 前端上传 packaged archive。
-- [ ] 从归档安装到 Project。
-- [ ] 在 session WorkspacePanel 打开插件 panel。
-- [ ] 调用 profile、pure TS、protocol adapter action。
-- [ ] 调用 provider channel，并验证 consumer 插件或 Canvas-like panel 经统一 bridge 访问。
-- [ ] 缺权限或 backend 离线时显示可诊断错误。
+- [x] 前端上传 packaged archive。
+- [x] 从归档安装到 Project。
+- [x] 在 session WorkspacePanel 打开插件 panel。
+- [x] 调用 profile、pure TS、protocol adapter action。
+- [x] 调用 provider channel，并验证 consumer 插件或 Canvas-like panel 经统一 bridge 访问。
+- [x] 缺权限或 backend 离线时显示可诊断错误。
 
 ## Phase 7: Docs and Spec Update
 
@@ -168,7 +168,7 @@ Docs acceptance:
 - [x] `pnpm --filter @agentdash/extension-dev test`
 - [x] `pnpm --filter app-web typecheck`
 - [x] Example `validate/test/pack`
-- [ ] 前端安装和试用插件手工验证
+- [x] 前端安装和试用插件手工验证
 
 ## Risk Files
 

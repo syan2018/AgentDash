@@ -130,6 +130,70 @@ async fn dependency_alias_invokes_provider_channel_in_same_host() {
 }
 
 #[tokio::test]
+async fn channel_method_permissions_guard_host_api_facade() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let denied_dir = write_channel_env_package(temp.path(), false)
+        .await
+        .expect("denied package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&denied_dir, activation())
+        .await
+        .expect("activate denied");
+
+    let err = manager
+        .invoke_channel("local-hello.api", "readEnv", Value::Null)
+        .await
+        .expect_err("permission denied");
+
+    assert!(err.to_string().contains(
+        "extension channel method `local-hello.api.readEnv` 未声明 env.read 或 env.read:PATH"
+    ));
+    manager.stop().await.expect("stop denied manager");
+
+    let allowed_dir = write_channel_env_package(temp.path(), true)
+        .await
+        .expect("allowed package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&allowed_dir, activation())
+        .await
+        .expect("activate allowed");
+
+    let result = manager
+        .invoke_channel("local-hello.api", "readEnv", Value::Null)
+        .await
+        .expect("invoke allowed");
+
+    assert_eq!(result["has_path"], true);
+    manager.stop().await.expect("stop allowed manager");
+}
+
+#[tokio::test]
+async fn channel_invocation_limits_recursive_calls() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_channel_loop_package(temp.path())
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_channel("local-hello.api", "loop", Value::Null)
+        .await
+        .expect_err("recursive channel");
+
+    assert!(
+        err.to_string()
+            .contains("extension invocation depth exceeded")
+    );
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn runtime_invoke_calls_loaded_extension_action() {
     let temp = tempfile::tempdir().expect("tempdir");
     let provider_dir = write_runtime_provider_package(temp.path())
@@ -466,6 +530,90 @@ async fn write_bundle(package_dir: &Path, bundle: String) -> anyhow::Result<()> 
     Ok(())
 }
 
+async fn write_channel_env_package(
+    root: &Path,
+    include_method_permission: bool,
+) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join(if include_method_permission {
+        "channel-env-allowed"
+    } else {
+        "channel-env-denied"
+    });
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = channel_env_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let method_permissions = if include_method_permission {
+        json!(["env.read:PATH"])
+    } else {
+        json!([])
+    };
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "local-hello",
+        "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
+        "asset_version": "0.1.0",
+        "protocol_channels": [{
+            "channel_key": "local-hello.api",
+            "version": "1.0.0",
+            "description": "Local API",
+            "methods": [{
+                "name": "readEnv",
+                "description": "Read PATH",
+                "input_schema": true,
+                "output_schema": true,
+                "permissions": method_permissions,
+            }],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
+async fn write_channel_loop_package(root: &Path) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("channel-loop");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = channel_loop_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "local-hello",
+        "package": { "name": "@agentdash/local-hello", "version": "0.1.0" },
+        "asset_version": "0.1.0",
+        "protocol_channels": [{
+            "channel_key": "local-hello.api",
+            "version": "1.0.0",
+            "description": "Local API",
+            "methods": [{
+                "name": "loop",
+                "description": "Recursive channel",
+                "input_schema": true,
+                "output_schema": true,
+                "permissions": [],
+            }],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
 async fn write_provider_package(root: &Path) -> anyhow::Result<PathBuf> {
     let package_dir = root.join("provider");
     tokio::fs::create_dir_all(package_dir.join("dist")).await?;
@@ -753,6 +901,53 @@ export default {
       description: "Call provider channel",
       async invoke(input) {
         return await ctx.api.channels.from("provider").invoke("echo", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn channel_env_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.channels.register({
+      channel_key: "api",
+      version: "1.0.0",
+      description: "Local API",
+      methods: {
+        readEnv: {
+          description: "Read PATH",
+          async invoke() {
+            const path = await ctx.api.env.get("PATH");
+            return { has_path: typeof path === "string" && path.length > 0 };
+          },
+        },
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn channel_loop_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.channels.register({
+      channel_key: "api",
+      version: "1.0.0",
+      description: "Loop channel",
+      methods: {
+        loop: {
+          description: "Loop forever",
+          async invoke() {
+            return await ctx.api.channels.self("api").invoke("loop", {});
+          },
+        },
       },
     });
   },

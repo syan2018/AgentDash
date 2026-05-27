@@ -107,17 +107,17 @@ pnpm --filter app-web typecheck
 
 ## Phase 6: Example Extension
 
-- [ ] 更新或新增示例插件，覆盖三类 action：
+- [x] 更新或新增示例插件，覆盖三类 action：
   - built-in Host API：`profile`
   - pure TS：`greet` / `echo`
   - user protocol adapter：`fetch_demo` / `list_items`
   - protocol channel provider/consumer：`demo_channel` / `consume_demo_channel`
-- [ ] 新增独立 `examples/extensions/protocol-demo`；`local-hello` 保持最小 Host API 示例。
-- [ ] 示例 manifest 声明所有 top-level capabilities 与 action-level permissions。
-- [ ] 示例 manifest 声明 protocol channel provider surface 与 consumer dependency。
+- [x] 新增独立 `examples/extensions/protocol-demo`；`local-hello` 保持最小 Host API 示例。
+- [x] 示例 manifest 声明所有 top-level capabilities 与 action-level permissions。
+- [x] 示例 manifest 声明 protocol channel provider surface 与 consumer dependency。
 - [ ] 示例代码使用 self-channel shortcut 和 dependency alias，避免在闭合调用里手写自己的插件名。
-- [ ] 示例 panel 调用多个 action，并展示成功/错误状态。
-- [ ] 示例 tests 覆盖 pure TS action、protocol adapter mock、channel provider/consumer、permission declaration。
+- [x] 示例 panel 调用多个 action，并展示成功/错误状态。
+- [x] 示例 tests 覆盖 pure TS action、protocol adapter mock、channel provider/consumer、permission declaration。
 - [ ] `pack` 后 archive 可通过前端 Assets 页安装，并在 session WorkspacePanel 打开试用。
 
 Validation:
@@ -140,22 +140,22 @@ Manual check:
 
 ## Phase 7: Docs and Spec Update
 
-- [ ] 新增 `docs/extension-system.md`。
-- [ ] 更新示例 README，链接主文档。
+- [x] 新增 `docs/extension-system.md`。
+- [x] 更新示例 README，链接主文档。
 - [ ] 更新 `.trellis/spec/cross-layer/desktop-local-runtime.md`，记录 Host API registry、用户自有 TS host bundle 与 built-in capability 的职责边界。
 - [ ] 更新 `.trellis/spec/cross-layer/shared-library-contract.md`，记录新的 extension permission/capability/channel/dependency schema。
 - [ ] 更新 `.trellis/spec/frontend/architecture.md` 或 type-safety/state-management 中与 bridge/projection 相关的长期约束。
 
 Docs acceptance:
 
-- [ ] 文档说明 `getProfile` 从哪里来、为什么是 built-in host capability。
-- [ ] 文档说明如何写一个纯 TS action。
-- [ ] 文档说明如何写一个用户自有协议 adapter，并通过 Host API facade 获得 HTTP/env/VFS/process 能力。
-- [ ] 文档说明如何注册 protocol channel，以及其它插件/Canvas 如何声明依赖并调用该信道。
-- [ ] 文档说明 self-channel shortcut、dependency alias、Canvas binding alias 与 canonical key 的关系。
-- [ ] 文档说明 process/shell 当前按本机可信工具模型提供通用执行，不按 Marketplace 安全模型约束。
-- [ ] 文档说明权限声明的定位：服务安装摘要、依赖解析、可用性诊断和审计，不为可信本机工具堆叠过度门禁。
-- [ ] 文档说明 pack/install/frontend trial flow。
+- [x] 文档说明 `getProfile` 从哪里来、为什么是 built-in host capability。
+- [x] 文档说明如何写一个纯 TS action。
+- [x] 文档说明如何写一个用户自有协议 adapter，并通过 Host API facade 获得 HTTP/env/VFS/process 能力。
+- [x] 文档说明如何注册 protocol channel，以及其它插件/Canvas 如何声明依赖并调用该信道。
+- [x] 文档说明 self-channel shortcut、dependency alias、Canvas binding alias 与 canonical key 的关系。
+- [x] 文档说明 process/shell 当前按本机可信工具模型提供通用执行，不按 Marketplace 安全模型约束。
+- [x] 文档说明权限声明的定位：服务安装摘要、依赖解析、可用性诊断和审计，不为可信本机工具堆叠过度门禁。
+- [x] 文档说明 pack/install/frontend trial flow。
 
 ## Phase 8: Final Verification
 

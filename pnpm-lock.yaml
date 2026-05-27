@@ -52,6 +52,33 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
+  examples/extensions/protocol-demo:
+    devDependencies:
+      '@agentdash/extension-dev':
+        specifier: workspace:*
+        version: link:../../../packages/extension-dev
+      '@agentdash/extension-sdk':
+        specifier: workspace:*
+        version: link:../../../packages/extension-sdk
+      '@agentdash/extension-ui':
+        specifier: workspace:*
+        version: link:../../../packages/extension-ui
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.4(react@19.2.4)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
   packages/app-tauri:
     dependencies:
       '@agentdash/core':

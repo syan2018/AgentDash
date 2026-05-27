@@ -1,0 +1,160 @@
+{
+  "manifest_version": "2",
+  "extension_id": "protocol-demo",
+  "package": {
+    "name": "@agentdash/example-protocol-demo",
+    "version": "0.1.0"
+  },
+  "asset_version": "0.1.0",
+  "runtime_actions": [
+    {
+      "action_key": "protocol-demo.greet",
+      "kind": "session_runtime",
+      "description": "Return a pure TypeScript greeting",
+      "input_schema": true,
+      "output_schema": true,
+      "permissions": []
+    },
+    {
+      "action_key": "protocol-demo.fetch_demo",
+      "kind": "session_runtime",
+      "description": "Fetch a text response through the built-in HTTP facade",
+      "input_schema": true,
+      "output_schema": true,
+      "permissions": [
+        "http.fetch"
+      ]
+    },
+    {
+      "action_key": "protocol-demo.workspace_demo",
+      "kind": "session_runtime",
+      "description": "Write, read, stat and list a workspace file",
+      "input_schema": true,
+      "output_schema": true,
+      "permissions": [
+        "workspace.vfs.write",
+        "workspace.vfs.read",
+        "workspace.vfs.list"
+      ]
+    },
+    {
+      "action_key": "protocol-demo.shell_demo",
+      "kind": "session_runtime",
+      "description": "Run a local shell command through the trusted tool facade",
+      "input_schema": true,
+      "output_schema": true,
+      "permissions": [
+        "process.execute",
+        "env.read:PATH"
+      ]
+    },
+    {
+      "action_key": "protocol-demo.consume_demo_channel",
+      "kind": "session_runtime",
+      "description": "Consume the extension's own protocol channel through the self shortcut",
+      "input_schema": true,
+      "output_schema": true,
+      "permissions": [
+        "extension.channel.invoke:protocol-demo.api.greet",
+        "extension.channel.invoke:protocol-demo.api.runShell"
+      ]
+    }
+  ],
+  "protocol_channels": [
+    {
+      "channel_key": "protocol-demo.api",
+      "version": "1.0.0",
+      "description": "Protocol Demo API channel",
+      "methods": [
+        {
+          "name": "greet",
+          "description": "Return a greeting from the provider channel",
+          "input_schema": true,
+          "output_schema": true,
+          "permissions": []
+        },
+        {
+          "name": "inspectWorkspace",
+          "description": "Use workspace VFS through the provider channel",
+          "input_schema": true,
+          "output_schema": true,
+          "permissions": [
+            "workspace.vfs.write",
+            "workspace.vfs.read",
+            "workspace.vfs.list"
+          ]
+        },
+        {
+          "name": "runShell",
+          "description": "Run a trusted local shell command through the provider channel",
+          "input_schema": true,
+          "output_schema": true,
+          "permissions": [
+            "process.execute"
+          ]
+        }
+      ]
+    }
+  ],
+  "extension_dependencies": [
+    {
+      "alias": "demo",
+      "extension_id": "protocol-demo",
+      "version": "^1.0.0",
+      "channels": [
+        "protocol-demo.api"
+      ]
+    }
+  ],
+  "workspace_tabs": [
+    {
+      "type_id": "protocol-demo.panel",
+      "label": "Protocol Demo",
+      "uri_scheme": "protocol-demo",
+      "renderer": {
+        "kind": "webview",
+        "entry": "dist/panel/index.html"
+      }
+    }
+  ],
+  "permissions": [
+    {
+      "kind": "http",
+      "hosts": [
+        "*"
+      ],
+      "access": "read"
+    },
+    {
+      "kind": "workspace",
+      "access": "read_write"
+    },
+    {
+      "kind": "env",
+      "names": [
+        "PATH"
+      ],
+      "access": "read"
+    },
+    {
+      "kind": "process",
+      "access": "execute"
+    },
+    {
+      "kind": "extension_channel",
+      "channel_key": "protocol-demo.api",
+      "methods": [
+        "greet",
+        "inspectWorkspace",
+        "runShell"
+      ]
+    }
+  ],
+  "bundles": [
+    {
+      "kind": "extension_host",
+      "entry": "dist/extension.js",
+      "digest": "sha256:158d4ef503fff354a8ddf617bfba45630fb7fb9f587d1781736f3e1f3a0b0e16"
+    }
+  ]
+}

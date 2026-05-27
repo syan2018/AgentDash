@@ -2,6 +2,8 @@
 
 `local-hello` 是一个独立的 AgentDash extension 示例，用 packaged archive 验证 SDK、panel webview、RuntimeGateway 和本机 TS extension host 的闭环。
 
+完整插件系统开发模型见 [插件系统文档](../../../docs/extension-system.md)。需要 protocol channel、用户自写协议 adapter 和 process/workspace 示例时，看 `examples/extensions/protocol-demo`。
+
 ## 开发命令
 
 ```powershell

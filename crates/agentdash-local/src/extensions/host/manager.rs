@@ -180,6 +180,7 @@ impl LocalExtensionHostManager {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
+            workspace_roots: activation.workspace_roots.clone(),
         };
         process.active = Some(active.clone());
         let result = process
@@ -214,6 +215,7 @@ impl LocalExtensionHostManager {
             extension_key: activation.extension_key,
             manifest: loaded.manifest.clone(),
             profile,
+            workspace_roots: activation.workspace_roots.clone(),
         };
         process.active = Some(active.clone());
         let result = process

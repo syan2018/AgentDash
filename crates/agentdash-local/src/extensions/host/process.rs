@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use agentdash_domain::shared_library::ExtensionTemplatePayload;
@@ -25,6 +26,7 @@ pub(super) struct ActiveExtension {
     pub extension_key: String,
     pub manifest: ExtensionTemplatePayload,
     pub profile: LocalExtensionHostProfile,
+    pub workspace_roots: Vec<PathBuf>,
 }
 
 impl ExtensionHostProcess {
@@ -124,7 +126,7 @@ impl ExtensionHostProcess {
             .ok_or_else(|| LocalExtensionHostError::Protocol("host api request 缺少 id".into()))?;
         let method = message.method.unwrap_or_default();
         let params = message.params.unwrap_or(Value::Null);
-        let response = match resolve_host_api(self.active.as_ref(), &method, &params) {
+        let response = match resolve_host_api(self.active.as_ref(), &method, &params).await {
             Ok(result) => json!({ "kind": "host_api_response", "id": id, "result": result }),
             Err(error) => {
                 json!({ "kind": "host_api_response", "id": id, "error": error.to_string() })

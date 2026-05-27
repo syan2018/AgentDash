@@ -150,6 +150,51 @@ async fn top_level_local_profile_summary_does_not_gate_action_call() {
 }
 
 #[tokio::test]
+async fn built_in_host_apis_use_action_permissions_and_workspace_boundary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace = temp.path().join("workspace");
+    tokio::fs::create_dir_all(&workspace)
+        .await
+        .expect("workspace");
+    let package_dir = write_package_with_permissions(
+        temp.path(),
+        built_in_host_api_bundle(),
+        json!([]),
+        json!([
+            "workspace.vfs.write",
+            "workspace.vfs.read",
+            "workspace.vfs.list",
+            "env.read:PATH",
+            "process.execute"
+        ]),
+    )
+    .await
+    .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation_with_root(workspace))
+        .await
+        .expect("activate");
+
+    let result = manager
+        .invoke_action("local-hello.profile", Value::Null)
+        .await
+        .expect("invoke");
+    assert_eq!(result["file_text"], "hello from extension");
+    assert_eq!(result["stat_kind"], "file");
+    assert_eq!(result["listed"], true);
+    assert_eq!(result["shell"]["exit_code"], 0);
+    assert!(
+        result["shell"]["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("host-api-ok")
+    );
+    assert_eq!(result["has_path"], true);
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn packaged_directory_verifies_bundle_digest() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), version_bundle(7), true, true)
@@ -204,12 +249,16 @@ fn test_manager(root: &Path) -> LocalExtensionHostManager {
 }
 
 fn activation() -> LocalExtensionHostActivation {
+    activation_with_root(PathBuf::from("C:/secret/workspace"))
+}
+
+fn activation_with_root(workspace_root: PathBuf) -> LocalExtensionHostActivation {
     LocalExtensionHostActivation {
         extension_key: "local-hello".to_string(),
         backend_id: "backend-1".to_string(),
         project_id: Some("project-1".to_string()),
         session_id: Some("session-1".to_string()),
-        workspace_roots: vec![PathBuf::from("C:/secret/workspace")],
+        workspace_roots: vec![workspace_root],
     }
 }
 
@@ -219,10 +268,6 @@ async fn write_package(
     include_top_level_permission: bool,
     include_action_permission: bool,
 ) -> anyhow::Result<PathBuf> {
-    let package_dir = root.join("package");
-    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
-    write_bundle(&package_dir, bundle.clone()).await?;
-    let digest = digest_bytes(bundle.as_bytes());
     let permissions = if include_top_level_permission {
         json!([{ "kind": "local_profile", "access": "read" }])
     } else {
@@ -233,6 +278,19 @@ async fn write_package(
     } else {
         json!([])
     };
+    write_package_with_permissions(root, bundle, permissions, action_permissions).await
+}
+
+async fn write_package_with_permissions(
+    root: &Path,
+    bundle: String,
+    permissions: Value,
+    action_permissions: Value,
+) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("package");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let digest = digest_bytes(bundle.as_bytes());
     let manifest = json!({
         "manifest_version": "2",
         "extension_id": "local-hello",
@@ -344,6 +402,46 @@ export default {
       description: "Invoke own channel",
       async invoke(input) {
         return await ctx.api.channels.self("api").invoke("echo", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn built_in_host_api_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Use built-in host APIs",
+      permissions: [
+        "workspace.vfs.write",
+        "workspace.vfs.read",
+        "workspace.vfs.list",
+        "env.read:PATH",
+        "process.execute",
+      ],
+      async invoke() {
+        await ctx.api.workspace.writeText("notes/hello.txt", "hello from extension");
+        const fileText = await ctx.api.workspace.readText("notes/hello.txt");
+        const entries = await ctx.api.workspace.list("notes");
+        const stat = await ctx.api.workspace.stat("notes/hello.txt");
+        const pathValue = await ctx.api.env.get("PATH");
+        const shell = await ctx.api.process.shell("node -e \"console.log('host-api-ok')\"", {
+          timeout_ms: 5000,
+          max_output_bytes: 1024,
+        });
+        return {
+          file_text: fileText,
+          listed: entries.some((entry) => entry.path === "notes/hello.txt"),
+          stat_kind: stat.kind,
+          has_path: typeof pathValue === "string" && pathValue.length > 0,
+          shell,
+        };
       },
     });
   },

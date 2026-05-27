@@ -52,14 +52,14 @@ pnpm --dir examples/extensions/local-hello run test
 
 ## Phase 3: Host API Registry and Built-in Capabilities
 
-- [ ] 在 `agentdash-local/src/extensions/host/` 增加 Host API registry/dispatcher。
-- [ ] 将 `local.get_profile` 迁入 registry entry。
+- [x] 在 `agentdash-local/src/extensions/host/` 增加 Host API registry/dispatcher。
+- [x] 将 `local.get_profile` 迁入 registry entry。
 - [ ] 实现 `runtime.invoke` entry，并明确 recursion/trace/admission 规则。
 - [ ] 实现 `extension.channel_invoke` entry，并明确 provider/consumer/dependency/trace/admission 规则。
-- [ ] 实现 HTTP entry，包含 URL parse、method/body/header contract、timeout 和 response normalization；host declaration 仅在保留为安装摘要或诊断信息时参与。
-- [ ] 实现 workspace/VFS entry，复用现有 workspace root/path safety helper。
-- [ ] 实现 env/secret entry，显式 allowlist、redaction 和 missing secret 错误。
-- [ ] 实现 process entry，支持通用 shell/process command、cwd boundary、timeout、output size limit、exit code capture。
+- [x] 实现 HTTP entry，包含 URL parse、method/body/header contract、timeout 和 response normalization；host declaration 仅在保留为安装摘要或诊断信息时参与。
+- [x] 实现 workspace/VFS entry，复用现有 workspace root/path safety helper。
+- [x] 实现 env/secret entry，显式 allowlist、redaction 和 missing secret 错误。
+- [x] 实现 process entry，支持通用 shell/process command、cwd boundary、timeout、output size limit、exit code capture。
 - [ ] 为每个 entry 增加 permission allowed/denied tests、参数非法 tests 和错误消息 tests。
 - [ ] 为 channel invocation 增加 provider missing、dependency missing、version mismatch、permission denied、recursive call depth tests。
 - [ ] 将 permission denied 测试聚焦在仍有产品价值的边界上；对已清理的过度门禁删除对应测试。

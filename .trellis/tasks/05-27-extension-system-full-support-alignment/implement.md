@@ -94,7 +94,7 @@ cargo test -p agentdash-api extension
 - [x] 增加 panel/Canvas-facing `extension.invoke_channel` bridge method，参数只包含 channel key、method、input，Project/session/backend/actor/context 由宿主组装。
 - [x] 接通 panel VFS read/write 或从 SDK 中移除未实现声明；本任务倾向接通。
 - [x] 定义 events 的宿主语义：panel-local、workspace-level，或 extension runtime event；实现与文档保持一致。
-- [ ] 增加 bridge model/ui tests，覆盖 method params、unknown method、permission/admission error 显示。
+- [x] 增加 bridge model/ui tests，覆盖 method params、unknown method、permission/admission error 显示。
 - [x] 保持 WorkspacePanel dynamic tab 仍从 Project extension runtime projection 生成。
 
 Validation:

@@ -3,7 +3,7 @@
   "name": "compaction-lifecycle-anchor-index",
   "title": "压缩索引锚点与 Lifecycle Session 投影设计",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

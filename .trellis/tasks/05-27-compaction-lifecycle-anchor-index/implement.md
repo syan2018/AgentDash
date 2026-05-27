@@ -2,23 +2,23 @@
 
 ## Checklist
 
-- [ ] 更新 compaction summary prompt，新增固定 markdown 章节“原文回看索引”。
-- [ ] 更新 update summary prompt，要求保留、更新、删除过时的回看索引项。
-- [ ] 将摘要请求从 transcript serialization 调整为旁支 turn：复用原始 `messages_to_summarize`，只追加一条总结指令消息。
-- [ ] 构建高信息量 Lifecycle 文件列表索引，messages 默认每 10 条给一个窗口，tools/writes 直接列关键文件名。
-- [ ] 移除 `serialize_messages_for_summary` 作为主总结路径，旁支 summary request 直接复用原始 `messages_to_summarize`。
-- [ ] 新增 Lifecycle session item projection：从 persisted Backbone events 派生用户消息、agent message item、reasoning item、tool ThreadItem、context compaction item。
-- [ ] 新增或重做 Lifecycle VFS 路径：`session/items`、`session/messages`、`session/tools`、`session/writes`、`session/summaries`，以及对应 `nodes/{step_key}/session/...`。
-- [ ] `session/items` 作为全量 item catalog，文件名包含 ordinal、item id、item kind、短预览。
-- [ ] `session/messages` 只包含用户消息和 Agent 消息，文件名包含 item id、role、十词预览，文件内容为 markdown 原文与必要 metadata。
-- [ ] `session/tools` 文件内容直接输出原始 ThreadItem JSON，文件名包含 item id、工具名和目标；不把 request/result/stdout/raw 四个拆分文件作为主路径。
-- [ ] `session/writes` 仅包含成功写入类工具 item，文件名包含 item id、工具名和写入文件路径。
-- [ ] `session/summaries` 标准化列出每轮 compaction summary，并能读取单轮 summary markdown。
-- [ ] 降级或移除当前信息量不足的 `session/turns` 主索引语义，避免把 `turn_id` 当作回看主索引。
-- [ ] 更新 Lifecycle VFS 相关测试，覆盖 items/messages/tools/writes/summaries 和 `nodes/{step_key}/session/...` 的索引与文件读取。
-- [ ] 更新 compaction tests，验证摘要请求复用原始消息前缀，只追加总结指令和 Lifecycle 文件列表索引。
-- [ ] 如需要，给 compaction metadata diagnostics 增加 `summary_format = markdown_with_recall_index_v1`。
-- [ ] 更新 backend session compaction projection spec，说明 summary 文本锚点与 Lifecycle 文件索引协作的原因。
+- [x] 更新 compaction summary prompt，新增固定 markdown 章节“原文回看索引”。
+- [x] 更新 update summary prompt，要求保留、更新、删除过时的回看索引项。
+- [x] 将摘要请求从 transcript serialization 调整为旁支 turn：复用原始 `messages_to_summarize`，只追加一条总结指令消息。
+- [x] 构建高信息量 Lifecycle 文件列表索引，messages 默认每 10 条给一个窗口，tools/writes 直接列关键文件名。
+- [x] 移除 `serialize_messages_for_summary` 作为主总结路径，旁支 summary request 直接复用原始 `messages_to_summarize`。
+- [x] 新增 Lifecycle session item projection：从 persisted Backbone events 派生用户消息、agent message item、reasoning item、tool ThreadItem、context compaction item。
+- [x] 新增或重做 Lifecycle VFS 路径：`session/items`、`session/messages`、`session/tools`、`session/writes`、`session/summaries`，以及对应 `nodes/{step_key}/session/...`。
+- [x] `session/items` 作为全量 item catalog，文件名包含 ordinal、item id、item kind、短预览。
+- [x] `session/messages` 只包含用户消息和 Agent 消息，文件名包含 item id、role、十词预览，文件内容为 markdown 原文与必要 metadata。
+- [x] `session/tools` 文件内容直接输出原始 ThreadItem JSON，文件名包含 item id、工具名和目标；不把 request/result/stdout/raw 四个拆分文件作为主路径。
+- [x] `session/writes` 仅包含成功写入类工具 item，文件名包含 item id、工具名和写入文件路径。
+- [x] `session/summaries` 标准化列出每轮 compaction summary，并能读取单轮 summary markdown。
+- [x] 降级或移除当前信息量不足的 `session/turns` 主索引语义，避免把 `turn_id` 当作回看主索引。
+- [x] 更新 Lifecycle VFS 相关测试，覆盖 items/messages/tools/writes/summaries 和 `nodes/{step_key}/session/...` 的索引与文件读取。
+- [x] 更新 compaction tests，验证摘要请求复用原始消息前缀，只追加总结指令和 Lifecycle 文件列表索引。
+- [x] 评估 compaction metadata diagnostics；当前 summary 文件与 prompt 版本已覆盖回看索引形态，无需新增字段。
+- [x] 更新 backend session compaction projection spec，说明 summary 文本锚点与 Lifecycle 文件索引协作的原因。
 
 ## Validation Commands
 
@@ -26,6 +26,21 @@
 - `cargo test -p agentdash-application workflow::lifecycle::journey`
 - `cargo test -p agentdash-application session::`
 - `pnpm --filter @agentdash/app-web test`
+- `cargo test -p agentdash-application lifecycle_vfs`
+- `cargo test -p agentdash-application lifecycle_catalog`
+- `cargo clippy -p agentdash-agent -p agentdash-application --all-targets`
+- `git diff --check`
+
+## Validation Results
+
+- `cargo test -p agentdash-agent compaction -- --nocapture` 通过：5 passed。
+- `cargo test -p agentdash-application lifecycle_vfs -- --nocapture` 通过：3 passed。
+- `cargo test -p agentdash-application lifecycle_catalog -- --nocapture` 通过：2 passed。
+- `cargo test -p agentdash-application workflow::lifecycle::journey -- --nocapture` 通过：0 matched。
+- `cargo test -p agentdash-application session:: -- --nocapture` 通过：144 passed。
+- `pnpm --filter @agentdash/app-web test` 完成，但当前 workspace 没有匹配该 filter。
+- `cargo clippy -p agentdash-agent -p agentdash-application --all-targets` 完成，剩余 warning 来自既有模块。
+- `git diff --check` 通过，仅提示 `task.json` 行尾会在 Git 写入时从 CRLF 转为 LF。
 
 ## Risky Areas
 

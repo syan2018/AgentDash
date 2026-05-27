@@ -20,6 +20,8 @@ PostgreSQL 与 SQLite repository 必须把 compact completed event、compaction 
 
 Projection store 的 head key 是 `(session_id, projection_kind)`，segment 顺序唯一性是 `(session_id, projection_kind, projection_version, sort_order)`。同一 session 的模型可见上下文只有一个当前 head；session 树拓扑由 `session_lineage` 表达，因为 lineage 记录的是会话关系，projection store 记录的是某个 session 当前可恢复的模型输入。
 
+结构性 compact 的摘要生成同样通过 `BridgeRequest` 的原生 `AgentMessage` 序列进入 provider bridge：system prompt 表达摘要目标，request messages 只添加摘要任务说明并保留待摘要的原始 User / Assistant / ToolResult / content parts。原因是摘要路径需要复用 Agent 正常请求的 provider adapter 转换边界，让工具调用、工具结果、多模态内容、Context panel 展示与 token 估算保持同一套模型可见口径。
+
 ## Runtime Contract
 
 Pi/native compact 进入 Codex-aligned item lifecycle：

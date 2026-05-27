@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
 use crate::types::{
-    AgentError, AgentMessage, CompactionParams, CompactionResult, MessageRef,
+    AgentError, AgentMessage, CompactionParams, CompactionResult, ContentPart, MessageRef,
     estimate_message_tokens,
 };
 
@@ -254,84 +254,34 @@ fn previously_compacted_count(messages: &[AgentMessage]) -> u32 {
         .unwrap_or(0)
 }
 
-/// 将消息序列化为文本，用于发给摘要 LLM
-fn serialize_messages_for_summary(messages: &[AgentMessage]) -> String {
-    let mut text = String::new();
-    for msg in messages {
-        match msg {
-            AgentMessage::User { content, .. } => {
-                text.push_str("[User]: ");
-                for part in content {
-                    if let Some(t) = part.extract_text() {
-                        text.push_str(t);
-                    }
-                }
-                text.push('\n');
-            }
-            AgentMessage::Assistant {
-                content,
-                tool_calls,
-                ..
-            } => {
-                text.push_str("[Assistant]: ");
-                for part in content {
-                    if let Some(t) = part.extract_text() {
-                        text.push_str(t);
-                    }
-                }
-                for tc in tool_calls {
-                    text.push_str(&format!(
-                        "\n  [Tool Call: {}({})]",
-                        tc.name,
-                        truncate_str(
-                            &serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                            500
-                        )
-                    ));
-                }
-                text.push('\n');
-            }
-            AgentMessage::ToolResult {
-                tool_name,
-                content,
-                is_error,
-                ..
-            } => {
-                let name = tool_name.as_deref().unwrap_or("unknown");
-                let prefix = if *is_error {
-                    "[Tool Error"
-                } else {
-                    "[Tool Result"
-                };
-                text.push_str(&format!("{prefix}: {name}]: "));
-                for part in content {
-                    if let Some(t) = part.extract_text() {
-                        text.push_str(truncate_str(t, 2000));
-                    }
-                }
-                text.push('\n');
-            }
-            AgentMessage::CompactionSummary { summary, .. } => {
-                text.push_str("[Previous Summary]: ");
-                text.push_str(summary);
-                text.push('\n');
-            }
-        }
-    }
-    text
-}
+fn build_summary_request_messages(
+    messages_to_summarize: &[AgentMessage],
+    previous_summary: Option<&str>,
+) -> Vec<AgentMessage> {
+    let instruction = if let Some(prev) = previous_summary {
+        format!(
+            "\
+## 已有摘要
 
-fn truncate_str(s: &str, max_len: usize) -> &str {
-    if s.len() <= max_len {
-        s
+<summary>
+{prev}
+</summary>
+
+接下来会以原始 Agent 消息序列提供新增对话历史。请基于已有摘要和后续消息更新完整摘要；不要把本说明当作对话历史内容。"
+        )
     } else {
-        // 安全截断（不破坏 UTF-8 边界）
-        let mut end = max_len;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        &s[..end]
-    }
+        "\
+接下来会以原始 Agent 消息序列提供对话历史。请基于后续消息生成摘要；不要把本说明当作对话历史内容。"
+            .to_string()
+    };
+
+    let mut messages = Vec::with_capacity(messages_to_summarize.len() + 1);
+    messages.push(AgentMessage::User {
+        content: vec![ContentPart::text(instruction)],
+        timestamp: None,
+    });
+    messages.extend(messages_to_summarize.iter().cloned());
+    messages
 }
 
 /// 调用 LLM 生成摘要
@@ -342,21 +292,15 @@ async fn generate_summary(
     custom_prompt: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<String, AgentError> {
-    let conversation_text = serialize_messages_for_summary(messages_to_summarize);
-
-    let (system_prompt, user_content) = if let Some(prev) = previous_summary {
-        let system = custom_prompt.unwrap_or(UPDATE_SUMMARIZATION_PROMPT);
-        let user = format!("## 已有摘要\n\n{prev}\n\n## 新增对话历史\n\n{conversation_text}");
-        (system, user)
+    let system_prompt = if previous_summary.is_some() {
+        custom_prompt.unwrap_or(UPDATE_SUMMARIZATION_PROMPT)
     } else {
-        let system = custom_prompt.unwrap_or(SUMMARIZATION_SYSTEM_PROMPT);
-        let user = format!("## 对话历史\n\n{conversation_text}");
-        (system, user)
+        custom_prompt.unwrap_or(SUMMARIZATION_SYSTEM_PROMPT)
     };
 
     let request = BridgeRequest {
         system_prompt: Some(system_prompt.to_string()),
-        messages: vec![AgentMessage::user(user_content)],
+        messages: build_summary_request_messages(messages_to_summarize, previous_summary),
         tools: vec![], // 摘要生成不需要工具
     };
 
@@ -400,19 +344,31 @@ async fn generate_summary(
 mod tests {
     use super::*;
     use crate::bridge::{BridgeResponse, LlmBridge};
-    use crate::types::{ContentPart, TokenUsage};
+    use crate::types::{ContentPart, TokenUsage, ToolCallInfo};
     use async_trait::async_trait;
     use std::pin::Pin;
+    use tokio::sync::Mutex;
 
-    struct RecordingBridge;
+    struct RecordingBridge {
+        requests: Mutex<Vec<BridgeRequest>>,
+    }
     struct EmptySummaryBridge;
+
+    impl RecordingBridge {
+        fn new() -> Self {
+            Self {
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
 
     #[async_trait]
     impl LlmBridge for RecordingBridge {
         async fn stream_complete(
             &self,
-            _request: BridgeRequest,
+            request: BridgeRequest,
         ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
+            self.requests.lock().await.push(request);
             Box::pin(tokio_stream::once(StreamChunk::Done(BridgeResponse {
                 message: AgentMessage::Assistant {
                     content: vec![ContentPart::text("summary")],
@@ -480,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_compaction_skips_existing_summary_when_building_new_summary() {
-        let bridge = RecordingBridge;
+        let bridge = RecordingBridge::new();
         let messages = vec![
             AgentMessage::compaction_summary("old summary", 32_000, 3),
             AgentMessage::user("u1"),
@@ -509,6 +465,130 @@ mod tests {
         ));
         assert_eq!(result.messages.len(), 2);
         assert_eq!(result.messages[1].first_text(), Some("u2"));
+    }
+
+    #[tokio::test]
+    async fn summary_generation_sends_native_messages_to_bridge() {
+        let bridge = RecordingBridge::new();
+        let tool_call = ToolCallInfo {
+            id: "tool-read-1".to_string(),
+            call_id: Some("call-read-1".to_string()),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": "src/main.rs" }),
+        };
+        let messages = vec![
+            AgentMessage::user("请读取文件"),
+            AgentMessage::Assistant {
+                content: vec![ContentPart::text("我来读取。")],
+                tool_calls: vec![tool_call.clone()],
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+            AgentMessage::tool_result_full(
+                "tool-read-1",
+                Some("call-read-1".to_string()),
+                Some("read_file".to_string()),
+                vec![
+                    ContentPart::text("fn main() {}"),
+                    ContentPart::Image {
+                        mime_type: "image/png".to_string(),
+                        data: "AAECAw==".to_string(),
+                    },
+                ],
+                Some(serde_json::json!({ "bytes": 12 })),
+                false,
+            ),
+            AgentMessage::user("继续"),
+        ];
+
+        execute_compaction(
+            &messages,
+            &message_refs(messages.len()),
+            &CompactionParams {
+                custom_summary: None,
+                ..compaction_params(1, 16_384)
+            },
+            &bridge,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("compaction should succeed")
+        .expect("compaction should produce result");
+
+        let requests = bridge.requests.lock().await;
+        let request = requests.first().expect("summary request should be sent");
+        assert_eq!(request.messages.len(), 4);
+        assert!(matches!(request.messages[0], AgentMessage::User { .. }));
+        assert_eq!(request.messages[1], messages[0]);
+        assert_eq!(request.messages[2], messages[1]);
+        assert_eq!(request.messages[3], messages[2]);
+
+        match &request.messages[2] {
+            AgentMessage::Assistant { tool_calls, .. } => assert_eq!(tool_calls, &[tool_call]),
+            other => panic!("expected assistant with tool calls, got {other:?}"),
+        }
+        match &request.messages[3] {
+            AgentMessage::ToolResult {
+                content, details, ..
+            } => {
+                assert!(matches!(content.get(1), Some(ContentPart::Image { .. })));
+                assert_eq!(
+                    details.as_ref().and_then(|d| d.get("bytes")),
+                    Some(&serde_json::json!(12))
+                );
+            }
+            other => panic!("expected native tool result, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn summary_update_keeps_previous_summary_as_instruction_not_flattened_history() {
+        let bridge = RecordingBridge::new();
+        let messages = vec![
+            AgentMessage::compaction_summary("old summary", 32_000, 3),
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+
+        execute_compaction(
+            &messages,
+            &message_refs(messages.len()),
+            &CompactionParams {
+                custom_summary: None,
+                ..compaction_params(1, 16_384)
+            },
+            &bridge,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("compaction should succeed")
+        .expect("compaction should produce result");
+
+        let requests = bridge.requests.lock().await;
+        let request = requests.first().expect("summary request should be sent");
+        assert_eq!(
+            request.system_prompt.as_deref(),
+            Some(UPDATE_SUMMARIZATION_PROMPT)
+        );
+        assert_eq!(request.messages.len(), 3);
+        assert!(
+            request
+                .messages
+                .first()
+                .and_then(AgentMessage::first_text)
+                .is_some_and(|text| text.contains("<summary>\nold summary\n</summary>"))
+        );
+        assert_eq!(request.messages[1], messages[1]);
+        assert_eq!(request.messages[2], messages[2]);
+        assert!(
+            !request
+                .messages
+                .iter()
+                .any(|message| matches!(message, AgentMessage::CompactionSummary { .. }))
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use ts_rs::TS;
 use crate::backbone::approval::ApprovalRequest;
 use crate::backbone::item::{ItemCompletedNotification, ItemStartedNotification};
 use crate::backbone::platform::PlatformEvent;
+use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
 
 /// 平台内部事件流转的统一类型。
 ///
@@ -40,7 +41,7 @@ pub enum BackboneEvent {
     PlanDelta(codex::PlanDeltaNotification),
 
     // ── 资源 / 状态 ──
-    TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
+    TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
     /// 外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned
     /// summary/boundary/replacement provenance，只能作为遥测与审计事实。

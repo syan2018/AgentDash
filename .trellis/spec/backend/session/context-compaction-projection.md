@@ -20,6 +20,8 @@ PostgreSQL 与 SQLite repository 必须把 compact completed event、compaction 
 
 Projection store 的 head key 是 `(session_id, projection_kind)`，segment 顺序唯一性是 `(session_id, projection_kind, projection_version, sort_order)`。同一 session 的模型可见上下文只有一个当前 head；session 树拓扑由 `session_lineage` 表达，因为 lineage 记录的是会话关系，projection store 记录的是某个 session 当前可恢复的模型输入。
 
+结构性 compact 的摘要生成同样通过 `BridgeRequest` 的原生 `AgentMessage` 序列进入 provider bridge：system prompt 表达摘要目标，request messages 只添加摘要任务说明并保留待摘要的原始 User / Assistant / ToolResult / content parts。原因是摘要路径需要复用 Agent 正常请求的 provider adapter 转换边界，让工具调用、工具结果、多模态内容、Context panel 展示与 token 估算保持同一套模型可见口径。
+
 ## Runtime Contract
 
 Pi/native compact 进入 Codex-aligned item lifecycle：
@@ -77,6 +79,17 @@ session_projection_heads(model_context)
 | `active_compaction_id` | envelope 当前使用的 active checkpoint |
 
 API `GET /sessions/{id}/context/projection` 返回当前 `model_context` projection view，前端 Context panel 用它展示模型当前可见 segments。Timeline 继续消费真实事件流，两者不互相替代。
+
+projection view 同时返回 `context_usage` 分析数据，用于上下文查看窗口展示 Claude Code 粒度的主分类与二级详情。分类估算来自 `AgentContextEnvelope` 中的 projection segments 与统一 token estimation helper；provider usage 仍是总量和窗口压力的权威来源。这个拆分让窗口能够解释“当前模型可见内容的构成”，同时避免前端重复实现 message/tool/summary token 估算。
+
+压缩触发统计使用当前 provider-visible context pressure 与 effective window：
+
+```text
+context_pressure = current_context_tokens
+threshold = effective_context_window - reserve_tokens
+```
+
+Anthropic/Claude 类 provider 的当前上下文输入需要把 cache read 与 cache creation input 纳入压力值，因为这些 token 仍然占用本轮模型可见上下文。provider usage 尚未返回时，runtime 可以使用本地 request estimate 作为 pending estimate，使状态提示与压缩判断在两次真实 usage 之间保持连续。
 
 ## Lifecycle Recall Surface
 

@@ -8,7 +8,7 @@ use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
     BeforeProviderRequestInput, CompactionFailureInput, ContentPart, DynAgentTool,
     EvaluateCompactionInput, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
-    now_millis,
+    estimate_request_tokens, now_millis,
 };
 
 use super::tool_call::refresh_context_tools;
@@ -664,80 +664,12 @@ fn provider_visible_stats(request: &BridgeRequest) -> ProviderVisibleContextStat
         system_prompt_len: request.system_prompt.as_deref().map(str::len).unwrap_or(0),
         message_count: request.messages.len(),
         tool_count: request.tools.len(),
-        estimated_input_tokens: estimate_request_tokens(request),
+        estimated_input_tokens: estimate_request_tokens(
+            request.system_prompt.as_deref(),
+            &request.messages,
+            &request.tools,
+        ),
     }
-}
-
-fn estimate_request_tokens(request: &BridgeRequest) -> u64 {
-    let system_tokens = request
-        .system_prompt
-        .as_deref()
-        .map(|value| chars_to_tokens(value.chars().count()))
-        .unwrap_or_default();
-    let message_tokens = request
-        .messages
-        .iter()
-        .map(estimate_message_tokens)
-        .fold(0_u64, u64::saturating_add);
-    let tool_tokens = request
-        .tools
-        .iter()
-        .map(|tool| {
-            chars_to_tokens(tool.name.chars().count())
-                .saturating_add(chars_to_tokens(tool.description.chars().count()))
-                .saturating_add(chars_to_tokens(tool.parameters.to_string().chars().count()))
-        })
-        .fold(0_u64, u64::saturating_add);
-    system_tokens
-        .saturating_add(message_tokens)
-        .saturating_add(tool_tokens)
-}
-
-fn estimate_message_tokens(message: &AgentMessage) -> u64 {
-    let chars = match message {
-        AgentMessage::User { content, .. } => content_chars(content),
-        AgentMessage::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let tool_chars = tool_calls
-                .iter()
-                .map(|tool_call| tool_call.name.len() + tool_call.arguments.to_string().len())
-                .sum::<usize>();
-            content_chars(content) + tool_chars
-        }
-        AgentMessage::ToolResult {
-            tool_name,
-            content,
-            details,
-            ..
-        } => {
-            let details_chars = details
-                .as_ref()
-                .map(|value| value.to_string().len())
-                .unwrap_or_default();
-            tool_name.as_deref().unwrap_or_default().len() + content_chars(content) + details_chars
-        }
-        AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
-    };
-    chars_to_tokens(chars)
-}
-
-fn content_chars(content: &[ContentPart]) -> usize {
-    content
-        .iter()
-        .map(|part| match part {
-            ContentPart::Text { text } => text.chars().count(),
-            ContentPart::Reasoning { text, .. } => text.chars().count(),
-            ContentPart::Image { data, .. } => data.len() / 4,
-        })
-        .sum()
-}
-
-fn chars_to_tokens(chars: usize) -> u64 {
-    let body = u64::try_from(chars).unwrap_or(u64::MAX);
-    body.saturating_add(3) / 4 + 4
 }
 
 async fn end_active_text(

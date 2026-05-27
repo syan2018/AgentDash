@@ -292,7 +292,11 @@ impl HookScriptEngine {
 
             "token_stats": ctx.query.token_stats.as_ref().map(|ts| serde_json::json!({
                 "last_input_tokens": ts.last_input_tokens,
+                "current_context_tokens": ts.current_context_tokens,
+                "pending_estimate_tokens": ts.pending_estimate_tokens,
                 "context_window": ts.context_window,
+                "effective_context_window": ts.effective_context_window,
+                "reserve_tokens": ts.reserve_tokens,
             })).unwrap_or(serde_json::Value::Null),
 
             "params": params.unwrap_or(&serde_json::Value::Null),

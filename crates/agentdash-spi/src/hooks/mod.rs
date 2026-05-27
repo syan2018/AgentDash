@@ -749,9 +749,21 @@ pub struct ContextTokenStats {
     /// 最近一次 LLM 调用的 input token 数（来自 usage data）
     #[serde(default)]
     pub last_input_tokens: u64,
+    /// 当前模型可见上下文压力，用于 UI 与压缩判断。
+    #[serde(default)]
+    pub current_context_tokens: u64,
+    /// 最近 provider usage 后新增内容的本地估算。
+    #[serde(default)]
+    pub pending_estimate_tokens: u64,
     /// 模型 context window 上限
     #[serde(default)]
     pub context_window: u64,
+    /// 扣除策略保留空间后的实际判断窗口。
+    #[serde(default)]
+    pub effective_context_window: u64,
+    /// 输出、工具调用或摘要预留的 token 空间。
+    #[serde(default)]
+    pub reserve_tokens: u64,
 }
 
 /// Hook 层的压缩决策

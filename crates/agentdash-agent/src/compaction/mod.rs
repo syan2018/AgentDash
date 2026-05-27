@@ -6,7 +6,10 @@
 use tokio_util::sync::CancellationToken;
 
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk};
-use crate::types::{AgentError, AgentMessage, CompactionParams, CompactionResult, MessageRef};
+use crate::types::{
+    AgentError, AgentMessage, CompactionParams, CompactionResult, ContentPart, MessageRef,
+    estimate_message_tokens,
+};
 
 /// 默认摘要 system prompt
 const SUMMARIZATION_SYSTEM_PROMPT: &str = "\
@@ -256,53 +259,53 @@ fn previously_compacted_count(messages: &[AgentMessage]) -> u32 {
         .unwrap_or(0)
 }
 
-fn estimate_message_tokens(message: &AgentMessage) -> u64 {
-    let chars = match message {
-        AgentMessage::User { content, .. } => content_chars(content),
-        AgentMessage::Assistant {
-            content,
-            tool_calls,
-            ..
-        } => {
-            let tool_chars = tool_calls
-                .iter()
-                .map(|tool_call| tool_call.name.len() + tool_call.arguments.to_string().len())
-                .sum::<usize>();
-            content_chars(content) + tool_chars
-        }
-        AgentMessage::ToolResult {
-            tool_name,
-            content,
-            details,
-            ..
-        } => {
-            let details_chars = details
-                .as_ref()
-                .map(|value| value.to_string().len())
-                .unwrap_or_default();
-            tool_name.as_deref().unwrap_or_default().len() + content_chars(content) + details_chars
-        }
-        AgentMessage::CompactionSummary { summary, .. } => summary.chars().count(),
+fn build_summary_request_messages(
+    messages_to_summarize: &[AgentMessage],
+    message_refs: &[Option<MessageRef>],
+    previous_summary: Option<&str>,
+) -> Vec<AgentMessage> {
+    let lifecycle_index = build_lifecycle_summary_index(messages_to_summarize, message_refs);
+    let instruction = if let Some(prev) = previous_summary {
+        format!(
+            "\
+请基于以上新增对话历史更新已有摘要。
+
+## 已有摘要
+
+<summary>
+{prev}
+</summary>
+
+## Lifecycle 文件列表索引
+
+{lifecycle_index}
+
+## 输出要求
+
+输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。不要把本说明当作对话历史内容。"
+        )
+    } else {
+        format!(
+            "\
+请基于以上对话历史生成交接摘要。
+
+## Lifecycle 文件列表索引
+
+{lifecycle_index}
+
+## 输出要求
+
+输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。不要把本说明当作对话历史内容。"
+        )
     };
-    chars_to_tokens(chars)
-}
 
-fn content_chars(content: &[crate::types::ContentPart]) -> usize {
-    content
-        .iter()
-        .map(|part| match part {
-            crate::types::ContentPart::Text { text } => text.chars().count(),
-            crate::types::ContentPart::Reasoning { text, .. } => text.chars().count(),
-            crate::types::ContentPart::Image { data, .. } => data.len() / 4,
-        })
-        .sum()
-}
-
-fn chars_to_tokens(chars: usize) -> u64 {
-    // 粗略估算：多数 provider 的自然语言 / JSON 输入约 3-4 chars/token。
-    // 向上取整并给每条消息一个最小结构成本。
-    let body = u64::try_from(chars).unwrap_or(u64::MAX);
-    body.saturating_add(3) / 4 + 4
+    let mut messages = Vec::with_capacity(messages_to_summarize.len() + 1);
+    messages.extend(messages_to_summarize.iter().cloned());
+    messages.push(AgentMessage::User {
+        content: vec![ContentPart::text(instruction)],
+        timestamp: None,
+    });
+    messages
 }
 
 /// 调用 LLM 生成摘要
@@ -314,26 +317,19 @@ async fn generate_summary(
     custom_prompt: Option<&str>,
     cancel: &CancellationToken,
 ) -> Result<String, AgentError> {
-    let lifecycle_index = build_lifecycle_summary_index(messages_to_summarize, message_refs);
-    let (system_prompt, instruction) = if let Some(prev) = previous_summary {
-        let system = custom_prompt.unwrap_or(UPDATE_SUMMARIZATION_PROMPT);
-        let user = format!(
-            "请基于以上新增对话历史更新已有摘要。\n\n## 已有摘要\n\n{prev}\n\n## Lifecycle 文件列表索引\n\n{lifecycle_index}\n\n## 输出要求\n\n输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。"
-        );
-        (system, user)
+    let system_prompt = if previous_summary.is_some() {
+        custom_prompt.unwrap_or(UPDATE_SUMMARIZATION_PROMPT)
     } else {
-        let system = custom_prompt.unwrap_or(SUMMARIZATION_SYSTEM_PROMPT);
-        let user = format!(
-            "请基于以上对话历史生成交接摘要。\n\n## Lifecycle 文件列表索引\n\n{lifecycle_index}\n\n## 输出要求\n\n输出完整 markdown 摘要，必须包含 `## 原文回看索引` 章节。回看索引只能引用上面的文件名、item id 或 message 区间。"
-        );
-        (system, user)
+        custom_prompt.unwrap_or(SUMMARIZATION_SYSTEM_PROMPT)
     };
 
-    let mut request_messages = messages_to_summarize.to_vec();
-    request_messages.push(AgentMessage::user(instruction));
     let request = BridgeRequest {
         system_prompt: Some(system_prompt.to_string()),
-        messages: request_messages,
+        messages: build_summary_request_messages(
+            messages_to_summarize,
+            message_refs,
+            previous_summary,
+        ),
         tools: vec![], // 摘要生成不需要工具
     };
 
@@ -498,17 +494,23 @@ fn sanitize_path_part(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::bridge::{BridgeResponse, LlmBridge};
-    use crate::types::{ContentPart, TokenUsage};
+    use crate::types::{ContentPart, TokenUsage, ToolCallInfo};
     use async_trait::async_trait;
     use std::pin::Pin;
-    use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    #[derive(Default)]
     struct RecordingBridge {
-        request: Arc<Mutex<Option<BridgeRequest>>>,
+        requests: Mutex<Vec<BridgeRequest>>,
     }
     struct EmptySummaryBridge;
+
+    impl RecordingBridge {
+        fn new() -> Self {
+            Self {
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
 
     #[async_trait]
     impl LlmBridge for RecordingBridge {
@@ -516,7 +518,7 @@ mod tests {
             &self,
             request: BridgeRequest,
         ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
-            *self.request.lock().await = Some(request);
+            self.requests.lock().await.push(request);
             Box::pin(tokio_stream::once(StreamChunk::Done(BridgeResponse {
                 message: AgentMessage::Assistant {
                     content: vec![ContentPart::text("summary")],
@@ -584,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_compaction_skips_existing_summary_when_building_new_summary() {
-        let bridge = RecordingBridge::default();
+        let bridge = RecordingBridge::new();
         let messages = vec![
             AgentMessage::compaction_summary("old summary", 32_000, 3),
             AgentMessage::user("u1"),
@@ -616,12 +618,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summary_request_uses_original_messages_as_side_branch_prefix() {
-        let bridge = RecordingBridge::default();
+    async fn summary_generation_sends_native_messages_to_bridge() {
+        let bridge = RecordingBridge::new();
+        let tool_call = ToolCallInfo {
+            id: "tool-read-1".to_string(),
+            call_id: Some("call-read-1".to_string()),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({ "path": "src/main.rs" }),
+        };
         let messages = vec![
-            AgentMessage::user("用户希望压缩摘要可以回看原始意图"),
-            AgentMessage::assistant("我会检查 compaction 和 lifecycle projection"),
-            AgentMessage::user("最新问题"),
+            AgentMessage::user("请读取文件"),
+            AgentMessage::Assistant {
+                content: vec![ContentPart::text("我来读取。")],
+                tool_calls: vec![tool_call.clone()],
+                stop_reason: None,
+                error_message: None,
+                usage: None,
+                timestamp: None,
+            },
+            AgentMessage::tool_result_full(
+                "tool-read-1",
+                Some("call-read-1".to_string()),
+                Some("read_file".to_string()),
+                vec![
+                    ContentPart::text("fn main() {}"),
+                    ContentPart::Image {
+                        mime_type: "image/png".to_string(),
+                        data: "AAECAw==".to_string(),
+                    },
+                ],
+                Some(serde_json::json!({ "bytes": 12 })),
+                false,
+            ),
+            AgentMessage::user("继续"),
         ];
 
         execute_compaction(
@@ -638,27 +667,80 @@ mod tests {
         .expect("compaction should succeed")
         .expect("compaction should produce result");
 
-        let request = bridge
-            .request
-            .lock()
-            .await
-            .clone()
-            .expect("summary request should be captured");
-        assert_eq!(request.messages.len(), 3);
-        assert_eq!(
-            request.messages[0].first_text(),
-            Some("用户希望压缩摘要可以回看原始意图")
-        );
-        let instruction = request
-            .messages
-            .last()
-            .and_then(AgentMessage::first_text)
-            .expect("instruction");
+        let requests = bridge.requests.lock().await;
+        let request = requests.first().expect("summary request should be sent");
+        assert_eq!(request.messages.len(), 4);
+        assert_eq!(request.messages[0], messages[0]);
+        assert_eq!(request.messages[1], messages[1]);
+        assert_eq!(request.messages[2], messages[2]);
+
+        match &request.messages[1] {
+            AgentMessage::Assistant { tool_calls, .. } => assert_eq!(tool_calls, &[tool_call]),
+            other => panic!("expected assistant with tool calls, got {other:?}"),
+        }
+        match &request.messages[2] {
+            AgentMessage::ToolResult {
+                content, details, ..
+            } => {
+                assert!(matches!(content.get(1), Some(ContentPart::Image { .. })));
+                assert_eq!(
+                    details.as_ref().and_then(|d| d.get("bytes")),
+                    Some(&serde_json::json!(12))
+                );
+            }
+            other => panic!("expected native tool result, got {other:?}"),
+        }
+
+        let instruction = request.messages[3].first_text().expect("instruction");
         assert!(instruction.contains("Lifecycle 文件列表索引"));
-        assert!(instruction.contains("session/messages/0000_0001"));
+        assert!(instruction.contains("session/messages/0000_0002"));
         assert!(
             !instruction.contains("[User]:"),
             "summary request should not serialize history into transcript text"
+        );
+    }
+
+    #[tokio::test]
+    async fn summary_update_keeps_previous_summary_as_instruction_not_flattened_history() {
+        let bridge = RecordingBridge::new();
+        let messages = vec![
+            AgentMessage::compaction_summary("old summary", 32_000, 3),
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::user("u2"),
+        ];
+
+        execute_compaction(
+            &messages,
+            &message_refs(messages.len()),
+            &CompactionParams {
+                custom_summary: None,
+                ..compaction_params(1, 16_384)
+            },
+            &bridge,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("compaction should succeed")
+        .expect("compaction should produce result");
+
+        let requests = bridge.requests.lock().await;
+        let request = requests.first().expect("summary request should be sent");
+        assert_eq!(
+            request.system_prompt.as_deref(),
+            Some(UPDATE_SUMMARIZATION_PROMPT)
+        );
+        assert_eq!(request.messages.len(), 3);
+        assert_eq!(request.messages[0], messages[1]);
+        assert_eq!(request.messages[1], messages[2]);
+        let instruction = request.messages[2].first_text().expect("instruction");
+        assert!(instruction.contains("<summary>\nold summary\n</summary>"));
+        assert!(instruction.contains("Lifecycle 文件列表索引"));
+        assert!(
+            !request
+                .messages
+                .iter()
+                .any(|message| matches!(message, AgentMessage::CompactionSummary { .. }))
         );
     }
 

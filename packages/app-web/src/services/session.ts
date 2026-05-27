@@ -276,7 +276,57 @@ function mapProjectionSegment(raw: unknown): SessionProjectionSegmentViewRespons
     projection_segment_id:
       value.projection_segment_id != null ? String(value.projection_segment_id) : undefined,
     preview: typeof value.preview === "string" ? value.preview : "",
+    token_estimate:
+      typeof value.token_estimate === "number" ? value.token_estimate : undefined,
+    tool_names: Array.isArray(value.tool_names)
+      ? value.tool_names.filter((item): item is string => typeof item === "string")
+      : [],
     provenance: mapProjectionProvenance(value.provenance),
+  };
+}
+
+function mapContextUsage(raw: unknown) {
+  const value = asRecordOrThrow(raw, "context usage");
+  const messages = asRecordOrThrow(value.messages, "context usage messages");
+  return {
+    categories: Array.isArray(value.categories)
+      ? value.categories.map((item) => {
+          const category = asRecordOrThrow(item, "context usage category");
+          return {
+            kind: requireStringField(category, "kind"),
+            label: requireStringField(category, "label"),
+            token_estimate: requireNumberField(category, "token_estimate"),
+            source: requireStringField(category, "source"),
+            deferred: Boolean(category.deferred),
+          };
+        })
+      : [],
+    messages: {
+      user_message_tokens: requireNumberField(messages, "user_message_tokens"),
+      assistant_message_tokens: requireNumberField(messages, "assistant_message_tokens"),
+      tool_call_tokens: requireNumberField(messages, "tool_call_tokens"),
+      tool_result_tokens: requireNumberField(messages, "tool_result_tokens"),
+      attachment_tokens: requireNumberField(messages, "attachment_tokens"),
+    },
+    top_tools: Array.isArray(value.top_tools)
+      ? value.top_tools.map((item) => {
+          const tool = asRecordOrThrow(item, "context usage tool");
+          return {
+            name: requireStringField(tool, "name"),
+            call_tokens: requireNumberField(tool, "call_tokens"),
+            result_tokens: requireNumberField(tool, "result_tokens"),
+          };
+        })
+      : [],
+    top_attachments: Array.isArray(value.top_attachments)
+      ? value.top_attachments.map((item) => {
+          const attachment = asRecordOrThrow(item, "context usage attachment");
+          return {
+            name: requireStringField(attachment, "name"),
+            tokens: requireNumberField(attachment, "tokens"),
+          };
+        })
+      : [],
   };
 }
 
@@ -295,6 +345,7 @@ function mapSessionProjectionView(raw: Record<string, unknown>): SessionProjecti
       typeof raw.token_estimate === "number" ? raw.token_estimate : undefined,
     message_count: requireNumberField(raw, "message_count"),
     segments: raw.segments.map(mapProjectionSegment),
+    context_usage: mapContextUsage(raw.context_usage),
   };
 }
 

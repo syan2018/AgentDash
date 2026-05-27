@@ -9,13 +9,53 @@ describe("SessionProjectionViewPanel", () => {
       <SessionProjectionViewPanel projection={sampleProjection()} />,
     );
 
-    expect(markup).toContain("MODEL CONTEXT");
+    expect(markup).toContain("CONTEXT");
     expect(markup).toContain("v2");
     expect(markup).toContain("head #42");
     expect(markup).toContain("summary_chunk");
     expect(markup).toContain("#1-#30");
     expect(markup).toContain("synthetic");
     expect(markup).toContain("压缩后的历史摘要");
+    expect(markup).toContain("System / Developer");
+    expect(markup).toContain("工具调用");
+  });
+
+  it("剩余空间使用 effective window 时不重复扣除 reserve", () => {
+    const markup = renderToStaticMarkup(
+      <SessionProjectionViewPanel
+        projection={sampleProjection()}
+        tokenUsage={{
+          currentContextTokens: 13_500,
+          providerContextTokens: 12_600,
+          pendingEstimateTokens: 900,
+          cumulativeTotalTokens: 126_000,
+          modelContextWindow: 200_000,
+          effectiveContextWindow: 180_000,
+          reserveTokens: 16_384,
+          usageSource: "providerPlusEstimate",
+          last: {
+            inputTokens: 10_000,
+            outputTokens: 500,
+            totalTokens: 12_600,
+            cacheReadTokens: 2_000,
+            cacheCreationTokens: 0,
+            reasoningTokens: 100,
+          },
+          total: {
+            inputTokens: 100_000,
+            outputTokens: 5_000,
+            totalTokens: 126_000,
+            cacheReadTokens: 20_000,
+            cacheCreationTokens: 0,
+            reasoningTokens: 1_000,
+          },
+        }}
+      />,
+    );
+
+    expect(markup).toContain("剩余空间");
+    expect(markup).toContain("166.5K");
+    expect(markup).not.toContain("150.1K");
   });
 });
 
@@ -28,6 +68,40 @@ function sampleProjection(): SessionProjectionViewResponse {
     active_compaction_id: "compaction-1",
     token_estimate: 128,
     message_count: 2,
+    context_usage: {
+      categories: [
+        {
+          kind: "system_developer",
+          label: "System / Developer",
+          token_estimate: 0,
+          source: "not_loaded",
+          deferred: true,
+        },
+        {
+          kind: "messages",
+          label: "Messages",
+          token_estimate: 32,
+          source: "local_estimate",
+          deferred: false,
+        },
+        {
+          kind: "compaction_summary",
+          label: "Compaction Summary",
+          token_estimate: 96,
+          source: "projected",
+          deferred: false,
+        },
+      ],
+      messages: {
+        user_message_tokens: 32,
+        assistant_message_tokens: 0,
+        tool_call_tokens: 0,
+        tool_result_tokens: 0,
+        attachment_tokens: 0,
+      },
+      top_tools: [],
+      top_attachments: [],
+    },
     segments: [
       {
         id: "segment-1",
@@ -47,6 +121,8 @@ function sampleProjection(): SessionProjectionViewResponse {
         },
         projection_segment_id: "segment-1",
         preview: "压缩后的历史摘要",
+        token_estimate: 96,
+        tool_names: [],
         provenance: {
           compaction_id: "compaction-1",
           projection_version: 2,
@@ -70,6 +146,8 @@ function sampleProjection(): SessionProjectionViewResponse {
         },
         source_event_seq: 31,
         preview: "继续推进下一步",
+        token_estimate: 32,
+        tool_names: [],
         provenance: {},
       },
     ],

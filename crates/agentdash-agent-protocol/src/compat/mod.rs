@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
-    PlatformEvent,
+    PlatformEvent, ThreadTokenUsage, ThreadTokenUsageUpdatedNotification,
 };
 
 const AGENTDASH_NS: &str = "agentdash";
@@ -70,9 +70,16 @@ pub fn envelope_to_session_notification(
             ))
         }
         BackboneEvent::TokenUsageUpdated(usage) => {
-            let total_tokens = usage.token_usage.total.total_tokens.max(0) as u64;
-            let context_window = usage.token_usage.model_context_window.unwrap_or(0).max(0) as u64;
-            let update = UsageUpdate::new(total_tokens, context_window).meta(meta);
+            let current_context_tokens =
+                usage.token_usage.context.current_context_tokens.max(0) as u64;
+            let context_window = usage
+                .token_usage
+                .context
+                .effective_context_window
+                .or(usage.token_usage.model_context_window)
+                .unwrap_or(0)
+                .max(0) as u64;
+            let update = UsageUpdate::new(current_context_tokens, context_window).meta(meta);
             Some(SessionNotification::new(
                 session_id,
                 SessionUpdate::UsageUpdate(update),
@@ -230,29 +237,13 @@ pub fn session_notification_to_envelope(notification: &SessionNotification) -> B
                 },
             )
         }
-        SessionUpdate::UsageUpdate(usage) => BackboneEvent::TokenUsageUpdated(
-            codex_app_server_protocol::ThreadTokenUsageUpdatedNotification {
+        SessionUpdate::UsageUpdate(usage) => {
+            BackboneEvent::TokenUsageUpdated(ThreadTokenUsageUpdatedNotification {
                 thread_id: session_id.clone(),
                 turn_id: trace.turn_id.clone().unwrap_or_default(),
-                token_usage: codex_app_server_protocol::ThreadTokenUsage {
-                    total: codex_app_server_protocol::TokenUsageBreakdown {
-                        total_tokens: usage.used as i64,
-                        input_tokens: 0,
-                        cached_input_tokens: 0,
-                        output_tokens: 0,
-                        reasoning_output_tokens: 0,
-                    },
-                    last: codex_app_server_protocol::TokenUsageBreakdown {
-                        total_tokens: 0,
-                        input_tokens: 0,
-                        cached_input_tokens: 0,
-                        output_tokens: 0,
-                        reasoning_output_tokens: 0,
-                    },
-                    model_context_window: Some(usage.size as i64),
-                },
-            },
-        ),
+                token_usage: ThreadTokenUsage::from_current_context(usage.used, usage.size),
+            })
+        }
         SessionUpdate::SessionInfoUpdate(_) => {
             let event_obj = agentdash_meta.and_then(|v| v.get("event"));
             match event_type {

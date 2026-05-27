@@ -1,6 +1,7 @@
 pub mod model;
 pub mod protocol;
 pub mod runtime;
+pub mod token_estimation;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
 
@@ -32,4 +33,8 @@ pub use runtime::hooks_io::{
 };
 pub use runtime::tool::{
     AgentTool, AgentToolError, AgentToolResult, DynAgentTool, ToolDefinition, ToolUpdateCallback,
+};
+pub use token_estimation::{
+    chars_to_tokens, estimate_content_tokens, estimate_message_tokens, estimate_request_tokens,
+    estimate_tool_tokens, text_tokens,
 };

@@ -1,8 +1,8 @@
 use std::io;
 
 use agentdash_agent_types::{
-    AgentContextEnvelope, AgentInputMessage, AgentMessage, ContentPart, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind,
+    AgentContextEnvelope, AgentInputMessage, ProjectedEntry, ProjectedTranscript, ProjectionKind,
+    estimate_message_tokens,
 };
 use agentdash_spi::{
     SESSION_PROJECTION_KIND_MODEL_CONTEXT, SessionCompactionRecord, SessionCompactionStatus,
@@ -319,86 +319,6 @@ fn entries_token_total(entries: &[ProjectedEntry]) -> u64 {
     entries.iter().fold(0_u64, |total, entry| {
         total.saturating_add(estimate_message_tokens(&entry.message))
     })
-}
-
-fn estimate_message_tokens(message: &AgentMessage) -> u64 {
-    match message {
-        AgentMessage::User { content, .. } => estimate_content_tokens(content),
-        AgentMessage::Assistant {
-            content,
-            tool_calls,
-            error_message,
-            ..
-        } => {
-            let tool_chars = tool_calls.iter().fold(0_usize, |acc, call| {
-                acc.saturating_add(call.id.chars().count())
-                    .saturating_add(
-                        call.call_id
-                            .as_deref()
-                            .map(|value| value.chars().count())
-                            .unwrap_or(0),
-                    )
-                    .saturating_add(call.name.chars().count())
-                    .saturating_add(json_chars(&call.arguments))
-            });
-            estimate_content_tokens(content)
-                .saturating_add(chars_to_tokens(tool_chars))
-                .saturating_add(error_message.as_deref().map(text_tokens).unwrap_or(0))
-        }
-        AgentMessage::ToolResult {
-            tool_call_id,
-            call_id,
-            tool_name,
-            content,
-            details,
-            ..
-        } => {
-            let metadata_chars = tool_call_id
-                .chars()
-                .count()
-                .saturating_add(
-                    call_id
-                        .as_deref()
-                        .map(|value| value.chars().count())
-                        .unwrap_or(0),
-                )
-                .saturating_add(
-                    tool_name
-                        .as_deref()
-                        .map(|value| value.chars().count())
-                        .unwrap_or(0),
-                )
-                .saturating_add(details.as_ref().map(json_chars).unwrap_or(0));
-            estimate_content_tokens(content).saturating_add(chars_to_tokens(metadata_chars))
-        }
-        AgentMessage::CompactionSummary { summary, .. } => text_tokens(summary),
-    }
-}
-
-fn estimate_content_tokens(content: &[ContentPart]) -> u64 {
-    let chars = content.iter().fold(0_usize, |acc, part| {
-        acc.saturating_add(match part {
-            ContentPart::Text { text } | ContentPart::Reasoning { text, .. } => {
-                text.chars().count()
-            }
-            ContentPart::Image { mime_type, .. } => mime_type.chars().count().saturating_add(1024),
-        })
-    });
-    chars_to_tokens(chars).saturating_add(4)
-}
-
-fn text_tokens(value: &str) -> u64 {
-    chars_to_tokens(value.chars().count()).saturating_add(4)
-}
-
-fn json_chars(value: &serde_json::Value) -> usize {
-    serde_json::to_string(value)
-        .map(|value| value.chars().count())
-        .unwrap_or_default()
-}
-
-fn chars_to_tokens(chars: usize) -> u64 {
-    u64::try_from(chars).unwrap_or(u64::MAX).saturating_add(3) / 4
 }
 
 fn latest_event_seq(events: &[PersistedSessionEvent]) -> u64 {

@@ -36,11 +36,11 @@ cargo test -p agentdash-domain extension
 
 ## Phase 2: Runner Runtime Extraction
 
-- [ ] 为 TS Extension Host runner 建立独立源码维护位置。
+- [x] 为 TS Extension Host runner 建立独立源码维护位置。
 - [ ] 将当前 Rust raw string runner 的 context/actions/host api client/protocol 拆成可测试 JS/TS 模块。
 - [ ] 保持 Rust `LocalExtensionHostProcess` 协议不漂移，先用 golden tests 锁定 activate/invoke/host_api_request/host_api_response。
 - [x] 在 runner context 中加入 channel handler registry，支持 activate 时收集 channel contributions，invoke 时路由到 method handler。
-- [ ] 通过 build/embed 机制让 Rust 继续获得 runner 源码。
+- [x] 通过 build/embed 机制让 Rust 继续获得 runner 源码。
 - [x] 保持 `local-hello.profile` 现有链路可跑。
 
 Validation:
@@ -54,7 +54,7 @@ pnpm --dir examples/extensions/local-hello run test
 
 - [x] 在 `agentdash-local/src/extensions/host/` 增加 Host API registry/dispatcher。
 - [x] 将 `local.get_profile` 迁入 registry entry。
-- [ ] 实现 `runtime.invoke` entry，并明确 recursion/trace/admission 规则。
+- [x] 实现 `runtime.invoke` entry，并明确 recursion/trace/admission 规则。
 - [x] 实现 `extension.channel_invoke` entry，并明确 provider/consumer/dependency/trace/admission 规则。
 - [x] 实现 HTTP entry，包含 URL parse、method/body/header contract、timeout 和 response normalization；host declaration 仅在保留为安装摘要或诊断信息时参与。
 - [x] 实现 workspace/VFS entry，复用现有 workspace root/path safety helper。
@@ -90,10 +90,10 @@ cargo test -p agentdash-api extension
 
 ## Phase 5: Frontend Webview Bridge
 
-- [ ] 对齐 `@agentdash/extension-ui` 与 `ExtensionWebviewPanel` 支持的方法。
+- [x] 对齐 `@agentdash/extension-ui` 与 `ExtensionWebviewPanel` 支持的方法。
 - [x] 增加 panel/Canvas-facing `extension.invoke_channel` bridge method，参数只包含 channel key、method、input，Project/session/backend/actor/context 由宿主组装。
 - [x] 接通 panel VFS read/write 或从 SDK 中移除未实现声明；本任务倾向接通。
-- [ ] 定义 events 的宿主语义：panel-local、workspace-level，或 extension runtime event；实现与文档保持一致。
+- [x] 定义 events 的宿主语义：panel-local、workspace-level，或 extension runtime event；实现与文档保持一致。
 - [ ] 增加 bridge model/ui tests，覆盖 method params、unknown method、permission/admission error 显示。
 - [x] 保持 WorkspacePanel dynamic tab 仍从 Project extension runtime projection 生成。
 
@@ -142,9 +142,9 @@ Manual check:
 
 - [x] 新增 `docs/extension-system.md`。
 - [x] 更新示例 README，链接主文档。
-- [ ] 更新 `.trellis/spec/cross-layer/desktop-local-runtime.md`，记录 Host API registry、用户自有 TS host bundle 与 built-in capability 的职责边界。
-- [ ] 更新 `.trellis/spec/cross-layer/shared-library-contract.md`，记录新的 extension permission/capability/channel/dependency schema。
-- [ ] 更新 `.trellis/spec/frontend/architecture.md` 或 type-safety/state-management 中与 bridge/projection 相关的长期约束。
+- [x] 更新 `.trellis/spec/cross-layer/desktop-local-runtime.md`，记录 Host API registry、用户自有 TS host bundle 与 built-in capability 的职责边界。
+- [x] 更新 `.trellis/spec/cross-layer/shared-library-contract.md`，记录新的 extension permission/capability/channel/dependency schema。
+- [x] 更新 `.trellis/spec/frontend/architecture.md` 或 type-safety/state-management 中与 bridge/projection 相关的长期约束。
 
 Docs acceptance:
 

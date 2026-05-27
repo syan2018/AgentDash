@@ -86,12 +86,17 @@ export function createExtensionBridge(options: ExtensionBridgeOptions = {}): Ext
       const type = typeof message.type === "string" ? message.type : "";
       const subscribers = handlers.get(type);
       if (!subscribers) return;
-      const payload = toJsonValue(message.payload);
-      for (const handler of subscribers) {
-        handler(payload);
-      }
+      dispatchEvent(type, toJsonValue(message.payload));
     }
   });
+
+  function dispatchEvent(type: string, payload: JsonValue) {
+    const subscribers = handlers.get(type);
+    if (!subscribers) return;
+    for (const handler of subscribers) {
+      handler(payload);
+    }
+  }
 
   function request<TOutput extends JsonValue>(method: string, params: JsonObject): Promise<TOutput> {
     const requestId = crypto.randomUUID();
@@ -145,15 +150,7 @@ export function createExtensionBridge(options: ExtensionBridgeOptions = {}): Ext
     },
     events: {
       emit(event) {
-        target.postMessage(
-          {
-            channel: "agentdash.extension",
-            kind: "event",
-            type: event.type,
-            payload: event.payload,
-          },
-          origin,
-        );
+        dispatchEvent(event.type, toJsonValue(event.payload));
       },
       subscribe(type, handler) {
         const subscribers = handlers.get(type) ?? new Set<EventHandler>();

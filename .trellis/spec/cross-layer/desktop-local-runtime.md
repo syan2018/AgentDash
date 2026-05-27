@@ -63,10 +63,12 @@ Tauri 桌面端把 Web Dashboard、本机 runtime 管理面板和桌面托管 AP
 ### Local TS Extension Host
 
 - `agentdash-local` 管理 Node-based extension host 子进程，通过 stdio JSON line 协议执行 activate / reload / invoke / health。
-- Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permissions.rs` 执行 host API 权限裁决、`runner.rs` 承载内嵌 JS runner，原因是本机插件执行、协议、权限和 runner 分发会独立演进。
+- Extension Host 内部位于 `agentdash-local/src/extensions/host/`，由 `manager.rs` 管理生命周期、`process.rs` 管理 Node stdio request-response、`protocol.rs` 定义 runner 消息、`permissions.rs` 执行 host API 权限裁决、`runner/agentdash-extension-host-runner.mjs` 承载 JS runtime 源码，`runner.rs` 只负责 `include_str!` 嵌入，原因是本机插件执行、协议、权限和 runner 分发会独立演进。
 - Extension bundle 作为 trusted local extension 在 Node runner context 中加载 self-contained ESM，原因是当前执行面使用本机 Node host 子进程承载插件代码；Host API facade 提供产品权限、协议稳定性与审计入口，不把 Node `vm` 作为不受信代码的安全隔离边界。
 - `api.local.getProfile()` 由 Rust host API facade 返回 username、platform、arch、backend/project/session 与 workspace root 摘要，原因是本机 profile 是 local runtime 的事实源。
-- 本机 profile API 同时按 manifest `local_profile` capability 与当前 action `local.profile.read` permission 裁决，原因是顶层 capability 表达插件包可申请的能力范围，action permission 表达具体 runtime surface 的实际使用声明。
+- Host API 运行时裁决使用当前 action 或 provider channel method 的 `permissions` 声明；manifest 顶层 capability 用于安装摘要、依赖解析、可用性诊断和审计，原因是当前插件执行模型是 trusted local extension，不把顶层 capability 重复做成 deny path。
+- `ctx.api.runtime.invoke()` 优先调用当前 Project 已预加载 extension host 中注册的 runtime action；跨 extension action 调用要求当前 action 或 channel method 声明 `runtime.invoke:<action_key>` 或 `runtime.invoke`，并由 runner 限制 invocation depth，原因是 RuntimeGateway 已在 relay payload 中提供 Project enabled extension host surface，本机 runner 可以在同一 host process 内完成可信工具模型下的快速路由。
+- Protocol channel 使用 canonical provider channel key 作为 projection、routing 和 trace 事实；runner 提供 `ctx.api.channels.self()` 与 dependency alias sugar，Gateway 和 local host 仍记录 canonical provider extension/channel/method，原因是 authoring 体验不应改变审计与依赖解析事实。
 - packaged mode 直接消费 `ExtensionArtifactCacheEntry.unpacked_dir`，原因是 artifact cache 已完成 archive digest 校验与安全解包。
 - action exception 和 host process exit 投影为 host 调用错误，原因是 extension host 故障应隔离在插件执行面内，保留 `agentdash-local` 主进程生命周期。
 - Relay `command.extension_action_invoke` 进入本机 CommandHandler 后调用 TS Extension Host，原因是 RuntimeGateway 只拥有 action/trace/placement 意图，具体插件执行发生在 local runtime。

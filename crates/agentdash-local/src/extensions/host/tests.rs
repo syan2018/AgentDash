@@ -130,6 +130,111 @@ async fn dependency_alias_invokes_provider_channel_in_same_host() {
 }
 
 #[tokio::test]
+async fn runtime_invoke_calls_loaded_extension_action() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let provider_dir = write_runtime_provider_package(temp.path())
+        .await
+        .expect("provider");
+    let consumer_dir = write_runtime_consumer_package(temp.path(), true)
+        .await
+        .expect("consumer");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(
+            &provider_dir,
+            LocalExtensionHostActivation {
+                extension_key: "provider".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate provider");
+    manager
+        .activate_dev_directory(
+            &consumer_dir,
+            LocalExtensionHostActivation {
+                extension_key: "consumer".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate consumer");
+
+    let result = manager
+        .invoke_action("consumer.runtime_call", json!({ "source": "runtime" }))
+        .await
+        .expect("invoke consumer");
+
+    assert_eq!(result["echoed"]["source"], "runtime");
+    assert_eq!(result["provider"], "provider");
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn runtime_invoke_requires_cross_extension_permission() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let provider_dir = write_runtime_provider_package(temp.path())
+        .await
+        .expect("provider");
+    let consumer_dir = write_runtime_consumer_package(temp.path(), false)
+        .await
+        .expect("consumer");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(
+            &provider_dir,
+            LocalExtensionHostActivation {
+                extension_key: "provider".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate provider");
+    manager
+        .activate_dev_directory(
+            &consumer_dir,
+            LocalExtensionHostActivation {
+                extension_key: "consumer".to_string(),
+                ..activation()
+            },
+        )
+        .await
+        .expect("activate consumer");
+
+    let err = manager
+        .invoke_action("consumer.runtime_call", json!({ "source": "runtime" }))
+        .await
+        .expect_err("permission denied");
+
+    assert!(err.to_string().contains("runtime.invoke:provider.echo"));
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
+async fn runtime_invoke_limits_recursive_calls() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let package_dir = write_package(temp.path(), recursive_runtime_bundle(), false, false)
+        .await
+        .expect("package");
+    let manager = test_manager(temp.path());
+    manager
+        .activate_dev_directory(&package_dir, activation())
+        .await
+        .expect("activate");
+
+    let err = manager
+        .invoke_action("local-hello.profile", Value::Null)
+        .await
+        .expect_err("recursive invoke");
+
+    assert!(
+        err.to_string()
+            .contains("extension invocation depth exceeded")
+    );
+    manager.stop().await.expect("stop");
+}
+
+#[tokio::test]
 async fn permission_denied_when_local_profile_is_not_declared() {
     let temp = tempfile::tempdir().expect("tempdir");
     let package_dir = write_package(temp.path(), profile_bundle(), false, false)
@@ -435,6 +540,82 @@ async fn write_consumer_package(root: &Path) -> anyhow::Result<PathBuf> {
     Ok(package_dir)
 }
 
+async fn write_runtime_provider_package(root: &Path) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join("runtime-provider");
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = runtime_provider_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "provider",
+        "package": { "name": "@agentdash/provider", "version": "1.0.0" },
+        "asset_version": "1.0.0",
+        "runtime_actions": [{
+            "action_key": "provider.echo",
+            "kind": "session_runtime",
+            "description": "Echo input",
+            "input_schema": true,
+            "output_schema": true,
+            "permissions": [],
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
+async fn write_runtime_consumer_package(
+    root: &Path,
+    include_permission: bool,
+) -> anyhow::Result<PathBuf> {
+    let package_dir = root.join(if include_permission {
+        "runtime-consumer"
+    } else {
+        "runtime-consumer-denied"
+    });
+    tokio::fs::create_dir_all(package_dir.join("dist")).await?;
+    let bundle = runtime_consumer_bundle();
+    write_bundle(&package_dir, bundle.clone()).await?;
+    let permissions = if include_permission {
+        json!(["runtime.invoke:provider.echo"])
+    } else {
+        json!([])
+    };
+    let manifest = json!({
+        "manifest_version": "2",
+        "extension_id": "consumer",
+        "package": { "name": "@agentdash/consumer", "version": "1.0.0" },
+        "asset_version": "1.0.0",
+        "runtime_actions": [{
+            "action_key": "consumer.runtime_call",
+            "kind": "session_runtime",
+            "description": "Call provider runtime action",
+            "input_schema": true,
+            "output_schema": true,
+            "permissions": permissions,
+        }],
+        "bundles": [{
+            "kind": "extension_host",
+            "entry": "dist/extension.js",
+            "digest": digest_bytes(bundle.as_bytes()),
+        }],
+    });
+    tokio::fs::write(
+        package_dir.join("agentdash.extension.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(package_dir)
+}
+
 fn profile_bundle() -> String {
     r#"
 export default {
@@ -482,6 +663,24 @@ export default {
       description: "Throw",
       invoke() {
         throw new Error("boom");
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn recursive_runtime_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "local-hello.profile",
+      kind: "session_runtime",
+      description: "Recursive runtime invoke",
+      async invoke() {
+        return await ctx.api.runtime.invoke("local-hello.profile", {});
       },
     });
   },
@@ -554,6 +753,42 @@ export default {
       description: "Call provider channel",
       async invoke(input) {
         return await ctx.api.channels.from("provider").invoke("echo", input);
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn runtime_provider_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "provider.echo",
+      kind: "session_runtime",
+      description: "Echo input",
+      invoke(input) {
+        return { provider: "provider", echoed: input };
+      },
+    });
+  },
+};
+"#
+    .to_string()
+}
+
+fn runtime_consumer_bundle() -> String {
+    r#"
+export default {
+  activate(ctx) {
+    ctx.runtime.registerAction({
+      action_key: "consumer.runtime_call",
+      kind: "session_runtime",
+      description: "Call provider runtime action",
+      async invoke(input) {
+        return await ctx.api.runtime.invoke("provider.echo", input);
       },
     });
   },

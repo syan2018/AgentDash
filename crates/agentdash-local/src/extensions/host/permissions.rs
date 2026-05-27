@@ -35,6 +35,7 @@ pub(super) async fn resolve_host_api(
         "process.shell" => resolve_process_shell(active, params).await,
         "process.exec" => resolve_process_exec(active, params).await,
         "http.fetch" => resolve_http_fetch(active, params).await,
+        "runtime.invoke" => resolve_runtime_invoke(active, params),
         "extension.channel_invoke" => Err(LocalExtensionHostError::Host(
             "extension channel provider routing 尚未接入 Project registry".to_string(),
         )),
@@ -65,6 +66,24 @@ fn resolve_env_get(
     require_declared_permission(active, params, &permissions)?;
     let value = std::env::var(&name).ok();
     Ok(json!(value))
+}
+
+fn resolve_runtime_invoke(
+    active: &ActiveExtension,
+    params: &Value,
+) -> Result<Value, LocalExtensionHostError> {
+    let action_key = require_string(params, "action_key")?;
+    require_declared_permission(
+        active,
+        params,
+        &[
+            "runtime.invoke".to_string(),
+            format!("runtime.invoke:{action_key}"),
+        ],
+    )?;
+    Err(LocalExtensionHostError::Host(format!(
+        "runtime.invoke 目标 action `{action_key}` 未在当前 Project extension host 预加载"
+    )))
 }
 
 async fn resolve_workspace_read_text(

@@ -95,7 +95,9 @@ ctx.api.channels.invoke(channelKey, method, input);
 
 `getProfile` 的实现位于 `agentdash-local` 的 TS Extension Host dispatcher。用户名来自本机后端读取到的本地运行环境，连同 platform、arch、backend、Project/session 和 workspace root 摘要一起返回。它是 built-in host capability，用来说明平台事实源如何通过 `ctx.api.local.getProfile()` 暴露给插件；它不是浏览器原生信道，也不是插件系统的能力上限。
 
-HTTP、workspace/VFS、env 和 process/shell 也由 `agentdash-local` 执行。workspace/VFS 复用 workspace root/path safety helper；process/shell 按本机可信工具模型提供通用执行，同时记录 cwd、timeout、输出上限、exit code 和截断状态。权限声明用于安装摘要、依赖解析、可用性诊断和审计；运行时不再把顶层 capability 当成重复门禁，具体 action 通过 `permissions` 表达自己会使用的能力。
+HTTP、workspace/VFS、env 和 process/shell 也由 `agentdash-local` 执行。workspace/VFS 复用 workspace root/path safety helper；process/shell 按本机可信工具模型提供通用执行，同时记录 cwd、timeout、输出上限、exit code 和截断状态。权限声明用于安装摘要、依赖解析、可用性诊断和审计；运行时不再把顶层 capability 当成重复门禁，具体 action 或 channel method 通过 `permissions` 表达自己会使用的能力。
+
+`ctx.api.runtime.invoke()` 用来调用当前 Project 已启用插件注册的 runtime action。RuntimeGateway 会把 Project 中可执行的 packaged extension host surface 预加载到本机 runner；同插件内调用可以直接路由，跨插件调用需要当前 action 或 channel method 声明 `runtime.invoke:<action_key>` 或 `runtime.invoke`。Runner 会限制嵌套 invocation depth，目标 action、consumer、backend、trace 和 invocation metadata 仍由平台记录。
 
 ## Runtime Actions
 
@@ -199,7 +201,18 @@ const result = await bridge.invokeAction("protocol-demo.consume_demo_channel", {
 });
 ```
 
-Panel request 只传 method 和 params。Project、session、backend、extension actor 和 trace context 由宿主 webview bridge 组装。需要调用 provider channel 的 panel 可以先通过 action 间接调用；Canvas/panel 直接 channel bridge 使用同一 `extension.invoke_channel` contract 接入。
+Panel request 只传 method 和 params。Project、session、backend、extension actor 和 trace context 由宿主 webview bridge 组装。Panel 可以调用 runtime action、provider channel、workspace VFS 与 workspace tab：
+
+```ts
+await bridge.invokeChannel("api", "greet", { name: "AgentDash" });
+await bridge.vfs.write("notes/demo.txt", "hello");
+const text = await bridge.vfs.read("notes/demo.txt");
+await bridge.openWorkspaceTab("protocol-demo.panel", "protocol-demo://demo");
+```
+
+`bridge.events` 是 panel 内部的 local event bus，适合在同一个 webview 内解耦组件状态。workspace-level 或 extension-runtime-level event 需要平台事件路由时，应作为新的宿主 bridge contract 设计。
+
+Canvas/panel 直接 channel bridge 使用同一 `extension.invoke_channel` contract 接入。Canvas 代码面向 binding/alias 调用，宿主按 Project runtime projection 解析到 canonical provider extension/channel/method。
 
 ## 打包、安装和试用
 
@@ -222,4 +235,4 @@ pnpm --dir examples/extensions/protocol-demo run agentdash:install -- --api-url 
 ## 示例
 
 - `examples/extensions/local-hello`：最小 built-in Host API 示例，展示 `ctx.api.local.getProfile()` 从本机 host 获取 profile。
-- `examples/extensions/protocol-demo`：完整协议/channel 示例，展示纯 TS action、用户自写 protocol adapter、workspace/env/process/http facade、protocol channel provider、self-channel shortcut 和 panel action 调用。
+- `examples/extensions/protocol-demo`：完整协议/channel 示例，展示纯 TS action、用户自写 protocol adapter、workspace/env/process/http facade、protocol channel provider、self-channel shortcut、dependency alias 和 panel action/channel 调用。

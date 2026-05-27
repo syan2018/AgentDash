@@ -174,11 +174,30 @@ Inline payload 额外携带 `files[]`；external service payload 额外携带 `s
   "capability_directives": ["ToolCapabilityDirective"],
   "asset_refs": [{ "asset_type": "string", "key": "string", "required": "bool" }],
   "runtime_actions": [{ "action_key": "string", "kind": "session_runtime | setup", "description": "string", "input_schema": "JSONSchema", "output_schema": "JSONSchema", "permissions": ["string"] }],
+  "protocol_channels": [{
+    "channel_key": "string",
+    "version": "semver",
+    "description": "string",
+    "methods": [{ "name": "string", "description": "string", "input_schema": "JSONSchema", "output_schema": "JSONSchema", "permissions": ["string"] }]
+  }],
+  "extension_dependencies": [{ "alias": "string", "extension_id": "string", "version": "semver range", "channels": ["string"] }],
   "workspace_tabs": [{ "type_id": "string", "label": "string", "uri_scheme": "string", "renderer": { "kind": "webview | canvas_panel", "entry": "string" } }],
-  "permissions": [{ "kind": "local_profile | workspace | runtime_action", "access": "read | write | read_write?", "action_key": "string?" }],
+  "permissions": [{
+    "kind": "local_profile | http | workspace | env | process | runtime_action | extension_channel",
+    "access": "read | write | read_write | execute?",
+    "hosts": ["string?"],
+    "names": ["string?"],
+    "action_key": "string?",
+    "channel_key": "string?",
+    "methods": ["string?"]
+  }],
   "bundles": [{ "kind": "extension_host", "entry": "string", "digest": "sha256:<hex>" }]
 }
 ```
+
+Extension package 中 `protocol_channels` 表达 provider 插件导出的 Project/session scoped API surface，`extension_dependencies` 表达 consumer 插件按 alias 依赖的 provider extension/channel。Projection、Gateway admission、local runner trace 都以 canonical `extension_key.channel` / method 作为事实；SDK/bridge 可以提供 self shortcut、dependency alias 或 Canvas binding alias，但不改变 manifest 中 provider/channel/dependency 的权威关系。
+
+Extension `permissions` 的职责是安装摘要、依赖解析、可用性诊断和审计。运行时真正需要裁决的本机 Host API 使用 action-level 或 channel-method-level `permissions` string，例如 `local.profile.read`、`workspace.vfs.read`、`process.execute`、`runtime.invoke:<action_key>`、`extension.channel.invoke:<channel_key>.<method>`。
 
 ## Install Summary
 

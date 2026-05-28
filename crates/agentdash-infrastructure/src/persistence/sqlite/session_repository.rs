@@ -233,6 +233,76 @@ impl SqliteSessionRepository {
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_io)?;
+        self.backfill_legacy_session_event_payloads().await?;
+        Ok(())
+    }
+
+    async fn backfill_legacy_session_event_payloads(&self) -> io::Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE session_events
+            SET notification_json = json_set(
+                notification_json,
+                '$.event.payload.startedAtMs',
+                occurred_at_ms
+            )
+            WHERE session_update_type = 'item_started'
+              AND json_type(notification_json, '$.event.payload.startedAtMs') IS NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+
+        sqlx::query(
+            r#"
+            UPDATE session_events
+            SET notification_json = json_set(
+                notification_json,
+                '$.event.payload.completedAtMs',
+                occurred_at_ms
+            )
+            WHERE session_update_type = 'item_completed'
+              AND json_type(notification_json, '$.event.payload.completedAtMs') IS NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+
+        sqlx::query(
+            r#"
+            UPDATE session_events
+            SET notification_json = json_set(
+                notification_json,
+                '$.event.payload.tokenUsage.context',
+                json_object(
+                    'providerContextTokens',
+                    max(coalesce(json_extract(notification_json, '$.event.payload.tokenUsage.last.totalTokens'), 0), 0),
+                    'pendingEstimateTokens',
+                    0,
+                    'currentContextTokens',
+                    max(coalesce(json_extract(notification_json, '$.event.payload.tokenUsage.last.totalTokens'), 0), 0),
+                    'cumulativeTotalTokens',
+                    max(coalesce(json_extract(notification_json, '$.event.payload.tokenUsage.total.totalTokens'), 0), 0),
+                    'modelContextWindow',
+                    json_extract(notification_json, '$.event.payload.tokenUsage.modelContextWindow'),
+                    'effectiveContextWindow',
+                    json_extract(notification_json, '$.event.payload.tokenUsage.modelContextWindow'),
+                    'reserveTokens',
+                    0,
+                    'source',
+                    'provider'
+                )
+            )
+            WHERE session_update_type = 'token_usage_updated'
+              AND json_type(notification_json, '$.event.payload.tokenUsage.context') IS NULL
+            "#,
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(sqlx_to_io)?;
+
         Ok(())
     }
 
@@ -2681,6 +2751,167 @@ mod tests {
                 .last_event_seq,
             2
         );
+    }
+
+    #[tokio::test]
+    async fn initialize_backfills_legacy_session_event_payloads() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("应能创建内存 sqlite");
+        let repo = SqliteSessionRepository::new(pool.clone());
+        repo.initialize().await.expect("应能初始化 session 表");
+        repo.create_session(&session_meta("sess-legacy"))
+            .await
+            .expect("应能创建 session");
+
+        let source = serde_json::json!({
+            "connectorId": "test",
+            "connectorType": "test"
+        });
+        let item_started = serde_json::json!({
+            "event": {
+                "type": "item_started",
+                "payload": {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "id": "tool-1",
+                        "namespace": null,
+                        "tool": "read",
+                        "arguments": {},
+                        "status": "inProgress",
+                        "contentItems": null,
+                        "success": null,
+                        "durationMs": null
+                    },
+                    "threadId": "sess-legacy",
+                    "turnId": "turn-1"
+                }
+            },
+            "sessionId": "sess-legacy",
+            "source": source,
+            "trace": {"turnId": "turn-1"},
+            "observedAt": "2026-05-28T00:00:00Z"
+        });
+        let item_completed = serde_json::json!({
+            "event": {
+                "type": "item_completed",
+                "payload": {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "id": "tool-1",
+                        "namespace": null,
+                        "tool": "read",
+                        "arguments": {},
+                        "status": "completed",
+                        "contentItems": null,
+                        "success": true,
+                        "durationMs": null
+                    },
+                    "threadId": "sess-legacy",
+                    "turnId": "turn-1"
+                }
+            },
+            "sessionId": "sess-legacy",
+            "source": source,
+            "trace": {"turnId": "turn-1"},
+            "observedAt": "2026-05-28T00:00:01Z"
+        });
+        let token_usage = serde_json::json!({
+            "event": {
+                "type": "token_usage_updated",
+                "payload": {
+                    "threadId": "sess-legacy",
+                    "turnId": "turn-1",
+                    "tokenUsage": {
+                        "total": {
+                            "totalTokens": 120,
+                            "inputTokens": 90,
+                            "cachedInputTokens": 10,
+                            "outputTokens": 30,
+                            "reasoningOutputTokens": 5
+                        },
+                        "last": {
+                            "totalTokens": 12,
+                            "inputTokens": 9,
+                            "cachedInputTokens": 1,
+                            "outputTokens": 3,
+                            "reasoningOutputTokens": 0
+                        },
+                        "modelContextWindow": 200
+                    }
+                }
+            },
+            "sessionId": "sess-legacy",
+            "source": source,
+            "trace": {"turnId": "turn-1"},
+            "observedAt": "2026-05-28T00:00:02Z"
+        });
+
+        for (seq, event_type, payload) in [
+            (1_i64, "item_started", item_started),
+            (2_i64, "item_completed", item_completed),
+            (3_i64, "token_usage_updated", token_usage),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO session_events (
+                    session_id, event_seq, occurred_at_ms, committed_at_ms,
+                    session_update_type, turn_id, entry_index, tool_call_id, notification_json
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                "#,
+            )
+            .bind("sess-legacy")
+            .bind(seq)
+            .bind(1_000_i64 + seq)
+            .bind(1_000_i64 + seq)
+            .bind(event_type)
+            .bind("turn-1")
+            .bind(if event_type == "token_usage_updated" {
+                None
+            } else {
+                Some("tool-1")
+            })
+            .bind(payload.to_string())
+            .execute(&pool)
+            .await
+            .expect("应能写入旧事件");
+        }
+        sqlx::query("UPDATE sessions SET last_event_seq = 3 WHERE id = ?")
+            .bind("sess-legacy")
+            .execute(&pool)
+            .await
+            .expect("应能更新游标");
+
+        repo.initialize().await.expect("再次初始化应补齐旧事件");
+
+        let page = repo
+            .list_event_page("sess-legacy", 0, 10)
+            .await
+            .expect("补齐后应能读取历史事件");
+        assert_eq!(page.events.len(), 3);
+        assert!(matches!(
+            page.events[0].notification.event,
+            BackboneEvent::ItemStarted(_)
+        ));
+        assert!(matches!(
+            page.events[1].notification.event,
+            BackboneEvent::ItemCompleted(_)
+        ));
+        match &page.events[2].notification.event {
+            BackboneEvent::TokenUsageUpdated(notification) => {
+                assert_eq!(notification.token_usage.context.provider_context_tokens, 12);
+                assert_eq!(notification.token_usage.context.current_context_tokens, 12);
+                assert_eq!(
+                    notification.token_usage.context.cumulative_total_tokens,
+                    120
+                );
+                assert_eq!(
+                    notification.token_usage.context.effective_context_window,
+                    Some(200)
+                );
+            }
+            other => panic!("应为 token_usage_updated，实际为 {other:?}"),
+        }
     }
 
     #[tokio::test]

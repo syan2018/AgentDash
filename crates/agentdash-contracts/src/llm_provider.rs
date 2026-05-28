@@ -251,3 +251,27 @@ pub struct UpsertLlmProviderUserCredentialRequest {
 pub struct DeleteLlmProviderUserCredentialResponse {
     pub deleted: bool,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexOAuthFlowStatusDto {
+    Pending,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct StartCodexOAuthResponse {
+    pub flow_id: String,
+    pub auth_url: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct CodexOAuthStatusResponse {
+    pub flow_id: String,
+    pub status: CodexOAuthFlowStatusDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub message: Option<String>,
+}

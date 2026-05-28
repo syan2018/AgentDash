@@ -28,9 +28,10 @@ use agentdash_contracts::extension_runtime::{
     UninstallExtensionInstallationResponse,
 };
 use agentdash_contracts::llm_provider::{
-    CreateLlmProviderRequest, DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto,
-    LlmCredentialModeDto, LlmCredentialSourceDto, LlmProviderAdminDto, LlmProviderProtocol,
-    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
+    CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
+    DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto, LlmCredentialModeDto,
+    LlmCredentialSourceDto, LlmProviderAdminDto, LlmProviderProtocol, ProbeLlmProviderModelDto,
+    ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest, StartCodexOAuthResponse,
     UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_contracts::mcp_preset::{
@@ -134,6 +135,9 @@ fn main() {
             export_all::<ProbeLlmProviderModelDto>(dir);
             export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
             export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
+            export_all::<CodexOAuthFlowStatusDto>(dir);
+            export_all::<StartCodexOAuthResponse>(dir);
+            export_all::<CodexOAuthStatusResponse>(dir);
         },
     );
 

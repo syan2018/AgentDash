@@ -1,5 +1,6 @@
 import { api } from './client';
 import type {
+  CodexOAuthStatusResponse,
   CreateLlmProviderRequest,
   DeleteLlmProviderUserCredentialResponse,
   EffectiveLlmProviderDto,
@@ -7,6 +8,7 @@ import type {
   LlmProviderAdminDto,
   ProbeLlmProviderModelDto,
   ProbeLlmProviderModelsRequest,
+  StartCodexOAuthResponse,
   UpdateLlmProviderRequest,
   UpsertLlmProviderUserCredentialRequest,
 } from '../generated/llm-provider-contracts';
@@ -16,22 +18,12 @@ export type EffectiveLlmProvider = EffectiveLlmProviderDto;
 export type ProbeModelEntry = ProbeLlmProviderModelDto;
 export type {
   CreateLlmProviderRequest,
+  CodexOAuthStatusResponse,
   JsonValue,
   UpdateLlmProviderRequest,
   ProbeLlmProviderModelsRequest,
+  StartCodexOAuthResponse,
 };
-
-export interface StartCodexOAuthResponse {
-  flow_id: string;
-  auth_url: string;
-  expires_at: string;
-}
-
-export interface CodexOAuthStatusResponse {
-  flow_id: string;
-  status: 'pending' | 'completed' | 'failed';
-  message?: string;
-}
 
 export const llmProvidersApi = {
   list: () => api.get<LlmProvider[]>('/llm-providers'),
@@ -65,6 +57,9 @@ export const llmProvidersApi = {
 
   startCodexOAuth: (providerId: string) =>
     api.post<StartCodexOAuthResponse>(`/llm-providers/${providerId}/codex-oauth/start`, {}),
+
+  startUserCodexOAuth: (providerId: string) =>
+    api.post<StartCodexOAuthResponse>(`/llm-providers/${providerId}/user-credential/codex-oauth/start`, {}),
 
   getCodexOAuthStatus: (flowId: string) =>
     api.get<CodexOAuthStatusResponse>(`/llm-providers/codex-oauth/${flowId}`),

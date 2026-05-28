@@ -2,9 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentdash_contracts::llm_provider::{
-    CreateLlmProviderRequest, DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto,
-    LlmProviderAdminDto, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
-    ReorderLlmProvidersRequest, UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
+    CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
+    DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto, LlmProviderAdminDto,
+    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
+    StartCodexOAuthResponse, UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_domain::llm_provider::{
     LlmCredentialMode, LlmCredentialSource, LlmProvider, LlmProviderUserCredential, WireProtocol,
@@ -16,7 +17,7 @@ use axum::{
     extract::{Path, State},
 };
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
@@ -44,18 +45,9 @@ const CODEX_OAUTH_EXTRA_AUTHORIZE_PARAMS: &[(&str, &str)] = &[
 
 // ─── Response / Request types ───
 
-#[derive(Debug, Serialize)]
-pub struct StartCodexOAuthResponse {
-    pub flow_id: String,
-    pub auth_url: String,
-    pub expires_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CodexOAuthStatusResponse {
-    pub flow_id: String,
-    pub status: String,
-    pub message: Option<String>,
+enum CodexOAuthCredentialTarget {
+    GlobalProvider,
+    UserByok { user_id: String },
 }
 
 // ─── Access control ───
@@ -325,6 +317,11 @@ pub async fn upsert_user_credential(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     ensure_provider_allows_user_credential(&provider)?;
+    if provider.protocol == WireProtocol::OpenaiCodex {
+        return Err(ApiError::BadRequest(
+            "ChatGPT Codex 需要通过 OAuth 登录保存个人凭据".into(),
+        ));
+    }
     let api_key = req.api_key.trim();
     if api_key.is_empty() {
         return Err(ApiError::BadRequest("api_key 不能为空".into()));
@@ -394,6 +391,52 @@ pub async fn start_codex_oauth(
     tokio::spawn(run_codex_oauth_token_exchange(
         state,
         provider_id,
+        CodexOAuthCredentialTarget::GlobalProvider,
+        flow_id.clone(),
+        started.verifier,
+        started.code_rx,
+    ));
+
+    Ok(Json(StartCodexOAuthResponse {
+        flow_id,
+        auth_url,
+        expires_at: expires_at.to_rfc3339(),
+    }))
+}
+
+pub async fn start_user_codex_oauth(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<StartCodexOAuthResponse>, ApiError> {
+    let provider_id = parse_id(&id)?;
+    let provider = state
+        .repos
+        .llm_provider_repo
+        .get_by_id(provider_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    if provider.protocol != WireProtocol::OpenaiCodex {
+        return Err(ApiError::BadRequest(
+            "只有 openai_codex Provider 支持 Codex 登录向导".into(),
+        ));
+    }
+    ensure_provider_allows_user_credential(&provider)?;
+
+    let started = oauth_flow::start_local_pkce_oauth_flow(codex_oauth_config())
+        .await
+        .map_err(ApiError::BadRequest)?;
+    let flow_id = started.flow_id.clone();
+    let auth_url = started.auth_url.clone();
+    let expires_at = started.expires_at;
+
+    tokio::spawn(run_codex_oauth_token_exchange(
+        state,
+        provider_id,
+        CodexOAuthCredentialTarget::UserByok {
+            user_id: current_user.user_id,
+        },
         flow_id.clone(),
         started.verifier,
         started.code_rx,
@@ -408,32 +451,30 @@ pub async fn start_codex_oauth(
 
 pub async fn get_codex_oauth_status(
     State(_state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(flow_id): Path<String>,
 ) -> Result<Json<CodexOAuthStatusResponse>, ApiError> {
-    require_system_access(&current_user)?;
     let flow = oauth_flow::get_flow_status(&flow_id)
         .await
         .map_err(ApiError::NotFound)?;
     Ok(Json(CodexOAuthStatusResponse {
         flow_id: flow.flow_id,
-        status: flow.status.as_str().to_string(),
+        status: codex_oauth_status_dto(&flow.status),
         message: flow.status.message(),
     }))
 }
 
 pub async fn cancel_codex_oauth(
     State(_state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(flow_id): Path<String>,
 ) -> Result<Json<CodexOAuthStatusResponse>, ApiError> {
-    require_system_access(&current_user)?;
     let flow = oauth_flow::cancel_flow(&flow_id, "Codex 登录已取消")
         .await
         .map_err(ApiError::NotFound)?;
     Ok(Json(CodexOAuthStatusResponse {
         flow_id: flow.flow_id,
-        status: flow.status.as_str().to_string(),
+        status: codex_oauth_status_dto(&flow.status),
         message: flow.status.message(),
     }))
 }
@@ -584,6 +625,7 @@ async fn resolve_user_probe_api_key(
 async fn run_codex_oauth_token_exchange(
     state: Arc<AppState>,
     provider_id: Uuid,
+    target: CodexOAuthCredentialTarget,
     flow_id: String,
     verifier: String,
     code_rx: tokio::sync::oneshot::Receiver<Result<String, String>>,
@@ -601,10 +643,12 @@ async fn run_codex_oauth_token_exchange(
     };
 
     match exchange_codex_authorization_code(&code, &verifier).await {
-        Ok(credential) => match save_codex_credential(&state, provider_id, credential).await {
-            Ok(()) => oauth_flow::complete_flow(&flow_id, "Codex 登录已完成").await,
-            Err(e) => oauth_flow::fail_flow(&flow_id, e).await,
-        },
+        Ok(credential) => {
+            match save_codex_credential(&state, provider_id, target, credential).await {
+                Ok(()) => oauth_flow::complete_flow(&flow_id, "Codex 登录已完成").await,
+                Err(e) => oauth_flow::fail_flow(&flow_id, e).await,
+            }
+        }
         Err(e) => oauth_flow::fail_flow(&flow_id, e).await,
     }
 }
@@ -675,6 +719,7 @@ async fn exchange_codex_authorization_code(
 async fn save_codex_credential(
     state: &AppState,
     provider_id: Uuid,
+    target: CodexOAuthCredentialTarget,
     credential: serde_json::Value,
 ) -> Result<(), String> {
     let encrypted = state
@@ -682,21 +727,34 @@ async fn save_codex_credential(
         .llm_provider_secret
         .encrypt(&credential.to_string())
         .map_err(|e| e.to_string())?;
-    let mut provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("LLM Provider {provider_id} 不存在"))?;
-    provider.global_api_key_ciphertext = encrypted;
-    provider.updated_at = chrono::Utc::now();
-    state
-        .repos
-        .llm_provider_repo
-        .update(&provider)
-        .await
-        .map_err(|e| e.to_string())?;
+    match target {
+        CodexOAuthCredentialTarget::GlobalProvider => {
+            let mut provider = state
+                .repos
+                .llm_provider_repo
+                .get_by_id(provider_id)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("LLM Provider {provider_id} 不存在"))?;
+            provider.global_api_key_ciphertext = encrypted;
+            provider.updated_at = chrono::Utc::now();
+            state
+                .repos
+                .llm_provider_repo
+                .update(&provider)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        CodexOAuthCredentialTarget::UserByok { user_id } => {
+            let credential = LlmProviderUserCredential::new(provider_id, user_id, encrypted);
+            state
+                .repos
+                .llm_provider_credential_repo
+                .upsert_for_user_provider(&credential)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
     Ok(())
 }
 
@@ -721,6 +779,21 @@ fn extract_codex_account_id(token: &str) -> Result<String, String> {
 
 // ─── Helpers ───
 
+fn codex_oauth_status_dto(status: &oauth_flow::OAuthFlowStatus) -> CodexOAuthFlowStatusDto {
+    match status {
+        oauth_flow::OAuthFlowStatus::Pending => CodexOAuthFlowStatusDto::Pending,
+        oauth_flow::OAuthFlowStatus::Completed { .. } => CodexOAuthFlowStatusDto::Completed,
+        oauth_flow::OAuthFlowStatus::Failed { .. } => CodexOAuthFlowStatusDto::Failed,
+    }
+}
+
+fn credential_preview(protocol: WireProtocol, secret: &str) -> String {
+    if protocol == WireProtocol::OpenaiCodex {
+        return "ChatGPT OAuth".to_string();
+    }
+    mask_secret(secret)
+}
+
 fn admin_provider_dto(
     provider: LlmProvider,
     state: &AppState,
@@ -741,7 +814,7 @@ fn admin_provider_dto(
         global.is_some() || !provider.global_api_key_ciphertext.trim().is_empty();
     let global_api_key_preview = global
         .as_ref()
-        .map(|credential| mask_secret(&credential.api_key))
+        .map(|credential| credential_preview(provider.protocol, &credential.api_key))
         .filter(|preview| !preview.is_empty());
     let global_api_key_source = if !provider.global_api_key_ciphertext.trim().is_empty() {
         LlmCredentialSource::GlobalDb
@@ -794,7 +867,7 @@ async fn effective_provider_dto(
                 .decrypt(&credential.api_key_ciphertext)
                 .ok()
         })
-        .map(|secret| mask_secret(&secret))
+        .map(|secret| credential_preview(provider.protocol, &secret))
         .filter(|preview| !preview.is_empty());
     let user_api_key_configured = user_credential.is_some();
 

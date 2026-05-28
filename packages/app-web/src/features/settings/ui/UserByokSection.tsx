@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { llmProvidersApi } from "../../../api/llmProviders";
 import { useLlmByokStore } from "../../../stores/llmProviderStore";
+import { OAuthLoginWizard } from "./OAuthLoginWizard";
 import { btnPrimaryCls, inputCls, SectionCard } from "./primitives";
 
 export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => void }) {
@@ -37,10 +39,15 @@ export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => vo
     onRefreshModels();
   };
 
+  const handleOAuthCredentialChanged = async () => {
+    await fetchProviders();
+    onRefreshModels();
+  };
+
   return (
     <SectionCard title="个人 BYOK">
       <p className="text-xs text-muted-foreground -mt-2">
-        个人 Key 只对当前账号生效，会优先用于允许 BYOK 的 Provider。
+        个人凭据只对当前账号生效，会优先用于允许 BYOK 的 Provider。
       </p>
       {error && (
         <p className="rounded-[8px] border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -68,7 +75,32 @@ export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => vo
                   </span>
                 </div>
 
-                {canByok ? (
+                {canByok && provider.protocol === "openai_codex" ? (
+                  <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
+                    <OAuthLoginWizard
+                      start={() => llmProvidersApi.startUserCodexOAuth(provider.id)}
+                      getStatus={llmProvidersApi.getCodexOAuthStatus}
+                      cancel={llmProvidersApi.cancelCodexOAuth}
+                      onCompleted={handleOAuthCredentialChanged}
+                      idleLabel={provider.user_api_key_configured ? "重新登录 ChatGPT" : "通过 ChatGPT 登录"}
+                      authLinkLabel="打开 ChatGPT 授权页"
+                      openedMessage="已在外部浏览器打开 ChatGPT 授权页，等待授权完成…"
+                      manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
+                      completedMessage="个人 Codex 登录已完成"
+                      failedMessage="个人 Codex 登录失败"
+                      disabled={saving}
+                      className="bg-background/80"
+                    />
+                    <button
+                      type="button"
+                      className="h-fit rounded-[8px] border border-border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                      disabled={saving || !provider.user_api_key_configured}
+                      onClick={() => void handleDeleteCredential(provider.id)}
+                    >
+                      删除
+                    </button>
+                  </div>
+                ) : canByok ? (
                   <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto_auto]">
                     <input
                       type="password"

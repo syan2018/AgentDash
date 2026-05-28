@@ -31,5 +31,13 @@
 ### 剩余建议
 
 - 设置页业务主体仍可继续按面板深化拆分，尤其是全局 Provider 管理、模型 chip/editor、Backend 管理与 Agent/Executor 设置。
-- Codex 用户 BYOK 应拆成个人 OAuth 凭据流，并把管理员 / 用户共用的登录向导抽为可复用模块，作为下一轮独立迭代提交。
 - 若进入提交前收尾，可补 API route 级权限测试与用户默认 Provider/Model 偏好 UI 的更完整回归。
+
+### 第二笔迭代：Codex 用户 OAuth
+
+- 新增用户侧 Codex OAuth 入口，允许 `global_or_user` / `user_required` 的 `openai_codex` Provider 把 ChatGPT OAuth token JSON 保存为当前用户 BYOK 凭据。
+- 管理员全局 Codex 登录和用户个人 Codex 登录复用 `OAuthLoginWizard`，登录向导统一负责启动 flow、打开外部浏览器、轮询状态、取消和完成刷新。
+- 用户 BYOK 面板对 `openai_codex` 不再展示 API Key 输入框；保存 API Key 的通用接口也会拒绝 Codex Provider，避免生成不可执行的个人凭据。
+- Codex 凭据 preview 收敛为 OAuth 状态文案，不再对 token JSON 做掩码展示。
+- 验证通过：`cargo check -p agentdash-api`、`cargo test -p agentdash-api codex`、`pnpm run contracts:check`、`pnpm run frontend:check`、`pnpm run frontend:lint`、`pnpm run backend:check`。
+- 已重启 `pnpm dev` 并用浏览器验证：临时 `global_or_user` Codex Provider 在个人 BYOK 面板展示 ChatGPT 登录入口，用户 OAuth start/cancel 接口可用，临时 Provider 已清理。

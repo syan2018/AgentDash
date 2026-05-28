@@ -16,8 +16,8 @@ import type { BackendConfig, BackendRuntimeSummary } from "../../../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
 import { ConfirmDialog } from "@agentdash/ui";
 import { getDesktopLocalRuntimeClient, getDesktopBrowseDirectory } from "../../../desktop/localRuntimeBridge";
-import { hasDesktopExternalBrowserOpener, openDesktopExternalBrowser } from "../../../desktop/externalBrowser";
 import { DebugPrefsSection } from "./DebugPrefsSection";
+import { OAuthLoginWizard } from "./OAuthLoginWizard";
 import { UserByokSection } from "./UserByokSection";
 import { btnPrimaryCls, Field, inputCls, SectionCard } from "./primitives";
 
@@ -510,26 +510,11 @@ function LlmProviderForm({
   const [probedModels, setProbedModels] = useState<ProbeModelEntry[] | null>(null);
   const [isProbing, setIsProbing] = useState(false);
   const [probeError, setProbeError] = useState<string | null>(null);
-  const [codexLoginStatus, setCodexLoginStatus] = useState<"idle" | "starting" | "waiting" | "completed" | "failed">("idle");
-  const [codexLoginMessage, setCodexLoginMessage] = useState<string | null>(null);
-  const [codexAuthUrl, setCodexAuthUrl] = useState<string | null>(null);
-  const codexFlowIdRef = useRef<string | null>(null);
-  const codexPollCancelledRef = useRef(false);
 
   const showApiKey = provider.protocol !== "openai_codex";
   const showBaseUrl = provider.protocol === "openai_compatible" || provider.protocol === "anthropic";
   const showWireApi = provider.protocol === "openai_compatible";
   const showDefaultModel = true; // all protocols support default model
-
-  useEffect(() => {
-    return () => {
-      codexPollCancelledRef.current = true;
-      const flowId = codexFlowIdRef.current;
-      if (flowId) {
-        void llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
-      }
-    };
-  }, []);
 
   // 合并来源：probe 结果优先（当存在时替代 discovery 结果），否则用全局 discovery
   const effectiveDiscoveredModels: ModelInfo[] = useMemo(() => {
@@ -626,69 +611,11 @@ function LlmProviderForm({
     }
   }, [provider.id, provider.protocol, provider.env_api_key, apiKey, apiKeyTouched, baseUrl]);
 
-  const pollCodexOAuth = useCallback(async (flowId: string) => {
-    while (!codexPollCancelledRef.current) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1200));
-      if (codexPollCancelledRef.current) return;
-      const status = await llmProvidersApi.getCodexOAuthStatus(flowId);
-      if (status.status === "pending") continue;
-      codexFlowIdRef.current = null;
-      if (status.status === "completed") {
-        setCodexLoginStatus("completed");
-        setCodexLoginMessage(status.message ?? "Codex 登录已完成");
-        setApiKeyTouched(false);
-        await onProviderChanged();
-        return;
-      }
-      setCodexLoginStatus("failed");
-      setCodexLoginMessage(status.message ?? "Codex 登录失败");
-      return;
-    }
+  const handleCodexLoginCompleted = useCallback(async () => {
+    setApiKeyTouched(false);
+    await onProviderChanged();
   }, [onProviderChanged]);
 
-  const handleStartCodexLogin = useCallback(async () => {
-    codexPollCancelledRef.current = false;
-    setCodexLoginStatus("starting");
-    setCodexLoginMessage(null);
-    setCodexAuthUrl(null);
-    try {
-      const flow = await llmProvidersApi.startCodexOAuth(provider.id);
-      codexFlowIdRef.current = flow.flow_id;
-      setCodexAuthUrl(flow.auth_url);
-      setCodexLoginStatus("waiting");
-      if (hasDesktopExternalBrowserOpener()) {
-        await openDesktopExternalBrowser(flow.auth_url);
-        setCodexLoginMessage("已在外部浏览器打开 ChatGPT 授权页，等待授权完成…");
-      } else {
-        setCodexLoginMessage("请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。");
-      }
-      void pollCodexOAuth(flow.flow_id).catch((e) => {
-        codexFlowIdRef.current = null;
-        setCodexLoginStatus("failed");
-        setCodexLoginMessage(e instanceof Error ? e.message : String(e));
-      });
-    } catch (e) {
-      const flowId = codexFlowIdRef.current;
-      if (flowId) {
-        await llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
-      }
-      codexFlowIdRef.current = null;
-      setCodexLoginStatus("failed");
-      setCodexLoginMessage(e instanceof Error ? e.message : String(e));
-    }
-  }, [pollCodexOAuth, provider.id]);
-
-  const handleCancelCodexLogin = useCallback(async () => {
-    codexPollCancelledRef.current = true;
-    const flowId = codexFlowIdRef.current;
-    codexFlowIdRef.current = null;
-    if (flowId) {
-      await llmProvidersApi.cancelCodexOAuth(flowId).catch(() => undefined);
-    }
-    setCodexLoginStatus("idle");
-    setCodexLoginMessage(null);
-    setCodexAuthUrl(null);
-  }, []);
 
   const handleAddModel = (initial?: ModelConfig) => {
     const newModel: ModelConfig = initial ?? { id: "", name: "", context_window: 200000, reasoning: true, supports_image: true };
@@ -757,42 +684,18 @@ function LlmProviderForm({
       )}
 
       {provider.protocol === "openai_codex" && (
-        <div className="rounded-[8px] border border-border bg-muted/20 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className={btnPrimaryCls}
-              disabled={codexLoginStatus === "starting" || codexLoginStatus === "waiting"}
-              onClick={handleStartCodexLogin}
-            >
-              {codexLoginStatus === "starting" ? "启动中…" : codexLoginStatus === "waiting" ? "登录中…" : "通过 ChatGPT 登录"}
-            </button>
-            {codexLoginStatus === "waiting" && (
-              <button
-                type="button"
-                className="rounded-[8px] border border-border px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-                onClick={handleCancelCodexLogin}
-              >
-                取消
-              </button>
-            )}
-            {codexAuthUrl && codexLoginStatus === "waiting" && (
-              <a
-                className="text-xs text-primary hover:underline"
-                href={codexAuthUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                打开 ChatGPT 授权页
-              </a>
-            )}
-          </div>
-          {codexLoginMessage && (
-            <p className={`mt-2 text-xs ${codexLoginStatus === "failed" ? "text-red-500" : "text-muted-foreground"}`}>
-              {codexLoginMessage}
-            </p>
-          )}
-        </div>
+        <OAuthLoginWizard
+          start={() => llmProvidersApi.startCodexOAuth(provider.id)}
+          getStatus={llmProvidersApi.getCodexOAuthStatus}
+          cancel={llmProvidersApi.cancelCodexOAuth}
+          onCompleted={handleCodexLoginCompleted}
+          idleLabel={provider.global_api_key_configured ? "重新登录 ChatGPT" : "通过 ChatGPT 登录"}
+          authLinkLabel="打开 ChatGPT 授权页"
+          openedMessage="已在外部浏览器打开 ChatGPT 授权页，等待授权完成…"
+          manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
+          completedMessage="Codex 登录已完成"
+          failedMessage="Codex 登录失败"
+        />
       )}
 
       {/* Base URL */}

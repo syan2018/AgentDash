@@ -206,6 +206,9 @@ async fn discover_options_stream(
 - `PUT /llm-providers/{id}/user-credential`
   - body: `{ "api_key": "..." }`
   - 仅在 `global_or_user` / `user_required` 下允许。
+  - `openai_codex` 不接受用户手填 API Key；个人凭据通过 Codex OAuth endpoint 写入。
+- `POST /llm-providers/{id}/user-credential/codex-oauth/start`
+  - 仅用于 `openai_codex`，启动当前用户的 ChatGPT OAuth 登录，完成后把 OAuth token JSON 加密保存为当前用户 BYOK 凭据。
 - `DELETE /llm-providers/{id}/user-credential`
   - 删除当前用户自己的 BYOK。
 - `POST /llm-providers/{id}/probe-models`

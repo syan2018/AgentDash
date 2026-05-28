@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ThinkingLevel } from "../../../types";
 import { THINKING_LEVEL_OPTIONS, CAPABILITY_OPTIONS } from "../../../types";
-import { useEffectiveLlmModelSelector, useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
+import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../../executor-selector";
 import { CapabilityPicker } from "./capability-picker";
 import { KnowledgeSection } from "./knowledge-section";
@@ -47,14 +47,8 @@ export function PresetFormFields({
   const [activeTab, setActiveTab] = useState<'basic' | 'capability' | 'memory'>('basic');
   const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'vfs' | 'skill' | 'companion'>('tool');
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
-  const usesEffectiveLlmModels = form.agent_type.trim() === "PI_AGENT";
-  const effectiveLlmModels = useEffectiveLlmModelSelector(usesEffectiveLlmModels);
-  const modelSelector = usesEffectiveLlmModels
-    ? effectiveLlmModels.modelSelector
-    : discovered.options?.model_selector ?? null;
-  const isModelLoading = usesEffectiveLlmModels
-    ? effectiveLlmModels.loading
-    : !discovered.isInitialized || (discovered.options?.loading_models ?? false);
+  const modelSelector = discovered.options?.model_selector ?? null;
+  const isModelLoading = !discovered.isInitialized || (discovered.options?.loading_models ?? false);
 
   const providersById = useMemo(() => {
     const map = new Map<string, string>();

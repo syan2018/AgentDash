@@ -383,6 +383,22 @@ async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Val
     state
 }
 
+fn execution_context_with_config(executor_config: agentdash_spi::AgentConfig) -> ExecutionContext {
+    ExecutionContext {
+        session: agentdash_spi::ExecutionSessionFrame {
+            turn_id: "turn-test".to_string(),
+            working_directory: PathBuf::from("/tmp/test-workspace"),
+            environment_variables: HashMap::new(),
+            executor_config,
+            mcp_servers: Vec::new(),
+            vfs: Some(test_vfs("/tmp/test-workspace")),
+            backend_execution: None,
+            identity: None,
+        },
+        turn: agentdash_spi::ExecutionTurnFrame::default(),
+    }
+}
+
 #[test]
 fn thinking_delta_maps_to_agent_thought_chunk() {
     let event = AgentEvent::MessageUpdate {
@@ -1555,11 +1571,76 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
     let refreshed = discover_options_state(&connector).await;
     assert_eq!(
         refreshed["options"]["model_selector"]["providers"],
-        serde_json::json!([{ "id": "anthropic", "name": "Anthropic Claude" }])
+        serde_json::json!([{
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "credential_mode": "global_only",
+            "credential_source": "global_db",
+            "protocol": "anthropic",
+            "base_url": null,
+            "discovery_url": null,
+            "resolved_wire_api": null,
+        }])
     );
     assert_eq!(
         refreshed["options"]["model_selector"]["default_model"],
         serde_json::json!("test-model")
+    );
+}
+
+#[tokio::test]
+async fn discovery_includes_global_only_platform_provider_without_user_byok() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider = LlmProvider::new("Platform Only", "platform-only", WireProtocol::Anthropic);
+    provider.global_api_key_ciphertext = "test-key".to_string();
+    provider.default_model = "platform-model".to_string();
+    provider.models = serde_json::json!(["platform-model"]);
+    llm_repo.set_providers(vec![provider]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize with platform provider");
+    connector.set_llm_provider_repository(llm_repo.clone());
+    connector.set_llm_provider_credential_repository(credential_repo.clone());
+    connector.set_llm_secret_codec(secret_codec.clone());
+
+    let state = discover_options_state(&connector).await;
+    assert_eq!(
+        state["options"]["model_selector"]["providers"],
+        serde_json::json!([{
+            "id": "platform-only",
+            "name": "Platform Only",
+            "credential_mode": "global_only",
+            "credential_source": "global_db",
+            "protocol": "anthropic",
+            "base_url": null,
+            "discovery_url": null,
+            "resolved_wire_api": null,
+        }])
+    );
+    assert_eq!(
+        state["options"]["model_selector"]["default_model"],
+        serde_json::json!("platform-model")
+    );
+    assert!(
+        state["options"]["model_selector"]["models"]
+            .as_array()
+            .expect("models should be an array")
+            .iter()
+            .any(|model| model["id"] == "platform-model"
+                && model["provider_id"] == "platform-only"
+                && model["blocked"] == false)
     );
 }
 
@@ -1592,7 +1673,16 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
     let initial = discover_options_state(&connector).await;
     assert_eq!(
         initial["options"]["model_selector"]["providers"],
-        serde_json::json!([{ "id": "anthropic", "name": "Anthropic Claude" }])
+        serde_json::json!([{
+            "id": "anthropic",
+            "name": "Anthropic Claude",
+            "credential_mode": "global_only",
+            "credential_source": "global_db",
+            "protocol": "anthropic",
+            "base_url": null,
+            "discovery_url": null,
+            "resolved_wire_api": null,
+        }])
     );
 
     llm_repo.set_providers(vec![]);
@@ -1792,6 +1882,162 @@ async fn prompt_selected_user_required_provider_reports_byok_when_identity_exist
             assert!(message.contains("个人 BYOK 设置中补齐"));
         }
         Ok(_) => panic!("prompt should fail for user_required provider without user credential"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_selected_provider_rejects_blocked_model() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    provider.global_api_key_ciphertext = "test-key".to_string();
+    provider.default_model = "model-ok".to_string();
+    provider.models = serde_json::json!(["model-ok", "model-blocked"]);
+    provider.blocked_models = serde_json::json!(["model-blocked"]);
+    llm_repo.set_providers(vec![provider]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+    executor_config.provider_id = Some("anthropic".to_string());
+    executor_config.model_id = Some("model-blocked".to_string());
+
+    let result = connector
+        .prompt(
+            "session-blocked-model",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            execution_context_with_config(executor_config),
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("已被屏蔽"));
+            assert!(message.contains("model-blocked"));
+        }
+        Ok(_) => panic!("prompt should fail for blocked model"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_selected_provider_rejects_unknown_model() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
+    provider.global_api_key_ciphertext = "test-key".to_string();
+    provider.default_model = "model-ok".to_string();
+    provider.models = serde_json::json!(["model-ok"]);
+    llm_repo.set_providers(vec![provider]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+    executor_config.provider_id = Some("anthropic".to_string());
+    executor_config.model_id = Some("missing-model".to_string());
+
+    let result = connector
+        .prompt(
+            "session-unknown-model",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            execution_context_with_config(executor_config),
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("不包含模型"));
+            assert!(message.contains("missing-model"));
+        }
+        Ok(_) => panic!("prompt should fail for unknown model"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_requires_provider_when_model_id_matches_multiple_providers() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut provider_a = LlmProvider::new("Provider A", "provider-a", WireProtocol::Anthropic);
+    provider_a.global_api_key_ciphertext = "test-key".to_string();
+    provider_a.default_model = "shared-model".to_string();
+    provider_a.models = serde_json::json!(["shared-model"]);
+
+    let mut provider_b = LlmProvider::new("Provider B", "provider-b", WireProtocol::Anthropic);
+    provider_b.global_api_key_ciphertext = "test-key".to_string();
+    provider_b.default_model = "shared-model".to_string();
+    provider_b.models = serde_json::json!(["shared-model"]);
+    llm_repo.set_providers(vec![provider_a, provider_b]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+    executor_config.model_id = Some("shared-model".to_string());
+
+    let result = connector
+        .prompt(
+            "session-ambiguous-model",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            execution_context_with_config(executor_config),
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("多个 LLM Provider"));
+            assert!(message.contains("provider-a"));
+            assert!(message.contains("provider-b"));
+        }
+        Ok(_) => panic!("prompt should fail for ambiguous model without provider_id"),
         Err(other) => panic!("unexpected connector error: {other}"),
     }
 }

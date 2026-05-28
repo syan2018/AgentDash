@@ -54,6 +54,12 @@ export type PermissionPolicy = "AUTO" | "SUPERVISED" | "PLAN";
 export interface ModelProvider {
   id: string;
   name: string;
+  credential_mode?: string;
+  credential_source?: string;
+  protocol?: string;
+  base_url?: string | null;
+  discovery_url?: string | null;
+  resolved_wire_api?: string | null;
 }
 
 export interface ModelInfo {

@@ -19,7 +19,7 @@ use agentdash_domain::llm_provider::{
 use agentdash_domain::settings::SettingsRepository;
 
 use super::bridges::provider_registry::{
-    CONTEXT_WINDOW_STANDARD, ProviderEntry, ProviderUnavailableReason,
+    CONTEXT_WINDOW_STANDARD, ProviderEntry, ProviderModelResolveError, ProviderUnavailableReason,
     build_provider_entries_result_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
@@ -224,8 +224,10 @@ impl PiAgentConnector {
                 .iter()
                 .find(|provider| provider.provider_id == provider_id)
         {
-            let resolved_model = model_id.unwrap_or(provider.default_model.as_str());
-            return Ok(provider.create_bridge(resolved_model));
+            let resolved_model = provider.resolve_model(model_id).await.map_err(|error| {
+                ConnectorError::InvalidConfig(describe_provider_model_error(provider_id, &error))
+            })?;
+            return Ok(provider.create_bridge(&resolved_model.id));
         }
 
         if let Some(provider_id) = provider_id {
@@ -236,12 +238,22 @@ impl PiAgentConnector {
             }
         }
 
-        let default_bridge = provider_state.default_bridge.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig("Pi Agent 尚未配置任何可用的 LLM Provider".to_string())
-        })?;
-
         if provider_id.is_none() && model_id.is_none() {
-            return Ok(default_bridge);
+            if let Some(provider) = provider_state.providers.first() {
+                let resolved_model = provider.resolve_model(None).await.map_err(|error| {
+                    ConnectorError::InvalidConfig(describe_provider_model_error(
+                        &provider.provider_id,
+                        &error,
+                    ))
+                })?;
+                return Ok(provider.create_bridge(&resolved_model.id));
+            }
+
+            return provider_state.default_bridge.clone().ok_or_else(|| {
+                ConnectorError::InvalidConfig(
+                    "Pi Agent 尚未配置任何可用的 LLM Provider".to_string(),
+                )
+            });
         }
 
         if let Some(provider_id) = provider_id {
@@ -251,18 +263,50 @@ impl PiAgentConnector {
         }
 
         if let Some(model_id) = model_id {
-            if provider_state.default_model.as_deref() == Some(model_id) {
-                return Ok(default_bridge.clone());
-            }
-
+            let mut matches = Vec::new();
+            let mut blocked_providers = Vec::new();
             for provider in &provider_state.providers {
-                if provider.supports_model(model_id).await {
-                    return Ok(provider.create_bridge(model_id));
+                match provider.resolve_model(Some(model_id)).await {
+                    Ok(model) => matches.push((provider, model.id)),
+                    Err(ProviderModelResolveError::BlockedModel { .. }) => {
+                        blocked_providers.push(provider.provider_id.clone());
+                    }
+                    Err(ProviderModelResolveError::UnknownModel { .. }) => {}
+                    Err(ProviderModelResolveError::EmptyModelSelection) => {}
                 }
             }
+
+            if matches.len() == 1 {
+                let (provider, resolved_model_id) = matches.remove(0);
+                return Ok(provider.create_bridge(&resolved_model_id));
+            }
+
+            if matches.len() > 1 {
+                let provider_ids = matches
+                    .iter()
+                    .map(|(provider, _)| provider.provider_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(ConnectorError::InvalidConfig(format!(
+                    "模型 `{model_id}` 同时存在于多个 LLM Provider（{provider_ids}），请明确指定 provider_id"
+                )));
+            }
+
+            if !blocked_providers.is_empty() {
+                return Err(ConnectorError::InvalidConfig(format!(
+                    "模型 `{model_id}` 已被 LLM Provider（{}）屏蔽，不能用于本次调用",
+                    blocked_providers.join(", ")
+                )));
+            }
+
+            return Err(ConnectorError::InvalidConfig(format!(
+                "模型 `{model_id}` 不存在于任何当前可用的 LLM Provider"
+            )));
         }
 
-        Ok(default_bridge)
+        Err(ConnectorError::InvalidConfig(
+            "Pi Agent 尚未配置任何可用的 LLM Provider".to_string(),
+        ))
     }
 }
 
@@ -308,6 +352,20 @@ fn describe_unavailable_provider(provider_id: &str, reason: &ProviderUnavailable
         }
         ProviderUnavailableReason::InvalidBlockedModels => {
             format!("LLM Provider `{provider_id}` blocked_models 配置无法解析")
+        }
+    }
+}
+
+fn describe_provider_model_error(provider_id: &str, error: &ProviderModelResolveError) -> String {
+    match error {
+        ProviderModelResolveError::EmptyModelSelection => {
+            format!("LLM Provider `{provider_id}` 没有配置可用于调用的默认模型")
+        }
+        ProviderModelResolveError::UnknownModel { model_id } => format!(
+            "LLM Provider `{provider_id}` 不包含模型 `{model_id}`，请从当前可用模型列表中选择"
+        ),
+        ProviderModelResolveError::BlockedModel { model_id } => {
+            format!("LLM Provider `{provider_id}` 的模型 `{model_id}` 已被屏蔽，不能用于本次调用")
         }
     }
 }
@@ -375,9 +433,16 @@ impl AgentConnector for PiAgentConnector {
         let mut all_models: Vec<serde_json::Value> = vec![];
 
         for provider in &provider_state.providers {
+            let call_profile = provider.call_profile();
             all_providers.push(serde_json::json!({
                 "id": provider.provider_id,
                 "name": provider.provider_name,
+                "credential_mode": call_profile.credential_mode.as_str(),
+                "credential_source": call_profile.credential_source.as_str(),
+                "protocol": call_profile.protocol.as_str(),
+                "base_url": call_profile.base_url.clone(),
+                "discovery_url": call_profile.discovery_url.clone(),
+                "resolved_wire_api": call_profile.resolved_wire_api.clone(),
             }));
 
             for model in provider.load_models_with_block_state().await {

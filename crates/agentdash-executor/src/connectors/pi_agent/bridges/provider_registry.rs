@@ -7,8 +7,9 @@ use super::OpenAiCompletionsBridge;
 use super::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::{
-    LlmCredentialMode, LlmProvider, LlmProviderCredentialRepository, LlmProviderRepository,
-    LlmSecretCodec, WireProtocol, provider_allows_empty_api_key, resolve_effective_credential,
+    LlmCredentialMode, LlmCredentialSource, LlmProvider, LlmProviderCredentialRepository,
+    LlmProviderRepository, LlmSecretCodec, WireProtocol, provider_allows_empty_api_key,
+    resolve_effective_credential,
 };
 use agentdash_spi::AuthIdentity;
 use futures::future::BoxFuture;
@@ -110,6 +111,23 @@ pub(crate) struct BuiltProviderEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderCallProfile {
+    pub credential_mode: LlmCredentialMode,
+    pub credential_source: LlmCredentialSource,
+    pub protocol: WireProtocol,
+    pub base_url: Option<String>,
+    pub discovery_url: Option<String>,
+    pub resolved_wire_api: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProviderModelResolveError {
+    EmptyModelSelection,
+    UnknownModel { model_id: String },
+    BlockedModel { model_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProviderUnavailableReason {
     MissingCredential {
         credential_mode: LlmCredentialMode,
@@ -138,6 +156,7 @@ pub(crate) struct ProviderEntry {
     pub provider_id: String,
     pub provider_name: String,
     pub default_model: String,
+    call_profile: ProviderCallProfile,
     bridge_factory: BridgeFactory,
     list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
     configured_models: Vec<ModelMeta>,
@@ -150,6 +169,7 @@ impl ProviderEntry {
         provider_id: impl Into<String>,
         provider_name: impl Into<String>,
         default_model: String,
+        call_profile: ProviderCallProfile,
         bridge_factory: BridgeFactory,
         list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
         configured_models: Vec<ModelMeta>,
@@ -159,6 +179,7 @@ impl ProviderEntry {
             provider_id: provider_id.into(),
             provider_name: provider_name.into(),
             default_model,
+            call_profile,
             bridge_factory,
             list_models,
             configured_models,
@@ -169,6 +190,10 @@ impl ProviderEntry {
 
     pub(crate) fn create_bridge(&self, model_id: &str) -> Arc<dyn LlmBridge> {
         (self.bridge_factory)(model_id)
+    }
+
+    pub(crate) fn call_profile(&self) -> &ProviderCallProfile {
+        &self.call_profile
     }
 
     #[cfg(test)]
@@ -183,6 +208,14 @@ impl ProviderEntry {
             provider_id,
             provider_name,
             default_model.into(),
+            ProviderCallProfile {
+                credential_mode: LlmCredentialMode::GlobalOnly,
+                credential_source: LlmCredentialSource::None,
+                protocol: WireProtocol::Anthropic,
+                base_url: None,
+                discovery_url: None,
+                resolved_wire_api: None,
+            },
             bridge_factory,
             None,
             configured_models,
@@ -252,11 +285,39 @@ impl ProviderEntry {
         self.load_models_raw().await
     }
 
-    pub(crate) async fn supports_model(&self, model_id: &str) -> bool {
-        self.load_models_raw()
+    pub(crate) async fn resolve_model(
+        &self,
+        model_id: Option<&str>,
+    ) -> Result<ModelMeta, ProviderModelResolveError> {
+        let requested_model = model_id
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .unwrap_or(self.default_model.as_str())
+            .trim();
+
+        if requested_model.is_empty() {
+            return Err(ProviderModelResolveError::EmptyModelSelection);
+        }
+
+        let Some(model) = self
+            .load_models_raw()
             .await
             .iter()
-            .any(|model| model.id == model_id)
+            .find(|model| model.id == requested_model)
+            .cloned()
+        else {
+            return Err(ProviderModelResolveError::UnknownModel {
+                model_id: requested_model.to_string(),
+            });
+        };
+
+        if model.blocked {
+            return Err(ProviderModelResolveError::BlockedModel {
+                model_id: requested_model.to_string(),
+            });
+        }
+
+        Ok(model)
     }
 }
 
@@ -326,6 +387,10 @@ async fn build_provider_entry_from_db(
             ));
         }
     };
+    let credential_source = credential
+        .as_ref()
+        .map(|credential| credential.source)
+        .unwrap_or(LlmCredentialSource::None);
     let api_key = credential
         .map(|credential| credential.api_key)
         .unwrap_or_default();
@@ -405,6 +470,14 @@ async fn build_provider_entry_from_db(
     } else {
         Some(db_provider.discovery_url.clone())
     };
+    let call_profile = ProviderCallProfile {
+        credential_mode: db_provider.credential_mode,
+        credential_source,
+        protocol: db_provider.protocol,
+        base_url: base_url.clone(),
+        discovery_url: discovery_url.clone(),
+        resolved_wire_api: openai_wire_api.map(|api| api.as_str().to_string()),
+    };
 
     let list_models =
         build_model_lister_by_protocol(db_provider.protocol, api_key, base_url, discovery_url);
@@ -426,6 +499,7 @@ async fn build_provider_entry_from_db(
             provider_id,
             db_provider.name.clone(),
             default_model,
+            call_profile,
             bridge_factory,
             list_models,
             configured_models,

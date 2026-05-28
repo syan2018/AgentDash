@@ -20,7 +20,6 @@ import {
   useExecutorDiscovery,
   useExecutorConfig,
   useExecutorDiscoveredOptions,
-  useEffectiveLlmModelSelector,
   ExecutorSelector,
 } from "../../executor-selector";
 import type { ExecutorConfigSource } from "../../executor-selector/model/types";
@@ -427,30 +426,6 @@ export function SessionChatView({
 
   const execConfig = useExecutorConfig({ initialSource: initialExecutorSource });
   const discovered = useExecutorDiscoveredOptions(execConfig.executor);
-  const usesEffectiveLlmModels = execConfig.executor.trim() === "PI_AGENT";
-  const effectiveLlmModels = useEffectiveLlmModelSelector(usesEffectiveLlmModels);
-  const displayedDiscoveredOptions = useMemo(() => {
-    if (!usesEffectiveLlmModels) return discovered.options;
-    const baseOptions = discovered.options;
-    if (!baseOptions) return null;
-    return {
-      ...baseOptions,
-      model_selector: {
-        ...effectiveLlmModels.modelSelector,
-        agents: baseOptions.model_selector.agents,
-        permissions: baseOptions.model_selector.permissions,
-      },
-      loading_models: effectiveLlmModels.loading,
-      error: effectiveLlmModels.error?.message ?? baseOptions.error,
-    };
-  }, [
-    discovered.options,
-    effectiveLlmModels.error,
-    effectiveLlmModels.loading,
-    effectiveLlmModels.modelSelector,
-    usesEffectiveLlmModels,
-  ]);
-  const displayedDiscoveredError = effectiveLlmModels.error ?? discovered.error;
   const setExecutor = execConfig.setExecutor;
   const hydrateExecutor = execConfig.hydrate;
   const execProviderId = execConfig.providerId;
@@ -489,14 +464,14 @@ export function SessionChatView({
 
   useEffect(() => {
     if (execProviderId.trim() || !execModelId.trim()) return;
-    const matches = (displayedDiscoveredOptions?.model_selector.models ?? []).filter(
+    const matches = (discovered.options?.model_selector.models ?? []).filter(
       (model) => model.id === execModelId.trim(),
     );
     if (matches.length === 1) {
       setExecProviderId(matches[0].provider_id ?? "");
     }
   }, [
-    displayedDiscoveredOptions?.model_selector.models,
+    discovered.options?.model_selector.models,
     execModelId,
     execProviderId,
     setExecProviderId,
@@ -938,13 +913,13 @@ export function SessionChatView({
               executors={discovery.executors}
               isLoading={discovery.isLoading}
               error={discovery.error}
-              discoveredOptions={displayedDiscoveredOptions}
-              discoveredError={displayedDiscoveredError}
+              discoveredOptions={discovered.options}
+              discoveredError={discovered.error}
               isDiscoveredLoading={
                 Boolean(execConfig.executor.trim()) &&
-                (!discovered.isInitialized || (usesEffectiveLlmModels && effectiveLlmModels.loading))
+                (!discovered.isInitialized || (discovered.options?.loading_models ?? false))
               }
-              onDiscoveredReconnect={usesEffectiveLlmModels ? effectiveLlmModels.refetch : discovered.reconnect}
+              onDiscoveredReconnect={discovered.reconnect}
               executor={execConfig.executor}
               providerId={execConfig.providerId}
               modelId={execConfig.modelId}

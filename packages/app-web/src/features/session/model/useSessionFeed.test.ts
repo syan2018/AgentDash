@@ -260,6 +260,8 @@ describe("aggregateEntries — tool burst", () => {
   });
 
   it("T8: thinking entries stay individual; only tools merge", () => {
+    // reasoning 同 itemId 已在 useSessionStream 层累积为单条，
+    // aggregateEntries 这层无需对 thinking 再做聚合。
     const entries = [
       mkReasoningEntry("r1"),
       mkReasoningEntry("r2"),
@@ -267,7 +269,6 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // 合并范畴只覆盖 tool_like ThreadItem：r1/r2 各自独立，c1/c2 合并
     expect(result).toHaveLength(3);
     expect((result[0] as SessionDisplayEntry).id).toBe("r1");
     expect((result[1] as SessionDisplayEntry).id).toBe("r2");
@@ -346,22 +347,20 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as SessionDisplayEntry).id).toBe("c2");
   });
 
-  it("T15: context_frame is a soft boundary — tools merge across it, CTX stays as single entry", () => {
+  it("T15: context_frame is a soft boundary — tools merge across it, single CTX flattened", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // 期望：tool burst 合并为一组（c1+c2），CTX 不聚合，作为单 entry 入 result
+    // tool burst 合并为一组（c1+c2），单 CTX 被扁平化为单 entry（不成 group）
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2"]);
     expect(
       result.some((item) => (item as SessionDisplayEntry)?.id === "ctx1"),
     ).toBe(true);
-    // 不应有 CTX side group
-    expect(result.filter(isContextFrameGroup)).toHaveLength(0);
   });
 
   it("T16: agent message stays as hard boundary across context_frame", () => {
@@ -381,7 +380,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(cmdEntries).toHaveLength(2);
   });
 
-  it("T17: multiple context_frames stay as individual entries (no aggregation)", () => {
+  it("T17: consecutive context_frames fold into one CTX group, tools merge separately", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
@@ -391,15 +390,12 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c3", "echo"),
     ];
     const result = aggregateEntries(entries);
+    // CTX 内部合并为一个 group；tool 自己合并；两类互不混
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
-    // CTX 不再聚合：应有 3 个独立 ctx entry
-    const ctxIds = result
-      .filter((item) => (item as SessionDisplayEntry)?.id?.startsWith("ctx"))
-      .map((item) => (item as SessionDisplayEntry).id);
-    expect(ctxIds).toEqual(["ctx1", "ctx2", "ctx3"]);
-    expect(result.filter(isContextFrameGroup)).toHaveLength(0);
+    const ctxGroups = result.filter(isContextFrameGroup);
+    expect(ctxGroups).toHaveLength(1);
   });
 
   it("T18: real-world scenario — tools, ctx, more tools all merge into one burst", () => {

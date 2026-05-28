@@ -196,24 +196,73 @@ function pushToolGroup(
   return null;
 }
 
+// ── side group：context_frame 内部聚合，但**不**与工具组合并 ──
+//
+// 注：reasoning_text_delta/summary 同 itemId 已在 useSessionStream 层累积为单条
+// entry，因此 thinking 没有"连续多条"场景，无需聚合。
+
+function isCtxSideGroup(group: AggregatedContextFrameGroup | null): boolean {
+  return group?.type === "aggregated_context_frames";
+}
+
+function createCtxSideGroup(entry: SessionDisplayEntry): AggregatedContextFrameGroup {
+  return {
+    type: "aggregated_context_frames",
+    entries: [entry],
+    id: entry.id,
+    groupKey: `context-frame-${entry.id}`,
+  };
+}
+
+function pushCtxSideGroup(
+  result: SessionDisplayItem[],
+  group: AggregatedContextFrameGroup | null,
+): null {
+  if (!group) return null;
+  if (group.entries.length === 1) {
+    const only = group.entries[0];
+    if (only) result.push(only);
+    return null;
+  }
+  result.push(group);
+  return null;
+}
+
 /**
  * 聚合 entries → display items。
  *
- * **合并范畴：仅连续的 tool_like ThreadItem。**
- * thinking / context_frame / message / approval / error 等其他类型一律单 entry，
- * 不参与任何聚合。
+ * **关键约定：合并只覆盖同类内部，绝不跨类。**
+ * - tool_like：连续工具调用合并为 tool burst
+ * - context_frame：连续 CTX 合并为 CTX group（soft boundary，**不** flush tool）
+ * - 其他（agent message / reasoning / approval / error / 可渲染 hook）：
+ *   hard boundary，自身单 entry，flush tool group
+ * - neutral：完全透明
  *
- * - tool_like: 累积进 active tool group
- * - hard_boundary: flush tool group 并自身入 result
- * - soft_boundary（context_frame）: 不 flush tool group，自身入 result
- * - neutral: 完全透明
+ * CTX 是 soft boundary 的关键：它出现在工具序列中间时，不会把工具组打散，
+ * 仅独立成自己的 CTX group 与工具组并存。
+ *
+ * Reasoning 不参与聚合 —— 同 itemId 已在 useSessionStream 层累积成一条，
+ * 不会出现"连续多条 thinking entry"的场景。
  */
 function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
   const result: SessionDisplayItem[] = [];
   let activeToolGroup: AggregatedEntryGroup | null = null;
+  let activeCtxGroup: AggregatedContextFrameGroup | null = null;
 
   const flushToolGroup = () => {
     activeToolGroup = pushToolGroup(result, activeToolGroup);
+  };
+  const flushCtxGroup = () => {
+    activeCtxGroup = pushCtxSideGroup(result, activeCtxGroup);
+  };
+
+  const joinCtxGroup = (entry: SessionDisplayEntry) => {
+    if (isCtxSideGroup(activeCtxGroup)) {
+      activeCtxGroup!.entries.push(entry);
+    } else {
+      flushCtxGroup();
+      activeCtxGroup = createCtxSideGroup(entry);
+    }
   };
 
   for (const entry of entries) {
@@ -221,19 +270,26 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
 
     switch (cls) {
       case "tool_like": {
+        flushCtxGroup();
         activeToolGroup = appendToolEntry(activeToolGroup, entry);
         break;
       }
 
       case "hard_boundary": {
         flushToolGroup();
+        flushCtxGroup();
         result.push(entry);
         break;
       }
 
       case "soft_boundary": {
-        // 不 flush tool group，自身作为单 entry 入 result
-        result.push(entry);
+        // CTX：不 flush tool group，进 CTX side group 内部聚合
+        if (isContextFrameEvent(entry.event)) {
+          joinCtxGroup(entry);
+        } else {
+          // 防御：当前 soft_boundary 只覆盖 context_frame
+          result.push(entry);
+        }
         break;
       }
 
@@ -245,6 +301,7 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
   }
 
   flushToolGroup();
+  flushCtxGroup();
 
   return result;
 }

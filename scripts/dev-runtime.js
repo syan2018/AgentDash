@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * AgentDash 联合启动脚本（Node 版）
- * 目标：
- * 1. 先清理遗留端口，减少重启时的干扰
- * 2. 先统一编译，再按顺序启动 server -> local -> frontend
- * 3. 统一接管 Ctrl+C，确保子进程树被一并清理
+ * AgentDash 统一开发启动入口。
+ *
+ * 运行形态由 profile 决定：
+ * - web：启动 Dashboard API、本机 runtime、app-web
+ * - desktop：启动 Dashboard API、app-tauri、Tauri 桌面壳
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execSync, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   createProcessSupervisor,
   fetchJson,
@@ -30,7 +30,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '..');
 
-const config = parseArgs(process.argv.slice(2));
+const WEB_FRONTEND_PORT = 5380;
+const DESKTOP_FRONTEND_PORT = 5381;
+const DESKTOP_PREVIEW_PORT = 5382;
+const DEFAULT_SERVER_PORT = 3001;
+
+const config = applyProfileDefaults(parseArgs(process.argv.slice(2)));
 
 if (config.help) {
   printHelp();
@@ -44,14 +49,14 @@ if (config.databaseUrl && !isPostgresUrl(config.databaseUrl)) {
 const rustBuild = configureRustBuild(config);
 const supervisor = createProcessSupervisor({
   root,
-  shutdownMessage: '正在停止所有服务...',
-  stoppedMessage: '全部已停止',
+  shutdownMessage: `正在停止 AgentDash ${profileLabel(config.profile)} 开发进程...`,
+  stoppedMessage: `AgentDash ${profileLabel(config.profile)} 开发进程已停止`,
   afterStop: async () => {
-    // 兜底：确保 embedded PostgreSQL 子进程不会成为僵尸。
     await killEmbeddedPostgres().catch(() => {});
   },
 });
 const {
+  hasManagedChildren,
   runCommand,
   shutdown,
   waitForAnyChildExit,
@@ -64,110 +69,139 @@ await main();
 async function main() {
   printBanner();
 
-  await runStep0Cleanup();
+  if (!config.skipClean) {
+    await runCleanup();
+  } else {
+    console.log('[0] 跳过清理（--skip-clean）');
+  }
 
   if (!config.skipBuild) {
-    console.log('[1/4] 构建 dev Rust 目标...');
+    console.log('[1] 构建 dev Rust 目标...');
     await runAgentDashDevRustBuild(runCommand, { env: rustBuild.env });
-    console.log('  构建完成');
+    console.log('  Rust 目标构建完成');
   } else {
-    console.log('[1/4] 跳过构建（--skip-build）');
+    console.log('[1] 跳过 Rust 构建（--skip-build）');
   }
 
   if (!config.skipServer) {
-    console.log(`[2/4] 启动 agentdash-server (:${config.serverPort})...`);
-    const serverEnv = {
-      ...process.env,
-      HOST: config.serverHost,
-      PORT: String(config.serverPort),
-      DATABASE_URL: undefined,
-    };
-    // 仅当明确提供 PostgreSQL URL 时透传，避免 sqlite 默认值误导运行时判断。
-    if (isPostgresUrl(config.databaseUrl)) {
-      serverEnv.DATABASE_URL = config.databaseUrl;
-    }
-    startDebugBinary(supervisor, root, 'agentdash-server', { env: serverEnv });
+    console.log(`[2] 启动 agentdash-server (:${config.serverPort})...`);
+    startAgentDashServer();
   } else {
-    console.log(`[2/4] 跳过 agentdash-server，等待现有服务 (:${config.serverPort})...`);
+    console.log(`[2] 跳过 agentdash-server，复用现有服务 (:${config.serverPort})...`);
   }
-  await waitForHttpReady(config.serverPort, '/api/health', 120);
+  await waitForHttpReady(config.serverPort, '/api/health', 120, {
+    label: 'agentdash-server',
+  });
 
-  if (!config.skipLocal) {
-    const backend = await ensureDevLocalRuntimeClaim(config.serverPort, config);
-    const localArgs = [
-      '--cloud-url', backend.relay_ws_url,
-      '--token', backend.auth_token,
-      '--name', backend.name || config.backendName,
-      '--backend-id', backend.backend_id
-    ];
-    const workspaceRoots = splitWorkspaceRoots(config.workspaceRoots);
-    if (workspaceRoots.length > 0) {
-      localArgs.push('--workspace-roots', workspaceRoots.join(','));
-    }
-    if (config.noExecutor) {
-      localArgs.push('--no-executor');
-    }
-
-    console.log('[3/4] 启动 agentdash-local...');
-    startDebugBinary(supervisor, root, 'agentdash-local', {
-      args: localArgs,
-      label: 'agentdash-local',
-    });
-    await waitForLocalRegistration(config.serverPort, backend.backend_id, 20, 500);
-  } else {
-    console.log('[3/4] 跳过 agentdash-local（--skip-local）');
+  if (config.profile === 'web') {
+    await maybeStartLocalRuntime();
   }
 
   if (!config.skipFrontend) {
-    console.log(`[4/4] 启动前端 (${config.frontendMode}, :${config.frontendPort})...`);
+    console.log(`[${config.profile === 'web' ? 4 : 3}] 启动前端 ${config.frontendPackage} (:${config.frontendPort})...`);
     startFrontendProcess();
   } else {
-    console.log('[4/4] 跳过前端（--skip-frontend）');
+    console.log(`[${config.profile === 'web' ? 4 : 3}] 跳过前端（--skip-frontend）`);
   }
 
-  console.log('');
-  console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║       所有服务已就绪                 ║');
-  console.log('  ╚══════════════════════════════════════╝');
-  console.log(`  API:      http://${config.serverHost}:${config.serverPort}`);
-  console.log(`  Frontend: http://${config.frontendHost}:${config.frontendPort}`);
-  console.log(`  WS:       ws://${config.serverHost}:${config.serverPort}/ws/backend`);
-  console.log('');
-  console.log('  按 Ctrl+C 停止全部服务');
-  console.log('');
+  if (config.profile === 'desktop') {
+    await waitForHttpReady(config.frontendPort, '/', 60, {
+      label: 'desktop frontend',
+      acceptStatus: (statusCode) => statusCode >= 200 && statusCode < 500,
+    });
+    if (!config.skipShell) {
+      console.log('[4] 启动 Tauri 桌面壳 agentdash-local-tauri...');
+      startDesktopShell();
+    } else {
+      console.log('[4] 跳过 Tauri 桌面壳（--skip-shell）');
+    }
+  }
 
+  printReady();
+
+  if (!hasManagedChildren()) {
+    return;
+  }
   await waitForAnyChildExit();
   await shutdown(1);
 }
 
+async function maybeStartLocalRuntime() {
+  if (config.skipLocal) {
+    console.log('[3] 跳过 agentdash-local（--skip-local）');
+    return;
+  }
+
+  const backend = await ensureDevLocalRuntimeClaim(config.serverPort, config);
+  const localArgs = [
+    '--cloud-url', backend.relay_ws_url,
+    '--token', backend.auth_token,
+    '--name', backend.name || config.backendName,
+    '--backend-id', backend.backend_id,
+  ];
+  const workspaceRoots = splitWorkspaceRoots(config.workspaceRoots);
+  if (workspaceRoots.length > 0) {
+    localArgs.push('--workspace-roots', workspaceRoots.join(','));
+  }
+  if (config.noExecutor) {
+    localArgs.push('--no-executor');
+  }
+
+  console.log('[3] 启动 agentdash-local...');
+  startDebugBinary(supervisor, root, 'agentdash-local', {
+    args: localArgs,
+    label: 'agentdash-local',
+  });
+  await waitForLocalRegistration(config.serverPort, backend.backend_id, 20, 500);
+}
+
 function parseArgs(args) {
   const result = {
-    workspaceRoots: '',
     backendName: 'dev-local',
     databaseUrl: process.env.DATABASE_URL || null,
-    frontendMode: 'dev',
     frontendHost: '127.0.0.1',
-    frontendPort: 5380,
+    frontendMode: 'dev',
+    frontendPort: null,
     help: false,
     noExecutor: false,
-    sccacheMode: 'auto',
+    profile: 'web',
     sccacheDir: process.env.SCCACHE_DIR || null,
+    sccacheMode: 'auto',
     serverHost: '127.0.0.1',
-    serverPort: 3001,
+    serverPort: DEFAULT_SERVER_PORT,
     skipBuild: false,
+    skipClean: false,
     skipFrontend: false,
     skipLocal: false,
-    skipServer: false
+    skipServer: false,
+    skipShell: false,
+    workspaceRoots: '',
   };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    if (arg === 'web' || arg === 'desktop') {
+      result.profile = arg;
+      continue;
+    }
+    if (arg === '--profile') {
+      result.profile = parseProfile(readNextValue(args, ++index, arg), arg);
+      continue;
+    }
+    if (arg.startsWith('--profile=')) {
+      result.profile = parseProfile(arg.slice('--profile='.length), arg);
+      continue;
+    }
     if (arg === '--help' || arg === '-h') {
       result.help = true;
       continue;
     }
     if (arg === '--skip-build') {
       result.skipBuild = true;
+      continue;
+    }
+    if (arg === '--skip-clean') {
+      result.skipClean = true;
       continue;
     }
     if (arg === '--skip-local') {
@@ -180,6 +214,10 @@ function parseArgs(args) {
     }
     if (arg === '--skip-frontend') {
       result.skipFrontend = true;
+      continue;
+    }
+    if (arg === '--skip-shell') {
+      result.skipShell = true;
       continue;
     }
     if (arg === '--no-executor') {
@@ -272,12 +310,36 @@ function parseArgs(args) {
   return result;
 }
 
+function applyProfileDefaults(options) {
+  const config = { ...options };
+  if (config.profile === 'web') {
+    config.frontendPackage = 'app-web';
+    config.frontendPort ??= WEB_FRONTEND_PORT;
+    return config;
+  }
+  if (config.profile === 'desktop') {
+    config.frontendPackage = 'app-tauri';
+    config.frontendMode = 'dev';
+    config.frontendPort ??= DESKTOP_FRONTEND_PORT;
+    config.skipLocal = true;
+    return config;
+  }
+  throw new Error(`不支持的 profile: ${config.profile}`);
+}
+
 function readNextValue(args, index, flagName) {
   const value = args[index];
   if (!value) {
     throw new Error(`${flagName} 缺少取值`);
   }
   return value;
+}
+
+function parseProfile(value, flagName) {
+  if (value === 'web' || value === 'desktop') {
+    return value;
+  }
+  throw new Error(`${flagName} 不是合法 profile: ${value}`);
 }
 
 function parsePort(value, flagName) {
@@ -296,42 +358,58 @@ function parseFrontendMode(value, flagName) {
 }
 
 function printHelp() {
-  console.log('AgentDash 联合启动脚本（Node 版）');
+  console.log('AgentDash 统一开发启动脚本');
   console.log('');
   console.log('用法:');
-  console.log('  node ./scripts/dev-joint.js [options]');
+  console.log('  node ./scripts/dev-runtime.js --profile web [options]');
+  console.log('  node ./scripts/dev-runtime.js --profile desktop [options]');
   console.log('');
   console.log('常用参数:');
+  console.log('  --profile <web|desktop>   指定启动形态');
+  console.log('  --skip-clean              不清理端口和残留进程');
   console.log('  --skip-build              跳过 cargo build');
-  console.log('  --skip-local              只启动 server + frontend');
+  console.log('  --skip-local              web profile 不启动 agentdash-local');
   console.log('  --skip-server             不启动 server，复用现有服务');
   console.log('  --skip-frontend           不启动前端');
+  console.log('  --skip-shell              desktop profile 不启动 Tauri 壳');
   console.log('  --no-executor             local 追加 --no-executor');
   console.log('  --sccache                 强制使用 sccache，未安装时报错');
   console.log('  --no-sccache              关闭自动 sccache 检测');
   console.log('  --sccache-dir <path>      指定 SCCACHE_DIR');
-  console.log('  --workspace-roots <val>  指定 workspace roots');
-  console.log('  --backend-name <val>      指定本机运行时展示名称');
-  console.log('  --database-url <val>      指定 DATABASE_URL');
+  console.log('  --workspace-roots <val>   指定 workspace roots');
+  console.log('  --backend-name <val>      指定本机 runtime 展示名称');
+  console.log('  --database-url <val>      指定 PostgreSQL DATABASE_URL');
   console.log('  --server-host <val>       指定后端绑定 host');
   console.log('  --server-port <port>      指定 server 端口');
   console.log('  --frontend-host <val>     指定前端 host');
-  console.log('  --frontend-mode <mode>    指定前端模式（dev | preview）');
+  console.log('  --frontend-mode <mode>    web 前端模式（dev | preview）');
   console.log('  --frontend-port <port>    指定前端端口');
 }
 
 function printBanner() {
   console.log('');
   console.log('  ╔══════════════════════════════════════╗');
-  console.log('  ║   AgentDash 联合启动（保序模式）     ║');
+  console.log(`  ║   AgentDash ${profileLabel(config.profile)}开发启动${bannerPadding(config.profile)}║`);
   console.log('  ╚══════════════════════════════════════╝');
   console.log(`  root:       ${root}`);
-  console.log(`  roots:      ${config.workspaceRoots || '(未显式配置)'}`);
-  console.log(`  runtime:    ${config.backendName}`);
-  console.log(`  frontend:   ${config.frontendMode}`);
+  console.log(`  profile:    ${config.profile}`);
+  console.log(`  frontend:   ${config.frontendPackage} (${config.frontendMode}, :${config.frontendPort})`);
+  console.log(`  server:     ${config.serverHost}:${config.serverPort}`);
+  if (config.profile === 'web') {
+    console.log(`  runtime:    ${config.skipLocal ? '(跳过)' : config.backendName}`);
+    console.log(`  roots:      ${config.workspaceRoots || '(未显式配置)'}`);
+  }
   console.log(`  db:         ${formatDatabaseMode(config.databaseUrl)}`);
   console.log(`  rust cache: ${rustBuild.description}`);
   console.log('');
+}
+
+function bannerPadding(profile) {
+  return profile === 'desktop' ? '        ' : '            ';
+}
+
+function profileLabel(profile) {
+  return profile === 'desktop' ? '桌面端 ' : 'Web ';
 }
 
 function formatDatabaseMode(value) {
@@ -351,7 +429,7 @@ function configureRustBuild(options) {
     delete env.RUSTC_WRAPPER;
     return {
       description: '已关闭',
-      env
+      env,
     };
   }
 
@@ -359,7 +437,7 @@ function configureRustBuild(options) {
   if (existingWrapper && options.sccacheMode !== 'required') {
     return {
       description: `RUSTC_WRAPPER=${existingWrapper}${formatCacheDirSuffix(env.SCCACHE_DIR)}`,
-      env
+      env,
     };
   }
 
@@ -368,7 +446,7 @@ function configureRustBuild(options) {
     env.RUSTC_WRAPPER = sccachePath;
     return {
       description: formatSccacheDescription(sccachePath, env.SCCACHE_DIR),
-      env
+      env,
     };
   }
 
@@ -378,7 +456,7 @@ function configureRustBuild(options) {
 
   return {
     description: '未检测到 sccache，已退化为普通 rustc',
-    env
+    env,
   };
 }
 
@@ -396,7 +474,7 @@ function resolveExecutable(name) {
   const result = spawnSync(command, args, {
     cwd: root,
     encoding: 'utf8',
-    windowsHide: true
+    windowsHide: true,
   });
   if (result.status !== 0) {
     return null;
@@ -417,12 +495,10 @@ function formatCacheDirSuffix(cacheDir) {
   return normalized ? `，SCCACHE_DIR=${normalized}` : '';
 }
 
-async function runStep0Cleanup() {
-  console.log('[0/4] 启动前环境检测...');
+async function runCleanup() {
+  console.log('[0] 启动前环境检测...');
 
   if (!config.skipServer) {
-    // 先杀残留 agentdash-server — 它是 embedded postgres 的父进程，
-    // 杀父进程比杀子进程更可靠，也能释放端口和文件句柄。
     const serverConflict = await detectProcessByName('agentdash-server');
     if (serverConflict) {
       console.log('  [warn] 检测到残留 agentdash-server，正在强制终止...');
@@ -430,12 +506,10 @@ async function runStep0Cleanup() {
       await sleep(1000);
     }
 
-    // 再杀残留 embedded PostgreSQL 子进程
     const pgConflict = await detectEmbeddedPostgres();
     if (pgConflict) {
       console.log('  [warn] 检测到残留 embedded PostgreSQL，正在强制终止...');
       await killEmbeddedPostgres();
-      // 等待 Windows 释放文件句柄，然后验证是否真的死了
       await sleep(1500);
       const stillAlive = await detectEmbeddedPostgres();
       if (stillAlive) {
@@ -445,21 +519,18 @@ async function runStep0Cleanup() {
       }
     }
 
-    // 清理 postmaster.pid 和锁文件，避免新实例启动时被卡住
     cleanupPostgresLockFiles();
   }
 
-  if (!config.skipLocal) {
+  if (config.profile === 'web' && !config.skipLocal) {
     const localConflict = await detectProcessByName('agentdash-local');
     if (localConflict) {
       console.log('  [warn] 检测到残留 agentdash-local 进程，正在终止以避免重复注册...');
       await forceKillProcessByName('agentdash-local');
     }
-  } else {
-    console.log('  [skip] 保留现有 agentdash-local（--skip-local）');
   }
 
-  if (!config.skipBuild) {
+  if (!config.skipBuild || (config.profile === 'desktop' && !config.skipShell)) {
     const tauriConflict = await detectProcessByName('agentdash-local-tauri');
     if (tauriConflict) {
       console.log('  [warn] 检测到残留 agentdash-local-tauri 进程，正在终止以避免锁定 debug binary...');
@@ -472,9 +543,11 @@ async function runStep0Cleanup() {
     ports.push(config.serverPort);
   }
   if (!config.skipFrontend) {
-    ports.push(5380, 5381, 5382, config.frontendPort, config.frontendPort + 1, config.frontendPort + 2);
+    ports.push(WEB_FRONTEND_PORT, DESKTOP_FRONTEND_PORT, DESKTOP_PREVIEW_PORT, config.frontendPort);
+    if (config.profile === 'web') {
+      ports.push(config.frontendPort + 1, config.frontendPort + 2);
+    }
   }
-
   const uniquePorts = [...new Set(ports)];
 
   if (uniquePorts.length === 0) {
@@ -487,7 +560,8 @@ async function runStep0Cleanup() {
     console.log(`  [warn] 端口被占用: ${occupiedPorts.join(', ')}，正在释放...`);
     await runCommand(process.execPath, [path.join(root, 'scripts', 'kill-ports.js'), ...occupiedPorts.map(String)], {
       cwd: root,
-      label: 'kill-ports'
+      label: 'kill-ports',
+      allowNonZeroExit: true,
     });
   } else {
     console.log(`  [ok] 所需端口均可用: ${uniquePorts.join(', ')}`);
@@ -499,9 +573,9 @@ async function detectProcessByName(name) {
     if (isWindows) {
       const out = execSync(
         `powershell -NoProfile -Command "(Get-Process -Name '${name}' -ErrorAction SilentlyContinue).Count"`,
-        { encoding: 'utf8', timeout: 5000 }
+        { encoding: 'utf8', timeout: 5000 },
       ).trim();
-      return parseInt(out, 10) > 0;
+      return Number.parseInt(out, 10) > 0;
     }
     execSync(`pgrep -f ${name}`, { timeout: 5000 });
     return true;
@@ -513,14 +587,12 @@ async function detectProcessByName(name) {
 async function detectEmbeddedPostgres() {
   try {
     if (isWindows) {
-      // 匹配 .theseus 和 .agentdash 路径；
-      // CommandLine 可能用正斜杠 (/) 或反斜杠 (\)，两种都要匹配。
       const psScript = `@(Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue | Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }).Count`;
       const out = execSync(
         `powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`,
-        { encoding: 'utf8', timeout: 8000 }
+        { encoding: 'utf8', timeout: 8000 },
       ).trim();
-      return parseInt(out, 10) > 0;
+      return Number.parseInt(out, 10) > 0;
     }
     execSync('pgrep -f ".theseus.*postgres"', { timeout: 5000 });
     return true;
@@ -536,24 +608,22 @@ async function detectOccupiedPorts(ports) {
       if (isWindows) {
         const out = execSync(
           `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).Count"`,
-          { encoding: 'utf8', timeout: 5000 }
+          { encoding: 'utf8', timeout: 5000 },
         ).trim();
-        if (parseInt(out, 10) > 0) occupied.push(port);
+        if (Number.parseInt(out, 10) > 0) {
+          occupied.push(port);
+        }
       } else {
         execSync(`lsof -ti:${port}`, { timeout: 5000 });
         occupied.push(port);
       }
     } catch {
-      // port is free
+      // 端口空闲
     }
   }
   return occupied;
 }
 
-/**
- * 强制杀掉按名称匹配的进程及其整个进程树。
- * Windows 上使用 Get-CimInstance + taskkill /F /T 确保子进程一并清理。
- */
 async function forceKillProcessByName(name) {
   await killProcessTreeByName(name, { root, runCommand });
   console.log(`  [run] 已强制终止进程树 ${name}`);
@@ -561,32 +631,27 @@ async function forceKillProcessByName(name) {
 
 async function killEmbeddedPostgres() {
   if (isWindows) {
-    // 使用 Get-CimInstance + taskkill /F /T 杀掉 postgres 进程树
-    // 用 -match 正则同时匹配正斜杠和反斜杠路径（CommandLine 两种都可能出现）
     const psScript = [
       `$procs = Get-CimInstance Win32_Process -Filter "Name = 'postgres.exe'" -ErrorAction SilentlyContinue`,
       `| Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }`,
-      `; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null }`
+      `; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId 2>$null | Out-Null }`,
     ].join(' ');
-    await runCommand(
-      'powershell',
-      ['-NoProfile', '-Command', psScript],
-      { cwd: root, label: 'kill-embedded-postgres', allowNonZeroExit: true }
-    );
+    await runCommand('powershell', ['-NoProfile', '-Command', psScript], {
+      cwd: root,
+      label: 'kill-embedded-postgres',
+      allowNonZeroExit: true,
+      windowsHide: true,
+    });
   } else {
     await runCommand('pkill', ['-9', '-f', '.theseus.*postgres'], {
       cwd: root,
       label: 'kill-embedded-postgres',
-      allowNonZeroExit: true
+      allowNonZeroExit: true,
     });
   }
   console.log('  [run] 已强制终止 embedded PostgreSQL 进程树');
 }
 
-/**
- * 清理 embedded PostgreSQL 的 postmaster.pid 和锁文件。
- * 这些文件在进程被强杀后可能残留，导致新实例启动卡住。
- */
 function cleanupPostgresLockFiles() {
   const dataRoot = process.env.AGENTDASH_DATA_ROOT
     ? path.resolve(process.env.AGENTDASH_DATA_ROOT)
@@ -596,10 +661,9 @@ function cleanupPostgresLockFiles() {
   let serviceDirs;
   try {
     serviceDirs = fs.readdirSync(embeddedDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => path.join(embeddedDir, d.name, 'data'));
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(embeddedDir, entry.name, 'data'));
   } catch {
-    // embedded-postgres 目录不存在，无需清理
     return;
   }
 
@@ -624,18 +688,44 @@ function cleanupPostgresLockFiles() {
   }
 }
 
-function startFrontendProcess() {
-  const frontendEnv = {
+function startAgentDashServer() {
+  const env = {
     ...process.env,
-    VITE_API_ORIGIN: `http://${config.serverHost}:${config.serverPort}`
+    HOST: config.serverHost,
+    PORT: String(config.serverPort),
   };
+  if (isPostgresUrl(config.databaseUrl)) {
+    env.DATABASE_URL = config.databaseUrl;
+  } else {
+    delete env.DATABASE_URL;
+  }
+  startDebugBinary(supervisor, root, 'agentdash-server', { env });
+}
+
+function startFrontendProcess() {
+  const env = {
+    ...process.env,
+    VITE_API_ORIGIN: serverOrigin(),
+  };
+  const scriptArgs = config.profile === 'web'
+    ? ['--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort']
+    : ['--', '--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'];
   startPnpmFilterScript(supervisor, {
-    packageName: 'app-web',
+    packageName: config.frontendPackage,
     scriptName: config.frontendMode,
-    scriptArgs: ['--host', config.frontendHost, '--port', String(config.frontendPort), '--strictPort'],
-    label: 'frontend',
-    env: frontendEnv,
+    scriptArgs,
+    label: config.profile === 'desktop' ? 'desktop-frontend' : 'frontend',
+    env,
   });
+}
+
+function startDesktopShell() {
+  const env = {
+    ...process.env,
+    AGENTDASH_DESKTOP_API_MODE: 'external',
+    AGENTDASH_DESKTOP_API_ORIGIN: serverOrigin(),
+  };
+  startDebugBinary(supervisor, root, 'agentdash-local-tauri', { env });
 }
 
 async function waitForLocalRegistration(port, backendId, maxAttempts, intervalMs) {
@@ -666,15 +756,16 @@ async function ensureDevLocalRuntimeClaim(port, options) {
     name: options.backendName,
     workspace_roots: splitWorkspaceRoots(options.workspaceRoots),
     executor_enabled: !options.noExecutor,
-    client_version: 'dev-joint',
+    client_version: 'dev-runtime',
     device: {
-      app: 'agentdash-dev-joint',
+      app: 'agentdash-dev-runtime',
       root,
+      profile: options.profile,
       platform: process.platform,
       arch: process.arch,
-      pid: process.pid
+      pid: process.pid,
     },
-    rotate_token: false
+    rotate_token: false,
   });
 
   if (!backend || typeof backend !== 'object' || backend.__error__) {
@@ -694,7 +785,7 @@ async function ensureDevLocalRuntimeClaim(port, options) {
   }
 
   console.log(
-    `  [ready] 本机运行时已领取 (backend_id=${backend.backend_id}, machine=${backend.machine_label ?? profile.machine_label})`
+    `  [ready] 本机运行时已领取 (backend_id=${backend.backend_id}, machine=${backend.machine_label ?? profile.machine_label})`,
   );
   return backend;
 }
@@ -703,7 +794,7 @@ function loadLocalMachineIdentity() {
   const result = spawnSync(localBinaryPath(), ['machine-identity'], {
     cwd: root,
     encoding: 'utf8',
-    windowsHide: true
+    windowsHide: true,
   });
   if (result.status !== 0) {
     const message = result.stderr.trim() || result.stdout.trim() || `exit=${result.status}`;
@@ -723,7 +814,7 @@ function loadLocalMachineIdentity() {
       machine_label: identity.machine_label.trim(),
       legacy_machine_ids: Array.isArray(identity.legacy_machine_ids)
         ? identity.legacy_machine_ids.map((value) => String(value)).filter(Boolean)
-        : []
+        : [],
     };
   } catch (error) {
     throw new Error(`agentdash-local machine-identity 输出不是合法身份 JSON: ${error.message}`);
@@ -750,5 +841,28 @@ function escapeRegExp(value) {
 }
 
 function formatDevRuntimeProfileId(options) {
-  return `dev-joint:${options.serverHost}:${options.serverPort}`;
+  return `dev-runtime:${options.profile}:${options.serverHost}:${options.serverPort}`;
+}
+
+function serverOrigin() {
+  return `http://${config.serverHost}:${config.serverPort}`;
+}
+
+function printReady() {
+  console.log('');
+  console.log('  ╔══════════════════════════════════════╗');
+  console.log(`  ║   AgentDash ${profileLabel(config.profile)}开发环境已就绪${readyPadding(config.profile)}║`);
+  console.log('  ╚══════════════════════════════════════╝');
+  console.log(`  API:      ${serverOrigin()}`);
+  console.log(`  Frontend: http://${config.frontendHost}:${config.frontendPort}`);
+  if (config.profile === 'web') {
+    console.log(`  WS:       ws://${config.serverHost}:${config.serverPort}/ws/backend`);
+  }
+  console.log('');
+  console.log('  按 Ctrl+C 停止全部服务');
+  console.log('');
+}
+
+function readyPadding(profile) {
+  return profile === 'desktop' ? '      ' : '          ';
 }

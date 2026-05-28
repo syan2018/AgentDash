@@ -163,6 +163,15 @@ export function startDebugBinary(
   supervisor.startManagedProcess(resolveDebugBinary(root, binaryName), args, label, { env });
 }
 
+export function startDebugBinaryFrom(
+  supervisor,
+  workspaceRoot,
+  binaryName,
+  { label = binaryName, args = [], env } = {},
+) {
+  supervisor.startManagedProcess(resolveDebugBinary(workspaceRoot, binaryName), args, label, { env });
+}
+
 export function isPostgresUrl(value) {
   if (!value || typeof value !== 'string') {
     return false;
@@ -186,9 +195,12 @@ export function startPnpmFilterScript(
 
 export async function runCargoBuild(
   runner,
-  { packages = [], bins = [], env, label = 'cargo build' },
+  { packages = [], bins = [], env, label = 'cargo build', manifestPath },
 ) {
   const args = ['build'];
+  if (manifestPath) {
+    args.push('--manifest-path', manifestPath);
+  }
   for (const packageName of packages) {
     args.push('-p', packageName);
   }

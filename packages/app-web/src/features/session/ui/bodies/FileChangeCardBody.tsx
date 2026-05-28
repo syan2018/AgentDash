@@ -4,6 +4,8 @@
 
 import { useState, useMemo } from "react";
 import type { ThreadItem } from "../../../../generated/backbone-protocol";
+import { DiffCardBody } from "./DiffCardBody";
+import { parseUnifiedDiff } from "./diffPayload";
 
 type FileChangeItem = Extract<ThreadItem, { type: "fileChange" }>;
 
@@ -27,7 +29,7 @@ function FileChangeBlock({
   change: FileChangeItem["changes"][number];
 }) {
   const [expanded, setExpanded] = useState(false);
-  const stats = useMemo(() => countDiffLines(change.diff), [change.diff]);
+  const payload = useMemo(() => parseUnifiedDiff(change.diff ?? ""), [change.diff]);
   const kindLabel = getChangeKindLabel(change.kind);
 
   return (
@@ -50,13 +52,13 @@ function FileChangeBlock({
             → {change.kind.move_path}
           </span>
         )}
-        {(stats.added > 0 || stats.removed > 0) && (
+        {(payload.added > 0 || payload.removed > 0) && (
           <span className="flex shrink-0 gap-1.5 text-xs">
-            {stats.added > 0 && (
-              <span className="text-success">+{stats.added}</span>
+            {payload.added > 0 && (
+              <span className="text-success">+{payload.added}</span>
             )}
-            {stats.removed > 0 && (
-              <span className="text-destructive">-{stats.removed}</span>
+            {payload.removed > 0 && (
+              <span className="text-destructive">-{payload.removed}</span>
             )}
           </span>
         )}
@@ -65,9 +67,9 @@ function FileChangeBlock({
         </span>
       </button>
       {expanded && change.diff && (
-        <pre className="agentdash-chat-code-block max-h-96 border-t border-border">
-          {change.diff}
-        </pre>
+        <div className="border-t border-border p-2.5">
+          <DiffCardBody payload={payload} />
+        </div>
       )}
     </div>
   );
@@ -86,17 +88,4 @@ function getChangeKindLabel(
     default:
       return null;
   }
-}
-
-function countDiffLines(diff: string): { added: number; removed: number } {
-  let added = 0;
-  let removed = 0;
-  if (!diff) return { added, removed };
-
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line.startsWith("+")) added++;
-    else if (line.startsWith("-")) removed++;
-  }
-  return { added, removed };
 }

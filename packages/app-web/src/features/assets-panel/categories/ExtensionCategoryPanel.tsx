@@ -39,10 +39,8 @@ import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog"
 import { InstallExtensionPackageDialog } from "./extension/InstallExtensionPackageDialog";
 
 type BusyState =
-  | { kind: "refresh" }
   | { kind: "download"; installationId: string }
   | { kind: "uninstall"; installationId: string };
-type GlobalBusyKind = "refresh";
 
 type DialogState =
   | { kind: "closed" }
@@ -74,8 +72,7 @@ export function ExtensionCategoryPanel() {
   const clearNotice = useCallback(() => setNotice(null), []);
 
   const refresh = useCallback(
-    async (projectId: string, busyKind: GlobalBusyKind | null = null) => {
-      if (busyKind) setBusy({ kind: busyKind });
+    async (projectId: string) => {
       setIsLoading(true);
       setError(null);
       try {
@@ -87,7 +84,6 @@ export function ExtensionCategoryPanel() {
         showError(message);
       } finally {
         setIsLoading(false);
-        if (busyKind) setBusy(null);
       }
     },
     [showError],
@@ -191,20 +187,10 @@ export function ExtensionCategoryPanel() {
       title="Extension 资产"
       stats={statsText}
       actions={
-        <>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void refresh(currentProjectId, "refresh")}
-            disabled={isLoading || busy?.kind === "refresh"}
-          >
-            刷新
-          </Button>
-          <CreateButton
-            entity="本地包"
-            onClick={() => setDialog({ kind: "import" })}
-          />
-        </>
+        <CreateButton
+          entity="Extension"
+          onClick={() => setDialog({ kind: "import" })}
+        />
       }
       notice={notice}
       onDismissNotice={clearNotice}
@@ -306,7 +292,7 @@ function ExtensionGrid({
       <EmptyState className="px-6 py-14">
         <p className="text-sm text-foreground">暂无 Extension 资产</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          点击右上角"+ 本地包"导入扩展包，或从资源市场安装 Extension 模板
+          点击右上角"+ Extension"导入本地包，或从资源市场安装 Extension 模板
         </p>
       </EmptyState>
     );

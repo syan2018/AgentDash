@@ -248,7 +248,7 @@ export function McpPresetCategoryPanel() {
     <CategoryPageShell
       title="MCP Preset 资产"
       stats={`${builtinCount} 个内置 · ${userCount} 个自定义 · 供 Agent 装配的 MCP Server 模板`}
-      actions={<CreateButton entity="Preset" onClick={() => setDetail({ kind: "create" })} />}
+      actions={<CreateButton entity="MCP" onClick={() => setDetail({ kind: "create" })} />}
       notice={notice}
       onDismissNotice={clearNotice}
     >
@@ -260,10 +260,10 @@ export function McpPresetCategoryPanel() {
         <div className="flex flex-col items-center rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-foreground">当前项目还没有任何 MCP Preset</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            可从资源市场安装公共模板，或点击下方"+ Preset"新建。
+            可从资源市场安装公共模板，或点击下方"+ MCP"新建。
           </p>
           <CreateButton
-            entity="Preset"
+            entity="MCP"
             className="mt-4"
             onClick={() => setDetail({ kind: "create" })}
           />

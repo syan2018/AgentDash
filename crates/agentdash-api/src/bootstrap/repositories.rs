@@ -11,7 +11,8 @@ use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAuthSessionRepository,
     PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
     PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
@@ -88,6 +89,8 @@ pub(crate) async fn build_repositories(
     let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
 
     let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
+    let llm_provider_credential_repo =
+        Arc::new(PostgresLlmProviderCredentialRepository::new(pool.clone()));
 
     let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
     let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
@@ -119,6 +122,7 @@ pub(crate) async fn build_repositories(
         extension_package_artifact_repo: extension_package_artifact_repo.clone(),
         project_extension_installation_repo: project_extension_installation_repo.clone(),
         llm_provider_repo: llm_provider_repo.clone(),
+        llm_provider_credential_repo: llm_provider_credential_repo.clone(),
         mcp_preset_repo: mcp_preset_repo.clone(),
         skill_asset_repo: skill_asset_repo.clone(),
         project_agent_repo: project_agent_repo.clone(),

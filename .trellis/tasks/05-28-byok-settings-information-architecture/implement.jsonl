@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端业务事实源、repository、bootstrap 与 AppState 分层边界"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PostgreSQL migration、repository readiness 与 schema 事实源约束"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "LLM provider/model/thinking_level 与 Settings key 现有契约"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "新增 LLM Provider DTO 时使用 contract crate 与 generated TS"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端 feature/model/ui 分层与后端事实源消费原则"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "generated DTO、mapper 与 snake_case 类型安全约束"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "设置页拆分后的 primitive、token、surface 与 radius 规则"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "BYOK 跨 API / runtime / frontend / database 的数据流检查"}
+{"file": ".trellis/tasks/archive/2026-03/03-06-settings-config-panel/prd.md", "reason": "Settings 与 Pi Agent 配置雏形的历史需求"}
+{"file": ".trellis/tasks/archive/2026-03/03-23-extend-llm-providers/prd.md", "reason": "多 LLM Provider 与模型发现链路的历史设计目标"}
+{"file": ".trellis/tasks/archive/2026-03/03-24-fix-piagent-dynamic-provider-bootstrap/prd.md", "reason": "PiAgent provider 动态重载与无 provider 启动场景约束"}

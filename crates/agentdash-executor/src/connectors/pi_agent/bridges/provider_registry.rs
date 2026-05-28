@@ -6,7 +6,11 @@ use super::OpenAiCodexResponsesBridge;
 use super::OpenAiCompletionsBridge;
 use super::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
-use agentdash_domain::llm_provider::{LlmProvider, LlmProviderRepository, WireProtocol};
+use agentdash_domain::llm_provider::{
+    LlmProvider, LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+    WireProtocol, provider_allows_empty_api_key, resolve_effective_credential,
+};
+use agentdash_spi::AuthIdentity;
 use futures::future::BoxFuture;
 use tokio::sync::RwLock;
 
@@ -234,6 +238,9 @@ impl ProviderEntry {
 
 pub(crate) async fn build_provider_entries_from_db(
     repo: &dyn LlmProviderRepository,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    identity: Option<&AuthIdentity>,
 ) -> Vec<BuiltProviderEntry> {
     let providers = match repo.list_enabled().await {
         Ok(list) => list,
@@ -245,27 +252,51 @@ pub(crate) async fn build_provider_entries_from_db(
 
     let mut result = Vec::new();
     for db_provider in providers {
-        if let Some(entry) = build_provider_entry_from_db(&db_provider) {
+        if let Some(entry) =
+            build_provider_entry_from_db(&db_provider, credential_repo, secret_codec, identity)
+                .await
+        {
             result.push(entry);
         }
     }
     result
 }
 
-fn build_provider_entry_from_db(db_provider: &LlmProvider) -> Option<BuiltProviderEntry> {
-    let api_key = db_provider.resolve_api_key();
-    // 对于非 openai_compatible + 空 api_key 的情况，Anthropic/Gemini/Codex 需要 key
-    let needs_api_key = !matches!(db_provider.protocol, WireProtocol::OpenaiCompatible)
-        || !db_provider.api_key.is_empty()
-        || !db_provider.env_api_key.is_empty();
-    if needs_api_key && api_key.is_none() {
-        // 无 API key 且不是可以无 key 运行的 provider (如 Ollama)，跳过
-        // 但 openai_compatible 可能是无 key 的本地端点
-        if !matches!(db_provider.protocol, WireProtocol::OpenaiCompatible) {
+async fn build_provider_entry_from_db(
+    db_provider: &LlmProvider,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    identity: Option<&AuthIdentity>,
+) -> Option<BuiltProviderEntry> {
+    let credential = match resolve_effective_credential(
+        db_provider,
+        credential_repo,
+        secret_codec,
+        identity.map(|user| user.user_id.as_str()),
+    )
+    .await
+    {
+        Ok(credential) => credential,
+        Err(error) => {
+            tracing::error!(
+                provider = %db_provider.slug,
+                error = %error,
+                "PiAgentConnector: Provider 凭据解析失败"
+            );
             return None;
         }
+    };
+    let api_key = credential
+        .map(|credential| credential.api_key)
+        .unwrap_or_default();
+    if api_key.is_empty() && !provider_allows_empty_api_key(db_provider) {
+        tracing::warn!(
+            provider = %db_provider.slug,
+            mode = %db_provider.credential_mode,
+            "PiAgentConnector: Provider 当前身份缺少可用凭据，已从可执行列表隐藏"
+        );
+        return None;
     }
-    let api_key = api_key.unwrap_or_default();
 
     let base_url = if db_provider.base_url.is_empty() {
         None

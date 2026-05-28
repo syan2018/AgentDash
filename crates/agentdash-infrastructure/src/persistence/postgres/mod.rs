@@ -114,7 +114,9 @@ pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
-pub use llm_provider_repository::PostgresLlmProviderRepository;
+pub use llm_provider_repository::{
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+};
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
 pub use project_extension_installation_repository::PostgresProjectExtensionInstallationRepository;

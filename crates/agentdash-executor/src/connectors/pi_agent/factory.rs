@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_agent::LlmBridge;
-use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::llm_provider::{
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+};
 
 use super::bridges::provider_registry::build_provider_entries_from_db;
 use super::connector::PiAgentConnector;
@@ -29,6 +31,8 @@ impl LlmBridge for NoopBridge {
 pub async fn build_pi_agent_connector(
     settings: &dyn agentdash_domain::settings::SettingsRepository,
     llm_provider_repo: &dyn LlmProviderRepository,
+    credential_repo: &dyn LlmProviderCredentialRepository,
+    secret_codec: &dyn LlmSecretCodec,
 ) -> Option<PiAgentConnector> {
     let system_prompt = read_setting_str(settings, "agent.pi.base_system_prompt")
         .await
@@ -37,7 +41,13 @@ pub async fn build_pi_agent_connector(
 
     let user_preferences = read_user_preferences(settings).await;
 
-    let providers = build_provider_entries_from_db(llm_provider_repo).await;
+    let providers = build_provider_entries_from_db(
+        llm_provider_repo,
+        Some(credential_repo),
+        secret_codec,
+        None,
+    )
+    .await;
 
     let (global_default_bridge, global_default_model) = if let Some(provider) = providers.first() {
         (

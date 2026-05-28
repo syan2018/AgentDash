@@ -8,6 +8,8 @@ use axum::{
 use futures::StreamExt;
 
 use crate::app_state::AppState;
+use crate::auth::CurrentUser;
+use agentdash_spi::DiscoveryContext;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct DiscoveredOptionsQuery {
@@ -24,6 +26,7 @@ pub struct DiscoveredOptionsQuery {
 ///   {"Error":"..."}       // 错误结束
 pub async fn discovered_options_stream(
     State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
     Query(q): Query<DiscoveredOptionsQuery>,
 ) -> impl IntoResponse {
     let connector = state.services.connector.clone();
@@ -41,7 +44,10 @@ pub async fn discovered_options_stream(
             .map(std::path::PathBuf::from)
             .filter(|p| p.is_absolute());
 
-        match connector.discover_options_stream(&q.executor, working_dir).await {
+        match connector.discover_options_stream_with_context(&q.executor, DiscoveryContext {
+            working_dir,
+            identity: Some(current_user),
+        }).await {
             Ok(mut patches) => {
                 while let Some(patch) = patches.next().await {
                     if let Some(line) = to_ndjson_line(&serde_json::json!({ "JsonPatch": patch })) {

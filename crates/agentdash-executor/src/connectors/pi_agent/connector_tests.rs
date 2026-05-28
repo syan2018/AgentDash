@@ -299,6 +299,58 @@ impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRe
     }
 }
 
+#[derive(Default)]
+struct TestLlmProviderCredentialRepository;
+
+#[async_trait::async_trait]
+impl agentdash_domain::llm_provider::LlmProviderCredentialRepository
+    for TestLlmProviderCredentialRepository
+{
+    async fn get_for_user_provider(
+        &self,
+        _user_id: &str,
+        _provider_id: uuid::Uuid,
+    ) -> Result<Option<agentdash_domain::llm_provider::LlmProviderUserCredential>, DomainError>
+    {
+        Ok(None)
+    }
+
+    async fn list_for_user(
+        &self,
+        _user_id: &str,
+    ) -> Result<Vec<agentdash_domain::llm_provider::LlmProviderUserCredential>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn upsert_for_user_provider(
+        &self,
+        _credential: &agentdash_domain::llm_provider::LlmProviderUserCredential,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn delete_for_user_provider(
+        &self,
+        _user_id: &str,
+        _provider_id: uuid::Uuid,
+    ) -> Result<bool, DomainError> {
+        Ok(false)
+    }
+}
+
+#[derive(Default)]
+struct TestLlmSecretCodec;
+
+impl agentdash_domain::llm_provider::LlmSecretCodec for TestLlmSecretCodec {
+    fn encrypt(&self, plaintext: &str) -> Result<String, DomainError> {
+        Ok(plaintext.to_string())
+    }
+
+    fn decrypt(&self, ciphertext: &str) -> Result<String, DomainError> {
+        Ok(ciphertext.to_string())
+    }
+}
+
 async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
     let patches = connector
         .discover_options_stream("PI_AGENT", None)
@@ -1470,11 +1522,20 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
 
     let settings_repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
 
-    let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
-        .await
-        .expect("connector should initialize even without provider");
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize even without provider");
     connector.set_llm_provider_repository(llm_repo.clone());
+    connector.set_llm_provider_credential_repository(credential_repo.clone());
+    connector.set_llm_secret_codec(secret_codec.clone());
 
     let initial = discover_options_state(&connector).await;
     assert_eq!(
@@ -1487,7 +1548,7 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
     );
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
-    provider.api_key = "test-key".to_string();
+    provider.global_api_key_ciphertext = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
 
@@ -1508,16 +1569,25 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
 
     let settings_repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
-    provider.api_key = "test-key".to_string();
+    provider.global_api_key_ciphertext = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
 
-    let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
-        .await
-        .expect("connector should initialize");
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
     connector.set_llm_provider_repository(llm_repo.clone());
+    connector.set_llm_provider_credential_repository(credential_repo.clone());
+    connector.set_llm_secret_codec(secret_codec.clone());
 
     let initial = discover_options_state(&connector).await;
     assert_eq!(
@@ -1546,9 +1616,12 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
 async fn prompt_without_provider_configuration_returns_clear_error() {
     let repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = TestLlmProviderRepository::default();
-    let mut connector = build_pi_agent_connector(repo.as_ref(), &llm_repo)
-        .await
-        .expect("connector should initialize even without provider");
+    let credential_repo = TestLlmProviderCredentialRepository;
+    let secret_codec = TestLlmSecretCodec;
+    let mut connector =
+        build_pi_agent_connector(repo.as_ref(), &llm_repo, &credential_repo, &secret_codec)
+            .await
+            .expect("connector should initialize even without provider");
     connector.set_settings_repository(repo);
 
     let result = connector

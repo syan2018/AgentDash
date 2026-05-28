@@ -27,6 +27,12 @@ use agentdash_contracts::extension_runtime::{
     ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
     UninstallExtensionInstallationResponse,
 };
+use agentdash_contracts::llm_provider::{
+    CreateLlmProviderRequest, DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto,
+    LlmCredentialModeDto, LlmCredentialSourceDto, LlmProviderAdminDto, LlmProviderProtocol,
+    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
+    UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
+};
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
@@ -108,6 +114,26 @@ fn main() {
             export_all::<SessionForkResponse>(dir);
             export_all::<SessionLineageViewResponse>(dir);
             export_all::<SessionProjectionRollbackResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("llm-provider-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<LlmProviderProtocol>(dir);
+            export_all::<LlmCredentialModeDto>(dir);
+            export_all::<LlmCredentialSourceDto>(dir);
+            export_all::<LlmProviderAdminDto>(dir);
+            export_all::<EffectiveLlmProviderDto>(dir);
+            export_all::<CreateLlmProviderRequest>(dir);
+            export_all::<UpdateLlmProviderRequest>(dir);
+            export_all::<ReorderLlmProvidersRequest>(dir);
+            export_all::<ProbeLlmProviderModelsRequest>(dir);
+            export_all::<ProbeLlmProviderModelDto>(dir);
+            export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
+            export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
         },
     );
 

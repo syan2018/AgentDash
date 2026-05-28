@@ -18,6 +18,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "lifecycle_runs",
     "library_assets",
     "llm_providers",
+    "llm_provider_user_credentials",
     "mcp_presets",
     "project_agents",
     "project_backend_access",

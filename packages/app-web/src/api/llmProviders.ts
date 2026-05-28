@@ -1,70 +1,25 @@
 import { api } from './client';
+import type {
+  CreateLlmProviderRequest,
+  DeleteLlmProviderUserCredentialResponse,
+  EffectiveLlmProviderDto,
+  JsonValue,
+  LlmProviderAdminDto,
+  ProbeLlmProviderModelDto,
+  ProbeLlmProviderModelsRequest,
+  UpdateLlmProviderRequest,
+  UpsertLlmProviderUserCredentialRequest,
+} from '../generated/llm-provider-contracts';
 
-// ─── Types ───
-
-export interface LlmProvider {
-  id: string;
-  name: string;
-  slug: string;
-  protocol: 'anthropic' | 'gemini' | 'openai_compatible' | 'openai_codex';
-  api_key: string;
-  api_key_configured: boolean;
-  base_url: string;
-  wire_api: string;
-  default_model: string;
-  models: unknown;
-  blocked_models: unknown;
-  env_api_key: string;
-  discovery_url: string;
-  sort_order: number;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateLlmProviderRequest {
-  name: string;
-  slug: string;
-  protocol: string;
-  api_key?: string;
-  base_url?: string;
-  wire_api?: string;
-  default_model?: string;
-  models?: unknown;
-  blocked_models?: unknown;
-  env_api_key?: string;
-  discovery_url?: string;
-  enabled?: boolean;
-}
-
-export interface UpdateLlmProviderRequest {
-  name?: string;
-  protocol?: string;
-  api_key?: string;
-  base_url?: string;
-  wire_api?: string;
-  default_model?: string;
-  models?: unknown;
-  blocked_models?: unknown;
-  env_api_key?: string;
-  discovery_url?: string;
-  sort_order?: number;
-  enabled?: boolean;
-}
-
-export interface ProbeModelsRequest {
-  protocol: string;
-  api_key?: string;
-  base_url?: string;
-  discovery_url?: string;
-  env_api_key?: string;
-  provider_id?: string;
-}
-
-export interface ProbeModelEntry {
-  id: string;
-  name: string;
-}
+export type LlmProvider = LlmProviderAdminDto;
+export type EffectiveLlmProvider = EffectiveLlmProviderDto;
+export type ProbeModelEntry = ProbeLlmProviderModelDto;
+export type {
+  CreateLlmProviderRequest,
+  JsonValue,
+  UpdateLlmProviderRequest,
+  ProbeLlmProviderModelsRequest,
+};
 
 export interface StartCodexOAuthResponse {
   flow_id: string;
@@ -78,10 +33,10 @@ export interface CodexOAuthStatusResponse {
   message?: string;
 }
 
-// ─── API ───
-
 export const llmProvidersApi = {
   list: () => api.get<LlmProvider[]>('/llm-providers'),
+
+  listEffective: () => api.get<EffectiveLlmProvider[]>('/llm-providers/effective'),
 
   get: (id: string) => api.get<LlmProvider>(`/llm-providers/${id}`),
 
@@ -96,8 +51,17 @@ export const llmProvidersApi = {
   reorder: (ids: string[]) =>
     api.post<{ reordered: boolean }>('/llm-providers/reorder', { ids }),
 
-  probeModels: (req: ProbeModelsRequest) =>
+  probeModels: (req: ProbeLlmProviderModelsRequest) =>
     api.post<ProbeModelEntry[]>('/llm-providers/probe-models', req),
+
+  probeUserModels: (providerId: string, req: ProbeLlmProviderModelsRequest) =>
+    api.post<ProbeModelEntry[]>(`/llm-providers/${providerId}/probe-models`, req),
+
+  saveUserCredential: (providerId: string, req: UpsertLlmProviderUserCredentialRequest) =>
+    api.put<EffectiveLlmProvider>(`/llm-providers/${providerId}/user-credential`, req),
+
+  deleteUserCredential: (providerId: string) =>
+    api.delete<DeleteLlmProviderUserCredentialResponse>(`/llm-providers/${providerId}/user-credential`),
 
   startCodexOAuth: (providerId: string) =>
     api.post<StartCodexOAuthResponse>(`/llm-providers/${providerId}/codex-oauth/start`, {}),

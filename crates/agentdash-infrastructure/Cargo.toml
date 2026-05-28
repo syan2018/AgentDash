@@ -19,6 +19,8 @@ tokio = { workspace = true }
 async-trait = "0.1"
 anyhow = { workspace = true }
 postgresql_embedded = { workspace = true }
+aes-gcm = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 dotenvy = "0.15"

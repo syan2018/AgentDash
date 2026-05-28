@@ -25,6 +25,7 @@ use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
+use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
@@ -95,6 +96,10 @@ pub struct AppConfig {
     pub auth_mode: AuthMode,
 }
 
+pub struct SecretSet {
+    pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
+}
+
 /// 全局应用状态
 ///
 /// 通过 Axum 的 State extractor 注入到各路由处理函数中。
@@ -103,6 +108,7 @@ pub struct AppState {
     pub repos: RepositorySet,
     pub services: ServiceSet,
     pub config: AppConfig,
+    pub secrets: SecretSet,
     /// 认证/授权提供者（由插件注入，None 表示无认证）
     pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
 }
@@ -132,6 +138,9 @@ impl AppState {
         let session_persistence = repository_bootstrap.session_persistence;
         let extension_package_artifact_storage =
             repository_bootstrap.extension_package_artifact_storage;
+        let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
+            agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
+        );
 
         let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
             mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
@@ -176,6 +185,7 @@ impl AppState {
                 platform_config: platform_config.clone(),
                 plugin_connectors: plugin_registration.connectors,
                 extra_skill_dirs: plugin_registration.extra_skill_dirs,
+                llm_provider_secret: llm_provider_secret.clone(),
             },
         )
         .await?;
@@ -307,6 +317,9 @@ impl AppState {
             config: AppConfig {
                 platform_config,
                 auth_mode,
+            },
+            secrets: SecretSet {
+                llm_provider_secret,
             },
             auth_provider: plugin_registration.auth_provider,
         };

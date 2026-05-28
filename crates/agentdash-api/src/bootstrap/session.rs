@@ -15,7 +15,9 @@ use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
     SessionToolServices, SharedSessionToolServicesHandle,
 };
-use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::llm_provider::{
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+};
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
@@ -33,6 +35,7 @@ pub(crate) struct SessionBootstrapInput {
     pub platform_config: SharedPlatformConfig,
     pub plugin_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
+    pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
 pub(crate) struct SessionBootstrapOutput {
@@ -66,6 +69,7 @@ pub(crate) async fn build_session_runtime(
         platform_config,
         plugin_connectors,
         extra_skill_dirs,
+        llm_provider_secret,
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
@@ -74,6 +78,8 @@ pub(crate) async fn build_session_runtime(
     if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
         settings_repo: repos.settings_repo.clone(),
         llm_provider_repo: repos.llm_provider_repo.clone(),
+        llm_provider_credential_repo: repos.llm_provider_credential_repo.clone(),
+        llm_provider_secret: llm_provider_secret.clone(),
     })
     .await
     {
@@ -179,6 +185,8 @@ pub(crate) async fn build_session_runtime(
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
+    llm_provider_credential_repo: Arc<dyn LlmProviderCredentialRepository>,
+    llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
 struct PiAgentConnectorBuildResult {
@@ -191,9 +199,13 @@ async fn build_pi_agent_connector(
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         deps.settings_repo.as_ref(),
         deps.llm_provider_repo.as_ref(),
+        deps.llm_provider_credential_repo.as_ref(),
+        deps.llm_provider_secret.as_ref(),
     )
     .await?;
     connector.set_settings_repository(deps.settings_repo);
     connector.set_llm_provider_repository(deps.llm_provider_repo);
+    connector.set_llm_provider_credential_repository(deps.llm_provider_credential_repo);
+    connector.set_llm_secret_codec(deps.llm_provider_secret);
     Some(PiAgentConnectorBuildResult { connector })
 }

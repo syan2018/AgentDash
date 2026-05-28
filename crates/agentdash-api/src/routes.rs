@@ -117,6 +117,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(llm_providers::list_providers).post(llm_providers::create_provider),
         )
         .route(
+            "/llm-providers/effective",
+            get(llm_providers::list_effective_providers),
+        )
+        .route(
             "/llm-providers/reorder",
             post(llm_providers::reorder_providers),
         )
@@ -137,6 +141,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(llm_providers::get_provider)
                 .put(llm_providers::update_provider)
                 .delete(llm_providers::delete_provider),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential",
+            put(llm_providers::upsert_user_credential)
+                .delete(llm_providers::delete_user_credential),
+        )
+        .route(
+            "/llm-providers/{id}/probe-models",
+            post(llm_providers::probe_user_provider_models),
         )
         .route(
             "/llm-providers/{id}/codex-oauth/start",

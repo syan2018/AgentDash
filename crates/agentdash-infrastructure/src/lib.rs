@@ -1,6 +1,7 @@
 pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
+pub mod secret;
 pub mod storage;
 
 pub use persistence::postgres::PostgresAuthSessionRepository;
@@ -9,6 +10,7 @@ pub use persistence::postgres::PostgresBackendRepository;
 pub use persistence::postgres::PostgresCanvasRepository;
 pub use persistence::postgres::PostgresExtensionPackageArtifactRepository;
 pub use persistence::postgres::PostgresInlineFileRepository;
+pub use persistence::postgres::PostgresLlmProviderCredentialRepository;
 pub use persistence::postgres::PostgresLlmProviderRepository;
 pub use persistence::postgres::PostgresMcpPresetRepository;
 pub use persistence::postgres::PostgresProjectAgentRepository;
@@ -30,4 +32,5 @@ pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use persistence::sqlite::SqliteSessionRepository;
+pub use secret::LlmProviderSecretCipher;
 pub use storage::FilesystemExtensionPackageArtifactStorage;

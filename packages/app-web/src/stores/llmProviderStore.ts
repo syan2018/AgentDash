@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   llmProvidersApi,
   type LlmProvider,
+  type EffectiveLlmProvider,
   type CreateLlmProviderRequest,
   type UpdateLlmProviderRequest,
 } from '../api/llmProviders';
@@ -74,6 +75,58 @@ export const useLlmProviderStore = create<LlmProviderState>((set, get) => ({
     set({ saving: true, error: null });
     try {
       await llmProvidersApi.reorder(ids);
+      await get().fetchProviders();
+      set({ saving: false });
+    } catch (e) {
+      set({ error: (e as Error).message, saving: false });
+    }
+  },
+}));
+
+interface LlmByokState {
+  providers: EffectiveLlmProvider[];
+  loading: boolean;
+  error: string | null;
+  saving: boolean;
+
+  fetchProviders: () => Promise<void>;
+  saveCredential: (providerId: string, apiKey: string) => Promise<EffectiveLlmProvider | null>;
+  deleteCredential: (providerId: string) => Promise<void>;
+}
+
+export const useLlmByokStore = create<LlmByokState>((set, get) => ({
+  providers: [],
+  loading: false,
+  error: null,
+  saving: false,
+
+  fetchProviders: async () => {
+    set({ loading: true, error: null });
+    try {
+      const providers = await llmProvidersApi.listEffective();
+      set({ providers, loading: false });
+    } catch (e) {
+      set({ error: (e as Error).message, loading: false });
+    }
+  },
+
+  saveCredential: async (providerId, apiKey) => {
+    set({ saving: true, error: null });
+    try {
+      const provider = await llmProvidersApi.saveUserCredential(providerId, { api_key: apiKey });
+      await get().fetchProviders();
+      set({ saving: false });
+      return provider;
+    } catch (e) {
+      set({ error: (e as Error).message, saving: false });
+      return null;
+    }
+  },
+
+  deleteCredential: async (providerId) => {
+    set({ saving: true, error: null });
+    try {
+      await llmProvidersApi.deleteUserCredential(providerId);
       await get().fetchProviders();
       set({ saving: false });
     } catch (e) {

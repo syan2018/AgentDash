@@ -172,6 +172,12 @@ pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct DiscoveryContext {
+    pub working_dir: Option<PathBuf>,
+    pub identity: Option<crate::platform::auth::AuthIdentity>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct RestoredSessionState {
     pub messages: Vec<AgentMessage>,
     pub message_refs: Vec<Option<MessageRef>>,
@@ -714,6 +720,15 @@ pub trait AgentConnector: Send + Sync {
         executor: &str,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError>;
+
+    async fn discover_options_stream_with_context(
+        &self,
+        executor: &str,
+        context: DiscoveryContext,
+    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        self.discover_options_stream(executor, context.working_dir)
+            .await
+    }
 
     /// 返回当前进程内该 session 是否仍有可直接续跑的执行器 runtime。
     ///

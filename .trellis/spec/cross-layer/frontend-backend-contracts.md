@@ -77,6 +77,7 @@ packages/app-web/src/generated/
 | VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
 | Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
 | Project Agent | `project-agent-contracts.ts` | `agentdash-contracts::project_agent` |
+| LLM Provider | `llm-provider-contracts.ts` | `agentdash-contracts::llm_provider` |
 
 API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
 
@@ -85,6 +86,8 @@ Frontend type entrypoints re-export generated contracts directly when the wire s
 Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service mappers may validate `unknown` payloads, but must not redefine this projection shape outside generated session contracts.
 
 Session branch DTOs also live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. Frontend service code consumes the generated relation/status unions and keeps session tree grouping keyed by backend-provided `parent_session_id` / `parent_relation_kind`.
+
+LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理员 Provider Catalog、用户 BYOK effective list、credential mode 和 probe 请求都由前端设置页与执行器 discovery 共同消费。前端 API 层消费 `generated/llm-provider-contracts.ts`，只保留 service 调用和轻量 view model 状态；`credential_mode`、`effective_api_key_source`、`global_api_key_configured`、`user_api_key_configured` 等字段不在前端手写重声明。
 
 ## Local Decisions
 

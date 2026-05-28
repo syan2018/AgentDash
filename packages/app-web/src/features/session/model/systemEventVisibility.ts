@@ -32,6 +32,7 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
 const SILENT_HOOK_DECISIONS = new Set<string>([
   "stop",
   "terminal_observed",
+  "observed",
   "refresh_requested",
   "allow",
   "effects_applied",

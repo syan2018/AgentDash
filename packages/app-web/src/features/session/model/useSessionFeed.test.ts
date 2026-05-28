@@ -22,7 +22,11 @@ function asEntry(id: string, event: BackboneEvent, extra?: Partial<SessionDispla
   };
 }
 
-function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: boolean }): SessionDisplayEntry {
+function mkCmdEntry(
+  id: string,
+  command: string,
+  opts?: { isPendingApproval?: boolean; status?: "inProgress" | "completed" | "failed" | "declined" },
+): SessionDisplayEntry {
   const item = {
     type: "commandExecution",
     id,
@@ -30,7 +34,7 @@ function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: bo
     cwd: "/tmp",
     processId: null,
     source: "agent",
-    status: "completed",
+    status: opts?.status ?? "completed",
     commandActions: [],
     aggregatedOutput: null,
     exitCode: 0,
@@ -119,6 +123,37 @@ function mkSilentHookTraceEntry(id: string): SessionDisplayEntry {
   return asEntry(id, event);
 }
 
+function mkObservedHookTraceEntry(id: string): SessionDisplayEntry {
+  const event = {
+    type: "platform",
+    payload: {
+      kind: "hook_trace",
+      data: {
+        eventType: "hook:before_provider_request:observed",
+        message: "Hook 已观测到 LLM API 请求即将发出",
+        data: {
+          trigger: "before_provider_request",
+          decision: "observed",
+          sequence: 1,
+          revision: 1,
+          severity: "info",
+          matched_rule_keys: [],
+          refresh_snapshot: false,
+          diagnostic_codes: ["session_binding_found"],
+          diagnostics: [
+            {
+              code: "session_binding_found",
+              message: "命中会话绑定",
+            },
+          ],
+          injections: [],
+        },
+      },
+    },
+  } as unknown as BackboneEvent;
+  return asEntry(id, event);
+}
+
 function mkSystemMessageEntry(id: string, message: string): SessionDisplayEntry {
   const event = {
     type: "platform",
@@ -139,6 +174,14 @@ function mkReasoningEntry(id: string): SessionDisplayEntry {
     payload: { threadId: "t1", turnId: "u1", itemId: id, delta: "...", contentIndex: 0 },
   };
   return asEntry(id, event, { accumulatedText: "..." });
+}
+
+function mkReasoningEntryWithText(id: string, text: string): SessionDisplayEntry {
+  const event: BackboneEvent = {
+    type: "reasoning_text_delta",
+    payload: { threadId: "t1", turnId: "u1", itemId: id, delta: text, contentIndex: 0 },
+  };
+  return asEntry(id, event, { accumulatedText: text });
 }
 
 function mkContextFrameEntry(id: string): SessionDisplayEntry {
@@ -415,6 +458,55 @@ describe("aggregateEntries — tool burst", () => {
       "mounts_list",
       "read",
       "canvas_start",
+    ]);
+  });
+
+  it("T19: observed hook trace is silent and does not split tool bursts", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkObservedHookTraceEntry("h-observed"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    expect(result).toHaveLength(1);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("T20: empty thinking stays silent and does not split tool bursts", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkReasoningEntryWithText("r-empty", "   "),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    expect(result).toHaveLength(1);
+    expect(isToolGroup(result[0])).toBe(true);
+    expect((result[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("T21: in-progress tools stay outside the burst until they reach a terminal state", () => {
+    const activeFrame = aggregateEntries([
+      mkCmdEntry("c1", "ls"),
+      mkCmdEntry("c2", "pwd"),
+      mkCmdEntry("c3", "sleep 1", { status: "inProgress" }),
+    ]);
+    expect(activeFrame).toHaveLength(2);
+    expect(isToolGroup(activeFrame[0])).toBe(true);
+    expect((activeFrame[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual(["c1", "c2"]);
+    expect((activeFrame[1] as SessionDisplayEntry).id).toBe("c3");
+
+    const completedFrame = aggregateEntries([
+      mkCmdEntry("c1", "ls"),
+      mkCmdEntry("c2", "pwd"),
+      mkCmdEntry("c3", "sleep 1", { status: "completed" }),
+    ]);
+    expect(completedFrame).toHaveLength(1);
+    expect(isToolGroup(completedFrame[0])).toBe(true);
+    expect((completedFrame[0] as AggregatedEntryGroup).entries.map((entry) => entry.id)).toEqual([
+      "c1",
+      "c2",
+      "c3",
     ]);
   });
 });

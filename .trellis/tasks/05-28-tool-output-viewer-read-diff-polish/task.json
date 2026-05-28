@@ -1,9 +1,9 @@
 {
-  "id": "tool-card-revamp",
-  "name": "tool-card-revamp",
-  "title": "工具卡片体验整体重做",
+  "id": "tool-output-viewer-read-diff-polish",
+  "name": "tool-output-viewer-read-diff-polish",
+  "title": "工具出参统一渲染与 Read/Diff 面板增强",
   "description": "",
-  "status": "in_progress",
+  "status": "planning",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -18,10 +18,8 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [
-    "05-28-tool-output-viewer-read-diff-polish"
-  ],
-  "parent": null,
+  "children": [],
+  "parent": "05-28-tool-card-revamp",
   "relatedFiles": [],
   "notes": "",
   "meta": {}

@@ -86,6 +86,7 @@ function isContextFrameEvent(event: BackboneEvent): boolean {
 
 type EntryClassification =
   | "tool_like"
+  | "active_tool"
   | "hard_boundary"
   | "soft_boundary"
   | "neutral";
@@ -112,9 +113,17 @@ function isUserMessageChunk(event: BackboneEvent): boolean {
   );
 }
 
+function isToolEntryTerminal(entry: SessionDisplayEntry): boolean {
+  const item = extractThreadItem(entry.event);
+  if (!item) return true;
+  if (!("status" in item)) return true;
+  return item.status !== "inProgress";
+}
+
 function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   const event = entry.event;
   if (getToolAggregationType(event) !== null) {
+    if (!isToolEntryTerminal(entry)) return "active_tool";
     return "tool_like";
   }
 
@@ -272,6 +281,13 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
       case "tool_like": {
         flushCtxGroup();
         activeToolGroup = appendToolEntry(activeToolGroup, entry);
+        break;
+      }
+
+      case "active_tool": {
+        flushToolGroup();
+        flushCtxGroup();
+        result.push(entry);
         break;
       }
 

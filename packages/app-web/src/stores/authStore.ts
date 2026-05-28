@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type { LoginCredentials, LoginMetadata } from '../types';
-import { fetchLoginMetadata, postLogin, startRedirectLogin } from '../api/auth';
+import { fetchLoginMetadata, postLogin, postLogout, startRedirectLogin } from '../api/auth';
 import { setStoredToken, clearStoredToken } from '../api/client';
+import { closeAllStreamConnections } from '../api/streamRegistry';
 import { useCurrentUserStore } from './currentUserStore';
+import { useEventStore } from './eventStore';
 
 interface AuthState {
   metadata: LoginMetadata | null;
@@ -71,8 +73,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: () => {
-    clearStoredToken();
+    void postLogout().catch((err: unknown) => {
+      console.warn('logout: 后端撤销 token 失败', err);
+    });
+    closeAllStreamConnections();
+    useEventStore.getState().disconnect();
     useCurrentUserStore.getState().clear();
+    clearStoredToken();
     set({ loginError: null });
   },
 }));

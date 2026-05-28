@@ -7,6 +7,7 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
+import { useAuthStore } from "../../stores/authStore";
 import { useSidebarSessionsStore } from "../../stores/sidebarSessionsStore";
 import { useTheme } from "../../hooks/use-theme";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
@@ -910,37 +911,162 @@ function ThemeIcon({ theme }: { theme: "light" | "dark" | "system" }) {
   );
 }
 
-// ─── 常驻 UserCard ─────────────────────────────────────────
+// ─── 常驻 UserCard（点击展开身份 popover，含退出登录） ──────────
 
 function UserCard() {
   const { currentUser } = useCurrentUserStore();
+  const logout = useAuthStore((state) => state.logout);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; right: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      if (!triggerRef.current) return;
+      const rect = triggerRef.current.getBoundingClientRect();
+      setAnchor({ top: Math.round(rect.top), left: Math.round(rect.left), right: Math.round(rect.right) });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
   if (!currentUser) return null;
 
   const title = currentUser.display_name?.trim() || currentUser.email?.trim() || currentUser.user_id;
   const subtitle = currentUser.email?.trim() || currentUser.user_id;
   const modeLabel = currentUser.auth_mode === "enterprise" ? "企业" : "个人";
   const avatarUrl = currentUser.avatar_url?.trim();
+  const providerLabel = currentUser.provider?.trim();
+
+  const handleLogout = () => {
+    setOpen(false);
+    logout();
+  };
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2">
-      <UserAvatar avatarUrl={avatarUrl} fallback={title} />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-foreground">{title}</p>
-        {subtitle !== title && (
-          <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
-        )}
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {currentUser.is_admin && (
-          <span className="rounded-[4px] border border-warning/30 bg-warning/10 px-1 py-0.5 text-[9px] text-warning">
-            Admin
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${
+          open ? "bg-secondary/70" : "hover:bg-secondary/60"
+        }`}
+      >
+        <UserAvatar avatarUrl={avatarUrl} fallback={title} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium text-foreground">{title}</p>
+          {subtitle !== title && (
+            <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {currentUser.is_admin && (
+            <span className="rounded-[4px] border border-warning/30 bg-warning/10 px-1 py-0.5 text-[9px] text-warning">
+              Admin
+            </span>
+          )}
+          <span className="rounded-[4px] border border-border bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">
+            {modeLabel}
           </span>
+        </div>
+      </button>
+
+      {open &&
+        anchor &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            role="menu"
+            style={{
+              position: "fixed",
+              left: anchor.left + 8,
+              width: anchor.right - anchor.left - 16,
+              bottom: window.innerHeight - anchor.top + 6,
+              maxHeight: `calc(${anchor.top}px - 16px)`,
+            }}
+            className="z-40 flex flex-col overflow-hidden rounded-[12px] border border-border bg-background shadow-2xl"
+          >
+            <div className="flex items-start gap-3 px-4 pb-3 pt-3">
+              <UserAvatar avatarUrl={avatarUrl} fallback={title} sizeClassName="h-10 w-10" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{title}</p>
+                {currentUser.email && (
+                  <p className="truncate text-[11px] text-muted-foreground">{currentUser.email}</p>
+                )}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  <span className="rounded-[4px] border border-border bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                    {modeLabel}
+                  </span>
+                  {currentUser.is_admin && (
+                    <span className="rounded-[4px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-[9px] text-warning">
+                      Admin
+                    </span>
+                  )}
+                  {providerLabel && (
+                    <span className="rounded-[4px] border border-border bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                      {providerLabel}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-4 py-2.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              退出登录
+            </button>
+          </div>,
+          document.body,
         )}
-        <span className="rounded-[4px] border border-border bg-secondary px-1 py-0.5 text-[9px] text-muted-foreground">
-          {modeLabel}
-        </span>
-      </div>
-    </div>
+    </>
   );
 }
 

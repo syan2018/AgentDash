@@ -18,3 +18,7 @@ export async function postLogin(credentials: LoginCredentials): Promise<LoginRes
 export async function startRedirectLogin(request: AuthStartRequest): Promise<AuthStartResponse> {
   return api.post<AuthStartResponse>('/auth/oidc/start', request);
 }
+
+export async function postLogout(): Promise<void> {
+  await api.post<void>('/auth/logout', {});
+}

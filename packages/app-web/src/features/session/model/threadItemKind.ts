@@ -61,7 +61,8 @@ export function resolveKind(item: AgentDashThreadItem): KindMeta {
   switch (item.type) {
     case "commandExecution":    return KIND_REGISTRY.execute;
     case "fileChange":          return KIND_REGISTRY.edit;
-    case "mcpToolCall":         return KIND_REGISTRY.mcp;
+    // MCP 暂复用 TOOL badge，后续若有专门标识再切回 KIND_REGISTRY.mcp
+    case "mcpToolCall":         return KIND_REGISTRY.tool;
     case "webSearch":           return KIND_REGISTRY.search;
     case "imageView":
     case "imageGeneration":     return KIND_REGISTRY.image;

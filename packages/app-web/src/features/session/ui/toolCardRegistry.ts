@@ -1,16 +1,18 @@
 /**
  * ThreadItem → renderer 一级分发注册表
  *
- * 根据 ThreadItem.type 选择对应的 renderer，返回 { kind, title, body, status }，
+ * 根据 ThreadItem.type 选择对应的 renderer，返回 { kind, header, body, status }，
  * 由 ToolCallCardShell 包裹渲染。
  *
- * dynamicToolCall 内部按 tool 名做二级摘要。
+ * dynamicToolCall 内部按 tool 名做二级 header 摘要。
  */
 
 import { createElement, type ReactNode } from "react";
 import type { ThreadItem, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import { resolveKind, type KindMeta } from "../model/threadItemKind";
 import type { DisplayStatus } from "./ToolCallCardShell";
+import type { ToolCardHeaderModel } from "./ToolCardHeader";
+import { FilePathPill } from "./FilePathPill";
 
 import { CommandExecutionCardBody } from "./bodies/CommandExecutionCardBody";
 import { FileChangeCardBody } from "./bodies/FileChangeCardBody";
@@ -29,7 +31,7 @@ export interface CardContext {
 
 export interface CardRenderResult {
   kind: KindMeta;
-  title: ReactNode;
+  header: ToolCardHeaderModel;
   body: ReactNode;
   status: DisplayStatus;
   durationMs?: number;
@@ -46,11 +48,10 @@ export function renderToolCallCard(
     case "commandExecution":
       return {
         kind,
-        title: createElement(
-          "code",
-          { className: "font-mono" },
-          `$ ${item.command}`,
-        ),
+        header: {
+          primary: createElement("code", { className: "font-mono" }, item.command),
+          secondary: item.cwd ? `cwd: ${item.cwd}` : undefined,
+        },
         body: createElement(CommandExecutionCardBody, {
           item,
           outputText: ctx.outputText,
@@ -60,18 +61,33 @@ export function renderToolCallCard(
         durationMs: item.durationMs ?? undefined,
       };
 
-    case "fileChange":
+    case "fileChange": {
+      const stats = sumDiffStats(item.changes);
+      const n = item.changes.length;
+      const firstPath = item.changes[0]?.path ?? "";
       return {
         kind,
-        title: fileChangeTitle(item),
+        header: {
+          primary: firstPath ? createElement(FilePathPill, { path: firstPath }) : "文件变更",
+          secondary:
+            n === 0
+              ? undefined
+              : n > 1
+                ? `+${n - 1} 文件 · +${stats.added} -${stats.removed}`
+                : `+${stats.added} -${stats.removed}`,
+        },
         body: createElement(FileChangeCardBody, { item }),
         status,
       };
+    }
 
     case "mcpToolCall":
       return {
         kind,
-        title: `${item.server}/${item.tool}`,
+        header: {
+          primary: `${item.server}/${item.tool}`,
+          secondary: summarizeArgs(item.arguments),
+        },
         body: createElement(McpCardBody, { item }),
         status,
         durationMs: item.durationMs ?? undefined,
@@ -80,7 +96,7 @@ export function renderToolCallCard(
     case "webSearch":
       return {
         kind,
-        title: `Search "${truncate(item.query, 80)}"`,
+        header: { primary: createElement("code", { className: "font-mono" }, `"${item.query}"`) },
         body: createElement(WebSearchCardBody, { item }),
         status,
       };
@@ -88,7 +104,7 @@ export function renderToolCallCard(
     case "imageView":
       return {
         kind,
-        title: `View ${truncate(item.path, 80)}`,
+        header: { primary: createElement(FilePathPill, { path: item.path }) },
         body: createElement(ImageCardBody, { item }),
         status,
       };
@@ -96,7 +112,7 @@ export function renderToolCallCard(
     case "imageGeneration":
       return {
         kind,
-        title: "Generate image",
+        header: { primary: "图片生成" },
         body: createElement(ImageCardBody, { item }),
         status,
       };
@@ -104,7 +120,7 @@ export function renderToolCallCard(
     case "collabAgentToolCall":
       return {
         kind,
-        title: `${item.tool} agent`,
+        header: { primary: item.tool, secondary: "协作 agent" },
         body: createElement(CollabAgentCardBody, { item }),
         status,
       };
@@ -112,7 +128,7 @@ export function renderToolCallCard(
     case "contextCompaction":
       return {
         kind,
-        title: "上下文压缩",
+        header: { primary: "上下文压缩" },
         body: createElement(ContextCompactionCardBody),
         status: status === "inProgress" ? "inProgress" : "completed",
       };
@@ -120,17 +136,21 @@ export function renderToolCallCard(
     case "dynamicToolCall":
       return {
         kind,
-        title: getDynamicToolTitle(item),
+        header: getDynamicToolHeader(item),
         body: createElement(DynamicToolCallCardBody, { item }),
         status,
         durationMs: item.durationMs ?? undefined,
       };
 
-    // AgentDash native items
     case "fsRead":
       return {
         kind,
-        title: fsReadTitle(item),
+        header: {
+          primary: createElement(FilePathPill, {
+            path: item.path,
+            range: rangeOf(item.offset, item.limit),
+          }),
+        },
         body: createElement(GenericJsonBody, {
           arguments: item.arguments,
           contentItems: item.contentItems,
@@ -141,7 +161,10 @@ export function renderToolCallCard(
     case "fsGrep":
       return {
         kind,
-        title: fsGrepTitle(item),
+        header: {
+          primary: createElement("code", { className: "font-mono" }, `"${item.pattern}"`),
+          secondary: (item.path ?? item.glob) ? `in ${item.path ?? item.glob}` : undefined,
+        },
         body: createElement(GenericJsonBody, {
           arguments: item.arguments,
           contentItems: item.contentItems,
@@ -152,7 +175,9 @@ export function renderToolCallCard(
     case "fsGlob":
       return {
         kind,
-        title: `Glob ${truncate(item.pattern, 60)}`,
+        header: {
+          primary: createElement("code", { className: "font-mono" }, item.pattern),
+        },
         body: createElement(GenericJsonBody, {
           arguments: item.arguments,
           contentItems: item.contentItems,
@@ -161,62 +186,78 @@ export function renderToolCallCard(
       };
 
     default:
-      return { kind, title: "未知", body: null, status };
+      return { kind, header: { primary: "未知" }, body: null, status };
   }
 }
 
-// ── dynamicToolCall 二级摘要 ──
+// ── dynamicToolCall 二级 header ──
 
 type DynamicItem = Extract<ThreadItem, { type: "dynamicToolCall" }>;
 
-function getDynamicToolTitle(item: DynamicItem): string {
+function getDynamicToolHeader(item: DynamicItem): ToolCardHeaderModel {
   const args = item.arguments as Record<string, unknown> | null;
   const tool = item.tool.toLowerCase();
 
   switch (tool) {
     case "read": {
-      const path = str(args, "path");
-      const offset = num(args, "offset");
-      const limit = num(args, "limit");
-      if (!path) return "Read";
-      let label = `Read ${truncate(path, 60)}`;
-      if (offset != null && limit != null) label += `:${offset}–${offset + limit}`;
-      return label;
+      const path = str(args, "path") ?? str(args, "file_path");
+      if (!path) return { primary: "Read" };
+      return {
+        primary: createElement(FilePathPill, {
+          path,
+          range: rangeOf(num(args, "offset"), num(args, "limit")),
+        }),
+      };
     }
     case "write": {
       const path = str(args, "file_path") ?? str(args, "path");
-      return path ? `Write ${truncate(path, 60)}` : "Write";
+      return {
+        primary: path ? createElement(FilePathPill, { path }) : "Write",
+      };
     }
     case "edit":
     case "str_replace_editor":
     case "applypatch": {
-      const path = str(args, "path") ?? str(args, "file_path");
-      return path ? `Edit ${truncate(path, 60)}` : "Edit";
+      const path = str(args, "file_path") ?? str(args, "path");
+      return {
+        primary: path ? createElement(FilePathPill, { path }) : "Edit",
+      };
     }
     case "grep": {
       const pattern = str(args, "pattern");
-      const path = str(args, "path") ?? str(args, "glob");
-      let label = pattern ? `Grep "${truncate(pattern, 40)}"` : "Grep";
-      if (path) label += ` in ${truncate(path, 30)}`;
-      return label;
+      const target = str(args, "path") ?? str(args, "glob");
+      return {
+        primary: pattern
+          ? createElement("code", { className: "font-mono" }, `"${pattern}"`)
+          : "Grep",
+        secondary: target ? `in ${target}` : undefined,
+      };
     }
     case "glob": {
       const pattern = str(args, "pattern") ?? str(args, "glob_pattern");
-      return pattern ? `Glob ${truncate(pattern, 60)}` : "Glob";
+      return {
+        primary: pattern
+          ? createElement("code", { className: "font-mono" }, pattern)
+          : "Glob",
+      };
     }
     case "websearch": {
       const query = str(args, "search_term") ?? str(args, "query");
-      return query ? `Search "${truncate(query, 60)}"` : "WebSearch";
+      return {
+        primary: query
+          ? createElement("code", { className: "font-mono" }, `"${query}"`)
+          : "WebSearch",
+      };
     }
     case "webfetch":
     case "fetch": {
       const url = str(args, "url");
-      return url ? `Fetch ${truncate(url, 60)}` : "WebFetch";
+      return { primary: url ?? "WebFetch" };
     }
     case "todowrite": {
       const todos = args?.todos;
       const count = Array.isArray(todos) ? todos.length : 0;
-      return count > 0 ? `更新 ${count} 项 todo` : "TodoWrite";
+      return { primary: count > 0 ? `更新 ${count} 项 todo` : "TodoWrite" };
     }
     case "askquestion":
     case "askuserquestion": {
@@ -226,48 +267,87 @@ function getDynamicToolTitle(item: DynamicItem): string {
           ? ((questions[0] as Record<string, unknown>).prompt ??
             (questions[0] as Record<string, unknown>).question)
           : null;
-      const q = typeof first === "string" ? truncate(first, 50) : "";
+      const q = typeof first === "string" ? first : null;
       const n = Array.isArray(questions) ? questions.length : 0;
-      let label = q ? `提问 ${q}` : "AskQuestion";
-      if (n > 1) label += ` (+${n - 1})`;
-      return label;
+      return {
+        primary: q ?? "AskQuestion",
+        secondary: n > 1 ? `+${n - 1} 个问题` : undefined,
+      };
     }
     default: {
       const ns = item.namespace;
-      return ns ? `${ns}/${item.tool}` : item.tool;
+      return {
+        primary: ns ? `${ns}/${item.tool}` : item.tool,
+        secondary: summarizeArgs(args),
+      };
     }
   }
 }
 
-// ── fileChange 标题 ──
+// ── 工具函数 ──
 
-function fileChangeTitle(
-  item: Extract<ThreadItem, { type: "fileChange" }>,
-): string {
-  const n = item.changes.length;
-  if (n === 0) return "文件变更";
-  if (n === 1) return item.changes[0]!.path;
-  return `${item.changes[0]!.path} (+${n - 1} files)`;
+function rangeOf(
+  offset: number | null | undefined,
+  limit: number | null | undefined,
+): { from: number; to: number } | null {
+  if (offset == null || limit == null) return null;
+  return { from: offset, to: offset + limit };
 }
 
-// ── AgentDash native item 标题 ──
-
-type FsReadItem = Extract<AgentDashThreadItem, { type: "fsRead" }>;
-type FsGrepItem = Extract<AgentDashThreadItem, { type: "fsGrep" }>;
-
-function fsReadTitle(item: FsReadItem): string {
-  let label = `Read ${truncate(item.path, 60)}`;
-  if (item.offset != null && item.limit != null) {
-    label += `:${item.offset}–${item.offset + item.limit}`;
+function sumDiffStats(
+  changes: Extract<ThreadItem, { type: "fileChange" }>["changes"],
+): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const change of changes) {
+    if (!change.diff) continue;
+    for (const line of change.diff.split("\n")) {
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
+      if (line.startsWith("+")) added++;
+      else if (line.startsWith("-")) removed++;
+    }
   }
-  return label;
+  return { added, removed };
 }
 
-function fsGrepTitle(item: FsGrepItem): string {
-  let label = `Grep "${truncate(item.pattern, 40)}"`;
-  const target = item.path ?? item.glob;
-  if (target) label += ` in ${truncate(target, 30)}`;
-  return label;
+/**
+ * 入参摘要：取 1-2 个有意义的字段，拼成 "k1: v1 · k2: v2"。
+ * 用于通用 dynamic 兜底与 mcp 副标题。
+ */
+function summarizeArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const obj = args as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return undefined;
+  const parts: string[] = [];
+  for (const key of keys.slice(0, 2)) {
+    const value = obj[key];
+    const formatted = formatArgValue(value);
+    if (formatted == null) continue;
+    parts.push(`${key}: ${formatted}`);
+  }
+  if (parts.length === 0) return undefined;
+  let summary = parts.join(" · ");
+  if (summary.length > 80) summary = summary.slice(0, 79) + "…";
+  return summary;
+}
+
+function formatArgValue(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    if (value.length === 0) return null;
+    return value.length > 40 ? value.slice(0, 39) + "…" : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.length}]`;
+  }
+  if (typeof value === "object") {
+    return "{…}";
+  }
+  return null;
 }
 
 // ── 状态映射 ──
@@ -306,8 +386,4 @@ function num(
   if (!args) return null;
   const v = args[key];
   return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max) + "…" : s;
 }

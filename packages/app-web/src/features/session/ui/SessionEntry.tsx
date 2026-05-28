@@ -117,7 +117,7 @@ export function SingleEntry({
       return (
         <ToolCallCardShell
           kind={card.kind}
-          title={card.title}
+          header={card.header}
           status={card.status}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}

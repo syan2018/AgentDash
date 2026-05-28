@@ -8,6 +8,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import type { KindMeta } from "../model/threadItemKind";
 import { approveToolCall, rejectToolCall } from "../../../services/executor";
+import { ToolCardHeader, type ToolCardHeaderModel } from "./ToolCardHeader";
 
 export type DisplayStatus =
   | "inProgress"
@@ -20,7 +21,7 @@ const MIN_IN_PROGRESS_VISIBLE_MS = 600;
 
 export interface ToolCallCardShellProps {
   kind: KindMeta;
-  title: ReactNode;
+  header: ToolCardHeaderModel;
   status: DisplayStatus;
   isPendingApproval?: boolean;
   sessionId?: string;
@@ -32,7 +33,7 @@ export interface ToolCallCardShellProps {
 
 export const ToolCallCardShell = memo(function ToolCallCardShell({
   kind,
-  title,
+  header,
   status,
   isPendingApproval,
   sessionId,
@@ -122,18 +123,11 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
+        className="flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary/35"
       >
-        <span className="inline-flex shrink-0 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          {kind.badge}
-        </span>
+        <ToolCardHeader kind={kind} header={header} />
 
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
-          <p className="text-xs text-muted-foreground">{kind.label}</p>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="mt-0.5 flex shrink-0 items-center gap-1.5">
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${statusConfig.dot}`} />
           <span className={`text-xs ${statusConfig.color}`}>{statusConfig.label}</span>
           {displayDuration && (
@@ -143,7 +137,7 @@ export const ToolCallCardShell = memo(function ToolCallCardShell({
           )}
         </div>
 
-        <span className="shrink-0 text-[10px] text-muted-foreground/40">
+        <span className="mt-1 shrink-0 text-[10px] text-muted-foreground/40">
           {expanded ? "▲" : "▼"}
         </span>
       </button>

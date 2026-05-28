@@ -54,10 +54,15 @@ impl AgentDashPlugin for ConnectorCatalogPlugin {
                 "示例 extension asset：注册一个注入会话备注的 slash command 与运行时 flag。"
                     .to_string(),
             ),
-            version: "0.1.0".to_string(),
+            version: "0.1.1".to_string(),
             payload: json!({
-                "manifest_version": "1",
+                "manifest_version": "2",
                 "extension_id": "builtin-session-notes",
+                "package": {
+                    "name": "builtin-session-notes",
+                    "version": "0.1.1"
+                },
+                "asset_version": "0.1.1",
                 "commands": [{
                     "name": "session-notes:add",
                     "description": "向当前会话注入一条备注提示",

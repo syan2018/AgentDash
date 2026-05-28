@@ -1,0 +1,17 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "ExtensionTemplate / Marketplace / Project Asset / source-status 跨层权威契约"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "前端 Project 事实源、Extension runtime projection 与 Assets 管理边界"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "Assets 页面 UI primitive、token、surface 约束"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Extension package artifact ownership migration 与数据库约束"}
+{"file": "crates/agentdash-application/src/shared_library/install.rs", "reason": "Marketplace extension_template install 语义入口"}
+{"file": "crates/agentdash-application/src/shared_library/publish.rs", "reason": "Project asset 发布到 LibraryAsset 的后端 mapper 入口"}
+{"file": "crates/agentdash-application/src/extension_package.rs", "reason": "Package archive 校验、存储、安装、webview asset 读取边界"}
+{"file": "crates/agentdash-domain/src/extension_package.rs", "reason": "ExtensionPackageArtifact / artifact ref domain model"}
+{"file": "crates/agentdash-domain/src/shared_library/project_extension.rs", "reason": "ProjectExtensionInstallation 事实源与 package_artifact/installed_source 字段"}
+{"file": "crates/agentdash-infrastructure/migrations/0062_extension_package_artifacts.sql", "reason": "现有 project-scoped artifact schema 迁移基线"}
+{"file": "packages/app-web/src/features/assets-panel/categories/ExtensionCategoryPanel.tsx", "reason": "当前 Extension Assets 自立门户 UI 待收敛入口"}
+{"file": "packages/app-web/src/features/assets-panel/categories/MarketplaceCategoryPanel.tsx", "reason": "Marketplace install/source-status/publish 主入口"}
+{"file": "packages/app-web/src/features/assets-panel/categories/MarketplaceAssetDrawer.tsx", "reason": "ExtensionTemplate marketplace 详情展示待增强入口"}
+{"file": "packages/app-web/src/features/assets-panel/publish/PublishLibraryAssetDialog.tsx", "reason": "Shared Library 发布对话框需新增 Extension 类型"}
+{"file": "packages/app-web/src/features/assets-panel/publish/AssetPickerDrawer.tsx", "reason": "发布资产选择器需纳入 Project Extension installation"}
+{"file": "packages/extension-dev/src/cli.js", "reason": "如 package import API 改动需同步 CLI install/pack 流程"}

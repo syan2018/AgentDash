@@ -1,5 +1,6 @@
 pub mod connector;
 pub mod context;
+pub mod extension_package;
 pub mod hooks;
 pub mod platform;
 pub mod session_persistence;
@@ -8,13 +9,14 @@ pub mod session_persistence;
 
 pub use agentdash_agent_types::{
     AfterToolCallContext, AfterToolCallEffects, AfterToolCallInput, AfterToolCallResult,
-    AfterTurnInput, AgentContext, AgentMessage, AgentRuntimeDelegate, AgentRuntimeError,
-    BeforeProviderRequestInput, BeforeStopInput, BeforeToolCallContext, BeforeToolCallInput,
-    BeforeToolCallResult, CompactionParams, CompactionResult, CompactionTriggerStats,
-    DynAgentRuntimeDelegate, EvaluateCompactionInput, MessageRef, ProjectedEntry,
-    ProjectedTranscript, ProjectionKind, StopDecision, StopReason, TokenUsage, ToolApprovalOutcome,
-    ToolApprovalRequest, ToolCallDecision, ToolCallInfo, TransformContextInput,
-    TransformContextOutput, TurnControlDecision, now_millis,
+    AfterTurnInput, AgentContext, AgentContextEnvelope, AgentInputMessage, AgentMessage,
+    AgentRuntimeDelegate, AgentRuntimeError, BeforeProviderRequestInput, BeforeStopInput,
+    BeforeToolCallContext, BeforeToolCallInput, BeforeToolCallResult, CompactionFailureInput,
+    CompactionParams, CompactionResult, CompactionTriggerStats, DynAgentRuntimeDelegate,
+    EvaluateCompactionInput, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
+    ProjectionOrigin, ProjectionSourceRange, ProviderVisibleContextStats, StopDecision, StopReason,
+    TokenUsage, ToolApprovalOutcome, ToolApprovalRequest, ToolCallDecision, ToolCallInfo,
+    TransformContextInput, TransformContextOutput, TurnControlDecision, now_millis,
 };
 pub use agentdash_agent_types::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolDefinition,
@@ -32,11 +34,12 @@ pub use agentdash_domain::common::{
 
 pub use connector::{
     AgentConnector, AgentInfo, CapabilityState, CompanionDimension, ConnectorCapabilities,
-    ConnectorError, ConnectorType, DiscoveredGuideline, ExecutionBackendPlacement,
-    ExecutionContext, ExecutionSessionFrame, ExecutionStream, ExecutionTurnFrame, McpEnvVar,
-    McpHeader, McpTransportConfig, PromptPayload, RestoredSessionState, SessionMcpServer,
-    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
-    content_block_to_text, partition_session_mcp_servers, workspace_path_from_context,
+    ConnectorError, ConnectorType, DiscoveredGuideline, DiscoveryContext,
+    ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
+    ExecutionTurnFrame, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
+    RestoredSessionState, SessionMcpServer, SkillDimension, ToolCapabilityFilter, ToolCluster,
+    ToolDimension, VfsDimension, content_block_to_text, partition_session_mcp_servers,
+    workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────
@@ -54,6 +57,12 @@ pub use context::capability::{
     CompanionAgentEntry, CompanionSliceMode, SessionBaselineCapabilities, SkillEntry,
 };
 pub use context::tool_schema_sanitizer::{sanitize_tool_schema, schema_value};
+
+// ─── extension package storage ──────────────────────────────
+
+pub use extension_package::{
+    ExtensionPackageArtifactStorage, ExtensionPackageArtifactStorageError,
+};
 
 // ─── hooks ──────────────────────────────────────────────────
 
@@ -90,13 +99,18 @@ pub use platform::tool_capability::{
 pub use session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
     CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
-    CompanionSessionContext, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
-    EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
-    EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, NewTerminalEffectRecord,
-    PendingCapabilityStateTransition, PersistedSessionEvent, RuntimeCapabilityEffectRecord,
-    RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
-    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore,
-    SessionPersistence, SessionRuntimeCommandStore, SessionTerminalEffectStore,
-    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect,
-    TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType, TitleSource,
+    CompactionProjectionCommitResult, CompanionSessionContext, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS,
+    EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
+    EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
+    NewCompactionProjectionCommit, NewTerminalEffectRecord, PendingCapabilityStateTransition,
+    PersistedSessionEvent, RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition,
+    RuntimeCommandRecord, RuntimeCommandStatus, SESSION_PROJECTION_KIND_AUDIT,
+    SESSION_PROJECTION_KIND_HANDOFF, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
+    SESSION_PROJECTION_KIND_TIMELINE, SessionBootstrapState, SessionCompactionRecord,
+    SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionTerminalEffectStore, SetCompanionAgentRosterEffect,
+    SetMcpServerSetEffect, SetToolAccessEffect, TerminalEffectRecord, TerminalEffectStatus,
+    TerminalEffectType, TitleSource,
 };

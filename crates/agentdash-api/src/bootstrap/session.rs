@@ -7,15 +7,17 @@ use agentdash_application::hooks::AppExecutionHookProvider;
 use agentdash_application::platform_config::SharedPlatformConfig;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::{
-    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionPersistence,
-    SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::vfs::RelayVfsService;
 use agentdash_application::vfs::tools::provider::{
     SessionToolServices, SharedSessionToolServicesHandle,
 };
-use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::llm_provider::{
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+};
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_executor::AgentConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
@@ -33,11 +35,13 @@ pub(crate) struct SessionBootstrapInput {
     pub platform_config: SharedPlatformConfig,
     pub plugin_connectors: Vec<Arc<dyn AgentConnector>>,
     pub extra_skill_dirs: Vec<PathBuf>,
+    pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
 pub(crate) struct SessionBootstrapOutput {
     pub session_runtime_builder: SessionRuntimeBuilder,
     pub session_core: SessionCoreService,
+    pub session_branching: SessionBranchingService,
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
     pub session_control: SessionControlService,
@@ -65,19 +69,20 @@ pub(crate) async fn build_session_runtime(
         platform_config,
         plugin_connectors,
         extra_skill_dirs,
+        llm_provider_secret,
     } = input;
 
     let mut sub_connectors: Vec<Arc<dyn AgentConnector>> = Vec::new();
-    let mut title_bridge: Option<Arc<dyn agentdash_agent::LlmBridge>> = None;
     let mut prompt_config: Option<(String, Vec<String>)> = None;
 
     if let Some(result) = build_pi_agent_connector(PiAgentConnectorDeps {
         settings_repo: repos.settings_repo.clone(),
         llm_provider_repo: repos.llm_provider_repo.clone(),
+        llm_provider_credential_repo: repos.llm_provider_credential_repo.clone(),
+        llm_provider_secret: llm_provider_secret.clone(),
     })
     .await
     {
-        title_bridge = Some(result.connector.default_bridge());
         prompt_config = Some((
             result.connector.base_system_prompt().to_string(),
             result.connector.user_preferences().to_vec(),
@@ -123,13 +128,9 @@ pub(crate) async fn build_session_runtime(
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
     }
-    if let Some(bridge) = title_bridge {
-        session_runtime_builder = session_runtime_builder.with_title_generator(Arc::new(
-            crate::title_generator::LlmTitleGenerator::new(bridge),
-        ));
-    }
 
     let session_core = session_runtime_builder.core_service();
+    let session_branching = session_runtime_builder.branching_service();
     let session_eventing = session_runtime_builder.eventing_service();
     let session_runtime = session_runtime_builder.runtime_service();
     let session_control = session_runtime_builder.control_service();
@@ -166,6 +167,7 @@ pub(crate) async fn build_session_runtime(
     Ok(SessionBootstrapOutput {
         session_runtime_builder,
         session_core,
+        session_branching,
         session_eventing,
         session_runtime,
         session_control,
@@ -183,6 +185,8 @@ pub(crate) async fn build_session_runtime(
 struct PiAgentConnectorDeps {
     settings_repo: Arc<dyn SettingsRepository>,
     llm_provider_repo: Arc<dyn LlmProviderRepository>,
+    llm_provider_credential_repo: Arc<dyn LlmProviderCredentialRepository>,
+    llm_provider_secret: Arc<dyn LlmSecretCodec>,
 }
 
 struct PiAgentConnectorBuildResult {
@@ -195,9 +199,13 @@ async fn build_pi_agent_connector(
     let mut connector = agentdash_executor::connectors::pi_agent::build_pi_agent_connector(
         deps.settings_repo.as_ref(),
         deps.llm_provider_repo.as_ref(),
+        deps.llm_provider_credential_repo.as_ref(),
+        deps.llm_provider_secret.as_ref(),
     )
     .await?;
     connector.set_settings_repository(deps.settings_repo);
     connector.set_llm_provider_repository(deps.llm_provider_repo);
+    connector.set_llm_provider_credential_repository(deps.llm_provider_credential_repo);
+    connector.set_llm_secret_codec(deps.llm_provider_secret);
     Some(PiAgentConnectorBuildResult { connector })
 }

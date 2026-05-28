@@ -47,7 +47,13 @@ use crate::capability::{
     CompanionContribution, ContextContributionSource, ContextContributions, McpCandidates,
     ToolContribution, tool_directives_from_active_workflow,
 };
-use crate::companion::tools::CompanionSliceMode;
+use crate::companion::{
+    skill_projection::{
+        append_companion_system_skill_key, ensure_companion_system_skill_asset,
+        has_lifecycle_mount, project_companion_system_skill_to_activation,
+    },
+    tools::CompanionSliceMode,
+};
 use crate::context::{
     AuditTrigger, ContextBuildPhase, Contribution, SessionContextConfig, SharedContextAuditBus,
     TaskExecutionPhase, build_declared_source_warning_fragment, build_session_context_bundle,
@@ -892,7 +898,12 @@ impl<'a> SessionRequestAssembler<'a> {
             apply_agent_vfs_access_grants(space, Some(&spec.agent_vfs_access_grants));
         }
         let mut vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
+        let mut skill_asset_keys = spec.agent_skill_asset_keys.clone();
         if let Some(space) = vfs.as_mut() {
+            if has_lifecycle_mount(space) {
+                ensure_companion_system_skill_asset(self.repos, project_id).await?;
+                append_companion_system_skill_key(&mut skill_asset_keys);
+            }
             append_visible_canvas_mounts(
                 self.canvas_repo,
                 project_id,
@@ -901,11 +912,7 @@ impl<'a> SessionRequestAssembler<'a> {
             )
             .await
             .map_err(|e| e.to_string())?;
-            crate::vfs::append_skill_asset_projection(
-                space,
-                project_id,
-                &spec.agent_skill_asset_keys,
-            );
+            crate::vfs::append_skill_asset_projection(space, project_id, &skill_asset_keys);
         }
 
         // ── 2. workflow 上下文解析 → ToolContribution ──
@@ -1502,7 +1509,7 @@ async fn compose_lifecycle_node_with_audit(
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation = activate_step_with_platform(
+    let mut activation = activate_step_with_platform(
         &StepActivationInput {
             owner_ctx,
             active_step: spec.step,
@@ -1520,6 +1527,8 @@ async fn compose_lifecycle_node_with_audit(
         },
         platform_config,
     );
+    project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
+        .await?;
 
     // SessionPlan 在 PR 5b 前 lifecycle node 路径完全不产出，导致 lifecycle agent
     // 的 bundle 相比 owner / task 路径最薄。此处补上 SessionPlan contribution，

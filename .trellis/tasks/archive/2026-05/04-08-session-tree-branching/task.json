@@ -1,0 +1,45 @@
+{
+  "id": "session-tree-branching",
+  "name": "session-tree-branching",
+  "title": "会话分支与状态投影管理",
+  "description": "基于 session_compactions、session_lineage 和 active projection cursor 建立平台自有 Agent runtime 的 fork / rollback / branch restore 能力",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "priority": "P3",
+  "creator": "claude-agent",
+  "assignee": "-",
+  "createdAt": "2026-04-08",
+  "completedAt": null,
+  "branch": "codex/session-tree-branching",
+  "base_branch": "main",
+  "worktree_path": null,
+  "current_phase": 0,
+  "next_action": [
+    {
+      "phase": 1,
+      "action": "implement"
+    },
+    {
+      "phase": 2,
+      "action": "check"
+    },
+    {
+      "phase": 3,
+      "action": "finish"
+    },
+    {
+      "phase": 4,
+      "action": "sync-pr-base"
+    }
+  ],
+  "commit": null,
+  "pr_url": "https://github.com/syan2018/AgentDash/pull/33",
+  "subtasks": [],
+  "relatedFiles": [],
+  "notes": "后续子任务：依赖 05-25-context-compaction-architecture-enhancement 已交付的 session_compactions、projection segments、projection heads 和 ContextProjector 基座，继续补齐 lineage、fork、rollback 与 branch-aware restore。PR33 已转向 main 吸附收口，由 05-26-pr33-main-absorption-session-branching 承接主线合入与语义修正。Codex / pi-coding-agent 仅作参考，不照搬文本 rollout 或 JSON tree 持久化形态。",
+  "parent": null,
+  "children": [
+    "05-26-pr33-main-absorption-session-branching"
+  ]
+}

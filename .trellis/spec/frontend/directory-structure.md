@@ -12,7 +12,10 @@ packages/
 ├── app-tauri/     # Tauri 桌面端入口
 ├── ui/            # 共享 UI 基础件（Button / Select / Notice 等）
 ├── core/          # 共享核心逻辑（local-runtime 等）
-└── views/         # 共享视图组件（LocalRuntimeView 等）
+├── views/         # 共享视图组件（LocalRuntimeView 等）
+├── extension-sdk/ # Extension host 侧插件作者 API
+├── extension-ui/  # Extension webview bridge API
+└── extension-dev/ # Extension init / validate / pack / install CLI
 ```
 
 ---

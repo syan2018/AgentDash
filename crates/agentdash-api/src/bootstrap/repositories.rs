@@ -8,9 +8,11 @@ use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
 use agentdash_infrastructure::{
-    PostgresAuthSessionRepository, PostgresBackendExecutionLeaseRepository,
-    PostgresBackendRepository, PostgresCanvasRepository, PostgresInlineFileRepository,
-    PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
+    FilesystemExtensionPackageArtifactStorage, PostgresAuthSessionRepository,
+    PostgresBackendExecutionLeaseRepository, PostgresBackendRepository, PostgresCanvasRepository,
+    PostgresExtensionPackageArtifactRepository, PostgresInlineFileRepository,
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+    PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
@@ -19,11 +21,13 @@ use agentdash_infrastructure::{
     PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
     PostgresWorkspaceRepository,
 };
+use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 pub(crate) struct RepositoryBootstrapOutput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
     pub auth_session_service: Arc<AuthSessionService>,
+    pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
 
 pub(crate) async fn build_repositories(
@@ -73,6 +77,9 @@ pub(crate) async fn build_repositories(
     let project_extension_installation_repo = Arc::new(
         PostgresProjectExtensionInstallationRepository::new(pool.clone()),
     );
+    let extension_package_artifact_repo = Arc::new(
+        PostgresExtensionPackageArtifactRepository::new(pool.clone()),
+    );
 
     let project_agent_repo = Arc::new(PostgresProjectAgentRepository::new(pool.clone()));
 
@@ -82,6 +89,8 @@ pub(crate) async fn build_repositories(
     let routine_execution_repo = Arc::new(PostgresRoutineExecutionRepository::new(pool.clone()));
 
     let llm_provider_repo = Arc::new(PostgresLlmProviderRepository::new(pool.clone()));
+    let llm_provider_credential_repo =
+        Arc::new(PostgresLlmProviderCredentialRepository::new(pool.clone()));
 
     let auth_session_repo = Arc::new(PostgresAuthSessionRepository::new(pool.clone()));
     let auth_session_service = Arc::new(AuthSessionService::new(auth_session_repo.clone()));
@@ -110,8 +119,10 @@ pub(crate) async fn build_repositories(
         user_directory_repo: user_directory_repo.clone(),
         settings_repo: settings_repo.clone(),
         shared_library_repo: shared_library_repo.clone(),
+        extension_package_artifact_repo: extension_package_artifact_repo.clone(),
         project_extension_installation_repo: project_extension_installation_repo.clone(),
         llm_provider_repo: llm_provider_repo.clone(),
+        llm_provider_credential_repo: llm_provider_credential_repo.clone(),
         mcp_preset_repo: mcp_preset_repo.clone(),
         skill_asset_repo: skill_asset_repo.clone(),
         project_agent_repo: project_agent_repo.clone(),
@@ -145,5 +156,8 @@ pub(crate) async fn build_repositories(
         repos,
         session_persistence: session_repo,
         auth_session_service,
+        extension_package_artifact_storage: Arc::new(
+            FilesystemExtensionPackageArtifactStorage::default(),
+        ),
     })
 }

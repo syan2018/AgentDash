@@ -6,9 +6,11 @@ export { SessionChatView, type SessionChatViewProps, type PromptTemplate } from 
 export { SessionList, type SessionListProps } from "./SessionList";
 export { SessionEntry, type SessionEntryProps } from "./SessionEntry";
 export {
-  SessionToolCallCard as SessionToolCallCard,
-  type SessionToolCallCardProps as SessionToolCallCardProps,
-} from "./SessionToolCallCard";
+  ToolCallCardShell,
+  type ToolCallCardShellProps,
+  type DisplayStatus,
+} from "./ToolCallCardShell";
+export { renderToolCallCard, type CardContext, type CardRenderResult } from "./toolCardRegistry";
 export {
   SessionMessageCard as SessionMessageCard,
   type SessionMessageCardProps as SessionMessageCardProps,
@@ -25,6 +27,18 @@ export {
   SessionUsageCard as SessionUsageCard,
   type SessionUsageCardProps as SessionUsageCardProps,
 } from "./SessionUsageCard";
+export {
+  SessionProjectionView,
+  SessionProjectionViewPanel,
+  type SessionProjectionViewPanelProps,
+  type SessionProjectionViewProps,
+} from "./SessionProjectionView";
+export {
+  SessionLineageView,
+  SessionLineageViewPanel,
+  type SessionLineageViewPanelProps,
+  type SessionLineageViewProps,
+} from "./SessionLineageView";
 export { ContentBlockCard, type ContentBlockCardProps } from "./ContentBlockCard";
 export {
   SessionTaskContextCard as SessionTaskContextCard,

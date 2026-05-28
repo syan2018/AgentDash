@@ -3,7 +3,9 @@ use std::collections::{HashMap, HashSet};
 use base64::Engine;
 
 use agentdash_agent_protocol::codex_app_server_protocol as codex;
-use agentdash_agent_protocol::{BackboneEvent, ContentBlock, PlatformEvent};
+use agentdash_agent_protocol::{
+    AgentDashNativeThreadItem, AgentDashThreadItem, BackboneEvent, ContentBlock, PlatformEvent,
+};
 use agentdash_agent_types::{
     AgentMessage, ContentPart, MessageRef, ProjectedEntry, ProjectedTranscript, ProjectionKind,
     StopReason, ToolCallInfo,
@@ -15,20 +17,8 @@ use super::persistence::PersistedSessionEvent;
 
 // ─── Continuation transcript 构建 ─────────────────────────────
 //
-// 唯一公共入口：`build_projected_transcript_from_events`
-//   → 返回 `ProjectedTranscript`，消费者自选渲染方式：
-//     - `.into_messages()` → 执行器原生恢复（launch restore ExecutorState 分支）
-//     - `build_continuation_context_frame(&transcript, owner_context)` → ContextFrame 注入
-//       （acp_sessions route、routine executor）
-
-#[derive(Debug, Clone)]
-struct CompactionCheckpoint {
-    summary: String,
-    tokens_before: u64,
-    messages_compacted: u32,
-    compacted_until_ref: MessageRef,
-    timestamp_ms: Option<u64>,
-}
+// 原始事件 transcript 只表达已持久化消息。内部 compaction 的恢复语义由 projection
+// store materialize，continuation 不再从普通 `context_compacted` 事件推导 checkpoint。
 
 /// 把 `ProjectedTranscript` 组装为 `ContextFrame(kind=continuation_context)`。
 pub fn build_continuation_context_frame(
@@ -231,13 +221,22 @@ enum RestoredMessageEnvelope {
     },
 }
 
-/// 从持久化事件重建投影 transcript — 唯一公共入口。
-///
-/// 消费者根据需要自选渲染方式：
-/// - `.into_messages()` → 执行器原生 session restore
-/// - `build_continuation_context_frame(&transcript, owner_context)` → continuation frame 注入
-pub(super) fn build_projected_transcript_from_events(
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_events(
     events: &[PersistedSessionEvent],
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_filtered_events(events.iter())
+}
+
+/// 从持久化事件重建完整原始 transcript，不消费 compaction checkpoint。
+pub(super) fn build_raw_projected_transcript_from_filtered_events<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
+) -> ProjectedTranscript {
+    build_raw_projected_transcript_from_iter(events)
+}
+
+fn build_raw_projected_transcript_from_iter<'a>(
+    events: impl IntoIterator<Item = &'a PersistedSessionEvent>,
 ) -> ProjectedTranscript {
     let mut user_messages: HashMap<String, RestoredUserMessageState> = HashMap::new();
     let mut assistant_messages: HashMap<String, RestoredAssistantMessageState> = HashMap::new();
@@ -415,11 +414,11 @@ pub(super) fn build_projected_transcript_from_events(
     }
 
     envelopes.sort_by_key(restored_message_order);
-    let raw_entries: Vec<ProjectedEntry> = envelopes
+    let entries: Vec<ProjectedEntry> = envelopes
         .into_iter()
         .map(restored_envelope_to_projected_entry)
         .collect();
-    apply_compaction_checkpoint_projected(raw_entries, latest_compaction_checkpoint(events))
+    ProjectedTranscript { entries }
 }
 
 // ─── Private helpers ────────────────────────────────────────
@@ -552,24 +551,25 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
         RestoredMessageEnvelope::User {
             message_ref,
             content,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::User {
+            ProjectionKind::Transcript,
+            AgentMessage::User {
                 content,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::Assistant {
             message_ref,
             content,
             tool_calls,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::Assistant {
+            ProjectionKind::Transcript,
+            AgentMessage::Assistant {
                 content,
                 tool_calls: tool_calls.clone(),
                 stop_reason: Some(if tool_calls.is_empty() {
@@ -581,7 +581,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 usage: None,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
         RestoredMessageEnvelope::ToolResult {
             message_ref,
             tool_call_id,
@@ -590,11 +591,11 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
             content,
             details,
             is_error,
-            ..
-        } => ProjectedEntry {
+            order,
+        } => ProjectedEntry::event(
             message_ref,
-            projection_kind: ProjectionKind::Transcript,
-            message: AgentMessage::ToolResult {
+            ProjectionKind::Transcript,
+            AgentMessage::ToolResult {
                 tool_call_id,
                 call_id,
                 tool_name,
@@ -603,7 +604,8 @@ fn restored_envelope_to_projected_entry(envelope: RestoredMessageEnvelope) -> Pr
                 is_error,
                 timestamp: None,
             },
-        },
+            Some(order),
+        ),
     }
 }
 
@@ -616,90 +618,6 @@ fn make_message_ref(turn_id: Option<&str>, entry_index: Option<u32>, event_seq: 
             .unwrap_or_else(|| format!("_seq:{event_seq}")),
         entry_index: entry_index.unwrap_or(0),
     }
-}
-
-fn latest_compaction_checkpoint(events: &[PersistedSessionEvent]) -> Option<CompactionCheckpoint> {
-    events.iter().rev().find_map(extract_compaction_checkpoint)
-}
-
-fn extract_compaction_checkpoint(event: &PersistedSessionEvent) -> Option<CompactionCheckpoint> {
-    use agentdash_agent_protocol::{BackboneEvent, PlatformEvent};
-    match &event.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-            if key == "context_compacted" =>
-        {
-            let compacted_until_ref =
-                serde_json::from_value::<MessageRef>(value.get("compacted_until_ref")?.clone())
-                    .ok()?;
-            Some(CompactionCheckpoint {
-                summary: value.get("summary")?.as_str()?.to_string(),
-                tokens_before: value
-                    .get("tokens_before")
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or_default(),
-                messages_compacted: value
-                    .get("messages_compacted")
-                    .and_then(serde_json::Value::as_u64)
-                    .and_then(|v| u32::try_from(v).ok())
-                    .unwrap_or_default(),
-                compacted_until_ref,
-                timestamp_ms: value
-                    .get("timestamp_ms")
-                    .and_then(serde_json::Value::as_u64),
-            })
-        }
-        _ => None,
-    }
-}
-
-/// 在 ProjectedEntry 列表上应用 compaction checkpoint。
-fn apply_compaction_checkpoint_projected(
-    raw_entries: Vec<ProjectedEntry>,
-    checkpoint: Option<CompactionCheckpoint>,
-) -> ProjectedTranscript {
-    let Some(checkpoint) = checkpoint else {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    };
-    if checkpoint.summary.trim().is_empty() || checkpoint.messages_compacted == 0 {
-        return ProjectedTranscript {
-            entries: raw_entries,
-        };
-    }
-
-    let cut = raw_entries
-        .iter()
-        .position(|e| e.message_ref == checkpoint.compacted_until_ref)
-        .map(|pos| pos + 1)
-        .unwrap_or(0);
-
-    // 从 cut boundary 回推 compacted_until_ref（保留已 persisted 的 ref 做审计）
-    let derived_ref = if cut > 0 {
-        Some(raw_entries[cut - 1].message_ref.clone())
-    } else {
-        Some(checkpoint.compacted_until_ref.clone())
-    };
-
-    let summary_ref = MessageRef {
-        turn_id: "_compaction_summary".to_string(),
-        entry_index: 0,
-    };
-    let summary_entry = ProjectedEntry {
-        message_ref: summary_ref,
-        projection_kind: ProjectionKind::CompactionSummary,
-        message: AgentMessage::CompactionSummary {
-            summary: checkpoint.summary,
-            tokens_before: checkpoint.tokens_before,
-            messages_compacted: checkpoint.messages_compacted,
-            compacted_until_ref: derived_ref,
-            timestamp: checkpoint.timestamp_ms,
-        },
-    };
-
-    let mut entries = vec![summary_entry];
-    entries.extend(raw_entries.into_iter().skip(cut));
-    ProjectedTranscript { entries }
 }
 
 fn content_block_to_message_part(block: &ContentBlock) -> Option<ContentPart> {
@@ -751,7 +669,14 @@ struct ExtractedToolCall {
     is_error: bool,
 }
 
-fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<ExtractedToolCall> {
+fn extract_tool_call_from_thread_item(item: &AgentDashThreadItem) -> Option<ExtractedToolCall> {
+    match item {
+        AgentDashThreadItem::Codex(item) => extract_tool_call_from_codex_thread_item(item),
+        AgentDashThreadItem::AgentDash(item) => extract_tool_call_from_agentdash_thread_item(item),
+    }
+}
+
+fn extract_tool_call_from_codex_thread_item(item: &codex::ThreadItem) -> Option<ExtractedToolCall> {
     match item {
         codex::ThreadItem::DynamicToolCall {
             id,
@@ -860,6 +785,29 @@ fn extract_tool_call_from_thread_item(item: &codex::ThreadItem) -> Option<Extrac
         }
         _ => None,
     }
+}
+
+fn extract_tool_call_from_agentdash_thread_item(
+    item: &AgentDashNativeThreadItem,
+) -> Option<ExtractedToolCall> {
+    let is_terminal = matches!(
+        item.status(),
+        codex::DynamicToolCallStatus::Completed | codex::DynamicToolCallStatus::Failed
+    );
+    let content_parts = item
+        .content_items()
+        .map(|items| codex_content_items_to_parts(items))
+        .unwrap_or_default();
+    Some(ExtractedToolCall {
+        id: item.id().to_string(),
+        name: item.tool_name().to_string(),
+        raw_input: Some(item.arguments().clone()),
+        raw_output: None,
+        content_parts,
+        is_terminal,
+        is_error: item.success() == Some(false)
+            || matches!(item.status(), codex::DynamicToolCallStatus::Failed),
+    })
 }
 
 fn codex_content_items_to_parts(

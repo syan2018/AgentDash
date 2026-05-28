@@ -3,9 +3,11 @@ mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
 pub mod bootstrap;
+mod branching;
 pub mod capability_projection;
 pub mod capability_service;
 pub mod capability_state;
+mod compaction_checkpoint;
 mod compaction_context_frame;
 pub mod companion_wait;
 pub mod construction;
@@ -13,6 +15,7 @@ pub mod construction_planner;
 pub mod construction_provider;
 pub mod context;
 mod context_frame;
+mod context_projector;
 pub mod continuation;
 pub mod control;
 pub mod core;
@@ -57,6 +60,10 @@ pub use assembler::{
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
     compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
+pub use branching::{
+    SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
+    SessionProjectionRollbackRequest, SessionProjectionRollbackResult,
+};
 pub use capability_projection::{
     SessionCapabilityProjection, SessionCapabilityProjectionInput,
     derive_session_capability_projection, derive_session_guidelines, derive_session_skill_baseline,
@@ -78,6 +85,7 @@ pub use construction_provider::{
     TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
+pub use context_projector::ContextProjector;
 pub use control::SessionControlService;
 pub use core::SessionCoreService;
 pub use effects_service::SessionEffectsService;
@@ -90,7 +98,8 @@ pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
+    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,
@@ -105,7 +114,6 @@ pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
 };
-pub use title_generator::SessionTitleGenerator;
 pub use title_service::SessionTitleService;
 pub use turn_processor::{SessionTurnProcessor, SessionTurnProcessorConfig, TurnEvent};
 pub use types::{

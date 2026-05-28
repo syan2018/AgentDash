@@ -57,7 +57,7 @@ pub(crate) async fn build_session_context_plan(
                 .get_task_session(task_id)
                 .await
                 .map_err(ApiError::from)?;
-            let plan = SessionConstructionPlanner::plan_task_context_query(
+            SessionConstructionPlanner::plan_task_context_query(
                 &state.repos,
                 &state.services.vfs_service,
                 &state.services.extra_skill_dirs,
@@ -69,8 +69,7 @@ pub(crate) async fn build_session_context_plan(
                 result.agent_binding,
                 Some(&session_meta),
             )
-            .await;
-            plan
+            .await
         }
         SessionOwnerType::Story => {
             let story_id = owner.owner_id;
@@ -108,7 +107,7 @@ pub(crate) async fn build_session_context_plan(
             )
             .await?;
             let binding_label = owner.label.clone();
-            let plan = SessionConstructionPlanner::plan_project_context_query(
+            SessionConstructionPlanner::plan_project_context_query(
                 &state.repos,
                 &state.services.vfs_service,
                 &state.services.extra_skill_dirs,
@@ -128,8 +127,7 @@ pub(crate) async fn build_session_context_plan(
                 } else {
                     ApiError::Internal(error)
                 }
-            })?;
-            plan
+            })?
         }
     };
 

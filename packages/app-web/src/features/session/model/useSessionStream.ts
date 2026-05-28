@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import type { BackboneEvent, BackboneEnvelope, ThreadItem } from "../../../generated/backbone-protocol";
+import type { BackboneEvent, BackboneEnvelope, AgentDashThreadItem } from "../../../generated/backbone-protocol";
 import {
   cancelSession,
   fetchSessionEvents,
@@ -84,8 +84,8 @@ function backboneEventTypeName(event: BackboneEvent): string {
   return event.type;
 }
 
-/** 从 ThreadItem 提取 item ID */
-function threadItemId(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 提取 item ID */
+function threadItemId(item: AgentDashThreadItem): string {
   return item.id;
 }
 
@@ -113,12 +113,12 @@ function toEventEnvelope(event: StreamInputEvent): SessionEventEnvelope {
     session_id: event.session_id,
     event_seq: event.event_seq,
     notification: event.notification,
-    occurred_at_ms: event.occurred_at_ms ?? null,
-    committed_at_ms: event.committed_at_ms ?? null,
+    occurred_at_ms: event.occurred_at_ms ?? 0,
+    committed_at_ms: event.committed_at_ms ?? 0,
     session_update_type: event.session_update_type ?? backboneEventTypeName(event.notification.event),
-    turn_id: event.turn_id ?? event.notification.trace?.turnId ?? null,
-    entry_index: event.entry_index ?? event.notification.trace?.entryIndex ?? null,
-    tool_call_id: event.tool_call_id ?? null,
+    turn_id: event.turn_id ?? event.notification.trace?.turnId ?? undefined,
+    entry_index: event.entry_index ?? event.notification.trace?.entryIndex ?? undefined,
+    tool_call_id: event.tool_call_id ?? undefined,
   };
 }
 
@@ -359,8 +359,8 @@ function applyEventToEntries(prev: SessionDisplayEntry[], event: SessionEventEnv
     return [...prev, makeDisplayEntry(event, bbEvent)];
   }
 
-  // ── thread_status_changed / context_compacted / turn_diff_updated — 静默 ──
-  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "context_compacted" ||
+  // ── thread_status_changed / executor_context_compacted / turn_diff_updated — 静默 ──
+  if (bbEvent.type === "thread_status_changed" || bbEvent.type === "executor_context_compacted" ||
       bbEvent.type === "turn_diff_updated") {
     return prev;
   }

@@ -7,7 +7,10 @@ use tokio::sync::Mutex;
 
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionPersistence,
+    CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
+    SessionCompactionRecord, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
@@ -28,6 +31,10 @@ struct MemorySessionPersistenceState {
     events: HashMap<String, Vec<PersistedSessionEvent>>,
     terminal_effects: Vec<TerminalEffectRecord>,
     runtime_commands: Vec<RuntimeCommandRecord>,
+    compactions: Vec<SessionCompactionRecord>,
+    projection_segments: Vec<SessionProjectionSegmentRecord>,
+    projection_heads: HashMap<(String, String), SessionProjectionHeadRecord>,
+    lineage: Vec<SessionLineageRecord>,
 }
 
 #[async_trait::async_trait]
@@ -73,6 +80,16 @@ impl SessionPersistence for MemorySessionPersistence {
         guard
             .runtime_commands
             .retain(|command| command.session_id != session_id);
+        guard
+            .compactions
+            .retain(|compaction| compaction.session_id != session_id);
+        guard
+            .projection_segments
+            .retain(|segment| segment.session_id != session_id);
+        guard.projection_heads.retain(|(id, _), _| id != session_id);
+        guard.lineage.retain(|edge| {
+            edge.child_session_id != session_id && edge.parent_session_id != session_id
+        });
         Ok(())
     }
 
@@ -390,6 +407,327 @@ impl SessionPersistence for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
+
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .compactions
+            .iter()
+            .find(|record| record.session_id == session_id && record.id == compaction_id)
+            .cloned())
+    }
+
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>> {
+        let guard = self.inner.lock().await;
+        let mut records = guard
+            .compactions
+            .iter()
+            .filter(|record| {
+                record.session_id == session_id && record.projection_kind == projection_kind
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.projection_version);
+        Ok(records)
+    }
+
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+        let guard = self.inner.lock().await;
+        let mut segments = guard
+            .projection_segments
+            .iter()
+            .filter(|segment| {
+                segment.session_id == session_id
+                    && segment.projection_kind == projection_kind
+                    && segment.projection_version == projection_version
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        segments.sort_by_key(|segment| segment.sort_order);
+        Ok(segments)
+    }
+
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .projection_heads
+            .get(&projection_head_key(session_id, projection_kind))
+            .cloned())
+    }
+
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(&head.session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {} 不存在", head.session_id),
+            ));
+        }
+        guard.projection_heads.insert(
+            projection_head_key(&head.session_id, &head.projection_kind),
+            head,
+        );
+        Ok(())
+    }
+
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult> {
+        let mut guard = self.inner.lock().await;
+        if !guard.metas.contains_key(session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            ));
+        }
+        validate_commit_session(session_id, &commit)?;
+        if guard
+            .compactions
+            .iter()
+            .any(|record| record.session_id == session_id && record.id == commit.compaction.id)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("compaction {} 已存在", commit.compaction.id),
+            ));
+        }
+        for segment in &commit.segments {
+            if guard
+                .projection_segments
+                .iter()
+                .any(|record| record.session_id == session_id && record.id == segment.id)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("projection segment {} 已存在", segment.id),
+                ));
+            }
+        }
+        let committed_at_ms = chrono::Utc::now().timestamp_millis();
+        let meta = guard.metas.get_mut(session_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("session {session_id} 不存在"),
+            )
+        })?;
+        let event_seq = meta.last_event_seq.checked_add(1).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("session {session_id} 的 event_seq 已溢出"),
+            )
+        })?;
+        let persisted = build_persisted_event(
+            session_id,
+            event_seq,
+            committed_at_ms,
+            &commit.completed_event,
+        );
+        meta.last_event_seq = event_seq;
+        meta.updated_at = committed_at_ms;
+        apply_envelope_projection(meta, &commit.completed_event);
+        guard
+            .events
+            .entry(session_id.to_string())
+            .or_default()
+            .push(persisted.clone());
+
+        let mut compaction = commit.compaction;
+        compaction.completed_event_seq = Some(event_seq);
+        compaction.completed_at_ms = compaction.completed_at_ms.or(Some(committed_at_ms));
+        let mut head = commit.head;
+        head.head_event_seq = event_seq;
+        head.updated_by_event_seq = Some(event_seq);
+        head.updated_at_ms = if head.updated_at_ms == 0 {
+            committed_at_ms
+        } else {
+            head.updated_at_ms
+        };
+
+        guard.compactions.push(compaction.clone());
+        guard
+            .projection_segments
+            .extend(commit.segments.iter().cloned());
+        guard.projection_heads.insert(
+            projection_head_key(&head.session_id, &head.projection_kind),
+            head.clone(),
+        );
+
+        Ok(CompactionProjectionCommitResult {
+            event: persisted,
+            compaction,
+            segments: commit.segments,
+            head,
+        })
+    }
+
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        if record.child_session_id == record.parent_session_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "session lineage 不能指向自身",
+            ));
+        }
+        if !guard.metas.contains_key(&record.child_session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("child session {} 不存在", record.child_session_id),
+            ));
+        }
+        if !guard.metas.contains_key(&record.parent_session_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("parent session {} 不存在", record.parent_session_id),
+            ));
+        }
+        let mut current = Some(record.parent_session_id.clone());
+        while let Some(session_id) = current {
+            if session_id == record.child_session_id {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "session lineage 不能形成环",
+                ));
+            }
+            current = guard
+                .lineage
+                .iter()
+                .find(|edge| {
+                    edge.child_session_id == session_id
+                        && edge.child_session_id != record.child_session_id
+                })
+                .map(|edge| edge.parent_session_id.clone());
+        }
+        match guard
+            .lineage
+            .iter_mut()
+            .find(|edge| edge.child_session_id == record.child_session_id)
+        {
+            Some(existing) => *existing = record,
+            None => guard.lineage.push(record),
+        }
+        Ok(())
+    }
+
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        Ok(guard
+            .lineage
+            .iter()
+            .find(|edge| edge.child_session_id == child_session_id)
+            .cloned())
+    }
+
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut children = guard
+            .lineage
+            .iter()
+            .filter(|edge| {
+                edge.parent_session_id == parent_session_id
+                    && lineage_matches(edge, relation_kind, status)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        sort_lineage_edges(&mut children);
+        Ok(children)
+    }
+
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut ancestors = Vec::new();
+        let mut current = child_session_id.to_string();
+        while let Some(edge) = guard
+            .lineage
+            .iter()
+            .find(|edge| edge.child_session_id == current)
+        {
+            ancestors.push(edge.clone());
+            current = edge.parent_session_id.clone();
+        }
+        Ok(ancestors)
+    }
+
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>> {
+        let guard = self.inner.lock().await;
+        let mut result = Vec::new();
+        let mut frontier = vec![root_session_id.to_string()];
+        while !frontier.is_empty() {
+            let mut next = Vec::new();
+            for parent_id in frontier {
+                let mut children = guard
+                    .lineage
+                    .iter()
+                    .filter(|edge| {
+                        edge.parent_session_id == parent_id
+                            && lineage_matches(edge, relation_kind, status)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                sort_lineage_edges(&mut children);
+                next.extend(children.iter().map(|edge| edge.child_session_id.clone()));
+                result.extend(children);
+            }
+            frontier = next;
+        }
+        Ok(result)
+    }
+
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()> {
+        let mut guard = self.inner.lock().await;
+        let edge = guard
+            .lineage
+            .iter_mut()
+            .find(|edge| edge.child_session_id == child_session_id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("session lineage child {child_session_id} 不存在"),
+                )
+            })?;
+        edge.status = status;
+        edge.updated_at_ms = updated_at_ms;
+        Ok(())
+    }
 }
 
 impl MemorySessionPersistence {
@@ -470,11 +808,175 @@ fn build_persisted_event(
     }
 }
 
+fn lineage_matches(
+    edge: &SessionLineageRecord,
+    relation_kind: Option<SessionLineageRelationKind>,
+    status: Option<SessionLineageStatus>,
+) -> bool {
+    relation_kind
+        .map(|kind| edge.relation_kind == kind)
+        .unwrap_or(true)
+        && status
+            .map(|expected| edge.status == expected)
+            .unwrap_or(true)
+}
+
+fn sort_lineage_edges(edges: &mut [SessionLineageRecord]) {
+    edges.sort_by(|left, right| {
+        (
+            left.created_at_ms,
+            left.updated_at_ms,
+            left.child_session_id.as_str(),
+        )
+            .cmp(&(
+                right.created_at_ms,
+                right.updated_at_ms,
+                right.child_session_id.as_str(),
+            ))
+    });
+}
+
+fn projection_head_key(session_id: &str, projection_kind: &str) -> (String, String) {
+    (session_id.to_string(), projection_kind.to_string())
+}
+
+fn validate_commit_session(
+    session_id: &str,
+    commit: &NewCompactionProjectionCommit,
+) -> io::Result<()> {
+    if commit.compaction.session_id != session_id || commit.head.session_id != session_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("compaction projection commit session_id 不一致: {session_id}"),
+        ));
+    }
+    if commit
+        .segments
+        .iter()
+        .any(|segment| segment.session_id != session_id)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("projection segment session_id 不一致: {session_id}"),
+        ));
+    }
+    if commit.compaction.projection_kind != commit.head.projection_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection kind {} 与 head kind {} 不一致",
+                commit.compaction.projection_kind, commit.head.projection_kind
+            ),
+        ));
+    }
+    if commit.compaction.projection_version != commit.head.projection_version {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "compaction projection version {} 与 head version {} 不一致",
+                commit.compaction.projection_version, commit.head.projection_version
+            ),
+        ));
+    }
+    if commit.head.active_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "projection head active_compaction_id 必须指向当前 compaction {}",
+                commit.compaction.id
+            ),
+        ));
+    }
+    let compaction_range = source_range_pair(
+        "session_compactions",
+        commit.compaction.source_start_event_seq,
+        commit.compaction.source_end_event_seq,
+    )?;
+    for segment in &commit.segments {
+        if segment.projection_kind != commit.compaction.projection_kind {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} kind {} 与 compaction kind {} 不一致",
+                    segment.id, segment.projection_kind, commit.compaction.projection_kind
+                ),
+            ));
+        }
+        if segment.projection_version != commit.compaction.projection_version {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} version {} 与 compaction version {} 不一致",
+                    segment.id, segment.projection_version, commit.compaction.projection_version
+                ),
+            ));
+        }
+        if segment.generated_by_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "projection segment {} 必须归属于 compaction {}",
+                    segment.id, commit.compaction.id
+                ),
+            ));
+        }
+        let segment_range = source_range_pair(
+            "session_projection_segments",
+            segment.source_start_event_seq,
+            segment.source_end_event_seq,
+        )?;
+        match (compaction_range, segment_range) {
+            (Some((compaction_start, compaction_end)), Some((segment_start, segment_end)))
+                if segment_start < compaction_start || segment_end > compaction_end =>
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 不在 compaction {} source range 内",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            (None, Some(_)) | (Some(_), None) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "projection segment {} source range 与 compaction {} 不一致",
+                        segment.id, commit.compaction.id
+                    ),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn source_range_pair(
+    label: &str,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> io::Result<Option<(u64, u64)>> {
+    match (start, end) {
+        (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
+        (Some(start), Some(end)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 非法: {start}>{end}"),
+        )),
+        (None, None) => Ok(None),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} source range 必须同时包含 start/end"),
+        )),
+    }
+}
+
 fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     let current_event_seq = current.last_event_seq;
     let incoming_event_seq = incoming.last_event_seq;
 
     current.title = incoming.title.clone();
+    current.title_source = incoming.title_source;
     current.created_at = incoming.created_at;
     current.updated_at = current.updated_at.max(incoming.updated_at);
     current.last_event_seq = current.last_event_seq.max(incoming.last_event_seq);
@@ -572,6 +1074,47 @@ mod tests {
             turn_id: Some(turn_id.to_string()),
             entry_index: None,
         })
+    }
+
+    fn memory_session_meta(id: &str) -> SessionMeta {
+        SessionMeta {
+            id: id.to_string(),
+            title: "测试".to_string(),
+            title_source: TitleSource::Auto,
+            created_at: 1,
+            updated_at: 1,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Plain,
+        }
+    }
+
+    fn lineage_record(
+        child: &str,
+        parent: &str,
+        relation_kind: SessionLineageRelationKind,
+        status: SessionLineageStatus,
+        created_at_ms: i64,
+    ) -> SessionLineageRecord {
+        SessionLineageRecord {
+            child_session_id: child.to_string(),
+            parent_session_id: parent.to_string(),
+            relation_kind,
+            fork_point_event_seq: Some(7),
+            fork_point_ref_json: serde_json::json!({ "turn_id": "turn-1", "entry_index": 0 }),
+            fork_point_compaction_id: None,
+            status,
+            created_at_ms,
+            updated_at_ms: created_at_ms,
+            metadata_json: serde_json::json!({}),
+        }
     }
 
     #[tokio::test]
@@ -791,6 +1334,111 @@ mod tests {
         assert_eq!(applied.len(), 1);
         assert_eq!(applied[0].transition_id, "cmd-2");
     }
+
+    #[tokio::test]
+    async fn session_lineage_queries_are_stable_and_filterable() {
+        let persistence = MemorySessionPersistence::default();
+        for id in ["root", "child-a", "child-b", "grand"] {
+            persistence
+                .create_session(&memory_session_meta(id))
+                .await
+                .expect("应能创建 session");
+        }
+
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "child-a",
+                "root",
+                SessionLineageRelationKind::Fork,
+                SessionLineageStatus::Open,
+                20,
+            ))
+            .await
+            .expect("应能写入 fork edge");
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "child-b",
+                "root",
+                SessionLineageRelationKind::Companion,
+                SessionLineageStatus::Open,
+                10,
+            ))
+            .await
+            .expect("应能写入 companion edge");
+        persistence
+            .upsert_session_lineage(lineage_record(
+                "grand",
+                "child-b",
+                SessionLineageRelationKind::Fork,
+                SessionLineageStatus::Open,
+                30,
+            ))
+            .await
+            .expect("应能写入 grand edge");
+
+        let children = persistence
+            .list_session_children("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 direct children");
+        assert_eq!(
+            children
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a"]
+        );
+
+        let fork_children = persistence
+            .list_session_children(
+                "root",
+                Some(SessionLineageRelationKind::Fork),
+                Some(SessionLineageStatus::Open),
+            )
+            .await
+            .expect("应能按 relation 查询 children");
+        assert_eq!(fork_children.len(), 1);
+        assert_eq!(fork_children[0].child_session_id, "child-a");
+
+        let ancestors = persistence
+            .list_session_ancestors("grand")
+            .await
+            .expect("应能查询 ancestors");
+        assert_eq!(
+            ancestors
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["grand", "child-b"]
+        );
+
+        let descendants = persistence
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 descendants");
+        assert_eq!(
+            descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-b", "child-a", "grand"]
+        );
+
+        persistence
+            .set_session_lineage_status("child-b", SessionLineageStatus::Closed, 40)
+            .await
+            .expect("应能关闭 lineage edge");
+        let open_descendants = persistence
+            .list_session_descendants("root", None, Some(SessionLineageStatus::Open))
+            .await
+            .expect("应能查询 open descendants");
+        assert_eq!(
+            open_descendants
+                .iter()
+                .map(|edge| edge.child_session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["child-a"]
+        );
+    }
 }
 
 pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
@@ -810,7 +1458,7 @@ pub(super) fn backbone_event_type_name(event: &BackboneEvent) -> &'static str {
         BackboneEvent::PlanDelta(_) => "plan_delta",
         BackboneEvent::TokenUsageUpdated(_) => "token_usage_updated",
         BackboneEvent::ThreadStatusChanged(_) => "thread_status_changed",
-        BackboneEvent::ContextCompacted(_) => "context_compacted",
+        BackboneEvent::ExecutorContextCompacted(_) => "executor_context_compacted",
         BackboneEvent::ApprovalRequest(_) => "approval_request",
         BackboneEvent::Error(_) => "error",
         BackboneEvent::Platform(_) => "platform_event",

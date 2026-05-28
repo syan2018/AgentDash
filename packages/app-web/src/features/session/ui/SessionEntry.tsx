@@ -4,7 +4,7 @@
  * 根据 BackboneEvent 类型渲染不同的 UI：
  * - agent_message_delta → SessionMessageCard (agent)
  * - reasoning_text_delta / reasoning_summary_delta → SessionMessageCard (thinking)
- * - item_started / item_completed → SessionToolCallCard (ThreadItem)
+ * - item_started / item_completed → ToolCallCardShell + toolCardRegistry (AgentDashThreadItem)
  * - turn_plan_updated → SessionPlanCard
  * - platform:
  *   - user_message_chunk → SessionMessageCard (user)
@@ -25,6 +25,7 @@ import {
   getThreadItemStatus,
   parseContentBlock,
 } from "../model/types";
+import { resolveKind, KIND_REGISTRY, type ThreadItemKind } from "../model/threadItemKind";
 import type {
   SessionDisplayItem,
   SessionDisplayEntry,
@@ -34,8 +35,8 @@ import type {
 } from "../model/types";
 import { extractPlatformEventData } from "../model/platformEvent";
 import { parseContextFrame } from "../model/contextFrame";
-import { SessionToolCallCard } from "./SessionToolCallCard";
-import { CommandExecutionCard } from "./CommandExecutionCard";
+import { ToolCallCardShell } from "./ToolCallCardShell";
+import { renderToolCallCard } from "./toolCardRegistry";
 import { SessionMessageCard } from "./SessionMessageCard";
 import { SessionPlanCard } from "./SessionPlanCard";
 import { ContentBlockCard } from "./ContentBlockCard";
@@ -109,22 +110,22 @@ export function SingleEntry({
     case "item_started":
     case "item_completed": {
       const threadItem = event.payload.item;
-      if (threadItem.type === "commandExecution") {
-        return (
-          <CommandExecutionCard
-            item={threadItem}
-            sessionId={sessionId ?? undefined}
-            outputText={accumulatedText}
-          />
-        );
-      }
+      const card = renderToolCallCard(threadItem, {
+        sessionId: sessionId ?? undefined,
+        outputText: accumulatedText,
+      });
       return (
-        <SessionToolCallCard
-          item={threadItem}
+        <ToolCallCardShell
+          kind={card.kind}
+          title={card.title}
+          status={card.status}
           isPendingApproval={isPendingApproval}
           sessionId={sessionId ?? undefined}
-          outputText={accumulatedText}
-        />
+          itemId={threadItem.id}
+          durationMs={card.durationMs}
+        >
+          {card.body}
+        </ToolCallCardShell>
       );
     }
 
@@ -310,7 +311,7 @@ function AggregatedThinkingGroupEntry({ group }: { group: AggregatedThinkingGrou
   );
 }
 
-function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").ThreadItem | null {
+function extractThreadItem(entry: SessionDisplayEntry): import("../../../generated/backbone-protocol").AgentDashThreadItem | null {
   const evt = entry.event;
   if (evt.type === "item_started" || evt.type === "item_completed") {
     return evt.payload.item;
@@ -319,14 +320,7 @@ function extractThreadItem(entry: SessionDisplayEntry): import("../../../generat
 }
 
 function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
-  let cmd = 0;
-  let file = 0;
-  let mcp = 0;
-  let dyn = 0;
-  let search = 0;
-  let image = 0;
-  let collab = 0;
-  let other = 0;
+  const counts = new Map<ThreadItemKind, number>();
   let pending = 0;
   let failed = 0;
 
@@ -334,48 +328,22 @@ function buildKindSummary(entries: AggregatedEntryGroup["entries"]): string {
     if (entry.isPendingApproval) pending += 1;
     const item = extractThreadItem(entry);
     if (!item) {
-      other += 1;
+      counts.set("other", (counts.get("other") ?? 0) + 1);
       continue;
     }
     if (getThreadItemStatus(item) === "failed") failed += 1;
-    switch (item.type) {
-      case "commandExecution":
-        cmd += 1;
-        break;
-      case "fileChange":
-        file += 1;
-        break;
-      case "mcpToolCall":
-        mcp += 1;
-        break;
-      case "dynamicToolCall":
-        dyn += 1;
-        break;
-      case "webSearch":
-        search += 1;
-        break;
-      case "imageView":
-      case "imageGeneration":
-        image += 1;
-        break;
-      case "collabAgentToolCall":
-        collab += 1;
-        break;
-      default:
-        other += 1;
-        break;
-    }
+    const meta = resolveKind(item);
+    counts.set(meta.kind, (counts.get(meta.kind) ?? 0) + 1);
   }
 
   const parts: string[] = [];
-  if (cmd > 0) parts.push(`运行 ${cmd} 条命令`);
-  if (file > 0) parts.push(`编辑 ${file} 个文件`);
-  if (mcp > 0) parts.push(`调用 ${mcp} 个 MCP 工具`);
-  if (dyn > 0) parts.push(`调用 ${dyn} 个工具`);
-  if (search > 0) parts.push(`搜索 ${search} 次`);
-  if (image > 0) parts.push(`图片 ${image} 项`);
-  if (collab > 0) parts.push(`协作 ${collab} 项`);
-  if (other > 0) parts.push(`其他 ${other} 项`);
+  // 按 KIND_REGISTRY 声明顺序生成摘要，保证稳定
+  for (const kind of Object.keys(KIND_REGISTRY) as ThreadItemKind[]) {
+    const n = counts.get(kind);
+    if (!n) continue;
+    const meta = KIND_REGISTRY[kind];
+    parts.push(`${meta.summaryVerb} ${n} ${meta.summaryUnit}`);
+  }
   if (pending > 0) parts.push(`${pending} 待审批`);
   if (failed > 0) parts.push(`${failed} 失败`);
 

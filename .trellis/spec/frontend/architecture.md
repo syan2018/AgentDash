@@ -24,6 +24,9 @@
 | `packages/ui` | 共享 UI primitive 与样式 |
 | `packages/core` | 共享核心逻辑与 ports |
 | `packages/views` | 可复用 view components |
+| `packages/extension-sdk` | Extension host 侧插件作者 API 与 contribution collector |
+| `packages/extension-ui` | Workspace webview panel 内的 extension bridge API |
+| `packages/extension-dev` | Extension authoring CLI，负责 init / dev / validate / pack / install |
 
 主应用组织：`api/`、`services/`、`stores/`、`features/<feature>/model`、`features/<feature>/ui`、`pages/`、`types/`、`generated/`。
 
@@ -32,6 +35,15 @@
 - 前端类型直接使用 `snake_case`，原因是它让 DTO 契约错误暴露在 mapper / typecheck 边界，而不是被双读字段掩盖。
 - 设计系统优先使用 `@agentdash/ui` primitive，原因是重复业务布局会让视觉语言和交互状态持续漂移。
 - 长连接统一使用 fetch + ReadableStream 消费 NDJSON，原因是鉴权、resume、HMR cleanup 需要与普通 API 和 stream registry 对齐。
+- Extension authoring surface 使用独立 `packages/extension-*` 工作区包，原因是插件作者 API、webview bridge 与开发 CLI 需要随插件协议版本收敛成窄接口。
+- WorkspacePanel 的插件 tab 由 `features/extension-runtime` 消费 Project scoped runtime projection 后注册，原因是插件 catalog 是 Project enabled installation 的全局视图，不应随单个 session 生命周期被创建或销毁。
+- Extension webview action target 优先使用 Session runtime surface backend，缺省时使用当前 Project workspace binding，原因是 WorkspacePanel 插件 tab 的生命周期归属 Project，而本机 extension host 的可执行 backend 来自 workspace 授权事实。
+- `canvas_panel` 插件 tab 在主前端读取 package artifact 内的 Canvas runtime snapshot 并复用 `CanvasRuntimePreview`，原因是 Canvas-derived extension 需要沿用 Canvas runtime sandbox/asset bridge，同时保持 Project extension installation 作为 WorkspacePanel tab catalog 的事实源。
+- `@agentdash/extension-ui` 的 webview bridge 只让 panel 传递 method 与 JSON params；Project、session、backend、consumer extension 和 trace context 由 `ExtensionWebviewPanel` 组装，原因是 panel 运行在 iframe 中，不应成为 Project runtime routing 的事实源。
+- Extension panel 的 bridge request surface 包含 `metadata.get_context`、`workspace.open_tab`、`runtime.invoke_action`、`extension.invoke_channel`、`vfs.read` 和 `vfs.write`；`events` 是 panel-local event bus，原因是 workspace-level 或 extension-runtime-level event 需要后端路由和订阅模型，不能混入本地 helper。
+- Canvas runtime 如需消费 extension protocol channel，通过父页面注入的 `extensionChannelBridge` 进入同一 Project extension channel invocation service，原因是 Canvas 与 webview panel 都应依赖 Project runtime projection 和 Gateway admission，而不是在 iframe 里硬编码 provider extension key。
+- Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
+- Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
 
 ## Contract Appendices
 
@@ -43,4 +55,3 @@
 - [Design Language](./design-language.md)
 - [Quality Guidelines](./quality-guidelines.md)
 - [Activity Lifecycle Frontend Contract](./workflow-activity-lifecycle.md)
-

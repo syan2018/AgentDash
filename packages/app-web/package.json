@@ -7,6 +7,8 @@
     ".": "./src/App.tsx"
   },
   "scripts": {
+    "predev": "pnpm --dir ../.. icons:generate",
+    "prebuild": "pnpm --dir ../.. icons:generate",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",

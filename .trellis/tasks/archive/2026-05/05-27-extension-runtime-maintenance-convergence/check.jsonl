@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端质量检查入口"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "RuntimeGateway 权限与 provider 行为检查"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "若涉及 schema/storage metadata 变更需检查 migration"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "契约生成与前后端字段一致性检查"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "local runtime 和 relay 边界检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 mapper/DTO 类型安全检查"}

@@ -44,6 +44,7 @@ function makeSession(overrides: Partial<ProjectSessionEntry> = {}): ProjectSessi
     agent_key: null,
     agent_display_name: null,
     parent_session_id: null,
+    parent_relation_kind: null,
     ...overrides,
   };
 }
@@ -128,7 +129,7 @@ describe("groupSessionsByStory", () => {
     expect(roots[0].kind).toBe("orphan");
   });
 
-  it("Companion session 挂到父 session 的 companions 字段下", () => {
+  it("parent relation session 挂到父 session 的 linkedChildren 字段下", () => {
     const sessions = [
       makeSession({
         session_id: "parent",
@@ -136,22 +137,24 @@ describe("groupSessionsByStory", () => {
         owner_id: "S-A",
       }),
       makeSession({
-        session_id: "companion-1",
+        session_id: "fork-1",
         owner_type: "story",
         owner_id: "S-A",
         parent_session_id: "parent",
+        parent_relation_kind: "fork",
       }),
     ];
     const roots = groupSessionsByStory(sessions);
     expect(roots).toHaveLength(1);
     expect(roots[0].session.session_id).toBe("parent");
-    expect(roots[0].companions.map((c) => c.session_id)).toEqual(["companion-1"]);
+    expect(roots[0].linkedChildren.map((c) => c.session.session_id)).toEqual(["fork-1"]);
+    expect(roots[0].linkedChildren.map((c) => c.relation_kind)).toEqual(["fork"]);
   });
 
-  it("Companion 的父不在列表中 → 降级为独立 root", () => {
+  it("parent relation 的父不在列表中 → 降级为独立 root", () => {
     const sessions = [
       makeSession({
-        session_id: "orphan-companion",
+        session_id: "orphan-relation",
         owner_type: "task",
         owner_id: "T-1",
         story_id: "S-NOT-EXIST",
@@ -160,10 +163,10 @@ describe("groupSessionsByStory", () => {
     ];
     const roots = groupSessionsByStory(sessions);
     expect(roots).toHaveLength(1);
-    expect(roots[0].session.session_id).toBe("orphan-companion");
+    expect(roots[0].session.session_id).toBe("orphan-relation");
   });
 
-  it("混合：project + story + task + companion + orphan 全部正确分组", () => {
+  it("混合：project + story + task + relation child + orphan 全部正确分组", () => {
     const sessions = [
       makeSession({ session_id: "proj-1", owner_type: "project", owner_id: "P" }),
       makeSession({ session_id: "story-a", owner_type: "story", owner_id: "S-A" }),
@@ -174,11 +177,12 @@ describe("groupSessionsByStory", () => {
         story_id: "S-A",
       }),
       makeSession({
-        session_id: "task-a1-companion",
+        session_id: "task-a1-rollback",
         owner_type: "task",
         owner_id: "T-1",
         story_id: "S-A",
         parent_session_id: "task-a1",
+        parent_relation_kind: "rollback_branch",
       }),
       makeSession({
         session_id: "orphan-task",
@@ -196,8 +200,11 @@ describe("groupSessionsByStory", () => {
     const storyRoot = roots[0];
     expect(storyRoot.children).toHaveLength(1);
     expect(storyRoot.children[0].session.session_id).toBe("task-a1");
-    expect(storyRoot.children[0].companions.map((c) => c.session_id)).toEqual([
-      "task-a1-companion",
+    expect(storyRoot.children[0].linkedChildren.map((c) => c.session.session_id)).toEqual([
+      "task-a1-rollback",
+    ]);
+    expect(storyRoot.children[0].linkedChildren.map((c) => c.relation_kind)).toEqual([
+      "rollback_branch",
     ]);
   });
 });

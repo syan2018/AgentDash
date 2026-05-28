@@ -52,7 +52,19 @@ pub struct TokenUsage {
     #[serde(default)]
     pub input: u64,
     #[serde(default)]
+    pub cache_read_input: u64,
+    #[serde(default)]
+    pub cache_creation_input: u64,
+    #[serde(default)]
     pub output: u64,
+}
+
+impl TokenUsage {
+    pub fn context_input_tokens(&self) -> u64 {
+        self.input
+            .saturating_add(self.cache_read_input)
+            .saturating_add(self.cache_creation_input)
+    }
 }
 
 // ─── AgentMessage ───────────────────────────────────────────
@@ -192,11 +204,20 @@ impl AgentMessage {
         tokens_before: u64,
         messages_compacted: u32,
     ) -> Self {
+        Self::compaction_summary_with_boundary(summary, tokens_before, messages_compacted, None)
+    }
+
+    pub fn compaction_summary_with_boundary(
+        summary: impl Into<String>,
+        tokens_before: u64,
+        messages_compacted: u32,
+        compacted_until_ref: Option<MessageRef>,
+    ) -> Self {
         Self::CompactionSummary {
             summary: summary.into(),
             tokens_before,
             messages_compacted,
-            compacted_until_ref: None,
+            compacted_until_ref,
             timestamp: Some(now_millis()),
         }
     }

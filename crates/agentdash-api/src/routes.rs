@@ -5,6 +5,8 @@ pub mod backends;
 pub mod canvases;
 pub mod discovered_options;
 pub mod discovery;
+pub mod extension_package_artifacts;
+pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
@@ -12,6 +14,7 @@ pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
 pub mod project_agents;
+pub mod project_extensions;
 pub mod project_sessions;
 pub mod project_vfs_mounts;
 pub mod projects;
@@ -47,6 +50,7 @@ use crate::stream;
 
 const SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
 const VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+const EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
 
 pub fn create_router(state: Arc<AppState>) -> Router {
     let mcp_services = Arc::new(McpServices {
@@ -113,6 +117,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(llm_providers::list_providers).post(llm_providers::create_provider),
         )
         .route(
+            "/llm-providers/effective",
+            get(llm_providers::list_effective_providers),
+        )
+        .route(
             "/llm-providers/reorder",
             post(llm_providers::reorder_providers),
         )
@@ -133,6 +141,23 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(llm_providers::get_provider)
                 .put(llm_providers::update_provider)
                 .delete(llm_providers::delete_provider),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential",
+            put(llm_providers::upsert_user_credential)
+                .delete(llm_providers::delete_user_credential),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential/verify",
+            post(llm_providers::verify_user_credential),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential/codex-oauth/start",
+            post(llm_providers::start_user_codex_oauth),
+        )
+        .route(
+            "/llm-providers/{id}/probe-models",
+            post(llm_providers::probe_user_provider_models),
         )
         .route(
             "/llm-providers/{id}/codex-oauth/start",
@@ -320,6 +345,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             post(canvases::invoke_canvas_runtime_action),
         )
         .route(
+            "/canvases/{id}/promote-extension",
+            post(canvases::promote_canvas_to_extension),
+        )
+        .route(
             "/stories/{id}/tasks",
             get(stories::list_tasks).post(stories::create_task),
         )
@@ -448,6 +477,52 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/projects/{project_id}/shared-library/source-status",
             get(shared_library::get_project_asset_source_status),
         )
+        .route(
+            "/projects/{project_id}/extension-runtime",
+            get(extension_runtime::get_project_extension_runtime),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-action",
+            post(extension_runtime::invoke_project_extension_runtime_action),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-channel",
+            post(extension_runtime::invoke_project_extension_runtime_channel),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
+            get(extension_runtime::get_project_extension_webview_asset),
+        )
+        .route(
+            "/projects/{project_id}/extensions",
+            get(project_extensions::list_project_extensions),
+        )
+        .route(
+            "/projects/{project_id}/extensions/import-package",
+            post(project_extensions::import_extension_package).layer(DefaultBodyLimit::max(
+                EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES,
+            )),
+        )
+        .route(
+            "/projects/{project_id}/extensions/{installation_id}",
+            delete(extension_runtime::uninstall_extension_installation_route),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts",
+            get(extension_package_artifacts::list_extension_package_artifacts)
+                .post(extension_package_artifacts::upload_extension_package_artifact)
+                .layer(DefaultBodyLimit::max(
+                    EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES,
+                )),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/install",
+            post(extension_package_artifacts::install_extension_package_artifact_route),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+            get(extension_package_artifacts::download_extension_package_archive),
+        )
         // ACP Sessions — CRUD
         .route(
             "/sessions",
@@ -477,6 +552,19 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/sessions/{id}/context",
             get(acp_sessions::get_session_context),
+        )
+        .route(
+            "/sessions/{id}/context/projection",
+            get(acp_sessions::get_session_context_projection),
+        )
+        .route(
+            "/sessions/{id}/lineage",
+            get(acp_sessions::get_session_lineage),
+        )
+        .route("/sessions/{id}/fork", post(acp_sessions::fork_session))
+        .route(
+            "/sessions/{id}/projection/rollback",
+            post(acp_sessions::rollback_session_projection),
         )
         .route(
             "/sessions/{id}/context/audit",
@@ -593,6 +681,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/routine-triggers/{endpoint_id}/fire",
             post(routines::fire_webhook),
+        )
+        .route(
+            "/local-runtime/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+            get(extension_package_artifacts::download_extension_package_archive_for_backend),
         )
         .merge(secured_api)
         .with_state(state.clone());

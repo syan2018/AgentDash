@@ -52,10 +52,6 @@ const StoryTabView = lazy(async () => {
   return { default: m.StoryTabView };
 });
 
-// NOTE: Workflow / Canvas 原顶级 Tab 已降级为 Assets 子类目。
-// `CanvasTabView.tsx` 组件文件保留——未来会通过新的子路由
-// （例如 `/dashboard/assets/canvas/:id/edit`）重新拉起做资产编辑。
-
 const RoutineTabView = lazy(async () => {
   const m = await import("./features/routine/routine-tab-view");
   return { default: m.RoutineTabView };
@@ -96,6 +92,11 @@ const AssetsSkillPanel = lazy(async () => {
 const AssetsVfsMountPanel = lazy(async () => {
   const m = await import("./features/assets-panel");
   return { default: m.VfsMountCategoryPanel };
+});
+
+const AssetsExtensionPanel = lazy(async () => {
+  const m = await import("./features/assets-panel");
+  return { default: m.ExtensionCategoryPanel };
 });
 
 // 统一 Workflow 编辑器（自适应 Form / DAG 布局）
@@ -282,10 +283,8 @@ function AppContent() {
               <Route path="mcp-preset" element={<AssetsMcpPresetPanel />} />
               <Route path="skill" element={<AssetsSkillPanel />} />
               <Route path="vfs-mount" element={<AssetsVfsMountPanel />} />
+              <Route path="extension" element={<AssetsExtensionPanel />} />
             </Route>
-            {/* 旧路径深链兼容：重定向到 Assets 对应子类目，避免收藏 / 外部链接失效 */}
-            <Route path="canvas" element={<Navigate to="/dashboard/assets/canvas" replace />} />
-            <Route path="workflow" element={<Navigate to="/dashboard/assets/workflow" replace />} />
             <Route path="routine" element={<RoutineTabView />} />
           </Route>
 

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/capability/plugin-api.md", "reason": "检查实现没有把用户 TS extension 混入 Rust native plugin SPI 承诺面。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "检查插件 runtime action 通过 RuntimeGateway 统一 actor/context/trace 入口。"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "检查 extension_template、Project installation、source-status 与安装语义一致。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查新增 DTO 通过 contracts 生成与前端 wire type 消费。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 extension_runtime / WorkspacePanel 动态 tab 经过 mapper 且不引入 any/断言捷径。"}
+{"file": ".trellis/spec/backend/shared-library.md", "reason": "检查 Shared Library typed validator、seed、install transaction 和 plugin embedded 资产边界。"}

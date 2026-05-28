@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_application::runtime_gateway::{
-    McpCallToolProvider, McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway,
-    RuntimeSessionMcpAccess, WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider,
-    WorkspaceDetectProvider,
+    ExtensionRuntimeActionProvider, ExtensionRuntimeActionTransport, McpCallToolProvider,
+    McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway, RuntimeSessionMcpAccess,
+    WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider, WorkspaceDetectProvider,
 };
+use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 
 pub(crate) fn build_runtime_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
     setup_action_transport: Arc<dyn agentdash_application::backend_transport::BackendTransport>,
     session_mcp_access: Arc<dyn RuntimeSessionMcpAccess>,
+    extension_installations: Arc<dyn ProjectExtensionInstallationRepository>,
+    extension_action_transport: Arc<dyn ExtensionRuntimeActionTransport>,
 ) -> Arc<RuntimeGateway> {
     Arc::new(
         RuntimeGateway::new()
@@ -28,6 +31,10 @@ pub(crate) fn build_runtime_gateway(
             .with_provider(Arc::new(McpListToolsProvider::new(
                 session_mcp_access.clone(),
             )))
-            .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access))),
+            .with_provider(Arc::new(McpCallToolProvider::new(session_mcp_access)))
+            .with_dynamic_provider(Arc::new(ExtensionRuntimeActionProvider::new(
+                extension_installations,
+                extension_action_transport,
+            ))),
     )
 }

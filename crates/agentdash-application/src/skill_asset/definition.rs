@@ -1,4 +1,5 @@
 use agentdash_domain::canvas::CANVAS_SYSTEM_BUNDLE;
+use agentdash_domain::companion::COMPANION_SYSTEM_BUNDLE;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 
 #[derive(Debug, Clone, Copy)]
@@ -8,11 +9,18 @@ pub struct BuiltinSkillAssetTemplate {
     pub bundle: &'static EmbeddedSkillBundle,
 }
 
-const BUILTIN_SKILL_TEMPLATES: &[BuiltinSkillAssetTemplate] = &[BuiltinSkillAssetTemplate {
-    builtin_key: "canvas-system",
-    display_name: "Canvas System",
-    bundle: &CANVAS_SYSTEM_BUNDLE,
-}];
+const BUILTIN_SKILL_TEMPLATES: &[BuiltinSkillAssetTemplate] = &[
+    BuiltinSkillAssetTemplate {
+        builtin_key: "canvas-system",
+        display_name: "Canvas System",
+        bundle: &CANVAS_SYSTEM_BUNDLE,
+    },
+    BuiltinSkillAssetTemplate {
+        builtin_key: "companion-system",
+        display_name: "Companion System",
+        bundle: &COMPANION_SYSTEM_BUNDLE,
+    },
+];
 
 pub fn list_builtin_skill_asset_templates() -> Vec<BuiltinSkillAssetTemplate> {
     BUILTIN_SKILL_TEMPLATES.to_vec()

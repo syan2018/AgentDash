@@ -28,6 +28,7 @@ const SHAREABLE_CATEGORIES: CategoryItem[] = [
   { segment: "mcp-preset", label: "MCP", hint: "MCP Server 模板" },
   { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
   { segment: "vfs-mount", label: "VFS Mount", hint: "Project VFS 挂载点 (Inline / External)" },
+  { segment: "extension", label: "Extension", hint: "本地打包扩展（含已安装与归档）" },
 ];
 
 const LOCAL_CATEGORIES: CategoryItem[] = [
@@ -60,7 +61,6 @@ export function AssetsTabView() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 顶部 header 与 CanvasTabView / WorkflowTabView 对齐视觉语言 */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-6">
         <div className="flex items-center gap-2.5">
           <span className="inline-flex rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">

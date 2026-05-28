@@ -42,7 +42,6 @@ async-trait = "0.1"
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 walkdir = "2.5"
-executors = { workspace = true }
 schemars = { workspace = true }
 bcrypt = "0.16"
 base64 = "0.22"

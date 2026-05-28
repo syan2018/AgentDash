@@ -32,6 +32,7 @@ function workflow(key: string, ports: {
         key: port,
         description: `${port} input`,
         context_strategy: "full",
+        standalone_fulfillment: "required",
       })),
     },
     created_at: "2026-05-06T00:00:00.000Z",
@@ -85,7 +86,12 @@ describe("lifecycle port sync", () => {
       { key: "research_report", description: "research_report output", gate_strategy: "existence" },
     ]);
     expect(result.steps[1].input_ports).toEqual([
-      { key: "research_input", description: "research_input input", context_strategy: "full" },
+      {
+        key: "research_input",
+        description: "research_input input",
+        context_strategy: "full",
+        standalone_fulfillment: "required",
+      },
     ]);
   });
 
@@ -102,7 +108,12 @@ describe("lifecycle port sync", () => {
       { key: "research_report", description: "", gate_strategy: "existence" },
     ]);
     expect(result.steps[1].input_ports).toEqual([
-      { key: "research_input", description: "", context_strategy: "full" },
+      {
+        key: "research_input",
+        description: "",
+        context_strategy: "full",
+        standalone_fulfillment: "required",
+      },
     ]);
   });
 
@@ -110,7 +121,12 @@ describe("lifecycle port sync", () => {
     const merged = mergeWorkflowPortsIntoLifecycleStep(
       {
         ...step("implement", "implement_wf"),
-        input_ports: [{ key: "research_input", description: "existing", context_strategy: "full" }],
+        input_ports: [{
+          key: "research_input",
+          description: "existing",
+          context_strategy: "full",
+          standalone_fulfillment: "required",
+        }],
       },
       workflow("implement_wf", { input: ["research_input", "spec_input"], output: ["implementation_report"] }),
     );

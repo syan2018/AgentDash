@@ -458,18 +458,37 @@ fn make_tree_writable(path: &Path) -> Result<(), MaterializationError> {
         if child.is_dir() {
             make_tree_writable(&child)?;
         }
-        let mut permissions = std::fs::metadata(&child)?.permissions();
-        if permissions.readonly() {
-            permissions.set_readonly(false);
-            std::fs::set_permissions(&child, permissions)?;
-        }
+        make_path_writable(&child)?;
     }
-    let mut permissions = std::fs::metadata(path)?.permissions();
-    if permissions.readonly() {
-        permissions.set_readonly(false);
-        std::fs::set_permissions(path, permissions)?;
-    }
+    make_path_writable(path)?;
     Ok(())
+}
+
+fn make_path_writable(path: &Path) -> Result<(), MaterializationError> {
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    if !permissions.readonly() {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+
+    #[cfg(windows)]
+    {
+        clear_windows_readonly(&mut permissions);
+    }
+
+    std::fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_windows_readonly(permissions: &mut std::fs::Permissions) {
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
 }
 
 fn set_file_mode(

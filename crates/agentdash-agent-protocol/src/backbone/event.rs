@@ -3,13 +3,16 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::backbone::approval::ApprovalRequest;
+use crate::backbone::item::{ItemCompletedNotification, ItemStartedNotification};
 use crate::backbone::platform::PlatformEvent;
+use crate::backbone::usage::ThreadTokenUsageUpdatedNotification;
 
 /// 平台内部事件流转的统一类型。
 ///
-/// 变体名由平台定义（控制语义），payload 类型严格对齐 Codex App Server Protocol。
-/// 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
-/// 不设"通用退化变体"。Codex 原生协议没有覆盖的语义通过 `Platform` 扩展。
+/// 变体名由平台定义（控制语义），payload 优先对齐 Codex App Server Protocol。
+/// 所有 connector（codex_bridge / pi_agent 等）都必须映射到同一套变体，
+/// 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
+/// `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum BackboneEvent {
@@ -19,10 +22,9 @@ pub enum BackboneEvent {
     ReasoningSummaryDelta(codex::ReasoningSummaryTextDeltaNotification),
 
     // ── Item 生命周期（涵盖所有工具调用语义）──
-    // ThreadItem 区分: CommandExecution / FileChange / McpToolCall /
-    //   DynamicToolCall / AgentMessage / Plan / Reasoning / WebSearch 等
-    ItemStarted(codex::ItemStartedNotification),
-    ItemCompleted(codex::ItemCompletedNotification),
+    // AgentDashThreadItem 区分 Codex 原生 item 与 AgentDash native item。
+    ItemStarted(ItemStartedNotification),
+    ItemCompleted(ItemCompletedNotification),
 
     // ── Item 过程增量 ──
     CommandOutputDelta(codex::CommandExecutionOutputDeltaNotification),
@@ -39,9 +41,11 @@ pub enum BackboneEvent {
     PlanDelta(codex::PlanDeltaNotification),
 
     // ── 资源 / 状态 ──
-    TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
+    TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
-    ContextCompacted(codex::ContextCompactedNotification),
+    /// 外部 executor 自行完成的 compact 标记。该事件没有 AgentDash-owned
+    /// summary/boundary/replacement provenance，只能作为遥测与审计事实。
+    ExecutorContextCompacted(codex::ContextCompactedNotification),
 
     // ── 审批请求（server → client，需要平台决策后回传）──
     ApprovalRequest(ApprovalRequest),

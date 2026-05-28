@@ -178,12 +178,34 @@ impl Agent {
         self.state.lock().await.messages.clone()
     }
 
+    pub async fn message_refs(&self) -> Vec<Option<crate::types::MessageRef>> {
+        self.state.lock().await.message_refs.clone()
+    }
+
     pub async fn replace_messages(&self, messages: Vec<AgentMessage>) {
-        self.state.lock().await.messages = messages;
+        let mut state = self.state.lock().await;
+        state.message_refs = vec![None; messages.len()];
+        state.messages = messages;
+    }
+
+    pub async fn replace_messages_with_refs(
+        &self,
+        messages: Vec<AgentMessage>,
+        message_refs: Vec<Option<crate::types::MessageRef>>,
+    ) {
+        let mut state = self.state.lock().await;
+        state.message_refs = if message_refs.len() == messages.len() {
+            message_refs
+        } else {
+            vec![None; messages.len()]
+        };
+        state.messages = messages;
     }
 
     pub async fn clear_messages(&self) {
-        self.state.lock().await.messages.clear();
+        let mut state = self.state.lock().await;
+        state.messages.clear();
+        state.message_refs.clear();
     }
 
     pub fn set_thinking_level(&mut self, level: ThinkingLevel) {
@@ -418,12 +440,16 @@ impl Agent {
             Arc::new(AtomicBool::new(options.skip_initial_steering_poll));
 
         // 从 state 中取出构建 context 所需数据
-        let (system_prompt, messages) = {
+        let (system_prompt, messages, message_refs) = {
             let s = self
                 .state
                 .try_lock()
                 .expect("Agent state lock should not be contended at prompt() time");
-            (s.system_prompt.clone(), s.messages.clone())
+            (
+                s.system_prompt.clone(),
+                s.messages.clone(),
+                s.message_refs.clone(),
+            )
         };
         let tool_instances = live_tools
             .read()
@@ -443,6 +469,7 @@ impl Agent {
         let mut context = AgentContext {
             system_prompt,
             messages,
+            message_refs,
             tools: tool_definitions,
         };
 
@@ -650,10 +677,21 @@ pub async fn process_event(state: &Mutex<AgentState>, event: &AgentEvent) {
         AgentEvent::MessageEnd { message } => {
             s.stream_message = None;
             s.messages.push(message.clone());
+            s.message_refs.push(None);
         }
-        AgentEvent::ContextCompacted { messages, .. } => {
+        AgentEvent::ContextCompactionStarted { .. } => {}
+        AgentEvent::ContextCompacted {
+            messages,
+            message_refs,
+            ..
+        } => {
             s.stream_message = None;
             s.messages = messages.clone();
+            s.message_refs = message_refs.clone();
+        }
+        AgentEvent::ContextCompactionFailed { error, .. } => {
+            s.stream_message = None;
+            s.error = Some(error.clone());
         }
         AgentEvent::ToolExecutionStart { tool_call_id, .. } => {
             s.pending_tool_calls.insert(tool_call_id.clone());

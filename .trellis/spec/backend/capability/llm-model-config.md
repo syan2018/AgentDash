@@ -69,6 +69,26 @@ Agent 运转只需要三个业务参数：
 
 注册优先级（第一个为默认）：`anthropic → gemini → deepseek → groq → xai → openai`
 
+### Provider Catalog 与 BYOK 凭据
+
+`llm_providers` 是管理员维护的全局 Provider Catalog：它保存 provider metadata、模型列表、屏蔽列表、端点、wire_api、排序、启用状态和 `credential_mode`。DB-backed 全局 Key 不进入领域实体明文字段，而是保存为 `global_api_key_ciphertext`；用户 BYOK Key 保存在 `llm_provider_user_credentials`，按 `provider_id + user_id` 唯一隔离。
+
+用户 BYOK 凭据同时保存验证状态：`verification_status` 表示 `unverified` / `verified` / `failed`，`verification_message` 保存最近一次非敏感探测结果，`verified_at` 保存最近一次通过验证的时间。手动 API Key 保存会通过 Provider 的模型探测路径更新验证状态；Codex OAuth token exchange 成功即视为 OAuth 凭据已验证。
+
+`credential_mode` 控制运行态凭据解析：
+
+| 值 | 运行态含义 |
+|----|------------|
+| `global_only` | 只使用管理员全局 DB Key 或 `env_api_key` |
+| `global_or_user` | 当前用户有 BYOK 时优先使用用户 Key，否则使用全局 Key |
+| `user_required` | 只使用当前用户 BYOK；没有用户身份或用户 Key 时不可执行 |
+
+PiAgent prompt 和 discovered-options discovery 需要按当前 `AuthIdentity` 解析 effective Provider。HTTP prompt 已通过 `ExecutionSessionFrame.identity` 携带身份；discovered-options 通过 `DiscoveryContext.identity` 传入 connector。无身份的系统级执行只解析全局凭据。OpenAI-compatible 的本地无 Key 端点可以以 `credential_source = none` 进入运行态，原因是该协议承载 Ollama 等无鉴权端点；`user_required` 不适用无 Key 端点。
+
+DB-backed Key 的加解密通过 `LlmSecretCodec` 端口完成，当前基础设施实现使用 AES-GCM 主密钥：部署可以通过 `AGENTDASH_SECRET_KEY` 显式指定；未指定时服务端会在 AgentDash 数据根下创建并复用本地 master key 文件。这样本地开发和 embedded Postgres 数据生命周期保持一致，同时 API 响应只暴露配置状态、来源和脱敏 preview，运行态 secret 只在 resolver 到 bridge 构建链路内短暂存在。
+
+`openai_codex` 的凭据内容是 ChatGPT OAuth token JSON，不是用户可直接获取的 API Key。管理员全局 Codex 登录写入 Provider 的 `global_api_key_ciphertext`，用户个人 Codex 登录写入 `llm_provider_user_credentials`；两者复用同一套 PKCE 回调与 token exchange，只在保存目标上区分所有权。API 响应对 Codex 凭据只展示 OAuth 状态 preview，不返回 token JSON 或其中任意字段。
+
 ### OpenAI `wire_api` 契约
 
 `llm.openai.wire_api` 控制运行时 bridge 选择：

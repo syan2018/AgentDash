@@ -1,0 +1,28 @@
+{
+  "id": "context-compaction-architecture-enhancement",
+  "name": "context-compaction-architecture-enhancement",
+  "title": "上下文压缩系统架构增强",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-05-25",
+  "completedAt": "2026-05-26",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "04-08-session-tree-branching"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -24,7 +24,15 @@ write: Array<AbsolutePathBuf> | null, globScanMaxDepth?: number, entries?: Array
 
 export type AdditionalNetworkPermissions = { enabled: boolean | null, };
 
-export type AdditionalPermissionProfile = { network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
+export type AdditionalPermissionProfile = {
+/**
+ * Partial overlay used for per-command permission requests.
+ */
+network: AdditionalNetworkPermissions | null, fileSystem: AdditionalFileSystemPermissions | null, };
+
+export type AgentDashNativeThreadItem = { "type": "fsRead", id: string, path: string, offset: number | null, limit: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGrep", id: string, pattern: string, path: string | null, glob: string | null, fileType: string | null, outputMode: string | null, headLimit: number | null, offset: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, } | { "type": "fsGlob", id: string, pattern: string, path: string | null, maxResults: number | null, arguments: JsonValue, status: DynamicToolCallStatus, contentItems: Array<DynamicToolCallOutputContentItem> | null, success: boolean | null, };
+
+export type AgentDashThreadItem = ThreadItem | AgentDashNativeThreadItem;
 
 export type AgentMessageDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, };
 
@@ -43,11 +51,12 @@ export type BackboneEnvelope = { event: BackboneEvent, sessionId: string, source
 /**
  * 平台内部事件流转的统一类型。
  *
- * 变体名由平台定义（控制语义），payload 类型严格对齐 Codex App Server Protocol。
- * 所有 connector（codex_bridge / pi_agent / vibe_kanban 等）都必须映射到同一套变体，
- * 不设"通用退化变体"。Codex 原生协议没有覆盖的语义通过 `Platform` 扩展。
+ * 变体名由平台定义（控制语义），payload 优先对齐 Codex App Server Protocol。
+ * 所有 connector（codex_bridge / pi_agent 等）都必须映射到同一套变体，
+ * 不设"通用退化变体"。Codex 原生协议没有覆盖的 item 语义通过
+ * `AgentDashThreadItem` 扩展，平台能力通过 `Platform` 扩展。
  */
-export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "context_compacted", "payload": ContextCompactedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
+export type BackboneEvent = { "type": "agent_message_delta", "payload": AgentMessageDeltaNotification } | { "type": "reasoning_text_delta", "payload": ReasoningTextDeltaNotification } | { "type": "reasoning_summary_delta", "payload": ReasoningSummaryTextDeltaNotification } | { "type": "item_started", "payload": ItemStartedNotification } | { "type": "item_completed", "payload": ItemCompletedNotification } | { "type": "command_output_delta", "payload": CommandExecutionOutputDeltaNotification } | { "type": "file_change_delta", "payload": FileChangeOutputDeltaNotification } | { "type": "mcp_tool_call_progress", "payload": McpToolCallProgressNotification } | { "type": "turn_started", "payload": TurnStartedNotification } | { "type": "turn_completed", "payload": TurnCompletedNotification } | { "type": "turn_diff_updated", "payload": TurnDiffUpdatedNotification } | { "type": "turn_plan_updated", "payload": TurnPlanUpdatedNotification } | { "type": "plan_delta", "payload": PlanDeltaNotification } | { "type": "token_usage_updated", "payload": ThreadTokenUsageUpdatedNotification } | { "type": "thread_status_changed", "payload": ThreadStatusChangedNotification } | { "type": "executor_context_compacted", "payload": ContextCompactedNotification } | { "type": "approval_request", "payload": ApprovalRequest } | { "type": "error", "payload": ErrorNotification } | { "type": "platform", "payload": PlatformEvent };
 
 export type ByteRange = { start: number, end: number, };
 
@@ -74,6 +83,10 @@ export type CommandExecutionApprovalDecision = "accept" | "acceptForSession" | {
 export type CommandExecutionOutputDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, };
 
 export type CommandExecutionRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
+/**
+ * Unix timestamp (in milliseconds) when this approval request started.
+ */
+startedAtMs: number,
 /**
  * Unique identifier for this specific approval callback.
  *
@@ -130,6 +143,8 @@ export type CommandExecutionStatus = "inProgress" | "completed" | "failed" | "de
  */
 export type ContextCompactedNotification = { threadId: string, turnId: string, };
 
+export type ContextUsageSource = "provider" | "providerPlusEstimate" | "localEstimate";
+
 export type DynamicToolCallOutputContentItem = { "type": "inputText", text: string, } | { "type": "inputImage", imageUrl: string, };
 
 export type DynamicToolCallStatus = "inProgress" | "completed" | "failed";
@@ -138,9 +153,18 @@ export type ErrorNotification = { error: TurnError, willRetry: boolean, threadId
 
 export type ExecPolicyAmendment = Array<string>;
 
+/**
+ * Deprecated legacy notification for `apply_patch` textual output.
+ *
+ * The server no longer emits this notification.
+ */
 export type FileChangeOutputDeltaNotification = { threadId: string, turnId: string, itemId: string, delta: string, };
 
 export type FileChangeRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
+/**
+ * Unix timestamp (in milliseconds) when this approval request started.
+ */
+startedAtMs: number,
 /**
  * Optional explanatory reason (e.g. request for extra write access).
  */
@@ -151,13 +175,13 @@ reason?: string | null,
  */
 grantRoot?: string | null, };
 
-export type FileSystemAccessMode = "read" | "write" | "none";
+export type FileSystemAccessMode = "read" | "write" | "deny";
 
 export type FileSystemPath = { "type": "path", path: AbsolutePathBuf, } | { "type": "glob_pattern", pattern: string, } | { "type": "special", value: FileSystemSpecialPath, };
 
 export type FileSystemSandboxEntry = { path: FileSystemPath, access: FileSystemAccessMode, };
 
-export type FileSystemSpecialPath = { "kind": "root" } | { "kind": "minimal" } | { "kind": "current_working_directory" } | { "kind": "project_roots", subpath: string | null, } | { "kind": "tmpdir" } | { "kind": "slash_tmp" } | { "kind": "unknown", path: string, subpath: string | null, };
+export type FileSystemSpecialPath = { "kind": "root" } | { "kind": "minimal" } | { "kind": "project_roots", subpath: string | null, } | { "kind": "tmpdir" } | { "kind": "slash_tmp" } | { "kind": "unknown", path: string, subpath: string | null, };
 
 export type FileUpdateChange = { path: string, kind: PatchChangeKind, diff: string, };
 
@@ -183,9 +207,11 @@ export type HookTraceSeverity = "error" | "warning" | "success" | "info";
 
 export type HookTraceTrigger = "session_start" | "user_prompt_submit" | "before_tool" | "after_tool" | "after_turn" | "before_stop" | "session_terminal" | "before_subagent_dispatch" | "after_subagent_dispatch" | "before_compact" | "after_compact" | "before_provider_request";
 
-export type ItemCompletedNotification = { item: ThreadItem, threadId: string, turnId: string, };
+export type ImageDetail = "high" | "original";
 
-export type ItemStartedNotification = { item: ThreadItem, threadId: string, turnId: string, };
+export type ItemCompletedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, completedAtMs: number, };
+
+export type ItemStartedNotification = { item: AgentDashThreadItem, threadId: string, turnId: string, startedAtMs: number, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 
@@ -219,11 +245,17 @@ export type NetworkPolicyRuleAction = "allow" | "deny";
 
 export type NonSteerableTurnKind = "review" | "compact";
 
+export type NormalizedContextUsage = { providerContextTokens: number, pendingEstimateTokens: number, currentContextTokens: number, cumulativeTotalTokens: number, modelContextWindow: number | null, effectiveContextWindow: number | null, reserveTokens: number, source: ContextUsageSource, };
+
 export type PatchApplyStatus = "inProgress" | "completed" | "failed" | "declined";
 
 export type PatchChangeKind = { "type": "add" } | { "type": "delete" } | { "type": "update", move_path: string | null, };
 
-export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string, cwd: AbsolutePathBuf, reason: string | null, permissions: RequestPermissionProfile, };
+export type PermissionsRequestApprovalParams = { threadId: string, turnId: string, itemId: string,
+/**
+ * Unix timestamp (in milliseconds) when this approval request started.
+ */
+startedAtMs: number, cwd: AbsolutePathBuf, reason: string | null, permissions: RequestPermissionProfile, };
 
 /**
  * EXPERIMENTAL - proposed plan streaming deltas for plan items. Clients should
@@ -234,7 +266,7 @@ export type PlanDeltaNotification = { threadId: string, turnId: string, itemId: 
 /**
  * 平台独有事件 — Codex 原生协议未覆盖的语义在此扩展。
  */
-export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
+export type PlatformEvent = { "kind": "executor_session_bound", "data": { executor_session_id: string, } } | { "kind": "source_session_title_updated", "data": { executor_session_id: string | null, title: string, preview: string | null, source: string, } } | { "kind": "hook_trace", "data": HookTracePayload } | { "kind": "session_meta_update", "data": { key: string, value: JsonValue, } } | { "kind": "terminal_output", "data": { terminal_id: string, data: string, } } | { "kind": "terminal_state_changed", "data": { terminal_id: string, state: string, exit_code: number | null, message: string | null, } };
 
 /**
  * See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning
@@ -296,7 +328,7 @@ exitCode: number | null,
 /**
  * The duration of the command execution in milliseconds.
  */
-durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, result: McpToolCallResult | null, error: McpToolCallError | null,
+durationMs: number | null, } | { "type": "fileChange", id: string, changes: Array<FileUpdateChange>, status: PatchApplyStatus, } | { "type": "mcpToolCall", id: string, server: string, tool: string, status: McpToolCallStatus, arguments: JsonValue, mcpAppResourceUri?: string, pluginId: string | null, result: McpToolCallResult | null, error: McpToolCallError | null,
 /**
  * The duration of the MCP tool call in milliseconds.
  */
@@ -347,7 +379,7 @@ export type ThreadStatus = { "type": "notLoaded" } | { "type": "idle" } | { "typ
 
 export type ThreadStatusChangedNotification = { threadId: string, status: ThreadStatus, };
 
-export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, };
+export type ThreadTokenUsage = { total: TokenUsageBreakdown, last: TokenUsageBreakdown, modelContextWindow: number | null, context: NormalizedContextUsage, };
 
 export type ThreadTokenUsageUpdatedNotification = { threadId: string, turnId: string, tokenUsage: ThreadTokenUsage, };
 
@@ -375,11 +407,13 @@ export type TraceInfo = { turnId: string | null, entryIndex: number | null, };
 
 export type Turn = { id: string,
 /**
- * Only populated on a `thread/resume` or `thread/fork` response.
- * For all other responses and notifications returning a Turn,
- * the items field will be an empty list.
+ * Thread items currently included in this turn payload.
  */
-items: Array<ThreadItem>, status: TurnStatus,
+items: Array<ThreadItem>,
+/**
+ * Describes how much of `items` has been loaded for this turn.
+ */
+itemsView: TurnItemsView, status: TurnStatus,
 /**
  * Only populated when the Turn's status is failed.
  */
@@ -407,6 +441,8 @@ export type TurnDiffUpdatedNotification = { threadId: string, turnId: string, di
 
 export type TurnError = { message: string, codexErrorInfo: CodexErrorInfo | null, additionalDetails: string | null, };
 
+export type TurnItemsView = "notLoaded" | "summary" | "full";
+
 export type TurnPlanStep = { step: string, status: TurnPlanStepStatus, };
 
 export type TurnPlanStepStatus = "pending" | "inProgress" | "completed";
@@ -421,6 +457,6 @@ export type UserInput = { "type": "text", text: string,
 /**
  * UI-defined spans within `text` used to render or persist special elements.
  */
-text_elements: Array<TextElement>, } | { "type": "image", url: string, } | { "type": "localImage", path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
+text_elements: Array<TextElement>, } | { "type": "image", detail?: ImageDetail, url: string, } | { "type": "localImage", detail?: ImageDetail, path: string, } | { "type": "skill", name: string, path: string, } | { "type": "mention", name: string, path: string, };
 
 export type WebSearchAction = { "type": "search", query: string | null, queries: Array<string> | null, } | { "type": "openPage", url: string | null, } | { "type": "findInPage", url: string | null, pattern: string | null, } | { "type": "other" };

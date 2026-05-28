@@ -57,6 +57,7 @@ impl AgentConnector for RelayAgentConnector {
             supports_variants: true,
             supports_model_override: true,
             supports_permission_policy: true,
+            supports_source_session_title: false,
         }
     }
 

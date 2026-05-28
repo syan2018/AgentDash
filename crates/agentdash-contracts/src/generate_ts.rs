@@ -1,5 +1,40 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::extension_management::{
+    ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
+    ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
+    ProjectExtensionPackageArtifactRefResponse, ProjectExtensionPackageModeResponse,
+};
+use agentdash_contracts::extension_package::{
+    ExtensionPackageArtifactResponse, ExtensionPackageInstallationResponse,
+    ImportExtensionPackageResponse, InstallExtensionPackageArtifactRequest,
+};
+use agentdash_contracts::extension_runtime::{
+    ExtensionBundleKindResponse, ExtensionBundleProjectionResponse,
+    ExtensionCommandHandlerResponse, ExtensionCommandProjectionResponse,
+    ExtensionDependencyDeclarationResponse, ExtensionDependencyProjectionResponse,
+    ExtensionFlagProjectionResponse, ExtensionFlagTypeResponse,
+    ExtensionInstallationProjectionResponse, ExtensionInstalledAssetSourceResponse,
+    ExtensionMessageRendererDeclarationResponse, ExtensionMessageRendererProjectionResponse,
+    ExtensionPackageArtifactRefResponse, ExtensionPermissionAccessResponse,
+    ExtensionPermissionDeclarationResponse, ExtensionPermissionProjectionResponse,
+    ExtensionProcessPermissionAccessResponse, ExtensionProtocolChannelMethodProjectionResponse,
+    ExtensionProtocolChannelProjectionResponse, ExtensionRuntimeActionKindResponse,
+    ExtensionRuntimeActionProjectionResponse, ExtensionRuntimeInvocationOutputResponse,
+    ExtensionRuntimeInvokeActionRequest, ExtensionRuntimeInvokeActionResponse,
+    ExtensionRuntimeInvokeChannelRequest, ExtensionRuntimeInvokeChannelResponse,
+    ExtensionRuntimeProjectionResponse, ExtensionRuntimeTraceResponse,
+    ExtensionWorkspaceTabProjectionResponse, ExtensionWorkspaceTabRendererResponse,
+    UninstallExtensionInstallationResponse,
+};
+use agentdash_contracts::llm_provider::{
+    CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
+    DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto, LlmCredentialModeDto,
+    LlmCredentialSourceDto, LlmCredentialVerificationStatusDto, LlmProviderAdminDto,
+    LlmProviderProtocol, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    ReorderLlmProvidersRequest, StartCodexOAuthResponse, UpdateLlmProviderRequest,
+    UpsertLlmProviderUserCredentialRequest,
+};
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
     ProbeMcpPresetResponse, UpdateMcpPresetRequest,
@@ -9,12 +44,18 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    SessionEventResponse, SessionEventsPageResponse, SessionNdjsonEnvelope,
+    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
+    SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
+    SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
+    SessionProjectionMessageRefResponse, SessionProjectionRollbackResponse,
+    SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
+    SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
-    LibraryAssetDto, ListLibraryAssetsQuery, ProjectAssetSourceStatusDto,
-    PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
+    LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
+    ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
     ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
@@ -28,8 +69,8 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
-    LifecycleEdge, LifecycleExecutionEntry, LifecycleStepDefinition, ValidationIssue,
-    WorkflowContract,
+    LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
+    ValidationIssue, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
 };
 use ts_rs::TS;
 
@@ -60,6 +101,45 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
+            export_all::<SessionProjectionSourceRangeResponse>(dir);
+            export_all::<SessionProjectionMessageRefResponse>(dir);
+            export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
+            export_all::<SessionProjectionSegmentViewResponse>(dir);
+            export_all::<SessionProjectionViewResponse>(dir);
+            export_all::<SessionLineageRelationKindDto>(dir);
+            export_all::<SessionLineageStatusDto>(dir);
+            export_all::<SessionMessageRefDto>(dir);
+            export_all::<CreateSessionForkRequest>(dir);
+            export_all::<RollbackSessionProjectionRequest>(dir);
+            export_all::<SessionLineageRecordResponse>(dir);
+            export_all::<SessionForkChildSessionResponse>(dir);
+            export_all::<SessionForkResponse>(dir);
+            export_all::<SessionLineageViewResponse>(dir);
+            export_all::<SessionProjectionRollbackResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("llm-provider-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<LlmProviderProtocol>(dir);
+            export_all::<LlmCredentialModeDto>(dir);
+            export_all::<LlmCredentialSourceDto>(dir);
+            export_all::<LlmCredentialVerificationStatusDto>(dir);
+            export_all::<LlmProviderAdminDto>(dir);
+            export_all::<EffectiveLlmProviderDto>(dir);
+            export_all::<CreateLlmProviderRequest>(dir);
+            export_all::<UpdateLlmProviderRequest>(dir);
+            export_all::<ReorderLlmProvidersRequest>(dir);
+            export_all::<ProbeLlmProviderModelsRequest>(dir);
+            export_all::<ProbeLlmProviderModelDto>(dir);
+            export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
+            export_all::<DeleteLlmProviderUserCredentialResponse>(dir);
+            export_all::<CodexOAuthFlowStatusDto>(dir);
+            export_all::<StartCodexOAuthResponse>(dir);
+            export_all::<CodexOAuthStatusResponse>(dir);
         },
     );
 
@@ -75,8 +155,11 @@ fn main() {
             export_all::<LifecycleEdge>(dir);
             export_all::<LifecycleStepDefinition>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
+            export_all::<LifecycleRunStatus>(dir);
             export_all::<EffectiveSessionContract>(dir);
             export_all::<ValidationIssue>(dir);
+            export_all::<WorkflowBindingKind>(dir);
+            export_all::<WorkflowDefinitionSource>(dir);
         },
     );
 
@@ -109,11 +192,77 @@ fn main() {
     });
 
     write_domain(
+        &generated_dir.join("extension-runtime-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ExtensionRuntimeActionKindResponse>(dir);
+            export_all::<ExtensionFlagTypeResponse>(dir);
+            export_all::<ExtensionPermissionAccessResponse>(dir);
+            export_all::<ExtensionProcessPermissionAccessResponse>(dir);
+            export_all::<ExtensionBundleKindResponse>(dir);
+            export_all::<ExtensionCommandHandlerResponse>(dir);
+            export_all::<ExtensionMessageRendererDeclarationResponse>(dir);
+            export_all::<ExtensionWorkspaceTabRendererResponse>(dir);
+            export_all::<ExtensionPermissionDeclarationResponse>(dir);
+            export_all::<ExtensionInstalledAssetSourceResponse>(dir);
+            export_all::<ExtensionPackageArtifactRefResponse>(dir);
+            export_all::<ExtensionInstallationProjectionResponse>(dir);
+            export_all::<ExtensionCommandProjectionResponse>(dir);
+            export_all::<ExtensionFlagProjectionResponse>(dir);
+            export_all::<ExtensionMessageRendererProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeActionProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelMethodProjectionResponse>(dir);
+            export_all::<ExtensionProtocolChannelProjectionResponse>(dir);
+            export_all::<ExtensionDependencyDeclarationResponse>(dir);
+            export_all::<ExtensionDependencyProjectionResponse>(dir);
+            export_all::<ExtensionWorkspaceTabProjectionResponse>(dir);
+            export_all::<ExtensionPermissionProjectionResponse>(dir);
+            export_all::<ExtensionBundleProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeProjectionResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionRequest>(dir);
+            export_all::<ExtensionRuntimeInvokeChannelRequest>(dir);
+            export_all::<ExtensionRuntimeTraceResponse>(dir);
+            export_all::<ExtensionRuntimeInvocationOutputResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeActionResponse>(dir);
+            export_all::<ExtensionRuntimeInvokeChannelResponse>(dir);
+            export_all::<UninstallExtensionInstallationResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("extension-management-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ProjectExtensionPackageModeResponse>(dir);
+            export_all::<ProjectExtensionInstalledSourceResponse>(dir);
+            export_all::<ProjectExtensionPackageArtifactRefResponse>(dir);
+            export_all::<ProjectExtensionCapabilitySummaryResponse>(dir);
+            export_all::<ProjectExtensionManagementItemResponse>(dir);
+            export_all::<ProjectExtensionManagementListResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("extension-package-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<ExtensionPackageArtifactResponse>(dir);
+            export_all::<InstallExtensionPackageArtifactRequest>(dir);
+            export_all::<ExtensionPackageInstallationResponse>(dir);
+            export_all::<ImportExtensionPackageResponse>(dir);
+        },
+    );
+
+    write_domain(
         &generated_dir.join("shared-library-contracts.ts"),
         &[],
         check,
         |dir| {
             export_all::<InstalledAssetSourceDto>(dir);
+            export_all::<LibraryExtensionPackageArtifactDto>(dir);
             export_all::<LibraryAssetDto>(dir);
             export_all::<ListLibraryAssetsQuery>(dir);
             export_all::<SeedBuiltinLibraryAssetsRequest>(dir);
@@ -177,7 +326,7 @@ fn write_domain(
     let output = lines.join("\n");
 
     if check {
-        match fs::read_to_string(&out) {
+        match fs::read_to_string(out) {
             Ok(existing) if existing == output => {
                 eprintln!("{} is up to date", out.display());
                 return;
@@ -196,7 +345,7 @@ fn write_domain(
         }
     }
 
-    fs::write(&out, output).expect("write generated TS");
+    fs::write(out, output).expect("write generated TS");
 
     eprintln!("Wrote {} ({} types)", out.display(), declarations.len());
 }

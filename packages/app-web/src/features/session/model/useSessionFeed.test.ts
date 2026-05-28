@@ -39,7 +39,7 @@ function mkCmdEntry(id: string, command: string, opts?: { isPendingApproval?: bo
   } as unknown as ThreadItem;
   const event: BackboneEvent = {
     type: "item_started",
-    payload: { item, threadId: "t1", turnId: "u1" },
+    payload: { item, threadId: "t1", turnId: "u1", startedAtMs: 0 },
   };
   return asEntry(id, event, { isPendingApproval: opts?.isPendingApproval });
 }
@@ -53,7 +53,7 @@ function mkFileChangeEntry(id: string, path: string): SessionDisplayEntry {
   } as unknown as ThreadItem;
   const event: BackboneEvent = {
     type: "item_started",
-    payload: { item, threadId: "t1", turnId: "u1" },
+    payload: { item, threadId: "t1", turnId: "u1", startedAtMs: 0 },
   };
   return asEntry(id, event);
 }
@@ -72,7 +72,7 @@ function mkMcpEntry(id: string): SessionDisplayEntry {
   } as unknown as ThreadItem;
   const event: BackboneEvent = {
     type: "item_started",
-    payload: { item, threadId: "t1", turnId: "u1" },
+    payload: { item, threadId: "t1", turnId: "u1", startedAtMs: 0 },
   };
   return asEntry(id, event);
 }

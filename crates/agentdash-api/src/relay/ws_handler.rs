@@ -561,6 +561,8 @@ fn is_pending_response_message(msg: &RelayMessage) -> bool {
             | RelayMessage::ResponseMcpListTools { .. }
             | RelayMessage::ResponseMcpCallTool { .. }
             | RelayMessage::ResponseMcpClose { .. }
+            | RelayMessage::ResponseExtensionActionInvoke { .. }
+            | RelayMessage::ResponseExtensionChannelInvoke { .. }
             | RelayMessage::ResponseVfsMaterialize { .. }
             | RelayMessage::ResponseTerminalSpawn { .. }
             | RelayMessage::ResponseTerminalInput { .. }
@@ -866,6 +868,17 @@ mod tests {
     fn binary_file_read_response_is_routed_to_pending_requests() {
         let response = RelayMessage::ResponseToolFileReadBinary {
             id: "file-read-binary-1".to_string(),
+            payload: None,
+            error: None,
+        };
+
+        assert!(is_pending_response_message(&response));
+    }
+
+    #[test]
+    fn extension_action_response_is_routed_to_pending_requests() {
+        let response = RelayMessage::ResponseExtensionActionInvoke {
+            id: "extension-action-1".to_string(),
             payload: None,
             error: None,
         };

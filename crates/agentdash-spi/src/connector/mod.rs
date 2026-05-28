@@ -6,7 +6,7 @@ use std::{
 };
 
 use agentdash_agent_protocol::{ContentBlock, EmbeddedResourceResource};
-use agentdash_agent_types::AgentMessage;
+use agentdash_agent_types::{AgentMessage, MessageRef};
 use agentdash_domain::backend::BackendExecutionSelectionMode;
 use agentdash_domain::common::{AgentConfig, Vfs};
 use async_trait::async_trait;
@@ -37,6 +37,7 @@ pub struct ConnectorCapabilities {
     pub supports_variants: bool,
     pub supports_model_override: bool,
     pub supports_permission_policy: bool,
+    pub supports_source_session_title: bool,
 }
 
 /// 连接器对外暴露的执行器选项（用于前端选择器渲染）
@@ -171,8 +172,15 @@ pub fn workspace_path_from_context(context: &ExecutionContext) -> Result<PathBuf
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct DiscoveryContext {
+    pub working_dir: Option<PathBuf>,
+    pub identity: Option<crate::platform::auth::AuthIdentity>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct RestoredSessionState {
     pub messages: Vec<AgentMessage>,
+    pub message_refs: Vec<Option<MessageRef>>,
 }
 
 /// 工具簇标识 — 每个簇控制一组相关工具的注入。
@@ -712,6 +720,15 @@ pub trait AgentConnector: Send + Sync {
         executor: &str,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError>;
+
+    async fn discover_options_stream_with_context(
+        &self,
+        executor: &str,
+        context: DiscoveryContext,
+    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        self.discover_options_stream(executor, context.working_dir)
+            .await
+    }
 
     /// 返回当前进程内该 session 是否仍有可直接续跑的执行器 runtime。
     ///

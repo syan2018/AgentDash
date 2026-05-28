@@ -1,9 +1,10 @@
-﻿use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::hooks::ExecutionHookProvider;
 use agentdash_spi::{AgentConnector, McpRelayProvider};
 
+use super::branching::SessionBranchingService;
 use super::capability_service::SessionCapabilityService;
 use super::companion_wait::CompanionWaitRegistry;
 use super::construction_provider::SharedSessionConstructionProvider;
@@ -16,7 +17,6 @@ use super::hub::SessionRuntimeInner;
 use super::launch::SessionLaunchService;
 use super::persistence::SessionPersistence;
 use super::runtime_control::SessionRuntimeService;
-use super::title_generator::SessionTitleGenerator;
 use super::title_service::SessionTitleService;
 use crate::context::SharedContextAuditBus;
 
@@ -81,13 +81,12 @@ impl SessionRuntimeBuilder {
         self
     }
 
-    pub fn with_title_generator(mut self, generator: Arc<dyn SessionTitleGenerator>) -> Self {
-        self.inner = self.inner.with_title_generator(generator);
-        self
-    }
-
     pub fn core_service(&self) -> SessionCoreService {
         self.inner.core_service()
+    }
+
+    pub fn branching_service(&self) -> SessionBranchingService {
+        self.inner.branching_service()
     }
 
     pub fn eventing_service(&self) -> SessionEventingService {

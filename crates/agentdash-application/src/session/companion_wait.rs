@@ -67,6 +67,14 @@ impl CompanionWaitRegistry {
         })
     }
 
+    pub async fn request_type(&self, session_id: &str, request_id: &str) -> Option<String> {
+        let guard = self.inner.lock().await;
+        let entry = guard.get(request_id)?;
+        (entry.session_id == session_id)
+            .then(|| entry.request_type.clone())
+            .flatten()
+    }
+
     pub async fn remove(&self, request_id: &str) {
         self.inner.lock().await.remove(request_id);
     }

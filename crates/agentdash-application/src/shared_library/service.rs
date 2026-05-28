@@ -566,8 +566,13 @@ mod tests {
                 description: None,
                 version: "0.2.0".to_string(),
                 payload: json!({
-                    "manifest_version": "1",
+                    "manifest_version": "2",
                     "extension_id": "corp-extension",
+                    "package": {
+                        "name": "corp-extension",
+                        "version": "0.2.0"
+                    },
+                    "asset_version": "0.2.0",
                     "commands": [],
                     "flags": [],
                     "message_renderers": [],

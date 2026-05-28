@@ -107,7 +107,7 @@ export function PublishLibraryAssetDialog({
         scope: "user",
         key: trimmedKey,
         display_name: trimmedDisplayName,
-        description: description.trim() || null,
+        description: description.trim() || undefined,
         version: trimmedVersion,
         overwrite,
       });
@@ -249,6 +249,8 @@ function publishTitle(kind: PublishLibraryAssetKind, isUpdate: boolean): string 
       return `${prefix} Skill 模板`;
     case "vfs_mount":
       return `${prefix} VFS Mount 模板`;
+    case "extension_installation":
+      return `${prefix} Extension 模板`;
   }
 }
 
@@ -264,5 +266,7 @@ function kindToAssetType(kind: PublishLibraryAssetKind): LibraryAssetType {
       return "skill_template";
     case "vfs_mount":
       return "vfs_mount_template";
+    case "extension_installation":
+      return "extension_template";
   }
 }

@@ -25,6 +25,60 @@ importers:
         specifier: ^2.11.1
         version: 2.11.1
 
+  examples/extensions/local-hello:
+    devDependencies:
+      '@agentdash/extension-dev':
+        specifier: workspace:*
+        version: link:../../../packages/extension-dev
+      '@agentdash/extension-sdk':
+        specifier: workspace:*
+        version: link:../../../packages/extension-sdk
+      '@agentdash/extension-ui':
+        specifier: workspace:*
+        version: link:../../../packages/extension-ui
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.4(react@19.2.4)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  examples/extensions/protocol-demo:
+    devDependencies:
+      '@agentdash/extension-dev':
+        specifier: workspace:*
+        version: link:../../../packages/extension-dev
+      '@agentdash/extension-sdk':
+        specifier: workspace:*
+        version: link:../../../packages/extension-sdk
+      '@agentdash/extension-ui':
+        specifier: workspace:*
+        version: link:../../../packages/extension-ui
+      '@types/react':
+        specifier: ^19.2.7
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      react:
+        specifier: ^19.2.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.2.0
+        version: 19.2.4(react@19.2.4)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
   packages/app-tauri:
     dependencies:
       '@agentdash/core':
@@ -238,6 +292,43 @@ importers:
         version: 4.0.18(@types/node@24.10.13)(jiti@2.6.1)(lightningcss@1.31.1)
 
   packages/core:
+    devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/extension-dev:
+    dependencies:
+      '@agentdash/extension-sdk':
+        specifier: workspace:*
+        version: link:../extension-sdk
+      '@agentdash/extension-ui':
+        specifier: workspace:*
+        version: link:../extension-ui
+      '@vitejs/plugin-react':
+        specifier: ^5.1.1
+        version: 5.1.4(vite@7.3.1(@types/node@24.10.13)(jiti@2.6.1)(lightningcss@1.31.1))
+      esbuild:
+        specifier: ^0.27.3
+        version: 0.27.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@24.10.13)(jiti@2.6.1)(lightningcss@1.31.1)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.13
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/extension-sdk:
+    devDependencies:
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  packages/extension-ui:
     devDependencies:
       typescript:
         specifier: ~5.9.3

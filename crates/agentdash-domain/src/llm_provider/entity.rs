@@ -50,6 +50,108 @@ impl std::fmt::Display for WireProtocol {
     }
 }
 
+/// Provider 凭据策略
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCredentialMode {
+    /// 仅使用管理员配置的全局 DB Key 或 env key。
+    #[default]
+    GlobalOnly,
+    /// 当前用户配置 BYOK 时优先使用用户 Key，否则使用全局 Key。
+    GlobalOrUser,
+    /// 必须由当前用户配置 BYOK。
+    UserRequired,
+}
+
+impl LlmCredentialMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GlobalOnly => "global_only",
+            Self::GlobalOrUser => "global_or_user",
+            Self::UserRequired => "user_required",
+        }
+    }
+}
+
+impl std::str::FromStr for LlmCredentialMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "global_only" => Ok(Self::GlobalOnly),
+            "global_or_user" => Ok(Self::GlobalOrUser),
+            "user_required" => Ok(Self::UserRequired),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for LlmCredentialMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// 运行态凭据来源
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCredentialSource {
+    GlobalDb,
+    GlobalEnv,
+    UserByok,
+    None,
+}
+
+impl LlmCredentialSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GlobalDb => "global_db",
+            Self::GlobalEnv => "global_env",
+            Self::UserByok => "user_byok",
+            Self::None => "none",
+        }
+    }
+}
+
+/// 用户凭据验证状态。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCredentialVerificationStatus {
+    #[default]
+    Unverified,
+    Verified,
+    Failed,
+}
+
+impl LlmCredentialVerificationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unverified => "unverified",
+            Self::Verified => "verified",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::str::FromStr for LlmCredentialVerificationStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "unverified" => Ok(Self::Unverified),
+            "verified" => Ok(Self::Verified),
+            "failed" => Ok(Self::Failed),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for LlmCredentialVerificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// LLM Provider 配置实体
 ///
 /// 存储一个 LLM 服务端点的完整连接配置。
@@ -64,9 +166,12 @@ pub struct LlmProvider {
     pub slug: String,
     /// wire protocol 类型
     pub protocol: WireProtocol,
-    /// API 密钥 (可为空, 如本地 Ollama)
+    /// 凭据策略
     #[serde(default)]
-    pub api_key: String,
+    pub credential_mode: LlmCredentialMode,
+    /// 管理员保存的全局 API Key 密文。
+    #[serde(default)]
+    pub global_api_key_ciphertext: String,
     /// 端点 URL (空字符串 = 使用协议默认值)
     #[serde(default)]
     pub base_url: String,
@@ -110,7 +215,8 @@ impl LlmProvider {
             name: name.into(),
             slug: slug.into(),
             protocol,
-            api_key: String::new(),
+            credential_mode: LlmCredentialMode::GlobalOnly,
+            global_api_key_ciphertext: String::new(),
             base_url: String::new(),
             wire_api: String::new(),
             default_model: String::new(),
@@ -125,14 +231,61 @@ impl LlmProvider {
         }
     }
 
-    /// 解析生效的 API key: 优先使用配置值，为空时回退到环境变量
-    pub fn resolve_api_key(&self) -> Option<String> {
-        if !self.api_key.is_empty() {
-            return Some(self.api_key.clone());
-        }
+    /// 解析全局 env key。DB-backed key 由调用方通过 `LlmSecretCodec` 解密。
+    pub fn resolve_env_api_key(&self) -> Option<String> {
         if !self.env_api_key.is_empty() {
             return std::env::var(&self.env_api_key).ok();
         }
         None
+    }
+}
+
+/// 用户 BYOK 凭据实体。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmProviderUserCredential {
+    pub id: Uuid,
+    pub provider_id: Uuid,
+    pub user_id: String,
+    pub api_key_ciphertext: String,
+    #[serde(default)]
+    pub verification_status: LlmCredentialVerificationStatus,
+    #[serde(default)]
+    pub verification_message: String,
+    #[serde(default)]
+    pub verified_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl LlmProviderUserCredential {
+    pub fn new(
+        provider_id: Uuid,
+        user_id: impl Into<String>,
+        api_key_ciphertext: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            provider_id,
+            user_id: user_id.into(),
+            api_key_ciphertext: api_key_ciphertext.into(),
+            verification_status: LlmCredentialVerificationStatus::Unverified,
+            verification_message: String::new(),
+            verified_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn mark_verification(
+        &mut self,
+        status: LlmCredentialVerificationStatus,
+        message: impl Into<String>,
+    ) {
+        let now = Utc::now();
+        self.verification_status = status;
+        self.verification_message = message.into();
+        self.verified_at = (status == LlmCredentialVerificationStatus::Verified).then_some(now);
+        self.updated_at = now;
     }
 }

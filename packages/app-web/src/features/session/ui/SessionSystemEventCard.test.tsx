@@ -96,6 +96,39 @@ describe("SessionSystemEventCard", () => {
     expect(markup).toContain("workflow");
   });
 
+  it("渲染 capability grant companion 请求卡片", () => {
+    const event: BackboneEvent = {
+      type: "platform",
+      payload: {
+        kind: "session_meta_update",
+        data: {
+          key: "companion_human_request",
+          value: {
+            request_id: "human-1",
+            prompt: "Agent 请求临时能力扩展",
+            wait: true,
+            payload_type: "capability_grant_request",
+            ui_hint: "capability_grant_card",
+            payload: {
+              type: "capability_grant_request",
+              requested_paths: ["workflow_management::upsert_lifecycle_tool"],
+              reason: "需要更新 lifecycle 定义",
+              scope: "session",
+              ttl_seconds: 3600,
+            },
+          },
+        },
+      },
+    };
+
+    expect(isRenderableSystemEventUpdate(event)).toBe(true);
+    const markup = renderToStaticMarkup(<SessionSystemEventCard event={event} />);
+    expect(markup).toContain("能力申请");
+    expect(markup).toContain("workflow_management::upsert_lifecycle_tool");
+    expect(markup).toContain("批准");
+    expect(markup).toContain("拒绝");
+  });
+
   it("没有 injections 的 context_injected 不再显示空壳 CTX", () => {
     const event: BackboneEvent = {
       type: "platform",

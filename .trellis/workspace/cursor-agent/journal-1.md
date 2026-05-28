@@ -891,3 +891,113 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 上下文压缩基建落地
+
+**Date**: 2026-05-26
+**Task**: 上下文压缩基建落地
+**Branch**: `main`
+
+### Summary
+
+完成 Codex-aligned compact lifecycle、projection store、ContextProjector、projection view、失败熔断与规格固化，并归档父任务。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1d36cbe1` | (see git log) |
+| `ff6ac916` | (see git log) |
+| `aadb7db9` | (see git log) |
+| `596a8d1d` | (see git log) |
+| `894f766c` | (see git log) |
+| `0c31e8cd` | (see git log) |
+| `cdc2ef05` | (see git log) |
+| `cd6472e3` | (see git log) |
+| `f89746ea` | (see git log) |
+| `baabaa72` | (see git log) |
+| `600db8f6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 23: Companion 通用交互能力申请 MVP
+
+**Date**: 2026-05-26
+**Task**: Companion 通用交互能力申请 MVP
+**Branch**: `main`
+
+### Summary
+
+落地 companion payload object 契约、platform capability grant broker 骨架、companion-system 内嵌 skill 与 lifecycle mount 默认投影，并补齐前端审批卡片和验证。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4cada192` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 24: Canvas Promote Extension 与 TS Extension SDK 收口
+
+**Date**: 2026-05-27
+**Task**: Canvas Promote Extension 与 TS Extension SDK 收口
+**Branch**: `codex/extension-sdk`
+
+### Summary
+
+完成 Canvas promote to packaged extension 链路，补齐 canvas_panel renderer、前后端 API/mapper、package validation 与 E2E；父任务 8/8 子任务完成并归档。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4171ded7` | (see git log) |
+| `e53f69a5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

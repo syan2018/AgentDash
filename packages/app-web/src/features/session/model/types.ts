@@ -9,6 +9,7 @@ export type {
   BackboneEvent,
   BackboneEnvelope,
   ThreadItem,
+  AgentDashThreadItem,
   PlatformEvent,
   HookTracePayload,
   HookTraceData,
@@ -42,6 +43,8 @@ export type {
   TurnPlanStepStatus,
   ThreadTokenUsage,
   TokenUsageBreakdown,
+  NormalizedContextUsage,
+  ContextUsageSource,
   CommandExecutionStatus,
   DynamicToolCallStatus,
   McpToolCallStatus,
@@ -52,11 +55,15 @@ export type {
 
 import type {
   BackboneEvent,
-  ThreadItem,
+  AgentDashThreadItem,
   PlatformEvent,
   ThreadTokenUsage,
+  TokenUsageBreakdown,
+  NormalizedContextUsage,
+  ContextUsageSource,
 } from "../../../generated/backbone-protocol";
 import type { SessionEventResponse } from "../../../generated/session-contracts";
+import { resolveKind } from "./threadItemKind";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -256,8 +263,8 @@ export interface SessionDisplayEntry {
 /** 工具调用聚合状态 */
 export interface SessionToolCallState {
   itemId: string;
-  startedItem: ThreadItem | null;
-  completedItem: ThreadItem | null;
+  startedItem: AgentDashThreadItem | null;
+  completedItem: AgentDashThreadItem | null;
   status: string;
 }
 
@@ -299,14 +306,42 @@ export type OnEntriesUpdated = (
   loading: boolean,
 ) => void;
 
+export interface TokenUsageBreakdownInfo {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  reasoningTokens: number;
+}
+
+export interface NormalizedContextUsageInfo {
+  providerContextTokens: number;
+  pendingEstimateTokens: number;
+  currentContextTokens: number;
+  cumulativeTotalTokens: number;
+  modelContextWindow?: number;
+  effectiveContextWindow?: number;
+  reserveTokens: number;
+  source: ContextUsageSource;
+}
+
 /** Token 用量信息 */
 export interface TokenUsageInfo {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  maxTokens?: number;
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
+  /** 当前上下文压力，用于上下文环和压缩判断展示。 */
+  currentContextTokens: number;
+  /** 最近 provider usage 可确认的上下文占用。 */
+  providerContextTokens: number;
+  /** 最近 provider usage 后新增内容的本地估算。 */
+  pendingEstimateTokens: number;
+  /** 累计 session 消耗，用于统计展示，不参与上下文窗口判断。 */
+  cumulativeTotalTokens: number;
+  modelContextWindow?: number;
+  effectiveContextWindow?: number;
+  reserveTokens: number;
+  usageSource: ContextUsageSource;
+  last: TokenUsageBreakdownInfo;
+  total: TokenUsageBreakdownInfo;
 }
 
 // ==================== 类型守卫 ====================
@@ -358,8 +393,8 @@ export function extractTextFromEvent(event: BackboneEvent): string {
   }
 }
 
-/** 从 ThreadItem 获取显示标题 */
-export function getThreadItemTitle(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 获取显示标题 */
+export function getThreadItemTitle(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
       return item.command;
@@ -381,49 +416,41 @@ export function getThreadItemTitle(item: ThreadItem): string {
       return item.path;
     case "userMessage":
       return "用户消息";
+    case "contextCompaction":
+      return "上下文压缩";
+    case "fsRead":
+      return `Read ${item.path}`;
+    case "fsGrep":
+      return `Grep "${item.pattern}"`;
+    case "fsGlob":
+      return `Glob ${item.pattern}`;
     default:
       return "未知";
   }
 }
 
-/** 从 ThreadItem 获取状态 */
-export function getThreadItemStatus(item: ThreadItem): string {
+/** 从 ThreadItem / AgentDashThreadItem 获取状态 */
+export function getThreadItemStatus(item: AgentDashThreadItem): string {
   switch (item.type) {
     case "commandExecution":
-      return item.status;
     case "fileChange":
-      return item.status;
     case "mcpToolCall":
-      return item.status;
     case "dynamicToolCall":
+    case "collabAgentToolCall":
+    case "fsRead":
+    case "fsGrep":
+    case "fsGlob":
       return item.status;
+    case "contextCompaction":
+      return "completed";
     default:
       return "completed";
   }
 }
 
-/** 从 ThreadItem 获取工具类型标签 */
-export function getThreadItemKind(item: ThreadItem): string {
-  switch (item.type) {
-    case "commandExecution":
-      return "execute";
-    case "fileChange":
-      return "edit";
-    case "mcpToolCall":
-      return "mcp";
-    case "dynamicToolCall":
-      return "tool";
-    case "webSearch":
-      return "search";
-    case "imageView":
-      return "image";
-    case "imageGeneration":
-      return "image";
-    case "collabAgentToolCall":
-      return "collab";
-    default:
-      return "other";
-  }
+/** 从 ThreadItem / AgentDashThreadItem 获取工具类型标签（委托给 threadItemKind 注册表） */
+export function getThreadItemKind(item: AgentDashThreadItem): string {
+  return resolveKind(item).kind;
 }
 
 /** 从 BackboneEvent 判断是否是系统/平台事件 */
@@ -443,11 +470,61 @@ export function getPlatformEventKey(event: PlatformEvent): string | null {
 export function extractTokenUsageFromEvent(event: BackboneEvent): TokenUsageInfo | null {
   if (event.type !== "token_usage_updated") return null;
   const usage: ThreadTokenUsage = event.payload.tokenUsage;
+  const context = normalizeContextUsage(usage.context, usage);
   return {
-    inputTokens: usage.total.inputTokens,
-    outputTokens: usage.total.outputTokens,
-    totalTokens: usage.total.totalTokens,
-    maxTokens: usage.modelContextWindow ?? undefined,
-    cacheReadTokens: usage.total.cachedInputTokens,
+    currentContextTokens: context.currentContextTokens,
+    providerContextTokens: context.providerContextTokens,
+    pendingEstimateTokens: context.pendingEstimateTokens,
+    cumulativeTotalTokens: context.cumulativeTotalTokens,
+    modelContextWindow: context.modelContextWindow,
+    effectiveContextWindow: context.effectiveContextWindow,
+    reserveTokens: context.reserveTokens,
+    usageSource: context.source,
+    last: normalizeTokenBreakdown(usage.last),
+    total: normalizeTokenBreakdown(usage.total),
+  };
+}
+
+function positiveNumberOrUndefined(value: number | null | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value) || value <= 0) return undefined;
+  return value;
+}
+
+function nonNegativeNumber(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value) || value < 0) return 0;
+  return value;
+}
+
+function normalizeTokenBreakdown(value: TokenUsageBreakdown): TokenUsageBreakdownInfo {
+  return {
+    inputTokens: nonNegativeNumber(value.inputTokens),
+    outputTokens: nonNegativeNumber(value.outputTokens),
+    totalTokens: nonNegativeNumber(value.totalTokens),
+    cacheReadTokens: nonNegativeNumber(value.cachedInputTokens),
+    cacheCreationTokens: 0,
+    reasoningTokens: nonNegativeNumber(value.reasoningOutputTokens),
+  };
+}
+
+function normalizeContextUsage(
+  value: NormalizedContextUsage,
+  usage: ThreadTokenUsage,
+): NormalizedContextUsageInfo {
+  const modelContextWindow = positiveNumberOrUndefined(value.modelContextWindow ?? usage.modelContextWindow);
+  const effectiveContextWindow = positiveNumberOrUndefined(value.effectiveContextWindow) ?? modelContextWindow;
+  const providerContextTokens = nonNegativeNumber(value.providerContextTokens);
+  const pendingEstimateTokens = nonNegativeNumber(value.pendingEstimateTokens);
+  const currentContextTokens = nonNegativeNumber(value.currentContextTokens);
+  const cumulativeTotalTokens = nonNegativeNumber(value.cumulativeTotalTokens);
+
+  return {
+    providerContextTokens,
+    pendingEstimateTokens,
+    currentContextTokens,
+    cumulativeTotalTokens,
+    modelContextWindow,
+    effectiveContextWindow,
+    reserveTokens: nonNegativeNumber(value.reserveTokens),
+    source: value.source,
   };
 }

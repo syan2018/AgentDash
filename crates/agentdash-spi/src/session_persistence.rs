@@ -190,6 +190,7 @@ impl RuntimeCapabilityEffectRecord {
 pub enum TitleSource {
     #[default]
     Auto,
+    Source,
     User,
 }
 
@@ -452,6 +453,233 @@ pub struct SessionEventPage {
     pub next_after_seq: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionCompactionStatus {
+    Started,
+    ProjectionCommitted,
+    Failed,
+    Superseded,
+    RolledBack,
+}
+
+impl SessionCompactionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::ProjectionCommitted => "projection_committed",
+            Self::Failed => "failed",
+            Self::Superseded => "superseded",
+            Self::RolledBack => "rolled_back",
+        }
+    }
+}
+
+impl TryFrom<&str> for SessionCompactionStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "started" => Ok(Self::Started),
+            "projection_committed" => Ok(Self::ProjectionCommitted),
+            "failed" => Ok(Self::Failed),
+            "superseded" => Ok(Self::Superseded),
+            "rolled_back" => Ok(Self::RolledBack),
+            other => Err(format!("unknown session compaction status: {other}")),
+        }
+    }
+}
+
+pub const SESSION_PROJECTION_KIND_MODEL_CONTEXT: &str = "model_context";
+pub const SESSION_PROJECTION_KIND_TIMELINE: &str = "timeline";
+pub const SESSION_PROJECTION_KIND_AUDIT: &str = "audit";
+pub const SESSION_PROJECTION_KIND_HANDOFF: &str = "handoff";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionCompactionRecord {
+    pub id: String,
+    pub session_id: String,
+    pub projection_kind: String,
+    pub projection_version: u64,
+    pub lifecycle_item_id: String,
+    pub start_event_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_event_seq: Option<u64>,
+    pub status: SessionCompactionStatus,
+    pub trigger: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    pub strategy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_head_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_start_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_end_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_kept_event_seq: Option<u64>,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub replacement_projection_json: Value,
+    #[serde(default)]
+    pub token_stats_json: Value,
+    #[serde(default)]
+    pub diagnostics_json: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    pub created_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionSegmentRecord {
+    pub id: String,
+    pub session_id: String,
+    pub projection_kind: String,
+    pub projection_version: u64,
+    pub sort_order: u64,
+    pub segment_type: String,
+    pub origin: String,
+    pub synthetic: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_start_event_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_end_event_seq: Option<u64>,
+    #[serde(default)]
+    pub source_refs_json: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_by_compaction_id: Option<String>,
+    #[serde(default)]
+    pub content_json: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_estimate: Option<u64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionProjectionHeadRecord {
+    pub session_id: String,
+    pub projection_kind: String,
+    pub projection_version: u64,
+    pub head_event_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_compaction_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by_event_seq: Option<u64>,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLineageRelationKind {
+    Fork,
+    Companion,
+    SpawnedAgent,
+    RollbackBranch,
+}
+
+impl SessionLineageRelationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fork => "fork",
+            Self::Companion => "companion",
+            Self::SpawnedAgent => "spawned_agent",
+            Self::RollbackBranch => "rollback_branch",
+        }
+    }
+}
+
+impl TryFrom<&str> for SessionLineageRelationKind {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "fork" => Ok(Self::Fork),
+            "companion" => Ok(Self::Companion),
+            "spawned_agent" => Ok(Self::SpawnedAgent),
+            "rollback_branch" => Ok(Self::RollbackBranch),
+            other => Err(format!("unknown session lineage relation kind: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLineageStatus {
+    Open,
+    Closed,
+    Archived,
+}
+
+impl SessionLineageStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::Archived => "archived",
+        }
+    }
+}
+
+impl TryFrom<&str> for SessionLineageStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "open" => Ok(Self::Open),
+            "closed" => Ok(Self::Closed),
+            "archived" => Ok(Self::Archived),
+            other => Err(format!("unknown session lineage status: {other}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SessionLineageRecord {
+    pub child_session_id: String,
+    pub parent_session_id: String,
+    pub relation_kind: SessionLineageRelationKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_point_event_seq: Option<u64>,
+    #[serde(default)]
+    pub fork_point_ref_json: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_point_compaction_id: Option<String>,
+    pub status: SessionLineageStatus,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    #[serde(default)]
+    pub metadata_json: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewCompactionProjectionCommit {
+    pub completed_event: BackboneEnvelope,
+    pub compaction: SessionCompactionRecord,
+    pub segments: Vec<SessionProjectionSegmentRecord>,
+    pub head: SessionProjectionHeadRecord,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactionProjectionCommitResult {
+    pub event: PersistedSessionEvent,
+    pub compaction: SessionCompactionRecord,
+    pub segments: Vec<SessionProjectionSegmentRecord>,
+    pub head: SessionProjectionHeadRecord,
+}
+
 #[async_trait]
 pub trait SessionMetaStore: Send + Sync {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()>;
@@ -528,6 +756,72 @@ pub trait SessionRuntimeCommandStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait SessionCompactionStore: Send + Sync {
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>>;
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>>;
+}
+
+#[async_trait]
+pub trait SessionProjectionStore: Send + Sync {
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>>;
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult>;
+}
+
+#[async_trait]
+pub trait SessionLineageStore: Send + Sync {
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()>;
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>>;
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()>;
+}
+
+#[async_trait]
 pub trait SessionPersistence: Send + Sync {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()>;
     async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>>;
@@ -588,4 +882,58 @@ pub trait SessionPersistence: Send + Sync {
         statuses: &[RuntimeCommandStatus],
         limit: u32,
     ) -> io::Result<Vec<RuntimeCommandRecord>>;
+    async fn get_compaction(
+        &self,
+        session_id: &str,
+        compaction_id: &str,
+    ) -> io::Result<Option<SessionCompactionRecord>>;
+    async fn list_compactions(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Vec<SessionCompactionRecord>>;
+    async fn list_projection_segments(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+        projection_version: u64,
+    ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
+    async fn read_projection_head(
+        &self,
+        session_id: &str,
+        projection_kind: &str,
+    ) -> io::Result<Option<SessionProjectionHeadRecord>>;
+    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;
+    async fn commit_compaction_projection(
+        &self,
+        session_id: &str,
+        commit: NewCompactionProjectionCommit,
+    ) -> io::Result<CompactionProjectionCommitResult>;
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()>;
+    async fn get_session_lineage(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Option<SessionLineageRecord>>;
+    async fn list_session_children(
+        &self,
+        parent_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn list_session_ancestors(
+        &self,
+        child_session_id: &str,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn list_session_descendants(
+        &self,
+        root_session_id: &str,
+        relation_kind: Option<SessionLineageRelationKind>,
+        status: Option<SessionLineageStatus>,
+    ) -> io::Result<Vec<SessionLineageRecord>>;
+    async fn set_session_lineage_status(
+        &self,
+        child_session_id: &str,
+        status: SessionLineageStatus,
+        updated_at_ms: i64,
+    ) -> io::Result<()>;
 }

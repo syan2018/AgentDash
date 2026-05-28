@@ -14,11 +14,12 @@ use uuid::Uuid;
 
 use crate::session::{PersistedSessionEvent, SessionPersistence};
 
-pub mod tool_calls;
+pub mod session_items;
 
-pub use tool_calls::{
-    ToolCallProjection, ToolCallSummary, find_tool_projection, is_write_projection,
-    tool_call_projections,
+pub use session_items::{
+    SessionItemProjection, SessionItemSummary, SessionItemView, filter_session_items,
+    item_file_name, item_summary_for_view, render_item_content, session_item_projections,
+    session_summary_archives, summary_archive_markdown,
 };
 
 pub const PORT_OUTPUTS_CONTAINER: &str = "port_outputs";
@@ -58,6 +59,10 @@ impl LifecycleJourneyProjection {
             inline_file_repo,
             session_persistence,
         }
+    }
+
+    pub fn session_persistence(&self) -> &dyn SessionPersistence {
+        self.session_persistence.as_ref()
     }
 
     pub async fn session_events(
@@ -105,6 +110,40 @@ impl LifecycleJourneyProjection {
                 let events = self.session_events(session_id).await?;
                 to_json_pretty(&events)
             }
+            ["items"] => {
+                self.read_items_index(session_id, SessionItemView::Items)
+                    .await
+            }
+            ["items", rest @ ..] => {
+                self.read_item_file(session_id, SessionItemView::Items, rest)
+                    .await
+            }
+            ["messages"] => {
+                self.read_items_index(session_id, SessionItemView::Messages)
+                    .await
+            }
+            ["messages", rest @ ..] => {
+                self.read_item_file(session_id, SessionItemView::Messages, rest)
+                    .await
+            }
+            ["tools"] => {
+                self.read_items_index(session_id, SessionItemView::Tools)
+                    .await
+            }
+            ["tools", rest @ ..] => {
+                self.read_item_file(session_id, SessionItemView::Tools, rest)
+                    .await
+            }
+            ["writes"] => {
+                self.read_items_index(session_id, SessionItemView::Writes)
+                    .await
+            }
+            ["writes", rest @ ..] => {
+                self.read_item_file(session_id, SessionItemView::Writes, rest)
+                    .await
+            }
+            ["summaries"] => self.read_compaction_summary_index(session_id).await,
+            ["summaries", rest @ ..] => self.read_compaction_summary(session_id, rest).await,
             ["turns"] => {
                 let events = self.session_events(session_id).await?;
                 let summaries = group_events_into_turn_summaries(&events);
@@ -147,67 +186,73 @@ impl LifecycleJourneyProjection {
         }
     }
 
-    pub async fn read_tool_calls_projection(
+    pub async fn session_item_projections(
+        &self,
+        session_id: &str,
+    ) -> JourneyResult<Vec<SessionItemProjection>> {
+        let events = self.session_events(session_id).await?;
+        Ok(session_item_projections(&events))
+    }
+
+    pub async fn read_items_index(
+        &self,
+        session_id: &str,
+        view: SessionItemView,
+    ) -> JourneyResult<String> {
+        let projections = self.session_item_projections(session_id).await?;
+        let summaries = filter_session_items(&projections, view)
+            .iter()
+            .map(|projection| item_summary_for_view(projection, view))
+            .collect::<Vec<SessionItemSummary>>();
+        to_json_pretty(&summaries)
+    }
+
+    pub async fn read_item_file(
+        &self,
+        session_id: &str,
+        view: SessionItemView,
+        rest: &[&str],
+    ) -> JourneyResult<String> {
+        let name = join_rest(rest)?;
+        let projections = self.session_item_projections(session_id).await?;
+        let projection = filter_session_items(&projections, view)
+            .into_iter()
+            .find(|projection| item_file_name(projection, view) == name)
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("session item 不存在: {name}"))
+            })?;
+        render_item_content(&projection, view)
+    }
+
+    pub async fn read_compaction_summary_index(&self, session_id: &str) -> JourneyResult<String> {
+        let entries = session_summary_archives(self.session_persistence.as_ref(), session_id)
+            .await?
+            .into_iter()
+            .map(|(entry, _)| entry)
+            .collect::<Vec<_>>();
+        to_json_pretty(&entries)
+    }
+
+    pub async fn read_compaction_summary(
         &self,
         session_id: &str,
         rest: &[&str],
     ) -> JourneyResult<String> {
-        let events = self.session_events(session_id).await?;
-        let projections = tool_call_projections(&events);
-        match rest {
-            [] => {
-                let summaries: Vec<_> = projections
-                    .iter()
-                    .map(|projection| &projection.summary)
-                    .collect();
-                to_json_pretty(&summaries)
-            }
-            [tool_call_id, "raw.json"] => {
-                let projection = find_tool_projection(&projections, tool_call_id)?;
-                to_json_pretty(&projection.raw_events)
-            }
-            [tool_call_id, "request.json"] => {
-                let projection = find_tool_projection(&projections, tool_call_id)?;
-                let request = projection.request.as_ref().ok_or_else(|| {
-                    LifecycleJourneyError::NotFound(format!(
-                        "tool call `{tool_call_id}` 没有 request"
-                    ))
-                })?;
-                to_json_pretty(request)
-            }
-            [tool_call_id, "result.json"] => {
-                let projection = find_tool_projection(&projections, tool_call_id)?;
-                let result = projection.result.as_ref().ok_or_else(|| {
-                    LifecycleJourneyError::NotFound(format!(
-                        "tool call `{tool_call_id}` 没有 result"
-                    ))
-                })?;
-                to_json_pretty(result)
-            }
-            [tool_call_id, "stdout.txt"] => {
-                let projection = find_tool_projection(&projections, tool_call_id)?;
-                if projection.stdout.is_empty() {
-                    return Err(LifecycleJourneyError::NotFound(format!(
-                        "tool call `{tool_call_id}` 没有 stdout"
-                    )));
-                }
-                Ok(projection.stdout.clone())
-            }
-            _ => Err(LifecycleJourneyError::NotFound(format!(
-                "tool-calls projection 不支持的路径: {}",
-                rest.join("/")
-            ))),
-        }
-    }
-
-    pub async fn read_writes_projection(&self, session_id: &str) -> JourneyResult<String> {
-        let events = self.session_events(session_id).await?;
-        let writes = tool_call_projections(&events)
+        let name = join_rest(rest)?;
+        let entries =
+            session_summary_archives(self.session_persistence.as_ref(), session_id).await?;
+        let (_, compaction) = entries
             .into_iter()
-            .filter(is_write_projection)
-            .map(|projection| projection.summary)
-            .collect::<Vec<_>>();
-        to_json_pretty(&writes)
+            .find(|(entry, _)| {
+                entry
+                    .path
+                    .strip_prefix("session/summaries/")
+                    .is_some_and(|path| path == name)
+            })
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("compaction summary 不存在: {name}"))
+            })?;
+        Ok(summary_archive_markdown(&compaction))
     }
 
     pub async fn list_port_outputs(&self, run_id: Uuid) -> JourneyResult<BTreeMap<String, String>> {
@@ -353,10 +398,9 @@ impl LifecycleJourneyProjection {
                 &format!("{}/summary", step.step_key),
             )
             .await
+            && let Some(content) = file.into_text_content()
         {
-            if let Some(content) = file.into_text_content() {
-                return Ok(content);
-            }
+            return Ok(content);
         }
 
         step.summary.clone().ok_or_else(|| {

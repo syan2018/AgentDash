@@ -1,6 +1,6 @@
 /// PiAgentConnector — 基于 agentdash-agent 的进程内 Agent 连接器
 ///
-/// 与 `VibeKanbanExecutorsConnector`（通过子进程执行）不同，
+/// 与 `CodexBridgeConnector`（通过子进程执行）不同，
 /// PiAgentConnector 在进程内运行 Agent Loop，直接调用 LLM API。
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -13,7 +13,9 @@ use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::{Agent, AgentConfig, AgentMessage, DynAgentTool, LlmBridge};
-use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::llm_provider::{
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
+};
 use agentdash_domain::settings::SettingsRepository;
 
 use super::bridges::provider_registry::{
@@ -23,7 +25,7 @@ use crate::hook_events::build_hook_trace_envelope;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
-    ExecutionContext, ExecutionStream, PromptPayload,
+    DiscoveryContext, ExecutionContext, ExecutionStream, PromptPayload,
 };
 
 // ─── PiAgentConnector ───────────────────────────────────────────
@@ -35,6 +37,8 @@ pub struct PiAgentConnector {
     providers: Vec<ProviderEntry>,
     settings_repo: Option<Arc<dyn SettingsRepository>>,
     llm_provider_repo: Option<Arc<dyn LlmProviderRepository>>,
+    llm_provider_credential_repo: Option<Arc<dyn LlmProviderCredentialRepository>>,
+    llm_secret_codec: Option<Arc<dyn LlmSecretCodec>>,
     /// Layer 0: 系统全局 base system prompt。
     system_prompt: String,
     /// Layer 2: 用户偏好提示列表（每条独立的偏好指令）。
@@ -86,6 +90,8 @@ impl PiAgentConnector {
             providers: Vec::new(),
             settings_repo: None,
             llm_provider_repo: None,
+            llm_provider_credential_repo: None,
+            llm_secret_codec: None,
             system_prompt: system_prompt.into(),
             user_preferences: Vec::new(),
             agents: Arc::new(Mutex::new(HashMap::new())),
@@ -116,6 +122,17 @@ impl PiAgentConnector {
         self.llm_provider_repo = Some(repo);
     }
 
+    pub fn set_llm_provider_credential_repository(
+        &mut self,
+        repo: Arc<dyn LlmProviderCredentialRepository>,
+    ) {
+        self.llm_provider_credential_repo = Some(repo);
+    }
+
+    pub fn set_llm_secret_codec(&mut self, codec: Arc<dyn LlmSecretCodec>) {
+        self.llm_secret_codec = Some(codec);
+    }
+
     pub(crate) fn add_provider(&mut self, provider: ProviderEntry) {
         self.providers.push(provider);
     }
@@ -124,9 +141,22 @@ impl PiAgentConnector {
         self.providers.len()
     }
 
-    async fn load_provider_runtime_state(&self) -> ProviderRuntimeState {
-        if let Some(llm_provider_repo) = &self.llm_provider_repo {
-            let providers = build_provider_entries_from_db(llm_provider_repo.as_ref()).await;
+    async fn load_provider_runtime_state(
+        &self,
+        identity: Option<&agentdash_spi::AuthIdentity>,
+    ) -> ProviderRuntimeState {
+        if let (Some(llm_provider_repo), Some(secret_codec)) =
+            (&self.llm_provider_repo, &self.llm_secret_codec)
+        {
+            let providers = build_provider_entries_from_db(
+                llm_provider_repo.as_ref(),
+                self.llm_provider_credential_repo
+                    .as_ref()
+                    .map(|repo| repo.as_ref()),
+                secret_codec.as_ref(),
+                identity,
+            )
+            .await;
             let default_model = providers
                 .first()
                 .map(|provider| provider.entry.default_model.clone());
@@ -199,6 +229,12 @@ impl PiAgentConnector {
             return Ok(provider.create_bridge(resolved_model));
         }
 
+        if let Some(provider_id) = provider_id {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "当前身份没有可用的 LLM Provider `{provider_id}` 凭据，请在个人 BYOK 设置中补齐"
+            )));
+        }
+
         if let Some(model_id) = model_id {
             if provider_state.default_model.as_deref() == Some(model_id) {
                 return Ok(default_bridge.clone());
@@ -241,6 +277,7 @@ impl AgentConnector for PiAgentConnector {
             supports_variants: false,
             supports_model_override: true,
             supports_permission_policy: false,
+            supports_source_session_title: false,
         }
     }
 
@@ -262,7 +299,24 @@ impl AgentConnector for PiAgentConnector {
         _executor: &str,
         _working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
-        let provider_state = self.load_provider_runtime_state().await;
+        self.discover_options_stream_with_context(
+            _executor,
+            DiscoveryContext {
+                working_dir: _working_dir,
+                identity: None,
+            },
+        )
+        .await
+    }
+
+    async fn discover_options_stream_with_context(
+        &self,
+        _executor: &str,
+        context: DiscoveryContext,
+    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        let provider_state = self
+            .load_provider_runtime_state(context.identity.as_ref())
+            .await;
         let mut all_providers: Vec<serde_json::Value> = vec![];
         let mut all_models: Vec<serde_json::Value> = vec![];
 
@@ -310,7 +364,8 @@ impl AgentConnector for PiAgentConnector {
         let default_model = provider_state.default_model.clone();
 
         // 从工作目录扫描 skill，注册为 slash commands
-        let slash_commands: Vec<serde_json::Value> = _working_dir
+        let slash_commands: Vec<serde_json::Value> = context
+            .working_dir
             .as_deref()
             .map(discover_skill_slash_commands)
             .unwrap_or_default();
@@ -344,11 +399,7 @@ impl AgentConnector for PiAgentConnector {
         if prompt_text.is_empty() {
             return Err(ConnectorError::InvalidConfig("prompt 内容为空".to_string()));
         }
-        let restored_messages = context
-            .turn
-            .restored_session_state
-            .as_ref()
-            .map(|state| state.messages.clone());
+        let restored_state = context.turn.restored_session_state.as_ref().cloned();
 
         let existing_runtime = {
             let mut agents = self.agents.lock().await;
@@ -369,7 +420,10 @@ impl AgentConnector for PiAgentConnector {
         let mut agent = if let Some(runtime) = existing_runtime {
             if should_recreate_agent {
                 let preserved_messages = runtime.agent.messages().await;
-                let provider_state = self.load_provider_runtime_state().await;
+                let preserved_message_refs = runtime.agent.message_refs().await;
+                let provider_state = self
+                    .load_provider_runtime_state(context.session.identity.as_ref())
+                    .await;
                 if !provider_state.is_configured() {
                     return Err(ConnectorError::InvalidConfig(
                         "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
@@ -384,7 +438,9 @@ impl AgentConnector for PiAgentConnector {
                     )
                     .await?;
                 let agent = self.create_agent_with_bridge(bridge);
-                agent.replace_messages(preserved_messages).await;
+                agent
+                    .replace_messages_with_refs(preserved_messages, preserved_message_refs)
+                    .await;
                 current_tools = context.turn.assembled_tools.clone();
                 tracing::info!(
                     session_id = %session_id,
@@ -398,7 +454,9 @@ impl AgentConnector for PiAgentConnector {
                 runtime.agent
             }
         } else {
-            let provider_state = self.load_provider_runtime_state().await;
+            let provider_state = self
+                .load_provider_runtime_state(context.session.identity.as_ref())
+                .await;
             if !provider_state.is_configured() {
                 return Err(ConnectorError::InvalidConfig(
                     "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
@@ -428,8 +486,10 @@ impl AgentConnector for PiAgentConnector {
                 cached_identity_prompt = Some(system_prompt.clone());
             }
             agent.set_tools(current_tools.clone());
-            if let Some(messages) = restored_messages.filter(|messages| !messages.is_empty()) {
-                agent.replace_messages(messages).await;
+            if let Some(state) = restored_state.filter(|state| !state.messages.is_empty()) {
+                agent
+                    .replace_messages_with_refs(state.messages, state.message_refs)
+                    .await;
             }
         } else if incoming_identity_prompt.as_deref() != cached_identity_prompt.as_deref() {
             if let Some(system_prompt) = incoming_identity_prompt.as_ref() {

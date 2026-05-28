@@ -12,7 +12,8 @@
 
 import { useMemo } from "react";
 
-import type { ActivityDefinition, TransitionCondition } from "../../../../types";
+import { isWorkflowJsonValue } from "../../../../types";
+import type { ActivityDefinition, JsonValue, TransitionCondition } from "../../../../types";
 
 export interface ConditionEditorProps {
   condition: TransitionCondition;
@@ -75,9 +76,10 @@ function stringifyValue(value: unknown): string {
   }
 }
 
-function parseValue(input: string): unknown {
+function parseValue(input: string): JsonValue {
   try {
-    return JSON.parse(input);
+    const parsed: unknown = JSON.parse(input);
+    return isWorkflowJsonValue(parsed) ? parsed : input;
   } catch {
     return input;
   }

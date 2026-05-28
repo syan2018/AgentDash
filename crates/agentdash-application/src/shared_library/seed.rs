@@ -49,6 +49,11 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
         key: "canvas-system",
         version: "1.0.4",
     },
+    BuiltinAssetVersion {
+        asset_type: LibraryAssetType::SkillTemplate,
+        key: "companion-system",
+        version: "1.0.0",
+    },
 ];
 
 pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
@@ -179,7 +184,7 @@ fn skill_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
             let files = template
                 .bundle
                 .files
-                .into_iter()
+                .iter()
                 .map(|file| SkillTemplateFilePayload {
                     path: file.relative_path.to_string(),
                     content: file.content.to_string(),

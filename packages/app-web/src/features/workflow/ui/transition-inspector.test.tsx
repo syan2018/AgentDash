@@ -33,7 +33,12 @@ const activities: ActivityDefinition[] = [
     output_ports: [{ key: "decision", description: "", gate_strategy: "existence" }],
   }),
   activity("implement", {
-    input_ports: [{ key: "spec", description: "", context_strategy: "full" }],
+    input_ports: [{
+      key: "spec",
+      description: "",
+      context_strategy: "full",
+      standalone_fulfillment: "required",
+    }],
   }),
 ];
 

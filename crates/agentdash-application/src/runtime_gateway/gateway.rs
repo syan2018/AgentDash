@@ -10,12 +10,14 @@ use super::types::{
 
 pub struct RuntimeGateway {
     providers: HashMap<RuntimeActionKey, Arc<dyn RuntimeProvider>>,
+    dynamic_providers: Vec<Arc<dyn RuntimeProvider>>,
 }
 
 impl RuntimeGateway {
     pub fn new() -> Self {
         Self {
             providers: HashMap::new(),
+            dynamic_providers: Vec::new(),
         }
     }
 
@@ -26,6 +28,15 @@ impl RuntimeGateway {
 
     pub fn with_provider(mut self, provider: Arc<dyn RuntimeProvider>) -> Self {
         self.register(provider);
+        self
+    }
+
+    pub fn register_dynamic(&mut self, provider: Arc<dyn RuntimeProvider>) {
+        self.dynamic_providers.push(provider);
+    }
+
+    pub fn with_dynamic_provider(mut self, provider: Arc<dyn RuntimeProvider>) -> Self {
+        self.register_dynamic(provider);
         self
     }
 
@@ -79,9 +90,15 @@ impl RuntimeGateway {
             .providers
             .get(&request.action_key)
             .cloned()
+            .or_else(|| {
+                self.dynamic_providers
+                    .iter()
+                    .find(|provider| provider.supports(&request.action_key, &request.context))
+                    .cloned()
+            })
             .ok_or_else(|| RuntimeInvocationError::ProviderUnavailable {
                 action_key: request.action_key.clone(),
-                trace: Some(trace.clone()),
+                trace: Some(Box::new(trace.clone())),
             })?;
 
         validate_request(provider.as_ref(), &request)?;

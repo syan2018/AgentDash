@@ -4,6 +4,7 @@ import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resiz
 import type { BackboneEvent } from "../generated/backbone-protocol";
 import { SessionChatView } from "../features/session";
 import { extractPlatformEventData } from "../features/session/model/platformEvent";
+import { useProjectExtensionRuntime } from "../features/extension-runtime";
 import { LifecycleSessionView } from "../features/workflow/lifecycle-session-view";
 import {
   WorkspacePanel,
@@ -16,7 +17,7 @@ import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { useWorkflowStore } from "../stores/workflowStore";
-import { useWorkspaceStore } from "../stores/workspaceStore";
+import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import type {
   ProjectSessionAgentContext,
   SessionBindingOwner,
@@ -39,6 +40,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const selectProject = useProjectStore((state) => state.selectProject);
   const projects = useProjectStore((state) => state.projects);
   const fetchWorkspaces = useWorkspaceStore((state) => state.fetchWorkspaces);
+  const workspacesByProjectId = useWorkspaceStore((state) => state.workspacesByProjectId);
   const { createNew, setActiveSessionId, reload: reloadSessions, updateTitle, patchSessionLocally } = useSessionHistoryStore();
   const runsBySessionId = useWorkflowStore((state) => state.runsBySessionId);
   const fetchRunsBySession = useWorkflowStore((state) => state.fetchRunsBySession);
@@ -256,6 +258,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
+  const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   useEffect(() => {
     if (!ownerProjectId) return;
     void fetchWorkspaces(ownerProjectId);
@@ -288,6 +291,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     ?? ownerStory?.default_workspace_id
     ?? ownerProject?.config.default_workspace_id
     ?? null;
+  const workspaceBackend = useMemo(() => {
+    const ownerProjectWorkspaces = ownerProjectId ? workspacesByProjectId[ownerProjectId] ?? [] : [];
+    const selectedWorkspace = chatWorkspaceId
+      ? ownerProjectWorkspaces.find((workspace) => workspace.id === chatWorkspaceId) ?? null
+      : ownerProjectWorkspaces[0] ?? null;
+    if (!selectedWorkspace) return null;
+    const binding = findWorkspaceBinding(selectedWorkspace);
+    if (!binding) return null;
+    return {
+      backend_id: binding.backend_id,
+      label: selectedWorkspace.name || binding.backend_id,
+      online: binding.status !== "offline" && binding.status !== "error",
+    };
+  }, [chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
   const handleCreateSession = useCallback(async (title: string) => {
     const meta = await createNew(title);
@@ -331,7 +348,10 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
           setSessionTitle(newTitle);
           patchSessionLocally(currentSessionId, {
             title: newTitle,
-            title_source: newTitleSource === "auto" || newTitleSource === "user" ? newTitleSource : undefined,
+            title_source:
+              newTitleSource === "auto" || newTitleSource === "source" || newTitleSource === "user"
+                ? newTitleSource
+                : undefined,
           });
         }
         break;
@@ -406,27 +426,33 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     [currentSessionId, runsBySessionId],
   );
   const workspaceRuntimeData: WorkspaceRuntimeData = useMemo(() => ({
+    projectId: ownerProjectId,
     sessionId: currentSessionId,
     runtimeStatus: sessionRuntimeState.status,
     runtimeError: sessionRuntimeState.error,
+    extensionRuntime,
     contextSnapshot: sessionContextSnapshot,
     ownerStory,
     ownerProjectName,
     executorSummary: taskExecutorSummary,
     runtimeSurface: sessionRuntimeSurface,
+    workspaceBackend,
     hookRuntime: activeHookRuntime,
     sessionCapabilities,
     workflowRuns: lifecycleRuns,
     activeCanvasId,
   }), [
+    ownerProjectId,
     currentSessionId,
     sessionRuntimeState.status,
     sessionRuntimeState.error,
+    extensionRuntime,
     sessionContextSnapshot,
     ownerStory,
     ownerProjectName,
     taskExecutorSummary,
     sessionRuntimeSurface,
+    workspaceBackend,
     activeHookRuntime,
     sessionCapabilities,
     lifecycleRuns,

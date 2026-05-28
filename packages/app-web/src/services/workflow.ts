@@ -18,6 +18,9 @@ import type {
   HookRulePreset,
   ContextStrategy,
   GateStrategy,
+  InputPortDefinition,
+  JsonValue,
+  OutputPortDefinition,
   StandaloneFulfillment,
   LifecycleExecutionEntry,
   LifecycleExecutionEventKind,
@@ -27,6 +30,7 @@ import type {
   WorkflowContract,
   WorkflowDefinition,
   WorkflowDefinitionSource,
+  WorkflowCapabilityConfig,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -80,6 +84,33 @@ function requireStringField(raw: Record<string, unknown>, field: string): string
   return value;
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue);
+  }
+  const record = asRecord(value);
+  return record ? Object.values(record).every(isJsonValue) : false;
+}
+
+function mapJsonValue(value: unknown, field: string): JsonValue {
+  if (isJsonValue(value)) {
+    return value;
+  }
+  throw new Error(`${field} 必须是 JSON value`);
+}
+
+function mapOptionalJsonValue(value: unknown, field: string): JsonValue | undefined {
+  return value === undefined ? undefined : mapJsonValue(value, field);
+}
+
 function normalizeTargetKinds(raw: unknown, field: string): WorkflowTargetKind[] {
   const values = asStringArray(raw).map((value) =>
     normalizeEnum<WorkflowTargetKind>(value, WORKFLOW_TARGET_KINDS, field),
@@ -128,37 +159,40 @@ function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRule
     trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "workflow hook trigger"),
     description: optStringField(raw, "description"),
     preset: optString(raw.preset),
-    params: asRecord(raw.params),
+    params: mapOptionalJsonValue(raw.params, "workflow hook params"),
     script: optString(raw.script),
     enabled: raw.enabled !== false,
   };
 }
 
-function mapOutputPortDefinition(raw: Record<string, unknown>) {
+function mapOutputPortDefinition(raw: Record<string, unknown>): OutputPortDefinition {
   return {
     key: requireStringField(raw, "key"),
     description: optStringField(raw, "description"),
-    gate_strategy: raw.gate_strategy != null
-      ? normalizeEnum<GateStrategy>(raw.gate_strategy, GATE_STRATEGIES, "output port gate strategy")
-      : undefined,
-    gate_params: asRecord(raw.gate_params),
+    gate_strategy: normalizeEnum<GateStrategy>(
+      raw.gate_strategy,
+      GATE_STRATEGIES,
+      "output port gate strategy",
+    ),
+    gate_params: mapOptionalJsonValue(raw.gate_params, "output port gate params"),
   };
 }
 
-function mapInputPortDefinition(raw: Record<string, unknown>) {
+function mapInputPortDefinition(raw: Record<string, unknown>): InputPortDefinition {
   return {
     key: requireStringField(raw, "key"),
     description: optStringField(raw, "description"),
-    context_strategy: raw.context_strategy != null
-      ? normalizeEnum<ContextStrategy>(raw.context_strategy, CONTEXT_STRATEGIES, "input port context strategy")
-      : undefined,
+    context_strategy: normalizeEnum<ContextStrategy>(
+      raw.context_strategy,
+      CONTEXT_STRATEGIES,
+      "input port context strategy",
+    ),
     context_template: optString(raw.context_template),
     standalone_fulfillment: mapStandaloneFulfillment(raw.standalone_fulfillment),
   };
 }
 
-function mapStandaloneFulfillment(raw: unknown): StandaloneFulfillment | undefined {
-  if (raw == null) return undefined;
+function mapStandaloneFulfillment(raw: unknown): StandaloneFulfillment {
   if (raw === "required") return "required";
   const value = asRecord(raw);
   const optional = value ? asRecord(value.optional) : null;
@@ -194,7 +228,7 @@ function mapCapabilityDirective(raw: unknown, index: number): CapabilityDirectiv
   throw new Error(`capability_config.tool_directives[${index}] 缺少 add / remove 字段`);
 }
 
-function mapWorkflowCapabilityConfig(raw: unknown) {
+function mapWorkflowCapabilityConfig(raw: unknown): WorkflowCapabilityConfig {
   const value = asRecord(raw);
   const directivesRaw = value && Array.isArray(value.tool_directives)
     ? value.tool_directives
@@ -202,7 +236,9 @@ function mapWorkflowCapabilityConfig(raw: unknown) {
   return {
     tool_directives: directivesRaw.map((item, idx) => mapCapabilityDirective(item, idx)),
     mount_directives: value && Array.isArray(value.mount_directives)
-      ? [...value.mount_directives]
+      ? value.mount_directives.map((item, index) =>
+          mapJsonValue(item, `capability_config.mount_directives[${index}]`),
+        )
       : [],
   };
 }
@@ -246,7 +282,7 @@ function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
         type: "api_request",
         method: requireStringField(value, "method"),
         url_template: requireStringField(value, "url_template"),
-        body_template: asRecord(value.body_template),
+        body_template: mapOptionalJsonValue(value.body_template, "api request body template"),
       };
     }
     if (type === "bash_exec") {
@@ -339,7 +375,7 @@ function mapTransitionCondition(raw: unknown): TransitionCondition {
       activity: requireStringField(value, "activity"),
       port: requireStringField(value, "port"),
       path: requireStringField(value, "path"),
-      value: value.value,
+      value: mapJsonValue(value.value, "transition condition value"),
     };
   }
   if (kind === "human_decision_equals") {
@@ -355,7 +391,7 @@ function mapTransitionCondition(raw: unknown): TransitionCondition {
       kind,
       activity: requireStringField(value, "activity"),
       signal_key: requireStringField(value, "signal_key"),
-      value: value.value,
+      value: mapJsonValue(value.value, "transition condition value"),
     };
   }
   throw new Error(`未知的 transition condition: ${kind}`);
@@ -391,7 +427,7 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
     step_key: requireStringField(raw, "step_key"),
     event_kind: normalizeEnum<LifecycleExecutionEventKind>(raw.event_kind, LIFECYCLE_EXECUTION_EVENT_KINDS, "lifecycle execution event kind"),
     summary: requireStringField(raw, "summary"),
-    detail: asRecord(raw.detail),
+    detail: mapOptionalJsonValue(raw.detail, "lifecycle execution detail"),
   };
 }
 
@@ -429,7 +465,7 @@ function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState |
       activity_key: requireStringField(artifact, "activity_key"),
       attempt: Number(artifact.attempt),
       port_key: requireStringField(artifact, "port_key"),
-      value: artifact.value,
+      value: mapJsonValue(artifact.value, "activity output artifact value"),
       created_at: requireStringField(artifact, "created_at"),
     })),
     inputs: asRecordArray(value.inputs).map((artifact) => ({
@@ -439,7 +475,7 @@ function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState |
       source_activity_key: requireStringField(artifact, "source_activity_key"),
       source_attempt: Number(artifact.source_attempt),
       source_port_key: requireStringField(artifact, "source_port_key"),
-      value: artifact.value,
+      value: mapJsonValue(artifact.value, "activity input artifact value"),
       created_at: requireStringField(artifact, "created_at"),
     })),
   };

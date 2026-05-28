@@ -1,6 +1,8 @@
 use super::*;
 use crate::connectors::pi_agent::factory::{NoopBridge, build_pi_agent_connector};
-use agentdash_agent::{AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, StopReason};
+use agentdash_agent::{
+    AgentEvent, AgentToolResult, AssistantStreamEvent, ContentPart, MessageRef, StopReason,
+};
 use agentdash_agent_protocol::{BackboneEvent, SourceInfo};
 use agentdash_domain::DomainError;
 use agentdash_domain::settings::{Setting, SettingScope, SettingsRepository};
@@ -297,6 +299,58 @@ impl agentdash_domain::llm_provider::LlmProviderRepository for TestLlmProviderRe
     }
 }
 
+#[derive(Default)]
+struct TestLlmProviderCredentialRepository;
+
+#[async_trait::async_trait]
+impl agentdash_domain::llm_provider::LlmProviderCredentialRepository
+    for TestLlmProviderCredentialRepository
+{
+    async fn get_for_user_provider(
+        &self,
+        _user_id: &str,
+        _provider_id: uuid::Uuid,
+    ) -> Result<Option<agentdash_domain::llm_provider::LlmProviderUserCredential>, DomainError>
+    {
+        Ok(None)
+    }
+
+    async fn list_for_user(
+        &self,
+        _user_id: &str,
+    ) -> Result<Vec<agentdash_domain::llm_provider::LlmProviderUserCredential>, DomainError> {
+        Ok(Vec::new())
+    }
+
+    async fn upsert_for_user_provider(
+        &self,
+        _credential: &agentdash_domain::llm_provider::LlmProviderUserCredential,
+    ) -> Result<(), DomainError> {
+        Ok(())
+    }
+
+    async fn delete_for_user_provider(
+        &self,
+        _user_id: &str,
+        _provider_id: uuid::Uuid,
+    ) -> Result<bool, DomainError> {
+        Ok(false)
+    }
+}
+
+#[derive(Default)]
+struct TestLlmSecretCodec;
+
+impl agentdash_domain::llm_provider::LlmSecretCodec for TestLlmSecretCodec {
+    fn encrypt(&self, plaintext: &str) -> Result<String, DomainError> {
+        Ok(plaintext.to_string())
+    }
+
+    fn decrypt(&self, ciphertext: &str) -> Result<String, DomainError> {
+        Ok(ciphertext.to_string())
+    }
+}
+
 async fn discover_options_state(connector: &PiAgentConnector) -> serde_json::Value {
     let patches = connector
         .discover_options_stream("PI_AGENT", None)
@@ -363,6 +417,147 @@ fn thinking_delta_maps_to_agent_thought_chunk() {
     assert_eq!(envelopes.len(), 1);
     match &envelopes[0].event {
         BackboneEvent::ReasoningTextDelta(delta) => assert_eq!(delta.delta, "plan"),
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn context_compaction_started_maps_to_context_compaction_item() {
+    let event = AgentEvent::ContextCompactionStarted {
+        item_id: "compact-1".to_string(),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(started) => {
+            assert!(matches!(
+                started.item.as_codex(),
+                Some(agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id })
+                    if id == "compact-1"
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn context_compaction_completed_maps_lifecycle_and_metadata() {
+    let event = AgentEvent::ContextCompacted {
+        item_id: "compact-1".to_string(),
+        messages: vec![
+            agentdash_agent::AgentMessage::compaction_summary_with_boundary(
+                "summary body",
+                48_000,
+                8,
+                Some(MessageRef {
+                    turn_id: "turn-1".to_string(),
+                    entry_index: 2,
+                }),
+            ),
+        ],
+        message_refs: vec![None],
+        compacted_until_ref: MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 2,
+        },
+        first_kept_ref: Some(MessageRef {
+            turn_id: "turn-1".to_string(),
+            entry_index: 3,
+        }),
+        newly_compacted_messages: 3,
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 2);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            value,
+        }) => {
+            assert_eq!(key, "context_compacted");
+            assert_eq!(value["lifecycle_item_id"], "compact-1");
+            assert_eq!(value["summary"], "summary body");
+            assert_eq!(value["compacted_until_ref"]["turn_id"], "turn-1");
+            assert_eq!(value["first_kept_ref"]["entry_index"], 3);
+            assert_eq!(value["newly_compacted_messages"], 3);
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
+        BackboneEvent::ItemCompleted(completed) => {
+            assert!(matches!(
+                completed.item.as_codex(),
+                Some(agentdash_agent_protocol::codex_app_server_protocol::ThreadItem::ContextCompaction { id })
+                    if id == "compact-1"
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn context_compaction_failure_maps_diagnostic_and_error() {
+    let event = AgentEvent::ContextCompactionFailed {
+        item_id: "compact-1".to_string(),
+        error: "summary_empty".to_string(),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 2);
+    match &envelopes[0].event {
+        BackboneEvent::Platform(agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate {
+            key,
+            value,
+        }) => {
+            assert_eq!(key, "context_compaction_failed");
+            assert_eq!(value["lifecycle_item_id"], "compact-1");
+            assert_eq!(value["status"], "failed");
+            assert_eq!(value["error"], "summary_empty");
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+    match &envelopes[1].event {
+        BackboneEvent::Error(error) => {
+            assert_eq!(error.error.message, "summary_empty");
+            assert!(!error.will_retry);
+        }
         other => panic!("unexpected backbone event: {other:?}"),
     }
 }
@@ -568,7 +763,207 @@ fn message_end_without_streamed_tool_call_emits_pending_tool_call() {
     match &envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. } if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, arguments, .. }) if tool == "read_file" && *arguments == serde_json::json!({ "path": "README.md" }))
+            );
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn fs_tools_map_to_agentdash_native_thread_items() {
+    let cases = [
+        (
+            "fs_read",
+            serde_json::json!({ "file_path": "README.md", "offset": 4, "limit": 12 }),
+        ),
+        (
+            "fs_grep",
+            serde_json::json!({
+                "pattern": "AgentDashThreadItem",
+                "path": "crates",
+                "glob": "*.rs",
+                "type": "rust",
+                "output_mode": "content",
+                "head_limit": 20,
+                "offset": 2
+            }),
+        ),
+        (
+            "fs_glob",
+            serde_json::json!({ "pattern": "**/*.rs", "path": "crates", "maxResults": 50 }),
+        ),
+    ];
+
+    for (tool_name, args) in cases {
+        let event = AgentEvent::ToolExecutionStart {
+            tool_call_id: format!("{tool_name}-1"),
+            tool_name: tool_name.to_string(),
+            args,
+        };
+
+        let mut entry_index = 0;
+        let mut chunk_emit_states = HashMap::new();
+        let mut tool_call_states = HashMap::new();
+        let envelopes = convert_event_to_envelopes(
+            &event,
+            "session-1",
+            &test_source(),
+            "turn-1",
+            &mut entry_index,
+            &mut chunk_emit_states,
+            &mut tool_call_states,
+        );
+
+        assert_eq!(envelopes.len(), 1);
+        match (&envelopes[0].event, tool_name) {
+            (BackboneEvent::ItemStarted(n), "fs_read") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsRead {
+                            path,
+                            offset: Some(4),
+                            limit: Some(12),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if path == "README.md"
+                ));
+            }
+            (BackboneEvent::ItemStarted(n), "fs_grep") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsGrep {
+                            pattern,
+                            path: Some(path),
+                            glob: Some(glob),
+                            file_type: Some(file_type),
+                            output_mode: Some(output_mode),
+                            head_limit: Some(20),
+                            offset: Some(2),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if pattern == "AgentDashThreadItem"
+                        && path == "crates"
+                        && glob == "*.rs"
+                        && file_type == "rust"
+                        && output_mode == "content"
+                ));
+            }
+            (BackboneEvent::ItemStarted(n), "fs_glob") => {
+                assert!(matches!(
+                    &n.item,
+                    agentdash_agent_protocol::AgentDashThreadItem::AgentDash(
+                        agentdash_agent_protocol::AgentDashNativeThreadItem::FsGlob {
+                            pattern,
+                            path: Some(path),
+                            max_results: Some(50),
+                            status: codex_app_server_protocol::DynamicToolCallStatus::InProgress,
+                            ..
+                        }
+                    ) if pattern == "**/*.rs" && path == "crates"
+                ));
+            }
+            (other, _) => panic!("unexpected backbone event: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn fs_apply_patch_maps_to_codex_file_change() {
+    let patch = "\
+*** Begin Patch
+*** Add File: notes.txt
++hello
+*** Update File: src/lib.rs
+@@
+-old
++new
+*** Delete File: gone.txt
+*** End Patch
+";
+    let event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-patch-1".to_string(),
+        tool_name: "fs_apply_patch".to_string(),
+        args: serde_json::json!({ "patch": patch }),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            let Some(codex_app_server_protocol::ThreadItem::FileChange {
+                changes, status, ..
+            }) = n.item.as_codex()
+            else {
+                panic!("expected codex FileChange, got {:?}", n.item);
+            };
+            assert!(matches!(
+                status,
+                codex_app_server_protocol::PatchApplyStatus::InProgress
+            ));
+            assert_eq!(changes.len(), 3);
+            assert_eq!(changes[0].path, "notes.txt");
+            assert!(matches!(
+                changes[0].kind,
+                codex_app_server_protocol::PatchChangeKind::Add
+            ));
+            assert_eq!(changes[1].path, "src/lib.rs");
+            assert!(matches!(
+                changes[1].kind,
+                codex_app_server_protocol::PatchChangeKind::Update { .. }
+            ));
+            assert_eq!(changes[2].path, "gone.txt");
+            assert!(matches!(
+                changes[2].kind,
+                codex_app_server_protocol::PatchChangeKind::Delete
+            ));
+        }
+        other => panic!("unexpected backbone event: {other:?}"),
+    }
+}
+
+#[test]
+fn fs_apply_patch_falls_back_to_dynamic_when_patch_is_unparseable() {
+    let event = AgentEvent::ToolExecutionStart {
+        tool_call_id: "tool-patch-1".to_string(),
+        tool_name: "fs_apply_patch".to_string(),
+        args: serde_json::json!({ "patch": "not a patch" }),
+    };
+
+    let mut entry_index = 0;
+    let mut chunk_emit_states = HashMap::new();
+    let mut tool_call_states = HashMap::new();
+    let envelopes = convert_event_to_envelopes(
+        &event,
+        "session-1",
+        &test_source(),
+        "turn-1",
+        &mut entry_index,
+        &mut chunk_emit_states,
+        &mut tool_call_states,
+    );
+
+    assert_eq!(envelopes.len(), 1);
+    match &envelopes[0].event {
+        BackboneEvent::ItemStarted(n) => {
+            assert!(
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "fs_apply_patch")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -692,7 +1087,7 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     match &update_envelopes[0].event {
         BackboneEvent::ItemStarted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "echo")
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "echo")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -701,7 +1096,7 @@ fn tool_execution_updates_preserve_full_tool_result_payload() {
     match &end_envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. } if tool == "echo" && *success == Some(true))
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, success, .. }) if tool == "echo" && *success == Some(true))
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -851,7 +1246,7 @@ fn tool_execution_end_without_start_emits_orphan_terminal_update() {
     match &envelopes[0].event {
         BackboneEvent::ItemCompleted(n) => {
             assert!(
-                matches!(&n.item, codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. } if tool == "present_canvas")
+                matches!(n.item.as_codex(), Some(codex_app_server_protocol::ThreadItem::DynamicToolCall { tool, .. }) if tool == "present_canvas")
             );
         }
         other => panic!("unexpected backbone event: {other:?}"),
@@ -1127,11 +1522,20 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
 
     let settings_repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
 
-    let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
-        .await
-        .expect("connector should initialize even without provider");
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize even without provider");
     connector.set_llm_provider_repository(llm_repo.clone());
+    connector.set_llm_provider_credential_repository(credential_repo.clone());
+    connector.set_llm_secret_codec(secret_codec.clone());
 
     let initial = discover_options_state(&connector).await;
     assert_eq!(
@@ -1144,7 +1548,7 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
     );
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
-    provider.api_key = "test-key".to_string();
+    provider.global_api_key_ciphertext = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
 
@@ -1165,16 +1569,25 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
 
     let settings_repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
 
     let mut provider = LlmProvider::new("Anthropic Claude", "anthropic", WireProtocol::Anthropic);
-    provider.api_key = "test-key".to_string();
+    provider.global_api_key_ciphertext = "test-key".to_string();
     provider.default_model = "test-model".to_string();
     llm_repo.set_providers(vec![provider]);
 
-    let mut connector = build_pi_agent_connector(settings_repo.as_ref(), llm_repo.as_ref())
-        .await
-        .expect("connector should initialize");
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize");
     connector.set_llm_provider_repository(llm_repo.clone());
+    connector.set_llm_provider_credential_repository(credential_repo.clone());
+    connector.set_llm_secret_codec(secret_codec.clone());
 
     let initial = discover_options_state(&connector).await;
     assert_eq!(
@@ -1203,9 +1616,12 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
 async fn prompt_without_provider_configuration_returns_clear_error() {
     let repo = Arc::new(TestSettingsRepository::default());
     let llm_repo = TestLlmProviderRepository::default();
-    let mut connector = build_pi_agent_connector(repo.as_ref(), &llm_repo)
-        .await
-        .expect("connector should initialize even without provider");
+    let credential_repo = TestLlmProviderCredentialRepository;
+    let secret_codec = TestLlmSecretCodec;
+    let mut connector =
+        build_pi_agent_connector(repo.as_ref(), &llm_repo, &credential_repo, &secret_codec)
+            .await
+            .expect("connector should initialize even without provider");
     connector.set_settings_repository(repo);
 
     let result = connector
@@ -1265,6 +1681,7 @@ async fn prompt_restores_repository_messages_before_new_user_prompt() {
                             agentdash_spi::AgentMessage::user("历史用户消息"),
                             agentdash_spi::AgentMessage::assistant("历史助手消息"),
                         ],
+                        message_refs: vec![None, None],
                     }),
                     ..Default::default()
                 },

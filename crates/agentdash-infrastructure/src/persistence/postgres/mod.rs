@@ -3,6 +3,7 @@ mod auth_session_repository;
 mod backend_execution_lease_repository;
 mod backend_repository;
 mod canvas_repository;
+mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
@@ -111,8 +112,11 @@ pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
+pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
-pub use llm_provider_repository::PostgresLlmProviderRepository;
+pub use llm_provider_repository::{
+    PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
+};
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
 pub use project_extension_installation_repository::PostgresProjectExtensionInstallationRepository;

@@ -17,25 +17,28 @@ use agentdash_application::routine::RoutineExecutor;
 use agentdash_application::runtime_gateway::{RuntimeGateway, RuntimeSessionMcpAccess};
 use agentdash_application::scheduling::CronSchedulerHandle;
 use agentdash_application::session::{
-    SessionCapabilityService, SessionControlService, SessionCoreService, SessionEffectsService,
-    SessionEventingService, SessionHookService, SessionLaunchService, SessionRuntimeService,
-    SessionTitleService,
+    SessionBranchingService, SessionCapabilityService, SessionControlService, SessionCoreService,
+    SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
+    SessionRuntimeService, SessionTitleService,
 };
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
 use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
+use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_executor::AgentConnector;
 use agentdash_plugin_api::AgentDashPlugin;
 use agentdash_plugin_api::AuthMode;
+use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
 const BACKEND_RUNTIME_EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// 应用服务集合 — 执行引擎、连接器与各类注册表
 pub struct ServiceSet {
     pub session_core: SessionCoreService,
+    pub session_branching: SessionBranchingService,
     pub session_eventing: SessionEventingService,
     pub session_runtime: SessionRuntimeService,
     pub session_control: SessionControlService,
@@ -81,6 +84,8 @@ pub struct ServiceSet {
     pub audit_bus: SharedContextAuditBus,
     /// 统一运行时能力网关 — Session/Setup runtime action 的共享入口
     pub runtime_gateway: Arc<RuntimeGateway>,
+    /// Extension package archive object 存储端口 — API 只通过 application use case 消费。
+    pub extension_package_artifact_storage: Arc<dyn ExtensionPackageArtifactStorage>,
 }
 
 /// 应用级配置
@@ -91,6 +96,10 @@ pub struct AppConfig {
     pub auth_mode: AuthMode,
 }
 
+pub struct SecretSet {
+    pub llm_provider_secret: Arc<dyn LlmSecretCodec>,
+}
+
 /// 全局应用状态
 ///
 /// 通过 Axum 的 State extractor 注入到各路由处理函数中。
@@ -99,6 +108,7 @@ pub struct AppState {
     pub repos: RepositorySet,
     pub services: ServiceSet,
     pub config: AppConfig,
+    pub secrets: SecretSet,
     /// 认证/授权提供者（由插件注入，None 表示无认证）
     pub auth_provider: Option<Arc<dyn agentdash_plugin_api::AuthProvider>>,
 }
@@ -126,6 +136,11 @@ impl AppState {
         let repos = repository_bootstrap.repos;
         let auth_session_service = repository_bootstrap.auth_session_service;
         let session_persistence = repository_bootstrap.session_persistence;
+        let extension_package_artifact_storage =
+            repository_bootstrap.extension_package_artifact_storage;
+        let llm_provider_secret: Arc<dyn LlmSecretCodec> = Arc::new(
+            agentdash_infrastructure::LlmProviderSecretCipher::from_env_or_create_default()?,
+        );
 
         let platform_config: SharedPlatformConfig = Arc::new(PlatformConfig {
             mcp_base_url: std::env::var("AGENTDASH_MCP_BASE_URL").ok().or_else(|| {
@@ -170,11 +185,13 @@ impl AppState {
                 platform_config: platform_config.clone(),
                 plugin_connectors: plugin_registration.connectors,
                 extra_skill_dirs: plugin_registration.extra_skill_dirs,
+                llm_provider_secret: llm_provider_secret.clone(),
             },
         )
         .await?;
         let session_runtime_builder = session_bootstrap.session_runtime_builder;
         let session_core = session_bootstrap.session_core;
+        let session_branching = session_bootstrap.session_branching;
         let session_eventing = session_bootstrap.session_eventing;
         let session_runtime = session_bootstrap.session_runtime;
         let session_control = session_bootstrap.session_control;
@@ -193,6 +210,8 @@ impl AppState {
             mcp_probe_relay,
             setup_action_transport,
             session_mcp_access,
+            repos.project_extension_installation_repo.clone(),
+            backend_registry.clone(),
         );
 
         let lock_map = Arc::new(TaskLockMap::new());
@@ -266,6 +285,7 @@ impl AppState {
             repos,
             services: ServiceSet {
                 session_core,
+                session_branching,
                 session_eventing,
                 session_runtime,
                 session_control,
@@ -292,10 +312,14 @@ impl AppState {
                 routine_executor: None,
                 audit_bus,
                 runtime_gateway,
+                extension_package_artifact_storage,
             },
             config: AppConfig {
                 platform_config,
                 auth_mode,
+            },
+            secrets: SecretSet {
+                llm_provider_secret,
             },
             auth_provider: plugin_registration.auth_provider,
         };

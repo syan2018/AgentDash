@@ -14,6 +14,7 @@ use super::scheduler::{
     ActivityExecutorLauncher, ActivityExecutorStartError, ActivityExecutorStartResult,
 };
 use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
+use crate::companion::skill_projection::project_companion_system_skill_to_activation;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;
 use crate::session::capability_state::{
@@ -253,7 +254,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             let runtime_mcp_servers = session_capability
                 .get_runtime_mcp_servers(root_session_id)
                 .await;
-            let activation = activate_step_with_platform(
+            let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
                     active_step: &active_step,
@@ -271,6 +272,12 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 },
                 platform_config,
             );
+            project_companion_system_skill_to_activation(
+                &self.repos,
+                definition.project_id,
+                &mut activation,
+            )
+            .await?;
             apply_to_running_session(
                 &activation,
                 &hook_session,
@@ -293,7 +300,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .as_ref()
                 .map(|surface| agent_mcp_entries_from_servers(&surface.tool.mcp_servers))
                 .unwrap_or_default();
-            let activation = activate_step_with_platform(
+            let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
                     active_step: &active_step,
@@ -311,6 +318,12 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 },
                 platform_config,
             );
+            project_companion_system_skill_to_activation(
+                &self.repos,
+                definition.project_id,
+                &mut activation,
+            )
+            .await?;
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
             let mut declarations =
                 ToolCapabilityDimensionModule::capability_directive_declarations(
@@ -407,7 +420,7 @@ where
                 AgentSessionPolicy::ContinueRoot => {
                     self.start_continue_root(
                         definition,
-                        &activity,
+                        activity,
                         spec.workflow_key.as_str(),
                         state,
                         claim,

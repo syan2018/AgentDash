@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use crate::session::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, CompanionSessionContext, LaunchCommand,
@@ -46,17 +46,19 @@ pub enum CompanionRequestTarget {
     Sub,
     Parent,
     Human,
+    Platform,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompanionRequestParams {
-    /// 发给谁：sub（子 agent）、parent（父 agent）、human（用户）
+    /// 发给谁：sub（子 agent）、parent（父 agent）、human（用户）、platform（平台 broker）
     pub target: CompanionRequestTarget,
     /// 是否期望等待对方回应（创建 follow_up_required pending action，是否阻塞由 workflow 决定）
     #[serde(default)]
     pub wait: bool,
-    /// JSON 字符串格式的 payload，内容由 target 决定。示例：{"type":"task","prompt":"...","label":"reviewer"}
-    pub payload: String,
+    /// 结构化 JSON object payload，内容由 target 与 payload.type 决定。
+    #[schemars(schema_with = "json_object_payload_schema")]
+    pub payload: serde_json::Value,
 }
 
 #[derive(Clone)]
@@ -118,15 +120,7 @@ impl AgentTool for CompanionRequestTool {
     }
 
     fn description(&self) -> &str {
-        "向 companion 信道发起请求。target 决定方向（sub/parent/human），wait 决定是否暂停等回应，payload 为自由结构。\n\n\
-         payload 填写约定：\n\
-         ▸ target=sub 派发子任务：{\"type\":\"task\", \"prompt\":\"...\", \"label\":\"companion\", \"context_mode\":\"compact\", \"agent_key\":\"<agent name>\"}\n\
-         ▸ target=parent 向上提审：{\"type\":\"review\", \"prompt\":\"...\"}\n\
-         ▸ target=human 问用户：{\"type\":\"approval\", \"prompt\":\"...\", \"options\":[\"A\",\"B\"]}\n\
-         ▸ target=human 通知：{\"type\":\"notification\", \"message\":\"...\"}\n\n\
-         agent_key（仅 target=sub）：可选，指定执行子任务的 agent 名称（如 \"code-reviewer\"），必须是当前项目已关联的 agent。\
-         不指定则使用当前会话的执行器配置。可用 agent 列表见系统上下文中的 Companion Agents 章节。\n\n\
-         workflow_key（仅 target=sub）：可选，为子 agent 分配一个 workflow。指定后子 session 会自动创建 lifecycle run 并获得 workflow 的 port 门禁、能力指令和上下文注入。"
+        "向 companion 通用交互信道发起结构化请求。target 支持 sub、parent、human、platform；payload 必须是 JSON object。复杂 payload 规则见 companion-system skill。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -143,8 +137,10 @@ impl AgentTool for CompanionRequestTool {
         let raw: CompanionRequestParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
 
-        let payload: serde_json::Value = serde_json::from_str(&raw.payload)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("payload 不是合法 JSON: {e}")))?;
+        let payload = raw.payload;
+        if let Some(error) = super::payload_types::payload_object_error(&payload) {
+            return Err(AgentToolError::InvalidArguments(error));
+        }
 
         // payload type 校验
         let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
@@ -170,6 +166,10 @@ impl AgentTool for CompanionRequestTool {
             }
             CompanionRequestTarget::Human => {
                 self.execute_human_request(raw.wait, &payload, cancel).await
+            }
+            CompanionRequestTarget::Platform => {
+                self.execute_platform_request(raw.wait, &payload, cancel)
+                    .await
             }
         }
     }
@@ -712,6 +712,9 @@ impl CompanionRequestTool {
 
         let request_id = format!("human-{}", Uuid::new_v4().simple());
         let payload_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let ui_hint = super::payload_types::PayloadTypeRegistry::with_builtins()
+            .ui_hint(payload_type)
+            .unwrap_or("generic_companion_request");
         let options: Vec<String> = payload
             .get("options")
             .and_then(|v| v.as_array())
@@ -750,6 +753,8 @@ impl CompanionRequestTool {
                     "options": options,
                     "wait": true,
                     "payload_type": payload_type,
+                    "ui_hint": ui_hint,
+                    "payload": payload,
                 }),
             );
             if let Err(error) = session_services
@@ -806,6 +811,8 @@ impl CompanionRequestTool {
                         "options": options,
                         "wait": false,
                         "payload_type": payload_type,
+                        "ui_hint": ui_hint,
+                        "payload": payload,
                     }),
                 );
                 let _ = session_services
@@ -824,8 +831,34 @@ impl CompanionRequestTool {
                     "wait": false,
                     "prompt": prompt,
                     "options": options,
+                    "payload_type": payload_type,
+                    "ui_hint": ui_hint,
                 })),
             })
+        }
+    }
+
+    /// target=platform：当前先作为 platform broker 的统一入口，授权类请求会转成
+    /// 人类审批交互；授权事实落地由后续 grant 持久化任务承接。
+    async fn execute_platform_request(
+        &self,
+        wait: bool,
+        payload: &serde_json::Value,
+        cancel: CancellationToken,
+    ) -> Result<AgentToolResult, AgentToolError> {
+        let payload_type = payload.get("type").and_then(|value| value.as_str());
+        match payload_type {
+            Some("capability_grant_request") => {
+                let broker_payload = build_platform_capability_grant_payload(payload)?;
+                self.execute_human_request(wait, &broker_payload, cancel)
+                    .await
+            }
+            Some(type_name) => Err(AgentToolError::InvalidArguments(format!(
+                "target=platform 暂不支持 payload.type=`{type_name}`"
+            ))),
+            None => Err(AgentToolError::InvalidArguments(
+                "target=platform 要求 payload.type".to_string(),
+            )),
         }
     }
 
@@ -1062,8 +1095,9 @@ impl CompanionRequestTool {
 pub struct CompanionRespondParams {
     /// 回应的 request_id（companion_request 返回的 dispatch_id 或 hook pending action id）
     pub request_id: String,
-    /// JSON 字符串格式的 payload。示例：{"type":"resolution","status":"approved","summary":"..."}
-    pub payload: String,
+    /// 结构化 JSON object payload。示例：{"type":"resolution","status":"approved","summary":"..."}
+    #[schemars(schema_with = "json_object_payload_schema")]
+    pub payload: serde_json::Value,
 }
 
 #[derive(Clone)]
@@ -1099,12 +1133,7 @@ impl AgentTool for CompanionRespondTool {
     }
 
     fn description(&self) -> &str {
-        "回应 companion 信道上的请求。request_id 指定回应哪个请求，payload 为自由结构。\n\n\
-         payload 填写约定：\n\
-         ▸ 审批通过：{\"type\":\"resolution\", \"status\":\"approved\", \"summary\":\"...\"}\n\
-         ▸ 驳回：{\"type\":\"resolution\", \"status\":\"rejected\", \"summary\":\"...\"}\n\
-         ▸ 任务完成：{\"type\":\"completion\", \"status\":\"completed\", \"summary\":\"...\", \"final\":true}\n\
-         ▸ 需要修改：{\"type\":\"resolution\", \"status\":\"needs_revision\", \"summary\":\"...\", \"follow_ups\":[\"...\"]}"
+        "回应 companion 信道上的请求。request_id 指定回应对象，payload 必须是 JSON object，并应匹配原请求的 expected response type。复杂规则见 companion-system skill。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1121,8 +1150,10 @@ impl AgentTool for CompanionRespondTool {
         let raw: CompanionRespondParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
 
-        let payload: serde_json::Value = serde_json::from_str(&raw.payload)
-            .map_err(|e| AgentToolError::InvalidArguments(format!("payload 不是合法 JSON: {e}")))?;
+        let payload = raw.payload;
+        if let Some(error) = super::payload_types::payload_object_error(&payload) {
+            return Err(AgentToolError::InvalidArguments(error));
+        }
 
         // 先做 response 基础结构校验；与 request_type 的匹配在具体回流路径中校验。
         let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
@@ -1550,6 +1581,79 @@ fn parse_adoption_mode(value: &str) -> CompanionAdoptionMode {
     } else {
         CompanionAdoptionMode::Suggestion
     }
+}
+
+fn json_object_payload_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "additionalProperties": true
+    })
+}
+
+fn build_platform_capability_grant_payload(
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, AgentToolError> {
+    let mut object = payload.as_object().cloned().ok_or_else(|| {
+        AgentToolError::InvalidArguments(
+            "capability_grant_request payload 必须是 object".to_string(),
+        )
+    })?;
+
+    if !object.contains_key("prompt") && !object.contains_key("message") {
+        let prompt = object
+            .get("interaction_hint")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| {
+                build_capability_grant_prompt(&serde_json::Value::Object(object.clone()))
+            });
+        object.insert("prompt".to_string(), serde_json::Value::String(prompt));
+    }
+
+    object
+        .entry("options".to_string())
+        .or_insert_with(|| serde_json::json!(["批准", "拒绝"]));
+    object.insert(
+        "platform_broker".to_string(),
+        serde_json::Value::String("capability_grant".to_string()),
+    );
+
+    Ok(serde_json::Value::Object(object))
+}
+
+fn build_capability_grant_prompt(payload: &serde_json::Value) -> String {
+    let paths = payload
+        .get("requested_paths")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::trim))
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "未声明具体路径".to_string());
+    let reason = payload
+        .get("reason")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .unwrap_or("未提供理由");
+    let scope = payload
+        .get("scope")
+        .and_then(|value| value.as_str())
+        .unwrap_or("session");
+    let ttl = payload
+        .get("ttl_seconds")
+        .and_then(|value| value.as_u64())
+        .map(|seconds| format!("，TTL {seconds} 秒"))
+        .unwrap_or_default();
+
+    format!("Agent 请求临时能力扩展：{paths}。理由：{reason}。范围：{scope}{ttl}。")
 }
 
 // ─── hook action 辅助（从 hook_action.rs 合并） ─────────────────────
@@ -2206,7 +2310,8 @@ mod companion_tests {
     use super::{
         CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionRespondTool,
         CompanionSliceMode, build_companion_dispatch_prompt, build_companion_dispatch_slice,
-        build_companion_execution_slice, companion_owner_candidates,
+        build_companion_execution_slice, build_platform_capability_grant_payload,
+        companion_owner_candidates,
     };
     use agentdash_domain::session_binding::SessionOwnerType;
     use agentdash_spi::AgentTool;
@@ -2252,6 +2357,35 @@ mod companion_tests {
         assert_eq!(candidates[0].0, SessionOwnerType::Task);
         assert_eq!(candidates[1].0, SessionOwnerType::Story);
         assert_eq!(candidates[1].1, story_id);
+    }
+
+    #[test]
+    fn platform_capability_grant_payload_adds_prompt_and_options() {
+        let payload = serde_json::json!({
+            "type": "capability_grant_request",
+            "requested_paths": ["workflow_management::upsert_lifecycle_tool"],
+            "reason": "需要更新 lifecycle 定义",
+            "scope": "session",
+            "ttl_seconds": 3600
+        });
+
+        let broker_payload =
+            build_platform_capability_grant_payload(&payload).expect("broker payload");
+
+        assert_eq!(
+            broker_payload["platform_broker"],
+            serde_json::json!("capability_grant")
+        );
+        assert!(
+            broker_payload["prompt"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("workflow_management::upsert_lifecycle_tool")
+        );
+        assert_eq!(
+            broker_payload["options"],
+            serde_json::json!(["批准", "拒绝"])
+        );
     }
 
     #[test]
@@ -2624,7 +2758,7 @@ mod companion_tests {
         });
         let args = serde_json::json!({
             "request_id": "dispatch-1",
-            "payload": payload.to_string()
+            "payload": payload
         });
 
         let result = tool

@@ -7,9 +7,10 @@ use agentdash_domain::backend::{
     ProjectBackendAccessRepository, RuntimeHealthRepository,
 };
 use agentdash_domain::canvas::CanvasRepository;
+use agentdash_domain::extension_package::ExtensionPackageArtifactRepository;
 use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
-use agentdash_domain::llm_provider::LlmProviderRepository;
+use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::project_vfs_mount::ProjectVfsMountRepository;
@@ -52,8 +53,10 @@ pub struct RepositorySet {
     pub user_directory_repo: Arc<dyn UserDirectoryRepository>,
     pub settings_repo: Arc<dyn SettingsRepository>,
     pub shared_library_repo: Arc<dyn LibraryAssetRepository>,
+    pub extension_package_artifact_repo: Arc<dyn ExtensionPackageArtifactRepository>,
     pub project_extension_installation_repo: Arc<dyn ProjectExtensionInstallationRepository>,
     pub llm_provider_repo: Arc<dyn LlmProviderRepository>,
+    pub llm_provider_credential_repo: Arc<dyn LlmProviderCredentialRepository>,
     pub mcp_preset_repo: Arc<dyn McpPresetRepository>,
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,

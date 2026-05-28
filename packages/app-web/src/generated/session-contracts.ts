@@ -3,8 +3,50 @@
 
 import type { BackboneEnvelope } from "./backbone-protocol";
 
+export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
+
+export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
+
+export type RollbackSessionProjectionRequest = { target_event_seq: number, active_compaction_id?: string, reason?: string, };
+
+export type SessionAttachmentContextContributionResponse = { name: string, tokens: number, };
+
+export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
+
+export type SessionContextUsageCategoryResponse = { kind: string, label: string, token_estimate: number, source: string, deferred: boolean, };
+
 export type SessionEventResponse = { session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, };
 
 export type SessionEventsPageResponse = { snapshot_seq: number, events: Array<SessionEventResponse>, has_more: boolean, next_after_seq: number, };
 
+export type SessionForkChildSessionResponse = { id: string, title: string, created_at: number, updated_at: number, last_event_seq: number, };
+
+export type SessionForkResponse = { parent_session_id: string, child_session: SessionForkChildSessionResponse, lineage: SessionLineageRecordResponse, child_initial_compaction_id: string, projection_version: number, head_event_seq: number, };
+
+export type SessionLineageRecordResponse = { child_session_id: string, parent_session_id: string, relation_kind: SessionLineageRelationKindDto, fork_point_event_seq?: number, fork_point_ref_json: JsonValue, fork_point_compaction_id?: string, status: SessionLineageStatusDto, created_at_ms: number, updated_at_ms: number, metadata_json: JsonValue, };
+
+export type SessionLineageRelationKindDto = "fork" | "companion" | "spawned_agent" | "rollback_branch";
+
+export type SessionLineageStatusDto = "open" | "closed" | "archived";
+
+export type SessionLineageViewResponse = { session_id: string, lineage?: SessionLineageRecordResponse, ancestors: Array<SessionLineageRecordResponse>, children: Array<SessionLineageRecordResponse>, };
+
+export type SessionMessageContextBreakdownResponse = { user_message_tokens: number, assistant_message_tokens: number, tool_call_tokens: number, tool_result_tokens: number, attachment_tokens: number, };
+
+export type SessionMessageRefDto = { turn_id: string, entry_index: number, };
+
 export type SessionNdjsonEnvelope = { "type": "connected", last_event_id: number, } | { "type": "event", session_id: string, event_seq: number, occurred_at_ms: number, committed_at_ms: number, session_update_type: string, turn_id?: string, entry_index?: number, tool_call_id?: string, notification: BackboneEnvelope, } | { "type": "heartbeat", timestamp: number, };
+
+export type SessionProjectionMessageRefResponse = { turn_id: string, entry_index: number, };
+
+export type SessionProjectionRollbackResponse = { session_id: string, event: SessionEventResponse, head_event_seq: number, active_compaction_id?: string, projection_version: number, updated_by_event_seq?: number, };
+
+export type SessionProjectionSegmentProvenanceResponse = { compaction_id?: string, projection_version?: number, segment_type?: string, strategy?: string, trigger?: string, phase?: string, };
+
+export type SessionProjectionSegmentViewResponse = { id: string, sort_order: number, segment_type: string, role: string, origin: string, synthetic: boolean, projection_kind: string, message_ref: SessionProjectionMessageRefResponse, source_event_seq?: number, source_range?: SessionProjectionSourceRangeResponse, projection_segment_id?: string, preview: string, token_estimate?: number, attachment_tokens?: number, attachment_names?: Array<string>, tool_names?: Array<string>, provenance: SessionProjectionSegmentProvenanceResponse, };
+
+export type SessionProjectionSourceRangeResponse = { start_event_seq: number, end_event_seq: number, };
+
+export type SessionProjectionViewResponse = { session_id: string, projection_kind: string, projection_version: number, head_event_seq: number, active_compaction_id?: string, token_estimate?: number, message_count: number, segments: Array<SessionProjectionSegmentViewResponse>, context_usage: SessionContextUsageAnalysisResponse, };
+
+export type SessionToolContextContributionResponse = { name: string, call_tokens: number, result_tokens: number, };

@@ -24,16 +24,30 @@
 
 ### 3. ToolCall 映射
 
-- `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`（`ThreadItem::DynamicToolCall`）；
+- `ToolCall` 起始映射为 `BackboneEvent::ItemStarted`，item 类型为
+  `AgentDashThreadItem`；
 - `ToolCallResult` 完成映射为 `BackboneEvent::ItemCompleted`；
 - `ToolCallEmitState` 追踪每个 `tool_call_id` 的 `entry_index` 和元数据。
+- 工具名称到 item 的映射：
+  - `shell_exec` -> Codex `ThreadItem::CommandExecution`
+  - `fs_apply_patch` -> Codex `ThreadItem::FileChange`
+  - `fs_read` -> `AgentDashNativeThreadItem::FsRead`
+  - `fs_grep` -> `AgentDashNativeThreadItem::FsGrep`
+  - `fs_glob` -> `AgentDashNativeThreadItem::FsGlob`
+  - 其他工具 -> Codex `ThreadItem::DynamicToolCall`
 
 ### 4. Turn 生命周期
 
 - Turn 开始产出 `BackboneEvent::TurnStarted`；
 - Turn 结束产出 `BackboneEvent::TurnCompleted`。
 
-### 5. entry_index 递增
+### 5. 上下文压缩 lifecycle
+
+- `AgentEvent::ContextCompactionStarted` 映射为 `BackboneEvent::ItemStarted`，item 为 `ThreadItem::ContextCompaction`。
+- `AgentEvent::ContextCompacted` 先映射为 `PlatformEvent::SessionMetaUpdate(key="context_compacted")`，再映射为 `BackboneEvent::ItemCompleted`。应用层使用 `context_compacted` metadata 提交 checkpoint / projection，再让 completed marker 进入普通事件流。
+- `AgentEvent::ContextCompactionFailed` 映射为 `PlatformEvent::SessionMetaUpdate(key="context_compaction_failed")` 与 `BackboneEvent::Error`。结构化 diagnostic 服务审计和熔断；Error 服务现有错误消费路径。
+
+### 6. entry_index 递增
 
 - 保持原契约：本条 assistant 消息处理完成后再递增 `entry_index`。
 
@@ -54,4 +68,3 @@
 - `crates/agentdash-executor/src/connectors/pi_agent/stream_mapper.rs` — 事件映射与 ChunkEmitState
 - `packages/app-web/src/features/session/model/useSessionStream.ts` — 流管理 hook
 - `packages/app-web/src/features/session/model/useSessionFeed.ts` — 事件聚合消费
-

@@ -207,4 +207,5 @@ export interface ProjectSessionEntry {
   agent_key: string | null;
   agent_display_name: string | null;
   parent_session_id: string | null;
+  parent_relation_kind: "fork" | "companion" | "spawned_agent" | "rollback_branch" | null;
 }

@@ -59,6 +59,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures = "0.3"
 zip = "2.4"
+flate2 = "1.1.9"
+tar = "0.4.45"
 
 # 嵌入式脚本引擎
 rhai = { version = "1.24", features = ["serde", "sync"] }
@@ -80,7 +82,7 @@ agentdash-plugin-api = { path = "crates/agentdash-plugin-api" }
 agentdash-contracts = { path = "crates/agentdash-contracts" }
 
 # Codex App Server Protocol
-codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.124.0", package = "codex-app-server-protocol" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex.git", tag = "rust-v0.133.0", package = "codex-app-server-protocol" }
 
 # Agent 事件流传输协议
 agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }
@@ -88,12 +90,3 @@ agentdash-agent-protocol = { path = "crates/agentdash-agent-protocol" }
 # ACP 协议 (官方 SDK)
 agent-client-protocol = { version = "0.10.2", features = ["unstable"] }
 ts-rs = { version = "11.1", features = ["serde-json-impl", "no-serde-warnings", "chrono-impl"] }
-
-# vibe-kanban executors; pinned so Codex Rust protocol stays aligned with workspace.
-executors = { git = "https://github.com/BloopAI/vibe-kanban.git", rev = "4deb7eca8f381f7cbc1f9d15515a9ab8f8009053", package = "executors" }
-
-[patch.crates-io]
-# vibe-kanban 的 executors → codex-core 依赖 tokio-tungstenite/proxy feature，
-# crates.io 版本不提供该 feature，需用 OpenAI 的维护分支替换。
-tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
-tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

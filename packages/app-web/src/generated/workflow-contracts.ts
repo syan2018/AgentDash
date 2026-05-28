@@ -111,6 +111,8 @@ export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | 
  */
 export type LifecycleNodeType = "agent_node" | "phase_node";
 
+export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+
 export type LifecycleStepDefinition = { key: string, description: string, workflow_key?: string | null, node_type: LifecycleNodeType,
 /**
  * Step 级产出约束：该节点必须交付的 artifacts
@@ -163,6 +165,20 @@ export type ValidationIssue = { code: string, message: string, field_path: strin
 
 export type ValidationSeverity = "error" | "warning";
 
+/**
+ * Workflow 可挂载到哪一类 owner。
+ * 这里只描述绑定范围，不表达 workflow 自身的业务主语。
+ *
+ * **Model C 收敛（2026-04-27）**：原先的 `Task` 变体已被移除——Task 不再作为独立
+ * aggregate，而是 Story aggregate 下的 child entity；task-scope lifecycle
+ * definition 统一归到 Story binding。详见
+ * `.trellis/spec/backend/story-task-runtime.md`。
+ *
+ * 注意：`SessionOwnerType::Task` 仍然存在（session binding 的 owner 坐标系
+ * 不受影响），但当需要把它映射到 `WorkflowBindingKind` 时，会落到 `Story`。
+ */
+export type WorkflowBindingKind = "project" | "story";
+
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string | null, };
 
 export type WorkflowContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>,
@@ -180,6 +196,8 @@ output_ports?: Array<OutputPortDefinition>,
  * Workflow 输入声明 — 同时作为运行约束：lifecycle 内由 edge wire 满足，standalone 由调用方写入。
  */
 input_ports?: Array<InputPortDefinition>, };
+
+export type WorkflowDefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
 export type WorkflowHookRuleSpec = { key: string, trigger: WorkflowHookTrigger, description: string, preset?: string | null, params?: JsonValue | null, script?: string | null, enabled: boolean, };
 

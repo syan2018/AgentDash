@@ -92,3 +92,20 @@ Canvas iframe 通过 Gateway 调用 Session Action 的约束：
 - iframe SDK 只发送 `action_key` + `input`，actor/context 由父页面/API route 组装
 - Canvas 专用 `/runtime-invoke` 不接受 iframe 传入的 actor/context/trace
 - API route 必须再次校验 Session 与 Canvas Project 绑定关系
+
+---
+
+## Extension Runtime Action
+
+Project extension runtime action 通过动态 provider 接入 `RuntimeGateway`。Provider 在 invocation 阶段读取 Project enabled extension installations，按 `project_id + action_key` 解析 extension identity、action schema、权限声明和 packaged artifact 引用。
+
+调用约束：
+
+- extension action 使用 `RuntimeContext::Session`，并要求 context 携带 `project_id`。
+- backend placement 使用 `RuntimeTarget::Backend`，原因是 action 需要路由到实际承载本机 TS Extension Host 的 local backend。
+- API / panel 调用面只提交 `action_key + input`，actor、context、target 和 trace 由宿主侧组装。
+- Relay payload 使用 `command.extension_action_invoke` / `response.extension_action_invoke`，携带 extension key/id、action key、project/session、trace、invocation 与 package artifact。
+- Gateway output metadata 合并 extension key/id、action key、backend id、trace id 与 invocation id，原因是 extension action 的执行结果需要可审计到具体安装与本机后端。
+- packaged artifact 调用由 local backend 在收到 relay payload 后完成 archive 下载、cache 命中与 TS Extension Host activation，原因是云端只持有 Project 安装事实和 artifact 存储，本机 runtime 才持有可执行 host 与 workspace roots。
+- runtime action invocation 要求对应 installation 拥有 `package_artifact`，原因是 action 执行必须绑定到可校验 archive、manifest digest 与本机 Host activation。
+- local backend 下载 archive 使用 `/api/local-runtime/projects/{project_id}/extension-artifacts/{artifact_id}/archive`，通过 backend relay bearer token 鉴权，并复用 Project backend access 校验，原因是插件包执行权限必须绑定到已授权的 Project/backend 关系。

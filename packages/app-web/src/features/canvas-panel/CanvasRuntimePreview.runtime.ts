@@ -173,10 +173,13 @@ export function buildPreviewDocument(
     };
     const runtimeInvokeTimeoutMs = 60000;
     const assetUrlTimeoutMs = 60000;
+    const extensionChannelTimeoutMs = 60000;
     const pendingRuntimeInvocations = new Map();
     const pendingAssetUrls = new Map();
+    const pendingExtensionChannels = new Map();
     let runtimeInvokeSeq = 0;
     let assetUrlSeq = 0;
+    let extensionChannelSeq = 0;
     window.agentdash = Object.freeze({
       invoke(actionKey, input = {}) {
         if (typeof actionKey !== "string" || actionKey.trim().length === 0) {
@@ -231,12 +234,46 @@ export function buildPreviewDocument(
           }, "*");
         },
       }),
+      extensions: Object.freeze({
+        invoke(channelKey, method, input = {}, options = {}) {
+          if (typeof channelKey !== "string" || channelKey.trim().length === 0) {
+            return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 channelKey"));
+          }
+          if (typeof method !== "string" || method.trim().length === 0) {
+            return Promise.reject(new Error("agentdash.extensions.invoke 需要非空 method"));
+          }
+
+          const requestId = "canvas-ext-channel-" + (++extensionChannelSeq);
+          return new Promise((resolve, reject) => {
+            const timeout = window.setTimeout(() => {
+              pendingExtensionChannels.delete(requestId);
+              reject(new Error("Canvas extension channel 调用超时"));
+            }, extensionChannelTimeoutMs);
+            pendingExtensionChannels.set(requestId, { resolve, reject, timeout });
+            window.parent.postMessage({
+              kind: "canvas-extension-channel-invoke",
+              frame_id: frameId,
+              request_id: requestId,
+              channel_key: channelKey,
+              method,
+              input,
+              dependency_alias: options && typeof options.dependency_alias === "string"
+                ? options.dependency_alias
+                : null,
+            }, "*");
+          });
+        },
+      }),
     });
     window.addEventListener("message", (event) => {
       const payload = event.data;
       if (
         !payload
-        || (payload.kind !== "canvas-runtime-result" && payload.kind !== "canvas-asset-url-result")
+        || (
+          payload.kind !== "canvas-runtime-result"
+          && payload.kind !== "canvas-asset-url-result"
+          && payload.kind !== "canvas-extension-channel-result"
+        )
         || payload.frame_id !== frameId
         || typeof payload.request_id !== "string"
       ) {
@@ -271,6 +308,22 @@ export function buildPreviewDocument(
           pending.resolve(payload.url);
         } else {
           pending.reject(new Error(payload.error || "Canvas 图片资源读取失败"));
+        }
+        return;
+      }
+
+      if (payload.kind === "canvas-extension-channel-result") {
+        const pending = pendingExtensionChannels.get(payload.request_id);
+        if (!pending) {
+          return;
+        }
+        pendingExtensionChannels.delete(payload.request_id);
+        window.clearTimeout(pending.timeout);
+
+        if (payload.ok) {
+          pending.resolve(payload.result);
+        } else {
+          pending.reject(new Error(payload.error || "Canvas extension channel 调用失败"));
         }
       }
     });

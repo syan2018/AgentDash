@@ -6,8 +6,9 @@ use tokio_util::sync::CancellationToken;
 use crate::bridge::{BridgeRequest, LlmBridge, StreamChunk, ToolCallDeltaContent};
 use crate::types::{
     AgentContext, AgentError, AgentEvent, AgentMessage, AssistantStreamEvent,
-    BeforeProviderRequestInput, ContentPart, DynAgentTool, EvaluateCompactionInput, ToolCallInfo,
-    TransformContextInput,
+    BeforeProviderRequestInput, CompactionFailureInput, ContentPart, DynAgentTool,
+    EvaluateCompactionInput, ProviderVisibleContextStats, ToolCallInfo, TransformContextInput,
+    estimate_request_tokens, now_millis,
 };
 
 use super::tool_call::refresh_context_tools;
@@ -103,35 +104,6 @@ pub(super) async fn stream_assistant_response(
     emit: &AgentEventSink,
     cancel: &CancellationToken,
 ) -> Result<AgentMessage, AgentError> {
-    if let Some(delegate) = config.runtime_delegate.as_ref()
-        && let Some(params) = delegate
-            .evaluate_compaction(
-                EvaluateCompactionInput {
-                    context: context.clone(),
-                },
-                cancel.clone(),
-            )
-            .await
-            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?
-        && let Some(result) =
-            crate::compaction::execute_compaction(&context.messages, &params, bridge, cancel)
-                .await?
-    {
-        context.messages = result.messages.clone();
-        emit_event(
-            emit,
-            AgentEvent::ContextCompacted {
-                messages: result.messages.clone(),
-                newly_compacted_messages: result.newly_compacted_messages,
-            },
-        )
-        .await;
-        delegate
-            .after_compaction(result, cancel.clone())
-            .await
-            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
-    }
-
     refresh_context_tools(context, fallback_tool_instances, config);
 
     // delegate / transform_context 可在发送前裁剪或注入消息。
@@ -142,7 +114,7 @@ pub(super) async fn stream_assistant_response(
     // pending steering/follow-up。字段名从 `messages` 改为 `steering_messages`
     // 以强调语义：静态上下文（companion_agents / workflow 等）不应由此路径
     // 承载（它们走 Bundle 主数据面），此字段只承 per-turn 动态 steering。
-    let messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
+    let mut messages_for_llm = if let Some(delegate) = config.runtime_delegate.as_ref() {
         let output = delegate
             .transform_context(
                 TransformContextInput {
@@ -164,21 +136,128 @@ pub(super) async fn stream_assistant_response(
     } else {
         context.messages.clone()
     };
+    let message_refs_for_llm =
+        align_message_refs(&context.messages, &context.message_refs, &messages_for_llm);
 
-    let request = BridgeRequest {
+    let mut request = BridgeRequest {
         system_prompt: Some(context.system_prompt.clone()),
         messages: messages_for_llm.clone(),
         tools: context.tools.clone(),
     };
+    let mut compaction_context_window = 0_u64;
+    let mut compaction_reserve_tokens = 0_u64;
+
+    if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let draft_stats = provider_visible_stats(&request);
+        let params = delegate
+            .evaluate_compaction(
+                EvaluateCompactionInput {
+                    context: AgentContext {
+                        system_prompt: context.system_prompt.clone(),
+                        messages: messages_for_llm.clone(),
+                        message_refs: message_refs_for_llm.clone(),
+                        tools: context.tools.clone(),
+                    },
+                    provider_visible: Some(draft_stats.clone()),
+                },
+                cancel.clone(),
+            )
+            .await
+            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+
+        if let Some(params) = params
+            && crate::compaction::should_execute_compaction(
+                &messages_for_llm,
+                &message_refs_for_llm,
+                &params,
+            )
+        {
+            compaction_context_window = params.trigger_stats.context_window;
+            compaction_reserve_tokens = params.reserve_tokens;
+            let item_id = format!("context-compaction-{}", now_millis());
+            emit_event(
+                emit,
+                AgentEvent::ContextCompactionStarted {
+                    item_id: item_id.clone(),
+                },
+            )
+            .await;
+
+            match crate::compaction::execute_compaction(
+                &messages_for_llm,
+                &message_refs_for_llm,
+                &params,
+                bridge,
+                cancel,
+            )
+            .await
+            {
+                Ok(Some(result)) => {
+                    messages_for_llm = result.messages.clone();
+                    context.messages = result.messages.clone();
+                    context.message_refs = result.message_refs.clone();
+                    request.messages = messages_for_llm.clone();
+                    emit_event(
+                        emit,
+                        AgentEvent::ContextCompacted {
+                            item_id,
+                            messages: result.messages.clone(),
+                            message_refs: result.message_refs.clone(),
+                            compacted_until_ref: result.compacted_until_ref.clone(),
+                            first_kept_ref: result.first_kept_ref.clone(),
+                            newly_compacted_messages: result.newly_compacted_messages,
+                        },
+                    )
+                    .await;
+                    delegate
+                        .after_compaction(result, cancel.clone())
+                        .await
+                        .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let is_cancelled = matches!(error, AgentError::Cancelled);
+                    let error_message = error.to_string();
+                    emit_event(
+                        emit,
+                        AgentEvent::ContextCompactionFailed {
+                            item_id: item_id.clone(),
+                            error: error_message.clone(),
+                        },
+                    )
+                    .await;
+                    if !is_cancelled {
+                        delegate
+                            .after_compaction_failed(
+                                CompactionFailureInput {
+                                    item_id,
+                                    error: error_message,
+                                },
+                                cancel.clone(),
+                            )
+                            .await
+                            .map_err(|error| AgentError::RuntimeDelegate(error.to_string()))?;
+                    }
+                    if is_cancelled {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+    }
 
     // BeforeProviderRequest 观测 hook
     if let Some(delegate) = config.runtime_delegate.as_ref() {
+        let final_stats = provider_visible_stats(&request);
         let _ = delegate
             .on_before_provider_request(
                 BeforeProviderRequestInput {
                     system_prompt_len: context.system_prompt.len(),
                     message_count: messages_for_llm.len(),
                     tool_count: context.tools.len(),
+                    estimated_input_tokens: final_stats.estimated_input_tokens,
+                    context_window: compaction_context_window,
+                    reserve_tokens: compaction_reserve_tokens,
                 },
                 cancel.clone(),
             )
@@ -505,6 +584,7 @@ pub(super) async fn stream_assistant_response(
         )
         .await;
         context.messages.push(assistant_message.clone());
+        context.message_refs.push(None);
     } else {
         *context
             .messages
@@ -532,6 +612,7 @@ async fn ensure_partial_started(
         return;
     }
     context.messages.push(partial.message.clone());
+    context.message_refs.push(None);
     partial.added_partial = true;
     emit_event(
         emit,
@@ -547,6 +628,47 @@ fn sync_partial(context: &mut AgentContext, partial: &PartialAssistantState) {
         && let Some(last) = context.messages.last_mut()
     {
         *last = partial.message.clone();
+    }
+}
+
+fn align_message_refs(
+    base_messages: &[AgentMessage],
+    base_refs: &[Option<crate::types::MessageRef>],
+    projected_messages: &[AgentMessage],
+) -> Vec<Option<crate::types::MessageRef>> {
+    if base_messages.len() != base_refs.len() {
+        return vec![None; projected_messages.len()];
+    }
+    let mut next_base = 0_usize;
+    projected_messages
+        .iter()
+        .map(|message| {
+            let matched = base_messages
+                .iter()
+                .enumerate()
+                .skip(next_base)
+                .find(|(_, base_message)| *base_message == message)
+                .map(|(idx, _)| idx);
+            if let Some(idx) = matched {
+                next_base = idx.saturating_add(1);
+                base_refs[idx].clone()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn provider_visible_stats(request: &BridgeRequest) -> ProviderVisibleContextStats {
+    ProviderVisibleContextStats {
+        system_prompt_len: request.system_prompt.as_deref().map(str::len).unwrap_or(0),
+        message_count: request.messages.len(),
+        tool_count: request.tools.len(),
+        estimated_input_tokens: estimate_request_tokens(
+            request.system_prompt.as_deref(),
+            &request.messages,
+            &request.tools,
+        ),
     }
 }
 

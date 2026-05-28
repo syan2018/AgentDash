@@ -52,6 +52,7 @@ pub(super) fn build_turn_started_envelope(
             turn: codex::Turn {
                 id: turn_id.to_string(),
                 items: Vec::new(),
+                items_view: codex::TurnItemsView::NotLoaded,
                 status: codex::TurnStatus::InProgress,
                 error: None,
                 started_at: Some(chrono::Utc::now().timestamp()),

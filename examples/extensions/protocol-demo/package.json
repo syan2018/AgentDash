@@ -1,0 +1,23 @@
+{
+  "name": "@agentdash/example-protocol-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "agentdash-ext dev",
+    "validate": "agentdash-ext validate",
+    "pack": "agentdash-ext pack",
+    "agentdash:install": "agentdash-ext install",
+    "test": "node --test tests/extension.test.mjs"
+  },
+  "devDependencies": {
+    "@agentdash/extension-dev": "workspace:*",
+    "@agentdash/extension-sdk": "workspace:*",
+    "@agentdash/extension-ui": "workspace:*",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "~5.9.3"
+  }
+}

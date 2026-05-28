@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 
 # Node / Frontend
 node_modules/
@@ -9,6 +8,8 @@ frontend/dist/
 frontend/.vite/
 packages/app-web/dist/
 packages/app-web/.vite/
+examples/extensions/*/dist/
+examples/extensions/*/packed/
 
 # IDE
 .vscode/

@@ -14,6 +14,7 @@ import {
 
 export interface CanvasRuntimePreviewProps {
   snapshot: CanvasRuntimeSnapshot | null;
+  extensionChannelBridge?: (request: CanvasExtensionChannelRequest) => Promise<unknown>;
 }
 
 type PreviewStatus = "idle" | "building" | "ready" | "error";
@@ -63,6 +64,28 @@ interface AssetRevokeEnvelope {
   url: string;
 }
 
+export interface CanvasExtensionChannelRequest {
+  channel_key: string;
+  method: string;
+  input: unknown;
+  dependency_alias?: string | null;
+}
+
+interface ExtensionChannelInvokeEnvelope extends CanvasExtensionChannelRequest {
+  kind: "canvas-extension-channel-invoke";
+  frame_id: string;
+  request_id: string;
+}
+
+interface ExtensionChannelResultEnvelope {
+  kind: "canvas-extension-channel-result";
+  frame_id: string;
+  request_id: string;
+  ok: boolean;
+  result?: unknown;
+  error?: string;
+}
+
 interface PreviewGeneration {
   frameId: string;
   assetCache: RuntimeAssetUrlCache;
@@ -75,7 +98,7 @@ interface PreviewGeneration {
  */
 const BLOB_REVOKE_DELAY_MS = 8_000;
 
-export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
+export function CanvasRuntimePreview({ snapshot, extensionChannelBridge }: CanvasRuntimePreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   // 使用 React useId 生成渲染期稳定的 frame id，避免 Math.random 在 render 中被纯度规则拒绝。
   const frameIdBase = `canvas-preview-${useId()}`;
@@ -150,6 +173,10 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
   }, []);
 
   const sendAssetUrlResult = useCallback((payload: AssetUrlResultEnvelope) => {
+    iframeRef.current?.contentWindow?.postMessage(payload, "*");
+  }, []);
+
+  const sendExtensionChannelResult = useCallback((payload: ExtensionChannelResultEnvelope) => {
     iframeRef.current?.contentWindow?.postMessage(payload, "*");
   }, []);
 
@@ -263,6 +290,54 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
     }
   }, [sendAssetUrlResult, snapshot]);
 
+  const handleExtensionChannelInvoke = useCallback(async (payload: ExtensionChannelInvokeEnvelope) => {
+    const generation = activeGenerationRef.current;
+    if (!generation || payload.frame_id !== generation.frameId) {
+      return;
+    }
+
+    if (!extensionChannelBridge) {
+      sendExtensionChannelResult({
+        kind: "canvas-extension-channel-result",
+        frame_id: generation.frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: "当前 Canvas runtime 未绑定 Extension channel bridge",
+      });
+      return;
+    }
+
+    try {
+      const result = await extensionChannelBridge({
+        channel_key: payload.channel_key,
+        method: payload.method,
+        input: payload.input ?? {},
+        dependency_alias: payload.dependency_alias ?? null,
+      });
+      if (activeGenerationRef.current !== generation) {
+        return;
+      }
+      sendExtensionChannelResult({
+        kind: "canvas-extension-channel-result",
+        frame_id: generation.frameId,
+        request_id: payload.request_id,
+        ok: true,
+        result,
+      });
+    } catch (error) {
+      if (activeGenerationRef.current !== generation) {
+        return;
+      }
+      sendExtensionChannelResult({
+        kind: "canvas-extension-channel-result",
+        frame_id: generation.frameId,
+        request_id: payload.request_id,
+        ok: false,
+        error: error instanceof Error ? error.message : "Canvas extension channel 调用失败",
+      });
+    }
+  }, [extensionChannelBridge, sendExtensionChannelResult]);
+
   const handleIframeMessage = useCallback((event: MessageEvent<unknown>) => {
     const iframe = iframeRef.current;
     if (!iframe || event.source !== iframe.contentWindow) {
@@ -277,6 +352,11 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
 
     if (isAssetUrlRequestEnvelope(payload) && payload.frame_id === generation?.frameId) {
       void handleAssetUrlRequest(payload);
+      return;
+    }
+
+    if (isExtensionChannelInvokeEnvelope(payload) && payload.frame_id === generation?.frameId) {
+      void handleExtensionChannelInvoke(payload);
       return;
     }
 
@@ -296,7 +376,7 @@ export function CanvasRuntimePreview({ snapshot }: CanvasRuntimePreviewProps) {
       setRuntimeStatus("error");
       setRuntimeMessage(payload.message ?? "Canvas 运行时报错");
     }
-  }, [handleAssetUrlRequest, handleRuntimeInvoke]);
+  }, [handleAssetUrlRequest, handleExtensionChannelInvoke, handleRuntimeInvoke]);
 
   useEffect(() => {
     window.addEventListener("message", handleIframeMessage);
@@ -412,6 +492,21 @@ function isAssetRevokeEnvelope(value: unknown): value is AssetRevokeEnvelope {
     record.kind === "canvas-asset-revoke"
     && typeof record.frame_id === "string"
     && typeof record.url === "string"
+  );
+}
+
+function isExtensionChannelInvokeEnvelope(value: unknown): value is ExtensionChannelInvokeEnvelope {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === "canvas-extension-channel-invoke"
+    && typeof record.frame_id === "string"
+    && typeof record.request_id === "string"
+    && typeof record.channel_key === "string"
+    && typeof record.method === "string"
   );
 }
 

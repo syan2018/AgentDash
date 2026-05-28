@@ -66,8 +66,8 @@ const runtimeSurface: ResolvedVfsSurface = {
       capabilities: ["read", "write", "list"],
       default_write: true,
       purpose: "vfs_mount",
-      backend_online: null,
-      file_count: null,
+      backend_online: undefined,
+      file_count: undefined,
       edit_capabilities: {
         create: true,
         delete: true,
@@ -82,8 +82,8 @@ const runtimeSurface: ResolvedVfsSurface = {
       capabilities: ["read", "list"],
       default_write: false,
       purpose: "lifecycle",
-      backend_online: null,
-      file_count: null,
+      backend_online: undefined,
+      file_count: undefined,
       edit_capabilities: {
         create: false,
         delete: false,

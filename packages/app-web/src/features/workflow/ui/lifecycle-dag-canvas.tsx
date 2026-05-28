@@ -417,7 +417,12 @@ function LifecycleDagCanvasInner({
                       ...s,
                       input_ports: [
                         ...s.input_ports,
-                        { key: newKey, description: "", context_strategy: "full" as const },
+                        {
+                          key: newKey,
+                          description: "",
+                          context_strategy: "full" as const,
+                          standalone_fulfillment: "required" as const,
+                        },
                       ],
                     }
                   : s,

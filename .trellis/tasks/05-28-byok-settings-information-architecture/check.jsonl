@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 migration、repository 初始化与 schema readiness 是否符合约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查密钥/权限/配置错误的分层错误与 HTTP 映射"}
+{"file": ".trellis/spec/backend/capability/llm-model-config.md", "reason": "检查 provider/model/thinking_level 发现与运行态契约一致"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 generated contract 是否同步且无 DTO drift"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端 mapper、generated DTO 和 snake_case 字段使用"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "检查设置页拆分后的视觉 primitive、surface 与 token 使用"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 admin provider store、BYOK store 与写后刷新边界"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查 SettingsPage 拆分是否复用已有 primitive/store/service 模式"}

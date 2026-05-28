@@ -1,4 +1,4 @@
-use crate::model::message::AgentMessage;
+use crate::model::message::{AgentMessage, MessageRef};
 use crate::runtime::tool::ToolDefinition;
 
 /// Agent 上下文 — 仅持有 schema 快照，用于 DTO 传递。
@@ -9,6 +9,7 @@ use crate::runtime::tool::ToolDefinition;
 pub struct AgentContext {
     pub system_prompt: String,
     pub messages: Vec<AgentMessage>,
+    pub message_refs: Vec<Option<MessageRef>>,
     pub tools: Vec<ToolDefinition>,
 }
 
@@ -17,6 +18,7 @@ impl std::fmt::Debug for AgentContext {
         f.debug_struct("AgentContext")
             .field("system_prompt", &self.system_prompt)
             .field("messages_count", &self.messages.len())
+            .field("message_refs_count", &self.message_refs.len())
             .field("tools_count", &self.tools.len())
             .finish()
     }

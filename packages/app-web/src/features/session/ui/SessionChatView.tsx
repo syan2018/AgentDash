@@ -38,6 +38,8 @@ import {
   fetchSessionExecutionState,
 } from "../../../services/session";
 import type { SessionExecutionState } from "../../../types";
+import { SessionProjectionView } from "./SessionProjectionView";
+import { SessionLineageView } from "./SessionLineageView";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
@@ -138,18 +140,61 @@ export function collectNewSystemEvents(
   return { items, lastSeenSeq };
 }
 
+function isCompactionSummaryFrame(event: BackboneEvent): boolean {
+  if (
+    event.type !== "platform" ||
+    event.payload.kind !== "session_meta_update" ||
+    event.payload.data.key !== "context_frame"
+  ) {
+    return false;
+  }
+  const value = event.payload.data.value;
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    value.kind === "compaction_summary";
+}
+
+function isProjectionRefreshEvent(event: BackboneEvent): boolean {
+  if (event.type === "turn_completed") {
+    return true;
+  }
+  if (event.type !== "platform") {
+    return false;
+  }
+  return extractPlatformEventType(event) === "context_compacted" ||
+    isCompactionSummaryFrame(event);
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function computeProjectionRefreshKey(rawEvents: SessionEventEnvelope[]): number {
+  let refreshKey = 0;
+  for (const event of rawEvents) {
+    if (isProjectionRefreshEvent(event.notification.event)) {
+      refreshKey = Math.max(refreshKey, event.event_seq);
+    }
+  }
+  return refreshKey;
+}
+
 // ─── 子组件 ────────────────────────────────────────────
 
 function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
   const [showDetail, setShowDetail] = useState(false);
   if (!usage) return null;
 
-  const { totalTokens, maxTokens, inputTokens, outputTokens } = usage;
-  const hasAny = totalTokens != null || inputTokens != null || outputTokens != null;
+  const {
+    currentContextTokens,
+    effectiveContextWindow,
+    modelContextWindow,
+    pendingEstimateTokens,
+    total,
+    last,
+  } = usage;
+  const maxTokens = effectiveContextWindow ?? modelContextWindow;
+  const hasAny = currentContextTokens > 0 || total.totalTokens > 0 || last.totalTokens > 0;
   if (!hasAny) return null;
 
-  const percent = (maxTokens && totalTokens)
-    ? Math.min(Math.round((totalTokens / maxTokens) * 100), 100)
+  const percent = maxTokens
+    ? Math.min(Math.round((currentContextTokens / maxTokens) * 100), 100)
     : undefined;
   const radius = 7;
   const circumference = 2 * Math.PI * radius;
@@ -177,15 +222,16 @@ function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
       {showDetail && (
         <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
           {percent != null && <span className="font-medium">{percent}% 上下文</span>}
-          {totalTokens != null && maxTokens != null && (
-            <span className="text-muted-foreground"> ({formatTokens(totalTokens)}/{formatTokens(maxTokens)})</span>
+          {maxTokens != null && (
+            <span className="text-muted-foreground"> ({formatTokens(currentContextTokens)}/{formatTokens(maxTokens)})</span>
           )}
-          {(inputTokens != null || outputTokens != null) && (
+          {(last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0) && (
             <span className="text-muted-foreground">
               {percent != null ? " · " : ""}
-              {inputTokens != null && `↑${formatTokens(inputTokens)}`}
-              {inputTokens != null && outputTokens != null && " "}
-              {outputTokens != null && `↓${formatTokens(outputTokens)}`}
+              {last.inputTokens > 0 && `↑${formatTokens(last.inputTokens)}`}
+              {last.inputTokens > 0 && last.outputTokens > 0 && " "}
+              {last.outputTokens > 0 && `↓${formatTokens(last.outputTokens)}`}
+              {pendingEstimateTokens > 0 && ` +${formatTokens(pendingEstimateTokens)}估算`}
             </span>
           )}
         </span>
@@ -311,6 +357,8 @@ export function SessionChatView({
   const [stableActionRunning, setStableActionRunning] = useState(false);
   const [executionState, setExecutionState] = useState<SessionExecutionState | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [showProjectionView, setShowProjectionView] = useState(false);
+  const [showLineageView, setShowLineageView] = useState(false);
 
   const richInputRef = useRef<RichInputRef>(null);
   const appliedHintRef = useRef<string | null>(null);
@@ -359,6 +407,11 @@ export function SessionChatView({
     if (!sessionId) return;
     void refreshExecutionState().catch(() => {});
   }, [sessionId, refreshExecutionState]);
+
+  useEffect(() => {
+    setShowProjectionView(false);
+    setShowLineageView(false);
+  }, [sessionId]);
 
   // ─── 执行器配置 ──────────────────────────────────────
 
@@ -460,6 +513,11 @@ export function SessionChatView({
     streamingEntryId,
     tokenUsage,
   } = useSessionFeed({ sessionId: streamSessionId, enabled: hasSession });
+
+  const projectionRefreshKey = useMemo(
+    () => computeProjectionRefreshKey(rawEvents),
+    [rawEvents],
+  );
 
   useEffect(() => {
     if (!hasSession || executionState?.status !== "running") return;
@@ -725,7 +783,48 @@ export function SessionChatView({
             </span>
           )}
           <ContextUsageRing usage={tokenUsage} />
+          {hasSession && sessionId && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowLineageView((value) => !value)}
+                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+                  showLineageView
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                分支
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowProjectionView((value) => !value)}
+                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
+                  showProjectionView
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
+                }`}
+              >
+                上下文
+              </button>
+            </>
+          )}
         </div>
+      )}
+
+      {showLineageView && sessionId && (
+        <SessionLineageView
+          sessionId={sessionId}
+          refreshKey={projectionRefreshKey}
+        />
+      )}
+
+      {showProjectionView && sessionId && (
+        <SessionProjectionView
+          sessionId={sessionId}
+          refreshKey={projectionRefreshKey}
+          tokenUsage={tokenUsage}
+        />
       )}
 
       {/* headerSlot — 外部注入区（如 Task 执行控制栏） */}

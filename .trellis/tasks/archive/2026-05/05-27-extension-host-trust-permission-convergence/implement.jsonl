@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认 extension runtime projection、RuntimeGateway 与 local runtime 的职责边界。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "确认 dynamic extension provider 的 actor/context、permission 与 relay 调用约束。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "确认 local TS Extension Host 与 artifact cache 的本机 runtime contract，并更新 trusted runner 表达。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 extension runtime DTO 与 runtime projection 的 wire contract 语义。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 Gateway、local host 与前端投影的跨层一致性。"}

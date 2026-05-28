@@ -134,7 +134,7 @@ export function VfsBrowser({
   if (!hasBrowsableSurface) {
     return (
       <div className="space-y-2">
-        <MountSummaryList mounts={mounts} defaultMountId={filteredSurface?.default_mount_id ?? null} />
+        <MountSummaryList mounts={mounts} defaultMountId={filteredSurface?.default_mount_id} />
         <div className="rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-[11px] text-muted-foreground">
           当前入口只提供 mount 摘要，未附带可浏览的 resolved surface。
         </div>
@@ -147,7 +147,7 @@ export function VfsBrowser({
       <div className="border-b border-border bg-secondary/20 px-3 py-2">
         <MountSummaryList
           mounts={mounts}
-          defaultMountId={filteredSurface?.default_mount_id ?? null}
+          defaultMountId={filteredSurface?.default_mount_id}
           compact
         />
       </div>
@@ -181,11 +181,11 @@ function filterSurface(
 function normalizeDefaultMount<T extends { id: string }>(
   defaultMountId: string | null | undefined,
   mounts: T[],
-): string | null {
+): string | undefined {
   if (defaultMountId && mounts.some((mount) => mount.id === defaultMountId)) {
     return defaultMountId;
   }
-  return mounts[0]?.id ?? null;
+  return mounts[0]?.id;
 }
 
 function MountSummaryList({
@@ -194,7 +194,7 @@ function MountSummaryList({
   compact = false,
 }: {
   mounts: ResolvedMountSummary[];
-  defaultMountId: string | null;
+  defaultMountId: string | undefined;
   compact?: boolean;
 }) {
   return (

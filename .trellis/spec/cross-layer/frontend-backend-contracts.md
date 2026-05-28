@@ -40,6 +40,8 @@ crates/agentdash-contracts/
     generate_ts.rs
     mcp_preset.rs        # MCP preset CRUD/probe DTO
     session.rs           # Session event page DTO / NDJSON envelope / runtime projection
+    extension_runtime.rs # Project extension runtime surface DTO
+    extension_package.rs # Packaged extension artifact upload/install/download DTO
     workflow.rs          # WorkflowContract / lifecycle / activity DTO
     vfs.rs               # ResolvedVfsSurface / mount / edit capability DTO
     shared_library.rs    # Library asset install/publish DTO
@@ -52,6 +54,8 @@ crates/agentdash-contracts/
 packages/app-web/src/generated/
   backbone-protocol.ts
   session-contracts.ts
+  extension-runtime-contracts.ts
+  extension-package-contracts.ts
   workflow-contracts.ts
   vfs-contracts.ts
   shared-library-contracts.ts
@@ -66,21 +70,35 @@ packages/app-web/src/generated/
 | Domain | Generated File | Contract Source |
 | --- | --- | --- |
 | MCP Preset | `mcp-preset-contracts.ts` | `agentdash-contracts::mcp_preset` |
-| Session event stream | `session-contracts.ts` | `agentdash-contracts::session` |
+| Session event stream / projection view | `session-contracts.ts` | `agentdash-contracts::session` |
+| Extension Runtime | `extension-runtime-contracts.ts` | `agentdash-contracts::extension_runtime` |
+| Extension Package Artifact | `extension-package-contracts.ts` | `agentdash-contracts::extension_package` |
 | Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
 | VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
 | Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
 | Project Agent | `project-agent-contracts.ts` | `agentdash-contracts::project_agent` |
+| LLM Provider | `llm-provider-contracts.ts` | `agentdash-contracts::llm_provider` |
 
 API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
 
 Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields.
+
+Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service mappers may validate `unknown` payloads, but must not redefine this projection shape outside generated session contracts.
+
+Session branch DTOs also live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. Frontend service code consumes the generated relation/status unions and keeps session tree grouping keyed by backend-provided `parent_session_id` / `parent_relation_kind`.
+
+LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理员 Provider Catalog、用户 BYOK effective list、credential mode、probe 请求、用户凭据验证状态和 Codex OAuth 登录状态都由前端设置页与执行器 discovery 共同消费。前端 API 层消费 `generated/llm-provider-contracts.ts`，只保留 service 调用和轻量 view model 状态；`credential_mode`、`effective_api_key_source`、`global_api_key_configured`、`user_api_key_configured`、`user_credential_verification_status`、`CodexOAuthStatusResponse.status` 等字段不在前端手写重声明。
 
 ## Local Decisions
 
 - Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.
 - VFS, Shared Library and Project Agent use narrow DTOs in `agentdash-contracts` because their API responses intentionally map application/domain internals into stable browser-facing shapes.
 - Generated request/response DTOs model serde wire fields. UI-level convenience such as nullable fields, normalized config objects or derived aliases belongs in frontend type entrypoints rather than in the generated file.
+- Project extension runtime surface 使用独立 `agentdash-contracts::extension_runtime` 与 `extension-runtime-contracts.ts`，原因是它是 Project enabled extension installations 派生出的全局 runtime surface，不属于 Shared Library marketplace/source-status，也不是 Session Context 私有字段。
+- Extension package artifact 使用独立 `agentdash-contracts::extension_package` 与 `extension-package-contracts.ts`，原因是 packaged archive 的上传、安装引用和下载元数据是平台 artifact 契约，不属于 runtime projection 列表，也不属于 Shared Library payload。
+- Workspace webview panel 通过 `POST /api/projects/{project_id}/extension-runtime/invoke-action` 进入 RuntimeGateway，父页面 bridge 负责补齐 session、backend 与 Project context，原因是 iframe 内插件 UI 只能发送 action key 与 input，不应持有主前端 token、store 或内部 API client。
+- Packaged panel UI 通过 `GET /api/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}` 读取 artifact 内文件，服务端只允许读取已声明 workspace tab renderer entry 所在目录，原因是插件 UI 资源属于安装后的 Project artifact，而不是 Shared Library source payload。
+- `canvas_panel` workspace tab renderer 复用 packaged panel asset 读取 contract，entry 指向包内 Canvas runtime snapshot，原因是 Canvas-derived extension 应与其它 packaged extension 共享 artifact/source-status/install 语义，同时复用现有 Canvas runtime preview。
 
 ## Validation
 

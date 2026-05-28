@@ -17,9 +17,9 @@ use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult}
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
 use crate::workflow::lifecycle::journey::{
-    LifecycleJourneyError, LifecycleJourneyProjection, current_step, current_step_session_id,
-    find_step, find_tool_projection, group_events_into_turn_summaries, run_overview,
-    step_session_id, to_json_pretty, tool_call_projections,
+    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, current_step,
+    current_step_session_id, filter_session_items, find_step, group_events_into_turn_summaries,
+    item_file_name, run_overview, session_summary_archives, step_session_id, to_json_pretty,
 };
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -123,23 +123,45 @@ fn list_projected_entries(
     )
 }
 
-fn tool_call_entries(
+async fn list_session_item_entries(
+    journey: &LifecycleJourneyProjection,
+    session_id: &str,
     display_root: &str,
-    tool_call_id: &str,
-    projection: &crate::workflow::lifecycle::journey::ToolCallProjection,
-) -> Vec<RuntimeFileEntry> {
-    let base = format!("{display_root}/{tool_call_id}");
-    let mut entries = vec![RuntimeFileEntry::file(format!("{base}/raw.json")).as_virtual()];
-    if projection.request.is_some() {
-        entries.push(RuntimeFileEntry::file(format!("{base}/request.json")).as_virtual());
-    }
-    if projection.result.is_some() {
-        entries.push(RuntimeFileEntry::file(format!("{base}/result.json")).as_virtual());
-    }
-    if !projection.stdout.is_empty() {
-        entries.push(RuntimeFileEntry::file(format!("{base}/stdout.txt")).as_virtual());
-    }
-    entries
+    view: SessionItemView,
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    let projections = journey
+        .session_item_projections(session_id)
+        .await
+        .map_err(map_journey_err)?;
+    Ok(filter_session_items(&projections, view)
+        .iter()
+        .map(|projection| {
+            RuntimeFileEntry::file(format!(
+                "{display_root}/{}",
+                item_file_name(projection, view)
+            ))
+            .as_virtual()
+        })
+        .collect())
+}
+
+async fn list_session_summary_entries(
+    journey: &LifecycleJourneyProjection,
+    session_id: &str,
+    display_root: &str,
+) -> Result<Vec<RuntimeFileEntry>, MountError> {
+    let entries = session_summary_archives(journey.session_persistence(), session_id)
+        .await
+        .map_err(map_journey_err)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(entry, _)| {
+            entry
+                .path
+                .strip_prefix("session/summaries/")
+                .map(|name| RuntimeFileEntry::file(format!("{display_root}/{name}")).as_virtual())
+        })
+        .collect())
 }
 
 #[async_trait]
@@ -223,30 +245,6 @@ impl MountProvider for LifecycleMountProvider {
                             .await
                             .map_err(map_journey_err)?
                     }
-                    ["tool-calls"] => {
-                        let (_, session_id) =
-                            current_step_session_id(&active).map_err(map_journey_err)?;
-                        self.journey
-                            .read_tool_calls_projection(session_id, &[])
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["tool-calls", rest @ ..] => {
-                        let (_, session_id) =
-                            current_step_session_id(&active).map_err(map_journey_err)?;
-                        self.journey
-                            .read_tool_calls_projection(session_id, rest)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["writes"] => {
-                        let (_, session_id) =
-                            current_step_session_id(&active).map_err(map_journey_err)?;
-                        self.journey
-                            .read_writes_projection(session_id)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
                     ["records"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
@@ -312,27 +310,6 @@ impl MountProvider for LifecycleMountProvider {
                         find_step(&active, key).map_err(map_journey_err)?;
                         self.journey
                             .read_node_conclusions(run_id, key)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["nodes", key, "session", "tool-calls"] => {
-                        let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
-                        self.journey
-                            .read_tool_calls_projection(session_id, &[])
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["nodes", key, "session", "tool-calls", rest @ ..] => {
-                        let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
-                        self.journey
-                            .read_tool_calls_projection(session_id, rest)
-                            .await
-                            .map_err(map_journey_err)?
-                    }
-                    ["nodes", key, "session", "writes"] => {
-                        let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
-                        self.journey
-                            .read_writes_projection(session_id)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -495,7 +472,11 @@ impl MountProvider for LifecycleMountProvider {
                         RuntimeFileEntry::file("session/conclusions").as_virtual(),
                         RuntimeFileEntry::file("session/events.json").as_virtual(),
                         RuntimeFileEntry::file("session/terminal").as_virtual(),
-                        RuntimeFileEntry::dir("session/turns").as_virtual(),
+                        RuntimeFileEntry::dir("session/items").as_virtual(),
+                        RuntimeFileEntry::dir("session/messages").as_virtual(),
+                        RuntimeFileEntry::dir("session/tools").as_virtual(),
+                        RuntimeFileEntry::dir("session/writes").as_virtual(),
+                        RuntimeFileEntry::dir("session/summaries").as_virtual(),
                     ]
                 } else {
                     vec![
@@ -503,6 +484,50 @@ impl MountProvider for LifecycleMountProvider {
                         RuntimeFileEntry::file("session/conclusions").as_virtual(),
                     ]
                 }
+            }
+            ["session", "items"] => {
+                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    "session/items",
+                    SessionItemView::Items,
+                )
+                .await?
+            }
+            ["session", "messages"] => {
+                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    "session/messages",
+                    SessionItemView::Messages,
+                )
+                .await?
+            }
+            ["session", "tools"] => {
+                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    "session/tools",
+                    SessionItemView::Tools,
+                )
+                .await?
+            }
+            ["session", "writes"] => {
+                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    "session/writes",
+                    SessionItemView::Writes,
+                )
+                .await?
+            }
+            ["session", "summaries"] => {
+                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
+                list_session_summary_entries(&self.journey, session_id, "session/summaries").await?
             }
             ["session", "turns"] => {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
@@ -537,36 +562,6 @@ impl MountProvider for LifecycleMountProvider {
                 } else {
                     Vec::new()
                 }
-            }
-            ["tool-calls"] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
-                let events = self
-                    .journey
-                    .session_events(session_id)
-                    .await
-                    .map_err(map_journey_err)?;
-                tool_call_projections(&events)
-                    .into_iter()
-                    .map(|projection| {
-                        RuntimeFileEntry::dir(format!(
-                            "tool-calls/{}",
-                            projection.summary.tool_call_id
-                        ))
-                        .as_virtual()
-                    })
-                    .collect()
-            }
-            ["tool-calls", tool_call_id] => {
-                let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
-                let events = self
-                    .journey
-                    .session_events(session_id)
-                    .await
-                    .map_err(map_journey_err)?;
-                let projections = tool_call_projections(&events);
-                let projection =
-                    find_tool_projection(&projections, tool_call_id).map_err(map_journey_err)?;
-                tool_call_entries("tool-calls", tool_call_id, projection)
             }
             ["records"] => {
                 let step = current_step(&active).map_err(map_journey_err)?;
@@ -623,12 +618,63 @@ impl MountProvider for LifecycleMountProvider {
                             .as_virtual(),
                         RuntimeFileEntry::file(format!("nodes/{key}/session/terminal"))
                             .as_virtual(),
-                        RuntimeFileEntry::dir(format!("nodes/{key}/session/turns")).as_virtual(),
-                        RuntimeFileEntry::dir(format!("nodes/{key}/session/tool-calls"))
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/items")).as_virtual(),
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/messages")).as_virtual(),
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/tools")).as_virtual(),
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/writes")).as_virtual(),
+                        RuntimeFileEntry::dir(format!("nodes/{key}/session/summaries"))
                             .as_virtual(),
-                        RuntimeFileEntry::file(format!("nodes/{key}/session/writes")).as_virtual(),
                     ]
                 }
+            }
+            ["nodes", key, "session", "items"] => {
+                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    &format!("nodes/{key}/session/items"),
+                    SessionItemView::Items,
+                )
+                .await?
+            }
+            ["nodes", key, "session", "messages"] => {
+                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    &format!("nodes/{key}/session/messages"),
+                    SessionItemView::Messages,
+                )
+                .await?
+            }
+            ["nodes", key, "session", "tools"] => {
+                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    &format!("nodes/{key}/session/tools"),
+                    SessionItemView::Tools,
+                )
+                .await?
+            }
+            ["nodes", key, "session", "writes"] => {
+                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                list_session_item_entries(
+                    &self.journey,
+                    session_id,
+                    &format!("nodes/{key}/session/writes"),
+                    SessionItemView::Writes,
+                )
+                .await?
+            }
+            ["nodes", key, "session", "summaries"] => {
+                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
+                list_session_summary_entries(
+                    &self.journey,
+                    session_id,
+                    &format!("nodes/{key}/session/summaries"),
+                )
+                .await?
             }
             ["nodes", key, "session", "turns"] => {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
@@ -665,40 +711,6 @@ impl MountProvider for LifecycleMountProvider {
                 } else {
                     Vec::new()
                 }
-            }
-            ["nodes", key, "session", "tool-calls"] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
-                let events = self
-                    .journey
-                    .session_events(session_id)
-                    .await
-                    .map_err(map_journey_err)?;
-                tool_call_projections(&events)
-                    .into_iter()
-                    .map(|projection| {
-                        RuntimeFileEntry::dir(format!(
-                            "nodes/{key}/session/tool-calls/{}",
-                            projection.summary.tool_call_id
-                        ))
-                        .as_virtual()
-                    })
-                    .collect()
-            }
-            ["nodes", key, "session", "tool-calls", tool_call_id] => {
-                let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
-                let events = self
-                    .journey
-                    .session_events(session_id)
-                    .await
-                    .map_err(map_journey_err)?;
-                let projections = tool_call_projections(&events);
-                let projection =
-                    find_tool_projection(&projections, tool_call_id).map_err(map_journey_err)?;
-                tool_call_entries(
-                    &format!("nodes/{key}/session/tool-calls"),
-                    tool_call_id,
-                    projection,
-                )
             }
             ["nodes", key, "records"] => {
                 find_step(&active, key).map_err(map_journey_err)?;
@@ -747,7 +759,7 @@ impl MountProvider for LifecycleMountProvider {
         _ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError> {
         // 仅 skills 子树上提供 native substring search（直接读 skill_asset 表）。
-        // virtual projection 路径（nodes/ session/ tool-calls/ records/ ...）通过
+        // virtual projection 路径（nodes/ session/ items/ records/ ...）通过
         // SPI `grep_text` 默认实现的 list+read+regex 通用算法覆盖；
         // 那条路径才是 agent 从 journey 中精确定位被截断信息的主战场，
         // substring 通用搜索在 lifecycle 上不公开。
@@ -783,14 +795,23 @@ impl MountProvider for LifecycleMountProvider {
 mod tests {
     use super::*;
     use crate::session::{
-        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionMeta, TitleSource,
+        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionMeta,
+        SessionPersistence, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
-    use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, SourceInfo, TraceInfo};
+    use agentdash_agent_protocol::{
+        BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+        PlatformEvent, SourceInfo, TraceInfo,
+    };
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
     use agentdash_domain::workflow::{LifecycleStepDefinition, LifecycleStepExecutionStatus};
+    use agentdash_spi::{
+        NewCompactionProjectionCommit, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
+        SessionCompactionRecord, SessionCompactionStatus, SessionProjectionHeadRecord,
+        SessionProjectionSegmentRecord,
+    };
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -1128,6 +1149,7 @@ mod tests {
         codex::ThreadItem::McpToolCall {
             id: id.to_string(),
             server: "memory".to_string(),
+            plugin_id: None,
             tool: "lookup".to_string(),
             status: codex::McpToolCallStatus::Completed,
             arguments: serde_json::json!({ "query": "lifecycle" }),
@@ -1174,16 +1196,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemStarted(codex::ItemStartedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemStarted(ItemStartedNotification::new(
+                        dynamic_tool_item(
                             "tool-1",
                             "read_file",
                             codex::DynamicToolCallStatus::InProgress,
                             None,
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1194,16 +1216,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        dynamic_tool_item(
                             "tool-1",
                             "read_file",
                             codex::DynamicToolCallStatus::Completed,
                             Some("file contents"),
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1214,16 +1236,16 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: dynamic_tool_item(
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        dynamic_tool_item(
                             "patch-1",
                             "fs_apply_patch",
                             codex::DynamicToolCallStatus::Completed,
                             Some("patched"),
                         ),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
@@ -1234,15 +1256,94 @@ mod tests {
                 &envelope(
                     session_id,
                     "t-1",
-                    BackboneEvent::ItemCompleted(codex::ItemCompletedNotification {
-                        item: mcp_tool_item("mcp-1"),
-                        thread_id: session_id.to_string(),
-                        turn_id: "t-1".to_string(),
-                    }),
+                    BackboneEvent::ItemCompleted(ItemCompletedNotification::new(
+                        mcp_tool_item("mcp-1"),
+                        session_id.to_string(),
+                        "t-1".to_string(),
+                    )),
                 ),
             )
             .await
             .expect("append mcp");
+
+        persistence
+            .commit_compaction_projection(
+                session_id,
+                NewCompactionProjectionCommit {
+                    completed_event: envelope(
+                        session_id,
+                        "t-1",
+                        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
+                            key: "context_compacted".to_string(),
+                            value: serde_json::json!({
+                                "lifecycle_item_id": "compact-item-1",
+                                "summary": "保留原文回看索引的压缩摘要",
+                                "compacted_until_ref": { "turn_id": "t-1", "entry_index": 2 },
+                                "first_kept_ref": null,
+                            }),
+                        }),
+                    ),
+                    compaction: SessionCompactionRecord {
+                        id: "compact-1".to_string(),
+                        session_id: session_id.to_string(),
+                        projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                        projection_version: 1,
+                        lifecycle_item_id: "compact-item-1".to_string(),
+                        start_event_seq: 1,
+                        completed_event_seq: Some(5),
+                        failed_event_seq: None,
+                        status: SessionCompactionStatus::ProjectionCommitted,
+                        trigger: "unit_test".to_string(),
+                        reason: None,
+                        phase: None,
+                        strategy: "summarize".to_string(),
+                        budget_scope: None,
+                        base_head_event_seq: None,
+                        source_start_event_seq: Some(1),
+                        source_end_event_seq: Some(2),
+                        first_kept_event_seq: None,
+                        summary: "保留原文回看索引的压缩摘要".to_string(),
+                        replacement_projection_json: serde_json::json!({}),
+                        token_stats_json: serde_json::json!({}),
+                        diagnostics_json: serde_json::json!({
+                            "summary_format": "markdown_with_recall_index_v1"
+                        }),
+                        created_by: None,
+                        created_at_ms: 1,
+                        completed_at_ms: Some(2),
+                    },
+                    segments: vec![SessionProjectionSegmentRecord {
+                        id: "segment-1".to_string(),
+                        session_id: session_id.to_string(),
+                        projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                        projection_version: 1,
+                        sort_order: 0,
+                        segment_type: "summary_chunk".to_string(),
+                        origin: "projection".to_string(),
+                        synthetic: true,
+                        source_start_event_seq: Some(1),
+                        source_end_event_seq: Some(2),
+                        source_refs_json: serde_json::json!({}),
+                        generated_by_compaction_id: Some("compact-1".to_string()),
+                        content_json: serde_json::json!({
+                            "content": "保留原文回看索引的压缩摘要"
+                        }),
+                        token_estimate: Some(12),
+                        created_at_ms: 1,
+                    }],
+                    head: SessionProjectionHeadRecord {
+                        session_id: session_id.to_string(),
+                        projection_kind: SESSION_PROJECTION_KIND_MODEL_CONTEXT.to_string(),
+                        projection_version: 1,
+                        head_event_seq: 5,
+                        active_compaction_id: Some("compact-1".to_string()),
+                        updated_by_event_seq: Some(5),
+                        updated_at_ms: 2,
+                    },
+                },
+            )
+            .await
+            .expect("commit compaction");
 
         let mount = crate::vfs::build_lifecycle_mount_with_ports(
             run.id,
@@ -1259,59 +1360,116 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lifecycle_vfs_projects_current_node_session_and_tool_calls() {
+    async fn lifecycle_vfs_projects_current_node_session_items_and_tools() {
         let (provider, mount, _persistence) = fixture().await;
         let ctx = MountOperationContext::default();
 
-        let turn = provider
-            .read_text(&mount, "session/turns/t-1/events.json", &ctx)
+        let item_index = provider
+            .read_text(&mount, "session/items", &ctx)
             .await
-            .expect("turn events");
-        assert!(turn.content.contains("\"eventSeq\""));
+            .expect("item index");
+        assert!(item_index.content.contains("\"item_id\": \"tool-1\""));
+        assert!(item_index.content.contains("\"item_kind\": \"tool\""));
 
-        let node_turn = provider
-            .read_text(&mount, "nodes/analyze/session/turns/t-1/events.json", &ctx)
+        let tool_entries = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/tools".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &ctx,
+            )
             .await
-            .expect("node turn events");
-        assert_eq!(turn.content, node_turn.content);
+            .expect("list tools")
+            .entries;
+        let tool_path = tool_entries
+            .iter()
+            .find(|entry| entry.path.contains("tool-1") && entry.path.contains("read_file"))
+            .map(|entry| entry.path.clone())
+            .expect("tool-1 file");
 
         let tool_index = provider
-            .read_text(&mount, "tool-calls", &ctx)
+            .read_text(&mount, "session/tools", &ctx)
             .await
             .expect("tool index");
-        assert!(tool_index.content.contains("\"tool_call_id\": \"tool-1\""));
-        assert!(
-            tool_index
-                .content
-                .contains("\"kind\": \"dynamic_tool_call\"")
-        );
-        assert!(tool_index.content.contains("\"tool_call_id\": \"mcp-1\""));
-        assert!(tool_index.content.contains("\"kind\": \"mcp_tool_call\""));
-        assert!(tool_index.content.contains("\"provider\": \"memory\""));
+        assert!(tool_index.content.contains(&tool_path));
+        assert!(tool_index.content.contains("\"item_id\": \"mcp-1\""));
 
-        let request = provider
-            .read_text(&mount, "tool-calls/tool-1/request.json", &ctx)
+        let tool_item = provider
+            .read_text(&mount, &tool_path, &ctx)
             .await
-            .expect("request");
-        assert!(request.content.contains("\"path\": \"src/lib.rs\""));
+            .expect("tool item");
+        assert!(tool_item.content.contains("\"path\": \"src/lib.rs\""));
+        assert!(tool_item.content.contains("file contents"));
 
-        let result = provider
-            .read_text(&mount, "tool-calls/tool-1/result.json", &ctx)
+        let write_entries = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/writes".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &ctx,
+            )
             .await
-            .expect("result");
-        assert!(result.content.contains("file contents"));
+            .expect("list writes")
+            .entries;
+        let write_path = write_entries
+            .iter()
+            .find(|entry| entry.path.contains("patch-1") && entry.path.contains("fs_apply_patch"))
+            .map(|entry| entry.path.clone())
+            .expect("patch write file");
 
         let writes = provider
-            .read_text(&mount, "writes", &ctx)
+            .read_text(&mount, "session/writes", &ctx)
             .await
             .expect("writes");
-        assert!(writes.content.contains("\"tool_call_id\": \"patch-1\""));
+        assert!(writes.content.contains(&write_path));
 
-        let missing_mcp_calls = provider.read_text(&mount, "mcp-calls", &ctx).await;
-        assert!(
-            matches!(missing_mcp_calls, Err(MountError::NotFound(_))),
-            "MCP 不应有独立 mcp-calls 路径族"
-        );
+        let summary_entries = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "session/summaries".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &ctx,
+            )
+            .await
+            .expect("list summaries")
+            .entries;
+        let summary_path = summary_entries
+            .iter()
+            .find(|entry| entry.path.contains("compact-1"))
+            .map(|entry| entry.path.clone())
+            .expect("compaction summary file");
+        let summary = provider
+            .read_text(&mount, &summary_path, &ctx)
+            .await
+            .expect("summary file");
+        assert!(summary.content.contains("保留原文回看索引"));
+
+        let node_tools = provider
+            .list(
+                &mount,
+                &ListOptions {
+                    path: "nodes/analyze/session/tools".to_string(),
+                    pattern: None,
+                    recursive: false,
+                },
+                &ctx,
+            )
+            .await
+            .expect("list node tools")
+            .entries;
+        assert!(node_tools.iter().any(|entry| entry.path.contains("tool-1")));
+
+        let removed_tool_calls = provider.read_text(&mount, "tool-calls", &ctx).await;
+        assert!(matches!(removed_tool_calls, Err(MountError::NotFound(_))));
     }
 
     #[tokio::test]
@@ -1395,8 +1553,11 @@ mod tests {
             source_story_id: None,
             links: Vec::new(),
         };
-        let target = crate::vfs::parse_mount_uri("lifecycle://tool-calls/tool-1/result.json", &vfs)
-            .expect("URI should parse");
+        let target = crate::vfs::parse_mount_uri(
+            "lifecycle://session/tools/0001__tool-1__read_file__src_lib_rs.json",
+            &vfs,
+        )
+        .expect("URI should parse");
 
         let read = service
             .read_text(&vfs, &target, None, None)

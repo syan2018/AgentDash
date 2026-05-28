@@ -2,9 +2,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use agentdash_domain::common::AgentConfig;
-use agentdash_domain::shared_library::{
-    ExtensionCommandHandler, ExtensionFlagType, ExtensionRendererDeclaration, InstalledAssetSource,
-};
 use agentdash_domain::task::AgentBinding;
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
@@ -17,6 +14,7 @@ use super::context::SessionContextSnapshot;
 use super::ownership::ResolvedSessionOwner;
 use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
+use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::vfs::ResolvedVfsSurface;
 
 #[derive(Debug, Clone)]
@@ -99,50 +97,6 @@ pub struct ConstructionProjections {
     pub session_capabilities: Option<SessionBaselineCapabilities>,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
     pub extension_runtime: Option<ExtensionRuntimeProjection>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ExtensionRuntimeProjection {
-    pub installations: Vec<ExtensionInstallationProjection>,
-    pub commands: Vec<ExtensionCommandProjection>,
-    pub flags: Vec<ExtensionFlagProjection>,
-    pub message_renderers: Vec<ExtensionMessageRendererProjection>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionInstallationProjection {
-    pub installation_id: Uuid,
-    pub extension_key: String,
-    pub extension_id: String,
-    pub display_name: String,
-    pub installed_source: InstalledAssetSource,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionCommandProjection {
-    pub extension_key: String,
-    pub extension_id: String,
-    pub name: String,
-    pub description: String,
-    pub handler: ExtensionCommandHandler,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExtensionFlagProjection {
-    pub extension_key: String,
-    pub extension_id: String,
-    pub name: String,
-    pub flag_type: ExtensionFlagType,
-    pub default: serde_json::Value,
-    pub description: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtensionMessageRendererProjection {
-    pub extension_key: String,
-    pub extension_id: String,
-    pub custom_type: String,
-    pub renderer: ExtensionRendererDeclaration,
 }
 
 #[derive(Debug, Clone, Default)]

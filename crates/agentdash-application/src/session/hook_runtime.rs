@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
 use agentdash_spi::hooks::{
@@ -25,6 +25,7 @@ pub struct HookSessionRuntime {
     pending_actions: RwLock<Vec<HookPendingAction>>,
     turn_start_notices: RwLock<Vec<HookTurnStartNotice>>,
     token_stats: RwLock<ContextTokenStats>,
+    compaction_failure_count: AtomicU32,
     capabilities: RwLock<BTreeSet<String>>,
     revision: AtomicU64,
     trace_sequence: AtomicU64,
@@ -60,6 +61,7 @@ impl HookSessionRuntime {
             pending_actions: RwLock::new(Vec::new()),
             turn_start_notices: RwLock::new(Vec::new()),
             token_stats: RwLock::new(ContextTokenStats::default()),
+            compaction_failure_count: AtomicU32::new(0),
             capabilities: RwLock::new(BTreeSet::new()),
             revision: AtomicU64::new(1),
             trace_sequence: AtomicU64::new(0),
@@ -186,6 +188,18 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
             .read()
             .expect("token stats read lock poisoned")
             .clone()
+    }
+
+    fn record_compaction_failure(&self, _error: &str) -> u32 {
+        self.compaction_failure_count.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn reset_compaction_failures(&self) {
+        self.compaction_failure_count.store(0, Ordering::SeqCst);
+    }
+
+    fn compaction_failure_count(&self) -> u32 {
+        self.compaction_failure_count.load(Ordering::SeqCst)
     }
 
     async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {

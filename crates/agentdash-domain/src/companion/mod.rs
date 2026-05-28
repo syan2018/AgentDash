@@ -1,0 +1,5 @@
+mod value_objects;
+
+pub use value_objects::{
+    COMPANION_SYSTEM_BUNDLE, COMPANION_SYSTEM_SKILL_NAME, COMPANION_SYSTEM_SKILL_PATH,
+};

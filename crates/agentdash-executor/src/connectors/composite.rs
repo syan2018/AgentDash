@@ -9,8 +9,8 @@ use std::sync::Arc;
 use futures::stream::BoxStream;
 
 use agentdash_spi::{
-    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType, DynAgentTool,
-    ExecutionContext, ExecutionStream, PromptPayload,
+    AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
+    DiscoveryContext, DynAgentTool, ExecutionContext, ExecutionStream, PromptPayload,
 };
 
 pub struct CompositeConnector {
@@ -247,6 +247,8 @@ impl AgentConnector for CompositeConnector {
                 caps.supports_model_override || sub.supports_model_override;
             caps.supports_permission_policy =
                 caps.supports_permission_policy || sub.supports_permission_policy;
+            caps.supports_source_session_title =
+                caps.supports_source_session_title || sub.supports_source_session_title;
         }
         caps
     }
@@ -270,11 +272,26 @@ impl AgentConnector for CompositeConnector {
         executor: &str,
         working_dir: Option<PathBuf>,
     ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
+        self.discover_options_stream_with_context(
+            executor,
+            DiscoveryContext {
+                working_dir,
+                identity: None,
+            },
+        )
+        .await
+    }
+
+    async fn discover_options_stream_with_context(
+        &self,
+        executor: &str,
+        context: DiscoveryContext,
+    ) -> Result<BoxStream<'static, json_patch::Patch>, ConnectorError> {
         let connector = self
             .resolve_connector(executor)
             .ok_or_else(|| ConnectorError::InvalidConfig(format!("未知执行器: {executor}")))?;
         connector
-            .discover_options_stream(executor, working_dir)
+            .discover_options_stream_with_context(executor, context)
             .await
     }
 

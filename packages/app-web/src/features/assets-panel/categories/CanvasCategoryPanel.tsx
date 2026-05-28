@@ -5,9 +5,6 @@
  * - Canvas 的 list + detail 已在 `ProjectCanvasManager` 内部以左右分栏实现。
  * - 不再抽出新的 list 组件，也不引入额外子路由——PRD 要求"最小改动 + URL 拓扑不分裂"。
  * - 本面板直接复用 `ProjectCanvasManager`，选中即进入编辑态（等同于"编辑"操作）。
- * - 原有 `/dashboard/canvas` 深链已在 App.tsx redirect 到 `/dashboard/assets/canvas`，
- *   用户体验 = 原 Canvas Tab 等价。
- *
  * 对齐 PRD：
  * - 列表项展示：title / description / files 计数 / bindings 计数 / 更新时间（ProjectCanvasManager 已实现）
  * - 行动作：选中 = 编辑（ProjectCanvasManager 选中展开 detail / 绑定编辑），删除按钮也已存在

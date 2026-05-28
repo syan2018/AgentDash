@@ -1,0 +1,31 @@
+{
+  "id": "extension-runtime-boundary-local-modularization",
+  "name": "extension-runtime-boundary-local-modularization",
+  "title": "Extension Runtime 边界收口与 local 模块目录化",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "codex-agent",
+  "assignee": "codex-agent",
+  "createdAt": "2026-05-27",
+  "completedAt": "2026-05-27",
+  "branch": null,
+  "base_branch": "codex/extension-sdk",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-27-extension-host-trust-permission-convergence",
+    "05-27-extension-artifact-storage-boundary",
+    "05-27-local-extension-runtime-modularization",
+    "05-27-vite-dev-proxy-econnrefused-response"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -29,8 +29,8 @@ pub enum BackboneEvent {
     AgentMessageDelta(codex::AgentMessageDeltaNotification),
     ReasoningTextDelta(codex::ReasoningTextDeltaNotification),
     ReasoningSummaryDelta(codex::ReasoningSummaryTextDeltaNotification),
-    ItemStarted(codex::ItemStartedNotification),
-    ItemCompleted(codex::ItemCompletedNotification),
+    ItemStarted(ItemStartedNotification),
+    ItemCompleted(ItemCompletedNotification),
     CommandOutputDelta(codex::CommandExecutionOutputDeltaNotification),
     FileChangeDelta(codex::FileChangeOutputDeltaNotification),
     McpToolCallProgress(codex::McpToolCallProgressNotification),
@@ -39,9 +39,9 @@ pub enum BackboneEvent {
     TurnDiffUpdated(codex::TurnDiffUpdatedNotification),
     TurnPlanUpdated(codex::TurnPlanUpdatedNotification),
     PlanDelta(codex::PlanDeltaNotification),
-    TokenUsageUpdated(codex::ThreadTokenUsageUpdatedNotification),
+    TokenUsageUpdated(ThreadTokenUsageUpdatedNotification),
     ThreadStatusChanged(codex::ThreadStatusChangedNotification),
-    ContextCompacted(codex::ContextCompactedNotification),
+    ExecutorContextCompacted(codex::ContextCompactedNotification),
     ApprovalRequest(ApprovalRequest),
     Error(codex::ErrorNotification),
     Platform(PlatformEvent),
@@ -50,9 +50,52 @@ pub enum BackboneEvent {
 
 序列化采用 `#[serde(tag = "type", content = "payload", rename_all = "snake_case")]`。
 
+## Token Usage Semantics
+
+`TokenUsageUpdated` 使用 AgentDash 自有的 normalized payload 包装 provider usage。该 payload 保留 Codex `ThreadTokenUsage.last` 与 `ThreadTokenUsage.total` 的差异，并额外给出 `context`：
+
+- `provider_context_tokens` 表示最近一次 provider usage 可确认的模型可见输入压力。
+- `pending_estimate_tokens` 表示最近一次 provider usage 之后新增上下文的本地估算。
+- `current_context_tokens` 是状态栏、上下文环和压缩判断共同使用的当前压力值。
+- `cumulative_total_tokens` 表示 session 累计消耗，只服务统计与成本类展示。
+- `model_context_window` 表示 provider/model 暴露的原始窗口。
+- `effective_context_window` 表示扣除策略预算后用于判断的窗口。
+- `reserve_tokens` 表示输出、工具调用或摘要预留预算。
+
+这些字段在 Backbone 层拆开，是因为 provider usage 同时承载 billing、cache、最近一次请求和累计 session 信息。进入主事件流后，展示层和决策层必须能选择正确口径，而不是从累计值反推当前上下文压力。
+
+## Thread Items
+
+Backbone item lifecycle 使用 `AgentDashThreadItem`：
+
+```rust
+pub enum AgentDashThreadItem {
+    Codex(codex::ThreadItem),
+    AgentDash(AgentDashNativeThreadItem),
+}
+```
+
+Codex 已有的 item 语义保持原生 `ThreadItem` wire shape。AgentDash 自有 item 当前覆盖
+`fsRead`、`fsGrep`、`fsGlob`，用于表达 Codex Protocol 尚未提供一等 variant 的
+read/search/list 工具事实。
+
+Codex `fileChange` 是文件修改的统一 item 语义；AgentDash `fs_apply_patch` 进入
+Backbone 时映射为该 Codex variant。
+
+`ItemStartedNotification` / `ItemCompletedNotification` 在 Backbone 中携带
+`AgentDashThreadItem`，同时保留 `thread_id`、`turn_id` 与毫秒时间戳。Codex bridge
+接入 Codex 原生事件时包装为 `AgentDashThreadItem::Codex`；AgentDash 自有 connector
+可直接产出 native item。
+
 ## PlatformEvent
 
 Codex 原生协议没有覆盖的平台能力通过 `PlatformEvent` 扩展。Platform event 必须保持结构化 payload，不把业务语义塞入自由文本。
+
+来源执行器提供会话标题时使用 `PlatformEvent::SourceSessionTitleUpdated`，字段为 `executor_session_id`、`title`、`preview`、`source`。应用层负责把该事件投影为统一的 `session_meta_updated`，并按 `user > source > auto` 的标题来源优先级写入 `SessionMeta`。
+
+上下文压缩使用 Codex `ThreadItem::contextCompaction` 作为 lifecycle item。平台自有 runtime 的成功 compact 通过 `PlatformEvent::SessionMetaUpdate(key = "context_compacted")` 提供 summary、`compacted_until_ref` 和 `first_kept_ref`，这些字段构成 AgentDash-owned projection commit 的可信来源；失败 compact 通过 `context_compaction_failed` platform payload 提供结构化 diagnostic，并同时发送标准 `Error` 事件。外部 executor 的 compact marker 映射为 `executor_context_compacted`，它表达外部 executor 发生过压缩，但没有 replacement provenance，因此语义上属于遥测与审计事件。
+
+前端模型上下文面板的 refresh key 来自 `turn_completed`、内部 platform `context_compacted` 和 `ContextFrame(kind="compaction_summary")`。`executor_context_compacted` 只影响时间线/状态展示语义，因为内部 projection store 没有发生 commit。
 
 ## TypeScript Binding
 
@@ -127,3 +170,19 @@ BackboneEnvelope (NDJSON)
 ```
 
 前端直接消费 `BackboneEnvelope` / `BackboneEvent` 类型，不在主路径经过外部 SDK 解析。
+
+### Tool Card Rendering
+
+工具调用卡片以 `AgentDashThreadItem` 为唯一输入契约，通过 `ToolCallCardShell` + `toolCardRegistry` 统一渲染：
+
+```text
+AgentDashThreadItem
+  -> toolCardRegistry.renderToolCallCard(item, ctx) → { kind, title, body, status }
+  -> ToolCallCardShell(kind, title, status, children=body)
+```
+
+- `ToolCallCardShell`：统一承载 header（badge/title/status/elapsed）、折叠、审批操作、错误展示。
+- `toolCardRegistry`：按 `item.type` 一级分发到专用 renderer body；`dynamicToolCall` 内部按 `tool` 名做二级摘要。
+- `threadItemKind.ts`：kind 元数据（badge/label/summaryVerb）的单一来源。
+- Body 组件位于 `features/session/ui/bodies/`，每个 item type 对应一个 body，未注册的走 `GenericJsonBody` 兜底。
+- Codex 已有 item 直接使用 Codex Protocol type；AgentDash 仅在 Codex 不足时通过 `AgentDashNativeThreadItem` 做加法扩展。

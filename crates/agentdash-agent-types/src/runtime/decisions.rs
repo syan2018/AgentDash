@@ -1,7 +1,7 @@
 use crate::model::content::ContentPart;
 use crate::model::context::AgentContext;
-use crate::model::message::AgentMessage;
 use crate::model::message::ToolCallInfo;
+use crate::model::message::{AgentMessage, MessageRef};
 use crate::runtime::tool::AgentToolResult;
 
 // ─── RuntimeDelegate 输入/输出 ─────────────────────────────
@@ -39,6 +39,13 @@ pub struct TransformContextOutput {
 #[derive(Debug, Clone)]
 pub struct EvaluateCompactionInput {
     pub context: AgentContext,
+    pub provider_visible: Option<ProviderVisibleContextStats>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactionFailureInput {
+    pub item_id: String,
+    pub error: String,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +130,17 @@ pub struct BeforeProviderRequestInput {
     pub system_prompt_len: usize,
     pub message_count: usize,
     pub tool_count: usize,
+    pub estimated_input_tokens: u64,
+    pub context_window: u64,
+    pub reserve_tokens: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProviderVisibleContextStats {
+    pub system_prompt_len: usize,
+    pub message_count: usize,
+    pub tool_count: usize,
+    pub estimated_input_tokens: u64,
 }
 
 // ─── Compaction 参数 ──────────────────────────────────────
@@ -152,8 +170,14 @@ pub struct CompactionTriggerStats {
 pub struct CompactionResult {
     /// 压缩后应写回 runtime / restore 投影的完整消息序列
     pub messages: Vec<AgentMessage>,
+    /// 与 `messages` 对齐的持久化消息引用；投影摘要自身没有原始消息 ref。
+    pub message_refs: Vec<Option<MessageRef>>,
     /// 本次生成的新摘要消息
     pub summary_message: AgentMessage,
+    /// 摘要覆盖到的最后一条持久化消息引用。
+    pub compacted_until_ref: MessageRef,
+    /// 压缩后保留尾部的第一条持久化消息引用。
+    pub first_kept_ref: Option<MessageRef>,
     /// 压缩前的 token 触发统计
     pub trigger_stats: CompactionTriggerStats,
     /// 本次新增压缩的原始消息数量

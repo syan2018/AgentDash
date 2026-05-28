@@ -16,6 +16,7 @@ import {
   buildSessionShortcutRows,
   type SessionShortcutRow,
 } from "./session-shortcut-rows";
+import { sessionParentRelationLabel } from "../../features/agent/session-relations";
 
 // ─── 视图导航定义 ──────────────────────────────────────────
 type NavKey = "agent" | "story" | "assets" | "routine";
@@ -503,7 +504,7 @@ function getShortcutIndentClass(depth: number): string {
 function estimateShortcutRowHeight(row: SessionShortcutRow): number {
   const titleLength = row.session.session_title?.trim().length ?? 0;
   const hasMeta = Boolean(
-    row.isCompanion ||
+    row.parentRelationKind ||
       getShortcutAgentLabel(row.session) ||
       getShortcutOwnerLabel(row.session),
   );
@@ -606,7 +607,9 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
               const time = formatRelativeTime(session.last_activity);
               const indentClass = getShortcutIndentClass(row.depth);
               const metaParts = [
-                row.isCompanion ? "Subagent" : null,
+                row.parentRelationKind
+                  ? sessionParentRelationLabel(row.parentRelationKind)
+                  : null,
                 agent,
                 owner,
               ].filter((part): part is string => Boolean(part));
@@ -629,7 +632,7 @@ function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) 
                   title={meta ? `${title} · ${meta}` : title}
                 >
                   <div className="flex items-start gap-2">
-                    {row.isCompanion && (
+                    {row.parentRelationKind && (
                       <span className="mt-[3px] shrink-0 text-[11px] leading-none text-primary/70">
                         ↳
                       </span>

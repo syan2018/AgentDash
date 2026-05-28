@@ -263,7 +263,7 @@ impl Default for SearchQuery {
 ///   `--multiline --multiline-dotall`）。
 /// - `include_glob` 限定 grep 仅扫描匹配该 glob 的文件。
 /// - `output_mode` 决定 provider 返回的命中粒度。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GrepQuery {
     pub base: SearchQuery,
     pub include_glob: Option<String>,
@@ -272,20 +272,6 @@ pub struct GrepQuery {
     pub after_lines: usize,
     pub multiline: bool,
     pub output_mode: SearchOutputMode,
-}
-
-impl Default for GrepQuery {
-    fn default() -> Self {
-        Self {
-            base: SearchQuery::default(),
-            include_glob: None,
-            context_lines: 0,
-            before_lines: 0,
-            after_lines: 0,
-            multiline: false,
-            output_mode: SearchOutputMode::default(),
-        }
-    }
 }
 
 /// 搜索结果的输出形态（对齐 Claude Code GrepTool `output_mode`）。
@@ -696,11 +682,11 @@ pub trait MountProvider: Send + Sync {
                     continue;
                 }
                 let start = idx.saturating_sub(before);
-                for ctx_idx in start..idx {
+                for (ctx_idx, ctx_line) in lines.iter().enumerate().take(idx).skip(start) {
                     matches.push(SearchMatch {
                         path: entry.path.clone(),
                         line: Some((ctx_idx + 1) as u32),
-                        content: lines[ctx_idx].trim().to_string(),
+                        content: ctx_line.trim().to_string(),
                     });
                 }
                 matches.push(SearchMatch {
@@ -709,11 +695,11 @@ pub trait MountProvider: Send + Sync {
                     content: line.trim().to_string(),
                 });
                 let end = (idx + 1 + after).min(lines.len());
-                for ctx_idx in (idx + 1)..end {
+                for (ctx_idx, ctx_line) in lines.iter().enumerate().take(end).skip(idx + 1) {
                     matches.push(SearchMatch {
                         path: entry.path.clone(),
                         line: Some((ctx_idx + 1) as u32),
-                        content: lines[ctx_idx].trim().to_string(),
+                        content: ctx_line.trim().to_string(),
                     });
                 }
                 if matches.len() >= max_results {
@@ -947,10 +933,8 @@ mod tests {
 
     #[tokio::test]
     async fn grep_text_default_respects_include_glob() {
-        let provider = MockProvider::new(&[
-            ("src/main.rs", "fn x() {}"),
-            ("docs/notes.md", "fn x() {}"),
-        ]);
+        let provider =
+            MockProvider::new(&[("src/main.rs", "fn x() {}"), ("docs/notes.md", "fn x() {}")]);
         let result = provider
             .grep_text(
                 &fake_mount(),
@@ -1044,9 +1028,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_text_default_truncates_at_max_results() {
-        let provider = MockProvider::new(&[
-            ("a.rs", "x\nx\nx\nx\nx"),
-        ]);
+        let provider = MockProvider::new(&[("a.rs", "x\nx\nx\nx\nx")]);
         let result = provider
             .grep_text(
                 &fake_mount(),

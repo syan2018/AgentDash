@@ -1,0 +1,16 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端 spec 入口，新增类目 + service + panel 必读"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "feature 模块组织、service 与 store 之间的边界"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "categories / features / services 目录基线"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "DTO mapper、unknown→generated type、字段别名禁令"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "extensionRuntimeStore 复用规则与 panel 本地 state 边界"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复用 MarketplaceCategoryPanel 风格的 primitive / token 选择"}
+{"file": ".trellis/spec/frontend/design-language.md", "reason": "颜色、间距、surface token 沿用项目基线"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端代码质量约定（含 service 错误处理）"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "DTO 必须从 contract crate 生成，Uninstall response 必须走该链路"}
+{"file": ".trellis/spec/cross-layer/architecture.md", "reason": "前后端跨层调用边界与 multipart 上传定位"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "application / route / repo 三层职责，Uninstall 函数归属"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "在 repo trait 加 delete / get_by_project_and_id 的标准做法"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "DomainError::NotFound 翻译为 ApiError 的一致性"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码质量约定（含测试）"}
+{"file": "examples/extensions/local-hello/README.md", "reason": "本任务测试用归档与 install 命令的 source of truth"}
+{"file": "tests/e2e/local-hello-extension.spec.ts", "reason": "现有 e2e 用例形态，新增 panel e2e 复用其 helper / fixtures"}

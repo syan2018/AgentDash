@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/architecture.md", "reason": "确认 API、application、domain、infrastructure 与 local runtime 的职责边界，特别是 extension package artifact 与 runtime projection 的当前基线。"}
+{"file": ".trellis/spec/backend/runtime-gateway.md", "reason": "确认 RuntimeGateway dynamic extension provider 的调用、actor/context 与 relay 约束。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "约束后端整洁架构与新增模块归属，避免把 storage 继续放在 route 层。"}
+{"file": ".trellis/spec/cross-layer/desktop-local-runtime.md", "reason": "确认 local runtime、extension artifact cache 与 TS Extension Host 的跨层契约。"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "确认 extension runtime/package DTO 的生成契约与前端消费方式。"}
+{"file": ".trellis/spec/cross-layer/shared-library-contract.md", "reason": "确认 packaged extension artifact 与 Shared Library / Project installation 的关系。"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "确认前端 extension runtime 与 extension-* 作者侧包的目录归属。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "用于检查 cloud/local、backend/frontend 与 runtime policy 的跨层一致性。"}

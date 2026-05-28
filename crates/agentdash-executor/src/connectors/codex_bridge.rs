@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -8,7 +9,8 @@ use std::{
 };
 
 use agentdash_agent_protocol::{
-    BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
+    BackboneEnvelope, BackboneEvent, ItemCompletedNotification, ItemStartedNotification,
+    PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_spi::{
     AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError, ConnectorType,
@@ -18,13 +20,8 @@ use codex_app_server_protocol::{
     AskForApproval, ClientInfo, ClientNotification, ClientRequest, GetAccountParams,
     GetAccountResponse, InitializeCapabilities, InitializeParams, InitializeResponse,
     JSONRPCMessage, JSONRPCNotification, JSONRPCRequest, JSONRPCResponse, RequestId, SandboxMode,
-    ThreadForkParams, ThreadForkResponse, ThreadStartParams, ThreadStartResponse, TurnStartParams,
-    TurnStartResponse, UserInput,
-};
-use executors::{
-    executors::{BaseCodingAgent, StandardCodingAgentExecutor as _},
-    model_selector::PermissionPolicy,
-    profile::{ExecutorConfigs, ExecutorProfileId},
+    Thread, ThreadForkParams, ThreadForkResponse, ThreadNameUpdatedNotification, ThreadStartParams,
+    ThreadStartResponse, TurnStartParams, TurnStartResponse, UserInput,
 };
 use futures::stream::BoxStream;
 use serde::de::DeserializeOwned;
@@ -35,12 +32,12 @@ use tokio::{
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
-use workspace_utils::command_ext::GroupSpawnNoWindowExt;
 
-use crate::adapters::codex_config::to_codex_config;
+use crate::adapters::codex_config::{CodexExecutorConfig, CodexPermissionPolicy, to_codex_config};
 use crate::connectors::context_frame_render::compose_prompt_text;
 
 const CODEX_EXECUTOR_ID: &str = "CODEX";
+const CODEX_SOURCE_TITLE: &str = "codex";
 
 fn normalize_executor_id(executor: &str) -> String {
     executor.trim().replace('-', "_").to_ascii_uppercase()
@@ -54,18 +51,22 @@ type PendingResponseMap =
     Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ConnectorError>>>>>;
 
 pub struct CodexBridgeConnector {
-    default_repo_root: PathBuf,
     cancel_by_session: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
 
 impl CodexBridgeConnector {
     /// 首阶段桥接：对外暴露独立 Codex connector，内部走原生 app-server 协议。
     /// 后续替换底层 SDK/运行时时，仅需继续演进该模块。
-    pub fn new(default_repo_root: PathBuf) -> Self {
+    pub fn new() -> Self {
         Self {
-            default_repo_root,
             cancel_by_session: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+}
+
+impl Default for CodexBridgeConnector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -88,6 +89,52 @@ fn make_envelope(
     })
 }
 
+fn make_source_session_title_envelope(
+    session_id: &str,
+    source_info: &SourceInfo,
+    turn_id: &str,
+    executor_session_id: String,
+    title: String,
+    preview: Option<String>,
+) -> Option<BackboneEnvelope> {
+    let title = title.trim();
+    if title.is_empty()
+        || preview
+            .as_deref()
+            .is_some_and(|value| value.trim() == title)
+    {
+        return None;
+    }
+
+    Some(make_envelope(
+        BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+            executor_session_id: Some(executor_session_id),
+            title: title.to_string(),
+            preview,
+            source: CODEX_SOURCE_TITLE.to_string(),
+        }),
+        session_id,
+        source_info,
+        turn_id,
+    ))
+}
+
+fn make_thread_source_title_envelope(
+    session_id: &str,
+    source_info: &SourceInfo,
+    turn_id: &str,
+    thread: &Thread,
+) -> Option<BackboneEnvelope> {
+    make_source_session_title_envelope(
+        session_id,
+        source_info,
+        turn_id,
+        thread.id.clone(),
+        thread.name.clone()?,
+        Some(thread.preview.clone()),
+    )
+}
+
 fn build_prompt_text(
     context: &ExecutionContext,
     prompt: &PromptPayload,
@@ -102,8 +149,72 @@ fn build_prompt_text(
     Ok(prompt_text)
 }
 
+fn executable_available(name: &str) -> bool {
+    let name_path = Path::new(name);
+    if name_path.components().count() > 1 {
+        return name_path.is_file();
+    }
+
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+
+    for dir in env::split_paths(&paths) {
+        for candidate in executable_candidates(name) {
+            if dir.join(candidate).is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn executable_candidates(name: &str) -> Vec<String> {
+    if cfg!(windows) {
+        if Path::new(name).extension().is_some() {
+            vec![name.to_string()]
+        } else {
+            vec![
+                format!("{name}.exe"),
+                format!("{name}.cmd"),
+                format!("{name}.bat"),
+                name.to_string(),
+            ]
+        }
+    } else {
+        vec![name.to_string()]
+    }
+}
+
+fn spawn_codex_process(
+    command: &mut tokio::process::Command,
+) -> std::io::Result<tokio::process::Child> {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command.spawn()
+}
+
+fn codex_discovery_patch() -> json_patch::Patch {
+    serde_json::from_value(serde_json::json!([
+        { "op": "replace", "path": "/options/model_selector/providers", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/models", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/default_model", "value": null },
+        { "op": "replace", "path": "/options/model_selector/agents", "value": [] },
+        { "op": "replace", "path": "/options/model_selector/permissions", "value": ["AUTO", "SUPERVISED", "PLAN"] },
+        { "op": "replace", "path": "/options/loading_models", "value": false },
+        { "op": "replace", "path": "/options/loading_agents", "value": false },
+        { "op": "replace", "path": "/options/loading_slash_commands", "value": false },
+        { "op": "replace", "path": "/options/slash_commands", "value": [] }
+    ]))
+    .expect("static codex discovery patch must be valid")
+}
+
 fn build_thread_start_params(
-    codex_config: &executors::profile::ExecutorConfig,
+    codex_config: &CodexExecutorConfig,
     working_directory: &Path,
 ) -> ThreadStartParams {
     let mut config_overrides = HashMap::new();
@@ -123,10 +234,10 @@ fn build_thread_start_params(
     };
 
     let approval_policy = match codex_config.permission_policy {
-        Some(PermissionPolicy::Auto) => Some(AskForApproval::Never),
-        Some(PermissionPolicy::Supervised) => Some(AskForApproval::UnlessTrusted),
+        Some(CodexPermissionPolicy::Auto) => Some(AskForApproval::Never),
+        Some(CodexPermissionPolicy::Supervised) => Some(AskForApproval::UnlessTrusted),
         // 当前先保证协议通路可用；plan 专属协作模式后续单独补齐。
-        Some(PermissionPolicy::Plan) => Some(AskForApproval::OnRequest),
+        Some(CodexPermissionPolicy::Plan) => Some(AskForApproval::OnRequest),
         None => Some(AskForApproval::OnRequest),
     };
 
@@ -153,7 +264,7 @@ fn build_thread_fork_params(
         thread_id,
         model: thread_start.model.clone(),
         model_provider: thread_start.model_provider.clone(),
-        service_tier: thread_start.service_tier,
+        service_tier: thread_start.service_tier.clone(),
         cwd: thread_start.cwd.clone(),
         approval_policy: thread_start.approval_policy,
         sandbox: thread_start.sandbox,
@@ -260,14 +371,22 @@ async fn handle_server_notification(
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ItemStarted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ItemStarted(
+                        ItemStartedNotification::from_codex(p),
+                    ))))
+                    .await;
             }
         }
         "item/completed" => {
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ItemCompleted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ItemCompleted(
+                        ItemCompletedNotification::from_codex(p),
+                    ))))
+                    .await;
             }
         }
         "item/commandExecution/outputDelta" => {
@@ -332,9 +451,13 @@ async fn handle_server_notification(
         }
         "thread/tokenUsage/updated" => {
             if let Some(params) = notification.params
-                && let Ok(p) = serde_json::from_value(params)
+                && let Ok(p) = serde_json::from_value::<
+                    codex_app_server_protocol::ThreadTokenUsageUpdatedNotification,
+                >(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::TokenUsageUpdated(p.into()))))
+                    .await;
             }
         }
         "thread/status/changed" => {
@@ -346,11 +469,29 @@ async fn handle_server_notification(
                     .await;
             }
         }
-        "context/compacted" => {
+        "thread/name/updated" => {
+            if let Some(params) = notification.params
+                && let Ok(p) = serde_json::from_value::<ThreadNameUpdatedNotification>(params)
+                && let Some(thread_name) = p.thread_name
+                && let Some(envelope) = make_source_session_title_envelope(
+                    session_id,
+                    source,
+                    turn_id,
+                    p.thread_id,
+                    thread_name,
+                    None,
+                )
+            {
+                let _ = tx.send(Ok(envelope)).await;
+            }
+        }
+        "thread/compacted" => {
             if let Some(params) = notification.params
                 && let Ok(p) = serde_json::from_value(params)
             {
-                let _ = tx.send(Ok(wrap(BackboneEvent::ContextCompacted(p)))).await;
+                let _ = tx
+                    .send(Ok(wrap(BackboneEvent::ExecutorContextCompacted(p))))
+                    .await;
             }
         }
         "error" => {
@@ -398,35 +539,19 @@ impl AgentConnector for CodexBridgeConnector {
         ConnectorCapabilities {
             supports_cancel: true,
             supports_discovery: true,
-            supports_variants: true,
+            supports_variants: false,
             supports_model_override: true,
             supports_permission_policy: true,
+            supports_source_session_title: true,
         }
     }
 
     fn list_executors(&self) -> Vec<AgentInfo> {
-        let configs = ExecutorConfigs::get_cached();
-        let profile_id = ExecutorProfileId {
-            executor: BaseCodingAgent::Codex,
-            variant: None,
-        };
-        let available = configs
-            .get_coding_agent(&profile_id)
-            .map(|agent| agent.get_availability_info().is_available())
-            .unwrap_or(false);
-
-        let mut variants = configs
-            .executors
-            .get(&BaseCodingAgent::Codex)
-            .map(|profile| profile.configurations.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        variants.sort();
-
         vec![AgentInfo {
             id: CODEX_EXECUTOR_ID.to_string(),
             name: "Codex".to_string(),
-            variants,
-            available,
+            variants: Vec::new(),
+            available: executable_available("npx"),
         }]
     }
 
@@ -441,21 +566,10 @@ impl AgentConnector for CodexBridgeConnector {
             )));
         }
 
-        let profile_id = ExecutorProfileId {
-            executor: BaseCodingAgent::Codex,
-            variant: None,
-        };
-        let agent = ExecutorConfigs::get_cached()
-            .get_coding_agent(&profile_id)
-            .ok_or_else(|| {
-                ConnectorError::InvalidConfig("找不到 Codex 执行器 profile".to_string())
-            })?;
-
-        let wd = working_dir.unwrap_or_else(|| self.default_repo_root.clone());
-        agent
-            .discover_options(Some(&wd), Some(&self.default_repo_root))
-            .await
-            .map_err(|e| ConnectorError::Runtime(format!("discover_options 失败: {e}")))
+        let _ = working_dir;
+        Ok(Box::pin(futures::stream::once(async {
+            codex_discovery_patch()
+        })))
     }
 
     async fn has_live_session(&self, session_id: &str) -> bool {
@@ -491,16 +605,15 @@ impl AgentConnector for CodexBridgeConnector {
             .env("RUST_LOG", "error")
             .envs(context.session.environment_variables.clone());
 
-        let mut child = process
-            .group_spawn_no_window()
+        let mut child = spawn_codex_process(&mut process)
             .map_err(|e| ConnectorError::SpawnFailed(e.to_string()))?;
-        let stdout = child.inner().stdout.take().ok_or_else(|| {
+        let stdout = child.stdout.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stdout".to_string())
         })?;
-        let stderr = child.inner().stderr.take().ok_or_else(|| {
+        let stderr = child.stderr.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stderr".to_string())
         })?;
-        let stdin = child.inner().stdin.take().ok_or_else(|| {
+        let stdin = child.stdin.take().ok_or_else(|| {
             ConnectorError::SpawnFailed("Codex app-server 缺少 stdin".to_string())
         })?;
 
@@ -679,26 +792,39 @@ impl AgentConnector for CodexBridgeConnector {
 
             let thread_start =
                 build_thread_start_params(&codex_config, &context.session.working_directory);
-            let thread_id = if let Some(follow_up_session_id) = follow_up_session_id {
-                let fork_request = ClientRequest::ThreadFork {
-                    request_id: next_request_id(&request_counter),
-                    params: build_thread_fork_params(
-                        follow_up_session_id.to_string(),
-                        &thread_start,
-                    ),
+            let (thread_id, source_title_envelope) =
+                if let Some(follow_up_session_id) = follow_up_session_id {
+                    let fork_request = ClientRequest::ThreadFork {
+                        request_id: next_request_id(&request_counter),
+                        params: build_thread_fork_params(
+                            follow_up_session_id.to_string(),
+                            &thread_start,
+                        ),
+                    };
+                    let response: ThreadForkResponse =
+                        send_rpc_request(&out_tx, &pending, fork_request).await?;
+                    let source_title_envelope = make_thread_source_title_envelope(
+                        session_id,
+                        &source,
+                        &turn_id,
+                        &response.thread,
+                    );
+                    (response.thread.id, source_title_envelope)
+                } else {
+                    let start_request = ClientRequest::ThreadStart {
+                        request_id: next_request_id(&request_counter),
+                        params: thread_start,
+                    };
+                    let response: ThreadStartResponse =
+                        send_rpc_request(&out_tx, &pending, start_request).await?;
+                    let source_title_envelope = make_thread_source_title_envelope(
+                        session_id,
+                        &source,
+                        &turn_id,
+                        &response.thread,
+                    );
+                    (response.thread.id, source_title_envelope)
                 };
-                let response: ThreadForkResponse =
-                    send_rpc_request(&out_tx, &pending, fork_request).await?;
-                response.thread.id
-            } else {
-                let start_request = ClientRequest::ThreadStart {
-                    request_id: next_request_id(&request_counter),
-                    params: thread_start,
-                };
-                let response: ThreadStartResponse =
-                    send_rpc_request(&out_tx, &pending, start_request).await?;
-                response.thread.id
-            };
 
             let _ = tx
                 .send(Ok(make_envelope(
@@ -710,6 +836,9 @@ impl AgentConnector for CodexBridgeConnector {
                     &turn_id,
                 )))
                 .await;
+            if let Some(envelope) = source_title_envelope {
+                let _ = tx.send(Ok(envelope)).await;
+            }
 
             let turn_start_request = ClientRequest::TurnStart {
                 request_id: next_request_id(&request_counter),
@@ -763,5 +892,93 @@ impl AgentConnector for CodexBridgeConnector {
         Err(ConnectorError::Runtime(
             "当前 Codex bridge 尚未接入正式审批恢复链路".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn thread_name_updated_maps_to_source_session_title_event() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = SourceInfo {
+            connector_id: "codex-bridge".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("CODEX".to_string()),
+        };
+
+        handle_server_notification(
+            JSONRPCNotification {
+                method: "thread/name/updated".to_string(),
+                params: Some(json!({
+                    "threadId": "thread-1",
+                    "threadName": "Codex Title",
+                })),
+            },
+            "sess-1",
+            &tx,
+            &source,
+            "turn-1",
+        )
+        .await;
+
+        let envelope = rx
+            .recv()
+            .await
+            .expect("notification should emit an event")
+            .expect("event should be ok");
+        match envelope.event {
+            BackboneEvent::Platform(PlatformEvent::SourceSessionTitleUpdated {
+                executor_session_id,
+                title,
+                preview,
+                source,
+            }) => {
+                assert_eq!(executor_session_id.as_deref(), Some("thread-1"));
+                assert_eq!(title, "Codex Title");
+                assert_eq!(preview, None);
+                assert_eq!(source, CODEX_SOURCE_TITLE);
+            }
+            event => panic!("expected source title event, got {event:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn thread_compacted_maps_to_executor_context_compacted_event() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let source = SourceInfo {
+            connector_id: "codex-bridge".to_string(),
+            connector_type: "local_executor".to_string(),
+            executor_id: Some("CODEX".to_string()),
+        };
+
+        handle_server_notification(
+            JSONRPCNotification {
+                method: "thread/compacted".to_string(),
+                params: Some(json!({
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                })),
+            },
+            "sess-1",
+            &tx,
+            &source,
+            "turn-1",
+        )
+        .await;
+
+        let envelope = rx
+            .recv()
+            .await
+            .expect("notification should emit an event")
+            .expect("event should be ok");
+        match envelope.event {
+            BackboneEvent::ExecutorContextCompacted(payload) => {
+                assert_eq!(payload.thread_id, "thread-1");
+                assert_eq!(payload.turn_id, "turn-1");
+            }
+            event => panic!("expected executor context compacted event, got {event:?}"),
+        }
     }
 }

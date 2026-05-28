@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use agentdash_api::{ApiServerOptions, ApiServerReady};
 use agentdash_local::local_backend_config::McpLocalServerEntry;
@@ -9,8 +10,8 @@ use agentdash_local::{
 };
 use agentdash_relay::BrowseDirectoryEntry;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
-use tokio::sync::Mutex;
+use tauri::{AppHandle, Manager, RunEvent, State};
+use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::EnvFilter;
 
 const DESKTOP_PROFILE_FILE: &str = "desktop-runtime-profile.json";
@@ -18,6 +19,7 @@ const DESKTOP_MCP_SERVERS_FILE: &str = "local-mcp-servers.json";
 const DESKTOP_API_PORT: u16 = 3001;
 const DESKTOP_API_MODE_ENV: &str = "AGENTDASH_DESKTOP_API_MODE";
 const DESKTOP_API_ORIGIN_ENV: &str = "AGENTDASH_DESKTOP_API_ORIGIN";
+const DESKTOP_API_SIDECAR_ENV: &str = "AGENTDASH_DESKTOP_API_SIDECAR";
 const DEFAULT_PROFILE_ID: &str = "default";
 
 #[derive(Clone)]
@@ -37,7 +39,8 @@ impl Default for DesktopState {
 
 #[derive(Clone, Default)]
 struct DesktopApiManager {
-    snapshot: Arc<Mutex<DesktopApiSnapshot>>,
+    snapshot: Arc<AsyncMutex<DesktopApiSnapshot>>,
+    sidecar: Arc<StdMutex<Option<Child>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -671,17 +674,23 @@ fn main() {
         )
         .try_init();
 
+    let state = DesktopState::default();
+    let state_for_exit = state.clone();
+
     tauri::Builder::default()
-        .manage(DesktopState::default())
+        .manage(state)
         .setup(|app| {
             let state = app.state::<DesktopState>().inner().clone();
-            if let Some(origin) = external_desktop_api_origin() {
-                tracing::info!(
-                    origin = %origin,
-                    "Tauri 桌面端复用外部 Dashboard API"
-                );
-            } else {
-                start_desktop_api(state);
+            let api_config = desktop_api_config();
+            match api_config.mode {
+                DesktopApiMode::Builtin => start_desktop_api(state),
+                DesktopApiMode::External => {
+                    tracing::info!(
+                        origin = %api_config.origin,
+                        "Tauri 桌面端复用外部 Dashboard API"
+                    );
+                }
+                DesktopApiMode::Sidecar => start_desktop_api_sidecar(state, api_config),
             }
             let app_handle = app.handle().clone();
             let state = app.state::<DesktopState>().inner().clone();
@@ -707,8 +716,14 @@ fn main() {
             runtime_snapshot,
             open_external_url
         ])
-        .run(tauri::generate_context!())
-        .expect("启动 AgentDash 桌面端失败");
+        .build(tauri::generate_context!())
+        .expect("启动 AgentDash 桌面端失败")
+        .run(move |_app, event| match event {
+            RunEvent::Exit | RunEvent::ExitRequested { .. } => {
+                state_for_exit.api.stop_sidecar();
+            }
+            _ => {}
+        });
 }
 
 fn start_desktop_api(state: DesktopState) {
@@ -757,10 +772,113 @@ async fn run_desktop_api(state: DesktopState) {
     }
 }
 
+fn start_desktop_api_sidecar(state: DesktopState, config: DesktopApiConfig) {
+    let sidecar = match config.sidecar.as_deref() {
+        Some(sidecar) => sidecar,
+        None => {
+            let origin = config.origin.clone();
+            tauri::async_runtime::spawn(async move {
+                state
+                    .api
+                    .mark_error_origin(origin, "未配置桌面端 API sidecar 命令".to_string())
+                    .await;
+            });
+            return;
+        }
+    };
+
+    tracing::info!(
+        origin = %config.origin,
+        sidecar = %sidecar,
+        "Tauri 桌面端启动 API sidecar"
+    );
+
+    match spawn_desktop_api_sidecar(&config) {
+        Ok(child) => {
+            state.api.store_sidecar(child);
+            tauri::async_runtime::spawn(async move {
+                wait_for_sidecar_api_ready(state.api, config.origin).await;
+            });
+        }
+        Err(error) => {
+            let origin = config.origin.clone();
+            tauri::async_runtime::spawn(async move {
+                state.api.mark_error_origin(origin, error.to_string()).await;
+            });
+        }
+    }
+}
+
+fn spawn_desktop_api_sidecar(config: &DesktopApiConfig) -> anyhow::Result<Child> {
+    let sidecar = config
+        .sidecar
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("未配置桌面端 API sidecar 命令"))?;
+    let origin = reqwest::Url::parse(&config.origin)
+        .map_err(|error| anyhow::anyhow!("桌面端 API origin 无效: {error}"))?;
+    let host = origin.host_str().unwrap_or("127.0.0.1");
+    let port = origin
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("桌面端 API origin 缺少端口: {}", config.origin))?;
+
+    Command::new(sidecar)
+        .env("HOST", host)
+        .env("PORT", port.to_string())
+        .env(DESKTOP_API_MODE_ENV, "builtin")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| anyhow::anyhow!("启动桌面端 API sidecar 失败: {error}"))
+}
+
+async fn wait_for_sidecar_api_ready(api: DesktopApiManager, origin: String) {
+    api.mark_starting_origin(
+        origin.clone(),
+        format!("桌面端 API sidecar 正在启动: {origin}"),
+        None,
+    )
+    .await;
+
+    let endpoint = format!("{origin}/api/health");
+    let client = reqwest::Client::new();
+    for attempt in 1..=240 {
+        match client.get(&endpoint).send().await {
+            Ok(response) if response.status().is_success() => {
+                api.mark_running_origin(origin, "桌面端 API sidecar 已就绪".to_string(), None)
+                    .await;
+                return;
+            }
+            Ok(response) => {
+                if attempt % 20 == 0 {
+                    tracing::warn!(
+                        attempt,
+                        status = %response.status(),
+                        "等待桌面端 API sidecar 就绪"
+                    );
+                }
+            }
+            Err(error) => {
+                if attempt % 20 == 0 {
+                    tracing::warn!(
+                        attempt,
+                        error = %error,
+                        "等待桌面端 API sidecar 就绪"
+                    );
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    api.mark_error_origin(origin, "桌面端 API sidecar 未在 120s 内就绪".to_string())
+        .await;
+}
+
 impl DesktopApiManager {
     fn from_snapshot(snapshot: DesktopApiSnapshot) -> Self {
         Self {
-            snapshot: Arc::new(Mutex::new(snapshot)),
+            snapshot: Arc::new(AsyncMutex::new(snapshot)),
+            sidecar: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -769,30 +887,63 @@ impl DesktopApiManager {
     }
 
     async fn mark_starting(&self, port: u16) {
+        self.mark_starting_origin(
+            desktop_api_origin(port),
+            "桌面端 API 正在启动".to_string(),
+            None,
+        )
+        .await;
+    }
+
+    async fn mark_starting_origin(
+        &self,
+        origin: String,
+        message: String,
+        database_url: Option<String>,
+    ) {
         let mut guard = self.snapshot.lock().await;
         *guard = DesktopApiSnapshot {
             state: DesktopApiState::Starting,
-            origin: desktop_api_origin(port),
-            message: Some("桌面端 API 正在启动".to_string()),
-            database_url: None,
+            origin,
+            message: Some(message),
+            database_url,
         };
     }
 
     async fn mark_running(&self, ready: &ApiServerReady) {
+        self.mark_running_origin(
+            ready.origin.clone(),
+            format!("桌面端 API 已启动: {}", ready.addr),
+            Some(ready.database_url.clone()),
+        )
+        .await;
+    }
+
+    async fn mark_running_origin(
+        &self,
+        origin: String,
+        message: String,
+        database_url: Option<String>,
+    ) {
         let mut guard = self.snapshot.lock().await;
         *guard = DesktopApiSnapshot {
             state: DesktopApiState::Running,
-            origin: ready.origin.clone(),
-            message: Some(format!("桌面端 API 已启动: {}", ready.addr)),
-            database_url: Some(ready.database_url.clone()),
+            origin,
+            message: Some(message),
+            database_url,
         };
     }
 
     async fn mark_error(&self, port: u16, message: String) {
+        self.mark_error_origin(desktop_api_origin(port), message)
+            .await;
+    }
+
+    async fn mark_error_origin(&self, origin: String, message: String) {
         let mut guard = self.snapshot.lock().await;
         *guard = DesktopApiSnapshot {
             state: DesktopApiState::Error,
-            origin: desktop_api_origin(port),
+            origin,
             message: Some(message),
             database_url: None,
         };
@@ -807,6 +958,33 @@ impl DesktopApiManager {
             database_url: None,
         };
     }
+
+    fn store_sidecar(&self, child: Child) {
+        match self.sidecar.lock() {
+            Ok(mut guard) => {
+                *guard = Some(child);
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "记录桌面端 API sidecar 句柄失败");
+            }
+        }
+    }
+
+    fn stop_sidecar(&self) {
+        let child = match self.sidecar.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(error) => {
+                tracing::error!(error = %error, "停止桌面端 API sidecar 时锁已污染");
+                None
+            }
+        };
+        if let Some(mut child) = child {
+            if let Err(error) = child.kill() {
+                tracing::warn!(error = %error, "终止桌面端 API sidecar 失败");
+            }
+            let _ = child.wait();
+        }
+    }
 }
 
 fn desktop_api_origin(port: u16) -> String {
@@ -814,42 +992,98 @@ fn desktop_api_origin(port: u16) -> String {
 }
 
 fn default_desktop_api_snapshot() -> DesktopApiSnapshot {
-    if let Some(origin) = external_desktop_api_origin() {
-        return DesktopApiSnapshot {
+    let config = desktop_api_config();
+    match config.mode {
+        DesktopApiMode::Builtin => DesktopApiSnapshot::default(),
+        DesktopApiMode::External => DesktopApiSnapshot {
             state: DesktopApiState::Running,
-            origin: origin.clone(),
-            message: Some(format!("复用外部 Dashboard API: {origin}")),
+            origin: config.origin.clone(),
+            message: Some(format!("复用外部 Dashboard API: {}", config.origin)),
             database_url: None,
-        };
+        },
+        DesktopApiMode::Sidecar => DesktopApiSnapshot {
+            state: DesktopApiState::Starting,
+            origin: config.origin.clone(),
+            message: Some(format!("桌面端 API sidecar 正在启动: {}", config.origin)),
+            database_url: None,
+        },
     }
-    DesktopApiSnapshot::default()
 }
 
-fn external_desktop_api_origin() -> Option<String> {
-    let explicit_origin = std::env::var(DESKTOP_API_ORIGIN_ENV)
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty());
-    if explicit_origin.is_some() {
-        return explicit_origin;
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DesktopApiMode {
+    Builtin,
+    External,
+    Sidecar,
+}
 
+#[derive(Debug, Clone)]
+struct DesktopApiConfig {
+    mode: DesktopApiMode,
+    origin: String,
+    sidecar: Option<String>,
+}
+
+fn desktop_api_config() -> DesktopApiConfig {
+    let explicit_origin = env_trimmed(DESKTOP_API_ORIGIN_ENV).map(normalize_origin);
     let build_default_origin = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_ORIGIN")
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty());
-    if build_default_origin.is_some() {
-        return build_default_origin;
-    }
+        .and_then(|value| normalize_optional_text(value.to_string()))
+        .map(normalize_origin);
+    let origin = explicit_origin
+        .or(build_default_origin)
+        .unwrap_or_else(|| desktop_api_origin(DESKTOP_API_PORT));
 
-    let mode = std::env::var(DESKTOP_API_MODE_ENV)
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    if mode == "external" {
-        return Some(desktop_api_origin(DESKTOP_API_PORT));
-    }
+    let explicit_sidecar = env_trimmed(DESKTOP_API_SIDECAR_ENV);
+    let build_default_sidecar = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_SIDECAR")
+        .and_then(|value| normalize_optional_text(value.to_string()));
+    let sidecar = explicit_sidecar.or(build_default_sidecar);
 
-    None
+    let explicit_mode = env_trimmed(DESKTOP_API_MODE_ENV).and_then(|value| {
+        parse_desktop_api_mode(&value).or_else(|| {
+            tracing::warn!(mode = %value, "忽略未知桌面端 API mode");
+            None
+        })
+    });
+    let build_default_mode = option_env!("AGENTDASH_DESKTOP_DEFAULT_API_MODE")
+        .and_then(|value| normalize_optional_text(value.to_string()))
+        .and_then(|value| {
+            parse_desktop_api_mode(&value).or_else(|| {
+                tracing::warn!(mode = %value, "忽略未知桌面端默认 API mode");
+                None
+            })
+        });
+
+    let mode = explicit_mode
+        .or(build_default_mode)
+        .unwrap_or(DesktopApiMode::Builtin);
+
+    DesktopApiConfig {
+        mode,
+        origin,
+        sidecar,
+    }
+}
+
+fn parse_desktop_api_mode(value: &str) -> Option<DesktopApiMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "builtin" => Some(DesktopApiMode::Builtin),
+        "external" => Some(DesktopApiMode::External),
+        "sidecar" => Some(DesktopApiMode::Sidecar),
+        _ => None,
+    }
+}
+
+fn env_trimmed(key: &str) -> Option<String> {
+    std::env::var(key).ok().and_then(normalize_optional_text)
+}
+
+fn normalize_origin(value: String) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        desktop_api_origin(DESKTOP_API_PORT)
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn profile_path(app: &AppHandle) -> Result<PathBuf, String> {

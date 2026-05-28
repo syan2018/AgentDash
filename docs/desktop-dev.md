@@ -150,6 +150,19 @@ pnpm run desktop:build
 pnpm run desktop:bundle
 ```
 
+`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `builtin` API mode，也就是打出的桌面壳会在进程内托管 Dashboard API。可按发行形态覆盖：
+
+```powershell
+pnpm run desktop:build -- --api-mode builtin
+pnpm run desktop:build -- --api-mode external --api-origin http://127.0.0.1:3001
+pnpm run desktop:build -- --api-mode sidecar --api-origin http://127.0.0.1:3001 --api-sidecar target/release/agentdash-server.exe
+```
+
+- `builtin`：默认形态，桌面壳内置启动 API。
+- `external`：桌面壳只复用外部已经启动的 API。
+- `sidecar`：桌面壳启动指定 API 可执行文件，并在退出时一起终止。
+- `--sccache` / `--no-sccache` / `--sccache-dir` 与开发启动脚本语义一致，用于控制 Rust 编译缓存。
+
 预期安装包路径：
 
 ```text

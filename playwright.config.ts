@@ -15,7 +15,9 @@ const skipWebServer = process.env.PLAYWRIGHT_SKIP_WEBSERVER === "1";
 const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "1";
 const webServerArgs = [
   "node",
-  "./scripts/dev-joint.js",
+  "./scripts/dev-runtime.js",
+  "--profile",
+  "web",
   "--skip-build",
   "--frontend-mode",
   "preview",

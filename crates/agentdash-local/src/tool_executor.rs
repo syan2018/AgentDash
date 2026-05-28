@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use agentdash_application::vfs::ApplyPatchAffectedPaths;
 use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
+use ignore::WalkBuilder;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub(crate) struct SearchParams<'a> {
@@ -24,6 +25,28 @@ pub(crate) struct SearchParams<'a> {
 pub struct ToolExecutor {
     workspace_roots: Vec<PathBuf>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileDiscoveryIntent {
+    ImplicitWorkspaceScan,
+    ExplicitSubtreeScan,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FileDiscoveryPolicy {
+    intent: FileDiscoveryIntent,
+}
+
+const HARD_EXCLUDE_DIRS: &[&str] = &[".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
+const BUILTIN_NOISE_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".venv",
+    "__pycache__",
+];
 
 /// Shell 执行结果
 pub struct ShellResult {
@@ -370,6 +393,10 @@ impl ToolExecutor {
         } else {
             resolve_existing_path_with_root(&ws, path)?
         };
+        let policy = FileDiscoveryPolicy::from_base(&base, &ws);
+        if !policy.allows_path(&base, &ws) {
+            return Ok(Vec::new());
+        }
 
         tracing::debug!(
             path = %base.display(),
@@ -378,12 +405,12 @@ impl ToolExecutor {
             "file_list"
         );
 
-        let glob_matcher =
-            pattern.and_then(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()));
-
-        let mut entries = Vec::new();
-        collect_entries(&base, &ws, &glob_matcher, recursive, &mut entries).await?;
-        Ok(entries)
+        let pattern = pattern.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            collect_entries(&base, &ws, pattern.as_deref(), recursive, policy)
+        })
+        .await
+        .map_err(|e| ToolError::Io(std::io::Error::other(e)))?
     }
 
     pub async fn search(
@@ -398,12 +425,16 @@ impl ToolExecutor {
             }
             _ => ws.clone(),
         };
-
-        if let Some(rg) = detect_ripgrep().await {
-            return run_ripgrep(&rg, &search_dir, &ws, params).await;
+        let policy = FileDiscoveryPolicy::from_base(&search_dir, &ws);
+        if !policy.allows_path(&search_dir, &ws) {
+            return Ok((Vec::new(), false));
         }
 
-        fallback_search(&ws, &search_dir, params).await
+        if let Some(rg) = detect_ripgrep().await {
+            return run_ripgrep(&rg, &search_dir, &ws, params, policy).await;
+        }
+
+        fallback_search(&ws, &search_dir, params, policy).await
     }
 }
 
@@ -458,11 +489,15 @@ async fn run_ripgrep(
     search_dir: &Path,
     workspace_root: &Path,
     params: &SearchParams<'_>,
+    policy: FileDiscoveryPolicy,
 ) -> Result<(Vec<SearchHit>, bool), ToolError> {
     let mut cmd = tokio::process::Command::new(rg_path);
     cmd.arg("--json")
         .arg("--max-count")
         .arg(params.max_results.to_string());
+    for arg in ripgrep_policy_args(policy) {
+        cmd.arg(arg);
+    }
 
     if params.context_lines > 0 {
         cmd.arg("-C").arg(params.context_lines.to_string());
@@ -551,6 +586,7 @@ async fn fallback_search(
     workspace_root: &Path,
     search_dir: &Path,
     params: &SearchParams<'_>,
+    policy: FileDiscoveryPolicy,
 ) -> Result<(Vec<SearchHit>, bool), ToolError> {
     let ws = workspace_root.to_path_buf();
     let dir = search_dir.to_path_buf();
@@ -573,6 +609,7 @@ async fn fallback_search(
             regex: regex.as_ref(),
             max_results,
             context_lines,
+            policy,
             hits: Vec::new(),
             truncated: false,
         };
@@ -584,16 +621,6 @@ async fn fallback_search(
 }
 
 const FALLBACK_MAX_FILE_BYTES: u64 = 256 * 1024;
-const FALLBACK_SKIP_DIRS: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "__pycache__",
-    ".next",
-    "dist",
-    "build",
-    ".venv",
-];
 
 struct FallbackCollector<'a> {
     workspace_root: &'a Path,
@@ -601,59 +628,51 @@ struct FallbackCollector<'a> {
     regex: Option<&'a regex::Regex>,
     max_results: usize,
     context_lines: usize,
+    policy: FileDiscoveryPolicy,
     hits: Vec<SearchHit>,
     truncated: bool,
 }
 
 impl FallbackCollector<'_> {
     fn walk(&mut self, dir: &Path) {
-        if self.hits.len() >= self.max_results {
-            self.truncated = true;
-            return;
-        }
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-        for entry in entries.flatten() {
+        let walker = build_walk(dir, self.workspace_root, self.policy, true);
+        for result in walker.build() {
             if self.hits.len() >= self.max_results {
                 self.truncated = true;
                 return;
             }
-            let ft = match entry.file_type() {
-                Ok(ft) => ft,
+            let entry = match result {
+                Ok(entry) => entry,
                 Err(_) => continue,
             };
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-
-            if ft.is_dir() {
-                if FALLBACK_SKIP_DIRS.contains(&name_str.as_ref()) {
-                    continue;
-                }
-                self.walk(&entry.path());
-            } else if ft.is_file() {
-                self.scan_file(&entry);
+            if entry.path() == dir {
+                continue;
+            }
+            if entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_file())
+            {
+                self.scan_file(entry.path());
             }
         }
     }
 
-    fn scan_file(&mut self, entry: &std::fs::DirEntry) {
-        let meta = match entry.metadata() {
+    fn scan_file(&mut self, path: &Path) {
+        let meta = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(_) => return,
         };
         if meta.len() > FALLBACK_MAX_FILE_BYTES {
             return;
         }
-        let content = match std::fs::read_to_string(entry.path()) {
+        let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => return,
         };
         let lines: Vec<&str> = content.lines().collect();
-        let Ok(rel) = workspace_relative_path(&entry.path(), self.workspace_root) else {
+        let Ok(rel) = workspace_relative_path(path, self.workspace_root) else {
             tracing::warn!(
-                path = %entry.path().display(),
+                path = %path.display(),
                 workspace_root = %self.workspace_root.display(),
                 "fallback search skipped path outside workspace root"
             );
@@ -788,61 +807,150 @@ fn workspace_relative_path(path: &Path, workspace_root: &Path) -> Result<String,
         })
 }
 
-async fn collect_entries(
+fn collect_entries(
     dir: &Path,
     workspace_root: &Path,
-    glob_matcher: &Option<globset::GlobMatcher>,
+    glob_pattern: Option<&str>,
     recursive: bool,
-    entries: &mut Vec<FileEntryRelay>,
-) -> Result<(), ToolError> {
-    let mut read_dir = tokio::fs::read_dir(dir).await?;
+    policy: FileDiscoveryPolicy,
+) -> Result<Vec<FileEntryRelay>, ToolError> {
+    let glob_matcher =
+        glob_pattern.and_then(|p| globset::Glob::new(p).ok().map(|g| g.compile_matcher()));
+    let walker = build_walk(dir, workspace_root, policy, recursive);
+    let mut entries = Vec::new();
 
-    while let Some(entry) = read_dir.next_entry().await? {
-        let file_type = entry.file_type().await?;
-        let is_dir = file_type.is_dir();
+    for result in walker.build() {
+        let entry = result.map_err(|e| ToolError::Io(std::io::Error::other(e)))?;
         let path = entry.path();
-
-        let relative = workspace_relative_path(&path, workspace_root)?;
+        if path == dir {
+            continue;
+        }
+        let Some(file_type) = entry.file_type() else {
+            continue;
+        };
+        let is_dir = file_type.is_dir();
+        let relative = workspace_relative_path(path, workspace_root)?;
 
         let matches = glob_matcher
             .as_ref()
             .map(|matcher| {
                 matcher.is_match(&relative)
-                    || matcher.is_match(entry.file_name().to_string_lossy().as_ref())
+                    || path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| matcher.is_match(name))
             })
             .unwrap_or(true);
 
-        if matches || is_dir {
-            if matches {
-                let metadata = entry.metadata().await.ok();
-                entries.push(FileEntryRelay {
-                    path: relative,
-                    size: metadata.as_ref().map(|item| item.len()),
-                    modified_at: metadata
-                        .as_ref()
-                        .and_then(|item| item.modified().ok())
-                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|duration| duration.as_millis() as i64),
-                    is_dir,
-                    content_kind: file_content_kind(&path, is_dir),
-                    mime_type: file_mime_type(&path, is_dir),
-                });
-            }
-
-            if is_dir && recursive {
-                Box::pin(collect_entries(
-                    &path,
-                    workspace_root,
-                    glob_matcher,
-                    recursive,
-                    entries,
-                ))
-                .await?;
-            }
+        if matches {
+            let metadata = std::fs::metadata(path).ok();
+            entries.push(FileEntryRelay {
+                path: relative,
+                size: metadata.as_ref().map(|item| item.len()),
+                modified_at: metadata
+                    .as_ref()
+                    .and_then(|item| item.modified().ok())
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_millis() as i64),
+                is_dir,
+                content_kind: file_content_kind(path, is_dir),
+                mime_type: file_mime_type(path, is_dir),
+            });
         }
     }
 
-    Ok(())
+    Ok(entries)
+}
+
+fn build_walk(
+    dir: &Path,
+    workspace_root: &Path,
+    policy: FileDiscoveryPolicy,
+    recursive: bool,
+) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(dir);
+    let respect_workspace_ignores = policy.respects_workspace_ignores();
+    builder
+        .hidden(false)
+        .ignore(respect_workspace_ignores)
+        .git_ignore(respect_workspace_ignores)
+        .git_global(respect_workspace_ignores)
+        .git_exclude(respect_workspace_ignores)
+        .require_git(false)
+        .parents(respect_workspace_ignores);
+    if !recursive {
+        builder.max_depth(Some(1));
+    }
+    let workspace_root = workspace_root.to_path_buf();
+    builder.filter_entry(move |entry| policy.allows_path(entry.path(), &workspace_root));
+    builder
+}
+
+impl FileDiscoveryPolicy {
+    fn from_base(base: &Path, workspace_root: &Path) -> Self {
+        let intent = if base == workspace_root {
+            FileDiscoveryIntent::ImplicitWorkspaceScan
+        } else {
+            FileDiscoveryIntent::ExplicitSubtreeScan
+        };
+        Self { intent }
+    }
+
+    fn respects_workspace_ignores(self) -> bool {
+        self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
+    }
+
+    fn allows_path(self, path: &Path, workspace_root: &Path) -> bool {
+        if path_has_named_segment(path, workspace_root, HARD_EXCLUDE_DIRS) {
+            return false;
+        }
+        if self.intent == FileDiscoveryIntent::ImplicitWorkspaceScan
+            && path_has_named_segment(path, workspace_root, BUILTIN_NOISE_DIRS)
+        {
+            return false;
+        }
+        true
+    }
+}
+
+fn path_has_named_segment(path: &Path, workspace_root: &Path, names: &[&str]) -> bool {
+    let relative = path.strip_prefix(workspace_root).unwrap_or(path);
+    relative.components().any(|component| {
+        let std::path::Component::Normal(segment) = component else {
+            return false;
+        };
+        segment_matches(segment, names)
+    })
+}
+
+fn segment_matches(segment: &std::ffi::OsStr, names: &[&str]) -> bool {
+    segment
+        .to_str()
+        .is_some_and(|value| names.iter().any(|name| value.eq_ignore_ascii_case(name)))
+}
+
+fn ripgrep_policy_args(policy: FileDiscoveryPolicy) -> Vec<String> {
+    let mut args = vec!["--hidden".to_string()];
+    if policy.respects_workspace_ignores() {
+        args.push("--no-require-git".to_string());
+    }
+    if !policy.respects_workspace_ignores() {
+        args.push("--no-ignore".to_string());
+    }
+    push_ripgrep_exclude_globs(&mut args, HARD_EXCLUDE_DIRS);
+    if policy.intent == FileDiscoveryIntent::ImplicitWorkspaceScan {
+        push_ripgrep_exclude_globs(&mut args, BUILTIN_NOISE_DIRS);
+    }
+    args
+}
+
+fn push_ripgrep_exclude_globs(args: &mut Vec<String>, dirs: &[&str]) {
+    for dir in dirs {
+        args.push("--glob".to_string());
+        args.push(format!("!{dir}/**"));
+        args.push("--glob".to_string());
+        args.push(format!("!**/{dir}/**"));
+    }
 }
 
 fn file_content_kind(path: &Path, is_dir: bool) -> Option<String> {
@@ -915,6 +1023,17 @@ fn decode_output_chunk(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_file(path: &Path, content: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir parent");
+        }
+        std::fs::write(path, content).expect("write file");
+    }
+
+    fn entry_paths(entries: &[FileEntryRelay]) -> Vec<&str> {
+        entries.iter().map(|entry| entry.path.as_str()).collect()
+    }
 
     #[test]
     fn resolve_path_for_write_blocks_escape() {
@@ -1041,6 +1160,187 @@ mod tests {
 
         assert_eq!(entry.content_kind.as_deref(), Some("binary"));
         assert_eq!(entry.mime_type.as_deref(), Some("image/svg+xml"));
+    }
+
+    #[tokio::test]
+    async fn file_list_default_skips_workspace_ignored_and_builtin_noise() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".gitignore"), "ignored/\n");
+        write_file(&temp.path().join("src/main.rs"), "fn main() {}\n");
+        write_file(&temp.path().join("ignored/generated.rs"), "ignored\n");
+        write_file(&temp.path().join("node_modules/pkg/index.js"), "ignored\n");
+        write_file(&temp.path().join("target/debug/app.d"), "ignored\n");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let entries = executor
+            .file_list(".", &root, None, true)
+            .await
+            .expect("list");
+        let paths = entry_paths(&entries);
+
+        assert!(paths.contains(&"src/main.rs"));
+        assert!(
+            !paths.iter().any(|path| path.starts_with("ignored/")),
+            "gitignored subtree should be skipped: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|path| path.starts_with("node_modules/")),
+            "builtin dependency subtree should be skipped: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|path| path.starts_with("target/")),
+            "builtin build subtree should be skipped: {paths:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_list_explicit_path_enters_ordinary_ignored_subtree() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".gitignore"), "ignored/\n");
+        write_file(
+            &temp.path().join("ignored/generated.rs"),
+            "visible by explicit path\n",
+        );
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let entries = executor
+            .file_list("ignored", &root, None, true)
+            .await
+            .expect("list explicit ignored subtree");
+        let paths = entry_paths(&entries);
+
+        assert!(paths.contains(&"ignored/generated.rs"));
+    }
+
+    #[tokio::test]
+    async fn file_list_keeps_vcs_metadata_hard_excluded() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".git/HEAD"), "ref: refs/heads/main\n");
+        write_file(&temp.path().join("src/main.rs"), "fn main() {}\n");
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let default_entries = executor
+            .file_list(".", &root, None, true)
+            .await
+            .expect("default list");
+        let default_paths = entry_paths(&default_entries);
+        assert!(!default_paths.iter().any(|path| path.starts_with(".git/")));
+
+        let explicit_entries = executor
+            .file_list(".git", &root, None, true)
+            .await
+            .expect("explicit vcs list");
+        assert!(explicit_entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_default_skips_ignored_subtree_but_explicit_path_finds_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".gitignore"), "ignored/\n");
+        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
+        write_file(
+            &temp.path().join("ignored/generated.rs"),
+            "needle in generated\n",
+        );
+        let executor = ToolExecutor::new(vec![temp.path().to_path_buf()]);
+        let root = temp.path().to_string_lossy().to_string();
+
+        let params = SearchParams {
+            query: "needle",
+            path: None,
+            is_regex: false,
+            include_glob: None,
+            max_results: 20,
+            context_lines: 0,
+        };
+        let (default_hits, _) = executor.search(&root, &params).await.expect("search");
+        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
+        assert!(
+            !default_hits
+                .iter()
+                .any(|hit| hit.path.starts_with("ignored/")),
+            "default search should skip ignored subtree: {default_hits:?}"
+        );
+
+        let explicit_params = SearchParams {
+            path: Some("ignored"),
+            ..params
+        };
+        let (explicit_hits, _) = executor
+            .search(&root, &explicit_params)
+            .await
+            .expect("explicit search");
+        assert!(
+            explicit_hits
+                .iter()
+                .any(|hit| hit.path == "ignored/generated.rs"),
+            "explicit ignored subtree should be searchable: {explicit_hits:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_search_uses_same_ignore_policy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(&temp.path().join(".gitignore"), "ignored/\n");
+        write_file(&temp.path().join("src/main.rs"), "needle in source\n");
+        write_file(
+            &temp.path().join("ignored/generated.rs"),
+            "needle in generated\n",
+        );
+        let params = SearchParams {
+            query: "needle",
+            path: None,
+            is_regex: false,
+            include_glob: None,
+            max_results: 20,
+            context_lines: 0,
+        };
+
+        let implicit_policy = FileDiscoveryPolicy::from_base(temp.path(), temp.path());
+        let (default_hits, _) = fallback_search(temp.path(), temp.path(), &params, implicit_policy)
+            .await
+            .expect("fallback search");
+        assert!(default_hits.iter().any(|hit| hit.path == "src/main.rs"));
+        assert!(
+            !default_hits
+                .iter()
+                .any(|hit| hit.path.starts_with("ignored/"))
+        );
+
+        let ignored_dir = temp.path().join("ignored");
+        let explicit_policy = FileDiscoveryPolicy::from_base(&ignored_dir, temp.path());
+        let (explicit_hits, _) =
+            fallback_search(temp.path(), &ignored_dir, &params, explicit_policy)
+                .await
+                .expect("fallback explicit search");
+        assert!(
+            explicit_hits
+                .iter()
+                .any(|hit| hit.path == "ignored/generated.rs")
+        );
+    }
+
+    #[test]
+    fn ripgrep_policy_args_enter_explicit_ignored_subtree_without_vcs_metadata() {
+        let implicit = ripgrep_policy_args(FileDiscoveryPolicy {
+            intent: FileDiscoveryIntent::ImplicitWorkspaceScan,
+        });
+        assert!(implicit.contains(&"--hidden".to_string()));
+        assert!(implicit.contains(&"--no-require-git".to_string()));
+        assert!(!implicit.contains(&"--no-ignore".to_string()));
+        assert!(implicit.contains(&"!**/node_modules/**".to_string()));
+        assert!(implicit.contains(&"!**/.git/**".to_string()));
+
+        let explicit = ripgrep_policy_args(FileDiscoveryPolicy {
+            intent: FileDiscoveryIntent::ExplicitSubtreeScan,
+        });
+        assert!(explicit.contains(&"--no-ignore".to_string()));
+        assert!(!explicit.contains(&"--no-require-git".to_string()));
+        assert!(!explicit.contains(&"!**/node_modules/**".to_string()));
+        assert!(explicit.contains(&"!**/.git/**".to_string()));
     }
 
     #[tokio::test]

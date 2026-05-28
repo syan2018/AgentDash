@@ -336,6 +336,7 @@ dependencies = [
  "futures",
  "gix",
  "globset",
+ "ignore",
  "portable-pty",
  "postgresql_embedded",
  "regex",

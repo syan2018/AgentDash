@@ -63,10 +63,12 @@ impl AgentTool for FsGlobTool {
          - The pattern parameter is required and always interpreted as a glob.\n\
          - Use `*` for the current directory; `**/foo` for recursive match.\n\
          - The optional path parameter scopes the search to a mount-rooted directory; omit it to search the mount root.\n\
+         - Searches from the mount root respect workspace ignore files and built-in dependency/build noise exclusions.\n\
+         - Pass an explicit path to inspect ordinary ignored subtrees such as dependencies or build output.\n\
          - Returns paths sorted by modification time (newest first), then alphabetically.\n\
          - Directories are shown with a trailing slash (e.g., `src/utils/`).\n\
          - Results are limited to 100 entries by default.\n\
-         - VCS directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
+         - VCS metadata directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
          - For text content search, use fs_grep instead."
     }
     fn parameters_schema(&self) -> serde_json::Value {

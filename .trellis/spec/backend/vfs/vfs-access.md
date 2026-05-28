@@ -173,6 +173,14 @@ Agent 工具使用 mount-relative 参数模型：
 
 `shell.exec` 只能作用于声明了 `exec` 能力的 mount。VFS URI 物化成本机路径时遵守 [VFS Materialization](./vfs-materialization.md)。
 
+## Search Discovery Policy
+
+Agent-facing glob / grep 从 mount root 进行默认扫描时，工作区文件发现应尊重 workspace ignore 文件与内置依赖、构建、缓存目录排除规则。这样默认搜索结果表达项目可维护内容，避免依赖包和生成产物挤占 Agent 上下文。
+
+当调用方显式传入 `path` 指向普通 ignored subtree 时，该 subtree 表示用户的搜索目标，文件发现应允许进入。这样依赖包源码、构建产物和生成文件仍可在有明确意图时被检查。
+
+VCS 元数据目录是 hard exclude：`.git`、`.svn`、`.hg`、`.bzr`、`.jj`、`.sl` 不参与 Agent-facing glob / grep 搜索。原因是这些目录表达版本控制内部状态，不是 VFS 搜索工具的默认工作区内容。
+
 ## Error Semantics
 
 | 条件 | 用户语义 |

@@ -40,6 +40,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
+ignore = "0.4"
 regex.workspace = true
 base64 = "0.22"
 flate2.workspace = true

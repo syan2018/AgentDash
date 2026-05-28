@@ -131,7 +131,9 @@ impl AgentTool for FsGrepTool {
            - count: per-file match count.\n\
          - Use -i for case-insensitive search and -n to control line numbers in content mode.\n\
          - head_limit caps results (default 250; 0 = unlimited). Use offset for pagination.\n\
-         - Common VCS directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
+         - Searches from the mount root respect workspace ignore files and built-in dependency/build noise exclusions.\n\
+         - Pass an explicit path to search ordinary ignored subtrees such as dependencies or build output.\n\
+         - Common VCS metadata directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
          - Lines longer than 500 characters are truncated with a `...(truncated)` suffix."
     }
     fn parameters_schema(&self) -> serde_json::Value {

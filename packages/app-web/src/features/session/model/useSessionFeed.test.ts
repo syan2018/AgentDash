@@ -3,7 +3,6 @@ import { aggregateEntries } from "./useSessionFeed";
 import type {
   SessionDisplayEntry,
   AggregatedEntryGroup,
-  AggregatedThinkingGroup,
 } from "./types";
 import type { BackboneEvent, ThreadItem } from "../../../generated/backbone-protocol";
 
@@ -159,9 +158,6 @@ function mkContextFrameEntry(id: string): SessionDisplayEntry {
 function isToolGroup(item: unknown): item is AggregatedEntryGroup {
   return (item as AggregatedEntryGroup)?.type === "aggregated_group";
 }
-function isThinkingGroup(item: unknown): item is AggregatedThinkingGroup {
-  return (item as AggregatedThinkingGroup)?.type === "aggregated_thinking";
-}
 function isContextFrameGroup(item: unknown): boolean {
   return (item as { type: string })?.type === "aggregated_context_frames";
 }
@@ -263,7 +259,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(group.entries.some((e) => e.isPendingApproval === true)).toBe(true);
   });
 
-  it("T8: thinking group separate from tool unit", () => {
+  it("T8: thinking entries stay individual; only tools merge", () => {
     const entries = [
       mkReasoningEntry("r1"),
       mkReasoningEntry("r2"),
@@ -271,11 +267,12 @@ describe("aggregateEntries — tool burst", () => {
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    expect(result).toHaveLength(2);
-    expect(isThinkingGroup(result[0])).toBe(true);
-    expect((result[0] as AggregatedThinkingGroup).entries).toHaveLength(2);
-    expect(isToolGroup(result[1])).toBe(true);
-    expect((result[1] as AggregatedEntryGroup).entries).toHaveLength(2);
+    // 合并范畴只覆盖 tool_like ThreadItem：r1/r2 各自独立，c1/c2 合并
+    expect(result).toHaveLength(3);
+    expect((result[0] as SessionDisplayEntry).id).toBe("r1");
+    expect((result[1] as SessionDisplayEntry).id).toBe("r2");
+    expect(isToolGroup(result[2])).toBe(true);
+    expect((result[2] as AggregatedEntryGroup).entries).toHaveLength(2);
   });
 
   it("T9: thinking → tool → thinking sequence flushes correctly", () => {
@@ -349,21 +346,22 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[2] as SessionDisplayEntry).id).toBe("c2");
   });
 
-  it("T15: context_frame is a soft boundary — tools merge across it", () => {
+  it("T15: context_frame is a soft boundary — tools merge across it, CTX stays as single entry", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
       mkCmdEntry("c2", "pwd"),
     ];
     const result = aggregateEntries(entries);
-    // 期望：tool burst 仍然合并为一组（c1+c2），CTX 单条被扁平化为单 entry
+    // 期望：tool burst 合并为一组（c1+c2），CTX 不聚合，作为单 entry 入 result
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2"]);
-    const hasCtx = result.some(
-      (item) => isContextFrameGroup(item) || (item as SessionDisplayEntry)?.id === "ctx1",
-    );
-    expect(hasCtx).toBe(true);
+    expect(
+      result.some((item) => (item as SessionDisplayEntry)?.id === "ctx1"),
+    ).toBe(true);
+    // 不应有 CTX side group
+    expect(result.filter(isContextFrameGroup)).toHaveLength(0);
   });
 
   it("T16: agent message stays as hard boundary across context_frame", () => {
@@ -383,7 +381,7 @@ describe("aggregateEntries — tool burst", () => {
     expect(cmdEntries).toHaveLength(2);
   });
 
-  it("T17: multiple consecutive context_frames fold into one side group", () => {
+  it("T17: multiple context_frames stay as individual entries (no aggregation)", () => {
     const entries = [
       mkCmdEntry("c1", "ls"),
       mkContextFrameEntry("ctx1"),
@@ -396,8 +394,12 @@ describe("aggregateEntries — tool burst", () => {
     const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
     expect(toolGroups).toHaveLength(1);
     expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
-    const ctxGroups = result.filter(isContextFrameGroup);
-    expect(ctxGroups).toHaveLength(1);
+    // CTX 不再聚合：应有 3 个独立 ctx entry
+    const ctxIds = result
+      .filter((item) => (item as SessionDisplayEntry)?.id?.startsWith("ctx"))
+      .map((item) => (item as SessionDisplayEntry).id);
+    expect(ctxIds).toEqual(["ctx1", "ctx2", "ctx3"]);
+    expect(result.filter(isContextFrameGroup)).toHaveLength(0);
   });
 
   it("T18: real-world scenario — tools, ctx, more tools all merge into one burst", () => {

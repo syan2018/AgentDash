@@ -76,10 +76,6 @@ function getToolAggregationType(event: BackboneEvent): ToolAggregationType | nul
   }
 }
 
-function isThinkingEvent(event: BackboneEvent): boolean {
-  return event.type === "reasoning_text_delta" || event.type === "reasoning_summary_delta";
-}
-
 function isContextFrameEvent(event: BackboneEvent): boolean {
   return (
     event.type === "platform" &&
@@ -200,70 +196,24 @@ function pushToolGroup(
   return null;
 }
 
-type SideGroupKind = "thinking" | "context_frame";
-
-type SideGroup =
-  | AggregatedThinkingGroup
-  | AggregatedContextFrameGroup;
-
-function getSideGroupKind(entry: SessionDisplayEntry): SideGroupKind | null {
-  if (isThinkingEvent(entry.event)) return "thinking";
-  if (isContextFrameEvent(entry.event)) return "context_frame";
-  return null;
-}
-
-function createSideGroup(kind: SideGroupKind, entry: SessionDisplayEntry): SideGroup {
-  if (kind === "thinking") {
-    return {
-      type: "aggregated_thinking",
-      entries: [entry],
-      id: entry.id,
-      groupKey: `thinking-${entry.id}`,
-    };
-  }
-  return {
-    type: "aggregated_context_frames",
-    entries: [entry],
-    id: entry.id,
-    groupKey: `context-frame-${entry.id}`,
-  };
-}
-
-function sideGroupMatchesKind(group: SideGroup | null, kind: SideGroupKind): boolean {
-  if (!group) return false;
-  return (
-    (kind === "thinking" && group.type === "aggregated_thinking") ||
-    (kind === "context_frame" && group.type === "aggregated_context_frames")
-  );
-}
-
-function pushSideGroup(result: SessionDisplayItem[], group: SideGroup | null): null {
-  if (!group) return null;
-  if (group.entries.length === 1) {
-    const only = group.entries[0];
-    if (only) result.push(only);
-    return null;
-  }
-  result.push(group);
-  return null;
-}
-
+/**
+ * 聚合 entries → display items。
+ *
+ * **合并范畴：仅连续的 tool_like ThreadItem。**
+ * thinking / context_frame / message / approval / error 等其他类型一律单 entry，
+ * 不参与任何聚合。
+ *
+ * - tool_like: 累积进 active tool group
+ * - hard_boundary: flush tool group 并自身入 result
+ * - soft_boundary（context_frame）: 不 flush tool group，自身入 result
+ * - neutral: 完全透明
+ */
 function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] {
   const result: SessionDisplayItem[] = [];
   let activeToolGroup: AggregatedEntryGroup | null = null;
-  let activeSideGroup: SideGroup | null = null;
 
   const flushToolGroup = () => {
     activeToolGroup = pushToolGroup(result, activeToolGroup);
-  };
-
-  const flushSideGroup = () => {
-    activeSideGroup = pushSideGroup(result, activeSideGroup);
-  };
-
-  const flushVisibleGroups = () => {
-    flushToolGroup();
-    flushSideGroup();
   };
 
   for (const entry of entries) {
@@ -271,42 +221,19 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
 
     switch (cls) {
       case "tool_like": {
-        flushSideGroup();
         activeToolGroup = appendToolEntry(activeToolGroup, entry);
         break;
       }
 
       case "hard_boundary": {
         flushToolGroup();
-
-        const sideKind = getSideGroupKind(entry);
-        if (!sideKind) {
-          flushSideGroup();
-          result.push(entry);
-          break;
-        }
-
-        const sideGroup = activeSideGroup;
-        if (sideGroup && sideGroupMatchesKind(sideGroup, sideKind)) {
-          sideGroup.entries.push(entry);
-        } else {
-          flushSideGroup();
-          activeSideGroup = createSideGroup(sideKind, entry);
-        }
+        result.push(entry);
         break;
       }
 
       case "soft_boundary": {
-        // soft boundary 只参与 side group，不打散 tool burst
-        const sideKind = getSideGroupKind(entry);
-        if (!sideKind) break;
-        const sideGroup = activeSideGroup;
-        if (sideGroup && sideGroupMatchesKind(sideGroup, sideKind)) {
-          sideGroup.entries.push(entry);
-        } else {
-          flushSideGroup();
-          activeSideGroup = createSideGroup(sideKind, entry);
-        }
+        // 不 flush tool group，自身作为单 entry 入 result
+        result.push(entry);
         break;
       }
 
@@ -317,7 +244,7 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
     }
   }
 
-  flushVisibleGroups();
+  flushToolGroup();
 
   return result;
 }

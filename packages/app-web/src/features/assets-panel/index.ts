@@ -13,5 +13,3 @@ export { SkillCategoryPanel } from "./categories/SkillCategoryPanel";
 export { VfsMountCategoryPanel } from "./categories/VfsMountCategoryPanel";
 export { ExtensionCategoryPanel } from "./categories/ExtensionCategoryPanel";
 export { MarketplaceCategoryPanel } from "./categories/MarketplaceCategoryPanel";
-export { Notice } from "./_shared/Notice";
-export type { NoticeData, NoticeTone, NoticeProps } from "./_shared/Notice";

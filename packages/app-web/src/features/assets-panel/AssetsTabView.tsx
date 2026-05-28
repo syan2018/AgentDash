@@ -24,11 +24,11 @@ interface CategoryItem {
 }
 
 const SHAREABLE_CATEGORIES: CategoryItem[] = [
-  { segment: "workflow", label: "Workflow", hint: "Lifecycle + Workflow 模板" },
+  { segment: "workflow", label: "Workflow", hint: "Workflow 与 Lifecycle 模板" },
   { segment: "mcp-preset", label: "MCP", hint: "MCP Server 模板" },
-  { segment: "skill", label: "Skill", hint: "Agent 可读技能包" },
-  { segment: "vfs-mount", label: "VFS Mount", hint: "Project VFS 挂载点 (Inline / External)" },
-  { segment: "extension", label: "Extension", hint: "本地打包扩展（含已安装与归档）" },
+  { segment: "skill", label: "Skill", hint: "Agent 可装载的技能包" },
+  { segment: "vfs-mount", label: "VFS Mount", hint: "项目 VFS 挂载点（Inline / External）" },
+  { segment: "extension", label: "Extension", hint: "已安装的扩展（市场安装与本地导入）" },
 ];
 
 const LOCAL_CATEGORIES: CategoryItem[] = [

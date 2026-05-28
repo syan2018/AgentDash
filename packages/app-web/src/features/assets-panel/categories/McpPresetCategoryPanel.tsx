@@ -32,7 +32,6 @@ import {
   fetchProjectMcpPresets,
   updateMcpPreset,
 } from "../../../services/mcpPreset";
-import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import type {
   CreateMcpPresetRequest,
   LibraryAssetDto,
@@ -46,10 +45,18 @@ import {
   McpTransportConfigEditor,
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
-import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, CreateButton, OriginBadge } from "@agentdash/ui";
+import {
+  CardMenu,
+  CreateButton,
+  DangerConfirmDialog,
+  DismissibleNotice,
+  type DismissibleNoticeData,
+  OriginBadge,
+} from "@agentdash/ui";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
+import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 /* ─── 表单状态 ─── */
@@ -155,7 +162,7 @@ export function McpPresetCategoryPanel() {
 
   const [presets, setPresets] = useState<McpPresetDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
   const showError = useCallback((msg: string) => setNotice({ tone: "danger", message: msg }), []);
   const clearNotice = useCallback(() => setNotice(null), []);
@@ -164,8 +171,7 @@ export function McpPresetCategoryPanel() {
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<McpPresetDto | null>(null);
   const [publishTarget, setPublishTarget] = useState<McpPresetDto | null>(null);
-  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
-  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
+  const { publishedByKey, reloadPublished } = useLibraryPublishedAssets("mcp_server_template");
 
   const loadPresets = useCallback(
     async (projectId: string) => {
@@ -187,34 +193,6 @@ export function McpPresetCategoryPanel() {
     if (!currentProjectId) return;
     void loadPresets(currentProjectId);
   }, [currentProjectId, loadPresets]);
-
-  useEffect(() => {
-    if (!currentUserId) return;
-    let cancelled = false;
-    fetchLibraryAssets({ asset_type: "mcp_server_template", owner_id: currentUserId })
-      .then((list) => {
-        if (!cancelled) setPublishedAssets(list);
-      })
-      .catch(() => {
-        if (!cancelled) setPublishedAssets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, publishedReloadTick]);
-
-  const publishedByKey = useMemo(() => {
-    if (!currentUserId) return new Map<string, LibraryAssetDto>();
-    const map = new Map<string, LibraryAssetDto>();
-    for (const a of publishedAssets) {
-      if (a.source === "user_authored") map.set(a.key, a);
-    }
-    return map;
-  }, [publishedAssets, currentUserId]);
-
-  const reloadPublished = useCallback(() => {
-    setPublishedReloadTick((tick) => tick + 1);
-  }, []);
 
   const handleClone = useCallback(
     async (preset: McpPresetDto) => {
@@ -258,13 +236,7 @@ export function McpPresetCategoryPanel() {
   }, [currentProjectId, confirmDelete, detail, loadPresets, clearNotice, showSuccess, showError]);
 
   if (!currentProjectId) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">
-          请选择项目后查看 MCP Preset
-        </div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="MCP Preset 资产" />;
   }
 
   const builtinCount = presets.filter((p) => p.source === "builtin").length;
@@ -276,14 +248,13 @@ export function McpPresetCategoryPanel() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">MCP Preset 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {builtinCount} 个 builtin · {userCount} 个 user · project 级 MCP 引用模板，供 agent 装配复用
+            {builtinCount} 个内置 · {userCount} 个自定义 · 供 Agent 装配的 MCP Server 模板
           </p>
         </div>
         <CreateButton entity="Preset" onClick={() => setDetail({ kind: "create" })} />
       </header>
 
-      {/* 反馈消息 */}
-      <Notice notice={notice} onDismiss={clearNotice} />
+      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
 
       {/* 列表 */}
       {isLoading && presets.length === 0 ? (
@@ -294,7 +265,7 @@ export function McpPresetCategoryPanel() {
         <div className="flex flex-col items-center rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-foreground">当前项目还没有任何 MCP Preset</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            可从资源市场安装公共模板，或点击下方"+ Preset"新建用户 Preset。
+            可从资源市场安装公共模板，或点击下方"+ Preset"新建。
           </p>
           <CreateButton
             entity="Preset"
@@ -360,15 +331,21 @@ export function McpPresetCategoryPanel() {
         />
       )}
 
-      {/* 删除确认 */}
-      {confirmDelete && (
-        <ConfirmDeleteDialog
-          preset={confirmDelete}
-          isDeleting={busyRowId === confirmDelete.id}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => void handleConfirmDelete()}
-        />
-      )}
+      <DangerConfirmDialog
+        open={confirmDelete != null}
+        title="确认删除 MCP Preset"
+        description={
+          confirmDelete
+            ? `确定要删除 ${confirmDelete.display_name} 吗？此操作不可撤销，已引用该 Preset 的 Agent 配置在运行时会提示缺失。`
+            : ""
+        }
+        confirmLabel={
+          confirmDelete && busyRowId === confirmDelete.id ? "删除中…" : "删除"
+        }
+        isConfirming={confirmDelete != null && busyRowId === confirmDelete.id}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => void handleConfirmDelete()}
+      />
 
       {publishTarget && (
         <PublishLibraryAssetDialog
@@ -994,56 +971,6 @@ function ProbePanel({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/* ─── 删除确认 Dialog ─── */
-
-function ConfirmDeleteDialog({
-  preset,
-  isDeleting,
-  onCancel,
-  onConfirm,
-}: {
-  preset: McpPresetDto;
-  isDeleting: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-[92] flex items-center justify-center bg-black/40"
-      onClick={onCancel}
-    >
-      <div
-        className="w-[380px] rounded-[12px] border border-border bg-background p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-foreground">确认删除 MCP Preset</h3>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          确定要删除{" "}
-          <span className="font-medium text-foreground">{preset.display_name}</span> 吗？此操作不可撤销；
-          已引用该 Preset 的 agent 配置在运行时会提示缺失（本任务尚未接入活引用）。
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-[8px] border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={isDeleting}
-            className="rounded-[8px] border border-destructive/30 bg-destructive px-3 py-1.5 text-xs text-destructive-foreground transition-colors hover:opacity-90 disabled:opacity-50"
-          >
-            {isDeleting ? "删除中…" : "删除"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

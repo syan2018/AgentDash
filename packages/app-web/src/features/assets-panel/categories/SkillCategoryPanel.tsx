@@ -13,7 +13,6 @@ import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
-import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import { VfsBrowser, VfsCodeEditor, type VfsBrowserPanelInspectorContext } from "../../vfs";
 import {
   buildSkillYamlFrontmatter,
@@ -32,15 +31,21 @@ import {
 } from "../../../services/skillAsset";
 import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
-import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, ConfirmDialog, CreateButton, PromptDialog } from "@agentdash/ui";
-import { PublishedBadge } from "../_shared/PublishedBadge";
-import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import {
+  CardMenu,
+  CreateButton,
+  DangerConfirmDialog,
+  DismissibleNotice,
+  type DismissibleNoticeData,
   InspectorRow as UiInspectorRow,
   OriginBadge as UiOriginBadge,
+  PromptDialog,
   SectionTitle as UiSectionTitle,
 } from "@agentdash/ui";
+import { PublishedBadge } from "../_shared/PublishedBadge";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
+import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
+import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 
 // ─── Detail mode ─────────────────────────────────────────
@@ -78,10 +83,9 @@ export function SkillCategoryPanel() {
   const [draft, setDraft] = useState<SkillAssetDraft>(() => createEmptySkillAssetDraft());
   const [confirmDelete, setConfirmDelete] = useState<SkillAssetDto | null>(null);
   const [publishTarget, setPublishTarget] = useState<SkillAssetDto | null>(null);
-  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
-  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
+  const { publishedByKey, reloadPublished } = useLibraryPublishedAssets("skill_template");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const showSuccess = useCallback((msg: string) => setNotice({ tone: "success", message: msg }), []);
   const showError = useCallback((msg: string) => setNotice({ tone: "danger", message: msg }), []);
   const clearNotice = useCallback(() => setNotice(null), []);
@@ -105,33 +109,6 @@ export function SkillCategoryPanel() {
     void loadSkills();
   }, [loadSkills]);
 
-  useEffect(() => {
-    if (!currentUserId) return;
-    let cancelled = false;
-    fetchLibraryAssets({ asset_type: "skill_template", owner_id: currentUserId })
-      .then((list) => {
-        if (!cancelled) setPublishedAssets(list);
-      })
-      .catch(() => {
-        if (!cancelled) setPublishedAssets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, publishedReloadTick]);
-
-  const publishedByKey = useMemo(() => {
-    if (!currentUserId) return new Map<string, LibraryAssetDto>();
-    const map = new Map<string, LibraryAssetDto>();
-    for (const a of publishedAssets) {
-      if (a.source === "user_authored") map.set(a.key, a);
-    }
-    return map;
-  }, [publishedAssets, currentUserId]);
-
-  const reloadPublished = useCallback(() => {
-    setPublishedReloadTick((tick) => tick + 1);
-  }, []);
 
   // ── Stats ───────────────────────────────────────────
 
@@ -245,11 +222,7 @@ export function SkillCategoryPanel() {
   // ── Guard ───────────────────────────────────────────
 
   if (!currentProjectId || !currentProject) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">请选择项目后查看 Skill 资产</div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="Skill 资产" />;
   }
 
   // ── Render ──────────────────────────────────────────
@@ -266,15 +239,14 @@ export function SkillCategoryPanel() {
           <h2 className="text-base font-semibold tracking-tight text-foreground">Skill 资产</h2>
           <p className="text-xs text-muted-foreground">
             {skills.length > 0
-              ? `${statsText} · Agent preset 可按 key 装载`
-              : "0 个 Skill · Agent preset 可按 key 装载"}
+              ? `${statsText} · 可由 Agent 按 key 装载`
+              : "0 个 Skill · 可由 Agent 按 key 装载"}
           </p>
         </div>
         <CreateButton entity="Skill" onClick={() => setShowCreateDialog(true)} />
       </header>
 
-      {/* ── Notices ── */}
-      <Notice notice={notice} onDismiss={clearNotice} />
+      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
 
       {/* ── Grid ── */}
       {isLoading ? (
@@ -318,15 +290,21 @@ export function SkillCategoryPanel() {
         />
       )}
 
-      {/* ── Delete Confirm ── */}
-      {confirmDelete && (
-        <ConfirmDeleteDialog
-          skill={confirmDelete}
-          busy={busyId === confirmDelete.id}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => void handleDelete()}
-        />
-      )}
+      <DangerConfirmDialog
+        open={confirmDelete != null}
+        title="确认删除"
+        description={
+          confirmDelete
+            ? `确定要删除 Skill ${confirmDelete.key} 吗？此操作不可撤销。`
+            : ""
+        }
+        confirmLabel={
+          confirmDelete && busyId === confirmDelete.id ? "删除中…" : "删除"
+        }
+        isConfirming={confirmDelete != null && busyId === confirmDelete.id}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => void handleDelete()}
+      />
 
       {publishTarget && (
         <PublishLibraryAssetDialog
@@ -984,12 +962,11 @@ function SkillExtraFilesEditor({
           confirmRenameFile(filePrompt.originalPath, filePrompt.value);
         }}
       />
-      <ConfirmDialog
+      <DangerConfirmDialog
         open={deleteTargetPath !== null}
         title="删除附加文件"
-        description={`确定删除附加文件「${deleteTargetPath ?? ""}」？`}
+        description={`确定要删除附加文件「${deleteTargetPath ?? ""}」吗？此操作不可撤销。`}
         confirmLabel="删除"
-        tone="danger"
         onClose={() => setDeleteTargetPath(null)}
         onConfirm={confirmDeleteFile}
       />
@@ -1071,38 +1048,3 @@ function TrashIcon() {
   );
 }
 
-// ─── Confirm Delete Dialog ───────────────────────────────
-
-function ConfirmDeleteDialog({
-  skill,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  skill: SkillAssetDto;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div
-        className="w-[380px] rounded-[8px] border border-border bg-background p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          确定要删除 Skill <span className="font-medium text-foreground">{skill.key}</span> 吗？
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="agentdash-button-secondary">
-            取消
-          </button>
-          <button type="button" onClick={onConfirm} disabled={busy} className="agentdash-button-danger">
-            {busy ? "删除中..." : "删除"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

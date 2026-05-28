@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { CardMenu, CreateButton, OriginBadge as UiOriginBadge } from "@agentdash/ui";
+import {
+  CardMenu,
+  CreateButton,
+  DangerConfirmDialog,
+  DismissibleNotice,
+  type DismissibleNoticeData,
+  OriginBadge as UiOriginBadge,
+} from "@agentdash/ui";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
-import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import {
   createProjectVfsMount,
   deleteProjectVfsMount,
@@ -17,9 +23,10 @@ import type {
   ProjectVfsMountContent,
 } from "../../../types";
 import { VfsBrowser } from "../../vfs";
-import { Notice, type NoticeData } from "../_shared/Notice";
 import { PublishedBadge } from "../_shared/PublishedBadge";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
+import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 type DetailMode =
@@ -105,9 +112,9 @@ export function VfsMountCategoryPanel() {
   const [form, setForm] = useState<VfsMountFormState>(EMPTY_FORM);
   const [confirmDelete, setConfirmDelete] = useState<ProjectVfsMount | null>(null);
   const [publishTarget, setPublishTarget] = useState<ProjectVfsMount | null>(null);
-  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
-  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const { publishedByKey: publishedByMountId, reloadPublished } =
+    useLibraryPublishedAssets("vfs_mount_template");
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
 
   const showSuccess = useCallback((message: string) => setNotice({ tone: "success", message }), []);
   const showError = useCallback((message: string) => setNotice({ tone: "danger", message }), []);
@@ -129,37 +136,6 @@ export function VfsMountCategoryPanel() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    if (!currentUserId) {
-      setPublishedAssets([]);
-      return;
-    }
-    let cancelled = false;
-    fetchLibraryAssets({ asset_type: "vfs_mount_template", owner_id: currentUserId })
-      .then((list) => {
-        if (!cancelled) setPublishedAssets(list);
-      })
-      .catch(() => {
-        if (!cancelled) setPublishedAssets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, publishedReloadTick]);
-
-  const publishedByMountId = useMemo(() => {
-    if (!currentUserId) return new Map<string, LibraryAssetDto>();
-    const map = new Map<string, LibraryAssetDto>();
-    for (const a of publishedAssets) {
-      if (a.source === "user_authored") map.set(a.key, a);
-    }
-    return map;
-  }, [publishedAssets, currentUserId]);
-
-  const reloadPublished = useCallback(() => {
-    setPublishedReloadTick((tick) => tick + 1);
-  }, []);
 
   const openCreate = useCallback(() => {
     setForm(EMPTY_FORM);
@@ -283,11 +259,7 @@ export function VfsMountCategoryPanel() {
   }, [confirmDelete, currentProjectId, detail, bumpRevision, closeDetail, showError, showSuccess]);
 
   if (!currentProjectId || !currentProject) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">请选择项目后查看 VFS Mount 资产</div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="VFS Mount 资产" />;
   }
 
   return (
@@ -304,7 +276,7 @@ export function VfsMountCategoryPanel() {
         <CreateButton entity="VFS Mount" onClick={openCreate} />
       </header>
 
-      <Notice notice={notice} onDismiss={clearNotice} />
+      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
 
       {isLoading ? (
         <div className="rounded-[8px] border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">
@@ -334,14 +306,25 @@ export function VfsMountCategoryPanel() {
         />
       )}
 
-      {confirmDelete && (
-        <ConfirmDeleteDialog
-          mount={confirmDelete}
-          busy={busyId === confirmDelete.mount_id}
-          onCancel={() => setConfirmDelete(null)}
-          onConfirm={() => void handleDelete()}
-        />
-      )}
+      <DangerConfirmDialog
+        open={confirmDelete != null}
+        title="确认删除"
+        description={
+          confirmDelete
+            ? `确定要删除 VFS Mount ${confirmDelete.mount_id} 吗？${
+                confirmDelete.content.kind === "inline"
+                  ? "其中的文件也会一并删除。"
+                  : "此操作不可撤销。"
+              }`
+            : ""
+        }
+        confirmLabel={
+          confirmDelete && busyId === confirmDelete.mount_id ? "删除中…" : "删除"
+        }
+        isConfirming={confirmDelete != null && busyId === confirmDelete.mount_id}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => void handleDelete()}
+      />
 
       {publishTarget && (
         <PublishLibraryAssetDialog
@@ -696,44 +679,3 @@ function VfsMountEditorDialog({
   );
 }
 
-/* ─── Confirm Delete ─── */
-
-function ConfirmDeleteDialog({
-  mount,
-  busy,
-  onCancel,
-  onConfirm,
-}: {
-  mount: ProjectVfsMount;
-  busy: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div
-        className="w-[420px] rounded-[8px] border border-border bg-background p-5 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-foreground">确认删除</h3>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          确定要删除 VFS Mount <span className="font-medium text-foreground">{mount.mount_id}</span> 吗？
-          {mount.content.kind === "inline" ? "其中的文件也会一并删除。" : ""}
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="agentdash-button-secondary">
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={busy}
-            className="agentdash-button-danger"
-          >
-            {busy ? "删除中…" : "删除"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}

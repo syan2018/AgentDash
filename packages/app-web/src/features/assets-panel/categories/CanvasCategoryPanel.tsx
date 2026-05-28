@@ -19,6 +19,7 @@ import { useMemo } from "react";
 
 import { ProjectCanvasManager } from "../../canvas-panel/ProjectCanvasManager";
 import { useProjectStore } from "../../../stores/projectStore";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 
 export function CanvasCategoryPanel() {
   const currentProjectId = useProjectStore((s) => s.currentProjectId);
@@ -30,13 +31,7 @@ export function CanvasCategoryPanel() {
   );
 
   if (!currentProjectId || !currentProject) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">
-          请选择项目后查看 Canvas 资产
-        </div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="Canvas 资产" />;
   }
 
   return (

@@ -26,7 +26,8 @@ import type {
   SharedLibrarySourceStatus,
 } from "../../../types";
 import { Button } from "@agentdash/ui";
-import { Notice, type NoticeData } from "../_shared/Notice";
+import { DismissibleNotice, type DismissibleNoticeData } from "@agentdash/ui";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import {
   AssetPickerDrawer,
   type AssetPickerSelection,
@@ -95,7 +96,7 @@ export function MarketplaceCategoryPanel() {
   const [sourceStatus, setSourceStatus] = useState<ProjectAssetSourceStatusDto | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyAssetId, setBusyAssetId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const [drawer, setDrawer] = useState<DrawerState>({ kind: "closed" });
   const [overwrite, setOverwrite] = useState<OverwriteState>({ kind: "closed" });
   const [publishFlow, setPublishFlow] = useState<PublishFlow>({ kind: "closed" });
@@ -219,11 +220,7 @@ export function MarketplaceCategoryPanel() {
   );
 
   if (!currentProjectId) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        请选择项目
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="资源市场" />;
   }
 
   const drawerAsset =
@@ -303,7 +300,7 @@ export function MarketplaceCategoryPanel() {
         />
       </div>
 
-      <Notice notice={notice} onDismiss={clearNotice} />
+      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
 
       {/* Grid */}
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

@@ -22,8 +22,14 @@ import {
 } from "./agent-preset-editor";
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
-import { Notice, type NoticeData } from "../assets-panel/_shared/Notice";
-import { CardMenu, CreateButton, StatusDot, type StatusDotTone } from "@agentdash/ui";
+import {
+  CardMenu,
+  CreateButton,
+  DismissibleNotice,
+  type DismissibleNoticeData,
+  StatusDot,
+  type StatusDotTone,
+} from "@agentdash/ui";
 
 const EMPTY_PROJECT_AGENTS: ProjectAgent[] = [];
 
@@ -307,7 +313,7 @@ export function ProjectAgentView({
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<{ agentId: string; preset: AgentPreset } | null>(null);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [expandedAgentKeys, setExpandedAgentKeys] = useState<Set<string>>(() => new Set());
@@ -490,7 +496,7 @@ export function ProjectAgentView({
           </div>
         )}
 
-        <Notice notice={notice} onDismiss={() => setNotice(null)} />
+        <DismissibleNotice notice={notice} onDismiss={() => setNotice(null)} />
 
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <div className="flex flex-col gap-2">

@@ -4,11 +4,13 @@ import {
   Badge,
   Button,
   CardMenu,
-  ConfirmDialog,
   CreateButton,
+  DangerConfirmDialog,
   DetailMenu,
   DetailPanel,
   DetailSection,
+  DismissibleNotice,
+  type DismissibleNoticeData,
   EmptyState,
   InspectorRow,
   OriginBadge as UiOriginBadge,
@@ -22,14 +24,14 @@ import type {
 } from "../../../generated/extension-management-contracts";
 import { downloadExtensionArtifact } from "../../../services/extensionPackage";
 import { fetchProjectExtensions } from "../../../services/extensionManagement";
-import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import { uninstallExtensionInstallation } from "../../../services/extensionRuntime";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import type { LibraryAssetDto } from "../../../types";
-import { Notice, type NoticeData } from "../_shared/Notice";
 import { PublishedBadge } from "../_shared/PublishedBadge";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
+import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 import { InstallExtensionPackageDialog } from "./extension/InstallExtensionPackageDialog";
 
@@ -50,14 +52,13 @@ export function ExtensionCategoryPanel() {
   const [extensions, setExtensions] = useState<ProjectExtensionManagementItemResponse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const [busy, setBusy] = useState<BusyState | null>(null);
   const [dialog, setDialog] = useState<DialogState>({ kind: "closed" });
   const [detailInstallationId, setDetailInstallationId] = useState<string | null>(null);
   const [publishTarget, setPublishTarget] =
     useState<ProjectExtensionManagementItemResponse | null>(null);
-  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
-  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
+  const { publishedByKey, reloadPublished } = useLibraryPublishedAssets("extension_template");
 
   const showSuccess = useCallback(
     (message: string) => setNotice({ tone: "success", message }),
@@ -99,24 +100,6 @@ export function ExtensionCategoryPanel() {
     void refresh(currentProjectId);
   }, [currentProjectId, refresh]);
 
-  useEffect(() => {
-    if (!currentUserId) {
-      setPublishedAssets([]);
-      return;
-    }
-    let cancelled = false;
-    fetchLibraryAssets({ asset_type: "extension_template", owner_id: currentUserId })
-      .then((list) => {
-        if (!cancelled) setPublishedAssets(list);
-      })
-      .catch(() => {
-        if (!cancelled) setPublishedAssets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, publishedReloadTick]);
-
   const sortedExtensions = useMemo(
     () =>
       [...extensions].sort((a, b) =>
@@ -124,15 +107,6 @@ export function ExtensionCategoryPanel() {
       ),
     [extensions],
   );
-
-  const publishedByKey = useMemo(() => {
-    if (!currentUserId) return new Map<string, LibraryAssetDto>();
-    const map = new Map<string, LibraryAssetDto>();
-    for (const asset of publishedAssets) {
-      if (asset.source === "user_authored") map.set(asset.key, asset);
-    }
-    return map;
-  }, [currentUserId, publishedAssets]);
 
   const statsText = useMemo(() => extensionStatsText(extensions), [extensions]);
   const selectedExtension = useMemo(
@@ -146,10 +120,6 @@ export function ExtensionCategoryPanel() {
   const selectedPublished = selectedExtension
     ? publishedByKey.get(selectedExtension.extension_key) ?? null
     : null;
-
-  const reloadPublished = useCallback(() => {
-    setPublishedReloadTick((tick) => tick + 1);
-  }, []);
 
   const handleDownload = useCallback(
     async (extension: ProjectExtensionManagementItemResponse) => {
@@ -203,13 +173,7 @@ export function ExtensionCategoryPanel() {
   ]);
 
   if (!currentProjectId) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">
-          请选择项目后查看 Extension 资产
-        </div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="Extension 资产" />;
   }
 
   const actionHandlers: ExtensionActionHandlers = {
@@ -244,7 +208,7 @@ export function ExtensionCategoryPanel() {
         </div>
       </header>
 
-      <Notice notice={notice} onDismiss={clearNotice} />
+      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
 
       {error && (
         <div className="rounded-[8px] border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
@@ -283,16 +247,15 @@ export function ExtensionCategoryPanel() {
         onClose={() => setDetailInstallationId(null)}
       />
 
-      <ConfirmDialog
+      <DangerConfirmDialog
         open={dialog.kind === "uninstall"}
         title="卸载 Extension"
         description={
           dialog.kind === "uninstall"
-            ? `确认卸载 ${dialog.extension.display_name}？`
+            ? `确定要卸载 ${dialog.extension.display_name} 吗？此操作不可撤销。`
             : ""
         }
-        confirmLabel="卸载"
-        tone="danger"
+        confirmLabel={busy?.kind === "uninstall" ? "卸载中…" : "卸载"}
         isConfirming={busy?.kind === "uninstall"}
         onClose={() => setDialog({ kind: "closed" })}
         onConfirm={() => void handleUninstallConfirm()}
@@ -344,7 +307,7 @@ function ExtensionGrid({
       <EmptyState className="px-6 py-14">
         <p className="text-sm text-foreground">暂无 Extension 资产</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          点击上方"+ 本地包"安装本地包，或从资源市场安装 Extension 模板
+          点击右上角"+ 本地包"导入扩展包，或从资源市场安装 Extension 模板
         </p>
       </EmptyState>
     );
@@ -708,9 +671,9 @@ function extensionStatsText(
     (extension) => extension.package_mode === "invalid_missing_artifact",
   ).length;
   const parts = [
-    `${extensions.length} 个安装`,
-    `${marketplace} 个 marketplace`,
-    `${local} 个 local`,
+    `${extensions.length} 个 Extension`,
+    `${marketplace} 个来自市场`,
+    `${local} 个本地导入`,
   ];
   if (updateAvailable > 0) parts.push(`${updateAvailable} 个可更新`);
   if (invalid > 0) parts.push(`${invalid} 个缺少包`);

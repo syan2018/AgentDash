@@ -10,23 +10,30 @@
  *   - 删除：走 removeLifecycle；Marketplace 安装包的级联清理由后端负责。
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
-import { fetchLibraryAssets } from "../../../services/sharedLibrary";
 import type {
   ActivityLifecycleDefinition,
   LibraryAssetDto,
   WorkflowDefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
-import { Notice, type NoticeData } from "../_shared/Notice";
-import { CardMenu, CreateButton, DangerConfirmDialog, OriginBadge } from "@agentdash/ui";
+import {
+  CardMenu,
+  CreateButton,
+  DangerConfirmDialog,
+  DismissibleNotice,
+  type DismissibleNoticeData,
+  OriginBadge,
+} from "@agentdash/ui";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
+import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
+import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
 type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
@@ -44,47 +51,17 @@ export function WorkflowCategoryPanel() {
 
   const currentUserId = useCurrentUserStore((s) => s.currentUser?.user_id ?? null);
 
-  const [notice, setNotice] = useState<NoticeData | null>(null);
+  const [notice, setNotice] = useState<DismissibleNoticeData | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeleteTarget | null>(null);
   const [publishTarget, setPublishTarget] = useState<ActivityLifecycleDefinition | null>(null);
-  // 当前用户已发布的 workflow 模板列表，用于在卡片上展示"已发布"徽章
-  const [publishedAssets, setPublishedAssets] = useState<LibraryAssetDto[]>([]);
-  const [publishedReloadTick, setPublishedReloadTick] = useState(0);
+  const { publishedByKey, reloadPublished } = useLibraryPublishedAssets("workflow_template");
 
   useEffect(() => {
     if (!currentProjectId) return;
     void fetchDefinitions({ projectId: currentProjectId });
     void fetchLifecycles({ projectId: currentProjectId });
   }, [currentProjectId, fetchDefinitions, fetchLifecycles]);
-
-  useEffect(() => {
-    if (!currentUserId) return;
-    let cancelled = false;
-    fetchLibraryAssets({ asset_type: "workflow_template", owner_id: currentUserId })
-      .then((list) => {
-        if (!cancelled) setPublishedAssets(list);
-      })
-      .catch(() => {
-        if (!cancelled) setPublishedAssets([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUserId, publishedReloadTick]);
-
-  const publishedByKey = useMemo(() => {
-    if (!currentUserId) return new Map<string, LibraryAssetDto>();
-    const map = new Map<string, LibraryAssetDto>();
-    for (const a of publishedAssets) {
-      if (a.source === "user_authored") map.set(a.key, a);
-    }
-    return map;
-  }, [publishedAssets, currentUserId]);
-
-  const reloadPublished = useCallback(() => {
-    setPublishedReloadTick((tick) => tick + 1);
-  }, []);
 
   const handleDelete = useCallback(async () => {
     if (!confirmDelete) return;
@@ -96,13 +73,7 @@ export function WorkflowCategoryPanel() {
   }, [confirmDelete, removeLifecycle]);
 
   if (!currentProjectId) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center text-sm text-muted-foreground">
-          请选择项目后查看 Workflow 资产
-        </div>
-      </div>
-    );
+    return <SelectProjectEmpty assetLabel="Workflow 资产" />;
   }
 
   return (
@@ -111,7 +82,7 @@ export function WorkflowCategoryPanel() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-tight text-foreground">Workflow 资产</h2>
           <p className="text-xs text-muted-foreground">
-            {lifecycles.length} 个 Workflow 资产 · 支持 Marketplace 安装来源追踪
+            {lifecycles.length} 个 Workflow
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -119,10 +90,9 @@ export function WorkflowCategoryPanel() {
         </div>
       </header>
 
-      {/* 反馈消息 */}
-      <Notice notice={notice} onDismiss={() => setNotice(null)} />
+      <DismissibleNotice notice={notice} onDismiss={() => setNotice(null)} />
       {error && (
-        <Notice
+        <DismissibleNotice
           notice={{ tone: "danger", message: error }}
           onDismiss={() => {
             /* store 错误清理由 store 自身负责，这里不做 */
@@ -204,9 +174,9 @@ function LifecycleAssetGrid({
   if (items.length === 0) {
     return (
       <div className="rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
-        <p className="text-sm text-foreground">暂无 Lifecycle 定义</p>
+        <p className="text-sm text-foreground">暂无 Workflow 资产</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          可从资源市场安装公共模板，或"+ Lifecycle"新建用户定义。
+          可从资源市场安装公共模板，或点击右上角"+ Workflow"新建。
         </p>
       </div>
     );

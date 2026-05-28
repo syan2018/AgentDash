@@ -1655,6 +1655,148 @@ async fn prompt_without_provider_configuration_returns_clear_error() {
 }
 
 #[tokio::test]
+async fn prompt_selected_unavailable_provider_reports_credential_mode() {
+    use agentdash_domain::llm_provider::{LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut available = LlmProvider::new("Available", "available", WireProtocol::Anthropic);
+    available.global_api_key_ciphertext = "test-key".to_string();
+    available.default_model = "model-ok".to_string();
+
+    let mut missing_global = LlmProvider::new("Athen AI", "athen-ai", WireProtocol::Anthropic);
+    missing_global.default_model = "model-athen".to_string();
+
+    llm_repo.set_providers(vec![available, missing_global]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize with one available provider");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+    executor_config.provider_id = Some("athen-ai".to_string());
+    executor_config.model_id = Some("model-athen".to_string());
+
+    let result = connector
+        .prompt(
+            "session-provider-mode-error",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            ExecutionContext {
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-provider-mode-error".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config,
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    backend_execution: None,
+                    identity: None,
+                },
+                turn: agentdash_spi::ExecutionTurnFrame::default(),
+            },
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("仅平台全局 Key 模式"));
+            assert!(!message.contains("个人 BYOK 设置中补齐"));
+        }
+        Ok(_) => panic!("prompt should fail for selected provider without global credential"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn prompt_selected_user_required_provider_reports_byok_when_identity_exists() {
+    use agentdash_domain::llm_provider::{LlmCredentialMode, LlmProvider, WireProtocol};
+
+    let settings_repo = Arc::new(TestSettingsRepository::default());
+    let llm_repo = Arc::new(TestLlmProviderRepository::default());
+    let credential_repo = Arc::new(TestLlmProviderCredentialRepository);
+    let secret_codec = Arc::new(TestLlmSecretCodec);
+
+    let mut available = LlmProvider::new("Available", "available", WireProtocol::Anthropic);
+    available.global_api_key_ciphertext = "test-key".to_string();
+    available.default_model = "model-ok".to_string();
+
+    let mut byok_only = LlmProvider::new("Athen AI", "athen-ai", WireProtocol::Anthropic);
+    byok_only.credential_mode = LlmCredentialMode::UserRequired;
+    byok_only.default_model = "model-athen".to_string();
+
+    llm_repo.set_providers(vec![available, byok_only]);
+
+    let mut connector = build_pi_agent_connector(
+        settings_repo.as_ref(),
+        llm_repo.as_ref(),
+        credential_repo.as_ref(),
+        secret_codec.as_ref(),
+    )
+    .await
+    .expect("connector should initialize with one available provider");
+    connector.set_llm_provider_repository(llm_repo);
+    connector.set_llm_provider_credential_repository(credential_repo);
+    connector.set_llm_secret_codec(secret_codec);
+
+    let mut executor_config = agentdash_spi::AgentConfig::new("PI_AGENT");
+    executor_config.provider_id = Some("athen-ai".to_string());
+    executor_config.model_id = Some("model-athen".to_string());
+
+    let result = connector
+        .prompt(
+            "session-user-required-error",
+            None,
+            &PromptPayload::Text("hello".to_string()),
+            ExecutionContext {
+                session: agentdash_spi::ExecutionSessionFrame {
+                    turn_id: "turn-user-required-error".to_string(),
+                    working_directory: PathBuf::from("/tmp/test-workspace"),
+                    environment_variables: HashMap::new(),
+                    executor_config,
+                    mcp_servers: Vec::new(),
+                    vfs: Some(test_vfs("/tmp/test-workspace")),
+                    backend_execution: None,
+                    identity: Some(agentdash_spi::AuthIdentity {
+                        auth_mode: agentdash_spi::AuthMode::Personal,
+                        user_id: "user-1".to_string(),
+                        subject: "user-1".to_string(),
+                        display_name: None,
+                        email: None,
+                        avatar_url: None,
+                        groups: Vec::new(),
+                        is_admin: false,
+                        provider: Some("test".to_string()),
+                        extra: serde_json::Value::Null,
+                    }),
+                },
+                turn: agentdash_spi::ExecutionTurnFrame::default(),
+            },
+        )
+        .await;
+
+    match result {
+        Err(ConnectorError::InvalidConfig(message)) => {
+            assert!(message.contains("个人 BYOK 凭据"));
+            assert!(message.contains("个人 BYOK 设置中补齐"));
+        }
+        Ok(_) => panic!("prompt should fail for user_required provider without user credential"),
+        Err(other) => panic!("unexpected connector error: {other}"),
+    }
+}
+
+#[tokio::test]
 async fn prompt_restores_repository_messages_before_new_user_prompt() {
     let bridge = Arc::new(RecordingBridge::default());
     let connector = PiAgentConnector::new(bridge.clone(), "系统提示");

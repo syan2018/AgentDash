@@ -19,7 +19,8 @@ use agentdash_domain::llm_provider::{
 use agentdash_domain::settings::SettingsRepository;
 
 use super::bridges::provider_registry::{
-    CONTEXT_WINDOW_STANDARD, ProviderEntry, build_provider_entries_from_db,
+    CONTEXT_WINDOW_STANDARD, ProviderEntry, ProviderUnavailableReason,
+    build_provider_entries_result_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
@@ -75,12 +76,7 @@ struct ProviderRuntimeState {
     default_bridge: Option<Arc<dyn LlmBridge>>,
     default_model: Option<String>,
     providers: Vec<ProviderEntry>,
-}
-
-impl ProviderRuntimeState {
-    fn is_configured(&self) -> bool {
-        self.default_bridge.is_some() && self.default_model.is_some()
-    }
+    unavailable_providers: HashMap<String, ProviderUnavailableReason>,
 }
 
 impl PiAgentConnector {
@@ -148,7 +144,7 @@ impl PiAgentConnector {
         if let (Some(llm_provider_repo), Some(secret_codec)) =
             (&self.llm_provider_repo, &self.llm_secret_codec)
         {
-            let providers = build_provider_entries_from_db(
+            let provider_result = build_provider_entries_result_from_db(
                 llm_provider_repo.as_ref(),
                 self.llm_provider_credential_repo
                     .as_ref()
@@ -157,18 +153,26 @@ impl PiAgentConnector {
                 identity,
             )
             .await;
-            let default_model = providers
+            let default_model = provider_result
+                .available
                 .first()
                 .map(|provider| provider.entry.default_model.clone());
-            let default_bridge = providers
+            let default_bridge = provider_result
+                .available
                 .first()
                 .map(|provider| provider.default_bridge.clone());
             return ProviderRuntimeState {
                 default_bridge,
                 default_model,
-                providers: providers
+                providers: provider_result
+                    .available
                     .into_iter()
                     .map(|provider| provider.entry)
+                    .collect(),
+                unavailable_providers: provider_result
+                    .unavailable
+                    .into_iter()
+                    .map(|provider| (provider.provider_id, provider.reason))
                     .collect(),
             };
         }
@@ -185,6 +189,7 @@ impl PiAgentConnector {
                 default_bridge: Some(self.bridge.clone()),
                 default_model,
                 providers: self.providers.clone(),
+                unavailable_providers: HashMap::new(),
             };
         }
 
@@ -192,6 +197,7 @@ impl PiAgentConnector {
             default_bridge: None,
             default_model: None,
             providers: Vec::new(),
+            unavailable_providers: HashMap::new(),
         }
     }
 
@@ -209,15 +215,8 @@ impl PiAgentConnector {
         provider_id: Option<&str>,
         model_id: Option<&str>,
     ) -> Result<Arc<dyn LlmBridge>, ConnectorError> {
-        let default_bridge = provider_state.default_bridge.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig("Pi Agent 尚未配置任何可用的 LLM Provider".to_string())
-        })?;
         let provider_id = provider_id.map(str::trim).filter(|item| !item.is_empty());
         let model_id = model_id.map(str::trim).filter(|item| !item.is_empty());
-
-        if provider_id.is_none() && model_id.is_none() {
-            return Ok(default_bridge);
-        }
 
         if let Some(provider_id) = provider_id
             && let Some(provider) = provider_state
@@ -230,8 +229,24 @@ impl PiAgentConnector {
         }
 
         if let Some(provider_id) = provider_id {
+            if let Some(reason) = provider_state.unavailable_providers.get(provider_id) {
+                return Err(ConnectorError::InvalidConfig(
+                    describe_unavailable_provider(provider_id, reason),
+                ));
+            }
+        }
+
+        let default_bridge = provider_state.default_bridge.clone().ok_or_else(|| {
+            ConnectorError::InvalidConfig("Pi Agent 尚未配置任何可用的 LLM Provider".to_string())
+        })?;
+
+        if provider_id.is_none() && model_id.is_none() {
+            return Ok(default_bridge);
+        }
+
+        if let Some(provider_id) = provider_id {
             return Err(ConnectorError::InvalidConfig(format!(
-                "当前身份没有可用的 LLM Provider `{provider_id}` 凭据，请在个人 BYOK 设置中补齐"
+                "LLM Provider `{provider_id}` 不存在、已禁用或未向当前执行环境注册"
             )));
         }
 
@@ -256,6 +271,45 @@ fn normalize_model_selector_value(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(ToString::to_string)
+}
+
+fn describe_unavailable_provider(provider_id: &str, reason: &ProviderUnavailableReason) -> String {
+    match reason {
+        ProviderUnavailableReason::MissingCredential {
+            credential_mode,
+            has_identity,
+        } => match credential_mode {
+            agentdash_domain::llm_provider::LlmCredentialMode::GlobalOnly => format!(
+                "LLM Provider `{provider_id}` 当前是仅平台全局 Key 模式，但尚未配置可用的平台凭据"
+            ),
+            agentdash_domain::llm_provider::LlmCredentialMode::GlobalOrUser => format!(
+                "LLM Provider `{provider_id}` 当前是平台全局 Key 或用户 BYOK 模式，但当前没有可用的平台凭据，也没有可用的个人 BYOK 凭据"
+            ),
+            agentdash_domain::llm_provider::LlmCredentialMode::UserRequired => {
+                if *has_identity {
+                    format!(
+                        "当前身份没有可用的 LLM Provider `{provider_id}` 个人 BYOK 凭据，请在个人 BYOK 设置中补齐"
+                    )
+                } else {
+                    format!(
+                        "LLM Provider `{provider_id}` 当前必须使用用户 BYOK，但本次执行没有用户身份，无法读取个人凭据"
+                    )
+                }
+            }
+        },
+        ProviderUnavailableReason::CredentialResolutionFailed(error) => {
+            format!("LLM Provider `{provider_id}` 凭据解析失败: {error}")
+        }
+        ProviderUnavailableReason::InvalidWireApi(error) => {
+            format!("LLM Provider `{provider_id}` wire_api 配置错误: {error}")
+        }
+        ProviderUnavailableReason::InvalidModels => {
+            format!("LLM Provider `{provider_id}` models 配置无法解析")
+        }
+        ProviderUnavailableReason::InvalidBlockedModels => {
+            format!("LLM Provider `{provider_id}` blocked_models 配置无法解析")
+        }
+    }
 }
 
 use super::slash_commands::discover_skill_slash_commands;
@@ -424,12 +478,6 @@ impl AgentConnector for PiAgentConnector {
                 let provider_state = self
                     .load_provider_runtime_state(context.session.identity.as_ref())
                     .await;
-                if !provider_state.is_configured() {
-                    return Err(ConnectorError::InvalidConfig(
-                        "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
-                            .to_string(),
-                    ));
-                }
                 let bridge = self
                     .resolve_bridge_for_execution(
                         &provider_state,
@@ -457,12 +505,6 @@ impl AgentConnector for PiAgentConnector {
             let provider_state = self
                 .load_provider_runtime_state(context.session.identity.as_ref())
                 .await;
-            if !provider_state.is_configured() {
-                return Err(ConnectorError::InvalidConfig(
-                    "Pi Agent 尚未配置任何可用的 LLM Provider，请先在设置页保存 Provider 配置"
-                        .to_string(),
-                ));
-            }
             let bridge = self
                 .resolve_bridge_for_execution(
                     &provider_state,

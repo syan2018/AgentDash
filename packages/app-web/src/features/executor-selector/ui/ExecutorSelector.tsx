@@ -139,6 +139,9 @@ export function ExecutorSelector({
     }
     return out;
   }, [modelSelector]);
+  const visibleModelCount = useMemo(() => {
+    return [...modelsByProvider.values()].reduce((total, models) => total + models.length, 0);
+  }, [modelsByProvider]);
 
   const selectedModel = useMemo(() => {
     const id = modelId.trim();
@@ -270,7 +273,7 @@ export function ExecutorSelector({
                 onProviderIdChange(nextProviderId ?? "");
                 onModelIdChange(nextModelId ?? "");
               }}
-              disabled={!executor || isDiscoveredLoading || (modelSelector?.models?.length ?? 0) === 0}
+              disabled={!executor || isDiscoveredLoading || visibleModelCount === 0}
               className={SELECT_CLASS}
             >
               <option value="">
@@ -278,7 +281,7 @@ export function ExecutorSelector({
                   ? "先选择执行器…"
                   : isDiscoveredLoading
                     ? "加载模型中…"
-                    : (modelSelector?.models?.length ?? 0) === 0
+                    : visibleModelCount === 0
                       ? "暂无模型选项"
                       : "选择模型…"}
               </option>

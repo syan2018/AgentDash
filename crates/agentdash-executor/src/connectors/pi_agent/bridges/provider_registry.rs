@@ -7,8 +7,8 @@ use super::OpenAiCompletionsBridge;
 use super::OpenAiResponsesBridge;
 use agentdash_agent::LlmBridge;
 use agentdash_domain::llm_provider::{
-    LlmProvider, LlmProviderCredentialRepository, LlmProviderRepository, LlmSecretCodec,
-    WireProtocol, provider_allows_empty_api_key, resolve_effective_credential,
+    LlmCredentialMode, LlmProvider, LlmProviderCredentialRepository, LlmProviderRepository,
+    LlmSecretCodec, WireProtocol, provider_allows_empty_api_key, resolve_effective_credential,
 };
 use agentdash_spi::AuthIdentity;
 use futures::future::BoxFuture;
@@ -107,6 +107,30 @@ impl OpenAiWireApi {
 pub(crate) struct BuiltProviderEntry {
     pub entry: ProviderEntry,
     pub default_bridge: Arc<dyn LlmBridge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProviderUnavailableReason {
+    MissingCredential {
+        credential_mode: LlmCredentialMode,
+        has_identity: bool,
+    },
+    CredentialResolutionFailed(String),
+    InvalidWireApi(String),
+    InvalidModels,
+    InvalidBlockedModels,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct UnavailableProviderEntry {
+    pub provider_id: String,
+    pub reason: ProviderUnavailableReason,
+}
+
+#[derive(Default)]
+pub(crate) struct ProviderEntriesBuildResult {
+    pub available: Vec<BuiltProviderEntry>,
+    pub unavailable: Vec<UnavailableProviderEntry>,
 }
 
 #[derive(Clone)]
@@ -242,21 +266,35 @@ pub(crate) async fn build_provider_entries_from_db(
     secret_codec: &dyn LlmSecretCodec,
     identity: Option<&AuthIdentity>,
 ) -> Vec<BuiltProviderEntry> {
+    build_provider_entries_result_from_db(repo, credential_repo, secret_codec, identity)
+        .await
+        .available
+}
+
+pub(crate) async fn build_provider_entries_result_from_db(
+    repo: &dyn LlmProviderRepository,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    identity: Option<&AuthIdentity>,
+) -> ProviderEntriesBuildResult {
     let providers = match repo.list_enabled().await {
         Ok(list) => list,
         Err(e) => {
             tracing::error!("PiAgentConnector: 从 DB 读取 LLM providers 失败: {e}");
-            return Vec::new();
+            return ProviderEntriesBuildResult::default();
         }
     };
 
-    let mut result = Vec::new();
+    let mut result = ProviderEntriesBuildResult::default();
     for db_provider in providers {
-        if let Some(entry) =
-            build_provider_entry_from_db(&db_provider, credential_repo, secret_codec, identity)
-                .await
+        match build_provider_entry_from_db(&db_provider, credential_repo, secret_codec, identity)
+            .await
         {
-            result.push(entry);
+            Ok(entry) => result.available.push(entry),
+            Err(reason) => result.unavailable.push(UnavailableProviderEntry {
+                provider_id: db_provider.slug.clone(),
+                reason,
+            }),
         }
     }
     result
@@ -267,7 +305,7 @@ async fn build_provider_entry_from_db(
     credential_repo: Option<&dyn LlmProviderCredentialRepository>,
     secret_codec: &dyn LlmSecretCodec,
     identity: Option<&AuthIdentity>,
-) -> Option<BuiltProviderEntry> {
+) -> Result<BuiltProviderEntry, ProviderUnavailableReason> {
     let credential = match resolve_effective_credential(
         db_provider,
         credential_repo,
@@ -283,7 +321,9 @@ async fn build_provider_entry_from_db(
                 error = %error,
                 "PiAgentConnector: Provider 凭据解析失败"
             );
-            return None;
+            return Err(ProviderUnavailableReason::CredentialResolutionFailed(
+                error.to_string(),
+            ));
         }
     };
     let api_key = credential
@@ -295,7 +335,10 @@ async fn build_provider_entry_from_db(
             mode = %db_provider.credential_mode,
             "PiAgentConnector: Provider 当前身份缺少可用凭据，已从可执行列表隐藏"
         );
-        return None;
+        return Err(ProviderUnavailableReason::MissingCredential {
+            credential_mode: db_provider.credential_mode,
+            has_identity: identity.is_some(),
+        });
     }
 
     let base_url = if db_provider.base_url.is_empty() {
@@ -319,7 +362,7 @@ async fn build_provider_entry_from_db(
                     "PiAgentConnector: provider={} wire_api 配置错误: {err}",
                     db_provider.slug
                 );
-                return None;
+                return Err(ProviderUnavailableReason::InvalidWireApi(err));
             }
         }
     } else {
@@ -342,7 +385,7 @@ async fn build_provider_entry_from_db(
                 db_provider.slug,
                 db_provider.models
             );
-            return None;
+            return Err(ProviderUnavailableReason::InvalidModels);
         }
     };
     let blocked_models: HashSet<String> = match parse_string_list(&db_provider.blocked_models) {
@@ -353,7 +396,7 @@ async fn build_provider_entry_from_db(
                 db_provider.slug,
                 db_provider.blocked_models
             );
-            return None;
+            return Err(ProviderUnavailableReason::InvalidBlockedModels);
         }
     };
 
@@ -378,7 +421,7 @@ async fn build_provider_entry_from_db(
             .unwrap_or_default()
     );
 
-    Some(BuiltProviderEntry {
+    Ok(BuiltProviderEntry {
         entry: ProviderEntry::new(
             provider_id,
             db_provider.name.clone(),

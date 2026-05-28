@@ -6,3 +6,4 @@ export * from "./types";
 export { useExecutorDiscovery } from "./useExecutorDiscovery";
 export { useExecutorConfig } from "./useExecutorConfig";
 export { useExecutorDiscoveredOptions } from "./useExecutorDiscoveredOptions";
+export { useEffectiveLlmModelSelector, buildEffectiveModelSelector } from "./useEffectiveLlmModelSelector";

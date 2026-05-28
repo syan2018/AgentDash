@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { ThinkingLevel } from "../../../types";
 import { THINKING_LEVEL_OPTIONS, CAPABILITY_OPTIONS } from "../../../types";
-import { useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
+import { useEffectiveLlmModelSelector, useExecutorDiscovery, useExecutorDiscoveredOptions } from "../../executor-selector";
 import type { ModelInfo, PermissionPolicy } from "../../executor-selector";
 import { CapabilityPicker } from "./capability-picker";
 import { KnowledgeSection } from "./knowledge-section";
@@ -47,8 +47,14 @@ export function PresetFormFields({
   const [activeTab, setActiveTab] = useState<'basic' | 'capability' | 'memory'>('basic');
   const [activeCapability, setActiveCapability] = useState<'tool' | 'mcp' | 'vfs' | 'skill' | 'companion'>('tool');
   const discovered = useExecutorDiscoveredOptions(form.agent_type);
-  const modelSelector = discovered.options?.model_selector ?? null;
-  const isModelLoading = !discovered.isInitialized || (discovered.options?.loading_models ?? false);
+  const usesEffectiveLlmModels = form.agent_type.trim() === "PI_AGENT";
+  const effectiveLlmModels = useEffectiveLlmModelSelector(usesEffectiveLlmModels);
+  const modelSelector = usesEffectiveLlmModels
+    ? effectiveLlmModels.modelSelector
+    : discovered.options?.model_selector ?? null;
+  const isModelLoading = usesEffectiveLlmModels
+    ? effectiveLlmModels.loading
+    : !discovered.isInitialized || (discovered.options?.loading_models ?? false);
 
   const providersById = useMemo(() => {
     const map = new Map<string, string>();
@@ -72,6 +78,9 @@ export function PresetFormFields({
     }
     return out;
   }, [modelSelector]);
+  const visibleModelCount = useMemo(() => {
+    return [...modelsByProvider.values()].reduce((total, models) => total + models.length, 0);
+  }, [modelsByProvider]);
 
   const selectedModelOptionValue = useMemo(() => {
     const trimmedModelId = form.model_id.trim();
@@ -231,13 +240,13 @@ export function PresetFormFields({
           <select
             value={selectedModelOptionValue}
             onChange={(e) => handleModelChange(e.target.value)}
-            disabled={!form.agent_type || (isModelLoading && [...modelsByProvider.values()].flat().length === 0)}
+            disabled={!form.agent_type || (isModelLoading && visibleModelCount === 0)}
             className="agentdash-form-select"
           >
             <option value="">
               {!form.agent_type
                 ? "先选择 Agent 类型"
-                : isModelLoading && [...modelsByProvider.values()].flat().length === 0
+                : isModelLoading && visibleModelCount === 0
                   ? "加载模型中..."
                   : "不指定模型"}
             </option>

@@ -23,6 +23,7 @@ export interface DiffCardBodyProps {
 
 export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
   const totalLines = payload.lines.length;
   const showLines = expanded
     ? payload.lines
@@ -33,12 +34,34 @@ export function DiffCardBody({ payload }: DiffCardBodyProps): ReactNode {
     return <p className="text-xs text-muted-foreground">无差异</p>;
   }
 
+  const handleCopyDiff = async () => {
+    try {
+      const text = payload.lines
+        .map((l) => {
+          if (l.kind === "hunk" || l.kind === "meta") return l.text;
+          const prefix = l.kind === "add" ? "+" : l.kind === "remove" ? "-" : " ";
+          return prefix + l.text;
+        })
+        .join("\n");
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch { /* ignore */ }
+  };
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2 text-[11px]">
         <span className="text-success tabular-nums">+{payload.added}</span>
         <span className="text-destructive tabular-nums">-{payload.removed}</span>
         <span className="text-muted-foreground/50">· {totalLines} 行</span>
+        <button
+          type="button"
+          onClick={() => void handleCopyDiff()}
+          className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+        >
+          {copied ? "已复制" : "复制 diff"}
+        </button>
       </div>
 
       <div className="overflow-hidden rounded-[8px] border border-border bg-muted/15">

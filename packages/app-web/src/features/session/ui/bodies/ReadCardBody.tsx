@@ -2,16 +2,15 @@
  * Read 类工具专用预览面板
  *
  * 适配 fsRead 与 dynamicToolCall(read)：
- * - 从 contentItems 抽取文本内容
- * - 行号从 offset 起算（默认 1）
+ * - 解析 `file: path` 标头和 `N | text` 行号前缀
+ * - 文件路径显示在顶部 metadata，正文不含 `file:` 或 `N |`
  * - 默认折叠 ~24 行预览，可展开全文
- * - 提供"复制原文"按钮
- *
- * MVP 不做语法高亮，仅等宽体 + 行号。
+ * - 提供复制正文和复制原始输出
  */
 
 import { useMemo, useState, type ReactNode } from "react";
 import type { ThreadItem, AgentDashThreadItem } from "../../../../generated/backbone-protocol";
+import { parseReadToolText, type ParsedReadOutput } from "./readPayload";
 
 const PREVIEW_LINES = 24;
 
@@ -20,40 +19,54 @@ export interface ReadCardBodyProps {
 }
 
 export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
-  const payload = useMemo(() => normalizeReadItem(item), [item]);
+  const parsed = useMemo(() => buildParsedRead(item), [item]);
   const [expanded, setExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"body" | "raw" | false>(false);
 
-  if (!payload || payload.text.length === 0) {
+  if (!parsed || parsed.lines.length === 0) {
     return <p className="text-xs text-muted-foreground">尚无读取内容</p>;
   }
 
-  const lines = payload.text.split("\n");
-  const totalLines = lines.length;
-  const showLines = expanded ? lines : lines.slice(0, PREVIEW_LINES);
+  const totalLines = parsed.lines.length;
+  const showLines = expanded ? parsed.lines : parsed.lines.slice(0, PREVIEW_LINES);
   const hidden = totalLines - showLines.length;
 
-  const handleCopy = async () => {
+  const handleCopy = async (mode: "body" | "raw") => {
     try {
-      await navigator.clipboard.writeText(payload.text);
-      setCopied(true);
+      const text = mode === "body" ? parsed.bodyText : parsed.rawText;
+      await navigator.clipboard.writeText(text);
+      setCopied(mode);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
   };
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground/60">
-        <span className="tabular-nums">{totalLines} 行</span>
-        <button
-          type="button"
-          onClick={() => void handleCopy()}
-          className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
-        >
-          {copied ? "已复制" : "复制"}
-        </button>
+        <div className="flex items-center gap-2">
+          {parsed.filePath && (
+            <span className="truncate font-mono text-foreground/70" title={parsed.filePath}>
+              {parsed.filePath}
+            </span>
+          )}
+          <span className="tabular-nums">{totalLines} 行</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void handleCopy("body")}
+            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            {copied === "body" ? "已复制" : "复制正文"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleCopy("raw")}
+            className="rounded px-1.5 py-0.5 text-[11px] text-muted-foreground/70 transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            {copied === "raw" ? "已复制" : "复制原始"}
+          </button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-[8px] border border-border bg-muted/20">
@@ -62,25 +75,22 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
             expanded ? "max-h-[60vh]" : ""
           }`}
         >
-          {showLines.map((line, idx) => {
-            const lineNo = payload.startLine + idx;
-            return (
-              <div
-                key={lineNo}
-                className="grid grid-cols-[3.5rem_1fr] items-baseline"
-              >
-                <span className="select-none px-2 text-right tabular-nums text-muted-foreground/40">
-                  {lineNo}
-                </span>
-                <span className="whitespace-pre-wrap break-words pr-2 text-foreground/85">
-                  {line || " "}
-                </span>
-              </div>
-            );
-          })}
+          {showLines.map((line, idx) => (
+            <div
+              key={idx}
+              className="grid grid-cols-[3.5rem_1fr] items-baseline"
+            >
+              <span className="select-none px-2 text-right tabular-nums text-muted-foreground/40">
+                {line.lineNo}
+              </span>
+              <span className="whitespace-pre-wrap break-words pr-2 text-foreground/85">
+                {line.text || " "}
+              </span>
+            </div>
+          ))}
         </pre>
 
-        {hidden > 0 && (
+        {hidden > 0 && !expanded && (
           <button
             type="button"
             onClick={() => setExpanded(true)}
@@ -103,44 +113,34 @@ export function ReadCardBody({ item }: ReadCardBodyProps): ReactNode {
   );
 }
 
-interface ReadPayload {
-  text: string;
-  startLine: number;
-  totalLines: number;
+function buildParsedRead(item: AgentDashThreadItem): ParsedReadOutput | null {
+  const rawText = extractTextFromItem(item);
+  if (rawText == null) return null;
+
+  const fallbackStart = getFallbackStartLine(item);
+  return parseReadToolText(rawText, fallbackStart);
 }
 
-function normalizeReadItem(item: AgentDashThreadItem): ReadPayload | null {
-  // fsRead：原生字段
-  if (item.type === "fsRead") {
-    const text = extractText(item.contentItems);
-    if (text == null) return null;
-    return {
-      text,
-      startLine: item.offset ?? 1,
-      totalLines: text.split("\n").length,
-    };
-  }
-
-  // dynamicToolCall(read)：从 arguments 取 offset
+function getFallbackStartLine(item: AgentDashThreadItem): number {
+  if (item.type === "fsRead") return item.offset ?? 1;
   if (item.type === "dynamicToolCall" && item.tool.toLowerCase() === "read") {
-    const text = extractText(item.contentItems);
-    if (text == null) return null;
     const args = item.arguments as Record<string, unknown> | null;
     const offsetRaw = args?.offset;
-    const startLine = typeof offsetRaw === "number" && Number.isFinite(offsetRaw) ? offsetRaw : 1;
-    return {
-      text,
-      startLine,
-      totalLines: text.split("\n").length,
-    };
+    return typeof offsetRaw === "number" && Number.isFinite(offsetRaw) ? offsetRaw : 1;
   }
-
-  return null;
+  return 1;
 }
 
 type ContentItems = NonNullable<
   Extract<ThreadItem, { type: "dynamicToolCall" }>["contentItems"]
 >;
+
+function extractTextFromItem(item: AgentDashThreadItem): string | null {
+  if (item.type === "fsRead" || item.type === "dynamicToolCall") {
+    return extractText(item.contentItems);
+  }
+  return null;
+}
 
 function extractText(items: ContentItems | null): string | null {
   if (!items || items.length === 0) return null;

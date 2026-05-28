@@ -2,10 +2,14 @@
  * 通用 JSON 入参/出参双分区展示
  *
  * 兜底 body：对任何未注册专用 renderer 的工具调用，
- * 以可折叠 JSON 树展示 arguments 和 contentItems。
+ * 入参以 JSON 树展示，出参优先走 ToolOutputContentViewer。
  */
 
+import { useMemo } from "react";
+import type { DynamicToolCallOutputContentItem } from "../../../../generated/backbone-protocol";
 import { JsonTree, CopyJsonButton } from "./JsonTree";
+import { normalizeDynamicOutput, type ToolOutputBlock } from "./toolOutputContent";
+import { ToolOutputContentViewer } from "./ToolOutputContentViewer";
 
 export interface GenericJsonBodyProps {
   arguments?: unknown;
@@ -16,7 +20,15 @@ export function GenericJsonBody({ arguments: args, contentItems }: GenericJsonBo
   const hasArgs = args != null && !(typeof args === "object" && args !== null && Object.keys(args).length === 0);
   const hasOutput = contentItems != null;
 
-  if (!hasArgs && !hasOutput) return null;
+  const outputBlocks = useMemo((): ToolOutputBlock[] => {
+    if (!hasOutput) return [];
+    if (isDynamicContentItems(contentItems)) {
+      return normalizeDynamicOutput(contentItems);
+    }
+    return [{ kind: "json", value: contentItems }];
+  }, [contentItems, hasOutput]);
+
+  if (!hasArgs && outputBlocks.length === 0) return null;
 
   return (
     <div className="space-y-3">
@@ -25,10 +37,11 @@ export function GenericJsonBody({ arguments: args, contentItems }: GenericJsonBo
           <JsonTree data={args} defaultDepth={2} />
         </Section>
       )}
-      {hasOutput && (
-        <Section label="出参" data={contentItems}>
-          <JsonTree data={contentItems} defaultDepth={1} />
-        </Section>
+      {outputBlocks.length > 0 && (
+        <div>
+          <p className="mb-1 text-xs font-medium text-muted-foreground/60">出参</p>
+          <ToolOutputContentViewer blocks={outputBlocks} />
+        </div>
       )}
     </div>
   );
@@ -52,4 +65,11 @@ function Section({
       {children}
     </div>
   );
+}
+
+function isDynamicContentItems(v: unknown): v is DynamicToolCallOutputContentItem[] {
+  if (!Array.isArray(v)) return false;
+  if (v.length === 0) return false;
+  const first = v[0] as Record<string, unknown>;
+  return first != null && typeof first === "object" && (first.type === "inputText" || first.type === "inputImage");
 }

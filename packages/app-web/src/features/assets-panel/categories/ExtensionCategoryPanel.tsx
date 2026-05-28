@@ -10,7 +10,6 @@ import {
   DetailMenu,
   DetailPanel,
   DetailSection,
-  DismissibleNotice,
   type DismissibleNoticeData,
   EmptyState,
   InspectorRow,
@@ -19,6 +18,7 @@ import {
 import type { DetailMenuItem } from "@agentdash/ui";
 
 import { buildAssetMenuItems, type BuildAssetMenuOptions } from "../_shared/assetMenu";
+import { CategoryPageShell } from "../_shared/CategoryPageShell";
 
 import { asRecord } from "../../../api/mappers";
 import type {
@@ -187,15 +187,11 @@ export function ExtensionCategoryPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-foreground">
-            Extension 资产
-          </h2>
-          <p className="text-xs text-muted-foreground">{statsText}</p>
-        </div>
-        <div className="flex items-center gap-2">
+    <CategoryPageShell
+      title="Extension 资产"
+      stats={statsText}
+      actions={
+        <>
           <Button
             variant="secondary"
             size="sm"
@@ -208,11 +204,11 @@ export function ExtensionCategoryPanel() {
             entity="本地包"
             onClick={() => setDialog({ kind: "import" })}
           />
-        </div>
-      </header>
-
-      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
-
+        </>
+      }
+      notice={notice}
+      onDismissNotice={clearNotice}
+    >
       {error && (
         <div className="rounded-[8px] border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           {error}
@@ -283,7 +279,7 @@ export function ExtensionCategoryPanel() {
           }}
         />
       )}
-    </div>
+    </CategoryPageShell>
   );
 }
 

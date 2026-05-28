@@ -5,11 +5,11 @@ import {
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
-  DismissibleNotice,
   type DismissibleNoticeData,
   OriginBadge as UiOriginBadge,
 } from "@agentdash/ui";
 import { buildAssetMenuItems } from "../_shared/assetMenu";
+import { CategoryPageShell } from "../_shared/CategoryPageShell";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
@@ -265,21 +265,17 @@ export function VfsMountCategoryPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-foreground">VFS Mount 资产</h2>
-          <p className="text-xs text-muted-foreground">
-            {items.length > 0
-              ? `${items.length} 个 Project 级 VFS 挂载点 · Inline 文件 / External Service`
-              : "0 个 VFS Mount · 可创建 Inline 文件挂载或 ExternalService 挂载"}
-          </p>
-        </div>
-        <CreateButton entity="VFS Mount" onClick={openCreate} />
-      </header>
-
-      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
-
+    <CategoryPageShell
+      title="VFS Mount 资产"
+      stats={
+        items.length > 0
+          ? `${items.length} 个项目级 VFS 挂载点 · Inline 文件 / External Service`
+          : "0 个 VFS Mount · 可创建 Inline 文件挂载或 External Service 挂载"
+      }
+      actions={<CreateButton entity="VFS Mount" onClick={openCreate} />}
+      notice={notice}
+      onDismissNotice={clearNotice}
+    >
       {isLoading ? (
         <div className="rounded-[8px] border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">
           正在加载 VFS Mount 资产…
@@ -348,7 +344,7 @@ export function VfsMountCategoryPanel() {
           }}
         />
       )}
-    </div>
+    </CategoryPageShell>
   );
 }
 

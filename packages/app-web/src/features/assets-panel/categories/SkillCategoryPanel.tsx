@@ -36,7 +36,6 @@ import {
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
-  DismissibleNotice,
   type DismissibleNoticeData,
   InspectorRow as UiInspectorRow,
   MetaTagList,
@@ -46,6 +45,7 @@ import {
   SectionTitle as UiSectionTitle,
 } from "@agentdash/ui";
 import { buildAssetMenuItems } from "../_shared/assetMenu";
+import { CategoryPageShell } from "../_shared/CategoryPageShell";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
@@ -236,23 +236,17 @@ export function SkillCategoryPanel() {
     .join(" · ");
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      {/* ── Header ── */}
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-foreground">Skill 资产</h2>
-          <p className="text-xs text-muted-foreground">
-            {skills.length > 0
-              ? `${statsText} · 可由 Agent 按 key 装载`
-              : "0 个 Skill · 可由 Agent 按 key 装载"}
-          </p>
-        </div>
-        <CreateButton entity="Skill" onClick={() => setShowCreateDialog(true)} />
-      </header>
-
-      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
-
-      {/* ── Grid ── */}
+    <CategoryPageShell
+      title="Skill 资产"
+      stats={
+        skills.length > 0
+          ? `${statsText} · 可由 Agent 按 key 装载`
+          : "0 个 Skill · 可由 Agent 按 key 装载"
+      }
+      actions={<CreateButton entity="Skill" onClick={() => setShowCreateDialog(true)} />}
+      notice={notice}
+      onDismissNotice={clearNotice}
+    >
       {isLoading ? (
         <div className="rounded-[8px] border border-dashed border-border px-6 py-10 text-center text-sm text-muted-foreground">
           正在加载 Skill 资产…
@@ -329,7 +323,7 @@ export function SkillCategoryPanel() {
           }}
         />
       )}
-    </div>
+    </CategoryPageShell>
   );
 }
 

@@ -33,6 +33,7 @@ import {
   OriginBadge,
 } from "@agentdash/ui";
 import { buildAssetMenuItems } from "../_shared/assetMenu";
+import { CategoryPageShell } from "../_shared/CategoryPageShell";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
@@ -80,20 +81,13 @@ export function WorkflowCategoryPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-foreground">Workflow 资产</h2>
-          <p className="text-xs text-muted-foreground">
-            {lifecycles.length} 个 Workflow
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <CreateButton entity="Workflow" onClick={() => navigate("/workflow/new")} />
-        </div>
-      </header>
-
-      <DismissibleNotice notice={notice} onDismiss={() => setNotice(null)} />
+    <CategoryPageShell
+      title="Workflow 资产"
+      stats={`${lifecycles.length} 个 Workflow`}
+      actions={<CreateButton entity="Workflow" onClick={() => navigate("/workflow/new")} />}
+      notice={notice}
+      onDismissNotice={() => setNotice(null)}
+    >
       {error && (
         <DismissibleNotice
           notice={{ tone: "danger", message: error }}
@@ -104,7 +98,6 @@ export function WorkflowCategoryPanel() {
         />
       )}
 
-      {/* 统一列表 */}
       <LifecycleAssetGrid
         items={lifecycles}
         publishedByKey={publishedByKey}
@@ -151,7 +144,7 @@ export function WorkflowCategoryPanel() {
           }}
         />
       )}
-    </div>
+    </CategoryPageShell>
   );
 }
 

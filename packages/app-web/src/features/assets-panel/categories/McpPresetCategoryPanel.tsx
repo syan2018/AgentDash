@@ -50,11 +50,11 @@ import {
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
-  DismissibleNotice,
   type DismissibleNoticeData,
   OriginBadge,
 } from "@agentdash/ui";
 import { buildAssetMenuItems } from "../_shared/assetMenu";
+import { CategoryPageShell } from "../_shared/CategoryPageShell";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
@@ -245,20 +245,13 @@ export function McpPresetCategoryPanel() {
   const userCount = presets.length - builtinCount;
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-tight text-foreground">MCP Preset 资产</h2>
-          <p className="text-xs text-muted-foreground">
-            {builtinCount} 个内置 · {userCount} 个自定义 · 供 Agent 装配的 MCP Server 模板
-          </p>
-        </div>
-        <CreateButton entity="Preset" onClick={() => setDetail({ kind: "create" })} />
-      </header>
-
-      <DismissibleNotice notice={notice} onDismiss={clearNotice} />
-
-      {/* 列表 */}
+    <CategoryPageShell
+      title="MCP Preset 资产"
+      stats={`${builtinCount} 个内置 · ${userCount} 个自定义 · 供 Agent 装配的 MCP Server 模板`}
+      actions={<CreateButton entity="Preset" onClick={() => setDetail({ kind: "create" })} />}
+      notice={notice}
+      onDismissNotice={clearNotice}
+    >
       {isLoading && presets.length === 0 ? (
         <div className="rounded-[12px] border border-dashed border-border bg-secondary/20 px-6 py-10 text-center">
           <p className="text-sm text-muted-foreground">正在加载 MCP Preset…</p>
@@ -368,7 +361,7 @@ export function McpPresetCategoryPanel() {
           }}
         />
       )}
-    </div>
+    </CategoryPageShell>
   );
 }
 

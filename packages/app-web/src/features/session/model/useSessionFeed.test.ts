@@ -142,11 +142,28 @@ function mkReasoningEntry(id: string): SessionDisplayEntry {
   return asEntry(id, event, { accumulatedText: "..." });
 }
 
+function mkContextFrameEntry(id: string): SessionDisplayEntry {
+  const event = {
+    type: "platform",
+    payload: {
+      kind: "session_meta_update",
+      data: {
+        key: "context_frame",
+        value: { id, kind: "identity" },
+      },
+    },
+  } as unknown as BackboneEvent;
+  return asEntry(id, event);
+}
+
 function isToolGroup(item: unknown): item is AggregatedEntryGroup {
   return (item as AggregatedEntryGroup)?.type === "aggregated_group";
 }
 function isThinkingGroup(item: unknown): item is AggregatedThinkingGroup {
   return (item as AggregatedThinkingGroup)?.type === "aggregated_thinking";
+}
+function isContextFrameGroup(item: unknown): boolean {
+  return (item as { type: string })?.type === "aggregated_context_frames";
 }
 
 describe("aggregateEntries — tool burst", () => {
@@ -330,5 +347,76 @@ describe("aggregateEntries — tool burst", () => {
     expect((result[0] as SessionDisplayEntry).id).toBe("c1");
     expect((result[1] as SessionDisplayEntry).id).toBe("s1");
     expect((result[2] as SessionDisplayEntry).id).toBe("c2");
+  });
+
+  it("T15: context_frame is a soft boundary — tools merge across it", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkContextFrameEntry("ctx1"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    // 期望：tool burst 仍然合并为一组（c1+c2），CTX 单条被扁平化为单 entry
+    const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
+    expect(toolGroups).toHaveLength(1);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2"]);
+    const hasCtx = result.some(
+      (item) => isContextFrameGroup(item) || (item as SessionDisplayEntry)?.id === "ctx1",
+    );
+    expect(hasCtx).toBe(true);
+  });
+
+  it("T16: agent message stays as hard boundary across context_frame", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkContextFrameEntry("ctx1"),
+      mkMessageEntry("m1", "进度更新"),
+      mkCmdEntry("c2", "pwd"),
+    ];
+    const result = aggregateEntries(entries);
+    // 非空 agent message 是 hard boundary，c1 和 c2 必须分裂
+    const toolGroups = result.filter(isToolGroup);
+    expect(toolGroups).toHaveLength(0);  // 各 1 条工具不会折成 group
+    const cmdEntries = result.filter(
+      (item) => (item as SessionDisplayEntry)?.id === "c1" || (item as SessionDisplayEntry)?.id === "c2"
+    );
+    expect(cmdEntries).toHaveLength(2);
+  });
+
+  it("T17: multiple consecutive context_frames fold into one side group", () => {
+    const entries = [
+      mkCmdEntry("c1", "ls"),
+      mkContextFrameEntry("ctx1"),
+      mkContextFrameEntry("ctx2"),
+      mkContextFrameEntry("ctx3"),
+      mkCmdEntry("c2", "pwd"),
+      mkCmdEntry("c3", "echo"),
+    ];
+    const result = aggregateEntries(entries);
+    const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
+    expect(toolGroups).toHaveLength(1);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
+    const ctxGroups = result.filter(isContextFrameGroup);
+    expect(ctxGroups).toHaveLength(1);
+  });
+
+  it("T18: real-world scenario — tools, ctx, more tools all merge into one burst", () => {
+    // 模拟用户截图: mounts_list → ctx × 3 → Read → canvas_start
+    const entries = [
+      mkCmdEntry("mounts_list", "mounts"),
+      mkContextFrameEntry("ctx1"),
+      mkContextFrameEntry("ctx2"),
+      mkContextFrameEntry("ctx3"),
+      mkCmdEntry("read", "Read"),
+      mkCmdEntry("canvas_start", "canvas"),
+    ];
+    const result = aggregateEntries(entries);
+    const toolGroups = result.filter(isToolGroup) as AggregatedEntryGroup[];
+    expect(toolGroups).toHaveLength(1);
+    expect(toolGroups[0]!.entries.map((e) => e.id)).toEqual([
+      "mounts_list",
+      "read",
+      "canvas_start",
+    ]);
   });
 });

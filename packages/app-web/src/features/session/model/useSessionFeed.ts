@@ -90,7 +90,8 @@ function isContextFrameEvent(event: BackboneEvent): boolean {
 
 type EntryClassification =
   | "tool_like"
-  | "visible_boundary"
+  | "hard_boundary"
+  | "soft_boundary"
   | "neutral";
 
 function isEffectivelyEmptyTextEntry(entry: SessionDisplayEntry): boolean {
@@ -130,7 +131,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
     event.type === "reasoning_text_delta" ||
     event.type === "reasoning_summary_delta"
   ) {
-    return isEffectivelyEmptyTextEntry(entry) ? "neutral" : "visible_boundary";
+    return isEffectivelyEmptyTextEntry(entry) ? "neutral" : "hard_boundary";
   }
 
   if (
@@ -138,7 +139,7 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
     event.type === "approval_request" ||
     event.type === "error"
   ) {
-    return "visible_boundary";
+    return "hard_boundary";
   }
 
   if (
@@ -152,13 +153,16 @@ function classifyEntry(entry: SessionDisplayEntry): EntryClassification {
   }
 
   if (event.type === "platform") {
-    if (isUserMessageChunk(event) || isContextFrameEvent(event) || isRenderablePlatformEvent(event)) {
-      return "visible_boundary";
-    }
+    // user_message_chunk → 真正的"用户/agent 可见产出"，硬边界
+    if (isUserMessageChunk(event)) return "hard_boundary";
+    // context_frame → 侧轨身份/能力切换，不应打散 tool burst
+    if (isContextFrameEvent(event)) return "soft_boundary";
+    // 其他可渲染系统/任务事件 → 硬边界（hook trace、companion、capability change 等）
+    if (isRenderablePlatformEvent(event)) return "hard_boundary";
     return "neutral";
   }
 
-  return "visible_boundary";
+  return "hard_boundary";
 }
 
 function createToolGroup(entry: SessionDisplayEntry): AggregatedEntryGroup {
@@ -272,7 +276,7 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
         break;
       }
 
-      case "visible_boundary": {
+      case "hard_boundary": {
         flushToolGroup();
 
         const sideKind = getSideGroupKind(entry);
@@ -282,6 +286,20 @@ function aggregateEntries(entries: SessionDisplayEntry[]): SessionDisplayItem[] 
           break;
         }
 
+        const sideGroup = activeSideGroup;
+        if (sideGroup && sideGroupMatchesKind(sideGroup, sideKind)) {
+          sideGroup.entries.push(entry);
+        } else {
+          flushSideGroup();
+          activeSideGroup = createSideGroup(sideKind, entry);
+        }
+        break;
+      }
+
+      case "soft_boundary": {
+        // soft boundary 只参与 side group，不打散 tool burst
+        const sideKind = getSideGroupKind(entry);
+        if (!sideKind) break;
         const sideGroup = activeSideGroup;
         if (sideGroup && sideGroupMatchesKind(sideGroup, sideKind)) {
           sideGroup.entries.push(entry);

@@ -23,6 +23,7 @@ import { CollabAgentCardBody } from "./bodies/CollabAgentCardBody";
 import { ContextCompactionCardBody } from "./bodies/ContextCompactionCardBody";
 import { DynamicToolCallCardBody } from "./bodies/DynamicToolCallCardBody";
 import { GenericJsonBody } from "./bodies/GenericJsonBody";
+import { ReadCardBody } from "./bodies/ReadCardBody";
 
 export interface CardContext {
   sessionId?: string;
@@ -151,10 +152,7 @@ export function renderToolCallCard(
             range: rangeOf(item.offset, item.limit),
           }),
         },
-        body: createElement(GenericJsonBody, {
-          arguments: item.arguments,
-          contentItems: item.contentItems,
-        }),
+        body: createElement(ReadCardBody, { item }),
         status,
       };
 

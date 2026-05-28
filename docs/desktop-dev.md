@@ -40,7 +40,7 @@ pnpm dev:desktop
 
 ## 与 `pnpm dev` 的关系
 
-`pnpm dev` 仍然面向 Web 联合调试，入口是 `scripts/dev-joint.js`：
+`pnpm dev` 仍然面向 Web 联合调试，入口是 `scripts/dev-runtime.js --profile web`：
 
 1. 清理云端后端、本机后端和 Web 前端相关端口。
 2. 构建统一 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`。
@@ -48,9 +48,9 @@ pnpm dev:desktop
 4. 通过 `/api/local-runtime/ensure` 领取开发机的本机 runtime，拿到 server 颁发的 `backend_id`、relay token 和 WebSocket URL。
 5. 启动 Web 前端 `app-web`。
 
-`scripts/dev-joint.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。脚本会先调用 `agentdash-local machine-identity` 读取本机 runtime 自己识别和持久化的机器身份，再用该身份向 server ensure；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。开发脚本不拥有机器身份文件路径，也不生成机器身份。
+`scripts/dev-runtime.js` 不再直接写 `/api/backends`，也不接受手工指定 `backend_id`。Web profile 会先调用 `agentdash-local machine-identity` 读取本机 runtime 自己识别和持久化的机器身份，再用该身份向 server ensure；`backend_id` 始终由 server 按 `machine_id + scope + capability_slot` 生成或复用。开发脚本不拥有机器身份文件路径，也不生成机器身份。
 
-`pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-desktop.js`：
+`pnpm dev:desktop` 面向 Tauri 桌面端调试，入口是 `scripts/dev-runtime.js --profile desktop`：
 
 1. 清理独立后端、桌面 renderer 和残留 Tauri 壳。
 2. 先统一编译 dev Rust 目标：`agentdash-api`、`agentdash-local`、`agentdash-local-tauri`，避免任一长驻进程编译期间就开始做健康探测。
@@ -62,7 +62,7 @@ pnpm dev:desktop
 
 直接执行 `pnpm run dev:desktop-shell` 时不会自动设置 external 模式；这种方式会走 Tauri 壳的默认行为，由壳进程内托管 Dashboard API。需要调试独立后端时优先使用 `pnpm dev:desktop`。
 
-两个脚本都复用 `scripts/lib/dev-process.js` 中的开发进程基础设施：
+Web 与 Desktop profile 都复用 `scripts/lib/dev-process.js` 中的开发进程基础设施：
 
 - 子进程 supervisor。
 - `Ctrl+C` 统一收尾。
@@ -72,7 +72,7 @@ pnpm dev:desktop
 - JSON HTTP 请求。
 - 按进程名清理残留进程树。
 
-业务编排仍保留在各自入口中，避免把 Web 联合调试和桌面端调试揉成难以维护的通用流程。
+业务编排集中在 `scripts/dev-runtime.js`，通过 `web` / `desktop` profile 显式表达差异，避免两条启动路径继续漂移。
 
 因为两条入口共享同一套 Rust 编译目标，`pnpm dev` 在 build 前也会清理残留 `agentdash-local-tauri` 进程，避免 Windows 锁定 `target/debug/agentdash-local-tauri.exe` 导致编译失败。
 
@@ -149,6 +149,19 @@ pnpm run desktop:build
 ```powershell
 pnpm run desktop:bundle
 ```
+
+`desktop:build` 与 `desktop:bundle` 都通过 `scripts/desktop-build.js` 进入 Tauri 构建，默认使用 `builtin` API mode，也就是打出的桌面壳会在进程内托管 Dashboard API。可按发行形态覆盖：
+
+```powershell
+pnpm run desktop:build -- --api-mode builtin
+pnpm run desktop:build -- --api-mode external --api-origin http://127.0.0.1:3001
+pnpm run desktop:build -- --api-mode sidecar --api-origin http://127.0.0.1:3001 --api-sidecar target/release/agentdash-server.exe
+```
+
+- `builtin`：默认形态，桌面壳内置启动 API。
+- `external`：桌面壳只复用外部已经启动的 API。
+- `sidecar`：桌面壳启动指定 API 可执行文件，并在退出时一起终止。
+- `--sccache` / `--no-sccache` / `--sccache-dir` 与开发启动脚本语义一致，用于控制 Rust 编译缓存。
 
 预期安装包路径：
 

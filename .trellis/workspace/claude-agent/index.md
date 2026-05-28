@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 53
-- **Last Active**: 2026-05-27
+- **Total Sessions**: 54
+- **Last Active**: 2026-05-28
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~933 | Active |
+| `journal-2.md` | ~966 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 54 | 2026-05-28 | VFS 搜索默认忽略策略收束 | `ba10dd67` | `main` |
 | 53 | 2026-05-27 | Extension SDK 开发体验落地 | `ec9d8b96` | `codex/extension-sdk` |
 | 52 | 2026-05-27 | 插件系统完整能力对齐收口 | `ec4d0888`, `685b4255`, `abcd2f41`, `d1480a00`, `ac4d4ea4`, `827a6993`, `54b711a3`, `6f733380`, `7bf502af`, `613bc4e7`, `3ae20f11` | `codex/extension-sdk` |
 | 51 | 2026-05-27 | Extension Runtime 收口维护 | `c354af06` | `codex/extension-sdk` |

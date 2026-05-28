@@ -931,3 +931,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 54: VFS 搜索默认忽略策略收束
+
+**Date**: 2026-05-28
+**Task**: VFS 搜索默认忽略策略收束
+**Branch**: `main`
+
+### Summary
+
+实现 fs_glob/fs_grep 默认扫描的 workspace ignore 与内置噪音目录排除策略，保留显式 path 进入普通 ignored subtree，并将 VCS 元数据目录固化为 hard exclude。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ba10dd67` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

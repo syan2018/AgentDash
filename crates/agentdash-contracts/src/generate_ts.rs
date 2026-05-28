@@ -30,9 +30,10 @@ use agentdash_contracts::extension_runtime::{
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
     DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto, LlmCredentialModeDto,
-    LlmCredentialSourceDto, LlmProviderAdminDto, LlmProviderProtocol, ProbeLlmProviderModelDto,
-    ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest, StartCodexOAuthResponse,
-    UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
+    LlmCredentialSourceDto, LlmCredentialVerificationStatusDto, LlmProviderAdminDto,
+    LlmProviderProtocol, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    ReorderLlmProvidersRequest, StartCodexOAuthResponse, UpdateLlmProviderRequest,
+    UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
@@ -126,6 +127,7 @@ fn main() {
             export_all::<LlmProviderProtocol>(dir);
             export_all::<LlmCredentialModeDto>(dir);
             export_all::<LlmCredentialSourceDto>(dir);
+            export_all::<LlmCredentialVerificationStatusDto>(dir);
             export_all::<LlmProviderAdminDto>(dir);
             export_all::<EffectiveLlmProviderDto>(dir);
             export_all::<CreateLlmProviderRequest>(dir);

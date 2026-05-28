@@ -73,6 +73,8 @@ Agent 运转只需要三个业务参数：
 
 `llm_providers` 是管理员维护的全局 Provider Catalog：它保存 provider metadata、模型列表、屏蔽列表、端点、wire_api、排序、启用状态和 `credential_mode`。DB-backed 全局 Key 不进入领域实体明文字段，而是保存为 `global_api_key_ciphertext`；用户 BYOK Key 保存在 `llm_provider_user_credentials`，按 `provider_id + user_id` 唯一隔离。
 
+用户 BYOK 凭据同时保存验证状态：`verification_status` 表示 `unverified` / `verified` / `failed`，`verification_message` 保存最近一次非敏感探测结果，`verified_at` 保存最近一次通过验证的时间。手动 API Key 保存会通过 Provider 的模型探测路径更新验证状态；Codex OAuth token exchange 成功即视为 OAuth 凭据已验证。
+
 `credential_mode` 控制运行态凭据解析：
 
 | 值 | 运行态含义 |

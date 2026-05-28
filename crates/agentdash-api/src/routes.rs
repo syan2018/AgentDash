@@ -148,6 +148,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(llm_providers::delete_user_credential),
         )
         .route(
+            "/llm-providers/{id}/user-credential/verify",
+            post(llm_providers::verify_user_credential),
+        )
+        .route(
             "/llm-providers/{id}/user-credential/codex-oauth/start",
             post(llm_providers::start_user_codex_oauth),
         )

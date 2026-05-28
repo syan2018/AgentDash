@@ -3,8 +3,9 @@ use uuid::Uuid;
 
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::llm_provider::{
-    LlmCredentialMode, LlmProvider, LlmProviderCredentialRepository, LlmProviderRepository,
-    LlmProviderUserCredential, WireProtocol,
+    LlmCredentialMode, LlmCredentialVerificationStatus, LlmProvider,
+    LlmProviderCredentialRepository, LlmProviderRepository, LlmProviderUserCredential,
+    WireProtocol,
 };
 
 pub struct PostgresLlmProviderRepository {
@@ -232,8 +233,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
     }
 }
 
-const CREDENTIAL_COLUMNS: &str =
-    "id, provider_id, user_id, api_key_ciphertext, created_at, updated_at";
+const CREDENTIAL_COLUMNS: &str = "id, provider_id, user_id, api_key_ciphertext, verification_status, verification_message, verified_at, created_at, updated_at";
 
 #[derive(sqlx::FromRow)]
 struct LlmProviderUserCredentialRow {
@@ -241,6 +241,9 @@ struct LlmProviderUserCredentialRow {
     provider_id: String,
     user_id: String,
     api_key_ciphertext: String,
+    verification_status: String,
+    verification_message: String,
+    verified_at: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -260,6 +263,22 @@ impl TryFrom<LlmProviderUserCredentialRow> for LlmProviderUserCredential {
             })?,
             user_id: row.user_id,
             api_key_ciphertext: row.api_key_ciphertext,
+            verification_status: row
+                .verification_status
+                .parse::<LlmCredentialVerificationStatus>()
+                .unwrap_or_default(),
+            verification_message: row.verification_message,
+            verified_at: row
+                .verified_at
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| {
+                    super::parse_pg_timestamp_checked(
+                        value,
+                        "llm_provider_user_credentials.verified_at",
+                    )
+                })
+                .transpose()?,
             created_at: super::parse_pg_timestamp_checked(
                 &row.created_at,
                 "llm_provider_user_credentials.created_at",
@@ -319,16 +338,22 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
     ) -> Result<(), DomainError> {
         sqlx::query(
             "INSERT INTO llm_provider_user_credentials
-                (id, provider_id, user_id, api_key_ciphertext, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
+                (id, provider_id, user_id, api_key_ciphertext, verification_status, verification_message, verified_at, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              ON CONFLICT(provider_id, user_id) DO UPDATE SET
                 api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+                verification_status = EXCLUDED.verification_status,
+                verification_message = EXCLUDED.verification_message,
+                verified_at = EXCLUDED.verified_at,
                 updated_at = EXCLUDED.updated_at",
         )
         .bind(credential.id.to_string())
         .bind(credential.provider_id.to_string())
         .bind(&credential.user_id)
         .bind(&credential.api_key_ciphertext)
+        .bind(credential.verification_status.as_str())
+        .bind(&credential.verification_message)
+        .bind(credential.verified_at.map(|value| value.to_rfc3339()))
         .bind(credential.created_at.to_rfc3339())
         .bind(credential.updated_at.to_rfc3339())
         .execute(&self.pool)

@@ -87,7 +87,7 @@ Session projection view DTOs expose `AgentContextEnvelope` provenance to the bro
 
 Session branch DTOs also live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. Frontend service code consumes the generated relation/status unions and keeps session tree grouping keyed by backend-provided `parent_session_id` / `parent_relation_kind`.
 
-LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理员 Provider Catalog、用户 BYOK effective list、credential mode、probe 请求和 Codex OAuth 登录状态都由前端设置页与执行器 discovery 共同消费。前端 API 层消费 `generated/llm-provider-contracts.ts`，只保留 service 调用和轻量 view model 状态；`credential_mode`、`effective_api_key_source`、`global_api_key_configured`、`user_api_key_configured`、`CodexOAuthStatusResponse.status` 等字段不在前端手写重声明。
+LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理员 Provider Catalog、用户 BYOK effective list、credential mode、probe 请求、用户凭据验证状态和 Codex OAuth 登录状态都由前端设置页与执行器 discovery 共同消费。前端 API 层消费 `generated/llm-provider-contracts.ts`，只保留 service 调用和轻量 view model 状态；`credential_mode`、`effective_api_key_source`、`global_api_key_configured`、`user_api_key_configured`、`user_credential_verification_status`、`CodexOAuthStatusResponse.status` 等字段不在前端手写重声明。
 
 ## Local Decisions
 

@@ -9,13 +9,15 @@ export type CreateLlmProviderRequest = { name: string, slug: string, protocol: L
 
 export type DeleteLlmProviderUserCredentialResponse = { deleted: boolean, };
 
-export type EffectiveLlmProviderDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, base_url: string, wire_api: string, default_model: string, models: JsonValue, blocked_models: JsonValue, discovery_url: string, enabled: boolean, executable: boolean, effective_api_key_source: LlmCredentialSourceDto, user_api_key_configured: boolean, user_api_key_preview?: string, status: string, };
+export type EffectiveLlmProviderDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, base_url: string, wire_api: string, default_model: string, models: JsonValue, blocked_models: JsonValue, discovery_url: string, enabled: boolean, executable: boolean, effective_api_key_source: LlmCredentialSourceDto, user_api_key_configured: boolean, user_credential_verification_status: LlmCredentialVerificationStatusDto, user_api_key_preview?: string, user_credential_verification_message?: string, user_credential_verified_at?: string, status: string, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 
 export type LlmCredentialModeDto = "global_only" | "global_or_user" | "user_required";
 
 export type LlmCredentialSourceDto = "global_db" | "global_env" | "user_byok" | "none";
+
+export type LlmCredentialVerificationStatusDto = "unverified" | "verified" | "failed";
 
 export type LlmProviderAdminDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, global_api_key_configured: boolean, global_api_key_preview?: string, global_api_key_source: LlmCredentialSourceDto, base_url: string, wire_api: string, default_model: string, models: JsonValue, blocked_models: JsonValue, env_api_key: string, discovery_url: string, sort_order: number, enabled: boolean, created_at: string, updated_at: string, };
 

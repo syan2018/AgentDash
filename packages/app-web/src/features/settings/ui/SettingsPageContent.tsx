@@ -684,18 +684,39 @@ function LlmProviderForm({
       )}
 
       {provider.protocol === "openai_codex" && (
-        <OAuthLoginWizard
-          start={() => llmProvidersApi.startCodexOAuth(provider.id)}
-          getStatus={llmProvidersApi.getCodexOAuthStatus}
-          cancel={llmProvidersApi.cancelCodexOAuth}
-          onCompleted={handleCodexLoginCompleted}
-          idleLabel={provider.global_api_key_configured ? "重新登录 ChatGPT" : "通过 ChatGPT 登录"}
-          authLinkLabel="打开 ChatGPT 授权页"
-          openedMessage="已在外部浏览器打开 ChatGPT 授权页，等待授权完成…"
-          manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
-          completedMessage="Codex 登录已完成"
-          failedMessage="Codex 登录失败"
-        />
+        <div className="rounded-[8px] border border-border bg-muted/20 px-3 py-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-medium text-foreground">ChatGPT OAuth</p>
+                {provider.global_api_key_configured && (
+                  <span className="rounded-[6px] border border-success/40 bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success">
+                    全局已验证
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {provider.global_api_key_configured
+                  ? `${provider.global_api_key_preview ?? "ChatGPT OAuth"} · 平台全局生效`
+                : "未验证"}
+              </p>
+            </div>
+            <OAuthLoginWizard
+              start={() => llmProvidersApi.startCodexOAuth(provider.id)}
+              getStatus={llmProvidersApi.getCodexOAuthStatus}
+              cancel={llmProvidersApi.cancelCodexOAuth}
+              onCompleted={handleCodexLoginCompleted}
+              idleLabel={provider.global_api_key_configured ? "重新验证 ChatGPT" : "通过 ChatGPT 登录"}
+              authLinkLabel="打开 ChatGPT 授权页"
+              openedMessage="已在外部浏览器打开 ChatGPT 授权页，等待授权完成…"
+              manualMessage="请打开 ChatGPT 授权页并完成登录，完成后这里会自动更新状态。"
+              completedMessage="Codex 登录已完成"
+              failedMessage="Codex 登录失败"
+              surface="inline"
+              className="shrink-0"
+            />
+          </div>
+        </div>
       )}
 
       {/* Base URL */}

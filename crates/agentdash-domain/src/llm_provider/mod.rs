@@ -4,7 +4,8 @@ mod resolver;
 mod secret;
 
 pub use entity::{
-    LlmCredentialMode, LlmCredentialSource, LlmProvider, LlmProviderUserCredential, WireProtocol,
+    LlmCredentialMode, LlmCredentialSource, LlmCredentialVerificationStatus, LlmProvider,
+    LlmProviderUserCredential, WireProtocol,
 };
 pub use repository::{LlmProviderCredentialRepository, LlmProviderRepository};
 pub use resolver::{

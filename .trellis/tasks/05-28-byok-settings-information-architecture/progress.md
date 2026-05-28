@@ -39,5 +39,8 @@
 - 管理员全局 Codex 登录和用户个人 Codex 登录复用 `OAuthLoginWizard`，登录向导统一负责启动 flow、打开外部浏览器、轮询状态、取消和完成刷新。
 - 用户 BYOK 面板对 `openai_codex` 不再展示 API Key 输入框；保存 API Key 的通用接口也会拒绝 Codex Provider，避免生成不可执行的个人凭据。
 - Codex 凭据 preview 收敛为 OAuth 状态文案，不再对 token JSON 做掩码展示。
+- Codex OAuth 已配置状态在管理员和用户面板中都有独立验证标识，重新授权动作使用“重新验证 ChatGPT”表达。
+- 手动 BYOK Key 保存会同步探测模型接口并持久化验证状态；已保存 Key 可通过“验证”按钮重新检查，用户面板展示已验证 / 验证失败 / 未验证。
+- 后续用户自定义 LLM Provider 采用用户私有 Provider overlay 方向，和管理员全局 Catalog 分层，避免个人 endpoint 进入团队共享 Provider 事实源。
 - 验证通过：`cargo check -p agentdash-api`、`cargo test -p agentdash-api codex`、`pnpm run contracts:check`、`pnpm run frontend:check`、`pnpm run frontend:lint`、`pnpm run backend:check`。
 - 已重启 `pnpm dev` 并用浏览器验证：临时 `global_or_user` Codex Provider 在个人 BYOK 面板展示 ChatGPT 登录入口，用户 OAuth start/cancel 接口可用，临时 Provider 已清理。

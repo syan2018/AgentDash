@@ -83,6 +83,24 @@ impl From<domain::LlmCredentialSource> for LlmCredentialSourceDto {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCredentialVerificationStatusDto {
+    Unverified,
+    Verified,
+    Failed,
+}
+
+impl From<domain::LlmCredentialVerificationStatus> for LlmCredentialVerificationStatusDto {
+    fn from(status: domain::LlmCredentialVerificationStatus) -> Self {
+        match status {
+            domain::LlmCredentialVerificationStatus::Unverified => Self::Unverified,
+            domain::LlmCredentialVerificationStatus::Verified => Self::Verified,
+            domain::LlmCredentialVerificationStatus::Failed => Self::Failed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct LlmProviderAdminDto {
     pub id: String,
@@ -125,9 +143,16 @@ pub struct EffectiveLlmProviderDto {
     pub executable: bool,
     pub effective_api_key_source: LlmCredentialSourceDto,
     pub user_api_key_configured: bool,
+    pub user_credential_verification_status: LlmCredentialVerificationStatusDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub user_api_key_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user_credential_verification_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub user_credential_verified_at: Option<String>,
     pub status: String,
 }
 

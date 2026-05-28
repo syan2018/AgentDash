@@ -34,6 +34,7 @@ interface OAuthLoginWizardProps {
   disabled?: boolean;
   className?: string;
   buttonClassName?: string;
+  surface?: "panel" | "inline";
 }
 
 function sleep(ms: number): Promise<void> {
@@ -70,6 +71,7 @@ export function OAuthLoginWizard({
   disabled = false,
   className,
   buttonClassName = btnPrimaryCls,
+  surface = "panel",
 }: OAuthLoginWizardProps) {
   const [status, setStatus] = useState<OAuthLoginStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -155,9 +157,12 @@ export function OAuthLoginWizard({
   }, [cancel]);
 
   const buttonLabel = loginButtonLabel(status, idleLabel, startingLabel, waitingLabel);
+  const rootClassName = surface === "panel"
+    ? "rounded-[8px] border border-border bg-muted/20 p-3"
+    : "space-y-2";
 
   return (
-    <div className={cn("rounded-[8px] border border-border bg-muted/20 p-3", className)}>
+    <div className={cn(rootClassName, className)}>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"

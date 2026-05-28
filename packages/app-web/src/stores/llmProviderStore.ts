@@ -91,6 +91,7 @@ interface LlmByokState {
 
   fetchProviders: () => Promise<void>;
   saveCredential: (providerId: string, apiKey: string) => Promise<EffectiveLlmProvider | null>;
+  verifyCredential: (providerId: string) => Promise<EffectiveLlmProvider | null>;
   deleteCredential: (providerId: string) => Promise<void>;
 }
 
@@ -114,6 +115,19 @@ export const useLlmByokStore = create<LlmByokState>((set, get) => ({
     set({ saving: true, error: null });
     try {
       const provider = await llmProvidersApi.saveUserCredential(providerId, { api_key: apiKey });
+      await get().fetchProviders();
+      set({ saving: false });
+      return provider;
+    } catch (e) {
+      set({ error: (e as Error).message, saving: false });
+      return null;
+    }
+  },
+
+  verifyCredential: async (providerId) => {
+    set({ saving: true, error: null });
+    try {
+      const provider = await llmProvidersApi.verifyUserCredential(providerId);
       await get().fetchProviders();
       set({ saving: false });
       return provider;

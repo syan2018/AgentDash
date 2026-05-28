@@ -113,6 +113,45 @@ impl LlmCredentialSource {
     }
 }
 
+/// 用户凭据验证状态。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCredentialVerificationStatus {
+    #[default]
+    Unverified,
+    Verified,
+    Failed,
+}
+
+impl LlmCredentialVerificationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unverified => "unverified",
+            Self::Verified => "verified",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::str::FromStr for LlmCredentialVerificationStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "unverified" => Ok(Self::Unverified),
+            "verified" => Ok(Self::Verified),
+            "failed" => Ok(Self::Failed),
+            _ => Err(()),
+        }
+    }
+}
+
+impl std::fmt::Display for LlmCredentialVerificationStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// LLM Provider 配置实体
 ///
 /// 存储一个 LLM 服务端点的完整连接配置。
@@ -208,6 +247,12 @@ pub struct LlmProviderUserCredential {
     pub provider_id: Uuid,
     pub user_id: String,
     pub api_key_ciphertext: String,
+    #[serde(default)]
+    pub verification_status: LlmCredentialVerificationStatus,
+    #[serde(default)]
+    pub verification_message: String,
+    #[serde(default)]
+    pub verified_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -224,8 +269,23 @@ impl LlmProviderUserCredential {
             provider_id,
             user_id: user_id.into(),
             api_key_ciphertext: api_key_ciphertext.into(),
+            verification_status: LlmCredentialVerificationStatus::Unverified,
+            verification_message: String::new(),
+            verified_at: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    pub fn mark_verification(
+        &mut self,
+        status: LlmCredentialVerificationStatus,
+        message: impl Into<String>,
+    ) {
+        let now = Utc::now();
+        self.verification_status = status;
+        self.verification_message = message.into();
+        self.verified_at = (status == LlmCredentialVerificationStatus::Verified).then_some(now);
+        self.updated_at = now;
     }
 }

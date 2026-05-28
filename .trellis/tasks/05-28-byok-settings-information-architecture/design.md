@@ -214,8 +214,14 @@ async fn discover_options_stream(
 - `POST /llm-providers/{id}/probe-models`
   - 使用 body 中临时 key 或当前用户已保存 key。
   - 普通用户不能让该接口使用 global DB/env key。
+- `POST /llm-providers/{id}/user-credential/verify`
+  - 使用当前用户已保存的 BYOK Key 探测模型接口，并持久化 `verified` / `failed` 状态与非敏感验证消息。
 
 现有 admin `probe-models` 可以保留给管理员编辑 Provider 表单；普通用户 probe 走 provider-scoped route。
+
+### 后续用户私有 Provider Overlay
+
+用户自定义 LLM Provider 应作为用户私有 Provider overlay 进入后续迭代，而不是写入管理员全局 Catalog。这样个人 endpoint / model 偏好可以只服务当前用户；Project / Agent Preset 的团队共享引用仍以管理员 Catalog 为稳定公共事实源，避免把某个用户私有 endpoint 隐式传播给其他成员。
 
 ## Frontend Information Architecture
 

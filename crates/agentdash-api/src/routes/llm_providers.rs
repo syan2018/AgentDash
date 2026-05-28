@@ -8,9 +8,9 @@ use agentdash_contracts::llm_provider::{
     StartCodexOAuthResponse, UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_domain::llm_provider::{
-    LlmCredentialMode, LlmCredentialSource, LlmProvider, LlmProviderUserCredential, WireProtocol,
-    mask_secret, provider_allows_empty_api_key, resolve_effective_credential,
-    resolve_global_credential,
+    LlmCredentialMode, LlmCredentialSource, LlmCredentialVerificationStatus, LlmProvider,
+    LlmProviderUserCredential, WireProtocol, mask_secret, provider_allows_empty_api_key,
+    resolve_effective_credential, resolve_global_credential,
 };
 use axum::{
     Json,
@@ -331,8 +331,10 @@ pub async fn upsert_user_credential(
         .llm_provider_secret
         .encrypt(api_key)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let credential =
+    let mut credential =
         LlmProviderUserCredential::new(provider.id, current_user.user_id.clone(), encrypted);
+    let (status, message) = verify_user_api_key(&provider, api_key).await;
+    credential.mark_verification(status, message);
     state
         .repos
         .llm_provider_credential_repo
@@ -357,6 +359,50 @@ pub async fn delete_user_credential(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(DeleteLlmProviderUserCredentialResponse { deleted }))
+}
+
+pub async fn verify_user_credential(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<EffectiveLlmProviderDto>, ApiError> {
+    let provider_id = parse_id(&id)?;
+    let provider = state
+        .repos
+        .llm_provider_repo
+        .get_by_id(provider_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    ensure_provider_allows_user_credential(&provider)?;
+    if provider.protocol == WireProtocol::OpenaiCodex {
+        return Err(ApiError::BadRequest(
+            "ChatGPT Codex 凭据通过 OAuth 登录验证".into(),
+        ));
+    }
+    let mut credential = state
+        .repos
+        .llm_provider_credential_repo
+        .get_for_user_provider(&current_user.user_id, provider_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("尚未保存个人 BYOK Key".into()))?;
+    let api_key = state
+        .secrets
+        .llm_provider_secret
+        .decrypt(&credential.api_key_ciphertext)
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (status, message) = verify_user_api_key(&provider, &api_key).await;
+    credential.mark_verification(status, message);
+    state
+        .repos
+        .llm_provider_credential_repo
+        .upsert_for_user_provider(&credential)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    Ok(Json(
+        effective_provider_dto(provider, &state, &current_user.user_id).await?,
+    ))
 }
 
 // ─── Codex OAuth 登录向导 ───
@@ -622,6 +668,33 @@ async fn resolve_user_probe_api_key(
     Ok(resolved.api_key)
 }
 
+async fn verify_user_api_key(
+    provider: &LlmProvider,
+    api_key: &str,
+) -> (LlmCredentialVerificationStatus, String) {
+    let base_url = (!provider.base_url.trim().is_empty()).then_some(provider.base_url.as_str());
+    let discovery_url =
+        (!provider.discovery_url.trim().is_empty()).then_some(provider.discovery_url.as_str());
+
+    match agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::probe_models_for_protocol(
+        provider.protocol,
+        api_key,
+        base_url,
+        discovery_url,
+    )
+    .await
+    {
+        Ok(models) => (
+            LlmCredentialVerificationStatus::Verified,
+            format!("验证通过，发现 {} 个模型", models.len()),
+        ),
+        Err(error) => (
+            LlmCredentialVerificationStatus::Failed,
+            format!("验证失败: {error}"),
+        ),
+    }
+}
+
 async fn run_codex_oauth_token_exchange(
     state: Arc<AppState>,
     provider_id: Uuid,
@@ -746,7 +819,11 @@ async fn save_codex_credential(
                 .map_err(|e| e.to_string())?;
         }
         CodexOAuthCredentialTarget::UserByok { user_id } => {
-            let credential = LlmProviderUserCredential::new(provider_id, user_id, encrypted);
+            let mut credential = LlmProviderUserCredential::new(provider_id, user_id, encrypted);
+            credential.mark_verification(
+                LlmCredentialVerificationStatus::Verified,
+                "ChatGPT OAuth 已验证",
+            );
             state
                 .repos
                 .llm_provider_credential_repo
@@ -870,6 +947,18 @@ async fn effective_provider_dto(
         .map(|secret| credential_preview(provider.protocol, &secret))
         .filter(|preview| !preview.is_empty());
     let user_api_key_configured = user_credential.is_some();
+    let user_credential_verification_status = user_credential
+        .as_ref()
+        .map(|credential| credential.verification_status)
+        .unwrap_or(LlmCredentialVerificationStatus::Unverified);
+    let user_credential_verification_message = user_credential
+        .as_ref()
+        .map(|credential| credential.verification_message.trim().to_string())
+        .filter(|message| !message.is_empty());
+    let user_credential_verified_at = user_credential
+        .as_ref()
+        .and_then(|credential| credential.verified_at)
+        .map(|verified_at| verified_at.to_rfc3339());
 
     let resolved = match resolve_effective_credential(
         &provider,
@@ -914,7 +1003,10 @@ async fn effective_provider_dto(
         executable,
         effective_api_key_source: source.into(),
         user_api_key_configured,
+        user_credential_verification_status: user_credential_verification_status.into(),
         user_api_key_preview,
+        user_credential_verification_message,
+        user_credential_verified_at,
         status,
     })
 }

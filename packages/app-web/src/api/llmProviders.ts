@@ -52,6 +52,9 @@ export const llmProvidersApi = {
   saveUserCredential: (providerId: string, req: UpsertLlmProviderUserCredentialRequest) =>
     api.put<EffectiveLlmProvider>(`/llm-providers/${providerId}/user-credential`, req),
 
+  verifyUserCredential: (providerId: string) =>
+    api.post<EffectiveLlmProvider>(`/llm-providers/${providerId}/user-credential/verify`, {}),
+
   deleteUserCredential: (providerId: string) =>
     api.delete<DeleteLlmProviderUserCredentialResponse>(`/llm-providers/${providerId}/user-credential`),
 

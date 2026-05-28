@@ -45,13 +45,10 @@ impl FsGlobTool {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FsGlobParams {
-    /// Glob pattern. Required. Always treated as glob — use `*` to list current
-    /// directory contents and `**/foo` to recurse. No substring fallback.
+    /// The glob pattern to match files against.
     pub pattern: String,
-    /// Mount-rooted path to search within (`mount_id://relative/path`). Defaults to mount root.
+    /// Mount-rooted directory to search in (`mount_id://relative/path`). If omitted, the mount root is used.
     pub path: Option<String>,
-    /// Cap on returned entries. Default 100; `0` = unlimited.
-    pub max_results: Option<usize>,
 }
 
 #[async_trait]
@@ -65,10 +62,10 @@ impl AgentTool for FsGlobTool {
          Usage:\n\
          - The pattern parameter is required and always interpreted as a glob.\n\
          - Use `*` for the current directory; `**/foo` for recursive match.\n\
-         - The optional path parameter scopes the search to a sub-directory.\n\
+         - The optional path parameter scopes the search to a mount-rooted directory; omit it to search the mount root.\n\
          - Returns paths sorted by modification time (newest first), then alphabetically.\n\
          - Directories are shown with a trailing slash (e.g., `src/utils/`).\n\
-         - Default limit: 100 entries; pass max_results: 0 for unlimited.\n\
+         - Results are limited to 100 entries by default.\n\
          - VCS directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
          - For text content search, use fs_grep instead."
     }
@@ -124,12 +121,7 @@ impl AgentTool for FsGlobTool {
             b_m.cmp(&a_m).then_with(|| a.path.cmp(&b.path))
         });
 
-        // max_results = 0 ⇒ 无限；其他 ⇒ truncate
-        let cap = match params.max_results {
-            Some(0) => usize::MAX,
-            Some(n) => n,
-            None => DEFAULT_MAX_RESULTS,
-        };
+        let cap = DEFAULT_MAX_RESULTS;
         let total = entries.len();
         let truncated = total > cap;
         entries.truncate(cap);
@@ -148,7 +140,7 @@ impl AgentTool for FsGlobTool {
         };
         if truncated {
             output.push_str(&format!(
-                "\n({} more entries; refine pattern or raise max_results)",
+                "\n({} more entries; refine the pattern to see more)",
                 total - cap
             ));
         }
@@ -325,6 +317,23 @@ mod fs_glob_tests {
         Utc::now() + Duration::seconds(offset_secs)
     }
 
+    #[test]
+    fn fs_glob_schema_matches_claude_code_required_shape() {
+        let tool = make_tool_with_files(vec![("a.rs", "x", at(0))]);
+        let schema = tool.parameters_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(required, vec!["pattern"]);
+        assert!(schema["properties"].get("pattern").is_some());
+        assert!(schema["properties"].get("path").is_some());
+        assert!(schema["properties"].get("max_results").is_none());
+    }
+
     #[tokio::test]
     async fn fs_glob_rejects_legacy_recursive_field() {
         let tool = make_tool_with_files(vec![("a.rs", "x", at(0))]);
@@ -436,34 +445,6 @@ mod fs_glob_tests {
             .collect();
         assert_eq!(path_lines.len(), 100);
         assert!(text.contains("more entries"));
-    }
-
-    #[tokio::test]
-    async fn fs_glob_max_results_zero_returns_all() {
-        let mut files: Vec<(String, String, DateTime<Utc>)> = (0..150)
-            .map(|i| (format!("f{i:03}.rs"), "x".to_string(), at(-(i as i64))))
-            .collect();
-        let files_ref: Vec<(&str, &str, DateTime<Utc>)> = files
-            .iter_mut()
-            .map(|(p, c, t)| (p.as_str(), c.as_str(), *t))
-            .collect();
-        let tool = make_tool_with_files(files_ref);
-        let res = tool
-            .execute(
-                "c",
-                json!({ "pattern": "**/*.rs", "max_results": 0 }),
-                CancellationToken::new(),
-                None,
-            )
-            .await
-            .expect("execute");
-        let text = res.content[0].extract_text().expect("text");
-        assert!(!text.contains("more entries"));
-        let path_lines: Vec<&str> = text
-            .lines()
-            .filter(|l| !l.is_empty() && !l.starts_with('('))
-            .collect();
-        assert_eq!(path_lines.len(), 150);
     }
 
     #[tokio::test]

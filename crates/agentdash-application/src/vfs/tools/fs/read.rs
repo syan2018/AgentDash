@@ -109,9 +109,9 @@ impl AgentTool for FsReadTool {
          Usage:\n\
          - The path parameter must use `mount_id://relative/path` format (e.g., `main://src/lib.rs`).\n\
          - When the session has only one mount, the prefix may be omitted.\n\
-         - The offset parameter is the 1-based line number to start from.\n\
-         - The limit parameter caps how many lines to return.\n\
-         - Files larger than 256KB or 5000 lines must be read with offset/limit.\n\
+         - By default, this reads the whole file from the beginning, subject to size guards.\n\
+         - You can optionally specify a 1-based line offset and line limit, but omit them for normal short-file reads.\n\
+         - Files larger than 256KB or 5000 lines return an error without offset/limit; read those in chunks.\n\
          - Output uses cat -n format: each line prefixed with `   N | `.\n\
          - Image files (PNG/JPEG/etc) are returned as an image block plus metadata.\n\
          - This tool reads files only, not directories — use fs_glob for directory listings."
@@ -622,6 +622,30 @@ mod fs_read_tests {
 
     fn tool() -> FsReadTool {
         tool_with_provider(Arc::new(MemoryReadProvider::with_default_files()))
+    }
+
+    #[test]
+    fn fs_read_schema_only_requires_path() {
+        let schema = tool().parameters_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(required, vec!["path"]);
+        assert!(schema["properties"].get("path").is_some());
+        assert!(schema["properties"].get("offset").is_some());
+        assert!(schema["properties"].get("limit").is_some());
+        assert!(
+            !required.contains(&"offset"),
+            "offset 应保持可省略，避免短文件读取也被迫传参"
+        );
+        assert!(
+            !required.contains(&"limit"),
+            "limit 应保持可省略，避免短文件读取也被迫传参"
+        );
     }
 
     // T2 — 1-based offset 转换 + cat -n 格式

@@ -87,19 +87,26 @@ pub struct FsGrepParams {
     /// `content` / `files_with_matches` (default) / `count`.
     pub output_mode: Option<OutputMode>,
     /// Case-insensitive matching (`-i`). Default false.
+    #[serde(rename = "-i")]
     #[serde(default)]
     pub case_insensitive: bool,
     /// Show line numbers in `content` mode (`-n`). Default true.
+    #[serde(rename = "-n")]
     #[serde(default = "default_true")]
     pub line_numbers: bool,
     /// Multiline mode: `.` matches newlines and `^/$` match per line (`-U`). Default false.
     #[serde(default)]
     pub multiline: bool,
     /// Lines of context before each match (`-B`).
+    #[serde(rename = "-B")]
     pub before_context: Option<usize>,
     /// Lines of context after each match (`-A`).
+    #[serde(rename = "-A")]
     pub after_context: Option<usize>,
     /// Lines of context around each match (`-C`); merged with before/after as max.
+    #[serde(rename = "-C")]
+    pub context_short: Option<usize>,
+    /// Alias for `-C`.
     pub context: Option<usize>,
     /// Cap on returned hits (or files in files_with_matches/count modes). Default 250; `0` = unlimited.
     pub head_limit: Option<usize>,
@@ -122,6 +129,7 @@ impl AgentTool for FsGrepTool {
            - files_with_matches (default): unique file paths.\n\
            - content: matching lines (with optional line numbers and -A/-B/-C context).\n\
            - count: per-file match count.\n\
+         - Use -i for case-insensitive search and -n to control line numbers in content mode.\n\
          - head_limit caps results (default 250; 0 = unlimited). Use offset for pagination.\n\
          - Common VCS directories (.git, .svn, .hg, .bzr, .jj, .sl) are excluded automatically.\n\
          - Lines longer than 500 characters are truncated with a `...(truncated)` suffix."
@@ -163,7 +171,7 @@ impl AgentTool for FsGrepTool {
 
         let before_lines = params.before_context.unwrap_or(0);
         let after_lines = params.after_context.unwrap_or(0);
-        let context_lines = params.context.unwrap_or(0);
+        let context_lines = params.context.or(params.context_short).unwrap_or(0);
 
         let (hits, truncated) = self
             .service
@@ -494,6 +502,44 @@ mod fs_grep_tests {
         FsGrepTool::new(service, SharedRuntimeVfs::new(vfs), None, None)
     }
 
+    #[test]
+    fn fs_grep_schema_matches_claude_code_required_shape() {
+        let tool = make_tool(vec![("a.rs", "fn main() {}")]);
+        let schema = tool.parameters_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("required should be array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        let properties = schema["properties"]
+            .as_object()
+            .expect("properties should be object");
+
+        assert_eq!(required, vec!["pattern"]);
+        for name in [
+            "pattern",
+            "path",
+            "glob",
+            "output_mode",
+            "-B",
+            "-A",
+            "-C",
+            "context",
+            "-n",
+            "-i",
+            "type",
+            "head_limit",
+            "offset",
+            "multiline",
+        ] {
+            assert!(
+                properties.contains_key(name),
+                "missing schema property {name}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn fs_grep_rejects_legacy_query_field() {
         let tool = make_tool(vec![("a.rs", "fn main() {}")]);
@@ -567,7 +613,7 @@ mod fs_grep_tests {
         let res = tool
             .execute(
                 "c",
-                json!({ "pattern": "world", "case_insensitive": true, "output_mode": "content" }),
+                json!({ "pattern": "world", "-i": true, "output_mode": "content" }),
                 CancellationToken::new(),
                 None,
             )
@@ -667,8 +713,8 @@ mod fs_grep_tests {
                 "c",
                 json!({
                     "pattern": "NEEDLE",
-                    "before_context": 1,
-                    "after_context": 1,
+                    "-B": 1,
+                    "-A": 1,
                     "output_mode": "content",
                 }),
                 CancellationToken::new(),

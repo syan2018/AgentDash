@@ -120,6 +120,8 @@ Resolver 在 agent baseline（auto_granted）上应用 reduction：
 `definitions` 与装饰性关键字，确保 object/array 结构、nullable 与组合器表达在目标 provider
 可解析的 JSON Schema 子集内。
 
+sanitizer 必须保留来源 schema 的 `required` 语义，原因是模型可见参数摘要和运行时参数校验都依赖同一份机器契约；可省略参数应在 schema 中保持 optional，让 Agent 在短文件读取、默认搜索等场景只提供真正必要的输入。
+
 ## CapabilityResolver
 
 - 协议类型：`agentdash-spi/src/tool_capability.rs`

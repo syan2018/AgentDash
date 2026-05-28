@@ -9,7 +9,9 @@ export type CreateLlmProviderRequest = { name: string, slug: string, protocol: L
 
 export type DeleteLlmProviderUserCredentialResponse = { deleted: boolean, };
 
-export type EffectiveLlmProviderDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, base_url: string, wire_api: string, default_model: string, models: JsonValue, blocked_models: JsonValue, discovery_url: string, enabled: boolean, executable: boolean, effective_api_key_source: LlmCredentialSourceDto, user_api_key_configured: boolean, user_credential_verification_status: LlmCredentialVerificationStatusDto, user_api_key_preview?: string, user_credential_verification_message?: string, user_credential_verified_at?: string, status: string, };
+export type EffectiveLlmModelProfileDto = { id: string, name: string, provider_id: string, reasoning: boolean, supports_image: boolean, context_window: bigint, blocked: boolean, discovered: boolean, source: string, };
+
+export type EffectiveLlmProviderDto = { id: string, name: string, slug: string, protocol: LlmProviderProtocol, credential_mode: LlmCredentialModeDto, base_url: string, wire_api: string, resolved_wire_api?: string, default_model: string, models: JsonValue, effective_models: Array<EffectiveLlmModelProfileDto>, model_discovery_status: string, model_discovery_message?: string, blocked_models: JsonValue, discovery_url: string, enabled: boolean, executable: boolean, effective_api_key_source: LlmCredentialSourceDto, user_api_key_configured: boolean, user_credential_verification_status: LlmCredentialVerificationStatusDto, user_api_key_preview?: string, user_credential_verification_message?: string, user_credential_verified_at?: string, status: string, unavailable_reason?: string, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 

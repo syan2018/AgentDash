@@ -3,14 +3,15 @@ use std::time::Duration;
 
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
-    DeleteLlmProviderUserCredentialResponse, EffectiveLlmProviderDto, LlmProviderAdminDto,
-    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
-    StartCodexOAuthResponse, UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
+    DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
+    LlmProviderAdminDto, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    ReorderLlmProvidersRequest, StartCodexOAuthResponse, UpdateLlmProviderRequest,
+    UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_domain::llm_provider::{
     LlmCredentialMode, LlmCredentialSource, LlmCredentialVerificationStatus, LlmProvider,
-    LlmProviderUserCredential, WireProtocol, mask_secret, provider_allows_empty_api_key,
-    resolve_effective_credential, resolve_global_credential,
+    LlmProviderUserCredential, WireProtocol, mask_secret, resolve_effective_credential,
+    resolve_global_credential,
 };
 use axum::{
     Json,
@@ -19,6 +20,11 @@ use axum::{
 use base64::Engine;
 use serde::Deserialize;
 use uuid::Uuid;
+
+use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
+    EffectiveLlmProviderProfile, ProviderUnavailableReason,
+    build_effective_profile_catalog_from_db, build_effective_provider_profile,
+};
 
 use crate::{
     app_state::AppState,
@@ -289,15 +295,16 @@ pub async fn list_effective_providers(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<EffectiveLlmProviderDto>>, ApiError> {
-    let providers = state
-        .repos
-        .llm_provider_repo
-        .list_all()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let mut response = Vec::with_capacity(providers.len());
-    for provider in providers {
-        response.push(effective_provider_dto(provider, &state, &current_user.user_id).await?);
+    let catalog = build_effective_profile_catalog_from_db(
+        state.repos.llm_provider_repo.as_ref(),
+        Some(state.repos.llm_provider_credential_repo.as_ref()),
+        state.secrets.llm_provider_secret.as_ref(),
+        Some(&current_user),
+    )
+    .await;
+    let mut response = Vec::with_capacity(catalog.providers.len());
+    for profile in catalog.providers {
+        response.push(effective_provider_dto(profile, &state, &current_user.user_id).await?);
     }
     Ok(Json(response))
 }
@@ -342,7 +349,7 @@ pub async fn upsert_user_credential(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(
-        effective_provider_dto(provider, &state, &current_user.user_id).await?,
+        effective_provider_dto_for_provider(provider, &state, &current_user).await?,
     ))
 }
 
@@ -401,7 +408,7 @@ pub async fn verify_user_credential(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
     Ok(Json(
-        effective_provider_dto(provider, &state, &current_user.user_id).await?,
+        effective_provider_dto_for_provider(provider, &state, &current_user).await?,
     ))
 }
 
@@ -924,11 +931,27 @@ fn admin_provider_dto(
     })
 }
 
-async fn effective_provider_dto(
+async fn effective_provider_dto_for_provider(
     provider: LlmProvider,
+    state: &AppState,
+    current_user: &agentdash_plugin_api::AuthIdentity,
+) -> Result<EffectiveLlmProviderDto, ApiError> {
+    let profile = build_effective_provider_profile(
+        provider,
+        Some(state.repos.llm_provider_credential_repo.as_ref()),
+        state.secrets.llm_provider_secret.as_ref(),
+        Some(current_user),
+    )
+    .await;
+    effective_provider_dto(profile, state, &current_user.user_id).await
+}
+
+async fn effective_provider_dto(
+    profile: EffectiveLlmProviderProfile,
     state: &AppState,
     user_id: &str,
 ) -> Result<EffectiveLlmProviderDto, ApiError> {
+    let provider = profile.provider.clone();
     let user_credential = state
         .repos
         .llm_provider_credential_repo
@@ -960,32 +983,34 @@ async fn effective_provider_dto(
         .and_then(|credential| credential.verified_at)
         .map(|verified_at| verified_at.to_rfc3339());
 
-    let resolved = match resolve_effective_credential(
-        &provider,
-        Some(state.repos.llm_provider_credential_repo.as_ref()),
-        state.secrets.llm_provider_secret.as_ref(),
-        Some(user_id),
-    )
-    .await
-    {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            tracing::warn!(
-                provider = %provider.slug,
-                user_id = %user_id,
-                error = %error,
-                "LLM Provider 用户视角密钥无法解析"
-            );
-            None
-        }
-    };
-    let allows_empty = provider_allows_empty_api_key(&provider);
-    let executable = provider.enabled && (resolved.is_some() || allows_empty);
-    let source = resolved
+    let executable = profile.executable;
+    let source = profile.credential_source;
+    let status = effective_provider_status(&provider, &profile, user_api_key_configured);
+    let resolved_wire_api = profile
+        .call_profile
         .as_ref()
-        .map(|credential| credential.source)
-        .unwrap_or(LlmCredentialSource::None);
-    let status = effective_provider_status(&provider, executable, source, user_api_key_configured);
+        .and_then(|call_profile| call_profile.resolved_wire_api.clone());
+    let effective_models = profile
+        .models
+        .iter()
+        .map(|model| EffectiveLlmModelProfileDto {
+            id: model.id.clone(),
+            name: model.name.clone(),
+            provider_id: provider.slug.clone(),
+            reasoning: model.reasoning,
+            supports_image: model.supports_image,
+            context_window: model.context_window,
+            blocked: model.blocked,
+            discovered: model.discovered,
+            source: model.source.as_str().to_string(),
+        })
+        .collect();
+    let model_discovery_status = profile.discovery_status.kind().to_string();
+    let model_discovery_message = profile.discovery_status.message().map(ToOwned::to_owned);
+    let unavailable_reason = profile
+        .unavailable_reason
+        .as_ref()
+        .map(effective_unavailable_reason_code);
 
     Ok(EffectiveLlmProviderDto {
         id: provider.id.to_string(),
@@ -995,8 +1020,12 @@ async fn effective_provider_dto(
         credential_mode: provider.credential_mode.into(),
         base_url: provider.base_url,
         wire_api: provider.wire_api,
+        resolved_wire_api,
         default_model: provider.default_model,
         models: provider.models,
+        effective_models,
+        model_discovery_status,
+        model_discovery_message,
         blocked_models: provider.blocked_models,
         discovery_url: provider.discovery_url,
         enabled: provider.enabled,
@@ -1008,23 +1037,42 @@ async fn effective_provider_dto(
         user_credential_verification_message,
         user_credential_verified_at,
         status,
+        unavailable_reason,
     })
+}
+
+fn effective_unavailable_reason_code(reason: &ProviderUnavailableReason) -> String {
+    match reason {
+        ProviderUnavailableReason::Disabled => "disabled".to_string(),
+        ProviderUnavailableReason::MissingCredential {
+            credential_mode, ..
+        } => match credential_mode {
+            LlmCredentialMode::GlobalOnly => "missing_global_credential".to_string(),
+            LlmCredentialMode::GlobalOrUser => "missing_global_or_user_credential".to_string(),
+            LlmCredentialMode::UserRequired => "missing_user_byok".to_string(),
+        },
+        ProviderUnavailableReason::CredentialResolutionFailed(_) => {
+            "credential_resolution_failed".to_string()
+        }
+        ProviderUnavailableReason::InvalidWireApi(_) => "invalid_wire_api".to_string(),
+        ProviderUnavailableReason::InvalidModels => "invalid_models".to_string(),
+        ProviderUnavailableReason::InvalidBlockedModels => "invalid_blocked_models".to_string(),
+    }
 }
 
 fn effective_provider_status(
     provider: &LlmProvider,
-    executable: bool,
-    source: LlmCredentialSource,
+    profile: &EffectiveLlmProviderProfile,
     user_api_key_configured: bool,
 ) -> String {
     if !provider.enabled {
         return "disabled".to_string();
     }
-    if source == LlmCredentialSource::UserByok {
+    if profile.credential_source == LlmCredentialSource::UserByok {
         return "user_byok_active".to_string();
     }
     if matches!(
-        source,
+        profile.credential_source,
         LlmCredentialSource::GlobalDb | LlmCredentialSource::GlobalEnv
     ) {
         return "platform_provided".to_string();
@@ -1032,7 +1080,7 @@ fn effective_provider_status(
     if provider.credential_mode == LlmCredentialMode::UserRequired && !user_api_key_configured {
         return "needs_user_key".to_string();
     }
-    if executable {
+    if profile.executable {
         return "no_key_endpoint".to_string();
     }
     "unavailable".to_string()

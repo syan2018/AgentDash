@@ -22,7 +22,7 @@ pub(crate) const CONTEXT_WINDOW_STANDARD: u64 = 200_000;
 type ModelListFuture = BoxFuture<'static, Result<Vec<ModelMeta>, String>>;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ModelMeta {
+pub struct ModelMeta {
     pub id: String,
     pub name: String,
     pub reasoning: bool,
@@ -31,6 +31,56 @@ pub(crate) struct ModelMeta {
     pub blocked: bool,
     /// true = 来自 API 动态发现；false = 仅来自 models JSON 配置
     pub discovered: bool,
+    pub source: ModelProfileSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelProfileSource {
+    Discovered,
+    Configured,
+    Default,
+}
+
+impl ModelProfileSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Discovered => "discovered",
+            Self::Configured => "configured",
+            Self::Default => "default",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelDiscoveryStatus {
+    NotSupported,
+    Ok,
+    Failed(String),
+    SkippedUnavailable,
+}
+
+impl ModelDiscoveryStatus {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotSupported => "not_supported",
+            Self::Ok => "ok",
+            Self::Failed(_) => "failed",
+            Self::SkippedUnavailable => "skipped_unavailable",
+        }
+    }
+
+    pub fn message(&self) -> Option<&str> {
+        match self {
+            Self::Failed(message) => Some(message.as_str()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModelCatalogSnapshot {
+    pub models: Vec<ModelMeta>,
+    pub discovery_status: ModelDiscoveryStatus,
 }
 
 impl ModelMeta {
@@ -43,12 +93,16 @@ impl ModelMeta {
             context_window: CONTEXT_WINDOW_STANDARD,
             blocked: false,
             discovered: true,
+            source: ModelProfileSource::Discovered,
             id,
         }
     }
 
     fn fallback(id: &str) -> Self {
-        Self::from_id(id.to_string())
+        let mut model = Self::from_id(id.to_string());
+        model.discovered = false;
+        model.source = ModelProfileSource::Default;
+        model
     }
 }
 
@@ -77,6 +131,7 @@ impl From<StoredModelMeta> for ModelMeta {
             context_window: value.context_window.unwrap_or(CONTEXT_WINDOW_STANDARD),
             blocked: false,
             discovered: false,
+            source: ModelProfileSource::Configured,
             id: value.id,
         }
     }
@@ -105,13 +160,14 @@ impl OpenAiWireApi {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct BuiltProviderEntry {
     pub entry: ProviderEntry,
     pub default_bridge: Arc<dyn LlmBridge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProviderCallProfile {
+pub struct ProviderCallProfile {
     pub credential_mode: LlmCredentialMode,
     pub credential_source: LlmCredentialSource,
     pub protocol: WireProtocol,
@@ -121,14 +177,15 @@ pub(crate) struct ProviderCallProfile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ProviderModelResolveError {
+pub enum ProviderModelResolveError {
     EmptyModelSelection,
     UnknownModel { model_id: String },
     BlockedModel { model_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ProviderUnavailableReason {
+pub enum ProviderUnavailableReason {
+    Disabled,
     MissingCredential {
         credential_mode: LlmCredentialMode,
         has_identity: bool,
@@ -139,16 +196,52 @@ pub(crate) enum ProviderUnavailableReason {
     InvalidBlockedModels,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct UnavailableProviderEntry {
-    pub provider_id: String,
-    pub reason: ProviderUnavailableReason,
+#[derive(Clone)]
+pub struct EffectiveLlmProfileCatalog {
+    pub providers: Vec<EffectiveLlmProviderProfile>,
 }
 
-#[derive(Default)]
-pub(crate) struct ProviderEntriesBuildResult {
-    pub available: Vec<BuiltProviderEntry>,
-    pub unavailable: Vec<UnavailableProviderEntry>,
+impl EffectiveLlmProfileCatalog {
+    pub(crate) fn available_entries(&self) -> Vec<BuiltProviderEntry> {
+        self.providers
+            .iter()
+            .filter_map(|provider| provider.built_entry.clone())
+            .collect()
+    }
+
+    pub(crate) fn unavailable_entries(&self) -> Vec<UnavailableProviderEntry> {
+        self.providers
+            .iter()
+            .filter_map(|provider| {
+                provider
+                    .unavailable_reason
+                    .clone()
+                    .map(|reason| UnavailableProviderEntry {
+                        provider_id: provider.provider.slug.clone(),
+                        reason,
+                    })
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone)]
+pub struct EffectiveLlmProviderProfile {
+    pub provider: LlmProvider,
+    pub executable: bool,
+    pub credential_source: LlmCredentialSource,
+    pub unavailable_reason: Option<ProviderUnavailableReason>,
+    pub call_profile: Option<ProviderCallProfile>,
+    pub default_model: Option<String>,
+    pub models: Vec<ModelMeta>,
+    pub discovery_status: ModelDiscoveryStatus,
+    pub(crate) built_entry: Option<BuiltProviderEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnavailableProviderEntry {
+    pub provider_id: String,
+    pub reason: ProviderUnavailableReason,
 }
 
 #[derive(Clone)]
@@ -161,7 +254,7 @@ pub(crate) struct ProviderEntry {
     list_models: Option<Arc<dyn Fn() -> ModelListFuture + Send + Sync>>,
     configured_models: Vec<ModelMeta>,
     blocked_models: HashSet<String>,
-    models_cache: Arc<RwLock<Option<Vec<ModelMeta>>>>,
+    models_cache: Arc<RwLock<Option<ModelCatalogSnapshot>>>,
 }
 
 impl ProviderEntry {
@@ -223,25 +316,25 @@ impl ProviderEntry {
         )
     }
 
-    async fn load_models_raw(&self) -> Vec<ModelMeta> {
+    async fn load_model_catalog(&self) -> ModelCatalogSnapshot {
         if let Some(cached) = self.models_cache.read().await.clone() {
             return cached;
         }
 
-        let discovered_models = if let Some(list_models) = &self.list_models {
+        let (discovered_models, discovery_status) = if let Some(list_models) = &self.list_models {
             match list_models().await {
-                Ok(models) => models,
+                Ok(models) => (models, ModelDiscoveryStatus::Ok),
                 Err(error) => {
                     tracing::warn!(
                         "PiAgentConnector: provider={} 动态获取模型失败: {}",
                         self.provider_id,
                         error
                     );
-                    Vec::new()
+                    (Vec::new(), ModelDiscoveryStatus::Failed(error))
                 }
             }
         } else {
-            Vec::new()
+            (Vec::new(), ModelDiscoveryStatus::NotSupported)
         };
 
         // Merge configured_models into discovered: override attributes for matching
@@ -257,6 +350,7 @@ impl ProviderEntry {
             } else {
                 let mut entry = custom.clone();
                 entry.discovered = false;
+                entry.source = ModelProfileSource::Configured;
                 models.push(entry);
             }
         }
@@ -276,13 +370,21 @@ impl ProviderEntry {
             model.blocked = self.blocked_models.contains(model.id.as_str());
         }
 
+        let snapshot = ModelCatalogSnapshot {
+            models,
+            discovery_status,
+        };
         let mut cache = self.models_cache.write().await;
-        *cache = Some(models.clone());
-        models
+        *cache = Some(snapshot.clone());
+        snapshot
     }
 
     pub(crate) async fn load_models_with_block_state(&self) -> Vec<ModelMeta> {
-        self.load_models_raw().await
+        self.load_model_catalog().await.models
+    }
+
+    pub async fn load_model_profile_snapshot(&self) -> ModelCatalogSnapshot {
+        self.load_model_catalog().await
     }
 
     pub(crate) async fn resolve_model(
@@ -300,8 +402,9 @@ impl ProviderEntry {
         }
 
         let Some(model) = self
-            .load_models_raw()
+            .load_model_catalog()
             .await
+            .models
             .iter()
             .find(|model| model.id == requested_model)
             .cloned()
@@ -327,38 +430,90 @@ pub(crate) async fn build_provider_entries_from_db(
     secret_codec: &dyn LlmSecretCodec,
     identity: Option<&AuthIdentity>,
 ) -> Vec<BuiltProviderEntry> {
-    build_provider_entries_result_from_db(repo, credential_repo, secret_codec, identity)
-        .await
-        .available
+    let catalog =
+        build_effective_profile_catalog_from_db(repo, credential_repo, secret_codec, identity)
+            .await;
+    catalog.available_entries()
 }
 
-pub(crate) async fn build_provider_entries_result_from_db(
+pub async fn build_effective_profile_catalog_from_db(
     repo: &dyn LlmProviderRepository,
     credential_repo: Option<&dyn LlmProviderCredentialRepository>,
     secret_codec: &dyn LlmSecretCodec,
     identity: Option<&AuthIdentity>,
-) -> ProviderEntriesBuildResult {
-    let providers = match repo.list_enabled().await {
+) -> EffectiveLlmProfileCatalog {
+    let providers = match repo.list_all().await {
         Ok(list) => list,
         Err(e) => {
             tracing::error!("PiAgentConnector: 从 DB 读取 LLM providers 失败: {e}");
-            return ProviderEntriesBuildResult::default();
+            return EffectiveLlmProfileCatalog {
+                providers: Vec::new(),
+            };
         }
     };
 
-    let mut result = ProviderEntriesBuildResult::default();
+    let mut profiles = Vec::with_capacity(providers.len());
     for db_provider in providers {
-        match build_provider_entry_from_db(&db_provider, credential_repo, secret_codec, identity)
-            .await
-        {
-            Ok(entry) => result.available.push(entry),
-            Err(reason) => result.unavailable.push(UnavailableProviderEntry {
-                provider_id: db_provider.slug.clone(),
-                reason,
-            }),
-        }
+        profiles.push(
+            build_effective_provider_profile(db_provider, credential_repo, secret_codec, identity)
+                .await,
+        );
     }
-    result
+
+    EffectiveLlmProfileCatalog {
+        providers: profiles,
+    }
+}
+
+pub async fn build_effective_provider_profile(
+    db_provider: LlmProvider,
+    credential_repo: Option<&dyn LlmProviderCredentialRepository>,
+    secret_codec: &dyn LlmSecretCodec,
+    identity: Option<&AuthIdentity>,
+) -> EffectiveLlmProviderProfile {
+    if !db_provider.enabled {
+        return EffectiveLlmProviderProfile {
+            provider: db_provider,
+            executable: false,
+            credential_source: LlmCredentialSource::None,
+            unavailable_reason: Some(ProviderUnavailableReason::Disabled),
+            call_profile: None,
+            default_model: None,
+            models: Vec::new(),
+            discovery_status: ModelDiscoveryStatus::SkippedUnavailable,
+            built_entry: None,
+        };
+    }
+
+    match build_provider_entry_from_db(&db_provider, credential_repo, secret_codec, identity).await
+    {
+        Ok(entry) => {
+            let snapshot = entry.entry.load_model_profile_snapshot().await;
+            EffectiveLlmProviderProfile {
+                provider: db_provider,
+                executable: true,
+                credential_source: entry.entry.call_profile().credential_source,
+                unavailable_reason: None,
+                call_profile: Some(entry.entry.call_profile().clone()),
+                default_model: Some(entry.entry.default_model.clone())
+                    .filter(|model| !model.trim().is_empty()),
+                models: snapshot.models,
+                discovery_status: snapshot.discovery_status,
+                built_entry: Some(entry),
+            }
+        }
+        Err(reason) => EffectiveLlmProviderProfile {
+            provider: db_provider,
+            executable: false,
+            credential_source: LlmCredentialSource::None,
+            unavailable_reason: Some(reason),
+            call_profile: None,
+            default_model: None,
+            models: Vec::new(),
+            discovery_status: ModelDiscoveryStatus::SkippedUnavailable,
+            built_entry: None,
+        },
+    }
 }
 
 async fn build_provider_entry_from_db(
@@ -780,6 +935,7 @@ async fn list_gemini_models(api_key: &str) -> Result<Vec<ModelMeta>, String> {
                 context_window: model.input_token_limit.unwrap_or(CONTEXT_WINDOW_STANDARD),
                 blocked: false,
                 discovered: true,
+                source: ModelProfileSource::Discovered,
                 id,
             }
         })

@@ -1580,6 +1580,8 @@ async fn discovery_reflects_provider_added_to_db_without_restart() {
             "base_url": null,
             "discovery_url": null,
             "resolved_wire_api": null,
+            "discovery_status": "not_supported",
+            "discovery_message": null,
         }])
     );
     assert_eq!(
@@ -1627,6 +1629,8 @@ async fn discovery_includes_global_only_platform_provider_without_user_byok() {
             "base_url": null,
             "discovery_url": null,
             "resolved_wire_api": null,
+            "discovery_status": "not_supported",
+            "discovery_message": null,
         }])
     );
     assert_eq!(
@@ -1682,6 +1686,8 @@ async fn discovery_does_not_fall_back_to_startup_provider_after_db_cleared() {
             "base_url": null,
             "discovery_url": null,
             "resolved_wire_api": null,
+            "discovery_status": "not_supported",
+            "discovery_message": null,
         }])
     );
 

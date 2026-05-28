@@ -127,6 +127,19 @@ pub struct LlmProviderAdminDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct EffectiveLlmModelProfileDto {
+    pub id: String,
+    pub name: String,
+    pub provider_id: String,
+    pub reasoning: bool,
+    pub supports_image: bool,
+    pub context_window: u64,
+    pub blocked: bool,
+    pub discovered: bool,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct EffectiveLlmProviderDto {
     pub id: String,
     pub name: String,
@@ -135,8 +148,16 @@ pub struct EffectiveLlmProviderDto {
     pub credential_mode: LlmCredentialModeDto,
     pub base_url: String,
     pub wire_api: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub resolved_wire_api: Option<String>,
     pub default_model: String,
     pub models: Value,
+    pub effective_models: Vec<EffectiveLlmModelProfileDto>,
+    pub model_discovery_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub model_discovery_message: Option<String>,
     pub blocked_models: Value,
     pub discovery_url: String,
     pub enabled: bool,
@@ -154,6 +175,9 @@ pub struct EffectiveLlmProviderDto {
     #[ts(optional)]
     pub user_credential_verified_at: Option<String>,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

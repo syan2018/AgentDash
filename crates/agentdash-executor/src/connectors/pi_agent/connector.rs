@@ -19,8 +19,8 @@ use agentdash_domain::llm_provider::{
 use agentdash_domain::settings::SettingsRepository;
 
 use super::bridges::provider_registry::{
-    CONTEXT_WINDOW_STANDARD, ProviderEntry, ProviderModelResolveError, ProviderUnavailableReason,
-    build_provider_entries_result_from_db,
+    CONTEXT_WINDOW_STANDARD, EffectiveLlmProviderProfile, ProviderEntry, ProviderModelResolveError,
+    ProviderUnavailableReason, build_effective_profile_catalog_from_db,
 };
 use crate::hook_events::build_hook_trace_envelope;
 use agentdash_spi::hooks::{ContextFrame, ContextFrameSection};
@@ -75,6 +75,7 @@ impl PiAgentModelSelection {
 struct ProviderRuntimeState {
     default_bridge: Option<Arc<dyn LlmBridge>>,
     default_model: Option<String>,
+    profiles: Vec<EffectiveLlmProviderProfile>,
     providers: Vec<ProviderEntry>,
     unavailable_providers: HashMap<String, ProviderUnavailableReason>,
 }
@@ -144,7 +145,7 @@ impl PiAgentConnector {
         if let (Some(llm_provider_repo), Some(secret_codec)) =
             (&self.llm_provider_repo, &self.llm_secret_codec)
         {
-            let provider_result = build_provider_entries_result_from_db(
+            let catalog = build_effective_profile_catalog_from_db(
                 llm_provider_repo.as_ref(),
                 self.llm_provider_credential_repo
                     .as_ref()
@@ -153,27 +154,27 @@ impl PiAgentConnector {
                 identity,
             )
             .await;
-            let default_model = provider_result
-                .available
+            let available = catalog.available_entries();
+            let default_model = available
                 .first()
                 .map(|provider| provider.entry.default_model.clone());
-            let default_bridge = provider_result
-                .available
+            let default_bridge = available
                 .first()
                 .map(|provider| provider.default_bridge.clone());
+            let unavailable_providers = catalog
+                .unavailable_entries()
+                .into_iter()
+                .map(|provider| (provider.provider_id, provider.reason))
+                .collect();
             return ProviderRuntimeState {
                 default_bridge,
                 default_model,
-                providers: provider_result
-                    .available
+                profiles: catalog.providers,
+                providers: available
                     .into_iter()
                     .map(|provider| provider.entry)
                     .collect(),
-                unavailable_providers: provider_result
-                    .unavailable
-                    .into_iter()
-                    .map(|provider| (provider.provider_id, provider.reason))
-                    .collect(),
+                unavailable_providers,
             };
         }
 
@@ -188,6 +189,7 @@ impl PiAgentConnector {
             return ProviderRuntimeState {
                 default_bridge: Some(self.bridge.clone()),
                 default_model,
+                profiles: Vec::new(),
                 providers: self.providers.clone(),
                 unavailable_providers: HashMap::new(),
             };
@@ -196,6 +198,7 @@ impl PiAgentConnector {
         ProviderRuntimeState {
             default_bridge: None,
             default_model: None,
+            profiles: Vec::new(),
             providers: Vec::new(),
             unavailable_providers: HashMap::new(),
         }
@@ -341,6 +344,9 @@ fn describe_unavailable_provider(provider_id: &str, reason: &ProviderUnavailable
                 }
             }
         },
+        ProviderUnavailableReason::Disabled => {
+            format!("LLM Provider `{provider_id}` 已禁用，不能用于本次调用")
+        }
         ProviderUnavailableReason::CredentialResolutionFailed(error) => {
             format!("LLM Provider `{provider_id}` 凭据解析失败: {error}")
         }
@@ -432,30 +438,69 @@ impl AgentConnector for PiAgentConnector {
         let mut all_providers: Vec<serde_json::Value> = vec![];
         let mut all_models: Vec<serde_json::Value> = vec![];
 
-        for provider in &provider_state.providers {
-            let call_profile = provider.call_profile();
-            all_providers.push(serde_json::json!({
-                "id": provider.provider_id,
-                "name": provider.provider_name,
-                "credential_mode": call_profile.credential_mode.as_str(),
-                "credential_source": call_profile.credential_source.as_str(),
-                "protocol": call_profile.protocol.as_str(),
-                "base_url": call_profile.base_url.clone(),
-                "discovery_url": call_profile.discovery_url.clone(),
-                "resolved_wire_api": call_profile.resolved_wire_api.clone(),
-            }));
-
-            for model in provider.load_models_with_block_state().await {
-                all_models.push(serde_json::json!({
-                    "id": model.id,
-                    "name": model.name,
-                    "provider_id": provider.provider_id,
-                    "reasoning": model.reasoning,
-                    "supports_image": model.supports_image,
-                    "context_window": model.context_window,
-                    "blocked": model.blocked,
-                    "discovered": model.discovered,
+        if !provider_state.profiles.is_empty() {
+            for profile in provider_state
+                .profiles
+                .iter()
+                .filter(|profile| profile.executable)
+            {
+                let Some(call_profile) = profile.call_profile.as_ref() else {
+                    continue;
+                };
+                all_providers.push(serde_json::json!({
+                    "id": profile.provider.slug,
+                    "name": profile.provider.name,
+                    "credential_mode": call_profile.credential_mode.as_str(),
+                    "credential_source": call_profile.credential_source.as_str(),
+                    "protocol": call_profile.protocol.as_str(),
+                    "base_url": call_profile.base_url.clone(),
+                    "discovery_url": call_profile.discovery_url.clone(),
+                    "resolved_wire_api": call_profile.resolved_wire_api.clone(),
+                    "discovery_status": profile.discovery_status.kind(),
+                    "discovery_message": profile.discovery_status.message(),
                 }));
+
+                for model in &profile.models {
+                    all_models.push(serde_json::json!({
+                        "id": model.id,
+                        "name": model.name,
+                        "provider_id": profile.provider.slug,
+                        "reasoning": model.reasoning,
+                        "supports_image": model.supports_image,
+                        "context_window": model.context_window,
+                        "blocked": model.blocked,
+                        "discovered": model.discovered,
+                        "source": model.source.as_str(),
+                    }));
+                }
+            }
+        } else {
+            for provider in &provider_state.providers {
+                let call_profile = provider.call_profile();
+                all_providers.push(serde_json::json!({
+                    "id": provider.provider_id,
+                    "name": provider.provider_name,
+                    "credential_mode": call_profile.credential_mode.as_str(),
+                    "credential_source": call_profile.credential_source.as_str(),
+                    "protocol": call_profile.protocol.as_str(),
+                    "base_url": call_profile.base_url.clone(),
+                    "discovery_url": call_profile.discovery_url.clone(),
+                    "resolved_wire_api": call_profile.resolved_wire_api.clone(),
+                }));
+
+                for model in provider.load_models_with_block_state().await {
+                    all_models.push(serde_json::json!({
+                        "id": model.id,
+                        "name": model.name,
+                        "provider_id": provider.provider_id,
+                        "reasoning": model.reasoning,
+                        "supports_image": model.supports_image,
+                        "context_window": model.context_window,
+                        "blocked": model.blocked,
+                        "discovered": model.discovered,
+                        "source": model.source.as_str(),
+                    }));
+                }
             }
         }
 
@@ -480,7 +525,12 @@ impl AgentConnector for PiAgentConnector {
             }));
         }
 
-        let default_model = provider_state.default_model.clone();
+        let default_model = provider_state
+            .profiles
+            .iter()
+            .find(|profile| profile.executable)
+            .and_then(|profile| profile.default_model.clone())
+            .or_else(|| provider_state.default_model.clone());
 
         // 从工作目录扫描 skill，注册为 slash commands
         let slash_commands: Vec<serde_json::Value> = context

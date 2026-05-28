@@ -60,6 +60,8 @@ export interface ModelProvider {
   base_url?: string | null;
   discovery_url?: string | null;
   resolved_wire_api?: string | null;
+  discovery_status?: string;
+  discovery_message?: string | null;
 }
 
 export interface ModelInfo {
@@ -76,6 +78,7 @@ export interface ModelInfo {
   blocked?: boolean;
   /** true = 来自 API 动态发现；false = 仅来自 models JSON 配置 */
   discovered?: boolean;
+  source?: string;
 }
 
 export interface AgentInfo {

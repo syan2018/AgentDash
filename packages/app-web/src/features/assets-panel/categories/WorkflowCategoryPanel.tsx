@@ -23,13 +23,16 @@ import type {
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import {
+  AssetCard,
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
   DismissibleNotice,
   type DismissibleNoticeData,
+  MetaTagList,
   OriginBadge,
 } from "@agentdash/ui";
+import { buildAssetMenuItems } from "../_shared/assetMenu";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
@@ -222,85 +225,46 @@ function LifecycleAssetCard({
   const isBuiltin = item.source === "builtin_seed";
   // 已经从市场安装回来的资产或 builtin 不允许走"发布"路径，避免循环发布
   const canPublish = !isInstalled && !isBuiltin;
-  const sourceOrigin = workflowSourceOrigin(item.source, isInstalled);
+  const sourceOrigin = resolveOriginBadge(item.source, isInstalled);
 
-  const menuItems = [
-    {
-      key: "edit",
-      label: isBuiltin ? "查看" : "编辑",
-      onSelect: () => onEdit(item),
-    },
-    ...(canPublish
-      ? [
-          {
-            key: "publish",
-            label: published ? "更新发布" : "发布到资源市场",
-            onSelect: () => onPublish(item),
-          },
-        ]
-      : []),
-    { key: "---", label: "", onSelect: () => {} },
-    {
-      key: "delete",
-      label: isDeleting ? "删除中…" : "删除",
-      danger: true,
+  const menuItems = buildAssetMenuItems({
+    primary: { label: isBuiltin ? "查看" : "编辑", onSelect: () => onEdit(item) },
+    publish: canPublish
+      ? { published: Boolean(published), onSelect: () => onPublish(item) }
+      : null,
+    danger: {
+      label: "删除",
+      busy: isDeleting,
+      busyLabel: "删除中…",
       onSelect: () => onDelete(item),
     },
-  ];
+  });
 
   return (
-    <article
-      role="button"
-      tabIndex={0}
-      onClick={() => onEdit(item)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onEdit(item);
-        }
-      }}
-      title={isBuiltin ? "查看" : "编辑"}
-      className="flex cursor-pointer flex-col rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-    >
-      <header className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-6 text-foreground">{item.name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{item.key}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+    <AssetCard
+      onOpen={() => onEdit(item)}
+      openTitle={isBuiltin ? "查看" : "编辑"}
+      title={item.name}
+      subtitle={item.key}
+      description={item.description}
+      headerRight={
+        <>
           {published && <PublishedBadge version={published.version} />}
           <OriginBadge tone={sourceOrigin.tone} label={sourceOrigin.label} />
           <CardMenu items={menuItems} />
-        </div>
-      </header>
-
-      {item.description && (
-        <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {item.description}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          {stepCount} activity
-        </span>
-        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          {edgeCount} transition
-        </span>
-        <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-          target: {formatTargetKinds(item.target_kinds)}
-        </span>
-      </div>
-
-      <footer className="mt-3 border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
-        更新于 {formatDateTime(item.updated_at)}
-      </footer>
-    </article>
+        </>
+      }
+      footer={<>更新于 {formatDateTime(item.updated_at)}</>}
+    >
+      <MetaTagList
+        items={[
+          { key: "activity", label: `${stepCount} activity` },
+          { key: "transition", label: `${edgeCount} transition` },
+          { key: "target", label: `target: ${formatTargetKinds(item.target_kinds)}` },
+        ]}
+      />
+    </AssetCard>
   );
-}
-
-function workflowSourceOrigin(source: WorkflowDefinitionSource, installed: boolean) {
-  return resolveOriginBadge(source, installed);
 }
 
 /* ─── 公共：时间格式化 ─── */

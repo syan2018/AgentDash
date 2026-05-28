@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  AssetCard,
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
@@ -8,6 +9,7 @@ import {
   type DismissibleNoticeData,
   OriginBadge as UiOriginBadge,
 } from "@agentdash/ui";
+import { buildAssetMenuItems } from "../_shared/assetMenu";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
@@ -396,66 +398,33 @@ function VfsMountGrid({
         const published = publishedByMountId.get(item.mount_id) ?? null;
         const isBusy = busyId === item.mount_id;
         const contentKind = item.content.kind;
-        const menuItems = [
-          { key: "edit", label: "编辑", onSelect: () => onEdit(item) },
-          ...(canPublish
-            ? [
-                {
-                  key: "publish",
-                  label: published ? "更新发布" : "发布到资源市场",
-                  onSelect: () => onPublish(item),
-                },
-              ]
-            : []),
-          { key: "---", label: "", onSelect: () => {} },
-          {
-            key: "delete",
-            label: isBusy ? "处理中…" : "删除",
-            danger: true,
-            onSelect: () => onDelete(item),
-          },
-        ];
+        const menuItems = buildAssetMenuItems({
+          primary: { label: "编辑", onSelect: () => onEdit(item) },
+          publish: canPublish
+            ? { published: Boolean(published), onSelect: () => onPublish(item) }
+            : null,
+          danger: { label: "删除", busy: isBusy, onSelect: () => onDelete(item) },
+        });
 
         return (
-          <article
+          <AssetCard
             key={item.mount_id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onEdit(item)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onEdit(item);
-              }
-            }}
-            title="编辑"
-            className="flex cursor-pointer flex-col rounded-[8px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            <header className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium leading-6 text-foreground">
-                  {item.display_name}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                  {item.mount_id}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
+            onOpen={() => onEdit(item)}
+            openTitle="编辑"
+            title={item.display_name}
+            subtitle={<span className="font-mono">{item.mount_id}</span>}
+            description={item.description}
+            headerRight={
+              <>
                 <span className="rounded-[8px] border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
                   {contentKind === "inline" ? "Inline" : "External"}
                 </span>
                 {published && <PublishedBadge version={published.version} />}
                 <VfsMountOriginBadge mount={item} />
                 <CardMenu items={menuItems} />
-              </div>
-            </header>
-
-            {item.description && (
-              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                {item.description}
-              </p>
-            )}
-          </article>
+              </>
+            }
+          />
         );
       })}
     </div>

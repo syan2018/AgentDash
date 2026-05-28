@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  AssetCard,
   Badge,
   Button,
   CardMenu,
@@ -15,7 +16,9 @@ import {
   InspectorRow,
   OriginBadge as UiOriginBadge,
 } from "@agentdash/ui";
-import type { CardMenuItem, DetailMenuItem } from "@agentdash/ui";
+import type { DetailMenuItem } from "@agentdash/ui";
+
+import { buildAssetMenuItems, type BuildAssetMenuOptions } from "../_shared/assetMenu";
 
 import { asRecord } from "../../../api/mappers";
 import type {
@@ -318,43 +321,32 @@ function ExtensionGrid({
       {extensions.map((extension) => {
         const published = publishedByKey.get(extension.extension_key) ?? null;
         const isBusy = isBusyForExtension(busy, extension.installation_id);
-        const menuItems = extensionCardMenuItems(extension, published, isBusy, actions);
+        const menuItems = buildAssetMenuItems(
+          extensionMenuOptions(extension, published, isBusy, actions),
+        );
         return (
-          <article
+          <AssetCard
             key={extension.installation_id}
-            role="button"
-            tabIndex={0}
-            onClick={() => actions.onOpenDetail(extension)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                actions.onOpenDetail(extension);
-              }
-            }}
-            title="查看详情"
-            className="flex cursor-pointer flex-col rounded-[8px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            <header className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium leading-6 text-foreground">
-                  {extension.display_name}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  extensions/{extension.extension_key}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
+            onOpen={() => actions.onOpenDetail(extension)}
+            openTitle="查看详情"
+            title={extension.display_name}
+            subtitle={
+              <span className="font-mono text-[11px]">
+                extensions/{extension.extension_key}
+              </span>
+            }
+            headerRight={
+              <>
                 {published && <PublishedBadge version={published.version} />}
                 <ExtensionOriginBadge extension={extension} />
                 <CardMenu items={menuItems} />
-              </div>
-            </header>
-
+              </>
+            }
+          >
             <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
               {extension.extension_id}
             </p>
-
-            <div className="mt-3 flex flex-wrap gap-1.5">
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
               <Badge variant={packageBadgeVariant(extension)}>
                 {packageModeLabel(extension.package_mode)}
               </Badge>
@@ -363,16 +355,18 @@ function ExtensionGrid({
                   {sourceStatusLabel(extension.source_status)}
                 </Badge>
               )}
-              {capabilityLabels(extension).slice(0, 4).map((label) => (
-                <span
-                  key={label}
-                  className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                >
-                  {label}
-                </span>
-              ))}
+              {capabilityLabels(extension)
+                .slice(0, 4)
+                .map((label) => (
+                  <span
+                    key={label}
+                    className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                  >
+                    {label}
+                  </span>
+                ))}
             </div>
-          </article>
+          </AssetCard>
         );
       })}
     </div>
@@ -559,26 +553,15 @@ function ExtensionOriginBadge({
   );
 }
 
-function extensionCardMenuItems(
+function extensionMenuOptions(
   extension: ProjectExtensionManagementItemResponse,
   published: LibraryAssetDto | null,
   busy: boolean,
   actions: ExtensionActionHandlers,
-): CardMenuItem[] {
-  const items: CardMenuItem[] = [
-    { key: "detail", label: "详情", onSelect: () => actions.onOpenDetail(extension) },
-  ];
-  if (canPublishExtension(extension)) {
-    items.push({
-      key: "publish",
-      label: published ? "更新发布" : "发布到资源市场",
-      onSelect: () => {
-        if (!busy) actions.onPublish(extension);
-      },
-    });
-  }
+): BuildAssetMenuOptions {
+  const extras: BuildAssetMenuOptions["extras"] = [];
   if (extension.package_artifact) {
-    items.push({
+    extras.push({
       key: "download",
       label: busy ? "处理中…" : "下载包",
       onSelect: () => {
@@ -586,16 +569,25 @@ function extensionCardMenuItems(
       },
     });
   }
-  items.push({ key: "---", label: "", onSelect: () => {} });
-  items.push({
-    key: "uninstall",
-    label: busy ? "处理中…" : "卸载",
-    danger: true,
-    onSelect: () => {
-      if (!busy) actions.onUninstall(extension);
+  return {
+    primary: { label: "详情", onSelect: () => actions.onOpenDetail(extension) },
+    publish: canPublishExtension(extension)
+      ? {
+          published: Boolean(published),
+          onSelect: () => {
+            if (!busy) actions.onPublish(extension);
+          },
+        }
+      : null,
+    extras,
+    danger: {
+      label: "卸载",
+      busy,
+      onSelect: () => {
+        if (!busy) actions.onUninstall(extension);
+      },
     },
-  });
-  return items;
+  };
 }
 
 function extensionDetailMenuItems(

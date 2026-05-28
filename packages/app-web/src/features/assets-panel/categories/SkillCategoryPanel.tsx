@@ -32,16 +32,20 @@ import {
 import type { LibraryAssetDto, SkillAssetDto } from "../../../types";
 import { CreateSkillDialog } from "./CreateSkillDialog";
 import {
+  AssetCard,
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
   DismissibleNotice,
   type DismissibleNoticeData,
   InspectorRow as UiInspectorRow,
+  MetaTagList,
+  type MetaTagItem,
   OriginBadge as UiOriginBadge,
   PromptDialog,
   SectionTitle as UiSectionTitle,
 } from "@agentdash/ui";
+import { buildAssetMenuItems } from "../_shared/assetMenu";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
@@ -374,83 +378,50 @@ function SkillGrid({
         const canPublish = !isInstalled && !isBuiltin;
         const published = publishedByKey.get(skill.key) ?? null;
         const isBusy = busyId === skill.id;
-        const menuItems = [
-          { key: "edit", label: "编辑", onSelect: () => onEdit(skill) },
-          ...(canPublish
-            ? [
-                {
-                  key: "publish",
-                  label: published ? "更新发布" : "发布到资源市场",
-                  onSelect: () => onPublish(skill),
-                },
-              ]
-            : []),
-          { key: "---", label: "", onSelect: () => {} },
+        const menuItems = buildAssetMenuItems({
+          primary: { label: "编辑", onSelect: () => onEdit(skill) },
+          publish: canPublish
+            ? { published: Boolean(published), onSelect: () => onPublish(skill) }
+            : null,
+          danger: { label: "删除", busy: isBusy, onSelect: () => onDelete(skill) },
+        });
+
+        const tags: MetaTagItem[] = [
           {
-            key: "delete",
-            label: isBusy ? "处理中…" : "删除",
-            danger: true,
-            onSelect: () => onDelete(skill),
+            key: "files",
+            label: `${skill.files.length} file${skill.files.length !== 1 ? "s" : ""}`,
           },
         ];
+        if (skill.disable_model_invocation) {
+          tags.push({ key: "explicit", label: "explicit only", tone: "warning" });
+        }
+        if (skill.remote_source?.digest) {
+          tags.push({
+            key: "imported",
+            label: "imported",
+            tone: "muted",
+            title: `digest: ${skill.remote_source.digest}`,
+          });
+        }
 
         return (
-          <article
+          <AssetCard
             key={skill.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onEdit(skill)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onEdit(skill);
-              }
-            }}
-            title="编辑"
-            className="flex cursor-pointer flex-col rounded-[8px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            {/* Card header: name + badges + menu */}
-            <header className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium leading-6 text-foreground">
-                  {skill.display_name}
-                </p>
-                <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  skills/{skill.key}/SKILL.md
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
+            onOpen={() => onEdit(skill)}
+            openTitle="编辑"
+            title={skill.display_name}
+            subtitle={`skills/${skill.key}/SKILL.md`}
+            description={skill.description}
+            headerRight={
+              <>
                 {published && <PublishedBadge version={published.version} />}
                 <OriginBadge skill={skill} />
                 <CardMenu items={menuItems} />
-              </div>
-            </header>
-
-            {/* Description */}
-            <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-              {skill.description}
-            </p>
-
-            {/* Meta tags */}
-            <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-              <span className="rounded-[6px] border border-border bg-secondary/40 px-1.5 py-0.5">
-                {skill.files.length} file{skill.files.length !== 1 ? "s" : ""}
-              </span>
-              {skill.disable_model_invocation && (
-                <span className="rounded-[6px] border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-warning">
-                  explicit only
-                </span>
-              )}
-              {skill.remote_source?.digest && (
-                <span
-                  title={`digest: ${skill.remote_source.digest}`}
-                  className="rounded-[6px] border border-border bg-secondary/30 px-1.5 py-0.5 text-muted-foreground/70"
-                >
-                  imported
-                </span>
-              )}
-            </div>
-          </article>
+              </>
+            }
+          >
+            <MetaTagList items={tags} />
+          </AssetCard>
         );
       })}
     </div>

@@ -46,6 +46,7 @@ import {
   createDefaultMcpTransportConfig,
 } from "../../mcp-shared";
 import {
+  AssetCard,
   CardMenu,
   CreateButton,
   DangerConfirmDialog,
@@ -53,6 +54,7 @@ import {
   type DismissibleNoticeData,
   OriginBadge,
 } from "@agentdash/ui";
+import { buildAssetMenuItems } from "../_shared/assetMenu";
 import { resolveOriginBadge } from "../_shared/origin-badge-tone";
 import { PublishedBadge } from "../_shared/PublishedBadge";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
@@ -474,73 +476,44 @@ function McpPresetCard({
     void refreshProbe(preset.project_id, preset.transport).finally(() => setProbing(false));
   }, [refreshProbe, preset.project_id, preset.transport]);
 
-  const menuItems = [
-    { key: "edit", label: isBuiltin ? "查看" : "编辑", onSelect: onEdit },
-    {
-      key: "clone",
-      label: isBusy ? "处理中…" : "复制为 user",
-      onSelect: onClone,
-    },
-    ...(canPublish
-      ? [
-          {
-            key: "publish",
-            label: published ? "更新发布" : "发布到资源市场",
-            onSelect: onPublish,
-          },
-        ]
-      : []),
-    ...(isBuiltin
-      ? []
-      : [
-          { key: "---", label: "", onSelect: () => {} },
-          { key: "delete", label: "删除", danger: true, onSelect: onDelete },
-        ]),
-  ];
+  const menuItems = buildAssetMenuItems({
+    primary: { label: isBuiltin ? "查看" : "编辑", onSelect: onEdit },
+    publish: canPublish
+      ? { published: Boolean(published), onSelect: onPublish }
+      : null,
+    extras: [
+      {
+        key: "clone",
+        label: isBusy ? "处理中…" : "复制为 user",
+        onSelect: onClone,
+      },
+    ],
+    danger: isBuiltin ? null : { label: "删除", onSelect: onDelete },
+  });
 
   return (
-    <article
-      role="button"
-      tabIndex={0}
-      onClick={onEdit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onEdit();
-        }
-      }}
-      title={isBuiltin ? "查看" : "编辑"}
-      className="flex cursor-pointer flex-col rounded-[12px] border border-border bg-background p-3.5 text-left transition-colors hover:border-primary/25 hover:bg-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-    >
-      <header className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium leading-6 text-foreground">{preset.display_name}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">key: {preset.key}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
+    <AssetCard
+      onOpen={onEdit}
+      openTitle={isBuiltin ? "查看" : "编辑"}
+      title={preset.display_name}
+      subtitle={`key: ${preset.key}`}
+      description={preset.description}
+      headerRight={
+        <>
           {published && <PublishedBadge version={published.version} />}
           <RoutePolicyBadge policy={preset.route_policy} />
           <OriginBadge tone={sourceOrigin.tone} label={sourceOrigin.label} />
           <CardMenu items={menuItems} />
-        </div>
-      </header>
-
-      {preset.description && (
-        <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-          {preset.description}
-        </p>
-      )}
-
+        </>
+      }
+      footer={<>更新于 {formatDateTime(preset.updated_at)}</>}
+    >
       <ToolCapsules
         probing={probing}
         result={probeResult}
         onRecheck={handleRecheck}
       />
-
-      <footer className="mt-3 border-t border-border/70 pt-2.5 text-[11px] text-muted-foreground">
-        更新于 {formatDateTime(preset.updated_at)}
-      </footer>
-    </article>
+    </AssetCard>
   );
 }
 

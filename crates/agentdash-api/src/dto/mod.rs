@@ -13,6 +13,7 @@ mod identity_directory;
 mod llm_provider;
 mod shared_library;
 mod skill_asset;
+mod task_execution;
 mod workflow;
 
 pub use agentdash_contracts::core::{
@@ -31,4 +32,5 @@ pub use identity_directory::*;
 pub use llm_provider::*;
 pub use shared_library::*;
 pub use skill_asset::*;
+pub use task_execution::*;
 pub use workflow::*;

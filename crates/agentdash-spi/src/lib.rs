@@ -66,6 +66,7 @@ pub use extension_package::{
 
 // ─── hooks ──────────────────────────────────────────────────
 
+pub use hooks::script::HookScriptEvaluator;
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
@@ -83,12 +84,20 @@ pub use hooks::{
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
+pub use platform::function_runner::{
+    ApiRequestOutcome, BashExecOutcome, FunctionRunner,
+};
+pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
 };
 pub use platform::mount::MountEditCapabilities;
 pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use platform::skill::SkillRef;
+pub use platform::skill_source::{
+    RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
+    RemoteSkillSourceError,
+};
 pub use platform::tool_capability::{
     CapabilityVisibilityRule, PlatformMcpScope, ToolCapability, ToolDescriptor, ToolSource,
     capability_to_platform_mcp_scope, capability_to_tool_clusters, default_visibility_rules,

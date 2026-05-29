@@ -4,10 +4,14 @@ use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,
 };
+use std::sync::Arc;
+
 use agentdash_domain::workflow::LifecycleStepExecutionStatus;
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
-use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
+use agentdash_spi::{
+    AgentTool, AgentToolError, AgentToolResult, ContentPart, FunctionRunner, ToolUpdateCallback,
+};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,6 +28,7 @@ pub struct CompleteLifecycleNodeTool {
     current_turn_id: String,
     hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
     platform_config: SharedPlatformConfig,
+    function_runner: Arc<dyn FunctionRunner>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -54,6 +59,7 @@ impl CompleteLifecycleNodeTool {
         session_services: Option<SessionToolServices>,
         context: &ExecutionContext,
         platform_config: SharedPlatformConfig,
+        function_runner: Arc<dyn FunctionRunner>,
     ) -> Self {
         Self {
             repos,
@@ -61,6 +67,7 @@ impl CompleteLifecycleNodeTool {
             current_turn_id: context.session.turn_id.clone(),
             hook_session: context.turn.hook_session.clone(),
             platform_config,
+            function_runner,
         }
     }
 }
@@ -109,6 +116,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             session_services.capability,
             self.repos.clone(),
             self.platform_config.clone(),
+            self.function_runner.clone(),
         );
         let outcome = match params.outcome {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,

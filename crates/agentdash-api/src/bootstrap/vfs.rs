@@ -83,6 +83,7 @@ pub(crate) fn build_vfs_kernel(
             session_services_handle.clone(),
             Some(inline_persister),
             platform_config,
+            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
         )
         .with_materialization_service(materialization_service.clone())
         .with_shell_output_registry(shell_output_registry),

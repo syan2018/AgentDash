@@ -12,9 +12,8 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::skill_asset::{
-    CreateSkillAssetInput, ImportRemoteSkillAssetInput, RawSkillUploadFile,
-    SkillAssetApplicationError, SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput,
-    content_from_bytes,
+    CreateSkillAssetInput, ImportRemoteSkillAssetInput, SkillAssetApplicationError,
+    SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
 };
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
@@ -216,11 +215,15 @@ pub async fn import_remote_skill_asset(
     .await?;
 
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
+    let remote_source = agentdash_infrastructure::HttpRemoteSkillSource::new();
     let asset = service
-        .import_remote(ImportRemoteSkillAssetInput {
-            project_id,
-            url: req.url,
-        })
+        .import_remote(
+            ImportRemoteSkillAssetInput {
+                project_id,
+                url: req.url,
+            },
+            &remote_source,
+        )
         .await?;
     Ok(Json(asset.into()))
 }
@@ -259,7 +262,7 @@ pub async fn upload_skill_assets(
             files.extend(extract_zip_skill_files(&bytes)?);
         } else {
             let content = content_from_bytes(&filename, bytes.to_vec(), content_type.as_deref())?;
-            files.push(RawSkillUploadFile {
+            files.push(SkillAssetFileInput {
                 path: filename,
                 content,
             });
@@ -345,7 +348,7 @@ fn dto_files_to_update_input(
         .collect()
 }
 
-fn extract_zip_skill_files(bytes: &[u8]) -> Result<Vec<RawSkillUploadFile>, ApiError> {
+fn extract_zip_skill_files(bytes: &[u8]) -> Result<Vec<SkillAssetFileInput>, ApiError> {
     let reader = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(reader)
         .map_err(|error| ApiError::BadRequest(format!("ZIP 文件解析失败: {error}")))?;
@@ -373,7 +376,7 @@ fn extract_zip_skill_files(bytes: &[u8]) -> Result<Vec<RawSkillUploadFile>, ApiE
             .read_to_end(&mut bytes)
             .map_err(|error| ApiError::BadRequest(format!("读取 ZIP 条目失败: {path}: {error}")))?;
         let content = content_from_bytes(&path, bytes, None)?;
-        files.push(RawSkillUploadFile { path, content });
+        files.push(SkillAssetFileInput { path, content });
     }
     Ok(files)
 }

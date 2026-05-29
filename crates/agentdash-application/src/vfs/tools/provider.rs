@@ -35,6 +35,7 @@ pub struct RelayRuntimeToolProvider {
     session_services_handle: SharedSessionToolServicesHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
     platform_config: SharedPlatformConfig,
+    function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     materialization: Option<Arc<VfsMaterializationService>>,
 }
@@ -46,6 +47,7 @@ impl RelayRuntimeToolProvider {
         session_services_handle: SharedSessionToolServicesHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,
         platform_config: SharedPlatformConfig,
+        function_runner: Arc<dyn agentdash_spi::FunctionRunner>,
     ) -> Self {
         Self {
             service,
@@ -53,6 +55,7 @@ impl RelayRuntimeToolProvider {
             session_services_handle,
             inline_persister,
             platform_config,
+            function_runner,
             shell_output_registry: None,
             materialization: None,
         }
@@ -229,6 +232,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 session_services.clone(),
                 context,
                 self.platform_config.clone(),
+                self.function_runner.clone(),
             )));
         }
 

@@ -1,7 +1,11 @@
+pub mod function_runner;
+pub mod hooks;
+pub mod mcp;
 pub mod migration;
 pub mod persistence;
 pub mod postgres_runtime;
 pub mod secret;
+pub mod skill_source;
 pub mod storage;
 
 pub use persistence::postgres::PostgresAuthSessionRepository;
@@ -32,5 +36,9 @@ pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceRepository;
 pub use persistence::sqlite::SqliteSessionRepository;
+pub use function_runner::DefaultFunctionRunner;
+pub use hooks::RhaiHookScriptEvaluator;
+pub use mcp::RmcpProbeTransport;
 pub use secret::LlmProviderSecretCipher;
+pub use skill_source::HttpRemoteSkillSource;
 pub use storage::FilesystemExtensionPackageArtifactStorage;

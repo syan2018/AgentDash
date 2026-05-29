@@ -112,6 +112,11 @@ pub(crate) async fn build_session_runtime(
         repos.activity_lifecycle_definition_repo.clone(),
         repos.lifecycle_run_repo.clone(),
         repos.inline_file_repo.clone(),
+        |preset_scripts| {
+            Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(
+                preset_scripts,
+            ))
+        },
     ));
 
     let mut session_runtime_builder = SessionRuntimeBuilder::new_with_hooks_and_persistence(
@@ -147,6 +152,7 @@ pub(crate) async fn build_session_runtime(
         session_capability.clone(),
         repos,
         platform_config,
+        Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
     ));
     session_runtime_builder
         .set_terminal_callback(orchestrator)

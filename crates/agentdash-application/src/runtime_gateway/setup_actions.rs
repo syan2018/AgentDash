@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -62,14 +63,19 @@ pub struct WorkspaceBrowseDirectoryEntry {
 pub struct McpProbeTransportProvider {
     action_key: RuntimeActionKey,
     relay: Option<Arc<dyn McpRelayProvider>>,
+    http_probe: Arc<dyn McpProbeTransport>,
 }
 
 impl McpProbeTransportProvider {
-    pub fn new(relay: Option<Arc<dyn McpRelayProvider>>) -> Self {
+    pub fn new(
+        relay: Option<Arc<dyn McpRelayProvider>>,
+        http_probe: Arc<dyn McpProbeTransport>,
+    ) -> Self {
         Self {
             action_key: RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION)
                 .expect("builtin runtime action key should be valid"),
             relay,
+            http_probe,
         }
     }
 }
@@ -107,7 +113,8 @@ impl RuntimeProvider for McpProbeTransportProvider {
                 )
             })?;
 
-        let result = probe_transport(&transport, self.relay.as_deref()).await;
+        let result =
+            probe_transport(&transport, self.relay.as_deref(), self.http_probe.as_ref()).await;
         let output = serde_json::to_value(result).map_err(|error| {
             RuntimeInvocationError::provider_failed(
                 format!("序列化 mcp.probe_transport 结果失败: {error}"),
@@ -400,6 +407,7 @@ fn runtime_error_from_transport(
 #[cfg(test)]
 mod tests {
     use agentdash_domain::workspace::WorkspaceIdentityKind;
+    use agentdash_infrastructure::RmcpProbeTransport;
     use serde_json::json;
 
     use agentdash_domain::mcp_preset::McpTransportConfig;
@@ -459,7 +467,10 @@ mod tests {
     #[tokio::test]
     async fn mcp_probe_provider_rejects_invalid_input_shape() {
         let gateway =
-            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(None)));
+            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(
+                None,
+                Arc::new(RmcpProbeTransport::new()),
+            )));
         let request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
             RuntimeActor::EnvironmentSetup { request_id: None },
@@ -486,7 +497,10 @@ mod tests {
     #[tokio::test]
     async fn mcp_probe_provider_returns_probe_result_payload() {
         let gateway =
-            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(None)));
+            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(
+                None,
+                Arc::new(RmcpProbeTransport::new()),
+            )));
         let input = serde_json::to_value(McpTransportConfig::Stdio {
             command: "npx".to_string(),
             args: vec![],

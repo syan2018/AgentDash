@@ -384,6 +384,7 @@ pub async fn start_lifecycle_run(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),
             state.repos.clone(),
+            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
         )
         .with_runtime_context(
             state.services.session_hooks.clone(),
@@ -487,6 +488,7 @@ pub async fn submit_human_decision(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),
             state.repos.clone(),
+            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
         )
         .with_runtime_context(
             state.services.session_hooks.clone(),

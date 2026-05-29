@@ -21,6 +21,10 @@ anyhow = { workspace = true }
 postgresql_embedded = { workspace = true }
 aes-gcm = "0.10"
 base64 = "0.22"
+rhai = { workspace = true }
+rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["rustls"] }
+tera = "1"
 
 [dev-dependencies]
 dotenvy = "0.15"

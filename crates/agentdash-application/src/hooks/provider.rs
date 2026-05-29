@@ -11,8 +11,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
     ActiveWorkflowMeta, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookResolution,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SessionSnapshotMetadata,
+    HookScriptEvaluator, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 
@@ -41,7 +41,11 @@ pub struct AppExecutionHookProvider {
 }
 
 impl AppExecutionHookProvider {
-    pub fn new(
+    /// 构造 Facade。
+    ///
+    /// `script_evaluator_factory` 由 composition root 提供，接收内建 preset
+    /// 脚本（key → 源码）并返回具体脚本引擎实现（rhai 实现下沉 infrastructure）。
+    pub fn new<F>(
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
         session_binding_repo: Arc<dyn SessionBindingRepository>,
@@ -49,8 +53,13 @@ impl AppExecutionHookProvider {
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
-    ) -> Self {
+        script_evaluator_factory: F,
+    ) -> Self
+    where
+        F: FnOnce(&[(&str, &str)]) -> Arc<dyn HookScriptEvaluator>,
+    {
         let preset_scripts = builtin_preset_scripts();
+        let evaluator = script_evaluator_factory(&preset_scripts);
         let wf_binding = session_binding_repo.clone();
         Self {
             session_binding_repo,
@@ -62,7 +71,7 @@ impl AppExecutionHookProvider {
                 activity_lifecycle_definition_repo,
                 lifecycle_run_repo,
             ),
-            script_engine: HookScriptEngine::new(&preset_scripts),
+            script_engine: HookScriptEngine::new(evaluator),
         }
     }
 
@@ -438,6 +447,8 @@ mod tests {
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
+    use agentdash_infrastructure::RhaiHookScriptEvaluator;
+
     use super::super::presets::builtin_preset_scripts;
     use super::super::rules::{HookEvaluationContext, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
@@ -482,7 +493,7 @@ mod tests {
             let scripts = builtin_preset_scripts();
             Self {
                 snapshot,
-                engine: HookScriptEngine::new(&scripts),
+                engine: HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&scripts))),
             }
         }
     }

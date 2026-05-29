@@ -16,9 +16,10 @@ pub(crate) fn build_runtime_gateway(
 ) -> Arc<RuntimeGateway> {
     Arc::new(
         RuntimeGateway::new()
-            .with_provider(Arc::new(McpProbeTransportProvider::new(Some(
-                mcp_probe_relay,
-            ))))
+            .with_provider(Arc::new(McpProbeTransportProvider::new(
+                Some(mcp_probe_relay),
+                Arc::new(agentdash_infrastructure::RmcpProbeTransport::new()),
+            )))
             .with_provider(Arc::new(WorkspaceDetectProvider::new(
                 setup_action_transport.clone(),
             )))

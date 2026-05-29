@@ -1,4 +1,4 @@
-﻿//! Workflow runtime context transition 的统一应用入口。
+//! Workflow runtime context transition 的统一应用入口。
 //!
 //! 这里刻意放在 Hub 层：transition 应用需要同时触碰 live connector、SessionRuntime、
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
-    CapabilityDelta, ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource,
+    ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, SetDelta,
     SharedHookSessionRuntime,
 };
 use uuid::Uuid;
@@ -34,13 +34,13 @@ pub(crate) struct LiveRuntimeContextTransitionInput {
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,
     pub capability_keys: BTreeSet<String>,
-    pub key_delta: CapabilityDelta,
+    pub key_delta: SetDelta,
     pub apply_mode: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeContextTransitionOutcome {
-    pub capability_delta: Option<CapabilityDelta>,
+    pub capability_delta: Option<SetDelta>,
     pub emitted_capability_change: bool,
 }
 
@@ -70,7 +70,7 @@ pub(crate) fn build_initial_capability_state_frame(
     capability_keys: &BTreeSet<String>,
     tools: &[DynAgentTool],
 ) -> ContextFrame {
-    let initial_delta = CapabilityDelta {
+    let initial_delta = SetDelta {
         added: capability_keys.iter().cloned().collect(),
         removed: Vec::new(),
     };
@@ -187,7 +187,7 @@ impl SessionRuntimeInner {
             &input.after_state,
             &input.capability_keys,
         );
-        let capability_delta = CapabilityDelta {
+        let capability_delta = SetDelta {
             added: state_delta.tool_capabilities.added.clone(),
             removed: state_delta.tool_capabilities.removed.clone(),
         };
@@ -259,7 +259,7 @@ impl SessionRuntimeInner {
                 &pending_after_state,
                 &pending.capability_keys,
             );
-            let capability_delta = CapabilityDelta {
+            let capability_delta = SetDelta {
                 added: state_delta.tool_capabilities.added.clone(),
                 removed: state_delta.tool_capabilities.removed.clone(),
             };
@@ -311,7 +311,7 @@ impl SessionRuntimeInner {
 
 fn build_live_context_frame(
     input: &LiveRuntimeContextTransitionInput,
-    notification_delta: &CapabilityDelta,
+    notification_delta: &SetDelta,
     state_delta: &CapabilityStateDelta,
     tools: &[DynAgentTool],
 ) -> ContextFrame {
@@ -332,7 +332,7 @@ fn build_context_frame(
     phase_node: &str,
     apply_mode: Option<&str>,
     delivery_status: &str,
-    capability_delta: &CapabilityDelta,
+    capability_delta: &SetDelta,
     effective_capabilities: &BTreeSet<String>,
     state_delta: Option<&CapabilityStateDelta>,
     tools: &[DynAgentTool],
@@ -384,7 +384,7 @@ impl RuntimeContextUpdateFrame {
         phase_node: &str,
         apply_mode: Option<&str>,
         delivery_status: &str,
-        capability_delta: &CapabilityDelta,
+        capability_delta: &SetDelta,
         effective_capabilities: &BTreeSet<String>,
         state_delta: Option<&CapabilityStateDelta>,
         tools: &[DynAgentTool],
@@ -537,7 +537,7 @@ mod tests {
             before_state: None,
             after_state: CapabilityState::default(),
             capability_keys: BTreeSet::from(["workflow_management".to_string()]),
-            key_delta: CapabilityDelta::default(),
+            key_delta: SetDelta::default(),
             apply_mode: "live",
         };
         let state_delta = CapabilityStateDelta {
@@ -549,8 +549,7 @@ mod tests {
         };
         let tools: Vec<DynAgentTool> = vec![Arc::new(StubTool)];
 
-        let notice =
-            build_live_context_frame(&input, &CapabilityDelta::default(), &state_delta, &tools);
+        let notice = build_live_context_frame(&input, &SetDelta::default(), &state_delta, &tools);
 
         assert_eq!(notice.kind, "capability_state_update");
         assert_eq!(notice.phase_node.as_deref(), Some("apply"));

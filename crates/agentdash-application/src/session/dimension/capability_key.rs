@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_spi::hooks::{CapabilityDelta, ContextFrameSection};
+use agentdash_spi::hooks::ContextFrameSection;
 
 use super::DimensionDelta;
 use crate::capability::capability_description;
-use crate::session::CapabilityStateDelta;
+use crate::session::{CapabilityStateDelta, SetDelta};
 
 #[derive(Debug, Clone)]
 pub(crate) struct CapabilityKeyDimensionDelta {
@@ -17,7 +17,7 @@ pub(crate) struct CapabilityKeyDimensionDelta {
 
 impl CapabilityKeyDimensionDelta {
     pub fn from_delta(
-        capability_delta: &CapabilityDelta,
+        capability_delta: &SetDelta,
         effective_capabilities: &BTreeSet<String>,
         _state_delta: Option<&CapabilityStateDelta>,
     ) -> Option<Box<dyn DimensionDelta>> {

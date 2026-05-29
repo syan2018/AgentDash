@@ -1,4 +1,4 @@
-use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
+use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
@@ -113,7 +113,7 @@ impl SessionCapabilityService {
                 before_state: Some(before_state),
                 after_state,
                 capability_keys,
-                key_delta: CapabilityDelta::default(),
+                key_delta: crate::session::SetDelta::default(),
                 apply_mode,
             },
         )

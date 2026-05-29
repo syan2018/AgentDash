@@ -1030,3 +1030,32 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: wave2 capability-state-unify 小闭环
+
+**Date**: 2026-05-30
+**Task**: `05-29-capability-state-unify`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+收窄 wave2 capability-state-unify 到唯一高确定性重复：`hooks::CapabilityDelta` 并入 `connector::SetDelta`，保留 `CapabilityDimensionModule` 与 `DimensionDelta` 的正交职责结论。DDD 方向同步确认：domain 不依赖 contracts/protocol DTO，协议层依赖 domain/application 并向外映射。
+
+### Main Changes
+
+- `SetDelta::compute(old, new)` 承接 capability key diff；hook runtime、step activation、capability notification、session transition 统一消费 `SetDelta`。
+- `agentdash_spi::hooks` 删除本地 `CapabilityDelta` 并 re-export `SetDelta`，JSON 字段 shape 仍为 `added` / `removed`。
+- 建议人工复核：trait merge 仍不执行，因 replay/effect 与 render/projection 输入输出不同；`surface.vfs` / `context_projection.vfs` 单存储派生归 `session-assembly-converge`。
+
+### Testing
+
+- [OK] `rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` 无命中。
+- [OK] `rg "CapabilityDelta" crates/agentdash-application/src/session crates/agentdash-spi/src/hooks` 无命中。
+- [OK] `rg "CapabilityDelta" crates` 无命中。
+- [OK] `cargo check --workspace` 通过。
+- [WARN] `cargo test -p agentdash-application --lib capability` 与 `cargo test -p agentdash-application --lib session::capability` 仍因既存 test-only persistence mock 返回 `std::io::Error`、未同步 `SessionStoreError` 而无法编译。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**

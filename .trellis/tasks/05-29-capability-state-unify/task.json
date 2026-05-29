@@ -3,7 +3,7 @@
   "name": "capability-state-unify",
   "title": "能力状态机统一",
   "description": "合并两套 dimension trait，收敛为单一 CapabilityTransitionService",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

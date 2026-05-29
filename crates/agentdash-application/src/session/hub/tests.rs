@@ -984,7 +984,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
                 before_state: Some(before_state),
                 after_state,
                 capability_keys,
-                key_delta: agentdash_spi::hooks::CapabilityDelta::default(),
+                key_delta: agentdash_spi::SetDelta::default(),
                 apply_mode: "canvas_visible",
             },
         )

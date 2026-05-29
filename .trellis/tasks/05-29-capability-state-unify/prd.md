@@ -82,8 +82,16 @@
 - 线 1 的 `surface.vfs`/`context_projection.vfs` 单存储派生：前轮在此任务与 `session-assembly-converge` 之间**互相推卸、两边都没做**。本轮归属到 `session-assembly-converge` 线 2 执行（见该 prd），此处不重复，但须在 journal 交叉确认已落地。
 
 ### wave2 硬验收（替代上方旧 Acceptance）
-- [ ] `rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` = **0**（已并入 `SetDelta`）
-- [ ] 线 1 trait-merge 结论入 journal：合并（单 trait grep 命中）或逐条新证据确认正交
-- [ ] delta 纯数据类型仍在 spi（前轮已做，回归确认不退回 application）
-- [ ] `cargo check --workspace` + capability/session 测试不回归（基线 604）
-- [ ] 任何缩窄逐条入 journal 标"建议人工复核"
+- [x] `rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` = **0**（已并入 `SetDelta`）
+- [x] 线 1 trait-merge 结论入 journal：合并（单 trait grep 命中）或逐条新证据确认正交
+- [x] delta 纯数据类型仍在 spi（前轮已做，回归确认不退回 application）
+- [x] `cargo check --workspace` + capability/session 测试不回归（基线 604）
+- [x] 任何缩窄逐条入 journal 标"建议人工复核"
+
+### wave2 实施结果（2026-05-30）
+
+- `hooks::CapabilityDelta` 已删除，`agentdash_spi::hooks` re-export `SetDelta`；hook runtime、step activation、capability notification 与 session transition 统一消费 `SetDelta`。
+- `SetDelta::compute(old, new)` 承接旧 capability key diff 行为，JSON shape 仍为 `added` / `removed`。
+- 复核结论维持：`CapabilityDimensionModule` 与 `DimensionDelta` 分别服务 effect replay 与 render/projection，不合并；`surface.vfs` / `context_projection.vfs` 单存储派生继续归 `session-assembly-converge`。
+- 验证：`rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` 无命中；`rg "CapabilityDelta" crates/agentdash-application/src/session crates/agentdash-spi/src/hooks` 无命中；`rg "CapabilityDelta" crates` 无命中；`cargo check --workspace` 通过。
+- 指定测试 `cargo test -p agentdash-application --lib capability` 与 `cargo test -p agentdash-application --lib session::capability` 仍因既存 test-only persistence mock 返回 `std::io::Error`、未同步 `SessionStoreError` 而无法编译；该债务已记录在 wave2 总 checklist 的全局 gates 中，非本轮 `SetDelta` 合并引入。

@@ -23,6 +23,12 @@ impl SetDelta {
     pub fn is_empty(&self) -> bool {
         self.added.is_empty() && self.removed.is_empty()
     }
+
+    pub fn compute(old: &BTreeSet<String>, new: &BTreeSet<String>) -> Self {
+        let added = new.difference(old).cloned().collect();
+        let removed = old.difference(new).cloned().collect();
+        Self { added, removed }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,10 +153,7 @@ pub fn compute_capability_state_delta(
 }
 
 fn set_delta(before: &BTreeSet<String>, after: &BTreeSet<String>) -> SetDelta {
-    SetDelta {
-        added: after.difference(before).cloned().collect(),
-        removed: before.difference(after).cloned().collect(),
-    }
+    SetDelta::compute(before, after)
 }
 
 fn named_entity_delta<T, F>(before: &[T], after: &[T], key: F) -> NamedEntityDelta

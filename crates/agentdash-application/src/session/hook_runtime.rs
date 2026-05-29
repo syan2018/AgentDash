@@ -5,11 +5,10 @@ use std::sync::{
 };
 
 use agentdash_spi::hooks::{
-    CapabilityDelta, ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
-    HookTraceEntry, HookTurnStartNotice, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionSnapshotMetadata,
+    ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
+    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
+    HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, HookTurnStartNotice,
+    SessionHookRefreshQuery, SessionHookSnapshot, SessionSnapshotMetadata, SetDelta,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -279,12 +278,12 @@ impl HookSessionRuntimeAccess for HookSessionRuntime {
             .clone()
     }
 
-    fn update_capabilities(&self, new_caps: BTreeSet<String>) -> Option<CapabilityDelta> {
+    fn update_capabilities(&self, new_caps: BTreeSet<String>) -> Option<SetDelta> {
         let mut guard = self
             .capabilities
             .write()
             .expect("capabilities write lock poisoned");
-        let delta = CapabilityDelta::compute(&guard, &new_caps);
+        let delta = SetDelta::compute(&guard, &new_caps);
         if delta.is_empty() {
             return None;
         }

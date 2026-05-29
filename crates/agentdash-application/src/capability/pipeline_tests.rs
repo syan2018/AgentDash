@@ -4,7 +4,7 @@
 //! 完整数据流：
 //!
 //! - step ToolCapabilityDirective → workflow baseline + directive 运算 → effective key 集合
-//! - CapabilityDelta::compute → 前后差异
+//! - SetDelta::compute → 前后差异
 //! - CapabilityResolver::resolve(workflow_tool_directives) → 实际 CapabilityState
 //! - build_capability_delta_markdown → 供 agent 直接消费的通知文本
 
@@ -14,8 +14,8 @@ use std::collections::BTreeSet;
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::ToolCapabilityDirective;
+use agentdash_spi::SetDelta;
 use agentdash_spi::ToolCluster;
-use agentdash_spi::hooks::CapabilityDelta;
 use uuid::Uuid;
 
 use crate::capability::{
@@ -160,7 +160,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
         .iter()
         .map(|c| c.key().to_string())
         .collect();
-    let delta = CapabilityDelta::compute(&baseline_set, &effective_set);
+    let delta = SetDelta::compute(&baseline_set, &effective_set);
 
     let md = build_capability_delta_markdown("implement", &delta, &effective_set, None);
     assert!(md.contains("## Capability Update — Step Transition: implement"));
@@ -196,7 +196,7 @@ fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
         .iter()
         .map(|c| c.key().to_string())
         .collect();
-    let delta = CapabilityDelta::compute(&effective_set, &effective_set);
+    let delta = SetDelta::compute(&effective_set, &effective_set);
     assert!(delta.is_empty());
 }
 

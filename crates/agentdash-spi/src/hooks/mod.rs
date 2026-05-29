@@ -27,6 +27,8 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+pub use crate::connector::SetDelta;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct HookOwnerSummary {
@@ -451,30 +453,6 @@ impl HookPendingAction {
     }
 }
 
-/// 能力变更增量 — 记录 step transition 前后的能力集差异。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct CapabilityDelta {
-    pub added: Vec<String>,
-    pub removed: Vec<String>,
-}
-
-impl CapabilityDelta {
-    pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty()
-    }
-
-    /// 比较旧能力集和新能力集，产出 delta。
-    pub fn compute(
-        old_caps: &std::collections::BTreeSet<String>,
-        new_caps: &std::collections::BTreeSet<String>,
-    ) -> Self {
-        let added: Vec<String> = new_caps.difference(old_caps).cloned().collect();
-        let removed: Vec<String> = old_caps.difference(new_caps).cloned().collect();
-        Self { added, removed }
-    }
-}
-
 /// Hook Session 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
 /// 具体实现（`HookSessionRuntime`）位于 application 层。
 #[async_trait]
@@ -538,7 +516,7 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn update_capabilities(
         &self,
         _new_caps: std::collections::BTreeSet<String>,
-    ) -> Option<CapabilityDelta> {
+    ) -> Option<SetDelta> {
         None
     }
 

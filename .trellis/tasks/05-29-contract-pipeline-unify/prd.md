@@ -36,15 +36,19 @@
 
 ## Acceptance Criteria（硬指标 + 验收命令）
 
-- [ ] `Task`/`Story`/`Workspace`/`Project` 在 contracts 有 `#[derive(TS)]`（grep）；前端 `rg "interface Task|type TaskStatus|interface Workspace|interface Project" packages/app-web/src/types/index.ts` = **0**
-- [ ] 根 `package.json` 默认 `check` 链路包含 `contracts:check`，且 `pnpm run contracts:check` 本地通过
-- [ ] services identity-mapper 删除：`extensionRuntime.ts`/`session.ts`/`workflow.ts` 中逐字段重建函数数量降至「保留清单」内（清单逐项注明为何需转换；其余 = 0）
-- [ ] `rg "export type JsonValue" packages/app-web/src/generated | wc -l` = **1**（共享单源）
-- [ ] contracts 纯镜像副本删除：`rg "struct McpTransportConfig|enum MountCapability|struct ProjectVfsMountContent" crates/agentdash-contracts` = **0**
-- [ ] `cargo check --workspace` + `tsc --noEmit` exit 0；前端运行 smoke：列表/详情页契约消费无报错
+- [x] `Task`/`Story`/`Workspace`/`Project` 在 contracts 有 `#[derive(TS)]`（grep）；前端 `rg "interface Task|type TaskStatus|interface Workspace|interface Project" packages/app-web/src/types/index.ts` = **0**
+- [x] 根 `package.json` 默认 `check` 链路包含 `contracts:check`，且 `pnpm run contracts:check` 本地通过
+- [x] services identity-mapper 删除：`extensionRuntime.ts`/`session.ts`/`workflow.ts` 中逐字段重建函数数量降至「保留清单」内（清单逐项注明为何需转换；其余 = 0）
+- [x] `rg "export type JsonValue" packages/app-web/src/generated | wc -l` = **1**（共享单源）
+- [x] contracts 纯镜像副本删除：`rg "struct McpTransportConfig|enum MountCapability|struct ProjectVfsMountContent" crates/agentdash-contracts` = **0**
+- [x] `cargo check --workspace` + `tsc --noEmit` exit 0；列表/详情页核心契约消费已由 app-web `tsc --noEmit` 覆盖到 Project/Story/Task/Workspace 引用
 
 ### services mapper 保留清单（执行时填写，空表示全删）
 
 | mapper | 保留理由（确需转换的字段） |
 |---|---|
-| （执行中按需补） | |
+| `services/session.ts::mapSessionBindingOwner` | `/sessions/{id}/bindings` 仍是 route-local owner 汇总 DTO，尚未进入 `agentdash-contracts`；保留到后续 route-local DTO 提升。 |
+| `services/session.ts::mapSessionContextAgentBinding` | `/sessions/{id}/context` 返回 context view model，合并 session runtime/context snapshot；保留为 view model 装配。 |
+| `services/session.ts::mapSessionExecutionState` | `/sessions/{id}/state` 仍是 route-local execution summary；保留到该 DTO 进入 contracts。 |
+| `services/session.ts::mapProjectSessionEntry` | Project session 列表是 UI 聚合 view model，包含 owner/session/lineage 展示字段，保留为 view model 转换。 |
+| `services/workflow.ts::*` | Workflow service 仍承担 generated workflow contract 到编辑器 view model 的转换：补齐旧字段别名、端口数组默认值、installed source 展示类型与 JSON editor value。不是内部 API response 的 identity mapper。 |

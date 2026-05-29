@@ -27,10 +27,10 @@
 ## Phase 3: Mapper Removal
 
 - [x] `services/extensionRuntime.ts` 内部 endpoint 直接返回 generated contract response。
-- [ ] `services/session.ts` 删除 generated DTO 的逐字段 identity mapper，保留真正 view model 或非 generated route-local DTO 转换。
-- [ ] `services/workflow.ts` 删除 generated DTO 的逐字段 identity mapper，保留 UI view model 转换。
-- [ ] 更新 PRD 的 mapper 保留清单，逐项说明仍需转换的字段。
-- [ ] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
+- [x] `services/session.ts` 删除 generated DTO 的逐字段 identity mapper，保留真正 view model 或非 generated route-local DTO 转换。
+- [x] `services/workflow.ts` 删除 generated DTO 的逐字段 identity mapper，保留 UI view model 转换。
+- [x] 更新 PRD 的 mapper 保留清单，逐项说明仍需转换的字段。
+- [x] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
 
 ## Phase 4: JsonValue Single Definition
 
@@ -48,9 +48,9 @@
 ## Phase 6: Gate And Spec
 
 - [x] 根 `package.json` 的默认 `check` 链路包含 `contracts:check`。
-- [ ] 更新 cross-layer/frontend spec，记录内部 API 信任 generated wire 的原因和 mapper 适用边界。
-- [ ] 运行 `pnpm run contracts:check`。
-- [ ] 运行 `cargo check --workspace`。
-- [ ] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
-- [ ] 更新 wave2 `progress-checklist.md` 和本任务 PRD AC。
+- [x] 更新 cross-layer/frontend spec，记录内部 API 信任 generated wire 的原因和 mapper 适用边界。
+- [x] 运行 `pnpm run contracts:check`。
+- [x] 运行 `cargo check --workspace`。
+- [x] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
+- [x] 更新 wave2 `progress-checklist.md` 和本任务 PRD AC。
 - [ ] 归档本 child，并继续下一个 wave2 child。

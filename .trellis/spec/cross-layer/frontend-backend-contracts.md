@@ -13,7 +13,7 @@ Rust contract type
   -> serde wire shape
   -> ts-rs TypeScript generation
   -> packages/app-web/src/generated/*
-  -> frontend service mapper / reducer
+  -> frontend service / reducer
 ```
 
 `agentdash-contracts` 是业务 DTO 的归属 crate。它承载 HTTP request/response DTO、NDJSON envelope、跨端共享 enum 和少量 wire value object。`agentdash-api` 使用 contract crate 作为 route 输入输出类型；前端只从 generated 文件消费这些类型。
@@ -25,7 +25,7 @@ Rust contract type
 - 业务 HTTP JSON 默认使用 `snake_case`，生成类型保持 Rust serde 字段名。
 - Generated TypeScript 只落在 `packages/app-web/src/generated/`，文件头必须注明生成命令。
 - 每个生成入口必须有 check mode；CI 或 `pnpm run contracts:check` 用 check mode 发现 drift。
-- Frontend service mapper 负责 `unknown -> generated type` 的基础运行时验证和业务归一化；字段名、enum 值和 union 形态不在前端重新定义。
+- Frontend service 对内部 API response 信任 generated wire type；字段名、enum 值和 union 形态不在前端重新定义。Mapper 只用于 UI view model 转换、外部/用户输入、第三方 payload，或尚未进入 contract crate 的 route-local 过渡 DTO。
 - Route-local DTO 只用于极小的 transport wrapper；跨 feature 复用、前端消费或流式传输的 DTO 必须进入 contract crate。
 - NDJSON stream 的 `connected` / `event` / `heartbeat` envelope 也属于 contract，原因是续传游标、事件事实和 reducer 输入需要跨后端与前端共同演进。
 
@@ -81,9 +81,9 @@ packages/app-web/src/generated/
 
 API routes use contract DTOs for cross-feature HTTP input/output. When a route still needs an application/domain model internally, the API layer owns the mapping into contract DTOs.
 
-Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields.
+Frontend type entrypoints re-export generated contracts directly when the wire shape is ergonomic for UI code. A feature may keep a small UI wrapper around generated contracts when the UI needs a narrower semantic type, such as `AgentPresetConfig` over a JSON blob or nullable view state over omitted wire fields. Service 层不为 generated DTO 做逐字段 identity rebuild，原因是 drift detection 已由 contract check、Rust 编译和 TypeScript 编译负责。
 
-Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service mappers may validate `unknown` payloads, but must not redefine this projection shape outside generated session contracts.
+Session projection view DTOs expose `AgentContextEnvelope` provenance to the browser: segment origin, synthetic marker, source range, projection segment id and compaction metadata remain generated contract fields. Frontend service code consumes the generated projection response directly and must not redefine this projection shape outside generated session contracts.
 
 Session branch DTOs also live in `agentdash-contracts::session`: fork request/response, lineage record/view and projection rollback response. Frontend service code consumes the generated relation/status unions and keeps session tree grouping keyed by backend-provided `parent_session_id` / `parent_relation_kind`.
 

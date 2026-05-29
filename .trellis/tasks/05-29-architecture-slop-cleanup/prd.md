@@ -76,12 +76,22 @@
 - `dedup-naming-boilerplate` ✅ 落地（部分项按"行为不变"收窄，偏差已记录）
 - `app-infra-leak-to-spi` ✅ 5 port 全下沉
 - `infra-persistence-dedup` ✅ session_repository 去重（workflow discriminator 部分按冻结跳过）
-- `session-assembly-converge` ⚠️ 调查后只删死镜像，未强抽 resolver（review 高估耦合）— 建议人工 review
-- `capability-state-unify` ⚠️ 调查后只上移 delta 类型，未合并 trait（review 高估耦合）— 建议人工 review
-- `frontend-server-state-refactor` 🟡 A/B + workspace-layout 拆分完成；activity-inspector/SettingsPage 拆分 + stage C 未完成
+- `session-assembly-converge` 🔴 **wave2 reopen**（原 ⚠️ 只删死镜像未抽 resolver）— 见下
+- `capability-state-unify` 🔴 **wave2 reopen**（原 ⚠️ 只上移 delta 未合并 trait）— 见下
+- `frontend-server-state-refactor` 🔴 **wave2 reopen**（原标 A/B 完成，但盲审查当前代码：react-query 仅 1 处用、12 store 仍手搓 server-state，stage A 实为过度宣称）— 见下
 - `drop-step-lifecycle` ❄️ 冻结（非死代码，需 P0a/b/c feature 迁移 + 人工决策）
 
-**元结论**：3 个最深病灶（drop-step/session-assembly/capability）经执行调查均证明 review 高估耦合；机械/结构类发现全部准确。详见 outcome 文档。
+**元结论（已被 wave2 部分纠偏）**：机械/结构类发现全部准确；但"3 个最深病灶均证明 review 高估耦合"过早下定论——见下 reopen。
+
+## 2026-05-29 wave2 reopen（用户拍板）
+
+第二波零讨论纯代码盲审独立复现了上述三个标"待收/⚠️/🟡"child 的残留。用户定性：**盲审又翻出来 = 没收干净，不采信"高估耦合"作默认开脱**。三项 reopen（详见各自 prd 的「🔴 wave2 重审」段，含硬验收 + 对抗式复核）：
+
+- `session-assembly-converge`：线 1 对抗式复核 resolver 争议（验证而非预设前轮对错）；线 2 执行前轮与 capability **互相推卸、两边都没做**的 `surface.vfs/context_projection.vfs` 单存储派生 + compose_* 拆函数 + 2654 行 god module 瘦身。
+- `capability-state-unify`：线 1 复核 trait 正交性；线 2 收掉前轮未碰的 `hooks::CapabilityDelta`≡`connector::SetDelta` 同 crate 同结构重复。
+- `frontend-server-state-refactor`：stage A 真落地（store 迁 react-query）、stage C/D，及双源真理（project active id 两份）、跨 store `getState()` 命令式耦合、`workflowStore.selectedActivityKey` 派生字段等盲审新点。
+
+> **纠偏**：session/capability 的前轮论证有具体证据、值得对抗式复核（不是预设其错）；frontend 则是实打实的过度宣称。"高估耦合"今后须经独立复核证成，不作免做理由。新债务并入 parent `05-29-slop-cleanup-wave2`。
 
 ## Notes
 - parent 保持 planning，待全部 child archive 后再做集成 review 并归档（遵循"父任务不要早归档"）。

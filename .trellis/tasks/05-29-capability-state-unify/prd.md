@@ -63,3 +63,27 @@
 - **未合并 `surface.vfs` / `context_projection.vfs`**（姊妹任务期望本任务一并做）：调查确认二者不是死镜像（死镜像 `projections.context` 已在姊妹任务删除），而是**消费方语义不同的读模型** —— `surface.vfs` 喂 launch executor（orchestrator/planner/plan/extension_runtime/canvas tools），`context_projection.vfs` 喂 7 个 query DTO 路由（acp_sessions/canvases/project_sessions/story_sessions/task_execution/terminals/vfs_surfaces）。collapse 成"单存储+派生访问器"需改动 launch 链 + 7 个 `agentdash-api` 路由调用方 + finalize 同步 + `validate_for_launch`，属高 blast-radius 的命名/读模型重构，无行为收益。`validate_for_launch` 的 `capability_state.vfs.active == surface.vfs` 等断言是真实漂移防护，非 slop。姊妹任务已对此项做过收益/风险评估并判定不利，本任务确认并维持该判断。
 
 ### 建议人工 review
+
+---
+
+## 🔴 wave2 重审（reopen 2026-05-29）
+
+**为何 reopen**：wave2 盲审复现"Capability/Delta 多处建模"，并点名一处前轮**未触及**的具体重复。本任务上方「调查结论」对 trait-merge 给出了**正交职责**的具体证据（effect-application 轴 vs render 轴，无同名方法、输入输出不同、维度集仅部分重叠）——按铁律对抗式复核，非预设其错。
+
+**两条独立线：**
+
+### 线 1 · 复核 trait-merge 争议（验证正交性论证）
+1. 实读 `CapabilityDimensionModule`（`capability_state.rs:248`）与 `DimensionDelta`（`dimension/mod.rs:19`）的方法签名与维度集，独立确认是否真正交（无同名方法、输入 effect-record vs 计算后 delta、维度集 companion vs capability_key/tool_path/skill/tool_schema）。
+2. 若属实 → 确认无需合并，新证据逐条入 journal（不得仅引用前轮）。
+3. 若发现实为可合并 → 合并为单一 trait，impl 不得堆 `unimplemented!`。
+
+### 线 2 · 收掉前轮未碰的具体重复（盲审新点名，无条件做）
+- 盲审：`hooks::CapabilityDelta {added, removed}`（`spi/hooks/mod.rs:457`）与 `connector::SetDelta {added, removed}`（`spi/connector/capability_delta.rs:14`，前轮刚上移到此）**同 crate、结构完全相同、两个名**。合并为 `SetDelta`，删 `CapabilityDelta`（零下游风险）。
+- 线 1 的 `surface.vfs`/`context_projection.vfs` 单存储派生：前轮在此任务与 `session-assembly-converge` 之间**互相推卸、两边都没做**。本轮归属到 `session-assembly-converge` 线 2 执行（见该 prd），此处不重复，但须在 journal 交叉确认已落地。
+
+### wave2 硬验收（替代上方旧 Acceptance）
+- [ ] `rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` = **0**（已并入 `SetDelta`）
+- [ ] 线 1 trait-merge 结论入 journal：合并（单 trait grep 命中）或逐条新证据确认正交
+- [ ] delta 纯数据类型仍在 spi（前轮已做，回归确认不退回 application）
+- [ ] `cargo check --workspace` + capability/session 测试不回归（基线 604）
+- [ ] 任何缩窄逐条入 journal 标"建议人工复核"

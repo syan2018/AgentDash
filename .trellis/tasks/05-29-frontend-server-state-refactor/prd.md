@@ -26,3 +26,28 @@
 - **不要 git commit**，orchestrator gate 后提交。
 - 阶段独立，优先 A、B；A 完成即可单独交付。
 - 行为/视觉不回归；UI 辅助文字按"用户是否需要"取舍。
+
+---
+
+## 🔴 wave2 重审（reopen 2026-05-29）
+
+**为何 reopen——这是最硬的"标了 done 其实没做"**：parent 执行结果记"A/B + workspace-layout 完成"，但 wave2 盲审看**当前代码**：
+- `@tanstack/react-query` 已 wired（`api/queryClient.ts` + `App.tsx`），但**全项目仅 `queries/projectSessions.ts` 一处**用 `useQuery`；`features/`、`stores/` 内 `useQuery`/`useMutation` = **0**。
+- **12 个 store 仍手搓 server-state**：`projectStore.ts:113-358`、`llmProviderStore.ts:32-144`、`coordinatorStore`、`routineStore`、`storyStore`、`workspaceStore`、`sessionHistoryStore` 等，重复的 `isLoading/error` 三元组（`projectStore.ts` 内 `set({error:...})` ~15 处）。
+
+→ **stage A 实质未落地**（只迁了一个 query），被过度宣称为完成。stage C/D 亦未完（`SettingsPageContent` 2014 / `activity-inspector` 1304 仍在）。
+
+**盲审新增残留（前轮未列）：**
+- 双源真理：`projectStore.currentProjectId` 与 `eventStore.activeProjectId` 各存一份 active project，会漂移。
+- 跨 store 命令式耦合：`eventStore.ts:79` 调 `useStoryStore.getState().handleStateChange(...)`、`:35` 调 `useCoordinatorStore.getState().fetchBackends()`；`sessionHistoryStore.ts:58` 读 `projectStore.getState()`。
+- `workflowStore.selectedActivityKey`（`:205`）自标 `@deprecated`"由 selection 派生"却仍存字段、每个 reducer 手工再同步（`:220-223/:618/:658/:697`）——两字段一事实。
+- 跨 feature 循环：`extension-runtime↔workspace-panel↔canvas-panel`（与 `structural-splits` 前端项重叠，择一执行，journal 交叉标注）。
+
+### wave2 硬验收（替代上方旧 Acceptance）
+- [ ] `rg "useQuery|useMutation" packages/app-web/src/features packages/app-web/src/stores | wc -l` 显著 > 0；目标读密集 store（project/llmProvider/routine 起步）server-state 迁 react-query，store 内 `isLoading/error` 三元组计数大幅下降（前后计数入 journal）
+- [ ] active project 单一所有者：`rg "activeProjectId" packages/app-web/src/stores/eventStore.ts` = **0** 或改为读 projectStore
+- [ ] `rg "getState\(\)\.(handleStateChange|fetchBackends)" packages/app-web/src/stores` = **0**（改订阅/事件总线）
+- [ ] `rg "selectedActivityKey" packages/app-web/src/stores/workflowStore.ts` 字段删除，改 selector
+- [ ] `SettingsPageContent.tsx`/`activity-inspector.tsx` 行数各 < 600 或拆为目录（`wc -l`）
+- [ ] `pnpm -C packages/app-web exec tsc --noEmit` exit 0；视觉/行为不回归
+- [ ] 任何缩窄逐条入 journal 标"建议人工复核"；**stage A 不得再以"已 wired"冒充"已采用"**

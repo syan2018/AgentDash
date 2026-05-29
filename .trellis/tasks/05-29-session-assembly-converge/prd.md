@@ -66,3 +66,29 @@
 - `SessionSurfaceResolver` 不必抽；若要继续减重，应针对 `compose_owner_bootstrap`/`compose_story_step` 内部**各自**按阶段拆小函数（纯内部重构，不跨路径合并），属低风险 follow-up。
 - `surface.vfs` 与 `context_projection.vfs` 的"单存储 + 派生"合并放到 `capability-state-unify` 一并做（届时 `CapabilityState.vfs.active` 已是权威源，可让两镜像都派生自它）。
 - 建议人工 review。
+
+---
+
+## 🔴 wave2 重审（reopen 2026-05-29）
+
+**为何 reopen**：wave2 零讨论纯代码盲审（独立、未读本任务讨论）在 `session/` 复现了"两个组装引擎 + 镜像字段靠校验器防漂移"。按 wave2 铁律，盲审复现项**不默认采信前轮"耦合被高估"**——但本任务上方「调查结论」给出了**具体新证据**（launch 链产 bundle+保留 cap_output vs query 链只读丢弃 cap_output 的契约分叉、已有共享收敛点 `build_bootstrap_plan`/`finalize_session_construction_projection`）。故 reopen 目标是**对抗式复核该证据**，而非强抽 resolver。
+
+**两条独立线，互不前提：**
+
+### 线 1 · 复核 resolver 争议（验证前轮论证，不预设对错）
+按以下可证伪步骤独立核验，结论写入 journal：
+1. 实读 `compose_owner_bootstrap`/`compose_story_step` 与 `plan_*_context_query`，逐行确认 VFS+capability 解析步骤究竟是**各自手写**还是**已委托** `build_bootstrap_plan`/`finalize`。前轮称已共享——核验其是否属实。
+2. 若属实（共享点已存在、剩余差异是真契约分叉）→ **确认前轮结论**，本线收口为"无需抽 resolver"，但须把核验证据逐条列出（不是引用前轮，是新读）。
+3. 若不属实（仍存在跨路径重复的解析逻辑）→ 抽 `SessionSurfaceResolver` 承载真正共享的 `{vfs, capability candidate, mcp_servers}`，各路径保留自己的后处理（bundle vs snapshot、cap_output 取舍）。
+
+### 线 2 · 执行前轮甩锅掉缝的安全 follow-up（无条件做，与线 1 无关）
+前轮把这两项推给 `capability-state-unify`，后者又推回——**两边都没做**：
+1. `surface.vfs` / `context_projection.vfs` 改"单存储 + 派生访问器"（以 `CapabilityState.vfs.active` 为权威源），消除 `apply_session_assembly`/`finalize` 的手工同步；保留 `validate_for_launch` 中守护**真实**一致性的断言（非死镜像那条）。
+2. `compose_owner_bootstrap`/`compose_story_step`（230-250 行）按阶段拆私有 helper（纯内部、不跨路径合并）；`SessionAssemblyBuilder` 拆出独立文件，`assembler.rs`(2654) 显著瘦身。
+
+### wave2 硬验收（替代上方旧 Acceptance）
+- [ ] 线 1 核验结论入 journal：要么抽出 `SessionSurfaceResolver`（grep 命中 + 两路径委托它），要么逐条新证据确认无需抽（不得仅引用前轮）
+- [ ] `rg "apply_session_assembly" -A30` 中 `surface.vfs`/`context_projection.vfs` 的手工成对赋值消除（改派生）
+- [ ] `compose_owner_bootstrap`/`compose_story_step` 行数各 < 80（`wc`）；`assembler.rs` < 1500 行或拆分
+- [ ] `cargo check --workspace` + `cargo test -p agentdash-application --lib` 不回归（基线 604）+ launch/query/恢复三路径行为等价
+- [ ] 任何缩窄逐条入 journal 标"建议人工复核"；线 2 两项**不得**再次推迟

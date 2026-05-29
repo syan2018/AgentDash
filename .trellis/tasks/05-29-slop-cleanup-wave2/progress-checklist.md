@@ -5,9 +5,9 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前推进 child：`05-29-capability-state-unify`（收尾归档中）
-- 当前 child 状态：`in_progress`（`hooks::CapabilityDelta` 已并入 `SetDelta` / `SetDelta::compute`，等待提交与归档）
-- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning` 已提交并归档；当前收尾 `capability-state-unify`。
+- 当前推进 child：`05-29-frontend-server-state-refactor`（下一步）
+- 当前 child 状态：`planning`（需读取 PRD 并补齐/复核 design、implement 后启动）
+- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify` 已提交并归档；下一步推进 `frontend-server-state-refactor`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
@@ -50,7 +50,7 @@
 | 4 | `05-29-vfs-dedup` | 已归档 | 提交 `4d2e9105` / `05016cf0` / `b7db5bbc` / `6641d289`；归档提交 `c815b4ba`；provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
 | 5 | `05-29-infra-residual` | 已归档 | 规划提交 `27cd34e7`；实现提交 `d500c892` / `f346b96c` / `f93112d9`；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；历史 migrations 中 `*_at TEXT` 已改 `TIMESTAMPTZ`，新增 `0069_timestamp_columns_timestamptz.sql` 迁移已有开发库，repository bind/read 已改 `DateTime<Utc>`，`parse_pg_timestamp_checked` 删除，infra `to_rfc3339` grep 为 0；`cargo test -p agentdash-infrastructure`、`cargo check --workspace` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-infra-residual` |
 | 6 | `05-29-api-handler-thinning` | 已归档 | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` catalog 已提交 `80a97d6a`；`backends.rs` add/remove/ensure-local-runtime 写命令已提交 `08fc0574`；route direct repo grep 显式剩余 runtime read projection adapter并写入 PRD 保留清单；`Json<serde_json::Value>` / `Json<Value>` route response grep 清零；inline route DTO grep 清零；32 个 route module 已导出 `pub fn router()`，根 `routes.rs` 已收敛为 secured/public router 组合；`cargo check --workspace` / `pnpm run contracts:check` / `cargo test -p agentdash-api` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-api-handler-thinning` |
-| 7 | `05-29-capability-state-unify` | 待归档 | `hooks::CapabilityDelta` 已删除并并入 `SetDelta`；`SetDelta::compute` 承接旧 diff；`rg "CapabilityDelta" crates` 清零；`cargo check --workspace` 通过；指定 application lib 测试仍命中既存 test-only `std::io::Error`/`SessionStoreError` 债务 |
+| 7 | `05-29-capability-state-unify` | 已归档 | 提交 `35d94547`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-capability-state-unify`；`hooks::CapabilityDelta` 已删除并并入 `SetDelta`；`SetDelta::compute` 承接旧 diff；`rg "CapabilityDelta" crates` 清零；`cargo check --workspace` 通过；指定 application lib 测试仍命中既存 test-only `std::io::Error`/`SessionStoreError` 债务 |
 | 8 | `05-29-frontend-server-state-refactor` | 待执行 | server-state 真迁 react-query；active project 单源；跨 store 命令式耦合清理；目标 god component 拆分 |
 | 9 | `05-29-session-assembly-converge` | 待复核/拆分 | resolver 争议完成复核；builder/compose helper 拆分；VFS 单存储派生有明确落地或证据结论 |
 | 10 | `05-29-structural-splits` | 待 design | `agentdash-application-ports` crate 存在；session 目录按职责重排；重叠前端/session 项已从本 child 排除或交叉标注 |
@@ -71,15 +71,15 @@
 
 ## 当前 child 下一步
 
-1. 提交并归档 `05-29-capability-state-unify`。
-2. 下一 child：`05-29-frontend-server-state-refactor`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，复核 server-state 迁移顺序。
-3. 前端 child 建议顺序：先迁 `llmProviderStore`，再迁 `routineStore`，再清 `eventStore.activeProjectId` 与跨 store `getState()`，最后处理 `workflowStore.selectedActivityKey`；`storyStore` 延后。
+1. 启动 `05-29-frontend-server-state-refactor`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，若缺少 design/implement 则按今日复核结论补齐。
+2. 前端 child 建议顺序：先迁 `llmProviderStore`，再迁 `routineStore`，再清 `eventStore.activeProjectId` 与跨 store `getState()`，最后处理 `workflowStore.selectedActivityKey`；`storyStore` 延后。
+3. 该 child 完成后运行 `pnpm -C packages/app-web exec tsc --noEmit`，必要时补充针对迁移 store 的轻量测试。
 
 ## 今日子代理可行性复核
 
 - `api-handler-thinning`：已归档；`Json<Value>` route response 与 inline route DTO grep 均清零，32 个 route module 已导出 `pub fn router()`，根 router 已收敛为 secured/public 组合。
 - `frontend-server-state-refactor`：React Query 已接入但采用面很窄；建议先迁 `llmProviderStore`，再迁 `routineStore`，再清 `eventStore.activeProjectId` 与跨 store `getState()`，最后处理 `workflowStore.selectedActivityKey`；`storyStore` 延后。
-- `capability-state-unify`：小闭环可行；`hooks::CapabilityDelta` 与 `connector::capability_delta::SetDelta` 结构重复，先把 `CapabilityDelta` 合并到 `SetDelta` / `SetDelta::compute`；`CapabilityDimensionModule` 与 `DimensionDelta` 分属 validate/replay 与 render/section 两条轴，trait merge 推迟。
+- `capability-state-unify`：已归档；`hooks::CapabilityDelta` 与 `connector::capability_delta::SetDelta` 已合并为 `SetDelta` / `SetDelta::compute`；`CapabilityDimensionModule` 与 `DimensionDelta` 分属 validate/replay 与 render/section 两条轴，trait merge 推迟。
 - `session-assembly-converge`：不适合直接抽完整 resolver；建议先拆 `SessionAssemblyBuilder` 到独立文件，再拆 `compose_owner_bootstrap` / `compose_story_step` helper，最后设计 `surface.vfs` / `context_projection.vfs` 单存储派生 accessor。
 - `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层依赖 domain 并转换。当前关键风险是 `agentdash-contracts::workflow` 直接 re-export domain workflow 类型；先在 contracts 侧复制/定义 workflow wire DTO 并保留 domain -> contract mapper，再移除 domain 的 `ts-rs` / `schemars`。
 - `structural-splits`：可行但需控制依赖上限；第一批只迁 `backend_transport.rs` 这类纯 port，第二批只迁 `ExtensionRuntimeActionTransport` / `ExtensionRuntimeChannelTransport` / error，第三批只迁 `VfsMaterializationTransport`；provider/use case/service 留 application，避免新 crate 反向依赖 application。

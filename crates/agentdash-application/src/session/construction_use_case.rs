@@ -420,11 +420,10 @@ pub async fn finalize_session_construction_projection(
 
     plan.workspace.working_directory = Some(working_directory);
     plan.execution_profile.executor_config = executor_config;
-    plan.surface.vfs = Some(effective_vfs.clone());
-    plan.context_projection.vfs = Some(effective_vfs);
     plan.context_projection.session_capabilities = Some(session_capabilities.clone());
     plan.projections.mcp_servers = mcp_servers;
     plan.projections.capability_state = Some(final_capability_state);
+    plan.set_active_vfs(effective_vfs);
     plan.projections.session_capabilities = Some(session_capabilities);
     plan.projections.discovered_guidelines = discovered_guidelines;
     plan.projections.extension_runtime = Some(extension_runtime);
@@ -1156,7 +1155,6 @@ mod tests {
         capability.vfs.active = Some(vfs.clone());
         capability.tool.mcp_servers = vec![mcp.clone()];
 
-        plan.surface.vfs = Some(vfs.clone());
         plan.context.bundle = Some(agentdash_spi::SessionContextBundle::new(
             uuid::Uuid::new_v4(),
             "project_agent",
@@ -1165,6 +1163,7 @@ mod tests {
         plan.context.bootstrap_fragment_count = 1;
         plan.projections.mcp_servers = vec![mcp];
         plan.projections.capability_state = Some(capability);
+        plan.set_active_vfs(vfs);
         plan
     }
 

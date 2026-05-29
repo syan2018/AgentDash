@@ -1,4 +1,5 @@
 pub mod assembler;
+mod assembly_builder;
 mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;

@@ -193,10 +193,10 @@ async fn commit_runtime_commands_applied(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::persistence::{SessionStoreError, SessionStoreResult};
     use crate::session::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
     use crate::session::types::PendingCapabilityStateTransition;
     use async_trait::async_trait;
-    use std::io;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
@@ -227,27 +227,32 @@ mod tests {
             &self,
             _session_id: &str,
             _transition: PendingCapabilityStateTransition,
-        ) -> io::Result<RuntimeCommandRecord> {
-            Err(io::Error::other("not used"))
+        ) -> SessionStoreResult<RuntimeCommandRecord> {
+            Err(SessionStoreError::Internal("not used".to_string()))
         }
 
         async fn list_requested_runtime_commands(
             &self,
             _session_id: &str,
-        ) -> io::Result<Vec<RuntimeCommandRecord>> {
+        ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
             Ok(Vec::new())
         }
 
-        async fn mark_runtime_commands_applied(&self, _command_ids: &[Uuid]) -> io::Result<()> {
+        async fn mark_runtime_commands_applied(
+            &self,
+            _command_ids: &[Uuid],
+        ) -> SessionStoreResult<()> {
             self.apply_calls.fetch_add(1, Ordering::SeqCst);
-            Err(io::Error::other("forced applied commit failure"))
+            Err(SessionStoreError::Internal(
+                "forced applied commit failure".to_string(),
+            ))
         }
 
         async fn mark_runtime_commands_failed(
             &self,
             _command_ids: &[Uuid],
             _error: String,
-        ) -> io::Result<()> {
+        ) -> SessionStoreResult<()> {
             self.failed_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -256,7 +261,7 @@ mod tests {
             &self,
             _statuses: &[RuntimeCommandStatus],
             _limit: u32,
-        ) -> io::Result<Vec<RuntimeCommandRecord>> {
+        ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
             Ok(Vec::new())
         }
     }

@@ -87,8 +87,37 @@
 2. `compose_owner_bootstrap`/`compose_story_step`（230-250 行）按阶段拆私有 helper（纯内部、不跨路径合并）；`SessionAssemblyBuilder` 拆出独立文件，`assembler.rs`(2654) 显著瘦身。
 
 ### wave2 硬验收（替代上方旧 Acceptance）
-- [ ] 线 1 核验结论入 journal：要么抽出 `SessionSurfaceResolver`（grep 命中 + 两路径委托它），要么逐条新证据确认无需抽（不得仅引用前轮）
-- [ ] `rg "apply_session_assembly" -A30` 中 `surface.vfs`/`context_projection.vfs` 的手工成对赋值消除（改派生）
-- [ ] `compose_owner_bootstrap`/`compose_story_step` 行数各 < 80（`wc`）；`assembler.rs` < 1500 行或拆分
-- [ ] `cargo check --workspace` + `cargo test -p agentdash-application --lib` 不回归（基线 604）+ launch/query/恢复三路径行为等价
-- [ ] 任何缩窄逐条入 journal 标"建议人工复核"；线 2 两项**不得**再次推迟
+- [x] 线 1 核验结论入 journal：要么抽出 `SessionSurfaceResolver`（grep 命中 + 两路径委托它），要么逐条新证据确认无需抽（不得仅引用前轮）
+- [x] `rg "apply_session_assembly" -A30` 中 `surface.vfs`/`context_projection.vfs` 的手工成对赋值消除（改派生）
+- [x] `compose_owner_bootstrap`/`compose_story_step` 行数各 < 80（`wc`）；`assembler.rs` < 1500 行或拆分
+- [x] `cargo check --workspace` + `cargo test -p agentdash-application --lib` 不回归（基线 604）+ launch/query/恢复三路径行为等价
+- [x] 任何缩窄逐条入 journal 标"建议人工复核"；线 2 两项**不得**再次推迟
+
+## wave2 执行结论（2026-05-30）
+
+### 线 1 · resolver 争议
+
+结论：不抽跨路径 `SessionSurfaceResolver`，只抽路径内 helper。
+
+本轮重新实读确认：launch 与 query 已经共享 `session/bootstrap.rs::build_bootstrap_plan` / `derive_session_context_snapshot` 与 `session/construction_use_case.rs::finalize_session_construction_projection` 两个收敛点。`finalize_session_construction_projection` 同时服务 launch 与 inspect mode，统一补齐 effective VFS、MCP、capability、working directory、session capabilities、extension runtime 与 trace。
+
+剩余差异是真契约差异：launch 的 `compose_owner_bootstrap` / `compose_story_step` 产出 `SessionContextBundle`、prompt blocks、audit fragments、terminal hook binding，并保留完整 `CapabilityResolver` 输出；query 的 `plan_*_context_query` 产出只读 `SessionConstructionContextProjection` / snapshot，task query 还委托 `task/context_builder.rs` 的只读视图构建器。硬抽 `SessionSurfaceResolver` 会压扁 Launch/Inspect executor 校验、bundle 副作用、capability 输出保留、task strict failure 与 query `None` 语义。
+
+### 线 2 · 已落地
+
+- `SessionAssemblyBuilder` 已迁到 `crates/agentdash-application/src/session/assembly_builder.rs`，`assembler.rs` 从 2690 行降到 2381 行。
+- `compose_owner_bootstrap` 已拆成 VFS 准备、capability 解析、owner context bundle helper；入口约 66 行。
+- `compose_story_step` 已拆成 executor、VFS、context binding、capability、context bundle helper；入口约 51 行。
+- `SessionConstructionPlan` 新增 `active_vfs()` / `active_vfs_cloned()` / `set_active_vfs()` / `sync_vfs_projection_from_capability()`，`apply_session_assembly` 与 finalize 改走集中同步 helper，消除两处手工成对赋值。
+
+### 验证
+
+- `cargo check -p agentdash-application` 通过（仅既有 workflow/runtime warning）。
+- `cargo check --workspace` 通过（仅既有 warning）。
+- `cargo test -p agentdash-application --lib` 通过：595 passed。
+- `cargo test -p agentdash-application --lib session::assembler` 通过：22 passed。
+- `rg "apply_session_assembly" -A30 crates/agentdash-application/src/session/assembly_builder.rs` 中不再出现 `context_projection.vfs = plan.surface.vfs.clone()`。
+- `rg "plan\\.surface\\.vfs = Some\\(effective_vfs|plan\\.context_projection\\.vfs = Some\\(effective_vfs|context_projection\\.vfs = plan\\.surface\\.vfs" crates/agentdash-application/src/session` 无命中。
+- test-only session persistence mock 已从 `std::io::Error` 对齐到 `SessionStoreError`，移除此前阻断 application lib tests 的编译债务。
+
+建议人工复核：本次保留 `surface.vfs` / `context_projection.vfs` 双投影字段，采用集中同步 helper，而不是直接删字段。原因是 `SessionConstructionPlan` 在 finalize 前仍需要 `surface.vfs` 作为装配输入，query DTO 仍消费 `context_projection.vfs`。

@@ -1094,3 +1094,34 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Follow-up
 
 建议人工复核后续批次：`projectStore`、`storyStore`、`workspaceStore` 未全量迁移，原因分别是 active project / project-agent config、事件流 patch、workspace binding UI 消费面更宽，适合后续独立切片。
+
+
+## Session 27: wave2 session-assembly-converge
+
+**Date**: 2026-05-30
+**Task**: `05-29-session-assembly-converge`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 session 装配流水线 wave2 reopen。重新复核 resolver 争议后确认不抽跨路径 `SessionSurfaceResolver`，因为 launch 产 bundle/prompt/audit/terminal binding，query 产只读 snapshot/projection，二者已通过 bootstrap/finalize 共享真正收敛点。建议人工复核：本批采用 VFS 投影集中同步 helper，而不是删除 `surface.vfs` / `context_projection.vfs` 双投影字段。
+
+### Main Changes
+
+- `SessionAssemblyBuilder` 拆到 `session/assembly_builder.rs`，`assembler.rs` 从 2690 行降到 2381 行。
+- `compose_owner_bootstrap` 拆为 owner VFS、capability、context bundle helper，入口约 66 行。
+- `compose_story_step` 拆为 executor、VFS、context binding、capability、context bundle helper，入口约 51 行。
+- `SessionConstructionPlan` 增加 `active_vfs` / `set_active_vfs` / `sync_vfs_projection_from_capability`，apply/finalize/runtime replay test helper 通过集中 helper 同步 VFS 投影。
+- test-only session persistence mock 从 `std::io::Error` 对齐到 `SessionStoreError`，解除 application lib tests 编译阻塞。
+
+### Testing
+
+- [OK] `cargo check -p agentdash-application`
+- [OK] `cargo check --workspace`
+- [OK] `cargo test -p agentdash-application --lib session::assembler`（22 passed）
+- [OK] `cargo test -p agentdash-application --lib`（595 passed）
+- [OK] `rg "plan\\.surface\\.vfs = Some\\(effective_vfs|plan\\.context_projection\\.vfs = Some\\(effective_vfs|context_projection\\.vfs = plan\\.surface\\.vfs" crates/agentdash-application/src/session` 无命中。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**

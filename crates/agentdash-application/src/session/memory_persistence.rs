@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::{BackboneEnvelope, BackboneEvent, PlatformEvent};
@@ -12,7 +11,7 @@ use super::persistence::{
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
     SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
-    SessionTerminalEffectStore,
+    SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
@@ -41,26 +40,26 @@ struct MemorySessionPersistenceState {
 
 #[async_trait::async_trait]
 impl SessionMetaStore for MemorySessionPersistence {
-    async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
+    async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         guard.metas.insert(meta.id.clone(), meta.clone());
         guard.events.entry(meta.id.clone()).or_default();
         Ok(())
     }
 
-    async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>> {
+    async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let guard = self.inner.lock().await;
         Ok(guard.metas.get(session_id).cloned())
     }
 
-    async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
+    async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let guard = self.inner.lock().await;
         let mut metas = guard.metas.values().cloned().collect::<Vec<_>>();
         metas.sort_by_key(|meta| std::cmp::Reverse(meta.updated_at));
         Ok(metas)
     }
 
-    async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
+    async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         match guard.metas.get_mut(&meta.id) {
             Some(current) => merge_session_meta(current, meta),
@@ -72,7 +71,7 @@ impl SessionMetaStore for MemorySessionPersistence {
         Ok(())
     }
 
-    async fn delete_session(&self, session_id: &str) -> io::Result<()> {
+    async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         guard.metas.remove(session_id);
         guard.events.remove(session_id);
@@ -102,20 +101,15 @@ impl SessionEventStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         envelope: &BackboneEnvelope,
-    ) -> io::Result<PersistedSessionEvent> {
+    ) -> SessionStoreResult<PersistedSessionEvent> {
         let mut guard = self.inner.lock().await;
-        let meta = guard.metas.get_mut(session_id).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            )
-        })?;
+        let meta = guard
+            .metas
+            .get_mut(session_id)
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let event_seq = meta.last_event_seq.checked_add(1).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("session {session_id} 的 event_seq 已溢出"),
-            )
+            SessionStoreError::InvalidData(format!("session {session_id} 的 event_seq 已溢出"))
         })?;
         let persisted = build_persisted_event(session_id, event_seq, committed_at_ms, envelope);
         meta.last_event_seq = event_seq;
@@ -133,26 +127,18 @@ impl SessionEventStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         after_seq: u64,
-    ) -> io::Result<SessionEventBacklog> {
+    ) -> SessionStoreResult<SessionEventBacklog> {
         let guard = self.inner.lock().await;
         let snapshot_seq = guard
             .metas
             .get(session_id)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session {session_id} 不存在"),
-                )
-            })?
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?
             .last_event_seq;
         let events = guard
             .events
             .get(session_id)
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("session {session_id} 缺少事件缓存"),
-                )
+                SessionStoreError::InvalidData(format!("session {session_id} 缺少事件缓存"))
             })?
             .clone()
             .into_iter()
@@ -169,26 +155,18 @@ impl SessionEventStore for MemorySessionPersistence {
         session_id: &str,
         after_seq: u64,
         limit: u32,
-    ) -> io::Result<SessionEventPage> {
+    ) -> SessionStoreResult<SessionEventPage> {
         let guard = self.inner.lock().await;
         let snapshot_seq = guard
             .metas
             .get(session_id)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session {session_id} 不存在"),
-                )
-            })?
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?
             .last_event_seq;
         let mut events = guard
             .events
             .get(session_id)
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("session {session_id} 缺少事件缓存"),
-                )
+                SessionStoreError::InvalidData(format!("session {session_id} 缺少事件缓存"))
             })?
             .clone()
             .into_iter()
@@ -196,7 +174,7 @@ impl SessionEventStore for MemorySessionPersistence {
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.event_seq);
         let limit = usize::try_from(limit.max(1))
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
         let has_more = events.len() > limit;
         let page_events = if has_more {
             events.into_iter().take(limit).collect::<Vec<_>>()
@@ -215,17 +193,15 @@ impl SessionEventStore for MemorySessionPersistence {
         })
     }
 
-    async fn list_all_events(&self, session_id: &str) -> io::Result<Vec<PersistedSessionEvent>> {
+    async fn list_all_events(
+        &self,
+        session_id: &str,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
         let guard = self.inner.lock().await;
         Ok(guard
             .events
             .get(session_id)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session {session_id} 不存在"),
-                )
-            })?
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?
             .clone())
     }
 }
@@ -235,13 +211,13 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
-    ) -> io::Result<TerminalEffectRecord> {
+    ) -> SessionStoreResult<TerminalEffectRecord> {
         let mut guard = self.inner.lock().await;
         if !guard.metas.contains_key(&effect.session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {} 不存在", effect.session_id),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session {} 不存在",
+                effect.session_id
+            )));
         }
         let now = chrono::Utc::now().timestamp_millis();
         let record = TerminalEffectRecord {
@@ -261,7 +237,7 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         Ok(record)
     }
 
-    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
         self.update_terminal_effect(effect_id, |effect, now| {
             effect.status = TerminalEffectStatus::Running;
             effect.attempt_count = effect.attempt_count.saturating_add(1);
@@ -271,7 +247,10 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         .await
     }
 
-    async fn mark_terminal_effect_succeeded(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+    async fn mark_terminal_effect_succeeded(
+        &self,
+        effect_id: uuid::Uuid,
+    ) -> SessionStoreResult<()> {
         self.update_terminal_effect(effect_id, |effect, now| {
             effect.status = TerminalEffectStatus::Succeeded;
             effect.updated_at_ms = now;
@@ -284,7 +263,7 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         &self,
         effect_id: uuid::Uuid,
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         self.update_terminal_effect(effect_id, |effect, now| {
             effect.status = TerminalEffectStatus::Failed;
             effect.updated_at_ms = now;
@@ -297,7 +276,7 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         &self,
         effect_id: uuid::Uuid,
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         self.update_terminal_effect(effect_id, |effect, now| {
             effect.status = TerminalEffectStatus::DeadLetter;
             effect.updated_at_ms = now;
@@ -310,10 +289,10 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         &self,
         statuses: &[TerminalEffectStatus],
         limit: u32,
-    ) -> io::Result<Vec<TerminalEffectRecord>> {
+    ) -> SessionStoreResult<Vec<TerminalEffectRecord>> {
         let guard = self.inner.lock().await;
         let limit = usize::try_from(limit.max(1))
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
         let mut records = guard
             .terminal_effects
             .iter()
@@ -332,13 +311,12 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<RuntimeCommandRecord> {
+    ) -> SessionStoreResult<RuntimeCommandRecord> {
         let mut guard = self.inner.lock().await;
         if !guard.metas.contains_key(session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session {session_id} 不存在"
+            )));
         }
         let now = chrono::Utc::now().timestamp_millis();
         for command in guard.runtime_commands.iter_mut().filter(|command| {
@@ -371,7 +349,7 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
     async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<RuntimeCommandRecord>> {
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         let guard = self.inner.lock().await;
         let mut records = guard
             .runtime_commands
@@ -386,7 +364,10 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         Ok(records)
     }
 
-    async fn mark_runtime_commands_applied(&self, command_ids: &[uuid::Uuid]) -> io::Result<()> {
+    async fn mark_runtime_commands_applied(
+        &self,
+        command_ids: &[uuid::Uuid],
+    ) -> SessionStoreResult<()> {
         self.update_runtime_commands(command_ids, RuntimeCommandStatus::Applied, None)
             .await
     }
@@ -395,7 +376,7 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         &self,
         command_ids: &[uuid::Uuid],
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         self.update_runtime_commands(command_ids, RuntimeCommandStatus::Failed, Some(error))
             .await
     }
@@ -404,10 +385,10 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<RuntimeCommandRecord>> {
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         let guard = self.inner.lock().await;
         let limit = usize::try_from(limit.max(1))
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
         let mut records = guard
             .runtime_commands
             .iter()
@@ -426,7 +407,7 @@ impl SessionCompactionStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         compaction_id: &str,
-    ) -> io::Result<Option<SessionCompactionRecord>> {
+    ) -> SessionStoreResult<Option<SessionCompactionRecord>> {
         let guard = self.inner.lock().await;
         Ok(guard
             .compactions
@@ -439,7 +420,7 @@ impl SessionCompactionStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Vec<SessionCompactionRecord>> {
+    ) -> SessionStoreResult<Vec<SessionCompactionRecord>> {
         let guard = self.inner.lock().await;
         let mut records = guard
             .compactions
@@ -461,7 +442,7 @@ impl SessionProjectionStore for MemorySessionPersistence {
         session_id: &str,
         projection_kind: &str,
         projection_version: u64,
-    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+    ) -> SessionStoreResult<Vec<SessionProjectionSegmentRecord>> {
         let guard = self.inner.lock().await;
         let mut segments = guard
             .projection_segments
@@ -481,7 +462,7 @@ impl SessionProjectionStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+    ) -> SessionStoreResult<Option<SessionProjectionHeadRecord>> {
         let guard = self.inner.lock().await;
         Ok(guard
             .projection_heads
@@ -489,13 +470,16 @@ impl SessionProjectionStore for MemorySessionPersistence {
             .cloned())
     }
 
-    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+    async fn upsert_projection_head(
+        &self,
+        head: SessionProjectionHeadRecord,
+    ) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         if !guard.metas.contains_key(&head.session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {} 不存在", head.session_id),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session {} 不存在",
+                head.session_id
+            )));
         }
         guard.projection_heads.insert(
             projection_head_key(&head.session_id, &head.projection_kind),
@@ -508,13 +492,12 @@ impl SessionProjectionStore for MemorySessionPersistence {
         &self,
         session_id: &str,
         commit: NewCompactionProjectionCommit,
-    ) -> io::Result<CompactionProjectionCommitResult> {
+    ) -> SessionStoreResult<CompactionProjectionCommitResult> {
         let mut guard = self.inner.lock().await;
         if !guard.metas.contains_key(session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session {session_id} 不存在"
+            )));
         }
         validate_commit_session(session_id, &commit)?;
         if guard
@@ -522,10 +505,10 @@ impl SessionProjectionStore for MemorySessionPersistence {
             .iter()
             .any(|record| record.session_id == session_id && record.id == commit.compaction.id)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("compaction {} 已存在", commit.compaction.id),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "compaction {} 已存在",
+                commit.compaction.id
+            )));
         }
         for segment in &commit.segments {
             if guard
@@ -533,24 +516,19 @@ impl SessionProjectionStore for MemorySessionPersistence {
                 .iter()
                 .any(|record| record.session_id == session_id && record.id == segment.id)
             {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("projection segment {} 已存在", segment.id),
-                ));
+                return Err(SessionStoreError::InvalidInput(format!(
+                    "projection segment {} 已存在",
+                    segment.id
+                )));
             }
         }
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
-        let meta = guard.metas.get_mut(session_id).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            )
-        })?;
+        let meta = guard
+            .metas
+            .get_mut(session_id)
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?;
         let event_seq = meta.last_event_seq.checked_add(1).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("session {session_id} 的 event_seq 已溢出"),
-            )
+            SessionStoreError::InvalidData(format!("session {session_id} 的 event_seq 已溢出"))
         })?;
         let persisted = build_persisted_event(
             session_id,
@@ -599,32 +577,30 @@ impl SessionProjectionStore for MemorySessionPersistence {
 
 #[async_trait::async_trait]
 impl SessionLineageStore for MemorySessionPersistence {
-    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         if record.child_session_id == record.parent_session_id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "session lineage 不能指向自身",
+            return Err(SessionStoreError::InvalidInput(
+                "session lineage 不能指向自身".to_string(),
             ));
         }
         if !guard.metas.contains_key(&record.child_session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("child session {} 不存在", record.child_session_id),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "child session {} 不存在",
+                record.child_session_id
+            )));
         }
         if !guard.metas.contains_key(&record.parent_session_id) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("parent session {} 不存在", record.parent_session_id),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "parent session {} 不存在",
+                record.parent_session_id
+            )));
         }
         let mut current = Some(record.parent_session_id.clone());
         while let Some(session_id) = current {
             if session_id == record.child_session_id {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "session lineage 不能形成环",
+                return Err(SessionStoreError::InvalidInput(
+                    "session lineage 不能形成环".to_string(),
                 ));
             }
             current = guard
@@ -650,7 +626,7 @@ impl SessionLineageStore for MemorySessionPersistence {
     async fn get_session_lineage(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Option<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Option<SessionLineageRecord>> {
         let guard = self.inner.lock().await;
         Ok(guard
             .lineage
@@ -664,7 +640,7 @@ impl SessionLineageStore for MemorySessionPersistence {
         parent_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let guard = self.inner.lock().await;
         let mut children = guard
             .lineage
@@ -682,7 +658,7 @@ impl SessionLineageStore for MemorySessionPersistence {
     async fn list_session_ancestors(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let guard = self.inner.lock().await;
         let mut ancestors = Vec::new();
         let mut current = child_session_id.to_string();
@@ -702,7 +678,7 @@ impl SessionLineageStore for MemorySessionPersistence {
         root_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let guard = self.inner.lock().await;
         let mut result = Vec::new();
         let mut frontier = vec![root_session_id.to_string()];
@@ -732,17 +708,16 @@ impl SessionLineageStore for MemorySessionPersistence {
         child_session_id: &str,
         status: SessionLineageStatus,
         updated_at_ms: i64,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         let edge = guard
             .lineage
             .iter_mut()
             .find(|edge| edge.child_session_id == child_session_id)
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session lineage child {child_session_id} 不存在"),
-                )
+                SessionStoreError::NotFound(format!(
+                    "session lineage child {child_session_id} 不存在"
+                ))
             })?;
         edge.status = status;
         edge.updated_at_ms = updated_at_ms;
@@ -755,7 +730,7 @@ impl MemorySessionPersistence {
         &self,
         effect_id: uuid::Uuid,
         update: impl FnOnce(&mut TerminalEffectRecord, i64),
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         let now = chrono::Utc::now().timestamp_millis();
         let effect = guard
@@ -763,10 +738,7 @@ impl MemorySessionPersistence {
             .iter_mut()
             .find(|effect| effect.id == effect_id)
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("terminal effect {effect_id} 不存在"),
-                )
+                SessionStoreError::NotFound(format!("terminal effect {effect_id} 不存在"))
             })?;
         update(effect, now);
         Ok(())
@@ -777,7 +749,7 @@ impl MemorySessionPersistence {
         command_ids: &[uuid::Uuid],
         status: RuntimeCommandStatus,
         error: Option<String>,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let mut guard = self.inner.lock().await;
         let now = chrono::Utc::now().timestamp_millis();
         for command_id in command_ids {
@@ -786,10 +758,7 @@ impl MemorySessionPersistence {
                 .iter_mut()
                 .find(|command| command.id == *command_id)
                 .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("runtime command {command_id} 不存在"),
-                    )
+                    SessionStoreError::NotFound(format!("runtime command {command_id} 不存在"))
                 })?;
             command.status = status;
             command.updated_at_ms = now;
@@ -863,49 +832,38 @@ fn projection_head_key(session_id: &str, projection_kind: &str) -> (String, Stri
 fn validate_commit_session(
     session_id: &str,
     commit: &NewCompactionProjectionCommit,
-) -> io::Result<()> {
+) -> SessionStoreResult<()> {
     if commit.compaction.session_id != session_id || commit.head.session_id != session_id {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("compaction projection commit session_id 不一致: {session_id}"),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection commit session_id 不一致: {session_id}"
+        )));
     }
     if commit
         .segments
         .iter()
         .any(|segment| segment.session_id != session_id)
     {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("projection segment session_id 不一致: {session_id}"),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "projection segment session_id 不一致: {session_id}"
+        )));
     }
     if commit.compaction.projection_kind != commit.head.projection_kind {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "compaction projection kind {} 与 head kind {} 不一致",
-                commit.compaction.projection_kind, commit.head.projection_kind
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection kind {} 与 head kind {} 不一致",
+            commit.compaction.projection_kind, commit.head.projection_kind
+        )));
     }
     if commit.compaction.projection_version != commit.head.projection_version {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "compaction projection version {} 与 head version {} 不一致",
-                commit.compaction.projection_version, commit.head.projection_version
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection version {} 与 head version {} 不一致",
+            commit.compaction.projection_version, commit.head.projection_version
+        )));
     }
     if commit.head.active_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "projection head active_compaction_id 必须指向当前 compaction {}",
-                commit.compaction.id
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "projection head active_compaction_id 必须指向当前 compaction {}",
+            commit.compaction.id
+        )));
     }
     let compaction_range = source_range_pair(
         "session_compactions",
@@ -914,31 +872,22 @@ fn validate_commit_session(
     )?;
     for segment in &commit.segments {
         if segment.projection_kind != commit.compaction.projection_kind {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} kind {} 与 compaction kind {} 不一致",
-                    segment.id, segment.projection_kind, commit.compaction.projection_kind
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} kind {} 与 compaction kind {} 不一致",
+                segment.id, segment.projection_kind, commit.compaction.projection_kind
+            )));
         }
         if segment.projection_version != commit.compaction.projection_version {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} version {} 与 compaction version {} 不一致",
-                    segment.id, segment.projection_version, commit.compaction.projection_version
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} version {} 与 compaction version {} 不一致",
+                segment.id, segment.projection_version, commit.compaction.projection_version
+            )));
         }
         if segment.generated_by_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} 必须归属于 compaction {}",
-                    segment.id, commit.compaction.id
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} 必须归属于 compaction {}",
+                segment.id, commit.compaction.id
+            )));
         }
         let segment_range = source_range_pair(
             "session_projection_segments",
@@ -949,22 +898,16 @@ fn validate_commit_session(
             (Some((compaction_start, compaction_end)), Some((segment_start, segment_end)))
                 if segment_start < compaction_start || segment_end > compaction_end =>
             {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "projection segment {} source range 不在 compaction {} source range 内",
-                        segment.id, commit.compaction.id
-                    ),
-                ));
+                return Err(SessionStoreError::InvalidInput(format!(
+                    "projection segment {} source range 不在 compaction {} source range 内",
+                    segment.id, commit.compaction.id
+                )));
             }
             (None, Some(_)) | (Some(_), None) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "projection segment {} source range 与 compaction {} 不一致",
-                        segment.id, commit.compaction.id
-                    ),
-                ));
+                return Err(SessionStoreError::InvalidInput(format!(
+                    "projection segment {} source range 与 compaction {} 不一致",
+                    segment.id, commit.compaction.id
+                )));
             }
             _ => {}
         }
@@ -976,18 +919,16 @@ fn source_range_pair(
     label: &str,
     start: Option<u64>,
     end: Option<u64>,
-) -> io::Result<Option<(u64, u64)>> {
+) -> SessionStoreResult<Option<(u64, u64)>> {
     match (start, end) {
         (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
-        (Some(start), Some(end)) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} source range 非法: {start}>{end}"),
-        )),
+        (Some(start), Some(end)) => Err(SessionStoreError::InvalidInput(format!(
+            "{label} source range 非法: {start}>{end}"
+        ))),
         (None, None) => Ok(None),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} source range 必须同时包含 start/end"),
-        )),
+        _ => Err(SessionStoreError::InvalidInput(format!(
+            "{label} source range 必须同时包含 start/end"
+        ))),
     }
 }
 

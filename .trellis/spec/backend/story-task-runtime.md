@@ -125,55 +125,11 @@ session_id → lifecycle_run_repo.find_by_session(session_id)
   - 有 Task link → Task scope
   - 有 Story link（无 Task） → Story scope
   - 仅 Project link → Project scope
-- **Agent Permission System 已实现**：active grants 优先覆盖静态规则（`CapabilityContext.granted_capability_keys`）
-
----
-
-## Agent Permission System
-
-`agentdash-domain::permission` + `agentdash-application::permission` 构成完整链路。
-
-### 核心模型
-
-- **PermissionGrant** — 聚合根，10 状态机（Created → PendingPolicy → Approved/PendingUserApproval → Applied → ScopeEscalated/Expired/Revoked）
-- **PermissionPolicyService** — Agent role (`auto_grantable_capabilities`) ∩ Lifecycle contract (`requestable_capabilities`) → auto/user/reject
-- **PermissionGrantCompiler** — grant.requested_paths → `RuntimeCapabilityTransition` (Add directives)
-- **ScopeEscalationCoordinator** — post-action hook: create LifecycleRunLink(ControlScope) + unlock secondary paths
-
-### 数据流
-
-```
-companion_request(capability_grant_request)
-  → PermissionGrantService.request()
-    → PolicyService.evaluate()
-    → [auto_approved] → Compiler.compile() → apply RuntimeCapabilityTransition
-    → [needs_user]   → persist PendingUserApproval → wait UI approve
-    → [rejected]     → return error
-```
-
-### Scope Escalation
-
-Grant 携带 `scope_escalation_intent`（target_subject_kind + unlocked_paths）。
-Agent 执行 scope-creating action 后 → `ScopeEscalationCoordinator.try_escalate()`:
-1. 查找匹配的 active escalation grant
-2. 创建 LifecycleRunLink(ControlScope, new_subject)
-3. 标记 grant → ScopeEscalated
-4. 编译 unlocked_paths → secondary RuntimeCapabilityTransition
-
-### API
-
-- `GET /permission-grants?session_id=&run_id=`
-- `GET /permission-grants/:id`
-- `POST /permission-grants/:id/approve`
-- `POST /permission-grants/:id/reject`
-- `POST /permission-grants/:id/revoke`
+- Active permission grants 可覆盖静态规则（详见 [Permission System](./permission/architecture.md)）
 
 ---
 
 ## Open Architecture Questions
 
-以下问题不作为当前实现任务承诺，只作为后续 architecture review 的讨论入口：
-
 - WorkflowBindingKind 是否应全面替换为 launch scope / subject requirements / capability contract。
 - `LifecycleRun.session_id` 最终目标是重命名为 `runtime_session_id` 以明确语义。
-- Permission Grant TTL 过期需要后台 job 或 lazy check（session 活跃时检查）。

@@ -21,9 +21,9 @@ pub mod tools;
 pub mod types;
 
 pub use apply_patch::{
-    AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget,
-    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_fs,
-    apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
+    AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
+    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_target,
+    parse_patch as parse_patch_text,
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use materialization::{

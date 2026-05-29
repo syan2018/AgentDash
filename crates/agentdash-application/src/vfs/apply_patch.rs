@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use agentdash_spi::MountEditCapabilities;
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt;
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
@@ -110,162 +109,89 @@ pub trait ApplyPatchTarget: Send + Sync {
     async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError>;
 }
 
-pub fn apply_patch_to_fs(mount_root: &Path, patch: &str) -> Result<AffectedPaths, ApplyPatchError> {
-    let mount_root = std::fs::canonicalize(mount_root)
-        .map_err(|e| ApplyPatchError::Apply(format!("解析 mount_root 失败: {e}")))?;
-    let entries = parse_patch(patch)?;
-    if entries.is_empty() {
-        return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
-    }
-
-    let mut affected = AffectedPaths {
-        added: Vec::new(),
-        modified: Vec::new(),
-        deleted: Vec::new(),
-    };
-
-    for entry in entries {
-        match entry {
-            PatchEntry::AddFile { path, contents } => {
-                let target = resolve_path_for_write(&mount_root, &path)?;
-                if target.exists() {
-                    return Err(ApplyPatchError::Apply(format!(
-                        "目标文件已存在: {}",
-                        display_relative(&path)
-                    )));
-                }
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
-                }
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&target)
-                    .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
-                file.write_all(contents.as_bytes())
-                    .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
-                affected.added.push(display_relative(&path));
-            }
-            PatchEntry::DeleteFile { path } => {
-                let target = resolve_existing_path(&mount_root, &path)?;
-                std::fs::remove_file(&target)
-                    .map_err(|e| ApplyPatchError::Apply(format!("删除文件失败: {e}")))?;
-                affected.deleted.push(display_relative(&path));
-            }
-            PatchEntry::UpdateFile {
-                path,
-                move_path,
-                chunks,
-            } => {
-                let source = resolve_existing_path(&mount_root, &path)?;
-                let original_contents = std::fs::read_to_string(&source)
-                    .map_err(|e| ApplyPatchError::Apply(format!("读取待更新文件失败: {e}")))?;
-                let source_label = display_relative(&path);
-                let new_contents =
-                    derive_new_contents_from_text(&source_label, &original_contents, &chunks)?;
-
-                if let Some(dest_rel) = move_path {
-                    let destination = resolve_path_for_write(&mount_root, &dest_rel)?;
-                    if destination != source && destination.exists() {
-                        return Err(ApplyPatchError::Apply(format!(
-                            "目标文件已存在: {}",
-                            display_relative(&dest_rel)
-                        )));
-                    }
-                    if let Some(parent) = destination.parent() {
-                        std::fs::create_dir_all(parent)
-                            .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
-                    }
-                    std::fs::write(&destination, new_contents)
-                        .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
-                    if destination != source {
-                        std::fs::remove_file(&source)
-                            .map_err(|e| ApplyPatchError::Apply(format!("移除源文件失败: {e}")))?;
-                    }
-                    affected.modified.push(display_relative(&dest_rel));
-                } else {
-                    std::fs::write(&source, new_contents)
-                        .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
-                    affected.modified.push(source_label);
-                }
-            }
-        }
-    }
-
-    Ok(affected)
+pub struct FsPatchTarget {
+    mount_root: PathBuf,
 }
 
-pub fn apply_patch_to_inline_files(
-    files: &mut BTreeMap<String, String>,
-    patch: &str,
-) -> Result<AffectedPaths, ApplyPatchError> {
-    let entries = parse_patch(patch)?;
-    if entries.is_empty() {
-        return Err(ApplyPatchError::Apply("没有检测到任何文件改动".to_string()));
+impl FsPatchTarget {
+    pub fn new(mount_root: impl AsRef<Path>) -> Result<Self, ApplyPatchError> {
+        let mount_root = std::fs::canonicalize(mount_root)
+            .map_err(|e| ApplyPatchError::Apply(format!("解析 mount_root 失败: {e}")))?;
+        Ok(Self { mount_root })
     }
+}
 
-    let mut affected = AffectedPaths {
-        added: Vec::new(),
-        modified: Vec::new(),
-        deleted: Vec::new(),
-    };
-
-    for entry in entries {
-        match entry {
-            PatchEntry::AddFile { path, contents } => {
-                let normalized = normalize_relative_path(&path)?;
-                let key = display_relative(&normalized);
-                if files.contains_key(&key) {
-                    return Err(ApplyPatchError::Apply(format!("目标文件已存在: {key}")));
-                }
-                files.insert(key.clone(), contents);
-                affected.added.push(key);
-            }
-            PatchEntry::DeleteFile { path } => {
-                let normalized = normalize_relative_path(&path)?;
-                let key = display_relative(&normalized);
-                if files.remove(&key).is_none() {
-                    return Err(ApplyPatchError::Apply(format!("目标文件不存在: {key}")));
-                }
-                affected.deleted.push(key);
-            }
-            PatchEntry::UpdateFile {
-                path,
-                move_path,
-                chunks,
-            } => {
-                let normalized = normalize_relative_path(&path)?;
-                let key = display_relative(&normalized);
-                let original_contents = files
-                    .get(&key)
-                    .cloned()
-                    .ok_or_else(|| ApplyPatchError::Apply(format!("目标文件不存在: {key}")))?;
-                let new_contents =
-                    derive_new_contents_from_text(&key, &original_contents, &chunks)?;
-
-                if let Some(dest_rel) = move_path {
-                    let dest_normalized = normalize_relative_path(&dest_rel)?;
-                    let dest_key = display_relative(&dest_normalized);
-                    if dest_key != key && files.contains_key(&dest_key) {
-                        return Err(ApplyPatchError::Apply(format!(
-                            "目标文件已存在: {dest_key}"
-                        )));
-                    }
-                    files.insert(dest_key.clone(), new_contents);
-                    if dest_key != key {
-                        files.remove(&key);
-                    }
-                    affected.modified.push(dest_key);
-                } else {
-                    files.insert(key.clone(), new_contents);
-                    affected.modified.push(key);
-                }
-            }
+#[async_trait]
+impl ApplyPatchTarget for FsPatchTarget {
+    fn edit_capabilities(&self) -> MountEditCapabilities {
+        MountEditCapabilities {
+            create: true,
+            delete: true,
+            rename: true,
         }
     }
 
-    Ok(affected)
+    async fn read_text(&self, path: &str) -> Result<String, ApplyPatchError> {
+        let target = resolve_existing_path(&self.mount_root, Path::new(path))?;
+        tokio::fs::read_to_string(&target)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("读取待更新文件失败: {e}")))
+    }
+
+    async fn write_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        let target = resolve_path_for_write(&self.mount_root, Path::new(path))?;
+        tokio::fs::write(&target, content)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))
+    }
+
+    async fn create_text(&self, path: &str, content: &str) -> Result<(), ApplyPatchError> {
+        let relative = Path::new(path);
+        let target = resolve_path_for_write(&self.mount_root, relative)?;
+        if target.exists() {
+            return Err(ApplyPatchError::Apply(format!(
+                "目标文件已存在: {}",
+                display_relative(relative)
+            )));
+        }
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
+        }
+        tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?
+            .write_all(content.as_bytes())
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))
+    }
+
+    async fn delete_text(&self, path: &str) -> Result<(), ApplyPatchError> {
+        let target = resolve_existing_path(&self.mount_root, Path::new(path))?;
+        tokio::fs::remove_file(&target)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("删除文件失败: {e}")))
+    }
+
+    async fn rename_text(&self, from_path: &str, to_path: &str) -> Result<(), ApplyPatchError> {
+        let source = resolve_existing_path(&self.mount_root, Path::new(from_path))?;
+        let destination = resolve_path_for_write(&self.mount_root, Path::new(to_path))?;
+        if destination != source && destination.exists() {
+            return Err(ApplyPatchError::Apply(format!("目标文件已存在: {to_path}")));
+        }
+        if let Some(parent) = destination.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
+        }
+        tokio::fs::rename(&source, &destination)
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("移除源文件失败: {e}")))
+    }
 }
 
 pub async fn apply_patch_to_target<T: ApplyPatchTarget>(
@@ -877,13 +803,19 @@ fn display_relative(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     fn wrap_patch(body: &str) -> String {
         format!("*** Begin Patch\n{body}\n*** End Patch")
     }
 
-    #[test]
-    fn apply_patch_to_fs_updates_multiple_chunks() {
+    async fn apply_fs_patch(root: &Path, patch: &str) -> Result<AffectedPaths, ApplyPatchError> {
+        let target = FsPatchTarget::new(root)?;
+        apply_patch_to_target(&target, patch).await
+    }
+
+    #[tokio::test]
+    async fn fs_patch_target_updates_multiple_chunks() {
         let temp = tempfile::tempdir().expect("tempdir");
         let file = temp.path().join("multi.txt");
         std::fs::write(&file, "foo\nbar\nbaz\nqux\n").expect("write file");
@@ -900,7 +832,9 @@ mod tests {
 +QUX"#,
         );
 
-        let affected = apply_patch_to_fs(temp.path(), &patch).expect("patch should apply");
+        let affected = apply_fs_patch(temp.path(), &patch)
+            .await
+            .expect("patch should apply");
         assert_eq!(affected.modified, vec!["multi.txt".to_string()]);
         assert_eq!(
             std::fs::read_to_string(file).expect("read file"),
@@ -908,8 +842,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn apply_patch_to_fs_supports_add_delete_and_move() {
+    #[tokio::test]
+    async fn fs_patch_target_supports_add_delete_and_move() {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::write(temp.path().join("obsolete.txt"), "old\n").expect("write obsolete");
         std::fs::write(temp.path().join("rename-me.txt"), "line\n").expect("write source");
@@ -925,7 +859,9 @@ mod tests {
 +line2"#,
         );
 
-        let affected = apply_patch_to_fs(temp.path(), &patch).expect("patch should apply");
+        let affected = apply_fs_patch(temp.path(), &patch)
+            .await
+            .expect("patch should apply");
         assert_eq!(affected.added, vec!["nested/new.txt".to_string()]);
         assert_eq!(affected.deleted, vec!["obsolete.txt".to_string()]);
         assert_eq!(affected.modified, vec!["renamed/after.txt".to_string()]);
@@ -936,20 +872,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn apply_patch_to_fs_rejects_path_escape() {
+    #[tokio::test]
+    async fn fs_patch_target_rejects_path_escape() {
         let temp = tempfile::tempdir().expect("tempdir");
         let patch = wrap_patch(
             r#"*** Add File: ../escape.txt
 +nope"#,
         );
 
-        let error = apply_patch_to_fs(temp.path(), &patch).expect_err("escape should be rejected");
+        let error = apply_fs_patch(temp.path(), &patch)
+            .await
+            .expect_err("escape should be rejected");
         assert!(matches!(error, ApplyPatchError::InvalidPath(_)));
     }
 
-    #[test]
-    fn apply_patch_to_fs_accepts_heredoc_wrapped_patch() {
+    #[tokio::test]
+    async fn fs_patch_target_accepts_heredoc_wrapped_patch() {
         let temp = tempfile::tempdir().expect("tempdir");
         let patch = r#"<<'EOF'
 *** Begin Patch
@@ -958,7 +896,9 @@ mod tests {
 *** End Patch
 EOF"#;
 
-        let affected = apply_patch_to_fs(temp.path(), patch).expect("patch should apply");
+        let affected = apply_fs_patch(temp.path(), patch)
+            .await
+            .expect("patch should apply");
         assert_eq!(affected.added, vec!["hello.txt".to_string()]);
         assert_eq!(
             std::fs::read_to_string(temp.path().join("hello.txt")).expect("read file"),
@@ -971,34 +911,6 @@ EOF"#;
         let patch = wrap_patch("*** Add File: empty.txt");
         let error = parse_patch(&patch).expect_err("add file without + lines should fail");
         assert!(matches!(error, ParseError::InvalidHunkError { .. }));
-    }
-
-    #[test]
-    fn apply_patch_to_inline_files_supports_move_and_delete() {
-        let mut files = BTreeMap::from([
-            ("a.txt".to_string(), "one\n".to_string()),
-            ("dir/b.txt".to_string(), "two\n".to_string()),
-        ]);
-
-        let patch = wrap_patch(
-            r#"*** Update File: a.txt
-*** Move to: moved/a2.txt
-@@
--one
-+ONE
-*** Delete File: dir/b.txt
-*** Add File: new.txt
-+fresh"#,
-        );
-
-        let affected = apply_patch_to_inline_files(&mut files, &patch).expect("patch should apply");
-        assert_eq!(affected.modified, vec!["moved/a2.txt".to_string()]);
-        assert_eq!(affected.deleted, vec!["dir/b.txt".to_string()]);
-        assert_eq!(affected.added, vec!["new.txt".to_string()]);
-        assert_eq!(files.get("moved/a2.txt").map(String::as_str), Some("ONE\n"));
-        assert!(!files.contains_key("a.txt"));
-        assert!(!files.contains_key("dir/b.txt"));
-        assert_eq!(files.get("new.txt").map(String::as_str), Some("fresh\n"));
     }
 
     #[derive(Default)]

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agentdash_application::vfs::ApplyPatchAffectedPaths;
+use agentdash_application::vfs::{ApplyPatchAffectedPaths, FsPatchTarget, apply_patch_to_target};
 use agentdash_relay::{FileEntryRelay, SearchHit, ShellOutputStream};
 use ignore::WalkBuilder;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -215,14 +215,10 @@ impl ToolExecutor {
     ) -> Result<ApplyPatchAffectedPaths, ToolError> {
         let ws = self.validate_workspace_root(workspace_root)?;
         tracing::debug!(workspace_root = %ws.display(), "apply_patch");
-        let patch_owned = patch.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            agentdash_application::vfs::apply_patch_to_fs(&ws, &patch_owned)
-        })
-        .await
-        .map_err(|e| ToolError::PatchApply(format!("patch 任务失败: {e}")))?
-        .map_err(|e| ToolError::PatchApply(e.to_string()))
+        let target = FsPatchTarget::new(&ws).map_err(|e| ToolError::PatchApply(e.to_string()))?;
+        apply_patch_to_target(&target, patch)
+            .await
+            .map_err(|e| ToolError::PatchApply(e.to_string()))
     }
 
     pub fn resolve_shell_cwd(

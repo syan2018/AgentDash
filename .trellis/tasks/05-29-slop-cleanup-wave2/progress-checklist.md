@@ -5,9 +5,9 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前推进 child：`05-29-frontend-server-state-refactor`（收尾归档中）
-- 当前 child 状态：`in_progress`（硬验收已通过，等待归档）
-- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify` 已提交并归档；当前收尾 `frontend-server-state-refactor`。
+- 当前推进 child：`05-29-session-assembly-converge`（下一步）
+- 当前 child 状态：`planning`（需读取 PRD 并补齐/复核 design、implement 后启动）
+- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify`、`frontend-server-state-refactor` 已提交并归档；下一步推进 `session-assembly-converge`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
@@ -51,7 +51,7 @@
 | 5 | `05-29-infra-residual` | 已归档 | 规划提交 `27cd34e7`；实现提交 `d500c892` / `f346b96c` / `f93112d9`；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；历史 migrations 中 `*_at TEXT` 已改 `TIMESTAMPTZ`，新增 `0069_timestamp_columns_timestamptz.sql` 迁移已有开发库，repository bind/read 已改 `DateTime<Utc>`，`parse_pg_timestamp_checked` 删除，infra `to_rfc3339` grep 为 0；`cargo test -p agentdash-infrastructure`、`cargo check --workspace` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-infra-residual` |
 | 6 | `05-29-api-handler-thinning` | 已归档 | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` catalog 已提交 `80a97d6a`；`backends.rs` add/remove/ensure-local-runtime 写命令已提交 `08fc0574`；route direct repo grep 显式剩余 runtime read projection adapter并写入 PRD 保留清单；`Json<serde_json::Value>` / `Json<Value>` route response grep 清零；inline route DTO grep 清零；32 个 route module 已导出 `pub fn router()`，根 `routes.rs` 已收敛为 secured/public router 组合；`cargo check --workspace` / `pnpm run contracts:check` / `cargo test -p agentdash-api` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-api-handler-thinning` |
 | 7 | `05-29-capability-state-unify` | 已归档 | 提交 `35d94547`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-capability-state-unify`；`hooks::CapabilityDelta` 已删除并并入 `SetDelta`；`SetDelta::compute` 承接旧 diff；`rg "CapabilityDelta" crates` 清零；`cargo check --workspace` 通过；指定 application lib 测试仍命中既存 test-only `std::io::Error`/`SessionStoreError` 债务 |
-| 8 | `05-29-frontend-server-state-refactor` | 待归档 | 提交 `045cfa3d` / `eff74a2f` / `4421000f`；features/stores `useQuery|useMutation` 命中 28（迁移前 0）；store loading/error/saving 命中 233→178；`llmProviderStore` / `routineStore` 删除；`eventStore.activeProjectId`、store 内 `getState().handleStateChange/fetchBackends`、`workflowStore.selectedActivityKey` grep 清零；`SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行；`pnpm -C packages/app-web exec tsc --noEmit` 与相关 Vitest 通过 |
+| 8 | `05-29-frontend-server-state-refactor` | 已归档 | 提交 `045cfa3d` / `eff74a2f` / `4421000f` / `7ee7ff15`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-frontend-server-state-refactor`；features/stores `useQuery|useMutation` 命中 28（迁移前 0）；store loading/error/saving 命中 233→178；`llmProviderStore` / `routineStore` 删除；`eventStore.activeProjectId`、store 内 `getState().handleStateChange/fetchBackends`、`workflowStore.selectedActivityKey` grep 清零；`SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行；`pnpm -C packages/app-web exec tsc --noEmit` 与相关 Vitest 通过 |
 | 9 | `05-29-session-assembly-converge` | 待复核/拆分 | resolver 争议完成复核；builder/compose helper 拆分；VFS 单存储派生有明确落地或证据结论 |
 | 10 | `05-29-structural-splits` | 待 design | `agentdash-application-ports` crate 存在；session 目录按职责重排；重叠前端/session 项已从本 child 排除或交叉标注 |
 | 11 | `05-29-domain-purification` | 待 contract | domain `ts-rs/schemars` 移除；session id 假 alias 消失；contracts 生成仍完整 |
@@ -71,8 +71,8 @@
 
 ## 当前 child 下一步
 
-1. 提交并归档 `05-29-frontend-server-state-refactor`。
-2. 下一 child：`05-29-session-assembly-converge`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，复核 resolver/builder/VFS 单存储派生三条线。
+1. 启动 `05-29-session-assembly-converge`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，若缺少 design/implement 则按今日复核结论补齐。
+2. 复核 resolver/builder/VFS 单存储派生三条线，避免再次把互相推迟的项悬空。
 3. 建议先做低风险结构拆分：`SessionAssemblyBuilder` 独立文件，再拆 `compose_owner_bootstrap` / `compose_story_step` helper，最后处理 `surface.vfs` / `context_projection.vfs` 单存储派生 accessor。
 
 ## 今日子代理可行性复核

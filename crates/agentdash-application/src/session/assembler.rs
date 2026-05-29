@@ -1515,7 +1515,6 @@ async fn compose_lifecycle_node_with_audit(
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
@@ -1890,7 +1889,6 @@ async fn compose_companion_with_workflow(
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(comp.slice_mode),
@@ -2007,18 +2005,23 @@ async fn resolve_owner_workflow_tool_directives(
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
 
-    // 2. 查 lifecycle 定义 → entry step → workflow_key
+    // 2. 查 activity lifecycle 定义 → entry activity → workflow_key
     let lifecycle = repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
         .ok()
         .flatten()?;
-    let entry_step = lifecycle
-        .steps
+    let entry_activity = lifecycle
+        .activities
         .iter()
-        .find(|s| s.key == lifecycle.entry_step_key)?;
-    let workflow_key = entry_step.effective_workflow_key()?;
+        .find(|a| a.key == lifecycle.entry_activity_key)?;
+    let workflow_key = match &entry_activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => {
+            spec.workflow_key.as_str()
+        }
+        _ => return None,
+    };
 
     // 3. 查 workflow 定义 → contract.capability_config.tool_directives
     let workflow = repos

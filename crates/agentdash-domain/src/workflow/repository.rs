@@ -1,8 +1,7 @@
 use uuid::Uuid;
 
 use super::entity::{
-    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun,
-    WorkflowDefinition,
+    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
 };
 use super::value_objects::WorkflowBindingKind;
 use crate::common::error::DomainError;
@@ -88,29 +87,6 @@ pub trait ActivityExecutionClaimRepository: Send + Sync {
         &self,
         cutoff: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
-}
-
-#[async_trait::async_trait]
-pub trait LifecycleDefinitionRepository: Send + Sync {
-    async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn get_by_project_and_key(
-        &self,
-        project_id: Uuid,
-        key: &str,
-    ) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_binding_kind(
-        &self,
-        binding_kind: WorkflowBindingKind,
-    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
-    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]

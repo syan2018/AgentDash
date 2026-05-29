@@ -51,12 +51,7 @@ pub use orchestrator::{
 pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 #[cfg(test)]
 pub(crate) use projection::activity_projection;
-pub use run::{
-    ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
-    BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
-    LifecycleRunService, LifecycleStepProjector, RecordGateCollisionCommand,
-    StartLifecycleRunCommand, build_step_projector_from_repos, select_active_run,
-};
+pub use run::select_active_run;
 pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,

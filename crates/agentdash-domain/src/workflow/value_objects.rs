@@ -27,9 +27,7 @@ pub use capability::{
 pub use contract::{EffectiveSessionContract, WorkflowContract, WorkflowSessionTerminalState};
 pub use hook_rule::{WorkflowHookRuleSpec, WorkflowHookTrigger};
 pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
-pub use lifecycle_def::{
-    LifecycleEdge, LifecycleEdgeKind, LifecycleNodeType, LifecycleStepDefinition,
-};
+pub use lifecycle_def::LifecycleNodeType;
 pub use metadata::{ValidationIssue, ValidationSeverity, WorkflowDefinitionSource};
 pub use mount_directive::MountDirective;
 pub use ports::{
@@ -39,14 +37,11 @@ pub use run_state::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityExecutionClaimStatus,
     ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
     ActivityRunStatus, ExecutorRunRef, LifecycleExecutionEntry, LifecycleExecutionEventKind,
-    LifecycleRunStatus, LifecycleStepExecutionStatus, LifecycleStepState,
+    LifecycleRunStatus,
 };
 
 #[cfg(test)]
-use super::validation::{
-    validate_activity_lifecycle_definition, validate_lifecycle_definition,
-    validate_workflow_definition,
-};
+use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
 
 #[cfg(test)]
 mod tests {
@@ -90,116 +85,6 @@ mod tests {
 
         let error = validate_workflow_definition("wf", "Workflow", &contract).expect_err("fail");
         assert!(error.contains("重复"));
-    }
-
-    #[test]
-    fn validate_lifecycle_definition_requires_entry_step() {
-        let steps = vec![LifecycleStepDefinition {
-            key: "start".to_string(),
-            description: String::new(),
-            workflow_key: Some("wf_start".to_string()),
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
-        }];
-
-        let error = validate_lifecycle_definition("lc", "Lifecycle", "missing", &steps, &[])
-            .expect_err("fail");
-        assert!(error.contains("entry_step_key"));
-    }
-
-    #[test]
-    fn validate_lifecycle_definition_rejects_phase_node_entry() {
-        let mut steps = vec![simple_step("start")];
-        steps[0].node_type = LifecycleNodeType::PhaseNode;
-
-        let error = validate_lifecycle_definition("lc", "Lifecycle", "start", &steps, &[])
-            .expect_err("entry phase node should fail");
-        assert!(error.contains("PhaseNode"));
-        assert!(error.contains("AgentNode"));
-    }
-
-    #[test]
-    fn validate_edge_topology_detects_cycle() {
-        let steps = vec![
-            LifecycleStepDefinition {
-                key: "a".to_string(),
-                description: String::new(),
-                workflow_key: None,
-                node_type: Default::default(),
-                output_ports: vec![],
-                input_ports: vec![],
-                capability_config: Default::default(),
-            },
-            LifecycleStepDefinition {
-                key: "b".to_string(),
-                description: String::new(),
-                workflow_key: None,
-                node_type: Default::default(),
-                output_ports: vec![],
-                input_ports: vec![],
-                capability_config: Default::default(),
-            },
-            LifecycleStepDefinition {
-                key: "c".to_string(),
-                description: String::new(),
-                workflow_key: None,
-                node_type: Default::default(),
-                output_ports: vec![],
-                input_ports: vec![],
-                capability_config: Default::default(),
-            },
-        ];
-        // a → b → c → b（b-c 形成环，a 是入口无入边）
-        let edges = vec![
-            LifecycleEdge::artifact("a", "out", "b", "in"),
-            LifecycleEdge::artifact("b", "out", "c", "in"),
-            LifecycleEdge::artifact("c", "out", "b", "in2"),
-        ];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect_err("should detect cycle");
-        assert!(err.contains("循环"));
-    }
-
-    #[test]
-    fn validate_edge_topology_rejects_entry_with_incoming() {
-        let steps = vec![
-            LifecycleStepDefinition {
-                key: "a".to_string(),
-                description: String::new(),
-                workflow_key: None,
-                node_type: Default::default(),
-                output_ports: vec![],
-                input_ports: vec![],
-                capability_config: Default::default(),
-            },
-            LifecycleStepDefinition {
-                key: "b".to_string(),
-                description: String::new(),
-                workflow_key: None,
-                node_type: Default::default(),
-                output_ports: vec![],
-                input_ports: vec![],
-                capability_config: Default::default(),
-            },
-        ];
-        let edges = vec![LifecycleEdge::artifact("b", "out", "a", "in")];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect_err("entry should not have incoming");
-        assert!(err.contains("入边"));
-    }
-
-    fn simple_step(key: &str) -> LifecycleStepDefinition {
-        LifecycleStepDefinition {
-            key: key.to_string(),
-            description: String::new(),
-            workflow_key: None,
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
-        }
     }
 
     fn activity_agent(
@@ -269,69 +154,6 @@ mod tests {
             gate_strategy: GateStrategy::Existence,
             gate_params: None,
         }
-    }
-
-    #[test]
-    fn validate_rejects_multi_step_without_edges() {
-        let steps = vec![simple_step("a"), simple_step("b")];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &[])
-            .expect_err("multi-step without edges must fail");
-        assert!(err.contains("lifecycle.edges 不能为空"));
-    }
-
-    #[test]
-    fn validate_accepts_single_step_without_edges() {
-        let steps = vec![simple_step("solo")];
-        validate_lifecycle_definition("lc", "Lifecycle", "solo", &steps, &[])
-            .expect("single-step without edges should pass");
-    }
-
-    #[test]
-    fn validate_rejects_flow_edge_with_port() {
-        let steps = vec![simple_step("a"), simple_step("b")];
-        let edges = vec![LifecycleEdge {
-            kind: LifecycleEdgeKind::Flow,
-            from_node: "a".into(),
-            to_node: "b".into(),
-            from_port: Some("out".into()),
-            to_port: None,
-        }];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect_err("flow edge must not carry port");
-        assert!(err.contains("kind=flow"));
-    }
-
-    #[test]
-    fn validate_rejects_artifact_edge_without_port() {
-        let steps = vec![simple_step("a"), simple_step("b")];
-        let edges = vec![LifecycleEdge {
-            kind: LifecycleEdgeKind::Artifact,
-            from_node: "a".into(),
-            to_node: "b".into(),
-            from_port: None,
-            to_port: None,
-        }];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect_err("artifact edge must have both ports");
-        assert!(err.contains("kind=artifact"));
-    }
-
-    #[test]
-    fn validate_rejects_island_step() {
-        let steps = vec![simple_step("a"), simple_step("b"), simple_step("c")];
-        // 只连 a → b，c 是孤岛
-        let edges = vec![LifecycleEdge::flow("a", "b")];
-        let err = validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect_err("island step must be rejected");
-        assert!(err.contains("孤岛"));
-    }
-
-    #[test]
-    fn validate_accepts_pure_flow_edges() {
-        let steps = vec![simple_step("a"), simple_step("b"), simple_step("c")];
-        let edges = vec![LifecycleEdge::flow("a", "b"), LifecycleEdge::flow("b", "c")];
-        validate_lifecycle_definition("lc", "Lifecycle", "a", &steps, &edges)
-            .expect("pure flow lifecycle should pass");
     }
 
     #[test]
@@ -558,15 +380,6 @@ mod tests {
         assert_eq!(value["session_policy"], "spawn_child");
     }
 
-    #[test]
-    fn lifecycle_edge_deserializes_without_kind_as_artifact() {
-        // 历史持久化数据无 kind 字段，应兼容反序列化为 Artifact
-        let json = r#"{"from_node":"a","from_port":"out","to_node":"b","to_port":"in"}"#;
-        let edge: LifecycleEdge = serde_json::from_str(json).expect("deserialize legacy edge");
-        assert_eq!(edge.kind, LifecycleEdgeKind::Artifact);
-        assert_eq!(edge.from_port.as_deref(), Some("out"));
-        assert_eq!(edge.to_port.as_deref(), Some("in"));
-    }
     #[test]
     fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
         assert_eq!(

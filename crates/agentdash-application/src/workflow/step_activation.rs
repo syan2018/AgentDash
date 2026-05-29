@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    ActivityDefinition, LifecycleEdge, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
+    ActivityDefinition, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{CapabilityState, Vfs};
@@ -54,8 +54,6 @@ pub struct StepActivationInput<'a> {
     pub run_id: Uuid,
     /// lifecycle key,lifecycle mount 路径的一部分。
     pub lifecycle_key: &'a str,
-    /// lifecycle 全部 edges,kickoff prompt 生成前驱 port 引用时用。
-    pub edges: &'a [LifecycleEdge],
     /// agent config 内联 MCP server(向前兼容 `mcp:<name>` 解析)。
     pub agent_mcp_servers: Vec<AgentMcpServerEntry>,
     /// project 级 MCP Preset 预展开字典。
@@ -227,12 +225,7 @@ fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffProm
     );
 
     let output_section = render_output_section(&input.active_activity.output_ports);
-    let input_section = render_input_section(
-        &input.active_activity.input_ports,
-        node_key,
-        input.edges,
-        &input.ready_port_keys,
-    );
+    let input_section = render_input_section(&input.active_activity.input_ports);
 
     KickoffPromptFragment {
         title_line,
@@ -255,39 +248,14 @@ fn render_output_section(ports: &[agentdash_domain::workflow::OutputPortDefiniti
     )
 }
 
-fn render_input_section(
-    ports: &[agentdash_domain::workflow::InputPortDefinition],
-    node_key: &str,
-    edges: &[LifecycleEdge],
-    ready_port_keys: &BTreeSet<String>,
-) -> String {
+fn render_input_section(ports: &[agentdash_domain::workflow::InputPortDefinition]) -> String {
     if ports.is_empty() {
         return String::new();
     }
-    let mut items = Vec::new();
-    for ip in ports {
-        // Port 级输入只匹配 artifact edge；flow edge 不承载 port 关系
-        let source_edges: Vec<_> = edges
-            .iter()
-            .filter(|e| e.to_node == *node_key && e.to_port.as_deref() == Some(ip.key.as_str()))
-            .collect();
-        if source_edges.is_empty() {
-            items.push(format!("- **{}**({}) — 无前驱连接", ip.key, ip.description));
-        } else {
-            for edge in source_edges {
-                let from_port = edge.from_port.as_deref().unwrap_or("");
-                let status = if ready_port_keys.contains(from_port) {
-                    "已就绪"
-                } else {
-                    "未就绪"
-                };
-                items.push(format!(
-                    "- **{}**({}) ← `lifecycle://artifacts/{from_port}` [{status}]",
-                    ip.key, ip.description
-                ));
-            }
-        }
-    }
+    let items: Vec<String> = ports
+        .iter()
+        .map(|ip| format!("- **{}**({})", ip.key, ip.description))
+        .collect();
     format!(
         "\n\n## 输入上下文\n以下是来自前驱节点的产出,可通过 `read_file` 读取:\n{}",
         items.join("\n")
@@ -505,7 +473,6 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "trellis_dev_task",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -540,7 +507,6 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_admin",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -572,7 +538,6 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -610,7 +575,6 @@ mod tests {
             workflow: Some(&full_read_workflow),
             run_id,
             lifecycle_key: "lc_phase",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -679,7 +643,6 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -740,7 +703,6 @@ mod tests {
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -784,7 +746,6 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
-            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -833,7 +794,6 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();
         let ready: BTreeSet<String> = ["out".to_string()].into_iter().collect();
 
@@ -843,7 +803,6 @@ mod tests {
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
-            edges: &edges,
             agent_mcp_servers: vec![],
             available_presets: empty_presets(),
             companion_slice_mode: None,
@@ -854,11 +813,6 @@ mod tests {
         };
 
         let out = activate_step_with_platform(&input, &test_platform());
-        assert!(
-            out.kickoff_prompt
-                .input_section
-                .contains("lifecycle://artifacts/out")
-        );
-        assert!(out.kickoff_prompt.input_section.contains("已就绪"));
+        assert!(out.kickoff_prompt.input_section.contains("ctx"));
     }
 }

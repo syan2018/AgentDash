@@ -73,33 +73,31 @@ impl Task {
         &self.artifacts
     }
 
-    /// M2 projection：将 LifecycleStepState 的状态投射到 Task。
+    /// M2 projection：将 Activity attempt 状态投射到 Task。
     ///
     /// 状态映射规则：
     /// - `Pending` → `TaskStatus::Pending`
-    /// - `Ready`   → `TaskStatus::Assigned`
+    /// - `Ready` / `Claiming` → `TaskStatus::Assigned`
     /// - `Running` → `TaskStatus::Running`
     /// - `Completed` → `TaskStatus::AwaitingVerification`
     ///   （Task 完成态由业务（hook / verification）进一步推进为 Completed/Failed）
-    /// - `Failed`  → `TaskStatus::Failed`
-    /// - `Skipped` → `TaskStatus::Completed`（跳过视为终态完成）
+    /// - `Failed` / `Cancelled` → `TaskStatus::Failed`
     ///
     /// 返回 `true` 表示状态发生变化，`false` 表示投影后状态不变。
     ///
     /// 仅 domain crate 内部可调用；应用层通过 `Story::apply_task_projection` 间接触达。
     pub(crate) fn apply_projection(
         &mut self,
-        step_status: crate::workflow::LifecycleStepExecutionStatus,
+        attempt_status: crate::workflow::ActivityAttemptStatus,
     ) -> bool {
-        use crate::workflow::LifecycleStepExecutionStatus as S;
+        use crate::workflow::ActivityAttemptStatus as S;
 
-        let next = match step_status {
+        let next = match attempt_status {
             S::Pending => TaskStatus::Pending,
-            S::Ready => TaskStatus::Assigned,
+            S::Ready | S::Claiming => TaskStatus::Assigned,
             S::Running => TaskStatus::Running,
             S::Completed => TaskStatus::AwaitingVerification,
-            S::Failed => TaskStatus::Failed,
-            S::Skipped => TaskStatus::Completed,
+            S::Failed | S::Cancelled => TaskStatus::Failed,
         };
 
         if self.status == next {

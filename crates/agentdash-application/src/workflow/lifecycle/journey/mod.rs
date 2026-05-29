@@ -10,7 +10,6 @@ use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
-    LifecycleStepExecutionStatus, LifecycleStepState,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -390,7 +389,7 @@ impl LifecycleJourneyProjection {
     pub async fn read_node_summary(
         &self,
         run_id: Uuid,
-        step: &LifecycleStepState,
+        step: &ActivityAttemptState,
     ) -> JourneyResult<String> {
         if let Ok(Some(file)) = self
             .inline_file_repo
@@ -398,7 +397,7 @@ impl LifecycleJourneyProjection {
                 InlineFileOwnerKind::LifecycleRun,
                 run_id,
                 SESSION_RECORDS_CONTAINER,
-                &format!("{}/summary", step.step_key),
+                &format!("{}/summary", step.activity_key),
             )
             .await
             && let Some(content) = file.into_text_content()
@@ -407,7 +406,7 @@ impl LifecycleJourneyProjection {
         }
 
         step.summary.clone().ok_or_else(|| {
-            LifecycleJourneyError::NotFound(format!("node `{}` 没有 summary", step.step_key))
+            LifecycleJourneyError::NotFound(format!("node `{}` 没有 summary", step.activity_key))
         })
     }
 
@@ -499,48 +498,15 @@ pub fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec
         .collect()
 }
 
-/// 从 Activity attempt 合成展示用的 `LifecycleStepState`。
-///
-/// P2：投影/展示层读取点统一从 `activity_state.attempts` 取数，不再依赖
-/// 已被 migration 0050 抽空的 `step_states`。映射与
-/// `task/view_projector.rs::lifecycle_task_projection_states` 保持一致。
-fn step_state_from_attempt(attempt: &ActivityAttemptState) -> LifecycleStepState {
-    LifecycleStepState {
-        step_key: attempt.activity_key.clone(),
-        status: match attempt.status {
-            ActivityAttemptStatus::Pending => LifecycleStepExecutionStatus::Pending,
-            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
-                LifecycleStepExecutionStatus::Ready
-            }
-            ActivityAttemptStatus::Running => LifecycleStepExecutionStatus::Running,
-            ActivityAttemptStatus::Completed => LifecycleStepExecutionStatus::Completed,
-            ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
-                LifecycleStepExecutionStatus::Failed
-            }
-        },
-        session_id: match &attempt.executor_run {
-            Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
-            Some(ExecutorRunRef::FunctionRun { .. })
-            | Some(ExecutorRunRef::HumanDecision { .. })
-            | None => None,
-        },
-        started_at: attempt.started_at,
-        completed_at: attempt.completed_at,
-        summary: attempt.summary.clone(),
-        context_snapshot: None,
-        gate_collision_count: 0,
-    }
-}
-
-/// 从 Activity attempts 合成完整的展示用 step state 列表（投影 node 列表用）。
-pub fn step_states_from_run(run: &LifecycleRun) -> Vec<LifecycleStepState> {
+/// 取展示用的 Activity attempt 列表（投影 node 列表用）。
+pub fn step_states_from_run(run: &LifecycleRun) -> Vec<ActivityAttemptState> {
     run.activity_state
         .as_ref()
-        .map(|state| state.attempts.iter().map(step_state_from_attempt).collect())
+        .map(|state| state.attempts.clone())
         .unwrap_or_default()
 }
 
-pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<LifecycleStepState> {
+pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<ActivityAttemptState> {
     run.activity_state
         .as_ref()
         .and_then(|state| {
@@ -548,30 +514,39 @@ pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<LifecycleStepSt
                 .attempts
                 .iter()
                 .find(|attempt| attempt.activity_key == key)
+                .cloned()
         })
-        .map(step_state_from_attempt)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node 不存在: {key}")))
 }
 
-pub fn current_step(run: &LifecycleRun) -> JourneyResult<LifecycleStepState> {
+pub fn current_step(run: &LifecycleRun) -> JourneyResult<ActivityAttemptState> {
     let key = run.current_step_key().ok_or_else(|| {
         LifecycleJourneyError::NotFound("当前 lifecycle run 没有活跃 node".to_string())
     })?;
     find_step(run, key)
 }
 
+pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
+    match &attempt.executor_run {
+        Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
+        _ => None,
+    }
+}
+
 pub fn step_session_id(run: &LifecycleRun, key: &str) -> JourneyResult<String> {
-    find_step(run, key)?
-        .session_id
+    attempt_session_id(&find_step(run, key)?)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node `{key}` 没有关联 session")))
 }
 
 pub fn current_step_session_id(run: &LifecycleRun) -> JourneyResult<(String, String)> {
-    let step = current_step(run)?;
-    let session_id = step.session_id.clone().ok_or_else(|| {
-        LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", step.step_key))
+    let attempt = current_step(run)?;
+    let session_id = attempt_session_id(&attempt).ok_or_else(|| {
+        LifecycleJourneyError::NotFound(format!(
+            "node `{}` 没有关联 session",
+            attempt.activity_key
+        ))
     })?;
-    Ok((step.step_key, session_id))
+    Ok((attempt.activity_key, session_id))
 }
 
 pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {

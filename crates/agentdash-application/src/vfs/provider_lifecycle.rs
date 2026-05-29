@@ -17,10 +17,10 @@ use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult}
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
 use crate::workflow::lifecycle::journey::{
-    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, current_step,
-    current_step_session_id, filter_session_items, find_step, group_events_into_turn_summaries,
-    item_file_name, run_overview, session_summary_archives, step_session_id, step_states_from_run,
-    to_json_pretty,
+    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, attempt_session_id,
+    current_step, current_step_session_id, filter_session_items, find_step,
+    group_events_into_turn_summaries, item_file_name, run_overview, session_summary_archives,
+    step_session_id, step_states_from_run, to_json_pretty,
 };
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -234,7 +234,7 @@ impl MountProvider for LifecycleMountProvider {
                     ["session", "conclusions"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_node_conclusions(run_id, &step.step_key)
+                            .read_node_conclusions(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -249,14 +249,14 @@ impl MountProvider for LifecycleMountProvider {
                     ["records"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_records_map(run_id, &step.step_key)
+                            .read_records_map(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["records", rest @ ..] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_record(run_id, &step.step_key, rest)
+                            .read_record(run_id, &step.activity_key, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -384,12 +384,12 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let name = self
                     .journey
-                    .write_record(run_id, &step.step_key, rest, content)
+                    .write_record(run_id, &step.activity_key, rest, content)
                     .await
                     .map_err(map_journey_err)?;
                 info!(
                     run_id = %run_id,
-                    step_key = %step.step_key,
+                    step_key = %step.activity_key,
                     record = %name,
                     content_len = content.len(),
                     "lifecycle VFS: wrote journey record"
@@ -447,7 +447,7 @@ impl MountProvider for LifecycleMountProvider {
             ["active", "steps"] => step_states_from_run(&active)
                 .iter()
                 .map(|step| {
-                    RuntimeFileEntry::file(format!("active/steps/{}", step.step_key)).as_virtual()
+                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key)).as_virtual()
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
@@ -569,7 +569,7 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
-                    .records_map(run_id, &step.step_key)
+                    .records_map(run_id, &step.activity_key)
                     .await
                     .map_err(map_journey_err)?;
                 list_projected_entries(files, "records", "records", options)
@@ -579,7 +579,7 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
-                    .records_map(run_id, &step.step_key)
+                    .records_map(run_id, &step.activity_key)
                     .await
                     .map_err(map_journey_err)?;
                 let display_base = format!("records/{}", rest.join("/"));
@@ -587,16 +587,16 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["nodes"] => step_states_from_run(&active)
                 .iter()
-                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.step_key)).as_virtual())
+                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual())
                 .collect(),
             ["nodes", key] => {
                 if let Some(step) = step_states_from_run(&active)
                     .iter()
-                    .find(|step| step.step_key == *key)
+                    .find(|step| step.activity_key == *key)
                 {
                     let mut entries =
                         vec![RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual()];
-                    if step.session_id.is_some() {
+                    if attempt_session_id(step).is_some() {
                         entries.push(
                             RuntimeFileEntry::dir(format!("nodes/{key}/session")).as_virtual(),
                         );
@@ -609,8 +609,8 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["nodes", key, "session"] => {
                 let states = step_states_from_run(&active);
-                let step = states.iter().find(|step| step.step_key == *key);
-                if step.and_then(|step| step.session_id.as_ref()).is_none() {
+                let step = states.iter().find(|step| step.activity_key == *key);
+                if step.and_then(attempt_session_id).is_none() {
                     Vec::new()
                 } else {
                     vec![

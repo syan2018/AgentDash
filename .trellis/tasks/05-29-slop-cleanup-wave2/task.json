@@ -26,7 +26,8 @@
     "05-29-api-handler-thinning",
     "05-29-infra-residual",
     "05-29-structural-splits",
-    "05-29-domain-purification"
+    "05-29-domain-purification",
+    "05-29-mcp-direct-connection-pool"
   ],
   "parent": null,
   "relatedFiles": [],

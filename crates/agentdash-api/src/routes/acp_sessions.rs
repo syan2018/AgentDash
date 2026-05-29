@@ -11,14 +11,11 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
 use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::session::construction::SessionConstructionPlan;
-use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     LaunchCommand, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
@@ -36,33 +33,19 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
-use serde::Serialize;
 
 use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
+use crate::dto::{
+    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, CreateSessionRequest,
+    ListSessionsQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionBindingOwnerResponse,
+    SessionContextResponse, SessionEventsQuery, SessionExecutionStateResponse,
+    UpdateSessionMetaRequest,
+};
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-
-#[derive(Debug, Deserialize)]
-pub struct NdjsonStreamQuery {
-    pub since_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionEventsQuery {
-    pub after_seq: Option<u64>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListSessionsQuery {
-    pub owner_type: Option<String>,
-    pub owner_id: Option<String>,
-    /// 为 true 时排除已绑定到 Story/Task 的会话，仅返回独立会话
-    pub exclude_bound: Option<bool>,
-}
 
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
@@ -131,13 +114,6 @@ pub async fn list_sessions(
     }
 
     Ok(Json(visible_sessions))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateSessionRequest {
-    #[serde(default)]
-    pub title: Option<String>,
-    pub project_id: uuid::Uuid,
 }
 
 pub async fn create_session(
@@ -234,16 +210,6 @@ pub async fn get_session_hook_runtime(
             ))
         })?;
     Ok(Json(runtime.runtime_snapshot()))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionExecutionStateResponse {
-    pub session_id: String,
-    pub status: String,
-    pub turn_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
 }
 
 fn map_session_event(
@@ -380,21 +346,6 @@ pub async fn list_session_events(
         has_more: page.has_more,
         next_after_seq: page.next_after_seq,
     }))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionBindingOwnerResponse {
-    pub id: String,
-    pub session_id: String,
-    pub owner_type: String,
-    pub owner_id: String,
-    pub label: String,
-    pub created_at: String,
-    pub owner_title: Option<String>,
-    pub project_id: String,
-    pub story_id: Option<String>,
-    pub task_id: Option<String>,
 }
 
 #[cfg(test)]
@@ -540,23 +491,6 @@ mod tests {
             )
         );
     }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionContextResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vfs: Option<agentdash_spi::Vfs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<SessionContextSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_capabilities: Option<agentdash_spi::SessionBaselineCapabilities>,
 }
 
 /// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / vfs / snapshot
@@ -731,31 +665,6 @@ pub async fn rollback_session_projection(
     }))
 }
 
-impl SessionContextResponse {
-    fn empty() -> Self {
-        Self {
-            workspace_id: None,
-            agent_binding: None,
-            vfs: None,
-            runtime_surface: None,
-            context_snapshot: None,
-            session_capabilities: None,
-        }
-    }
-
-    fn from_construction_plan(plan: SessionConstructionPlan) -> Self {
-        let projection = plan.context_projection;
-        Self {
-            workspace_id: projection.workspace_id.map(|id| id.to_string()),
-            agent_binding: projection.agent_binding,
-            vfs: projection.vfs,
-            runtime_surface: projection.runtime_surface,
-            context_snapshot: projection.context_snapshot,
-            session_capabilities: projection.session_capabilities,
-        }
-    }
-}
-
 pub async fn get_session_bindings(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -833,14 +742,6 @@ pub async fn get_session_bindings(
     }
 
     Ok(Json(responses))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateSessionMetaRequest {
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub tab_layout: Option<serde_json::Value>,
 }
 
 /// GET /sessions/{id}/meta — 返回完整 session meta。
@@ -999,12 +900,6 @@ pub async fn cancel_session(
     }))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct RejectToolApprovalRequest {
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
 pub async fn approve_tool_call(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -1056,11 +951,6 @@ pub async fn reject_tool_call(
         session_id,
         tool_call_id,
     }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CompanionRespondRequest {
-    pub payload: serde_json::Value,
 }
 
 pub async fn respond_companion_request(
@@ -1387,39 +1277,6 @@ fn api_error_from_io(error: io::Error) -> ApiError {
 
 /// Content preview 的最大字节数（超过时截断）。
 const CONTEXT_AUDIT_CONTENT_PREVIEW_MAX: usize = 2048;
-
-/// `GET /sessions/{id}/context/audit` 的查询参数。
-#[derive(Debug, Deserialize)]
-pub struct ContextAuditQuery {
-    pub since_ms: Option<u64>,
-    /// scope 标签：`runtime_agent` / `title_gen` / `summarizer` / `bridge_replay` / `audit`
-    pub scope: Option<String>,
-    pub slot: Option<String>,
-    pub source_prefix: Option<String>,
-}
-
-/// 审计事件的 HTTP DTO。
-#[derive(Debug, Serialize)]
-pub struct ContextAuditEventDto {
-    pub event_id: uuid::Uuid,
-    pub bundle_id: uuid::Uuid,
-    /// session 外部 ID（session runtime 分配的 `sess-<ms>-<short>`）。
-    pub session_id: String,
-    /// Bundle 内部追踪 UUID（可能是占位值，与 `session_id` 不同）。
-    pub bundle_session_uuid: uuid::Uuid,
-    pub at_ms: u64,
-    /// 触发标签（snake_case）：`session_bootstrap` / `composer_rebuild` /
-    /// `hook:UserPromptSubmit` / `session_plan` / `capability` / `filter:runtime_agent`
-    pub trigger: String,
-    pub slot: String,
-    pub label: String,
-    pub source: String,
-    pub order: i32,
-    pub scope: Vec<String>,
-    pub content_preview: String,
-    pub content_hash: u64,
-    pub full_content_available: bool,
-}
 
 fn parse_scope_tag(tag: &str) -> Option<agentdash_spi::FragmentScope> {
     match tag {

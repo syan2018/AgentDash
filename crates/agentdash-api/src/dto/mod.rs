@@ -20,6 +20,7 @@ mod task_execution;
 mod terminal;
 mod vfs;
 mod workflow;
+mod workspace;
 
 pub use agentdash_contracts::core::{
     ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
@@ -44,3 +45,4 @@ pub use task_execution::*;
 pub use terminal::*;
 pub use vfs::*;
 pub use workflow::*;
+pub use workspace::*;

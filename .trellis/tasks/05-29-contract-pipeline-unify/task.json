@@ -3,7 +3,7 @@
   "name": "contract-pipeline-unify",
   "title": "契约双流水线统一（api-dto→contracts ts-rs→前端 codegen 单源）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

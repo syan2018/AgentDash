@@ -23,7 +23,7 @@
 ## Scope
 
 1. 把 `api/dto` 的 9/11 Serialize-only response 提升为 `contracts` 的 `#[derive(TS)]` 类型并注册进 `generate_ts.rs`；handler 改用 contracts 类型（与 `api-handler-thinning` 协调）。
-2. `generate_contracts_ts --check` 接入 CI gate（`generate_ts.rs` 已有 check 模式）。
+2. `generate_contracts_ts --check` 接入项目默认 gate：仓库当前没有 `.github` CI 配置，因此先要求根 `package.json` 的 `check` 链路包含 `contracts:check`，未来 CI 复用该脚本。
 3. 删前端 `types/index.ts` 中与 generated 重复的手抄部分（`Task/TaskStatus/StoryStatus/Workspace/Project/...`）；真正无契约的端点全部补进 contracts，目标是 `types/index.ts` 不再手写 domain 概念。
 4. **删 services identity mapper 层**：内部端点改 `api.get<GeneratedType>()`，删 `extensionRuntime.ts`/`session.ts`/`workflow.ts` 等的逐字段重建 mapper（信任 wire 决策）。
 5. generator 发射共享 `JsonValue`（`common.ts`），消 9 份重复。
@@ -37,7 +37,7 @@
 ## Acceptance Criteria（硬指标 + 验收命令）
 
 - [ ] `Task`/`Story`/`Workspace`/`Project` 在 contracts 有 `#[derive(TS)]`（grep）；前端 `rg "interface Task|type TaskStatus|interface Workspace|interface Project" packages/app-web/src/types/index.ts` = **0**
-- [ ] `generate_contracts_ts --check` 出现在 CI 配置（`rg "generate_contracts_ts.*check|--check" <ci 文件>` 命中）且本地 check 通过
+- [ ] 根 `package.json` 默认 `check` 链路包含 `contracts:check`，且 `pnpm run contracts:check` 本地通过
 - [ ] services identity-mapper 删除：`extensionRuntime.ts`/`session.ts`/`workflow.ts` 中逐字段重建函数数量降至「保留清单」内（清单逐项注明为何需转换；其余 = 0）
 - [ ] `rg "export type JsonValue" packages/app-web/src/generated | wc -l` = **1**（共享单源）
 - [ ] contracts 纯镜像副本删除：`rg "struct McpTransportConfig|enum MountCapability|struct ProjectVfsMountContent" crates/agentdash-contracts` = **0**

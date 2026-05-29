@@ -5,10 +5,10 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前 active child：`05-29-error-model-unify`
-- 当前 child 状态：`in_progress`（代码与验收已完成，待处理提交/归档边界）
-- 当前主线步骤：`error-model-unify` 已完成代码收口与主质量门，下一步应先决定如何在当前大 dirty worktree 中安全提交/归档，再推进 `contract-pipeline-unify`。
-- 已完成的本轮代码进展：
+- 当前 active child：`05-29-contract-pipeline-unify`
+- 当前 child 状态：`in_progress`（已启动；正在补齐复杂任务规划后进入实现）
+- 当前主线步骤：`error-model-unify` 已提交并归档；下一步先补齐 `contract-pipeline-unify` 缺失的 `design.md` / `implement.md`，然后按契约单源顺序推进实现。
+- 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
   - `ApiError` 增加 `From<ApplicationError>`，并更新 `From<DomainError>` 的结构化映射。
@@ -17,21 +17,28 @@
   - API `ApiError::Internal(e.to_string())` 计数降到 0，`looks_like_unique_violation` / `looks_like_skill_asset_unique_violation` 已删除。
   - 8 个指定 application 模块的 `Result<_, String>` grep 已清零，迁到 `ApplicationError` 或局部结构化错误。
   - `backend/error-handling.md` 与 `backend/database-guidelines.md` 已同步当前错误语义契约。
-- 最近验证状态：
+- `error-model-unify` 最近验证状态：
   - `cargo check -p agentdash-domain` 已通过。
   - `cargo check -p agentdash-application` 已通过（仅既存 warning）。
   - `cargo check -p agentdash-infrastructure` 已通过（含 Postgres fan-out 后复验）。
   - `cargo check -p agentdash-api` 已通过（仅 application 既存 warning）。
   - `cargo test -p agentdash-api append_required_story_change_maps_repo_failure_to_internal_error` 已通过。
   - `cargo check --workspace` 已通过（仅 application 既存 warning）。
+- 已提交记录：
+  - `c2fb8f78 refactor(error): 统一后端错误模型并清理 stringly 映射`
+  - `8f1d232d docs(task): 归档错误模型统一子任务`
+- 当前待处理：
+  - `contract-pipeline-unify` 的 PRD 已存在，但缺少复杂任务必需的 `design.md` / `implement.md`。
+  - 当前 spec 仍描述前端 service mapper 做 `unknown -> typed object` 校验；本 child 已拍板改为内部端点信任 generated wire，因此实现阶段必须同步更新 cross-layer / frontend spec。
+  - 仓库未发现 `.github` CI 配置；契约 drift gate 先落到根 `package.json` 的 `check` 链路和 `pnpm run contracts:check`，后续若补 CI 则复用该脚本。
 
 ## 全程推进队列
 
 | 顺序 | 任务 | 状态 | 完成证据 |
 |---:|---|---|---|
 | 0 | `05-29-quickfix-swarm` | 已归档 | archive 中 task completed；quickfix commit 已存在 |
-| 1 | `05-29-error-model-unify` | 验收完成，待提交/归档 | 本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
-| 2 | `05-29-contract-pipeline-unify` | 待规划修正 | `Task/Story/Workspace/Project` 进入 contracts；前端手写类型删除；`contracts:check` 通过；mapper/spec 冲突有明确决策 |
+| 1 | `05-29-error-model-unify` | 已归档 | 提交 `c2fb8f78`；归档提交 `8f1d232d`；本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
+| 2 | `05-29-contract-pipeline-unify` | 进行中：补规划后实现 | `Task/Story/Workspace/Project` 进入 contracts；前端手写类型删除；`contracts:check` 通过；mapper/spec 冲突按“前端信任 wire”同步落 spec |
 | 3 | `05-29-mcp-direct-connection-pool` | 待 design | `direct.rs` 每次 connect/cancel 路径消除；连接池失效/重连策略有测试或说明 |
 | 4 | `05-29-vfs-dedup` | 待执行 | VFS dispatch 单一 helper；patch executor 单份；`MountProvider` 拆 trait；VFS `to_string()` 抹平显著收敛 |
 | 5 | `05-29-infra-residual` | 待 error-model | sqlite 后端移除；TIMESTAMPTZ migration；session port 错误类型化；DB spec 同步当前决策 |
@@ -56,9 +63,10 @@
 
 ## 当前 child 下一步
 
-1. 先处理 `05-29-error-model-unify` 的收尾：当前 worktree 有大量既有/格式化触碰文件，提交前必须确认 staged 范围只包含本 child 应交付内容。
-2. 若决定暂不提交，至少在下一轮先复查 `git diff --name-only` 和本文件，避免把其他 child 的改动混进 error-model 提交。
-3. 之后推进 `05-29-contract-pipeline-unify`：先读其 PRD / design 状态，修正规划，再进入实现。
+1. 进入实现第一批：core DTO 进入 `agentdash-contracts`，API 改用 contract response。
+2. 注册 `generate_ts.rs` 并生成 TS contract。
+3. 删除前端 `types/index.ts` 中与 generated 重复的 Project / Workspace / Story / Task wire 类型。
+4. 运行 `cargo check -p agentdash-contracts -p agentdash-api` 与 `pnpm -C packages/app-web exec tsc --noEmit`。
 
 ## 全局验收 Gates
 

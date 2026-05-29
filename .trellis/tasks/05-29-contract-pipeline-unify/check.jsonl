@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查实现是否维持 agentdash-contracts 单源和 contracts:check gate"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查前端是否删除手写跨层 DTO 并只保留合理 view model"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "检查 store/service 是否消费 generated DTO，写后刷新约定是否不被 mapper 删除破坏"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "检查 contract/API/application 依赖方向是否保持单向"}

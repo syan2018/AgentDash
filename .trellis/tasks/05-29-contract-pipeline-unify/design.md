@@ -12,8 +12,10 @@
 
 ## Architectural Boundaries
 
-- `agentdash-contracts` 可以依赖 `agentdash-domain` / `agentdash-spi` / `agentdash-agent-types`，但不能依赖 `agentdash-application` 或 `agentdash-api`。Project access 里来自 `ProjectAuthorization` 的字段在 API 层适配成 contract DTO，避免 contract crate 反向依赖 application。
-- Domain 不在本任务新增 `TS` / `schemars` 暴露面；后续 `domain-purification` 会继续把 domain 从生成职责里剥离。本任务只移动 API-facing DTO。
+- 依赖方向是 `agentdash-domain <- agentdash-contracts <- agentdash-api`。Domain 不能引用 contract/protocol/DTO；contract 作为应用边界外侧的 wire DTO 层，可以依赖 domain 做显式转换。
+- Generated DTO 不直接暴露 domain entity。即使字段语义来自 domain，也优先在 `agentdash-contracts` 定义 wire DTO / wire enum，并通过穷尽 `From` / helper 映射 domain 值，避免为了 TS 生成把 `TS` derive 继续扩散到 domain。
+- `agentdash-contracts` 不能依赖 `agentdash-application` 或 `agentdash-api`。Project access 里来自 `ProjectAuthorization` 的字段在 API 层适配成 contract DTO，避免 contract crate 反向依赖 application。
+- Domain 不在本任务新增 `TS` / `schemars` 暴露面；后续 `domain-purification` 会继续把 domain 从生成职责里剥离。本任务只移动 API-facing DTO 和必要的 wire value object。
 - Frontend 内部端点信任 generated wire：service 函数直接 `api.get<GeneratedType>()` / `api.post<GeneratedType>()`，不再用 identity mapper 逐字段重建相同对象。
 - View model 可以保留，但必须表达 UI 语义差异，例如 `AgentPresetConfig` 对 JSON blob 的收窄、局部 nullable state 或排序分组结果；它不负责重声明后端 enum/string union。
 
@@ -38,7 +40,8 @@
 
 ## Mapping Strategy
 
-- 简单 domain entity 到 response 的转换可以放在 `agentdash-contracts` 中实现 `From<T>`，因为 contract crate 已依赖 domain。
+- 简单 domain entity 到 response 的转换可以放在 `agentdash-contracts` 中实现 `From<T>`，因为 contract crate 已依赖 domain；转换必须是穷尽映射，不能用字符串兜底或 wildcard 掩盖新增枚举值。
+- Domain enum/value object 若要进入前端，先成为 contract wire enum/value DTO，再由 `From<domain::...>` 显式映射。这样 Rust 后端仍有 domain model 和 DTO model 两层，前端则只消费 generated DTO 单源。
 - 需要 application-only 输入的转换留在 API 层函数中，例如 `ProjectAuthorization -> ProjectAccessSummaryResponse`。由于 orphan rule，API 层不为外部类型实现 `From`，而是使用局部 helper。
 - API route 返回类型改为 contract DTO，`crates/agentdash-api/src/dto` 中对应重复定义删除或只保留当前任务外的 DTO。
 

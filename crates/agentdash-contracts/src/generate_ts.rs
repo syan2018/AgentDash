@@ -1,5 +1,16 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::core::{
+    AgentBinding, AgentPreset, Artifact, ArtifactType, ContextContainerDefinition,
+    ContextContainerFile, ContextContainerProvider, ContextDelivery, ContextSlot,
+    ContextSourceKind, ContextSourceRef, MountCapability, ProjectAccessSummaryResponse,
+    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
+    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, SchedulingConfig,
+    SessionComposition, SessionRequiredContextBlock, StoryContext, StoryPriority, StoryResponse,
+    StoryStatus, StoryType, TaskResponse, TaskStatus, WorkspaceBindingResponse,
+    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
+    WorkspaceStatus,
+};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -78,6 +89,50 @@ fn main() {
     let check = env::args().any(|arg| arg == "--check");
     let generated_dir: PathBuf =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/app-web/src/generated");
+
+    write_domain(
+        &generated_dir.join("core-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<MountCapability>(dir);
+            export_all::<ContextContainerFile>(dir);
+            export_all::<ContextContainerProvider>(dir);
+            export_all::<ContextContainerDefinition>(dir);
+            export_all::<SchedulingConfig>(dir);
+            export_all::<AgentPreset>(dir);
+            export_all::<ProjectConfig>(dir);
+            export_all::<ProjectVisibility>(dir);
+            export_all::<ProjectRole>(dir);
+            export_all::<ProjectSubjectType>(dir);
+            export_all::<ProjectAccessSummaryResponse>(dir);
+            export_all::<ProjectResponse>(dir);
+            export_all::<ProjectSubjectGrantResponse>(dir);
+            export_all::<ProjectDetailResponse>(dir);
+            export_all::<WorkspaceIdentityKind>(dir);
+            export_all::<WorkspaceBindingStatus>(dir);
+            export_all::<WorkspaceResolutionPolicy>(dir);
+            export_all::<WorkspaceStatus>(dir);
+            export_all::<WorkspaceBindingResponse>(dir);
+            export_all::<WorkspaceResponse>(dir);
+            export_all::<ContextSourceKind>(dir);
+            export_all::<ContextSlot>(dir);
+            export_all::<ContextDelivery>(dir);
+            export_all::<ContextSourceRef>(dir);
+            export_all::<SessionRequiredContextBlock>(dir);
+            export_all::<SessionComposition>(dir);
+            export_all::<StoryContext>(dir);
+            export_all::<StoryStatus>(dir);
+            export_all::<StoryPriority>(dir);
+            export_all::<StoryType>(dir);
+            export_all::<StoryResponse>(dir);
+            export_all::<TaskStatus>(dir);
+            export_all::<ArtifactType>(dir);
+            export_all::<Artifact>(dir);
+            export_all::<AgentBinding>(dir);
+            export_all::<TaskResponse>(dir);
+        },
+    );
 
     write_domain(
         &generated_dir.join("mcp-preset-contracts.ts"),

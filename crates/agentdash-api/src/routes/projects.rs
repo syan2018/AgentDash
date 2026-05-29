@@ -20,7 +20,10 @@ use agentdash_plugin_api::AuthIdentity;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, require_project_permission};
-use crate::dto::{ProjectDetailResponse, ProjectResponse, ProjectSubjectGrantResponse};
+use crate::dto::{
+    ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
+    ProjectSubjectGrantResponse,
+};
 use crate::rpc::ApiError;
 
 #[derive(Deserialize)]
@@ -132,9 +135,10 @@ pub async fn get_project(
         .await?;
     let stories = state.repos.story_repo.list_by_project(project_id).await?;
 
-    Ok(Json(ProjectDetailResponse::new(
-        project.clone(),
-        resolve_project_access(state.as_ref(), &current_user, &project).await?,
+    let project_response =
+        project_response_for_user(state.as_ref(), &current_user, project).await?;
+    Ok(Json(ProjectDetailResponse::from_parts(
+        project_response,
         workspaces,
         stories,
     )))
@@ -609,5 +613,23 @@ async fn project_response_for_user(
     project: Project,
 ) -> Result<ProjectResponse, ApiError> {
     let access = resolve_project_access(state, current_user, &project).await?;
-    Ok(ProjectResponse::new(project, access))
+    Ok(ProjectResponse::from_project(
+        project,
+        project_access_response(access),
+    ))
+}
+
+fn project_access_response(
+    access: agentdash_application::project::ProjectAuthorization,
+) -> ProjectAccessSummaryResponse {
+    ProjectAccessSummaryResponse {
+        role: access
+            .role
+            .map(agentdash_contracts::core::ProjectRole::from),
+        can_view: access.can_view_project(),
+        can_edit: access.can_edit_project(),
+        can_manage_sharing: access.can_manage_project_sharing(),
+        via_admin_bypass: access.via_admin_bypass,
+        via_template_visibility: access.via_template_visibility,
+    }
 }

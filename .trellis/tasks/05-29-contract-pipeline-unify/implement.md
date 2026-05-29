@@ -9,19 +9,20 @@
 
 ## Phase 1: Core DTOs Into Contracts
 
-- [ ] 在 `agentdash-contracts` 增加 `project` / `story` / `task` / `workspace` contract DTO。
-- [ ] 注册 `generate_ts.rs`，让上述 DTO 生成到 `packages/app-web/src/generated/*-contracts.ts`。
-- [ ] API handler 改用 contract response 类型，删除 `crates/agentdash-api/src/dto` 中对应重复 response。
-- [ ] Project access 的 application mapping 保留在 API 层 helper 中，避免 contract crate 依赖 application。
-- [ ] 运行 `cargo fmt`。
-- [ ] 运行 `cargo check -p agentdash-contracts -p agentdash-api`。
+- [x] 在 `agentdash-contracts` 增加 `project` / `story` / `task` / `workspace` contract DTO。
+- [x] 为 core DTO 涉及的 domain enum/value object 建立 contract wire DTO，并使用穷尽映射，避免 domain 引用 contract 或新增 domain `TS` derive。
+- [x] 注册 `generate_ts.rs`，让上述 DTO 生成到 `packages/app-web/src/generated/core-contracts.ts`。
+- [x] API handler 改用 contract response 类型，删除 `crates/agentdash-api/src/dto` 中对应重复 response。
+- [x] Project access 的 application mapping 保留在 API 层 helper 中，避免 contract crate 依赖 application。
+- [x] 运行 `cargo fmt`。
+- [x] 运行 `cargo check -p agentdash-contracts -p agentdash-api`。
 
 ## Phase 2: Frontend Type Single Source
 
-- [ ] 运行 `pnpm run contracts:generate`，提交 generated TS。
-- [ ] 删除 `packages/app-web/src/types/index.ts` 中与 generated 重复的 Project / Workspace / Story / Task wire 类型。
-- [ ] 修正前端 imports，让跨层 DTO 从 `src/generated/*` 或 re-export 入口读取。
-- [ ] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
+- [x] 运行 `pnpm run contracts:generate`，提交 generated TS。
+- [x] 删除 `packages/app-web/src/types/index.ts` 中与 generated 重复的 Project / Workspace / Story / Task wire 类型。
+- [x] 修正前端 imports，让跨层 DTO 从 `src/generated/*` 或 re-export 入口读取。
+- [x] 运行 `pnpm -C packages/app-web exec tsc --noEmit`。
 
 ## Phase 3: Mapper Removal
 
@@ -46,7 +47,7 @@
 
 ## Phase 6: Gate And Spec
 
-- [ ] 根 `package.json` 的默认 `check` 链路包含 `contracts:check`。
+- [x] 根 `package.json` 的默认 `check` 链路包含 `contracts:check`。
 - [ ] 更新 cross-layer/frontend spec，记录内部 API 信任 generated wire 的原因和 mapper 适用边界。
 - [ ] 运行 `pnpm run contracts:check`。
 - [ ] 运行 `cargo check --workspace`。

@@ -28,9 +28,12 @@
   - `c2fb8f78 refactor(error): 统一后端错误模型并清理 stringly 映射`
   - `8f1d232d docs(task): 归档错误模型统一子任务`
 - 当前待处理：
-  - `contract-pipeline-unify` 的 PRD 已存在，但缺少复杂任务必需的 `design.md` / `implement.md`。
-  - 当前 spec 仍描述前端 service mapper 做 `unknown -> typed object` 校验；本 child 已拍板改为内部端点信任 generated wire，因此实现阶段必须同步更新 cross-layer / frontend spec。
-  - 仓库未发现 `.github` CI 配置；契约 drift gate 先落到根 `package.json` 的 `check` 链路和 `pnpm run contracts:check`，后续若补 CI 则复用该脚本。
+  - `contract-pipeline-unify` 已完成规划修正和第一批 core DTO 迁移。
+  - `Task/Story/Workspace/Project` response 已进入 `agentdash-contracts::core`，前端生成 `core-contracts.ts`。
+  - API 旧 `dto/project.rs`、`dto/story.rs`、`dto/task.rs`、`dto/workspace.rs` 已删除，route 通过 contract response 输出。
+  - `packages/app-web/src/types/index.ts` 的 Project / Workspace / Story / Task wire 类型改为 generated alias，手写 core interface/type grep 已清零。
+  - 根 `package.json` 默认 `check` 链路已加入 `contracts:check`。
+  - 当前 spec 仍描述前端 service mapper 做 `unknown -> typed object` 校验；本 child 已拍板改为内部端点信任 generated wire，因此后续 mapper cleanup 与 spec 同步仍需完成。
 
 ## 全程推进队列
 
@@ -38,7 +41,7 @@
 |---:|---|---|---|
 | 0 | `05-29-quickfix-swarm` | 已归档 | archive 中 task completed；quickfix commit 已存在 |
 | 1 | `05-29-error-model-unify` | 已归档 | 提交 `c2fb8f78`；归档提交 `8f1d232d`；本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
-| 2 | `05-29-contract-pipeline-unify` | 进行中：补规划后实现 | `Task/Story/Workspace/Project` 进入 contracts；前端手写类型删除；`contracts:check` 通过；mapper/spec 冲突按“前端信任 wire”同步落 spec |
+| 2 | `05-29-contract-pipeline-unify` | 进行中：core DTO 已迁移 | `Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`contracts:check` / API cargo check / app-web tsc 通过；待 mapper 删除、JsonValue 单源、mirror cleanup、spec sync |
 | 3 | `05-29-mcp-direct-connection-pool` | 待 design | `direct.rs` 每次 connect/cancel 路径消除；连接池失效/重连策略有测试或说明 |
 | 4 | `05-29-vfs-dedup` | 待执行 | VFS dispatch 单一 helper；patch executor 单份；`MountProvider` 拆 trait；VFS `to_string()` 抹平显著收敛 |
 | 5 | `05-29-infra-residual` | 待 error-model | sqlite 后端移除；TIMESTAMPTZ migration；session port 错误类型化；DB spec 同步当前决策 |
@@ -63,10 +66,10 @@
 
 ## 当前 child 下一步
 
-1. 进入实现第一批：core DTO 进入 `agentdash-contracts`，API 改用 contract response。
-2. 注册 `generate_ts.rs` 并生成 TS contract。
-3. 删除前端 `types/index.ts` 中与 generated 重复的 Project / Workspace / Story / Task wire 类型。
-4. 运行 `cargo check -p agentdash-contracts -p agentdash-api` 与 `pnpm -C packages/app-web exec tsc --noEmit`。
+1. 提交 `contract-pipeline-unify` 第一批 core DTO 迁移。
+2. 继续 Phase 3：删除 `extensionRuntime.ts` / `session.ts` / `workflow.ts` 中 generated DTO 的 identity mapper，保留真正 view model 转换。
+3. 继续 Phase 4：generator 生成共享 `JsonValue`，让 generated 目录只剩 1 个 `export type JsonValue`。
+4. 继续 Phase 5/6：删除 contracts 纯镜像副本，更新 spec，并跑完整 child gates。
 
 ## 全局验收 Gates
 

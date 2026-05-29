@@ -6,22 +6,19 @@ mod canvas;
 mod extension_management;
 mod extension_runtime;
 mod identity_directory;
-mod project;
 mod shared_library;
 mod skill_asset;
-mod story;
-mod task;
 mod workflow;
-mod workspace;
 
+pub use agentdash_contracts::core::{
+    ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
+    ProjectSubjectGrantResponse, StoryResponse, TaskResponse, WorkspaceBindingResponse,
+    WorkspaceResponse,
+};
 pub use canvas::*;
 pub use extension_management::*;
 pub use extension_runtime::*;
 pub use identity_directory::*;
-pub use project::*;
 pub use shared_library::*;
 pub use skill_asset::*;
-pub use story::*;
-pub use task::*;
 pub use workflow::*;
-pub use workspace::*;

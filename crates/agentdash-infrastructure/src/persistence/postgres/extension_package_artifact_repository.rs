@@ -9,7 +9,7 @@ use agentdash_domain::extension_package::{
 };
 use agentdash_domain::shared_library::ExtensionTemplatePayload;
 
-use super::{parse_pg_timestamp_checked, sql_err_for};
+use super::sql_err_for;
 
 #[derive(Clone)]
 pub struct PostgresExtensionPackageArtifactRepository {
@@ -51,8 +51,8 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
         .bind(&artifact.manifest_digest)
         .bind(Json(manifest))
         .bind(artifact.byte_size)
-        .bind(artifact.created_at.to_rfc3339())
-        .bind(artifact.updated_at.to_rfc3339())
+        .bind(artifact.created_at)
+        .bind(artifact.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|error| sql_err_for("extension_package_artifacts", error))?;
@@ -153,18 +153,12 @@ fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifac
         byte_size: row
             .try_get("byte_size")
             .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        created_at: parse_pg_timestamp_checked(
-            row.try_get::<String, _>("created_at")
-                .map_err(|error| sql_err_for("extension_package_artifacts", error))?
-                .as_str(),
-            "extension_package_artifacts.created_at",
-        )?,
-        updated_at: parse_pg_timestamp_checked(
-            row.try_get::<String, _>("updated_at")
-                .map_err(|error| sql_err_for("extension_package_artifacts", error))?
-                .as_str(),
-            "extension_package_artifacts.updated_at",
-        )?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        updated_at: row
+            .try_get("updated_at")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
     };
     artifact.package_ref().validate()?;
     Ok(artifact)

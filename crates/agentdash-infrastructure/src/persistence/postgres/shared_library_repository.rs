@@ -45,8 +45,8 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(&asset.payload_digest)
         .bind(asset.deprecated)
         .bind(Json(asset.payload.clone()))
-        .bind(asset.created_at.to_rfc3339())
-        .bind(asset.updated_at.to_rfc3339())
+        .bind(asset.created_at)
+        .bind(asset.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|error| sql_err_for("library_assets", error))?;
@@ -123,7 +123,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(&asset.payload_digest)
         .bind(asset.deprecated)
         .bind(Json(asset.payload.clone()))
-        .bind(asset.updated_at.to_rfc3339())
+        .bind(asset.updated_at)
         .bind(asset.id.to_string())
         .execute(&self.pool)
         .await
@@ -182,8 +182,8 @@ struct LibraryAssetRow {
     payload_digest: String,
     deprecated: bool,
     payload: Json<serde_json::Value>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<LibraryAssetRow> for LibraryAsset {
@@ -213,14 +213,8 @@ impl TryFrom<LibraryAssetRow> for LibraryAsset {
             payload_digest: row.payload_digest,
             deprecated: row.deprecated,
             payload,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "library_assets.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "library_assets.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

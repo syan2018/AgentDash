@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS extension_package_artifacts (
     manifest_digest TEXT NOT NULL,
     manifest JSONB NOT NULL,
     byte_size BIGINT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT extension_package_artifacts_digest_format CHECK (archive_digest LIKE 'sha256:%'),
     CONSTRAINT extension_package_artifacts_manifest_digest_format CHECK (manifest_digest LIKE 'sha256:%'),
     CONSTRAINT extension_package_artifacts_unique_project_digest UNIQUE (project_id, archive_digest)

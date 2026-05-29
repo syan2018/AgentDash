@@ -20,7 +20,7 @@ pub async fn append_state_change(
     .bind(kind_to_db_value(&kind)?)
     .bind(payload.to_string())
     .bind(backend_id)
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(chrono::Utc::now())
     .execute(pool)
     .await
     .map_err(super::db_err)?;
@@ -45,7 +45,7 @@ pub async fn append_state_change_in_tx(
     .bind(kind_to_db_value(&kind)?)
     .bind(payload.to_string())
     .bind(backend_id)
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(chrono::Utc::now())
     .execute(&mut **tx)
     .await
     .map_err(super::db_err)?;
@@ -127,7 +127,7 @@ struct StateChangeRow {
     kind: String,
     payload: String,
     backend_id: Option<String>,
-    created_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<StateChangeRow> for StateChange {
@@ -154,10 +154,7 @@ impl TryFrom<StateChangeRow> for StateChange {
                     Some(trimmed.to_string())
                 }
             }),
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "state_changes.created_at",
-            )?,
+            created_at: row.created_at,
         })
     }
 }

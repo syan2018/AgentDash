@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS project_filespaces (
     display_name TEXT NOT NULL,
     description TEXT,
     installed_source TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE(project_id, key)
 );
 
@@ -23,8 +23,8 @@ CREATE TABLE IF NOT EXISTS project_vfs_mount_bindings (
     source TEXT NOT NULL,
     capabilities TEXT NOT NULL,
     default_write BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE(project_id, mount_id)
 );
 

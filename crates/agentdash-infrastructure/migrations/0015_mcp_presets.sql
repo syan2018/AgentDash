@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS mcp_presets (
     server_decl TEXT NOT NULL,
     source TEXT NOT NULL,
     builtin_key TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT mcp_presets_source_check CHECK (source IN ('builtin', 'user')),
     CONSTRAINT mcp_presets_builtin_key_consistency CHECK (
         (source = 'builtin' AND builtin_key IS NOT NULL)

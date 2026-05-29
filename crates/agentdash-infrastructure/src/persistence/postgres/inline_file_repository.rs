@@ -32,7 +32,7 @@ struct InlineFileRow {
     text_content: Option<String>,
     binary_content: Option<Vec<u8>>,
     size_bytes: i64,
-    updated_at: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<InlineFileRow> for InlineFile {
@@ -90,10 +90,7 @@ impl TryFrom<InlineFileRow> for InlineFile {
                     row.size_bytes
                 ))
             })?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "inline_fs_files.updated_at",
-            )?,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -172,7 +169,7 @@ impl InlineFileRepository for PostgresInlineFileRepository {
     }
 
     async fn upsert_file(&self, file: &InlineFile) -> Result<(), DomainError> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
 
         sqlx::query(
             r#"
@@ -214,7 +211,7 @@ impl InlineFileRepository for PostgresInlineFileRepository {
             return Ok(());
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         let sizes = files
             .iter()
             .map(size_bytes_i64)

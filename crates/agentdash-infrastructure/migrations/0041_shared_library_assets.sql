@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS library_assets (
     payload_digest TEXT NOT NULL,
     deprecated BOOLEAN NOT NULL DEFAULT FALSE,
     payload JSONB NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT library_assets_type_check CHECK (
         asset_type IN ('agent_template', 'mcp_server_template', 'workflow_template', 'skill_template')
     ),

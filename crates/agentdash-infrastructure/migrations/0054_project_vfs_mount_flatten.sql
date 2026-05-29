@@ -11,8 +11,8 @@ CREATE TABLE IF NOT EXISTS project_vfs_mounts (
     default_write BOOLEAN NOT NULL DEFAULT FALSE,
     installed_source TEXT,
     content TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE(project_id, mount_id)
 );
 

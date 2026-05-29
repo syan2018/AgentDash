@@ -49,8 +49,8 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(task_count)
         .bind(serde_json::to_string(&story.context)?)
         .bind(tasks_json)
-        .bind(story.created_at.to_rfc3339())
-        .bind(story.updated_at.to_rfc3339())
+        .bind(story.created_at)
+        .bind(story.updated_at)
         .execute(&mut *tx)
         .await
         .map_err(super::db_err)?;
@@ -291,8 +291,8 @@ struct StoryRow {
     context: String,
     /// JSONB 列 → 直接由 sqlx 反序列化为 serde_json::Value
     tasks: sqlx::types::Json<serde_json::Value>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<StoryRow> for Story {
@@ -341,8 +341,8 @@ impl TryFrom<StoryRow> for Story {
             task_count: effective_task_count,
             context,
             tasks,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "stories.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "stories.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -417,7 +417,7 @@ async fn update_story_row_in_tx(
     .bind(task_count)
     .bind(serde_json::to_string(&story.context)?)
     .bind(tasks_json)
-    .bind(story.updated_at.to_rfc3339())
+    .bind(story.updated_at)
     .bind(story.id.to_string())
     .execute(&mut **tx)
     .await

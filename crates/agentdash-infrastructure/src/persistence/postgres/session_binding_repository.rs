@@ -70,7 +70,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(binding.owner_type.to_string())
         .bind(binding.owner_id.to_string())
         .bind(&binding.label)
-        .bind(binding.created_at.to_rfc3339())
+        .bind(binding.created_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -196,7 +196,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
             owner_type: String,
             owner_id: String,
             label: String,
-            created_at: String,
+            created_at: chrono::DateTime<chrono::Utc>,
             owner_title: Option<String>,
             story_id: Option<String>,
             story_title: Option<String>,
@@ -268,10 +268,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
                         id: row.owner_id.clone(),
                     })?,
                     label: row.label,
-                    created_at: super::parse_pg_timestamp_checked(
-                        &row.created_at,
-                        "session_bindings.created_at",
-                    )?,
+                    created_at: row.created_at,
                 };
                 let story_id = row
                     .story_id
@@ -303,7 +300,7 @@ struct BindingRow {
     owner_type: String,
     owner_id: String,
     label: String,
-    created_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<BindingRow> for SessionBinding {
@@ -333,10 +330,7 @@ impl TryFrom<BindingRow> for SessionBinding {
                 id: row.owner_id.clone(),
             })?,
             label: row.label,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "session_bindings.created_at",
-            )?,
+            created_at: row.created_at,
         })
     }
 }
@@ -358,7 +352,7 @@ mod tests {
                 project_id TEXT NOT NULL,
                 story_id TEXT NOT NULL,
                 title TEXT,
-                updated_at TEXT
+                updated_at TIMESTAMPTZ
             );
             CREATE TABLE stories (
                 id TEXT PRIMARY KEY,

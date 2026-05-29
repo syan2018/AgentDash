@@ -53,7 +53,7 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
             .bind(installed_source_version(&workflow.installed_source))
             .bind(installed_source_digest(&workflow.installed_source))
             .bind(installed_at(&workflow.installed_source))
-            .bind(workflow.created_at.to_rfc3339()).bind(workflow.updated_at.to_rfc3339())
+            .bind(workflow.created_at).bind(workflow.updated_at)
             .execute(&self.pool).await.map_err(db_err)?;
         Ok(())
     }
@@ -141,7 +141,7 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
             .bind(installed_source_version(&workflow.installed_source))
             .bind(installed_source_digest(&workflow.installed_source))
             .bind(installed_at(&workflow.installed_source))
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(chrono::Utc::now())
             .bind(workflow.id.to_string()).execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "workflow_definition", &workflow.id)
     }
@@ -178,8 +178,8 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
         .bind(installed_source_version(&lifecycle.installed_source))
         .bind(installed_source_digest(&lifecycle.installed_source))
         .bind(installed_at(&lifecycle.installed_source))
-        .bind(lifecycle.created_at.to_rfc3339())
-        .bind(lifecycle.updated_at.to_rfc3339())
+        .bind(lifecycle.created_at)
+        .bind(lifecycle.updated_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -251,7 +251,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
             .bind(installed_source_version(&lifecycle.installed_source))
             .bind(installed_source_digest(&lifecycle.installed_source))
             .bind(installed_at(&lifecycle.installed_source))
-            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(chrono::Utc::now())
             .bind(lifecycle.id.to_string())
             .execute(&self.pool)
             .await
@@ -316,7 +316,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 }
                 workflow.id = parse_uuid(&existing.id, "workflow_definition")?;
                 workflow.version = existing.version + 1;
-                workflow.created_at = parse_time(&existing.created_at)?;
+                workflow.created_at = existing.created_at;
                 workflow.updated_at = chrono::Utc::now();
                 sqlx::query("UPDATE workflow_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,library_asset_id=$9,source_ref=$10,source_version=$11,source_digest=$12,installed_at=$13,updated_at=$14 WHERE id=$15")
                     .bind(workflow.project_id.to_string())
@@ -332,7 +332,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                     .bind(installed_source_version(&workflow.installed_source))
                     .bind(installed_source_digest(&workflow.installed_source))
                     .bind(installed_at(&workflow.installed_source))
-                    .bind(workflow.updated_at.to_rfc3339())
+                    .bind(workflow.updated_at)
                     .bind(workflow.id.to_string())
                     .execute(&mut *tx)
                     .await
@@ -353,8 +353,8 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                     .bind(installed_source_version(&workflow.installed_source))
                     .bind(installed_source_digest(&workflow.installed_source))
                     .bind(installed_at(&workflow.installed_source))
-                    .bind(workflow.created_at.to_rfc3339())
-                    .bind(workflow.updated_at.to_rfc3339())
+                    .bind(workflow.created_at)
+                    .bind(workflow.updated_at)
                     .execute(&mut *tx)
                     .await
                     .map_err(db_err)?;
@@ -381,7 +381,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             }
             lifecycle.id = parse_uuid(&existing.id, "activity_lifecycle_definition")?;
             lifecycle.version = existing.version + 1;
-            lifecycle.created_at = parse_time(&existing.created_at)?;
+            lifecycle.created_at = existing.created_at;
             lifecycle.updated_at = chrono::Utc::now();
             sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_activity_key=$8,activities=$9,transitions=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
                 .bind(lifecycle.project_id.to_string())
@@ -399,7 +399,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 .bind(installed_source_version(&lifecycle.installed_source))
                 .bind(installed_source_digest(&lifecycle.installed_source))
                 .bind(installed_at(&lifecycle.installed_source))
-                .bind(lifecycle.updated_at.to_rfc3339())
+                .bind(lifecycle.updated_at)
                 .bind(lifecycle.id.to_string())
                 .execute(&mut *tx)
                 .await
@@ -424,8 +424,8 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             .bind(installed_source_version(&lifecycle.installed_source))
             .bind(installed_source_digest(&lifecycle.installed_source))
             .bind(installed_at(&lifecycle.installed_source))
-            .bind(lifecycle.created_at.to_rfc3339())
-            .bind(lifecycle.updated_at.to_rfc3339())
+            .bind(lifecycle.created_at)
+            .bind(lifecycle.updated_at)
             .execute(&mut *tx)
             .await
             .map_err(db_err)?;
@@ -458,8 +458,8 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         .bind(claim.status.as_str())
         .bind(&claim.idempotency_key)
         .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.created_at.to_rfc3339())
-        .bind(claim.updated_at.to_rfc3339())
+        .bind(claim.created_at)
+        .bind(claim.updated_at)
         .fetch_one(&self.pool)
         .await
         .map_err(db_err)?
@@ -503,7 +503,7 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         )
         .bind(claim.status.as_str())
         .bind(serialize_executor_run_ref(&claim.executor_run_ref)?)
-        .bind(claim.updated_at.to_rfc3339())
+        .bind(claim.updated_at)
         .bind(claim.claim_id.to_string())
         .execute(&self.pool)
         .await
@@ -524,8 +524,8 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
             "UPDATE activity_execution_claims SET status='abandoned',updated_at=$1 \
              WHERE status='claiming' AND updated_at < $2 RETURNING {ACTIVITY_CLAIM_COLS}"
         ))
-        .bind(now.to_rfc3339())
-        .bind(cutoff.to_rfc3339())
+        .bind(now)
+        .bind(cutoff)
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?
@@ -549,9 +549,9 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(serialize_activity_state(&run.activity_state)?)
-        .bind(run.created_at.to_rfc3339())
-        .bind(run.updated_at.to_rfc3339())
-        .bind(run.last_activity_at.to_rfc3339())
+        .bind(run.created_at)
+        .bind(run.updated_at)
+        .bind(run.last_activity_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -621,7 +621,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(serialize_activity_state(&run.activity_state)?)
-            .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())
+            .bind(chrono::Utc::now()).bind(run.last_activity_at).bind(run.id.to_string())
             .execute(&self.pool).await.map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "lifecycle_run", &run.id)
     }
@@ -657,7 +657,7 @@ fn ensure_rows_affected(
 struct ExistingProjectResourceRow {
     id: String,
     version: i32,
-    created_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -675,9 +675,9 @@ struct WorkflowDefinitionRow {
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
-    created_at: String,
-    updated_at: String,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
@@ -703,8 +703,8 @@ impl TryFrom<WorkflowDefinitionRow> for WorkflowDefinition {
             )?,
             version: row.version,
             contract: serde_json::from_str(&row.contract)?,
-            created_at: parse_time(&row.created_at)?,
-            updated_at: parse_time(&row.updated_at)?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -726,9 +726,9 @@ struct ActivityLifecycleDefinitionRow {
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
-    created_at: String,
-    updated_at: String,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ActivityLifecycleDefinitionRow> for ActivityLifecycleDefinition {
@@ -756,8 +756,8 @@ impl TryFrom<ActivityLifecycleDefinitionRow> for ActivityLifecycleDefinition {
             entry_activity_key: row.entry_activity_key,
             activities: parse_json_column(&row.activities, "lifecycle_definitions.activities")?,
             transitions: parse_json_column(&row.transitions, "lifecycle_definitions.transitions")?,
-            created_at: parse_time(&row.created_at)?,
-            updated_at: parse_time(&row.updated_at)?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -771,9 +771,9 @@ struct LifecycleRunRow {
     status: String,
     execution_log: String,
     activity_state: Option<String>,
-    created_at: String,
-    updated_at: String,
-    last_activity_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    last_activity_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<LifecycleRunRow> for LifecycleRun {
@@ -810,9 +810,9 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             active_node_keys,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,
             activity_state,
-            created_at: parse_time(&row.created_at)?,
-            updated_at: parse_time(&row.updated_at)?,
-            last_activity_at: parse_time(&row.last_activity_at)?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            last_activity_at: row.last_activity_at,
         })
     }
 }
@@ -827,8 +827,8 @@ struct ActivityExecutionClaimRow {
     status: String,
     idempotency_key: String,
     executor_run_ref: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
@@ -862,8 +862,8 @@ impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
             status,
             idempotency_key: row.idempotency_key,
             executor_run_ref,
-            created_at: parse_time(&row.created_at)?,
-            updated_at: parse_time(&row.updated_at)?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -881,10 +881,6 @@ fn parse_json_column<T: serde::de::DeserializeOwned>(
 ) -> Result<T, DomainError> {
     serde_json::from_str(raw)
         .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
-}
-
-fn parse_time(raw: &str) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
-    super::parse_pg_timestamp_checked(raw, "workflow.timestamp")
 }
 
 fn serialize_executor_run_ref(
@@ -925,10 +921,8 @@ fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str
     source.as_ref().map(|source| source.source_digest.as_str())
 }
 
-fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
-    source
-        .as_ref()
-        .map(|source| source.installed_at.to_rfc3339())
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTime<chrono::Utc>> {
+    source.as_ref().map(|source| source.installed_at)
 }
 
 fn parse_installed_source(
@@ -936,7 +930,7 @@ fn parse_installed_source(
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Option<InstalledAssetSource>, DomainError> {
     let Some(library_asset_id) = library_asset_id else {
         return Ok(None);
@@ -954,12 +948,9 @@ fn parse_installed_source(
         source_digest: source_digest.ok_or_else(|| {
             DomainError::InvalidConfig(String::from("installed_source.source_digest 为空"))
         })?,
-        installed_at: super::parse_pg_timestamp_checked(
-            installed_at.as_deref().ok_or_else(|| {
-                DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
-            })?,
-            "installed_source.installed_at",
-        )?,
+        installed_at: installed_at.ok_or_else(|| {
+            DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
+        })?,
     }))
 }
 
@@ -977,7 +968,7 @@ mod workflow_claim_tests {
     fn workflow_claim_row_parses_executor_run_ref() {
         let run_id = uuid::Uuid::new_v4();
         let claim_id = uuid::Uuid::new_v4();
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         let row = ActivityExecutionClaimRow {
             claim_id: claim_id.to_string(),
             run_id: run_id.to_string(),

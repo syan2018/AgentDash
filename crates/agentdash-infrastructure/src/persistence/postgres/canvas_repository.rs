@@ -180,8 +180,8 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
         .bind(serde_json::to_string(&canvas.sandbox_config)?)
-        .bind(canvas.created_at.to_rfc3339())
-        .bind(canvas.updated_at.to_rfc3339())
+        .bind(canvas.created_at)
+        .bind(canvas.updated_at)
         .execute(&mut *tx)
         .await
         .map_err(super::db_err)?;
@@ -307,7 +307,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(&canvas.description)
         .bind(&canvas.entry_file)
         .bind(serde_json::to_string(&canvas.sandbox_config)?)
-        .bind(canvas.updated_at.to_rfc3339())
+        .bind(canvas.updated_at)
         .bind(canvas.id.to_string())
         .execute(&mut *tx)
         .await
@@ -355,8 +355,8 @@ struct CanvasRow {
     description: String,
     entry_file: String,
     sandbox_config: String,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -403,8 +403,8 @@ impl CanvasRow {
             sandbox_config,
             files,
             bindings,
-            created_at: super::parse_pg_timestamp_checked(&self.created_at, "canvases.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&self.updated_at, "canvases.updated_at")?,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         })
     }
 }

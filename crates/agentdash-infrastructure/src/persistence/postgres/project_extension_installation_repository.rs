@@ -9,7 +9,7 @@ use agentdash_domain::shared_library::{
     ProjectExtensionInstallationRepository,
 };
 
-use super::{parse_pg_timestamp_checked, sql_err_for};
+use super::sql_err_for;
 
 #[derive(Clone)]
 pub struct PostgresProjectExtensionInstallationRepository {
@@ -72,8 +72,8 @@ impl ProjectExtensionInstallationRepository for PostgresProjectExtensionInstalla
         .bind(artifact_storage_ref(&installation.package_artifact))
         .bind(artifact_archive_digest(&installation.package_artifact))
         .bind(artifact_manifest_digest(&installation.package_artifact))
-        .bind(installation.created_at.to_rfc3339())
-        .bind(installation.updated_at.to_rfc3339())
+        .bind(installation.created_at)
+        .bind(installation.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|error| sql_err_for("project_extension_installations", error))?;
@@ -112,7 +112,7 @@ impl ProjectExtensionInstallationRepository for PostgresProjectExtensionInstalla
         .bind(artifact_storage_ref(&installation.package_artifact))
         .bind(artifact_archive_digest(&installation.package_artifact))
         .bind(artifact_manifest_digest(&installation.package_artifact))
-        .bind(installation.updated_at.to_rfc3339())
+        .bind(installation.updated_at)
         .bind(installation.id.to_string())
         .execute(&self.pool)
         .await
@@ -236,18 +236,12 @@ fn row_to_installation(
         manifest,
         installed_source,
         package_artifact,
-        created_at: parse_pg_timestamp_checked(
-            row.try_get::<String, _>("created_at")
-                .map_err(|error| sql_err_for("project_extension_installations", error))?
-                .as_str(),
-            "project_extension_installations.created_at",
-        )?,
-        updated_at: parse_pg_timestamp_checked(
-            row.try_get::<String, _>("updated_at")
-                .map_err(|error| sql_err_for("project_extension_installations", error))?
-                .as_str(),
-            "project_extension_installations.updated_at",
-        )?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|error| sql_err_for("project_extension_installations", error))?,
+        updated_at: row
+            .try_get("updated_at")
+            .map_err(|error| sql_err_for("project_extension_installations", error))?,
     })
 }
 
@@ -269,10 +263,10 @@ fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str
     source.as_ref().map(|source| source.source_digest.as_str())
 }
 
-fn installed_source_installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
-    source
-        .as_ref()
-        .map(|source| source.installed_at.to_rfc3339())
+fn installed_source_installed_at(
+    source: &Option<InstalledAssetSource>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    source.as_ref().map(|source| source.installed_at)
 }
 
 fn package_artifact_id(artifact: &Option<ExtensionPackageArtifactRef>) -> Option<String> {
@@ -335,16 +329,18 @@ fn row_to_installed_source(
     let source_ref = required_optional_column(row, "installed_source_ref")?;
     let source_version = required_optional_column(row, "installed_source_version")?;
     let source_digest = required_optional_column(row, "installed_source_digest")?;
-    let installed_at = required_optional_column(row, "installed_at")?;
+    let installed_at: Option<chrono::DateTime<chrono::Utc>> = row
+        .try_get("installed_at")
+        .map_err(|error| sql_err_for("project_extension_installations", error))?;
+    let installed_at = installed_at.ok_or_else(|| {
+        DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
+    })?;
     Ok(Some(InstalledAssetSource {
         library_asset_id: parse_uuid_value(&library_asset_id, "installed_library_asset_id")?,
         source_ref,
         source_version,
         source_digest,
-        installed_at: parse_pg_timestamp_checked(
-            &installed_at,
-            "project_extension_installations.installed_at",
-        )?,
+        installed_at: installed_at,
     }))
 }
 

@@ -64,10 +64,10 @@ impl PostgresWorkspaceRepository {
                 .push_bind(binding.root_ref.trim().to_string())
                 .push_bind(binding_status_to_str(&binding.status))
                 .push_bind(detected_facts)
-                .push_bind(binding.last_verified_at.map(|value| value.to_rfc3339()))
+                .push_bind(binding.last_verified_at.map(|value| value))
                 .push_bind(binding.priority)
-                .push_bind(binding.created_at.to_rfc3339())
-                .push_bind(binding.updated_at.to_rfc3339());
+                .push_bind(binding.created_at)
+                .push_bind(binding.updated_at);
         });
         builder
             .build()
@@ -119,8 +119,8 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
         .bind(mount_caps)
-        .bind(workspace.created_at.to_rfc3339())
-        .bind(workspace.updated_at.to_rfc3339())
+        .bind(workspace.created_at)
+        .bind(workspace.updated_at)
         .execute(&mut *tx)
         .await
         .map_err(super::db_err)?;
@@ -216,7 +216,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
         .bind(mount_caps)
-        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now())
         .bind(workspace.id.to_string())
         .execute(&mut *tx)
         .await
@@ -285,10 +285,10 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         .try_get::<String, _>("status")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.status: {e}")))?;
     let created_at = row
-        .try_get::<String, _>("created_at")
+        .try_get::<DateTime<Utc>, _>("created_at")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.created_at: {e}")))?;
     let updated_at = row
-        .try_get::<String, _>("updated_at")
+        .try_get::<DateTime<Utc>, _>("updated_at")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.updated_at: {e}")))?;
     let default_binding_id = row
         .try_get::<Option<String>, _>("default_binding_id")
@@ -319,8 +319,8 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         status: str_to_workspace_status(&status)?,
         bindings: Vec::new(),
         mount_capabilities,
-        created_at: parse_datetime(&created_at, "workspaces.created_at")?,
-        updated_at: parse_datetime(&updated_at, "workspaces.updated_at")?,
+        created_at,
+        updated_at,
     })
 }
 
@@ -355,36 +355,24 @@ fn workspace_binding_from_row(
             "workspace_bindings.detected_facts",
         )?,
         last_verified_at: row
-            .try_get::<Option<String>, _>("last_verified_at")
+            .try_get::<Option<DateTime<Utc>>, _>("last_verified_at")
             .map_err(|e| {
                 DomainError::InvalidConfig(format!("workspace_bindings.last_verified_at: {e}"))
-            })?
-            .map(|value| parse_datetime(&value, "workspace_bindings.last_verified_at"))
-            .transpose()?,
+            })?,
         priority: row
             .try_get::<i32, _>("priority")
             .map_err(|e| DomainError::InvalidConfig(format!("workspace_bindings.priority: {e}")))?,
-        created_at: parse_datetime(
-            &row.try_get::<String, _>("created_at").map_err(|e| {
-                DomainError::InvalidConfig(format!("workspace_bindings.created_at: {e}"))
-            })?,
-            "workspace_bindings.created_at",
-        )?,
-        updated_at: parse_datetime(
-            &row.try_get::<String, _>("updated_at").map_err(|e| {
-                DomainError::InvalidConfig(format!("workspace_bindings.updated_at: {e}"))
-            })?,
-            "workspace_bindings.updated_at",
-        )?,
+        created_at: row.try_get::<DateTime<Utc>, _>("created_at").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.created_at: {e}"))
+        })?,
+        updated_at: row.try_get::<DateTime<Utc>, _>("updated_at").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.updated_at: {e}"))
+        })?,
     })
 }
 
 fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound { entity, id: value })
-}
-
-fn parse_datetime(value: &str, field: &str) -> Result<DateTime<Utc>, DomainError> {
-    super::parse_pg_timestamp_checked(value, field)
 }
 
 fn parse_json_value(raw: &str, field: &str) -> Result<Value, DomainError> {

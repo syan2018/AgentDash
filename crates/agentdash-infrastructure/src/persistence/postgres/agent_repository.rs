@@ -30,13 +30,13 @@ struct ProjectAgentRow {
     installed_source_ref: Option<String>,
     installed_source_version: Option<String>,
     installed_source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
     default_lifecycle_key: Option<String>,
     is_default_for_story: bool,
     is_default_for_task: bool,
     knowledge_enabled: bool,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ProjectAgentRow> for ProjectAgent {
@@ -63,14 +63,8 @@ impl TryFrom<ProjectAgentRow> for ProjectAgent {
             is_default_for_story: row.is_default_for_story,
             is_default_for_task: row.is_default_for_task,
             knowledge_enabled: row.knowledge_enabled,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "project_agents.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "project_agents.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -99,8 +93,8 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.is_default_for_story)
         .bind(agent.is_default_for_task)
         .bind(agent.knowledge_enabled)
-        .bind(agent.created_at.to_rfc3339())
-        .bind(agent.updated_at.to_rfc3339())
+        .bind(agent.created_at)
+        .bind(agent.updated_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -180,7 +174,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.is_default_for_story)
         .bind(agent.is_default_for_task)
         .bind(agent.knowledge_enabled)
-        .bind(agent.updated_at.to_rfc3339())
+        .bind(agent.updated_at)
         .bind(agent.id.to_string())
         .bind(agent.project_id.to_string())
         .execute(&self.pool)
@@ -234,10 +228,8 @@ fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str
     source.as_ref().map(|source| source.source_digest.as_str())
 }
 
-fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
-    source
-        .as_ref()
-        .map(|source| source.installed_at.to_rfc3339())
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTime<chrono::Utc>> {
+    source.as_ref().map(|source| source.installed_at)
 }
 
 fn parse_installed_source(
@@ -245,7 +237,7 @@ fn parse_installed_source(
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Option<InstalledAssetSource>, DomainError> {
     let Some(library_asset_id) = library_asset_id else {
         return Ok(None);
@@ -263,10 +255,9 @@ fn parse_installed_source(
             source_digest,
             "installed_source.source_digest",
         )?,
-        installed_at: super::parse_pg_timestamp_checked(
-            &required_installed_source_field(installed_at, "installed_source.installed_at")?,
-            "installed_source.installed_at",
-        )?,
+        installed_at: installed_at.ok_or_else(|| {
+            DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
+        })?,
     }))
 }
 

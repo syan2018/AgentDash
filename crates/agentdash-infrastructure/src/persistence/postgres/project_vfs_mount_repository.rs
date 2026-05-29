@@ -28,8 +28,8 @@ struct ProjectVfsMountRow {
     capabilities: String,
     installed_source: Option<String>,
     content: String,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ProjectVfsMountRow> for ProjectVfsMount {
@@ -48,14 +48,8 @@ impl TryFrom<ProjectVfsMountRow> for ProjectVfsMount {
                 "project_vfs_mounts.installed_source",
             )?,
             content: parse_json_column(&row.content, "project_vfs_mounts.content")?,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "project_vfs_mounts.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "project_vfs_mounts.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -86,8 +80,8 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
             &mount.content,
             "project_vfs_mounts.content",
         )?)
-        .bind(mount.created_at.to_rfc3339())
-        .bind(mount.updated_at.to_rfc3339())
+        .bind(mount.created_at)
+        .bind(mount.updated_at)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(format!("写入 project_vfs_mounts 失败: {e}")))?;
@@ -160,7 +154,7 @@ impl ProjectVfsMountRepository for PostgresProjectVfsMountRepository {
             &mount.content,
             "project_vfs_mounts.content",
         )?)
-        .bind(mount.updated_at.to_rfc3339())
+        .bind(mount.updated_at)
         .bind(mount.id.to_string())
         .bind(mount.project_id.to_string())
         .execute(&self.pool)

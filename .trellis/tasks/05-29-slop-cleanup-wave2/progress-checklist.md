@@ -6,7 +6,7 @@
 
 - 当前分支：`refactor/architecture-slop-cleanup`
 - 当前 active child：`05-29-infra-residual`
-- 当前 child 状态：`in_progress`（已完成阶段 3：Session persistence port 已类型化为 `SessionStoreError`；下一步执行 TIMESTAMPTZ migration 与 repository 时间类型）
+- 当前 child 状态：`in_progress`（已完成阶段 4：PostgreSQL timestamp 列与 repository bind/read 已切 `TIMESTAMPTZ` / `DateTime<Utc>`；下一步执行阶段 5 收尾、spec 复核与归档）
 - 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup` 已提交并归档；下一步推进 `infra-residual`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
@@ -48,7 +48,7 @@
 | 2 | `05-29-contract-pipeline-unify` | 已归档 | 提交 `0edb6833` / `5a5316c4` / `2dea9bf9` / `eb026433`；归档提交 `a4336c55`；`Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`JsonValue` 单源；mirror grep 清零；mapper 保留清单已写；spec 已同步；`contracts:check` / `cargo check --workspace` / app-web `tsc --noEmit` 通过 |
 | 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；归档提交 `93a64a05`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
 | 4 | `05-29-vfs-dedup` | 已归档 | 提交 `4d2e9105` / `05016cf0` / `b7db5bbc` / `6641d289`；归档提交 `c815b4ba`；provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
-| 5 | `05-29-infra-residual` | in_progress | 规划提交 `27cd34e7`；已拆分 sqlite 移除、SessionStoreError、TIMESTAMPTZ 三阶段；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；`cargo check -p agentdash-spi -p agentdash-infrastructure -p agentdash-application -p agentdash-api -p agentdash-local`、`cargo test -p agentdash-infrastructure session_repository` 通过；下一步执行 TIMESTAMPTZ |
+| 5 | `05-29-infra-residual` | in_progress | 规划提交 `27cd34e7`；已拆分 sqlite 移除、SessionStoreError、TIMESTAMPTZ 三阶段；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；历史 migrations 中 `*_at TEXT` 已改 `TIMESTAMPTZ`，新增 `0069_timestamp_columns_timestamptz.sql` 迁移已有开发库，repository bind/read 已改 `DateTime<Utc>`，`parse_pg_timestamp_checked` 删除，infra `to_rfc3339` grep 为 0；`cargo test -p agentdash-infrastructure`、`cargo check --workspace` 通过；下一步执行收尾与归档 |
 | 6 | `05-29-api-handler-thinning` | 待 error/contract/session | API handler repo 直调下沉；`session_use_cases` 迁 application；`Json<Value>` 和 inline DTO 清零 |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
 | 8 | `05-29-frontend-server-state-refactor` | 待执行 | server-state 真迁 react-query；active project 单源；跨 store 命令式耦合清理；目标 god component 拆分 |
@@ -70,10 +70,9 @@
 
 ## 当前 child 下一步
 
-1. 执行阶段 4：新增 migration，将 session 相关 TEXT timestamp 列转换为 `TIMESTAMPTZ`。
-2. 同步历史 migration 的 timestamp 列声明，让干净库与已有开发库收敛到同一 schema。
-3. 将 infrastructure repository bind/read 改为 `chrono::DateTime<Utc>`，删除 `parse_pg_timestamp_checked`。
-4. 运行 TIMESTAMPTZ 阶段 grep、migration up、`cargo check --workspace`。
+1. 执行阶段 5：复核 infra-residual PRD AC 与 spec 是否已同步。
+2. 归档 `05-29-infra-residual`，并提交归档状态。
+3. 根据子代理复核结果，优先补齐下一个待开工 child 的 `design.md` / `implement.md`，不要直接大改只有 PRD 的任务。
 
 ## 今日子代理可行性复核
 

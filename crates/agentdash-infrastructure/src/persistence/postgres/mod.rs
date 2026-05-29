@@ -65,48 +65,6 @@ pub(crate) async fn test_pg_pool(suite: &str) -> Option<sqlx::PgPool> {
     Some(pool)
 }
 
-pub(crate) fn parse_pg_timestamp_checked(
-    raw: &str,
-    field: &str,
-) -> Result<chrono::DateTime<chrono::Utc>, DomainError> {
-    use chrono::{DateTime, NaiveDateTime, Utc};
-
-    if let Ok(v) = DateTime::parse_from_rfc3339(raw) {
-        return Ok(v.with_timezone(&Utc));
-    }
-    if let Ok(v) = DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f%:z") {
-        return Ok(v.with_timezone(&Utc));
-    }
-    if let Ok(v) = DateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f%z") {
-        return Ok(v.with_timezone(&Utc));
-    }
-    {
-        let trimmed = raw.trim();
-        if let Some(idx) = trimmed.rfind('+').or_else(|| {
-            let bytes = trimmed.as_bytes();
-            (10..trimmed.len()).rev().find(|&i| bytes[i] == b'-')
-        }) {
-            let tz_part = &trimmed[idx..];
-            if tz_part.len() == 3 {
-                let patched = format!("{}:00", trimmed);
-                if let Ok(v) = DateTime::parse_from_str(&patched, "%Y-%m-%d %H:%M:%S%.f%:z") {
-                    return Ok(v.with_timezone(&Utc));
-                }
-            }
-        }
-    }
-    if let Ok(v) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S%.f") {
-        return Ok(DateTime::from_naive_utc_and_offset(v, chrono::Utc));
-    }
-    if let Ok(v) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S") {
-        return Ok(DateTime::from_naive_utc_and_offset(v, chrono::Utc));
-    }
-
-    Err(DomainError::InvalidConfig(format!(
-        "{field}: 无法解析 PostgreSQL 时间戳 `{raw}`"
-    )))
-}
-
 /// 统一的 sqlx 错误映射 helper。
 ///
 /// Repository 在基础设施边界保留数据库错误语义，API 层再根据 `DomainError`

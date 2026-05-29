@@ -44,8 +44,8 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.visibility.as_str())
         .bind(project.is_template)
         .bind(project.cloned_from_project_id.map(|id| id.to_string()))
-        .bind(project.created_at.to_rfc3339())
-        .bind(project.updated_at.to_rfc3339())
+        .bind(project.created_at)
+        .bind(project.updated_at)
         .execute(&mut *tx)
         .await
         .map_err(super::db_err)?;
@@ -114,7 +114,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.visibility.as_str())
         .bind(project.is_template)
         .bind(project.cloned_from_project_id.map(|id| id.to_string()))
-        .bind(project.updated_at.to_rfc3339())
+        .bind(project.updated_at)
         .bind(project.id.to_string())
         .execute(&self.pool)
         .await
@@ -220,8 +220,8 @@ impl PostgresProjectRepository {
         .bind(&grant.subject_id)
         .bind(grant.role.as_str())
         .bind(&grant.granted_by_user_id)
-        .bind(grant.created_at.to_rfc3339())
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(grant.created_at)
+        .bind(chrono::Utc::now())
         .execute(&mut **tx)
         .await
         .map_err(super::db_err)?;
@@ -243,8 +243,8 @@ struct ProjectRow {
     visibility: String,
     is_template: bool,
     cloned_from_project_id: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -254,8 +254,8 @@ struct ProjectSubjectGrantRow {
     subject_id: String,
     role: String,
     granted_by_user_id: String,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ProjectRow> for Project {
@@ -284,8 +284,8 @@ impl TryFrom<ProjectRow> for Project {
                     })
                 })
                 .transpose()?,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "projects.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "projects.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -302,14 +302,8 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
             subject_id: row.subject_id,
             role: parse_project_role(&row.role)?,
             granted_by_user_id: row.granted_by_user_id,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "project_subject_grants.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "project_subject_grants.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

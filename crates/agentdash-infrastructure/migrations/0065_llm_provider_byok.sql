@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS llm_provider_user_credentials (
     provider_id TEXT NOT NULL REFERENCES llm_providers(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL,
     api_key_ciphertext TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(provider_id, user_id)
 );
 

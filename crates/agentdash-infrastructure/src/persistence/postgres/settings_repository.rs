@@ -129,7 +129,7 @@ struct SettingRow {
     scope_id: String,
     key: String,
     value: String,
-    updated_at: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<SettingRow> for Setting {
@@ -137,7 +137,7 @@ impl TryFrom<SettingRow> for Setting {
 
     fn try_from(row: SettingRow) -> Result<Self, Self::Error> {
         let value: serde_json::Value = serde_json::from_str(&row.value)?;
-        let updated_at = super::parse_pg_timestamp_checked(&row.updated_at, "settings.updated_at")?;
+        let updated_at = row.updated_at;
         let scope_kind = parse_scope_kind(&row.scope_kind)?;
 
         Ok(Setting {

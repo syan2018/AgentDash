@@ -42,10 +42,10 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         .bind(lease.root_ref.as_deref().map(str::trim))
         .bind(selection_mode_to_str(lease.selection_mode))
         .bind(lease.claim_reason.as_deref())
-        .bind(lease.claimed_at.to_rfc3339())
-        .bind(lease.last_seen_at.to_rfc3339())
-        .bind(lease.created_at.to_rfc3339())
-        .bind(lease.updated_at.to_rfc3339())
+        .bind(lease.claimed_at)
+        .bind(lease.last_seen_at)
+        .bind(lease.created_at)
+        .bind(lease.updated_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -126,7 +126,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         )
         .bind(backend_id.trim())
         .bind(reason)
-        .bind(lost_at.to_rfc3339())
+        .bind(lost_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -215,11 +215,11 @@ async fn update_state(
          WHERE id = $7",
     )
     .bind(state_to_str(state))
-    .bind(activated_at.map(|value| value.to_rfc3339()))
-    .bind(released_at.map(|value| value.to_rfc3339()))
+    .bind(activated_at.map(|value| value))
+    .bind(released_at.map(|value| value))
     .bind(terminal_kind.map(terminal_kind_to_str))
     .bind(release_reason)
-    .bind(updated_at.to_rfc3339())
+    .bind(updated_at)
     .bind(lease_id.to_string())
     .execute(pool)
     .await
@@ -364,8 +364,8 @@ fn datetime_col(
     column: &str,
     field: &str,
 ) -> Result<DateTime<Utc>, DomainError> {
-    let raw = string_col(row, column, field)?;
-    super::parse_pg_timestamp_checked(&raw, field)
+    row.try_get::<DateTime<Utc>, _>(column)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn optional_datetime_col(
@@ -373,10 +373,8 @@ fn optional_datetime_col(
     column: &str,
     field: &str,
 ) -> Result<Option<DateTime<Utc>>, DomainError> {
-    optional_string_col(row, column, field)?
-        .as_deref()
-        .map(|value| super::parse_pg_timestamp_checked(value, field))
-        .transpose()
+    row.try_get::<Option<DateTime<Utc>>, _>(column)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn string_col(

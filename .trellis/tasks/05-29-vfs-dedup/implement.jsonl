@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/architecture.md","reason":"确认 VFS 属于 application/runtime boundary，provider SPI 与本机执行边界不能反向依赖。"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"确认 VFS 地址模型、provider dispatch、runtime mount 与 agent-facing tools 的职责边界。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"确认 VFS access、mount capability 与路径 normalization 的调用契约。"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"确认 VFS materialization 与本机文件边界，避免 patch/local executor 重构破坏物化路径。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认 Rust 异步 trait、错误类型、测试与 cargo check 要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"确认 patch executor 与 VFS dispatch helper 的复用判断。"}

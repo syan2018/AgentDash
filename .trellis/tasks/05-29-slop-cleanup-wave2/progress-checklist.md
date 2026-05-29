@@ -5,9 +5,9 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前推进 child：`05-29-session-assembly-converge`（下一步）
+- 当前推进 child：`05-29-structural-splits`（下一步）
 - 当前 child 状态：`planning`（需读取 PRD 并补齐/复核 design、implement 后启动）
-- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify`、`frontend-server-state-refactor` 已提交并归档；下一步推进 `session-assembly-converge`。
+- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify`、`frontend-server-state-refactor`、`session-assembly-converge` 已提交并归档；下一步推进 `structural-splits`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
@@ -52,7 +52,7 @@
 | 6 | `05-29-api-handler-thinning` | 已归档 | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` catalog 已提交 `80a97d6a`；`backends.rs` add/remove/ensure-local-runtime 写命令已提交 `08fc0574`；route direct repo grep 显式剩余 runtime read projection adapter并写入 PRD 保留清单；`Json<serde_json::Value>` / `Json<Value>` route response grep 清零；inline route DTO grep 清零；32 个 route module 已导出 `pub fn router()`，根 `routes.rs` 已收敛为 secured/public router 组合；`cargo check --workspace` / `pnpm run contracts:check` / `cargo test -p agentdash-api` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-api-handler-thinning` |
 | 7 | `05-29-capability-state-unify` | 已归档 | 提交 `35d94547`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-capability-state-unify`；`hooks::CapabilityDelta` 已删除并并入 `SetDelta`；`SetDelta::compute` 承接旧 diff；`rg "CapabilityDelta" crates` 清零；`cargo check --workspace` 通过；指定 application lib 测试仍命中既存 test-only `std::io::Error`/`SessionStoreError` 债务 |
 | 8 | `05-29-frontend-server-state-refactor` | 已归档 | 提交 `045cfa3d` / `eff74a2f` / `4421000f` / `7ee7ff15`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-frontend-server-state-refactor`；features/stores `useQuery|useMutation` 命中 28（迁移前 0）；store loading/error/saving 命中 233→178；`llmProviderStore` / `routineStore` 删除；`eventStore.activeProjectId`、store 内 `getState().handleStateChange/fetchBackends`、`workflowStore.selectedActivityKey` grep 清零；`SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行；`pnpm -C packages/app-web exec tsc --noEmit` 与相关 Vitest 通过 |
-| 9 | `05-29-session-assembly-converge` | 待复核/拆分 | resolver 争议完成复核；builder/compose helper 拆分；VFS 单存储派生有明确落地或证据结论 |
+| 9 | `05-29-session-assembly-converge` | 已归档 | 提交 `462f8ee3`；归档提交 `f82846ec`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-session-assembly-converge`；重新复核确认不抽跨路径 `SessionSurfaceResolver`，只抽路径内 helper；`SessionAssemblyBuilder` 已拆出；`compose_owner_bootstrap` 约 66 行、`compose_story_step` 约 51 行；VFS 投影改由 `SessionConstructionPlan` helper 集中同步；test-only session persistence mock 已对齐 `SessionStoreError`；`cargo check --workspace` 与 `cargo test -p agentdash-application --lib`（595 passed）通过 |
 | 10 | `05-29-structural-splits` | 待 design | `agentdash-application-ports` crate 存在；session 目录按职责重排；重叠前端/session 项已从本 child 排除或交叉标注 |
 | 11 | `05-29-domain-purification` | 待 contract | domain `ts-rs/schemars` 移除；session id 假 alias 消失；contracts 生成仍完整 |
 | 12 | 父级集成 review | 待所有 child | wave2 parent AC 全部逐条验收；第一波三个 reopen child 已给出最终结论；父任务可归档 |
@@ -71,16 +71,16 @@
 
 ## 当前 child 下一步
 
-1. 启动 `05-29-session-assembly-converge`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，若缺少 design/implement 则按今日复核结论补齐。
-2. 复核 resolver/builder/VFS 单存储派生三条线，避免再次把互相推迟的项悬空。
-3. 建议先做低风险结构拆分：`SessionAssemblyBuilder` 独立文件，再拆 `compose_owner_bootstrap` / `compose_story_step` helper，最后处理 `surface.vfs` / `context_projection.vfs` 单存储派生 accessor。
+1. 启动 `05-29-structural-splits`。进入前读取该 child 的 `prd.md` / `design.md` / `implement.md`，若缺少 design/implement 则补齐。
+2. 复核 ports crate 拆分边界，避免让新 crate 反向依赖 application。
+3. 建议按可回滚 slice 推进：先迁纯 port（如 backend transport），再迁 runtime action/channel transport 与 error，最后迁 VFS materialization transport；provider/use case/service 留 application。
 
 ## 今日子代理可行性复核
 
 - `api-handler-thinning`：已归档；`Json<Value>` route response 与 inline route DTO grep 均清零，32 个 route module 已导出 `pub fn router()`，根 router 已收敛为 secured/public 组合。
 - `frontend-server-state-refactor`：硬验收已通过；React Query 真实采用进入 feature model，LLM Provider / Routine server-state 已迁移；active project 双源、跨 store 命令式耦合、`workflowStore.selectedActivityKey` 已清理；`SettingsPageContent` / `activity-inspector` 已拆分。
 - `capability-state-unify`：已归档；`hooks::CapabilityDelta` 与 `connector::capability_delta::SetDelta` 已合并为 `SetDelta` / `SetDelta::compute`；`CapabilityDimensionModule` 与 `DimensionDelta` 分属 validate/replay 与 render/section 两条轴，trait merge 推迟。
-- `session-assembly-converge`：不适合直接抽完整 resolver；建议先拆 `SessionAssemblyBuilder` 到独立文件，再拆 `compose_owner_bootstrap` / `compose_story_step` helper，最后设计 `surface.vfs` / `context_projection.vfs` 单存储派生 accessor。
+- `session-assembly-converge`：已归档；不抽完整 resolver，因 launch/query 已共享 bootstrap/finalize 收敛点且剩余差异是真契约差异；`SessionAssemblyBuilder` 与 compose helper 已拆；`surface.vfs` / `context_projection.vfs` 保留双投影但改由 `SessionConstructionPlan` helper 集中同步。
 - `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层依赖 domain 并转换。当前关键风险是 `agentdash-contracts::workflow` 直接 re-export domain workflow 类型；先在 contracts 侧复制/定义 workflow wire DTO 并保留 domain -> contract mapper，再移除 domain 的 `ts-rs` / `schemars`。
 - `structural-splits`：可行但需控制依赖上限；第一批只迁 `backend_transport.rs` 这类纯 port，第二批只迁 `ExtensionRuntimeActionTransport` / `ExtensionRuntimeChannelTransport` / error，第三批只迁 `VfsMaterializationTransport`；provider/use case/service 留 application，避免新 crate 反向依赖 application。
 
@@ -88,7 +88,7 @@
 
 - 每个 child 完成时运行其 PRD 中的 grep/count AC。
 - Rust 相关 child 最终运行 `cargo check --workspace`。
-- `cargo test -p agentdash-api` 已通过。当前已知 application test 构建债务：`cargo test -p agentdash-application canvas::management` 会先编译 application 全量 test target，并命中既存 session persistence test/mock 仍返回 `std::io::Error`、未同步 `SessionStoreError` 的错误；后续 child 收尾前需要修复这批 test-only impl。
+- `cargo test -p agentdash-api` 已通过。`cargo test -p agentdash-application --lib` 已在 `session-assembly-converge` 通过（595 passed），此前 test-only `std::io::Error` / `SessionStoreError` mock 债务已修复。
 - 前端相关 child 最终运行 `pnpm -C packages/app-web exec tsc --noEmit`。
 - contract 相关 child 运行 `pnpm run contracts:check`。
 - 涉及 DB schema 的 child 需要 migration，并验证 migration up。

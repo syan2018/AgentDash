@@ -964,3 +964,36 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 55: Routine mount 与跨轮次上下文实现
+
+**Date**: 2026-05-29
+**Task**: Routine mount 与跨轮次上下文实现
+**Branch**: `main`
+
+### Summary
+
+实现 routine_vfs runtime mount、Routine memory inline storage、Routine launch source metadata 与 routine-memory 默认 skill 注入，并同步相关 VFS、Session startup、Embedded Skill spec。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b40a9728` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

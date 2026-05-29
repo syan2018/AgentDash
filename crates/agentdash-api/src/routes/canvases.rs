@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
-use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::canvas::{
@@ -24,63 +22,16 @@ use agentdash_application::runtime_gateway::{
 };
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
-use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::CanvasResponse;
+use crate::dto::{
+    CanvasResponse, CanvasRuntimeInvokeRequest, CanvasRuntimeSnapshotQuery, CreateCanvasRequest,
+    ListProjectCanvasesPath, PromoteCanvasToExtensionRequest, UpdateCanvasRequest,
+};
 use crate::rpc::ApiError;
 use crate::session_construction::build_session_context_plan;
-
-#[derive(Debug, Deserialize)]
-pub struct ListProjectCanvasesPath {
-    pub project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateCanvasRequest {
-    pub mount_id: Option<String>,
-    pub title: String,
-    pub description: Option<String>,
-    pub entry_file: Option<String>,
-    pub sandbox_config: Option<CanvasSandboxConfig>,
-    pub files: Option<Vec<CanvasFile>>,
-    pub bindings: Option<Vec<CanvasDataBinding>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct UpdateCanvasRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub entry_file: Option<String>,
-    pub sandbox_config: Option<CanvasSandboxConfig>,
-    pub files: Option<Vec<CanvasFile>>,
-    pub bindings: Option<Vec<CanvasDataBinding>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct CanvasRuntimeSnapshotQuery {
-    pub session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CanvasRuntimeInvokeRequest {
-    pub session_id: String,
-    pub action_key: String,
-    #[serde(default)]
-    pub input: Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PromoteCanvasToExtensionRequest {
-    pub extension_key: Option<String>,
-    pub display_name: Option<String>,
-    pub package_version: Option<String>,
-    pub asset_version: Option<String>,
-    #[serde(default = "default_promote_overwrite")]
-    pub overwrite: bool,
-}
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -347,10 +298,6 @@ async fn load_canvas_with_permission(
 
 fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw_project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
-}
-
-fn default_promote_overwrite() -> bool {
-    true
 }
 
 fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {

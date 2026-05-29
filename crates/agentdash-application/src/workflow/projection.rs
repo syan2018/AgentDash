@@ -212,7 +212,7 @@ pub(crate) fn activity_projection(
         outputs: Vec::new(),
         inputs: Vec::new(),
     };
-    let run = LifecycleRun::new_activity(project_id, lifecycle.id, "sess-test", activity_state)
+    let run = LifecycleRun::new_activity(project_id, lifecycle.id, Some("sess-test".to_string()), activity_state)
         .expect("activity run should build");
     let (active_workflow_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {

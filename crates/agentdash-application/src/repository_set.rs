@@ -24,7 +24,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
-    LifecycleRunRepository, WorkflowDefinitionRepository, WorkflowTemplateInstallRepository,
+    LifecycleRunLinkRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -65,6 +66,7 @@ pub struct RepositorySet {
     pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     pub activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,

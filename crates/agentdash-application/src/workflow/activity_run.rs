@@ -63,8 +63,13 @@ where
 
         let state = LifecycleEngine::initialize(&definition)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let run = LifecycleRun::new_activity(cmd.project_id, definition.id, cmd.session_id, state)
-            .map_err(WorkflowApplicationError::BadRequest)?;
+        let run = LifecycleRun::new_activity(
+            cmd.project_id,
+            definition.id,
+            Some(cmd.session_id),
+            state,
+        )
+        .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
         Ok(run)
     }
@@ -260,6 +265,11 @@ mod tests {
             Ok((run.id == id).then_some(run))
         }
 
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            let run = self.run.lock().unwrap().clone();
+            Ok(if ids.contains(&run.id) { vec![run] } else { Vec::new() })
+        }
+
         async fn list_by_project(
             &self,
             project_id: Uuid,
@@ -285,7 +295,7 @@ mod tests {
             session_id: &str,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             let run = self.run.lock().unwrap().clone();
-            Ok((run.session_id == session_id)
+            Ok((run.session_id.as_deref() == Some(session_id))
                 .then_some(vec![run])
                 .unwrap_or_default())
         }
@@ -369,7 +379,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let definition = definition(project_id);
         let state = LifecycleEngine::initialize(&definition).expect("state");
-        let run = LifecycleRun::new_activity(project_id, definition.id, "sess-activity", state)
+        let run = LifecycleRun::new_activity(project_id, definition.id, Some("sess-activity".to_string()), state)
             .expect("run");
         let run_id = run.id;
         let definition_repo = DefinitionRepo { definition };

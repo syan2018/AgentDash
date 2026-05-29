@@ -312,7 +312,7 @@ impl LifecycleOrchestrator {
             AgentActivityLaunchContext {
                 project_id: run.project_id,
                 lifecycle_key: String::new(),
-                root_session_id: run.session_id.clone(),
+                root_session_id: run.session_id.clone().unwrap_or_default(),
             },
             AgentActivityRuntimePort::new(
                 self.session_core.clone(),

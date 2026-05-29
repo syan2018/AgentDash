@@ -12,6 +12,7 @@ mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
+mod run_link_repository;
 mod runtime_health_repository;
 mod session_binding_repository;
 mod session_repository;
@@ -140,6 +141,7 @@ pub use project_extension_installation_repository::PostgresProjectExtensionInsta
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
+pub use run_link_repository::PostgresRunLinkRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_binding_repository::PostgresSessionBindingRepository;
 pub use session_repository::PostgresSessionRepository;

@@ -906,7 +906,7 @@ impl CompanionRequestTool {
         let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
-            target_binding.session_id.clone(),
+            Some(target_binding.session_id.clone()),
             state,
         )
         .map_err(|e| AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}")))?;

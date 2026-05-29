@@ -120,7 +120,7 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(project_id, lifecycle.id, "sess-owner", activity_state)
+        let run = LifecycleRun::new_activity(project_id, lifecycle.id, Some("sess-owner".to_string()), activity_state)
             .expect("run");
 
         ActiveWorkflowProjection {

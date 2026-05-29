@@ -77,7 +77,7 @@ fn parse_run_id_from_metadata(mount: &Mount) -> Result<Uuid, MountError> {
         .map_err(|error| MountError::OperationFailed(format!("run_id 无效: {error}")))
 }
 
-fn resolve_session_id_for_runs(_mount: &Mount, active_run: &LifecycleRun) -> String {
+fn resolve_session_id_for_runs(_mount: &Mount, active_run: &LifecycleRun) -> Option<String> {
     active_run.session_id.clone()
 }
 
@@ -261,12 +261,14 @@ impl MountProvider for LifecycleMountProvider {
                             .map_err(map_journey_err)?
                     }
                     ["runs"] => {
-                        let session_id = resolve_session_id_for_runs(mount, &active);
-                        let runs = self
-                            .lifecycle_run_repo
-                            .list_by_session(&session_id)
-                            .await
-                            .map_err(map_domain_err)?;
+                        let runs = if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
+                            self.lifecycle_run_repo
+                                .list_by_session(&session_id)
+                                .await
+                                .map_err(map_domain_err)?
+                        } else {
+                            Vec::new()
+                        };
                         let summaries = runs.iter().map(run_overview).collect::<Vec<_>>();
                         to_json_pretty(&summaries).map_err(map_journey_err)?
                     }
@@ -740,12 +742,14 @@ impl MountProvider for LifecycleMountProvider {
                 list_projected_entries(files, &display_root, &display_base, options)
             }
             ["runs"] => {
-                let session_id = resolve_session_id_for_runs(mount, &active);
-                let runs = self
-                    .lifecycle_run_repo
-                    .list_by_session(&session_id)
-                    .await
-                    .map_err(map_domain_err)?;
+                let runs = if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
+                    self.lifecycle_run_repo
+                        .list_by_session(&session_id)
+                        .await
+                        .map_err(map_domain_err)?
+                } else {
+                    Vec::new()
+                };
                 runs.iter()
                     .map(|run| RuntimeFileEntry::file(format!("runs/{}", run.id)).as_virtual())
                     .collect()
@@ -844,6 +848,10 @@ mod tests {
                 .cloned())
         }
 
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self.runs.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+        }
+
         async fn list_by_project(
             &self,
             project_id: Uuid,
@@ -881,7 +889,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.session_id == session_id)
+                .filter(|run| run.session_id.as_deref() == Some(session_id))
                 .cloned()
                 .collect())
         }
@@ -1189,7 +1197,7 @@ mod tests {
         let run = LifecycleRun::new_activity(
             Uuid::new_v4(),
             Uuid::new_v4(),
-            "sess-root",
+            Some("sess-root".to_string()),
             activity_state,
         )
         .expect("run");

@@ -162,6 +162,7 @@ pub fn activate_step_with_platform(
             presets: input.available_presets.clone(),
             agent_servers: input.agent_mcp_servers.clone(),
         },
+        capability_context: None,
     };
     let mut cap_output = CapabilityResolver::resolve(&cap_input, platform);
     if let Some(slice_mode) = input.companion_slice_mode {

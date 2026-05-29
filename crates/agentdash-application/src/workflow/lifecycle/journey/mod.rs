@@ -436,7 +436,7 @@ pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
     lifecycle_id: Uuid,
-    session_id: &'a str,
+    session_id: Option<&'a str>,
     status: &'a LifecycleRunStatus,
     current_step_key: Option<&'a str>,
     step_count: usize,
@@ -451,7 +451,7 @@ pub fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         id: run.id,
         project_id: run.project_id,
         lifecycle_id: run.lifecycle_id,
-        session_id: &run.session_id,
+        session_id: run.session_id.as_deref(),
         status: &run.status,
         current_step_key: run.current_step_key(),
         step_count: run

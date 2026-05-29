@@ -9,13 +9,8 @@ use futures::StreamExt;
 
 use crate::app_state::AppState;
 use crate::auth::CurrentUser;
+use crate::dto::DiscoveredOptionsQuery;
 use agentdash_spi::DiscoveryContext;
-
-#[derive(Debug, serde::Deserialize)]
-pub struct DiscoveredOptionsQuery {
-    pub executor: String,
-    pub working_dir: Option<String>,
-}
 
 /// NDJSON 流：执行器发现选项（JSON Patch 增量推送）
 ///

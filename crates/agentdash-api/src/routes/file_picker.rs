@@ -9,81 +9,20 @@ use std::sync::Arc;
 use agentdash_application::vfs::selected_workspace_binding;
 use axum::Json;
 use axum::extract::{Query, State};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission};
+use crate::dto::{
+    BatchReadFilesRequest, BatchReadFilesResponse, FileEntry, ListFilesQuery, ListFilesResponse,
+    ReadFileRequest, ReadFileResponse, ReadFileResult,
+};
 use crate::rpc::ApiError;
 use agentdash_application::vfs::{ListOptions, ResourceRef};
 
 pub(crate) const MAX_FILE_SIZE: u64 = 100 * 1024; // 100KB
 pub(crate) const MAX_TOTAL_SIZE: u64 = 500 * 1024; // 500KB
 pub(crate) const MAX_REFERENCES: usize = 10;
-
-#[derive(Debug, Deserialize)]
-pub struct ListFilesQuery {
-    pub pattern: Option<String>,
-    pub workspace_id: Option<String>,
-}
-
-/// 文件条目 — 保持 camelCase 与前端 DTO 对齐
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileEntry {
-    pub rel_path: String,
-    pub size: u64,
-    pub is_text: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListFilesResponse {
-    pub files: Vec<FileEntry>,
-    pub root: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadFileRequest {
-    pub rel_path: String,
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadFileResponse {
-    pub rel_path: String,
-    pub uri: String,
-    pub mime_type: String,
-    pub content: String,
-    pub size: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BatchReadFilesRequest {
-    pub paths: Vec<String>,
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BatchReadFilesResponse {
-    pub files: Vec<ReadFileResult>,
-    pub total_size: u64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadFileResult {
-    pub rel_path: String,
-    pub uri: String,
-    pub mime_type: String,
-    pub content: Option<String>,
-    pub size: u64,
-    pub error: Option<String>,
-}
 
 /// GET /api/file-picker
 pub async fn list_files(

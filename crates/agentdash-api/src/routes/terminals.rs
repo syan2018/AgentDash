@@ -4,7 +4,6 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
 
 use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_application::vfs::PROVIDER_RELAY_FS;
@@ -12,6 +11,7 @@ use agentdash_relay::*;
 use agentdash_spi::Vfs;
 
 use crate::auth::{CurrentUser, ProjectPermission};
+use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::acp_sessions::ensure_session_permission;
 use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
@@ -31,15 +31,6 @@ pub async fn list_terminals(
     .await?;
     let terminals = state.services.terminal_cache.list_terminals(&session_id);
     Ok(Json(terminals))
-}
-
-/// POST /api/sessions/:session_id/terminals
-#[derive(Deserialize)]
-pub struct SpawnTerminalBody {
-    pub cwd: Option<String>,
-    pub shell: Option<String>,
-    pub cols: Option<u16>,
-    pub rows: Option<u16>,
 }
 
 pub async fn spawn_terminal(
@@ -118,12 +109,6 @@ pub async fn spawn_terminal(
     }
 }
 
-/// POST /api/terminals/:terminal_id/input
-#[derive(Deserialize)]
-pub struct TerminalInputBody {
-    pub data: String,
-}
-
 pub async fn terminal_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -157,13 +142,6 @@ pub async fn terminal_input(
             )))
         }
     }
-}
-
-/// POST /api/terminals/:terminal_id/resize
-#[derive(Deserialize)]
-pub struct TerminalResizeBody {
-    pub cols: u16,
-    pub rows: u16,
 }
 
 pub async fn terminal_resize(

@@ -21,8 +21,8 @@ use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery, SkillAssetFileDto,
-    SkillAssetResponse, UpdateSkillAssetRequest,
+    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery,
+    SkillAssetFileBlobQuery, SkillAssetFileDto, SkillAssetResponse, UpdateSkillAssetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -35,11 +35,6 @@ pub struct ProjectSkillAssetsPath {
 pub struct SkillAssetItemPath {
     pub project_id: String,
     pub id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SkillAssetFileBlobQuery {
-    pub path: String,
 }
 
 pub async fn list_skill_assets(

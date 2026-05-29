@@ -53,6 +53,12 @@ impl CapabilityArtifactSource {
             kind: "workflow".to_string(),
         }
     }
+
+    pub fn permission_grant() -> Self {
+        Self {
+            kind: "permission_grant".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

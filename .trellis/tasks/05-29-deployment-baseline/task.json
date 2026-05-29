@@ -1,0 +1,30 @@
+{
+  "id": "deployment-baseline",
+  "name": "deployment-baseline",
+  "title": "部署基准方案与发布流程",
+  "description": "维护 AgentDash 产品化部署基准：Docker Compose 作为首个交付形态，后续映射 Kubernetes；明确云端部署维护更新流程，以及桌面端服务器指向和发布策略。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "deployment",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-05-29",
+  "completedAt": null,
+  "branch": "codex/deployment-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-29-deployment-cloud-primitives",
+    "05-29-deployment-compose-runbook",
+    "05-29-deployment-desktop-targeting"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

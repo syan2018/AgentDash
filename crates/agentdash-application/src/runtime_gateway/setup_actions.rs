@@ -13,7 +13,7 @@ use super::{
     RuntimeActionDescriptor, RuntimeActionKey, RuntimeActionKind, RuntimeInvocationError,
     RuntimeInvocationOutput, RuntimeInvocationRequest, RuntimeProvider,
 };
-use crate::backend_transport::{BackendTransport, TransportError};
+use agentdash_application_ports::backend_transport::{BackendTransport, TransportError};
 
 pub const MCP_PROBE_TRANSPORT_ACTION: &str = "mcp.probe_transport";
 pub const WORKSPACE_BROWSE_DIRECTORY_ACTION: &str = "workspace.browse_directory";
@@ -413,10 +413,10 @@ mod tests {
     use agentdash_domain::mcp_preset::McpTransportConfig;
 
     use super::*;
-    use crate::backend_transport::{
+    use crate::runtime_gateway::{RuntimeActor, RuntimeContext, RuntimeGateway};
+    use agentdash_application_ports::backend_transport::{
         DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, TransportError, WorkspaceProbeInfo,
     };
-    use crate::runtime_gateway::{RuntimeActor, RuntimeContext, RuntimeGateway};
 
     struct FakeBackendTransport {
         online: bool,

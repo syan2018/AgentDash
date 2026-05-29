@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use tokio::sync::{RwLock, mpsc, oneshot};
 
-use agentdash_application::backend_transport::RemoteExecutorInfo;
-use agentdash_application::backend_transport::{RelaySessionRoute, RelaySessionRouteInfo};
+use agentdash_application_ports::backend_transport::RemoteExecutorInfo;
+use agentdash_application_ports::backend_transport::{RelaySessionRoute, RelaySessionRouteInfo};
 use agentdash_relay::{CapabilitiesPayload, RelayMessage};
 
 pub type BackendSender = mpsc::UnboundedSender<RelayMessage>;
@@ -80,7 +80,7 @@ impl BackendRegistry {
     pub fn feed_session_event(
         &self,
         session_id: &str,
-        event: agentdash_application::backend_transport::RelaySessionEvent,
+        event: agentdash_application_ports::backend_transport::RelaySessionEvent,
     ) -> bool {
         let sinks = self.session_sinks.read().unwrap_or_else(|e| e.into_inner());
         if let Some(tx) = sinks.get(session_id) {

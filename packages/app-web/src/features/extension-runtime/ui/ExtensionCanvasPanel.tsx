@@ -8,7 +8,7 @@ import type {
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../types";
 import { CanvasRuntimePreview } from "../../canvas-panel/CanvasRuntimePreview";
-import { useWorkspaceData } from "../../workspace-panel/workspace-data-context";
+import { useWorkspaceData } from "../../workspace-runtime";
 import {
   invokeExtensionChannelFromCanvas,
   resolveExtensionCanvasAvailability,

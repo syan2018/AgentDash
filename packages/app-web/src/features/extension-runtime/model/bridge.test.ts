@@ -9,7 +9,7 @@ import type {
   ExtensionWorkspaceTabProjectionResponse,
   JsonValue,
 } from "../../../generated/extension-runtime-contracts";
-import type { WorkspaceData } from "../../workspace-panel/workspace-data-context";
+import type { WorkspaceData } from "../../workspace-runtime";
 import type { ExtensionBridgeRequestMessage } from "./bridge";
 import {
   handleExtensionWebviewBridgeRequest,

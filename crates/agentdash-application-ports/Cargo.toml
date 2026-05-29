@@ -1,0 +1,15 @@
+[package]
+name = "agentdash-application-ports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agentdash-agent-protocol = { workspace = true }
+agentdash-domain = { workspace = true }
+agentdash-relay = { workspace = true }
+async-trait = "0.1"
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+uuid = { workspace = true }

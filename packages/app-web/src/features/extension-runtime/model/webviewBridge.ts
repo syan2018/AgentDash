@@ -8,8 +8,7 @@ import type {
 } from "../../../generated/extension-runtime-contracts";
 import type { ResolvedMountSummary } from "../../../types";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
-import type { WorkspaceData } from "../../workspace-panel/workspace-data-context";
-import type { WorkspaceBackendTarget } from "../../workspace-panel/workspace-panel-types";
+import type { WorkspaceBackendTarget, WorkspaceData } from "../../workspace-runtime";
 import {
   bridgeParamString,
   toJsonValue,

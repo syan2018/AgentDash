@@ -3,7 +3,7 @@
   "name": "structural-splits",
   "title": "结构性拆分（application 89k 拆 crate / session 目录重排 / 前端 god-component）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

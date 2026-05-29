@@ -47,11 +47,6 @@ use super::super::types::{
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
-use crate::backend_transport::{
-    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
-    WorkspaceProbeInfo,
-};
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
@@ -61,6 +56,11 @@ use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
     VfsService,
+};
+use agentdash_application_ports::backend_transport::{
+    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
+    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
+    WorkspaceProbeInfo,
 };
 
 fn test_hub(

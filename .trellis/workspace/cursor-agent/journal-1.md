@@ -1061,6 +1061,40 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 [OK] **Implementation complete; ready to archive**
 
 
+## Session 28: wave2 structural-splits
+
+**Date**: 2026-05-30
+**Task**: `05-29-structural-splits`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 structural-splits 的收敛实现。后端只抽第一道真实编译边界 `agentdash-application-ports`，不把 provider/use case/service 迁入 ports；前端通过中性 `workspace-runtime` 打断 extension-runtime、workspace-panel、canvas-panel 的双向循环；两个剩余前端 god component 完成入口拆分。
+
+### Main Changes
+
+- 新增 `crates/agentdash-application-ports`，迁入 `backend_transport`、extension action/channel transport trait 与 `VfsMaterializationTransport`。
+- `agentdash-api` 与 `agentdash-application` 改依赖 ports crate；application 不再定义已迁 port，provider/service/use case 留在 application。
+- `companion/tools.rs`、`canvas/tools.rs`、`workflow/tools/advance_node.rs` 改走 `crate::vfs::tools` facade，`vfs::tools::provider` 内部引用清零。
+- `session/memory_persistence.rs` 移到 `crates/agentdash-application/test-support/session_memory_persistence.rs`，由 session test-only module 引入。
+- 新增 `features/workspace-runtime` 承载 workspace runtime data/context 与 tab descriptor contract；`canvas-panel` 不再反向依赖 `extension-runtime`。
+- `SessionChatView.tsx` 拆出 parts/model/types 后 584 行；`workspace-list.tsx` 拆为 4 行目录入口，列表编排与 editor drawer 分离。
+- DDD 结论写入任务设计：domain 不依赖 contracts/protocol DTO；协议/API/contracts 向外映射 domain/application 输出。
+
+### Testing
+
+- [OK] `cargo check --workspace`
+- [OK] `cargo test -p agentdash-application --lib`（595 passed）
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+- [OK] `rg -n "vfs::tools::provider" crates/agentdash-application/src` 无命中。
+- [OK] `rg -n "pub trait BackendTransport|pub trait ExtensionRuntimeActionTransport|pub trait ExtensionRuntimeChannelTransport|pub trait VfsMaterializationTransport" crates/agentdash-application/src crates/agentdash-application-ports/src` 仅命中 ports crate。
+- [OK] `Get-ChildItem crates/agentdash-application/src -Recurse -Filter memory_persistence.rs` 无结果。
+
+### Status
+
+[OK] **Implementation complete; ready to commit/archive**
+
+
 ## Session 26: wave2 frontend-server-state-refactor
 
 **Date**: 2026-05-30

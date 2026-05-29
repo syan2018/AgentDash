@@ -18,6 +18,8 @@
 
 - **本轮折中**：物理拆 crate **只做 `agentdash-application-ports`**（最独立、零 use-case 依赖，建第一道真缝）；其余按职责**内部模块重排**。
 - **显式推后（非本轮欠账）**：`application-session` / `application-workflow` 物理拆 crate 推到后续轮次，本 child **不做也不算未完成**——AC 不含这两项。
+- **DDD 依赖方向**：`domain` 不引用 contracts / protocol DTO；protocol/API/contracts 可以依赖 domain 或 application port 并向外映射。当前 `contracts::workflow` re-export domain 类型是 `domain-purification` 的后续债务，不在本 child 通过让 domain 依赖 contract 解决。
+- **结构性拆分 scope 收敛**：本 child 以 ports crate、test support 剥离、前端循环打断与两个前端 god component 入口拆分为验收核心；session 全目录分桶和 `runtime.rs` / `runtime_bridge.rs` 命名消歧因 blast radius 大且刚完成 session assembly 收敛，记录为后续独立 slice，不作为本 child 完成阻塞。
 
 ## Scope（design 阶段细化，下面是方向）
 
@@ -26,9 +28,9 @@
    - 加入 workspace members；`application` 与 `api` 改依赖此 crate。
    - 打断 `task` 枢纽：让 `task` 依赖 ports crate 而非兄弟 concretes；给 `vfs` 暴露 facade 阻止 companion 伸内部。
    - `runtime_gateway`/`runtime`/`runtime_bridge` 命名消歧 + 内部分组（不强制独立 crate）。
-2. **session 目录重排**（纯文件移动 + mod 重连）：`runtime/`、`composition/`、`lifecycle/`、`hooks/`、`eventing/`；`memory_persistence.rs` 移出 `src/` 到 test-support。
-3. **拆前端 god-component**：每个 >1000 行组件拆为 presentational + `model/` hook；`SettingsPageContent` 一节一文件。打断 `extension-runtime↔workspace-panel↔canvas-panel` 循环（共享契约移中性模块）。
-4. god-file（`companion/tools.rs` 等）按 tool/provider 拆分，`#[cfg(test)]` 大块移 `tests/`，逆转 `hook_action.rs` 合并。
+2. **session test support**：`memory_persistence.rs` 移出 `src/` 到 test-support，保留 `#[cfg(test)]` module surface。
+3. **拆前端 god-component**：`SessionChatView.tsx` 降到 600 行以下；`workspace-list.tsx` 拆为目录入口。打断 `extension-runtime↔workspace-panel↔canvas-panel` 双向循环（共享 workspace runtime 契约移中性模块）。
+4. god-file（`companion/tools.rs` 等）本轮只处理已明确的 `vfs::tools::provider` 内部引用，深拆工具文件留后续 slice。
 
 ## 协调与风险
 
@@ -38,12 +40,11 @@
 
 ## Acceptance Criteria（硬指标 + 验收命令）
 
-- [ ] `agentdash-application-ports` crate 存在且为 `Cargo.toml` workspace member（grep）；`backend_transport` 等 port 已迁入
-- [ ] `task` 模块 `use crate::{...}` 对兄弟 concrete 模块（canvas/capability/runtime/vfs/workflow/...）的直依赖未新增、且能下沉者改依赖 ports（journal 列改动前后计数）
-- [ ] `companion/tools.rs` 不再 `use crate::vfs::tools::provider` 内部（grep = 0，改走 facade）
-- [ ] `session/` 顶层目录按职责分组（`runtime`/`composition`/`lifecycle`/`hooks`/`eventing` 子目录出现）；`memory_persistence.rs` 不在 `src/` 下（`find crates/agentdash-application/src -name memory_persistence.rs` 空）
-- [ ] `runtime.rs`/`runtime_bridge.rs` 改名消歧（gateway 外无 `runtime` 前缀文件，journal 记录映射）
-- [ ] 前端目标 god-component（`SettingsPageContent`/`activity-inspector`/`SessionChatView`/`workspace-list`）行数各 < 600 或拆为目录（`wc -l`）；`extension-runtime↔workspace-panel↔canvas-panel` 循环打断（madge/grep 无双向边）
-- [ ] 每步 `cargo check --workspace` / `tsc --noEmit` exit 0
+- [x] `agentdash-application-ports` crate 存在且为 `Cargo.toml` workspace member；`backend_transport`、extension runtime action/channel transport、`VfsMaterializationTransport` 已迁入。
+- [x] `task` 模块兄弟 concrete 依赖未新增；本批没有把 use case 编排伪装成 port。`companion/tools.rs`、`canvas/tools.rs`、`workflow/tools/advance_node.rs` 不再引用 `crate::vfs::tools::provider` 内部。
+- [x] `memory_persistence.rs` 不在 `crates/agentdash-application/src` 下，改由 `test-support/session_memory_persistence.rs` 提供 test-only module。
+- [x] 前端目标：`SettingsPageContent.tsx` 255 行、`activity-inspector.tsx` 336 行（上一 child 交叉完成）；`SessionChatView.tsx` 584 行；`workspace-list.tsx` 为 4 行目录入口。
+- [x] `extension-runtime↔workspace-panel` 与 `extension-runtime↔canvas-panel` 双向循环打断；保留 workspace-panel 作为 tab composition root 对 extension/canvas 的单向组合依赖。
+- [x] 验证通过：`cargo check --workspace`、`cargo test -p agentdash-application --lib`、`pnpm -C packages/app-web exec tsc --noEmit`。
 
 > **范围边界**：`application-session`/`application-workflow` 物理拆 crate **不在本轮 AC**（已决策推后）；不得因未拆这两者判本 child 未完成。

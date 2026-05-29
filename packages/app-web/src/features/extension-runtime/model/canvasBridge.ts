@@ -6,7 +6,7 @@ import type {
 } from "../../../generated/extension-runtime-contracts";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { CanvasExtensionChannelRequest } from "../../canvas-panel/CanvasRuntimePreview";
-import type { WorkspaceData } from "../../workspace-panel/workspace-data-context";
+import type { WorkspaceData } from "../../workspace-runtime";
 import { selectExtensionBackendTarget } from "./webviewBridge";
 
 export interface ExtensionCanvasAvailability {

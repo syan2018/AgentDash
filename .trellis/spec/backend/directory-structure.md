@@ -10,6 +10,7 @@
 crates/
 ├── agentdash-api/               # Interface Layer — HTTP 路由、DTO、中间件
 ├── agentdash-application/       # Application Layer — 用例编排
+├── agentdash-application-ports/ # Application Boundary Ports — API/local 实现、application 消费的纯端口
 ├── agentdash-domain/            # Domain Layer — 实体、值对象、Repository 接口
 ├── agentdash-infrastructure/    # Infrastructure Layer — PostgreSQL/SQLite 持久化
 ├── agentdash-executor/          # Infrastructure Layer — 连接器、LLM Bridge
@@ -50,6 +51,7 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 |------|-------|------|----------|
 | **Interface** | `agentdash-api` | HTTP 路由、DTO、中间件、错误映射 | application, domain |
 | **Application** | `agentdash-application` | 用例编排：session / context / task / VFS / story | domain, spi, executor |
+| **Application Ports** | `agentdash-application-ports` | application 边界 port、transport trait、轻量 DTO/error | domain, relay, agent-protocol |
 | **Domain** | `agentdash-domain` | 实体、值对象、Repository 接口、领域事件 | 无外部业务库 |
 | **Infrastructure** | `agentdash-infrastructure`, `agentdash-executor` | 持久化实现、连接器、WebSocket 中继 | domain |
 | **Agent Types** | `agentdash-agent-types` | 跨层共享类型（Message/Tool/Context/Delegate） | serde, async-trait |
@@ -65,6 +67,8 @@ agentdash-agent-types → agentdash-agent → agentdash-spi → agentdash-execut
 4. **Application Layer**（复杂业务时）：创建用例模块，路由改为调用用例
 
 > **禁止跨层依赖**：API 层不能直接访问 Repository 的具体实现。
+
+`agentdash-application-ports` 只承载 API/local 实现、application 消费的纯端口，原因是 transport trait 需要被 interface/runtime composition root 实现，同时又不能让 API 反向依赖 application 内部编排模块。Domain 仍不依赖 contracts、protocol DTO 或 application ports。
 
 ---
 

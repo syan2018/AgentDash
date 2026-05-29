@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agentdash-agent-types = { workspace = true }
+agentdash-application-ports = { workspace = true }
 agentdash-domain = { workspace = true }
 agentdash-relay = { workspace = true }
 agentdash-spi = { workspace = true }

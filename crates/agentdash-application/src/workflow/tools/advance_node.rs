@@ -1,5 +1,5 @@
 use crate::platform_config::SharedPlatformConfig;
-use crate::vfs::tools::provider::SessionToolServices;
+use crate::vfs::tools::SessionToolServices;
 use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
     LifecycleOrchestrator,

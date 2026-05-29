@@ -4,7 +4,7 @@ use agentdash_domain::backend::{BackendExecutionLeaseRepository, BackendExecutio
 use agentdash_spi::connector::ConnectorError;
 use uuid::Uuid;
 
-use crate::backend_transport::RelayPromptTransport;
+use agentdash_application_ports::backend_transport::RelayPromptTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendSelectionRequest {

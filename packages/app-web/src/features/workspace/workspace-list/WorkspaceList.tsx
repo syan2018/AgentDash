@@ -1,0 +1,233 @@
+import { useCallback, useEffect, useState, type MouseEvent } from "react";
+import type {
+  ProjectBackendAccess,
+  Workspace,
+  WorkspaceInventoryCandidate,
+} from "../../../types";
+import { findWorkspaceBinding } from "../../../stores/workspaceStore";
+import { useCoordinatorStore } from "../../../stores/coordinatorStore";
+import {
+  listProjectBackendAccess,
+  listWorkspaceInventoryCandidates,
+} from "../../../services/backendAccess";
+import {
+  detectedFactsSummary,
+  identityKindLabels,
+  identitySummary,
+  summarizeAvailability,
+  summarizeResolution,
+} from "../model/workspaceRouting";
+import {
+  BindingStatusBadge,
+  ResolutionBadge,
+  WorkspaceEditorDrawer,
+  WorkspaceStatusBadge,
+} from "./WorkspaceListEditor";
+interface WorkspaceListProps {
+  projectId: string;
+  workspaces: Workspace[];
+  defaultWorkspaceId?: string | null;
+  canManageBindings?: boolean;
+  onSetDefault?: (workspaceId: string | null) => void;
+  onInventoryChanged?: () => void | Promise<void>;
+}
+
+export function WorkspaceList({
+  projectId,
+  workspaces,
+  defaultWorkspaceId,
+  canManageBindings = false,
+  onSetDefault,
+  onInventoryChanged,
+}: WorkspaceListProps) {
+  const backends = useCoordinatorStore((state) => state.backends);
+  const fetchBackends = useCoordinatorStore((state) => state.fetchBackends);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [accesses, setAccesses] = useState<ProjectBackendAccess[]>([]);
+  const [candidates, setCandidates] = useState<WorkspaceInventoryCandidate[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadRoutingInputs = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const [nextAccesses, nextCandidates] = await Promise.all([
+        listProjectBackendAccess(projectId),
+        listWorkspaceInventoryCandidates(projectId),
+      ]);
+      setAccesses(nextAccesses);
+      setCandidates(nextCandidates);
+    } catch (loadErrorValue) {
+      setLoadError((loadErrorValue as Error).message);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void fetchBackends();
+    const timer = window.setTimeout(() => {
+      void loadRoutingInputs();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchBackends, loadRoutingInputs]);
+
+  const handleToggleDefault = (workspaceId: string, event: MouseEvent) => {
+    event.stopPropagation();
+    if (!onSetDefault) return;
+    onSetDefault(defaultWorkspaceId === workspaceId ? null : workspaceId);
+  };
+
+  return (
+    <>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">逻辑 Workspace</p>
+            <p className="text-xs text-muted-foreground">
+              Workspace 表达身份；运行落点来自已授权 backend/root 的可用目录。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="rounded-[8px] border border-border bg-background px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          >
+            + 新建 Workspace
+          </button>
+        </div>
+
+        {loadError && (
+          <p className="rounded-[8px] border border-destructive/35 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {loadError}
+          </p>
+        )}
+
+        {workspaces.length === 0 && (
+          <div className="rounded-[12px] border border-dashed border-border px-4 py-4 text-sm text-muted-foreground">
+            <p>当前还没有 logical Workspace。</p>
+            <p className="mt-1 text-xs">
+              可以从可用目录发现项创建，或使用本机目录识别快速从本机 backend 添加。
+            </p>
+          </div>
+        )}
+
+        {workspaces.map((workspace) => {
+          const availability = summarizeAvailability(workspace, backends, accesses);
+          const resolution = summarizeResolution(workspace, backends, accesses);
+          const primaryBinding = resolution.binding ?? findWorkspaceBinding(workspace);
+          const factSummary = detectedFactsSummary(primaryBinding);
+          const isDefault = defaultWorkspaceId === workspace.id;
+          return (
+            <div
+              key={workspace.id}
+              className={`w-full rounded-[12px] border px-4 py-4 transition-colors ${
+                isDefault
+                  ? "border-primary/30 bg-primary/[0.03]"
+                  : "border-border bg-background"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">{workspace.name}</p>
+                    {isDefault && (
+                      <span className="inline-flex items-center rounded-[8px] border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium text-primary">
+                        Project 默认
+                      </span>
+                    )}
+                    <WorkspaceStatusBadge status={workspace.status} />
+                    <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground">
+                      {identityKindLabels[workspace.identity_kind]}
+                    </span>
+                    <ResolutionBadge state={resolution.state} />
+                  </div>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    身份：{identitySummary(workspace.identity_kind, workspace.identity_payload)}
+                  </p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    路由：{resolution.label} · {resolution.description}
+                  </p>
+                  {factSummary && (
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      Facts: {factSummary}
+                    </p>
+                  )}
+                  {resolution.warnings.length > 0 && (
+                    <p className="mt-1 truncate text-xs text-warning">
+                      {resolution.warnings[0]}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <div className="text-right">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                      落点
+                    </p>
+                    <p className="text-sm font-medium text-foreground">
+                      {availability.online}/{availability.total}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      可用 {availability.ready} · 已授权 {availability.authorized}
+                    </p>
+                    {primaryBinding && <BindingStatusBadge status={primaryBinding.status} />}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {onSetDefault && (
+                      <button
+                        type="button"
+                        onClick={(event) => handleToggleDefault(workspace.id, event)}
+                        className={`rounded-[8px] border px-2.5 py-1.5 text-[11px] transition-colors ${
+                          isDefault
+                            ? "border-primary/25 bg-primary/10 text-primary hover:bg-primary/15"
+                            : "border-border bg-background text-muted-foreground hover:border-primary/25 hover:bg-primary/5 hover:text-primary"
+                        }`}
+                      >
+                        {isDefault ? "取消 Project 默认" : "设为 Project 默认"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWorkspace(workspace)}
+                      className="rounded-[8px] border border-border bg-background px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                    >
+                      详情
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <WorkspaceEditorDrawer
+        key={`workspace-create-${projectId}-${isCreateOpen ? "open" : "closed"}`}
+        open={isCreateOpen}
+        projectId={projectId}
+        mode="create"
+        workspace={null}
+        candidates={candidates}
+        accesses={accesses}
+        canManageBindings={canManageBindings}
+        onClose={() => setIsCreateOpen(false)}
+        onSetDefault={onSetDefault}
+        onCandidatesChanged={loadRoutingInputs}
+        onInventoryChanged={onInventoryChanged}
+      />
+
+      <WorkspaceEditorDrawer
+        key={`workspace-detail-${selectedWorkspace?.id ?? "none"}`}
+        open={Boolean(selectedWorkspace)}
+        projectId={projectId}
+        mode="detail"
+        workspace={selectedWorkspace}
+        candidates={candidates}
+        accesses={accesses}
+        canManageBindings={canManageBindings}
+        onClose={() => setSelectedWorkspace(null)}
+        onSetDefault={onSetDefault}
+        onCandidatesChanged={loadRoutingInputs}
+        onInventoryChanged={onInventoryChanged}
+      />
+    </>
+  );
+}

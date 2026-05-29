@@ -1,13 +1,10 @@
 import type { ExtensionRuntimeProjectionResponse } from "../../../types";
+import type {
+  ProjectExtensionRuntimeState,
+  ProjectExtensionRuntimeStatus,
+} from "../../workspace-runtime";
 
-export type ProjectExtensionRuntimeStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
-
-export interface ProjectExtensionRuntimeState {
-  project_id: string | null;
-  status: ProjectExtensionRuntimeStatus;
-  projection: ExtensionRuntimeProjectionResponse;
-  error: string | null;
-}
+export type { ProjectExtensionRuntimeState, ProjectExtensionRuntimeStatus };
 
 export function emptyExtensionRuntimeProjection(): ExtensionRuntimeProjectionResponse {
   return {

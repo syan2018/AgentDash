@@ -6,8 +6,9 @@ import {
   type SessionContextPayload,
 } from "../../../services/session";
 import type { HookSessionRuntimeInfo } from "../../../types";
+import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 
-export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
+export type { SessionRuntimeStateStatus };
 
 export interface SessionRuntimeProjectionState {
   session_id: string | null;

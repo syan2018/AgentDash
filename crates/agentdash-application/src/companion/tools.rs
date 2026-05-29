@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -2339,7 +2339,7 @@ mod companion_tests {
     use crate::session::{
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider,
     };
-    use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
+    use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {

@@ -18,6 +18,7 @@
 import { useMemo } from "react";
 
 import { ProjectCanvasManager } from "../../canvas-panel/ProjectCanvasManager";
+import { useExtensionRuntimeStore } from "../../extension-runtime/model/extensionRuntimeStore";
 import { useProjectStore } from "../../../stores/projectStore";
 import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 
@@ -46,6 +47,7 @@ export function CanvasCategoryPanel() {
       <ProjectCanvasManager
         projectId={currentProject.id}
         projectName={currentProject.name}
+        onExtensionRuntimeRefresh={(projectId) => useExtensionRuntimeStore.getState().fetchProject(projectId)}
       />
     </div>
   );

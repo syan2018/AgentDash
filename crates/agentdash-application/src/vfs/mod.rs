@@ -20,6 +20,7 @@ pub mod surface_query;
 pub mod tools;
 pub mod types;
 
+pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use apply_patch::{
     AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
     ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_target,
@@ -29,7 +30,6 @@ pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_conte
 pub use materialization::{
     MaterializationRewrite, RewriteJsonArgumentsInput, RewriteJsonArgumentsOutput,
     RewriteShellCommandInput, RewriteShellCommandOutput, VfsMaterializationService,
-    VfsMaterializationTransport,
 };
 pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,

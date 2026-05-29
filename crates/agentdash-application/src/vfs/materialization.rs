@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 use agentdash_relay::{
     MaterializationAccessMode, MaterializationCacheScope, MaterializationPlanKind,
     MaterializationTargetKind, VfsMaterializeContent, VfsMaterializeEntry, VfsMaterializePayload,
-    VfsMaterializeResponse,
 };
 use agentdash_spi::{Mount, MountCapability, Vfs};
-use async_trait::async_trait;
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
@@ -20,15 +19,6 @@ use super::{
     PROVIDER_SKILL_ASSET_FS, ResourceRef, format_mount_uri, join_root_ref,
     normalize_mount_relative_path, parse_mount_uri, resolve_mount,
 };
-
-#[async_trait]
-pub trait VfsMaterializationTransport: Send + Sync {
-    async fn materialize(
-        &self,
-        backend_id: &str,
-        payload: VfsMaterializePayload,
-    ) -> Result<VfsMaterializeResponse, String>;
-}
 
 #[derive(Clone)]
 pub struct VfsMaterializationService {

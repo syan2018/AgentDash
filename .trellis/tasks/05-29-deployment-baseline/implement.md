@@ -5,7 +5,9 @@
 - 已创建分支：`codex/deployment-baseline`。
 - 已新增文档：`docs/deployment/deployment-baseline.md`。
 - 已创建 Trellis 任务：`.trellis/tasks/05-29-deployment-baseline`。
-- 当前任务保持 `planning` 状态。
+- 当前任务已进入 `in_progress` 状态。
+- 已提交初始规划：`3ac34f17 docs(deployment): 建立部署基准规划`。
+- 当前实现切片：仓库部署环境与发布链路骨架。
 
 ## Suggested Implementation Slices
 

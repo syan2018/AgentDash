@@ -3,7 +3,7 @@
   "name": "deployment-baseline",
   "title": "部署基准方案与发布流程",
   "description": "维护 AgentDash 产品化部署基准：Docker Compose 作为首个交付形态，后续映射 Kubernetes；明确云端部署维护更新流程，以及桌面端服务器指向和发布策略。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "deployment",
   "package": null,

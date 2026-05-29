@@ -1,24 +1,16 @@
 import { api } from './client';
+import type {
+  SettingResponse,
+  SettingUpdate,
+  SettingsScopeKind,
+  SettingsScopeQuery,
+  UpdateSettingsResponse,
+} from '../generated/settings-contracts';
 
-export interface SettingEntry {
-  scope_kind: "system" | "user" | "project";
-  scope_id?: string | null;
-  key: string;
-  value: unknown;
-  updated_at: string;
-  masked: boolean;
-}
+export type SettingEntry = SettingResponse;
+export type { SettingUpdate };
 
-export interface SettingUpdate {
-  key: string;
-  value: unknown;
-}
-
-export interface SettingsScopeRequest {
-  scope: "system" | "user" | "project";
-  project_id?: string;
-  category?: string;
-}
+export type SettingsScopeRequest = SettingsScopeQuery & { scope: SettingsScopeKind };
 
 function buildScopeParams(scope: SettingsScopeRequest): string {
   const params = new URLSearchParams();
@@ -38,7 +30,7 @@ export const settingsApi = {
     return api.get<SettingEntry[]>(`/settings${buildScopeParams(scope)}`);
   },
   update: (scope: SettingsScopeRequest, settings: SettingUpdate[]) =>
-    api.put<{ updated: string[] }>(`/settings${buildScopeParams(scope)}`, { settings }),
+    api.put<UpdateSettingsResponse>(`/settings${buildScopeParams(scope)}`, { settings }),
   remove: (scope: SettingsScopeRequest, key: string) =>
     api.delete(`/settings/${encodeURIComponent(key)}${buildScopeParams(scope)}`),
 };

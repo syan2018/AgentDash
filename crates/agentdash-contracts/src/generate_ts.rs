@@ -68,6 +68,10 @@ use agentdash_contracts::session::{
     SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
+use agentdash_contracts::settings::{
+    SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
+    UpdateSettingsResponse,
+};
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
     LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
@@ -376,6 +380,20 @@ fn main() {
             export_all::<OpenProjectAgentSessionResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("settings-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<SettingsScopeKind>(dir);
+            export_all::<SettingsScopeQuery>(dir);
+            export_all::<SettingResponse>(dir);
+            export_all::<SettingUpdate>(dir);
+            export_all::<UpdateSettingsRequest>(dir);
+            export_all::<UpdateSettingsResponse>(dir);
         },
     );
 }

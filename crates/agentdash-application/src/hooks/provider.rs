@@ -5,8 +5,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
-    build_effective_contract,
+    ActivityAttemptStatus, ActivityLifecycleDefinitionRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -186,12 +186,32 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     } else {
                         workflow.active_step.description.clone()
                     };
+                    // P2：step_status 改读对应 Activity attempt 的状态。映射到
+                    // 与旧 LifecycleStepExecutionStatus Debug 输出一致的小写标签，
+                    // 保持 meta.step_status 语义不变。
                     let step_status = workflow
                         .run
-                        .step_states
-                        .iter()
-                        .find(|s| s.step_key == workflow.active_step.key)
-                        .map(|s| format!("{:?}", s.status).to_ascii_lowercase());
+                        .activity_state
+                        .as_ref()
+                        .and_then(|state| {
+                            state
+                                .attempts
+                                .iter()
+                                .find(|a| a.activity_key == workflow.active_step.key)
+                        })
+                        .map(|attempt| {
+                            match attempt.status {
+                                ActivityAttemptStatus::Pending => "pending",
+                                ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
+                                    "ready"
+                                }
+                                ActivityAttemptStatus::Running => "running",
+                                ActivityAttemptStatus::Completed => "completed",
+                                ActivityAttemptStatus::Failed
+                                | ActivityAttemptStatus::Cancelled => "failed",
+                            }
+                            .to_string()
+                        });
                     let node_type = Some(match workflow.active_step.node_type {
                         agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
                             "agent_node".to_string()
@@ -248,12 +268,10 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                                 Some(map.into_keys().collect())
                             }
                         },
-                        gate_collision_count: workflow
-                            .run
-                            .step_states
-                            .iter()
-                            .find(|s| s.step_key == workflow.active_step.key)
-                            .map(|s| s.gate_collision_count),
+                        // P2：Activity attempt 模型无 gate_collision_count 等价字段，
+                        // 该计数仅存在于旧 step_states 上。Activity run 一律置 None，
+                        // 待 gate 碰撞计数若需要在 attempt 上补字段时再恢复。
+                        gate_collision_count: None,
                     });
                 }
 

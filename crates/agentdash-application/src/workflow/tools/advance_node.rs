@@ -6,7 +6,7 @@ use crate::workflow::{
 };
 use std::sync::Arc;
 
-use agentdash_domain::workflow::LifecycleStepExecutionStatus;
+use agentdash_domain::workflow::ActivityAttemptStatus;
 use agentdash_spi::ExecutionContext;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
@@ -148,10 +148,13 @@ fn build_tool_result(
                 result.step_key,
                 result
                     .run
-                    .step_states
-                    .iter()
-                    .find(|state| state.step_key == result.step_key)
-                    .and_then(|state| state.summary.as_deref())
+                    .activity_state
+                    .as_ref()
+                    .and_then(|state| state
+                        .attempts
+                        .iter()
+                        .find(|attempt| attempt.activity_key == result.step_key))
+                    .and_then(|attempt| attempt.summary.as_deref())
                     .unwrap_or("")
             ))],
             is_error: false,
@@ -199,11 +202,17 @@ fn build_tool_result(
         AdvanceCurrentNodeStatus::Completed => {
             let newly_ready: Vec<&str> = result
                 .run
-                .step_states
-                .iter()
-                .filter(|state| state.status == LifecycleStepExecutionStatus::Ready)
-                .map(|state| state.step_key.as_str())
-                .collect();
+                .activity_state
+                .as_ref()
+                .map(|state| {
+                    state
+                        .attempts
+                        .iter()
+                        .filter(|attempt| attempt.status == ActivityAttemptStatus::Ready)
+                        .map(|attempt| attempt.activity_key.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
             let successor_info = if newly_ready.is_empty() {
                 if result.run.active_node_keys.is_empty() {
                     "lifecycle 已全部完成。".to_string()

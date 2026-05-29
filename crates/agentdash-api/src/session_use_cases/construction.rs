@@ -395,10 +395,8 @@ pub(crate) async fn finalize_session_construction_projection(
     plan.workspace.working_directory = Some(working_directory);
     plan.execution_profile.executor_config = executor_config;
     plan.surface.vfs = Some(effective_vfs.clone());
-    plan.context_projection.vfs = Some(effective_vfs.clone());
+    plan.context_projection.vfs = Some(effective_vfs);
     plan.context_projection.session_capabilities = Some(session_capabilities.clone());
-    plan.projections.context.vfs = Some(effective_vfs);
-    plan.projections.context.session_capabilities = Some(session_capabilities.clone());
     plan.projections.mcp_servers = mcp_servers;
     plan.projections.capability_state = Some(final_capability_state);
     plan.projections.session_capabilities = Some(session_capabilities);

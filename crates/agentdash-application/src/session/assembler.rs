@@ -130,7 +130,6 @@ fn apply_session_assembly(
         plan.surface.vfs = prepared.vfs;
     }
     plan.context_projection.vfs = plan.surface.vfs.clone();
-    plan.projections.context.vfs = plan.surface.vfs.clone();
     plan.projections.mcp_servers = prepared.mcp_servers;
     plan.projections.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {

@@ -187,7 +187,6 @@ async fn attach_runtime_surface(
     )
     .await;
     plan.context_projection.runtime_surface = Some(runtime_surface.clone());
-    plan.projections.context.runtime_surface = Some(runtime_surface.clone());
     plan.surface.runtime_surface = Some(runtime_surface);
     Ok(())
 }

@@ -882,8 +882,7 @@ mod tests {
         capability_state.vfs.active = Some(vfs.clone());
         construction.workspace.working_directory = Some(working_dir.to_path_buf());
         construction.execution_profile.executor_config = user_input.executor_config;
-        construction.surface.vfs = Some(vfs.clone());
-        construction.projections.context.vfs = Some(vfs);
+        construction.surface.vfs = Some(vfs);
         construction.projections.capability_state = Some(capability_state);
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("test.local_workspace_vfs".to_string()),

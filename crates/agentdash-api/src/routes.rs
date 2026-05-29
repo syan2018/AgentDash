@@ -13,6 +13,7 @@ pub mod identity_directory;
 pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
+pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_sessions;
@@ -429,6 +430,27 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             post(workflows::submit_human_decision),
         )
+        // Permission Grants
+        .route(
+            "/permission-grants",
+            get(permission_grants::list_grants),
+        )
+        .route(
+            "/permission-grants/{id}",
+            get(permission_grants::get_grant),
+        )
+        .route(
+            "/permission-grants/{id}/approve",
+            post(permission_grants::approve_grant),
+        )
+        .route(
+            "/permission-grants/{id}/reject",
+            post(permission_grants::reject_grant),
+        )
+        .route(
+            "/permission-grants/{id}/revoke",
+            post(permission_grants::revoke_grant),
+        )
         // Backend
         .route(
             "/backends",
@@ -557,10 +579,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/sessions/{id}/events",
             get(acp_sessions::list_session_events),
-        )
-        .route(
-            "/sessions/{id}/bindings",
-            get(acp_sessions::get_session_bindings),
         )
         .route(
             "/sessions/{id}/context",

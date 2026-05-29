@@ -33,13 +33,14 @@ pub use agentdash_domain::common::{
 // ─── connector ──────────────────────────────────────────────
 
 pub use connector::{
-    AgentConnector, AgentInfo, CapabilityState, CompanionDimension, ConnectorCapabilities,
-    ConnectorError, ConnectorType, DiscoveredGuideline, DiscoveryContext,
-    ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
-    ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig, PromptPayload,
-    RestoredSessionState, SessionMcpServer, SkillDimension, ToolCapabilityFilter, ToolCluster,
-    ToolDimension, VfsDimension, content_block_to_text, partition_session_mcp_servers,
-    workspace_path_from_context,
+    AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, CompanionDimension,
+    ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,
+    DiscoveryContext, ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame,
+    ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
+    NamedEntityDelta, PromptPayload, RestoredSessionState, SessionMcpServer, SetDelta,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    VfsSurfaceDelta, compute_capability_state_delta, content_block_to_text,
+    partition_session_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────

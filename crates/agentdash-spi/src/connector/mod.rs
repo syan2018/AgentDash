@@ -19,6 +19,13 @@ use crate::context::capability::SkillEntry;
 use crate::hooks::{ContextFrame, HookSessionRuntimeAccess};
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 
+pub mod capability_delta;
+
+pub use capability_delta::{
+    CapabilityStateDelta, DefaultMountDelta, NamedEntityDelta, SetDelta, VfsSurfaceDelta,
+    compute_capability_state_delta,
+};
+
 /// 连接器类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

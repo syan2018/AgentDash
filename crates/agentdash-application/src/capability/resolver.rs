@@ -75,6 +75,9 @@ pub struct CapabilityContext {
     /// Run 关联的 subject kinds（由 LifecycleRunLink 投影）。
     /// 例如 run 关联 Story → 此处含 `RunLinkSubjectKind::Story`。
     pub run_subject_kinds: Vec<agentdash_domain::workflow::RunLinkSubjectKind>,
+    /// Permission Grant 授予的 capability keys（由 active grants 解析）。
+    /// 任何出现在此集合中的 well-known key 视为已授权可见，绕过静态规则。
+    pub granted_capability_keys: BTreeSet<String>,
 }
 
 /// Resolver 输入 — 纯粹的 session 上下文描述。
@@ -208,7 +211,12 @@ impl CapabilityResolver {
         let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
+        let granted_keys = input
+            .capability_context
+            .as_ref()
+            .map(|ctx| &ctx.granted_capability_keys);
+        let mut effective_caps =
+            default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
 
         let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
@@ -357,10 +365,18 @@ fn compute_tool_policy(
 fn default_visible_capabilities(
     owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
+    granted_keys: Option<&BTreeSet<String>>,
 ) -> BTreeSet<ToolCapability> {
     let mut effective = BTreeSet::new();
     for &key in WELL_KNOWN_KEYS {
         let cap = ToolCapability::new(key);
+
+        // Permission Grant override: 如果 key 在 active grants 中，直接可见
+        if granted_keys.is_some_and(|gk| gk.contains(key)) {
+            effective.insert(cap);
+            continue;
+        }
+
         let agent_declares_this = merged.agent_declared_keys.contains(key);
         let workflow_declares_this = key == CAP_WORKFLOW && merged.has_active_workflow;
         if tool_capability::is_capability_visible(

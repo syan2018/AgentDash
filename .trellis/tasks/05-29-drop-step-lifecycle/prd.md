@@ -27,6 +27,17 @@
 - **不要 git commit**，orchestrator 统一 gate 后提交。
 - 若发现 Step 与 Activity 非纯新旧关系（某功能仅 Step 有），停下并在本文件记录，不强删。
 
+## ⚠️ 复查更正（2026-05-29 第二轮，推翻下方「冲突记录」）
+
+**下方「冲突记录」的核心结论错误**——它只数了代码引用就判 Step 轨为「活跃 load-bearing runtime」，未查数据状态。第二轮取证发现：
+
+- migration `0050` 已把所有 Step 定义行就地转 Activity 并 `steps='[]'`；Step repo 读取无判别式但 `steps` 恒空 → **task 启动 / companion overlay / start_run 在 0050 后静态可证必然失败**（不是活跃，是已断）。
+- Story session 实际挂 `builtin.freeform_session` 单活动 Activity run，**Step 多步 task 编排从未在产品中运行**。
+
+正确定性：Step 轨是「数据已抽空、生产必报错、概念从未真正启用」的死路径。完整方案见 **`design.md`**：P1 把 task 启动**解耦**（`task_id → session + launch`，不再激活 lifecycle step），而非「接 Activity attempt」（后者是超范围的新功能）。下方记录保留作纠正案例。
+
+---
+
 ## 冲突记录（2026-05-29，执行中止）
 
 **结论：Step 轨与 Activity 轨当前不是纯新旧关系，而是服务于不同入口的两套并行活跃 runtime；多个功能仅 Step 有、Activity 无对应。按硬约束停止强删，未改动任何代码（除本记录）。**

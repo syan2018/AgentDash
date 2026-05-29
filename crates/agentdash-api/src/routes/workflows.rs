@@ -7,7 +7,6 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
@@ -22,108 +21,22 @@ use agentdash_contracts::workflow::{
     RegisterHookPresetResponse, ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityTransition,
-    LifecycleRun, ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, normalize_workflow_binding_kinds,
-    workflow_binding_kinds_cover,
+    ActivityExecutorSpec, ActivityLifecycleDefinition, LifecycleRun, ValidationIssue,
+    ValidationSeverity, WorkflowDefinition, WorkflowDefinitionSource,
+    normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::WorkflowValidationResponse;
+use crate::dto::{
+    CreateActivityLifecycleDefinitionRequest, CreateWorkflowDefinitionRequest, ListWorkflowsQuery,
+    RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
+    UpdateActivityLifecycleDefinitionRequest, UpdateWorkflowDefinitionRequest,
+    ValidateActivityLifecycleDefinitionRequest, ValidateScriptRequest,
+    ValidateWorkflowDefinitionRequest, WorkflowValidationResponse,
+};
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ListWorkflowsQuery {
-    pub project_id: Option<String>,
-    pub binding_kind: Option<WorkflowBindingKind>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StartWorkflowRunRequest {
-    pub lifecycle_id: Option<String>,
-    pub lifecycle_key: Option<String>,
-    /// 父 session ID — lifecycle run 直接关联 session。
-    pub session_id: String,
-    /// project_id 显式传入，因为 session 本身不直接携带 project 信息。
-    pub project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SubmitHumanDecisionRequest {
-    pub decision_port: String,
-    pub decision: serde_json::Value,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateWorkflowDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateWorkflowDefinitionRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
-    pub contract: Option<WorkflowContract>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ValidateWorkflowDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateActivityLifecycleDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub entry_activity_key: String,
-    pub activities: Vec<ActivityDefinition>,
-    #[serde(default)]
-    pub transitions: Vec<ActivityTransition>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateActivityLifecycleDefinitionRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
-    pub entry_activity_key: Option<String>,
-    pub activities: Option<Vec<ActivityDefinition>>,
-    pub transitions: Option<Vec<ActivityTransition>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ValidateActivityLifecycleDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub entry_activity_key: String,
-    pub activities: Vec<ActivityDefinition>,
-    #[serde(default)]
-    pub transitions: Vec<ActivityTransition>,
-}
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
@@ -898,11 +811,6 @@ fn group_presets_by_trigger(
     Ok(groups)
 }
 
-#[derive(Deserialize)]
-pub struct ValidateScriptRequest {
-    pub script: String,
-}
-
 pub async fn validate_hook_script(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ValidateScriptRequest>,
@@ -917,12 +825,6 @@ pub async fn validate_hook_script(
             errors: Some(errors),
         }),
     }
-}
-
-#[derive(Deserialize)]
-pub struct RegisterPresetRequest {
-    pub key: String,
-    pub script: String,
 }
 
 pub async fn register_hook_preset(
@@ -949,12 +851,6 @@ pub async fn delete_hook_preset(
 }
 
 // ── Tool Catalog ──
-
-#[derive(Debug, Deserialize)]
-pub struct ToolCatalogQuery {
-    /// 逗号分隔的 capability keys，如 `file_read,canvas,mcp:code_analyzer`
-    pub capabilities: String,
-}
 
 pub async fn query_tool_catalog(
     Query(query): Query<ToolCatalogQuery>,

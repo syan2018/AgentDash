@@ -6,7 +6,7 @@
 
 - 当前分支：`refactor/architecture-slop-cleanup`
 - 当前 active child：`05-29-infra-residual`
-- 当前 child 状态：`in_progress`（已补齐 design/implement；下一步执行阶段 2：本机 runtime 切 embedded PostgreSQL 并移除 sqlite repository）
+- 当前 child 状态：`in_progress`（已完成阶段 2：本机 runtime 切 embedded PostgreSQL 并移除 sqlite repository；下一步执行 SessionStoreError 类型化）
 - 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup` 已提交并归档；下一步推进 `infra-residual`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
@@ -48,7 +48,7 @@
 | 2 | `05-29-contract-pipeline-unify` | 已归档 | 提交 `0edb6833` / `5a5316c4` / `2dea9bf9` / `eb026433`；归档提交 `a4336c55`；`Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`JsonValue` 单源；mirror grep 清零；mapper 保留清单已写；spec 已同步；`contracts:check` / `cargo check --workspace` / app-web `tsc --noEmit` 通过 |
 | 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；归档提交 `93a64a05`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
 | 4 | `05-29-vfs-dedup` | 已归档 | 提交 `4d2e9105` / `05016cf0` / `b7db5bbc` / `6641d289`；归档提交 `c815b4ba`；provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
-| 5 | `05-29-infra-residual` | in_progress | 规划提交 `27cd34e7`；已拆分 sqlite 移除、SessionStoreError、TIMESTAMPTZ 三阶段；下一步执行本机 runtime 切 embedded PostgreSQL 与 sqlite repository 删除 |
+| 5 | `05-29-infra-residual` | in_progress | 规划提交 `27cd34e7`；已拆分 sqlite 移除、SessionStoreError、TIMESTAMPTZ 三阶段；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；`cargo check -p agentdash-infrastructure -p agentdash-local`、`cargo test -p agentdash-infrastructure session_repository` 通过；下一步执行 SessionStoreError 类型化 |
 | 6 | `05-29-api-handler-thinning` | 待 error/contract/session | API handler repo 直调下沉；`session_use_cases` 迁 application；`Json<Value>` 和 inline DTO 清零 |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
 | 8 | `05-29-frontend-server-state-refactor` | 待执行 | server-state 真迁 react-query；active project 单源；跨 store 命令式耦合清理；目标 god component 拆分 |
@@ -70,9 +70,9 @@
 
 ## 当前 child 下一步
 
-1. 执行阶段 2：本机 runtime 使用 `PostgresRuntime` + `PostgresSessionRepository`，并持有 embedded runtime 句柄。
-2. 删除 sqlite repository module、re-export、local runtime sqlite imports 与 sqlite db path helper。
-3. 清理 `session_core.rs` sqlite row impl，并运行阶段 2 验证。
+1. 执行阶段 3：在 `agentdash-spi/src/session_persistence.rs` 增加 `SessionStoreError` / `SessionStoreResult<T>`。
+2. 批量替换 session persistence trait、`session_core.rs` helper 与 `PostgresSessionRepository` 返回类型。
+3. 更新 application/API/local 调用边缘错误映射，并运行阶段 3 验证。
 
 ## 全局验收 Gates
 

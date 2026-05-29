@@ -1,9 +1,7 @@
-//! sqlite/postgres session 持久化的共享逻辑。
+//! postgres session 持久化的共享逻辑。
 //!
-//! 这里集中了两套实现完全一致的部分：行解析（`*_from_row`）、值编解码辅助、
-//! 业务不变量校验（`validate_commit_session`）以及从 `BackboneEnvelope`
-//! 推导 session 投影的纯逻辑。两个 repository 只保留 pool 持有、`initialize()`、
-//! SQL 字符串（占位符 `?` vs `$n`）与方言差异（`RETURNING`/`ANY`）。
+//! 这里集中行解析（`*_from_row`）、值编解码辅助、业务不变量校验
+//! （`validate_commit_session`）以及从 `BackboneEnvelope` 推导 session 投影的纯逻辑。
 
 use std::io;
 
@@ -20,17 +18,10 @@ use agentdash_spi::session_persistence::{
 };
 use sqlx::Row;
 
-/// `synthetic` 列在 sqlite 存为 INTEGER、在 postgres 存为 BOOLEAN，
-/// 由各方言 row 类型实现该 trait 抹平差异，从而让 `projection_segment_from_row`
-/// 可以共用一份解析逻辑。
+/// `synthetic` 列在 postgres 存为 BOOLEAN，由 row 类型实现该 trait 让
+/// `projection_segment_from_row` 保持泛型解析。
 pub(crate) trait SessionRow {
     fn synthetic_flag(&self) -> bool;
-}
-
-impl SessionRow for sqlx::sqlite::SqliteRow {
-    fn synthetic_flag(&self) -> bool {
-        self.get::<i64, _>("synthetic") != 0
-    }
 }
 
 impl SessionRow for sqlx::postgres::PgRow {

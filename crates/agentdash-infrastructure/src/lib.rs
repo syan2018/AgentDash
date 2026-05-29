@@ -38,7 +38,6 @@ pub use persistence::postgres::PostgresStoryRepository;
 pub use persistence::postgres::PostgresUserDirectoryRepository;
 pub use persistence::postgres::PostgresWorkflowRepository;
 pub use persistence::postgres::PostgresWorkspaceRepository;
-pub use persistence::sqlite::SqliteSessionRepository;
 pub use secret::LlmProviderSecretCipher;
 pub use skill_source::HttpRemoteSkillSource;
 pub use storage::FilesystemExtensionPackageArtifactStorage;

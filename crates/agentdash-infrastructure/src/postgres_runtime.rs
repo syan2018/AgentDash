@@ -41,13 +41,22 @@ impl PostgresRuntime {
             });
         }
 
-        // ── Embedded PostgreSQL ──────────────────────────────────────────
-        let database_name = service_name.replace('-', "_");
         let data_root = match std::env::var("AGENTDASH_DATA_ROOT") {
             Ok(val) if !val.trim().is_empty() => PathBuf::from(val.trim()),
             _ => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         };
+        Self::resolve_embedded_at_data_root(service_name, max_connections, data_root).await
+    }
+
+    pub async fn resolve_embedded_at_data_root(
+        service_name: &str,
+        max_connections: u32,
+        data_root: impl AsRef<Path>,
+    ) -> Result<Self> {
+        // ── Embedded PostgreSQL ──────────────────────────────────────────
+        let database_name = service_name.replace('-', "_");
         let service_dir = data_root
+            .as_ref()
             .join(".agentdash")
             .join("embedded-postgres")
             .join(service_name);

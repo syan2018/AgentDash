@@ -43,3 +43,4 @@
 | `session_construction.rs` adapter | composition / transport adapter：从 `AppState` 组装 application use case deps，并补充 runtime-only VFS surface projection；退出条件是后续若 runtime projection 也抽为 application port，再移除 adapter 内的直接 repo/runtime 读取 |
 | `canvases.rs` runtime session scope | Canvas CRUD 已下沉 application；runtime snapshot/invoke 仍需在 API 校验 session 与 Canvas 是否属于同一 Project，当前保留 session binding 查询作为 transport/runtime scope adapter，退出条件是 session scope 校验收敛为 application session access use case |
 | `projects.rs` sharing/auth adapter | Project create/detail/update/delete/clone 已下沉 application；grant/revoke/list grants 与 user/group directory 存在性校验仍留在 API sharing/auth adapter，退出条件是 Project sharing management use case 落地 |
+| `stories.rs` task command adapter | Story list/create/update/delete 已下沉 application；task create/update/delete 仍保留 workspace 校验、Story aggregate 写回、StateChange append 与 terminal cancel 编排，退出条件是 Task management use case 单独落地 |

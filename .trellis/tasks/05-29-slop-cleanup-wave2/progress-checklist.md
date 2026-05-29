@@ -5,9 +5,9 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前 active child：`05-29-mcp-direct-connection-pool`
-- 当前 child 状态：`in_progress`（代码与验证已完成，待提交/归档）
-- 当前主线步骤：`error-model-unify` 与 `contract-pipeline-unify` 已提交并归档；`mcp-direct-connection-pool` 已完成 executor direct MCP 连接池实现，下一步提交并归档。
+- 当前 active child：`05-29-vfs-dedup`
+- 当前 child 状态：`planning`（复杂 VFS 结构任务；当前仅有 `prd.md`，下一步补齐 `design.md` / `implement.md`）
+- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool` 已提交并归档；下一步规划并推进 VFS 去重。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
@@ -46,8 +46,8 @@
 | 0 | `05-29-quickfix-swarm` | 已归档 | archive 中 task completed；quickfix commit 已存在 |
 | 1 | `05-29-error-model-unify` | 已归档 | 提交 `c2fb8f78`；归档提交 `8f1d232d`；本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
 | 2 | `05-29-contract-pipeline-unify` | 已归档 | 提交 `0edb6833` / `5a5316c4` / `2dea9bf9` / `eb026433`；归档提交 `a4336c55`；`Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`JsonValue` 单源；mirror grep 清零；mapper 保留清单已写；spec 已同步；`contracts:check` / `cargo check --workspace` / app-web `tsc --noEmit` 通过 |
-| 3 | `05-29-mcp-direct-connection-pool` | 验收完成，待提交/归档 | `DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
-| 4 | `05-29-vfs-dedup` | 待执行 | VFS dispatch 单一 helper；patch executor 单份；`MountProvider` 拆 trait；VFS `to_string()` 抹平显著收敛 |
+| 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
+| 4 | `05-29-vfs-dedup` | 待 design | VFS dispatch 单一 helper；patch executor 单份；`MountProvider` 拆 trait；VFS `to_string()` 抹平显著收敛 |
 | 5 | `05-29-infra-residual` | 待 error-model | sqlite 后端移除；TIMESTAMPTZ migration；session port 错误类型化；DB spec 同步当前决策 |
 | 6 | `05-29-api-handler-thinning` | 待 error/contract/session | API handler repo 直调下沉；`session_use_cases` 迁 application；`Json<Value>` 和 inline DTO 清零 |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
@@ -70,9 +70,10 @@
 
 ## 当前 child 下一步
 
-1. 提交 `mcp-direct-connection-pool` 实现与验收记录。
-2. 归档 `05-29-mcp-direct-connection-pool`。
-3. 启动下一个 child：`05-29-vfs-dedup`。
+1. 提交 `mcp-direct-connection-pool` 归档移动与 checklist 状态更新。
+2. 读取 `05-29-vfs-dedup/prd.md` 与相关 VFS / SPI / local patch executor 代码证据。
+3. 补齐 `05-29-vfs-dedup/design.md` / `implement.md` / context manifest。
+4. 通过 planning review 后启动 `05-29-vfs-dedup` 实现。
 
 ## 全局验收 Gates
 

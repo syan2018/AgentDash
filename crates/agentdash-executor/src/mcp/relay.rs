@@ -102,10 +102,7 @@ impl AgentTool for RelayMcpToolAdapter {
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         Ok(AgentToolResult {
-            content: vec![ContentPart::text(format!(
-                "MCP tool: {}\n\n{}",
-                self.original_tool_name, result.content
-            ))],
+            content: vec![ContentPart::text(result.content)],
             is_error: result.is_error,
             details: None,
         })

@@ -98,3 +98,14 @@ impl From<crate::task::execution::TaskExecutionError> for ApplicationError {
         }
     }
 }
+
+impl From<crate::backend::BackendAuthorizationError> for ApplicationError {
+    fn from(error: crate::backend::BackendAuthorizationError) -> Self {
+        match error {
+            crate::backend::BackendAuthorizationError::Domain(error) => Self::from(error),
+            crate::backend::BackendAuthorizationError::Forbidden { .. } => {
+                Self::Forbidden(error.to_string())
+            }
+        }
+    }
+}

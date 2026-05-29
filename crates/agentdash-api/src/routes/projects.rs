@@ -8,59 +8,22 @@ use agentdash_application::project::{
 };
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_contracts::core::{
     DeletedIdResponse, DeletedProjectSubjectGrantResponse,
     ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
 };
-use agentdash_domain::context_container::ContextContainerDefinition;
-use agentdash_domain::project::{
-    Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
-};
+use agentdash_domain::project::{Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType};
 use agentdash_plugin_api::AuthIdentity;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, require_project_permission};
 use crate::dto::{
-    ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
-    ProjectSubjectGrantResponse,
+    CloneProjectRequest, CreateProjectRequest, ProjectAccessSummaryResponse, ProjectDetailResponse,
+    ProjectResponse, ProjectSubjectGrantResponse, UpdateProjectRequest, UpsertProjectGrantRequest,
 };
 use crate::rpc::ApiError;
-
-#[derive(Deserialize)]
-pub struct CreateProjectRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub config: Option<ProjectConfig>,
-    pub visibility: Option<ProjectVisibility>,
-    pub is_template: Option<bool>,
-    pub cloned_from_project_id: Option<Uuid>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateProjectRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub config: Option<ProjectConfig>,
-    pub visibility: Option<ProjectVisibility>,
-    pub is_template: Option<bool>,
-    pub cloned_from_project_id: Option<Uuid>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-}
-
-#[derive(Deserialize)]
-pub struct UpsertProjectGrantRequest {
-    pub role: ProjectRole,
-}
-
-#[derive(Deserialize, Default)]
-pub struct CloneProjectRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-}
 
 pub async fn list_projects(
     State(state): State<Arc<AppState>>,

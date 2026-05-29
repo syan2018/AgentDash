@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 
 use uuid::Uuid;
 
+use crate::error::ApplicationError;
+use crate::repository_set::RepositorySet;
 use agentdash_domain::DomainError;
 use agentdash_domain::canvas::{
     Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig, ensure_canvas_system_skill,
@@ -16,6 +18,92 @@ pub struct CanvasMutationInput {
     pub sandbox_config: Option<CanvasSandboxConfig>,
     pub files: Option<Vec<CanvasFile>>,
     pub bindings: Option<Vec<CanvasDataBinding>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateCanvasInput {
+    pub project_id: Uuid,
+    pub mount_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub mutation: CanvasMutationInput,
+}
+
+pub async fn list_project_canvases(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<Vec<Canvas>, ApplicationError> {
+    repos
+        .canvas_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(ApplicationError::from)
+}
+
+pub async fn create_project_canvas(
+    repos: &RepositorySet,
+    input: CreateCanvasInput,
+) -> Result<Canvas, ApplicationError> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(ApplicationError::BadRequest(
+            "Canvas 标题不能为空".to_string(),
+        ));
+    }
+
+    let canvas = build_canvas(
+        input.project_id,
+        input.mount_id,
+        title.to_string(),
+        input.description.unwrap_or_default(),
+        input.mutation,
+    )
+    .map_err(ApplicationError::from)?;
+    repos
+        .canvas_repo
+        .create(&canvas)
+        .await
+        .map_err(ApplicationError::from)?;
+    Ok(canvas)
+}
+
+pub async fn load_canvas_by_ref(
+    repos: &RepositorySet,
+    raw_canvas_id: &str,
+) -> Result<Canvas, ApplicationError> {
+    let canvas = if let Ok(uuid) = Uuid::parse_str(raw_canvas_id) {
+        repos.canvas_repo.get_by_id(uuid).await
+    } else {
+        repos.canvas_repo.find_by_mount_id(raw_canvas_id).await
+    }
+    .map_err(ApplicationError::from)?;
+
+    canvas.ok_or_else(|| ApplicationError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))
+}
+
+pub async fn update_canvas_record(
+    repos: &RepositorySet,
+    mut canvas: Canvas,
+    input: CanvasMutationInput,
+) -> Result<Canvas, ApplicationError> {
+    apply_canvas_mutation(&mut canvas, input).map_err(ApplicationError::from)?;
+    repos
+        .canvas_repo
+        .update(&canvas)
+        .await
+        .map_err(ApplicationError::from)?;
+    Ok(canvas)
+}
+
+pub async fn delete_canvas_record(
+    repos: &RepositorySet,
+    canvas: &Canvas,
+) -> Result<(), ApplicationError> {
+    repos
+        .canvas_repo
+        .delete(canvas.id)
+        .await
+        .map_err(ApplicationError::from)
 }
 
 pub fn build_canvas(

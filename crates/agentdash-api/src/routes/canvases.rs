@@ -8,8 +8,10 @@ use uuid::Uuid;
 
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
-    apply_canvas_mutation, build_canvas, build_canvas_extension_package,
-    build_runtime_snapshot_with_bindings,
+    CreateCanvasInput, build_canvas_extension_package, build_runtime_snapshot_with_bindings,
+    create_project_canvas, delete_canvas_record,
+    list_project_canvases as list_project_canvases_use_case, load_canvas_by_ref,
+    update_canvas_record,
 };
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
@@ -93,7 +95,7 @@ pub async fn list_project_canvases(
     )
     .await?;
 
-    let canvases = state.repos.canvas_repo.list_by_project(project_id).await?;
+    let canvases = list_project_canvases_use_case(&state.repos, project_id).await?;
     Ok(Json(
         canvases.into_iter().map(CanvasResponse::from).collect(),
     ))
@@ -114,25 +116,23 @@ pub async fn create_canvas(
     )
     .await?;
 
-    let title = req.title.trim();
-    if title.is_empty() {
-        return Err(ApiError::BadRequest("Canvas 标题不能为空".into()));
-    }
-
-    let canvas = build_canvas(
-        project_id,
-        req.mount_id,
-        title.to_string(),
-        req.description.unwrap_or_default(),
-        CanvasMutationInput {
-            entry_file: req.entry_file,
-            sandbox_config: req.sandbox_config,
-            files: req.files,
-            bindings: req.bindings,
-            ..CanvasMutationInput::default()
+    let canvas = create_project_canvas(
+        &state.repos,
+        CreateCanvasInput {
+            project_id,
+            mount_id: req.mount_id,
+            title: req.title,
+            description: req.description,
+            mutation: CanvasMutationInput {
+                entry_file: req.entry_file,
+                sandbox_config: req.sandbox_config,
+                files: req.files,
+                bindings: req.bindings,
+                ..CanvasMutationInput::default()
+            },
         },
-    )?;
-    state.repos.canvas_repo.create(&canvas).await?;
+    )
+    .await?;
 
     Ok(Json(CanvasResponse::from(canvas)))
 }
@@ -155,12 +155,13 @@ pub async fn update_canvas(
     Path(id): Path<String>,
     Json(req): Json<UpdateCanvasRequest>,
 ) -> Result<Json<CanvasResponse>, ApiError> {
-    let mut canvas =
+    let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
 
-    apply_canvas_mutation(
-        &mut canvas,
+    let canvas = update_canvas_record(
+        &state.repos,
+        canvas,
         CanvasMutationInput {
             title: req.title,
             description: req.description,
@@ -169,8 +170,8 @@ pub async fn update_canvas(
             files: req.files,
             bindings: req.bindings,
         },
-    )?;
-    state.repos.canvas_repo.update(&canvas).await?;
+    )
+    .await?;
 
     Ok(Json(CanvasResponse::from(canvas)))
 }
@@ -183,7 +184,7 @@ pub async fn delete_canvas(
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
-    state.repos.canvas_repo.delete(canvas.id).await?;
+    delete_canvas_record(&state.repos, &canvas).await?;
 
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
@@ -337,17 +338,7 @@ async fn load_canvas_with_permission(
     raw_canvas_id: &str,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::canvas::Canvas, ApiError> {
-    let canvas = if let Ok(uuid) = Uuid::parse_str(raw_canvas_id) {
-        state.repos.canvas_repo.get_by_id(uuid).await?
-    } else {
-        state
-            .repos
-            .canvas_repo
-            .find_by_mount_id(raw_canvas_id)
-            .await?
-    };
-    let canvas =
-        canvas.ok_or_else(|| ApiError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))?;
+    let canvas = load_canvas_by_ref(&state.repos, raw_canvas_id).await?;
 
     load_project_with_permission(state, current_user, canvas.project_id, permission).await?;
     Ok(canvas)

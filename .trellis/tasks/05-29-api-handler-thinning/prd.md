@@ -41,3 +41,4 @@
 | 路由 | 保留直调的理由 |
 |---|---|
 | `session_construction.rs` adapter | composition / transport adapter：从 `AppState` 组装 application use case deps，并补充 runtime-only VFS surface projection；退出条件是后续若 runtime projection 也抽为 application port，再移除 adapter 内的直接 repo/runtime 读取 |
+| `canvases.rs` runtime session scope | Canvas CRUD 已下沉 application；runtime snapshot/invoke 仍需在 API 校验 session 与 Canvas 是否属于同一 Project，当前保留 session binding 查询作为 transport/runtime scope adapter，退出条件是 session scope 校验收敛为 application session access use case |

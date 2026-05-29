@@ -754,33 +754,33 @@ async fn build_lifecycle_node_prompt_request(
     })?;
     let lifecycle = state
         .repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .get_by_id(run.lifecycle_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id)))?;
     let current_step_key = run.current_step_key().ok_or_else(|| {
-        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无当前 step"))
+        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无当前 activity"))
     })?;
-    let step = lifecycle
-        .steps
+    let activity = lifecycle
+        .activities
         .iter()
         .find(|item| item.key == current_step_key)
         .cloned()
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Lifecycle {} 中不存在当前 step `{}`",
+                "Lifecycle {} 中不存在当前 activity `{}`",
                 lifecycle.id, current_step_key
             ))
         })?;
-    let workflow = match step.effective_workflow_key() {
-        Some(key) => state
+    let workflow = match &activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => state
             .repos
             .workflow_definition_repo
-            .get_by_project_and_key(run.project_id, key)
+            .get_by_project_and_key(run.project_id, &spec.workflow_key)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?,
-        None => None,
+        _ => None,
     };
     let audit_bus = Some(state.services.audit_bus.clone());
 
@@ -791,7 +791,7 @@ async fn build_lifecycle_node_prompt_request(
         LifecycleNodeSpec {
             run: &run,
             lifecycle: &lifecycle,
-            step: &step,
+            activity: &activity,
             workflow: workflow.as_ref(),
             inherited_executor_config: None,
         },
@@ -826,7 +826,7 @@ async fn build_companion_dispatch_prompt_request(
                     },
                     run: &workflow.run,
                     lifecycle: &workflow.lifecycle,
-                    step: &workflow.step,
+                    activity: &workflow.activity,
                     workflow: workflow.workflow.as_ref(),
                 },
             )

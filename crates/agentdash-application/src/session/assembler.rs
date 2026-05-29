@@ -35,7 +35,7 @@ use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
+use agentdash_domain::workflow::{ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
@@ -1442,7 +1442,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 },
                 run: spec.run,
                 lifecycle: spec.lifecycle,
-                step: spec.step,
+                activity: spec.activity,
                 workflow: spec.workflow,
             },
         )
@@ -1511,11 +1511,11 @@ async fn compose_lifecycle_node_with_audit(
     let mut activation = activate_step_with_platform(
         &StepActivationInput {
             owner_ctx,
-            active_step: spec.step,
+            active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &spec.lifecycle.edges,
+            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
@@ -1580,6 +1580,22 @@ async fn compose_lifecycle_node_with_audit(
         .build())
 }
 
+/// 由 activity executor 推导展示用的 node 语义。
+fn activity_node_type(
+    activity: &ActivityDefinition,
+) -> agentdash_domain::workflow::LifecycleNodeType {
+    use agentdash_domain::workflow::{ActivityExecutorSpec, AgentSessionPolicy, LifecycleNodeType};
+    match &activity.executor {
+        ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
+            AgentSessionPolicy::ContinueRoot => LifecycleNodeType::PhaseNode,
+            AgentSessionPolicy::SpawnChild | AgentSessionPolicy::AttachExisting => {
+                LifecycleNodeType::AgentNode
+            }
+        },
+        _ => LifecycleNodeType::AgentNode,
+    }
+}
+
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
     activation: &crate::workflow::StepActivation,
@@ -1587,16 +1603,17 @@ fn contribute_lifecycle_context(
 ) -> Contribution {
     let mut fragments = Vec::new();
 
-    let step_desc = spec.step.description.trim();
+    let step_desc = spec.activity.description.trim();
     let workflow_label = spec
         .workflow
         .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
         .unwrap_or_else(|| "未绑定 workflow".to_string());
+    let node_type = activity_node_type(spec.activity);
     let mut lifecycle_lines = vec![
         format!("- Lifecycle: `{}`", spec.lifecycle.key),
         format!("- Run: `{}`", spec.run.id),
-        format!("- Step: `{}`", spec.step.key),
-        format!("- Node type: `{:?}`", spec.step.node_type),
+        format!("- Step: `{}`", spec.activity.key),
+        format!("- Node type: `{node_type:?}`"),
         format!("- Workflow: {workflow_label}"),
     ];
     if !step_desc.is_empty() {
@@ -1795,8 +1812,8 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
@@ -1822,8 +1839,8 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
 }
 
@@ -1838,8 +1855,8 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
 }
 
@@ -1869,11 +1886,11 @@ async fn compose_companion_with_workflow(
     let activation = activate_step_with_platform(
         &StepActivationInput {
             owner_ctx,
-            active_step: spec.step,
+            active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &spec.lifecycle.edges,
+            edges: &[],
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(comp.slice_mode),
@@ -2018,9 +2035,9 @@ async fn resolve_owner_workflow_tool_directives(
 mod tests {
     use super::*;
     use agentdash_domain::workflow::{
-        InputPortDefinition, LifecycleDefinition, LifecycleStepDefinition, OutputPortDefinition,
-        WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
-        WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityLifecycleRunState,
+        AgentActivityExecutorSpec, InputPortDefinition, OutputPortDefinition, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -2257,17 +2274,13 @@ mod tests {
     #[test]
     fn lifecycle_context_contribution_contains_workflow_and_runtime_fragments() {
         let project_id = Uuid::new_v4();
-        let step = LifecycleStepDefinition {
+        let activity = ActivityDefinition {
             key: "implement".to_string(),
             description: "实现功能".to_string(),
-            workflow_key: Some("wf_impl".to_string()),
-            node_type: Default::default(),
-            output_ports: vec![OutputPortDefinition {
-                key: "summary".to_string(),
-                description: "实现摘要".to_string(),
-                gate_strategy: Default::default(),
-                gate_params: None,
-            }],
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: "wf_impl".to_string(),
+                session_policy: Default::default(),
+            }),
             input_ports: vec![InputPortDefinition {
                 key: "design".to_string(),
                 description: "设计方案".to_string(),
@@ -2275,9 +2288,17 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
-            capability_config: Default::default(),
+            output_ports: vec![OutputPortDefinition {
+                key: "summary".to_string(),
+                description: "实现摘要".to_string(),
+                gate_strategy: Default::default(),
+                gate_params: None,
+            }],
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         };
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle = ActivityLifecycleDefinition::new(
             project_id,
             "dev",
             "Dev",
@@ -2285,17 +2306,29 @@ mod tests {
             vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
-            vec![step.clone()],
+            vec![activity.clone()],
             vec![],
         )
         .expect("lifecycle");
-        let run = agentdash_domain::workflow::LifecycleRun::new(
+        let activity_state = ActivityLifecycleRunState {
+            status: agentdash_domain::workflow::ActivityRunStatus::Running,
+            attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
+                activity_key: "implement".to_string(),
+                attempt: 1,
+                status: agentdash_domain::workflow::ActivityAttemptStatus::Running,
+                executor_run: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+            }],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        };
+        let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
             "sess-story",
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
+            activity_state,
         )
         .expect("run");
         let workflow = WorkflowDefinition::new(
@@ -2343,7 +2376,7 @@ mod tests {
         let spec = LifecycleNodeSpec {
             run: &run,
             lifecycle: &lifecycle,
-            step: &step,
+            activity: &activity,
             workflow: Some(&workflow),
             inherited_executor_config: None,
         };

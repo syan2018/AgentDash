@@ -31,22 +31,13 @@ fn workflow_scope_key(workflow: &ActiveWorkflowProjection) -> String {
         .unwrap_or_else(|| workflow.lifecycle.key.clone())
 }
 
-fn lifecycle_step_advance_label(
-    step: &agentdash_domain::workflow::LifecycleStepDefinition,
-) -> &'static str {
-    match step.effective_workflow_key() {
-        Some(_) => "auto",
-        None => "manual",
-    }
-}
-
 pub(super) fn global_builtin_source() -> &'static str {
     "builtin:global"
 }
 
 pub(super) fn workflow_source(workflow: &ActiveWorkflowProjection) -> String {
     let scope = workflow_scope_key(workflow);
-    format!("workflow:{}:{}", scope, workflow.active_step.key)
+    format!("workflow:{}:{}", scope, workflow.active_activity.key)
 }
 
 fn dedupe_tags(tags: Vec<String>) -> Vec<String> {

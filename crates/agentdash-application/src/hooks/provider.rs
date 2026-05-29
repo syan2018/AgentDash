@@ -26,8 +26,7 @@ use super::snapshot_helpers::*;
 use super::workflow_contribution::build_workflow_step_fragments;
 use super::workflow_snapshot::WorkflowSnapshotBuilder;
 use super::{
-    dedupe_tags, global_builtin_source, lifecycle_step_advance_label, map_hook_error,
-    workflow_scope_key, workflow_source,
+    dedupe_tags, global_builtin_source, map_hook_error, workflow_scope_key, workflow_source,
 };
 
 /// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
@@ -175,16 +174,16 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     code: "active_workflow_resolved".to_string(),
                     message: format!(
                         "命中 active lifecycle step：{} / {}",
-                        workflow.lifecycle.key, workflow.active_step.key
+                        workflow.lifecycle.key, workflow.active_activity.key
                     ),
                 });
 
                 if let Some(meta) = snapshot.metadata.as_mut() {
-                    let transition_policy = lifecycle_step_advance_label(&workflow.active_step);
-                    let step_title = if workflow.active_step.description.trim().is_empty() {
-                        workflow.active_step.key.clone()
+                    let transition_policy = workflow.advance_label();
+                    let step_title = if workflow.active_activity.description.trim().is_empty() {
+                        workflow.active_activity.key.clone()
                     } else {
-                        workflow.active_step.description.clone()
+                        workflow.active_activity.description.clone()
                     };
                     // P2：step_status 改读对应 Activity attempt 的状态。映射到
                     // 与旧 LifecycleStepExecutionStatus Debug 输出一致的小写标签，
@@ -197,7 +196,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             state
                                 .attempts
                                 .iter()
-                                .find(|a| a.activity_key == workflow.active_step.key)
+                                .find(|a| a.activity_key == workflow.active_activity.key)
                         })
                         .map(|attempt| {
                             match attempt.status {
@@ -212,7 +211,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             }
                             .to_string()
                         });
-                    let node_type = Some(match workflow.active_step.node_type {
+                    let node_type = Some(match workflow.active_node_type {
                         agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
                             "agent_node".to_string()
                         }
@@ -226,11 +225,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                         lifecycle_name: Some(workflow.lifecycle.name.clone()),
                         run_id: Some(workflow.run.id),
                         run_status: Some(workflow.run.status),
-                        step_key: Some(workflow.active_step.key.clone()),
+                        step_key: Some(workflow.active_activity.key.clone()),
                         step_title: Some(step_title),
                         step_status,
                         node_type,
-                        workflow_key: workflow.active_step.workflow_key.clone(),
+                        workflow_key: workflow.active_workflow_key.clone(),
                         transition_policy: Some(transition_policy.to_string()),
                         primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
                         primary_workflow_name: workflow
@@ -239,13 +238,13 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                             .map(|w| w.name.clone()),
                         effective_contract: Some(build_effective_contract(
                             &workflow.lifecycle.key,
-                            &workflow.active_step.key,
+                            &workflow.active_activity.key,
                             workflow.primary_workflow.as_ref(),
                         )),
                         output_port_keys: {
-                            // port 归属已迁移到 step 级别
+                            // port 归属在 activity 级别
                             let port_keys: Vec<String> = workflow
-                                .active_step
+                                .active_activity
                                 .output_ports
                                 .iter()
                                 .map(|p| p.key.clone())
@@ -281,7 +280,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 // Add workflow tags
                 snapshot.tags.extend([
                     format!("workflow:{}", workflow_scope_key(&workflow)),
-                    format!("workflow_step:{}", workflow.active_step.key),
+                    format!("workflow_step:{}", workflow.active_activity.key),
                     format!(
                         "workflow_status:{}",
                         workflow_run_status_tag(workflow.run.status)

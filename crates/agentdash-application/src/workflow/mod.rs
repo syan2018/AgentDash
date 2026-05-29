@@ -49,6 +49,8 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
+#[cfg(test)]
+pub(crate) use projection::activity_projection;
 pub use run::{
     ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
     BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,

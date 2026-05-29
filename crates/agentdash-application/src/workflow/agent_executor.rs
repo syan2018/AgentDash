@@ -2,8 +2,7 @@ use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, Session
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     ActivityLifecycleDefinition, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
-    FunctionActivityExecutorSpec, HumanActivityExecutorSpec, LifecycleNodeType,
-    LifecycleStepDefinition,
+    FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
 };
 use std::sync::Arc;
 
@@ -237,7 +236,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| format!("加载 ContinueRoot workflow 失败: {error}"))?
             .ok_or_else(|| format!("ContinueRoot workflow 不存在: {workflow_key}"))?;
 
-        let active_step = activity_as_step(activity, workflow_key);
         let available_presets =
             crate::session::load_available_presets(&self.repos, definition.project_id).await;
         let ready_port_keys =
@@ -261,7 +259,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
-                    active_step: &active_step,
+                    active_activity: activity,
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     lifecycle_key: &definition.key,
@@ -307,7 +305,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
-                    active_step: &active_step,
+                    active_activity: activity,
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     lifecycle_key: &definition.key,
@@ -597,18 +595,6 @@ where
             result.executor_run,
             vec![result.completion_event],
         ))
-    }
-}
-
-fn activity_as_step(activity: &ActivityDefinition, workflow_key: &str) -> LifecycleStepDefinition {
-    LifecycleStepDefinition {
-        key: activity.key.clone(),
-        description: activity.description.clone(),
-        workflow_key: Some(workflow_key.to_string()),
-        node_type: LifecycleNodeType::PhaseNode,
-        output_ports: activity.output_ports.clone(),
-        input_ports: activity.input_ports.clone(),
-        capability_config: Default::default(),
     }
 }
 

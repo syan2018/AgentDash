@@ -23,7 +23,7 @@ pub fn contribute_workflow_binding(
             "## Workflow Projection Snapshot\n- lifecycle: {} (`{}`)\n- step: `{}`\n- primary_workflow: {}\n- run_status: `{}`\n- binding_count: {}\n- resolved_binding_count: {}",
             workflow.lifecycle.name,
             workflow.lifecycle.key,
-            workflow.active_step.key,
+            workflow.active_activity.key,
             workflow
                 .primary_workflow
                 .as_ref()
@@ -78,71 +78,10 @@ fn enum_tag<T: serde::Serialize>(value: &T) -> String {
 mod tests {
     use super::*;
     use crate::vfs::{ResolveBindingsOutput, ResolvedBinding};
-    use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
-    };
-    use uuid::Uuid;
+    use crate::workflow::activity_projection;
 
     fn sample_workflow() -> ActiveWorkflowProjection {
-        let contract = WorkflowContract {
-            injection: WorkflowInjectionSpec {
-                context_bindings: vec![agentdash_domain::workflow::WorkflowContextBinding {
-                    locator: ".trellis/workflow.md".to_string(),
-                    reason: "workflow 总规则".to_string(),
-                    required: true,
-                    title: Some("Workflow 总规则".to_string()),
-                }],
-                ..Default::default()
-            },
-            ..WorkflowContract::default()
-        };
-        let definition = WorkflowDefinition::new(
-            Uuid::new_v4(),
-            "wf_impl",
-            "Workflow Implement",
-            "desc",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            contract,
-        )
-        .expect("workflow definition");
-        let step = LifecycleStepDefinition {
-            key: "implement".to_string(),
-            description: "执行实现工作".to_string(),
-            workflow_key: Some(definition.key.clone()),
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
-        };
-        let lifecycle = LifecycleDefinition::new(
-            Uuid::new_v4(),
-            "trellis_dev_task",
-            "Trellis Dev Task",
-            "desc",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "implement",
-            vec![step.clone()],
-            vec![],
-        )
-        .expect("lifecycle definition");
-        let run = LifecycleRun::new(
-            Uuid::new_v4(),
-            lifecycle.id,
-            "sess-test-bindings",
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
-        )
-        .expect("run");
-        ActiveWorkflowProjection {
-            run,
-            lifecycle,
-            active_step: step,
-            primary_workflow: Some(definition),
-        }
+        activity_projection(None)
     }
 
     #[test]

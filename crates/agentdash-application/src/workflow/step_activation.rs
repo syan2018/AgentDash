@@ -20,8 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
-    LifecycleEdge, LifecycleStepDefinition, MountDirective, ToolCapabilityDirective,
-    WorkflowDefinition,
+    ActivityDefinition, LifecycleEdge, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
 };
 use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
 use agentdash_spi::{CapabilityState, Vfs};
@@ -45,8 +44,9 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 pub struct StepActivationInput<'a> {
     /// session 所属的 owner sum type。
     pub owner_ctx: SessionOwnerCtx,
-    /// 当前激活的 step 定义;提供 output/input ports、node_type、workflow_key。
-    pub active_step: &'a LifecycleStepDefinition,
+    /// 当前激活的 activity 定义;提供 output/input ports、key、description。
+    /// node_type / workflow_key 由 executor 推导,激活计算本身不需要。
+    pub active_activity: &'a ActivityDefinition,
     /// step 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
     pub workflow: Option<&'a WorkflowDefinition>,
@@ -178,7 +178,7 @@ pub fn activate_step_with_platform(
 
     // ── 4. lifecycle mount + Vfs ──
     let writable_port_keys: Vec<String> = input
-        .active_step
+        .active_activity
         .output_ports
         .iter()
         .map(|p| p.key.clone())
@@ -192,11 +192,11 @@ pub fn activate_step_with_platform(
         source_story_id: None,
         links: Vec::new(),
     };
-    let mut mount_directives = input
+    // Activity 没有 step 级 capability_config;mount overlay 全部来自 workflow contract。
+    let mount_directives = input
         .workflow
         .map(|workflow| workflow.contract.capability_config.mount_directives.clone())
         .unwrap_or_default();
-    mount_directives.extend(input.active_step.capability_config.mount_directives.clone());
 
     // ── 5. kickoff prompt fragment ──
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
@@ -214,8 +214,8 @@ pub fn activate_step_with_platform(
 }
 
 fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffPromptFragment {
-    let node_key = &input.active_step.key;
-    let desc = input.active_step.description.trim();
+    let node_key = &input.active_activity.key;
+    let desc = input.active_activity.description.trim();
     let node_title = if desc.is_empty() {
         format!("`{node_key}`")
     } else {
@@ -226,9 +226,9 @@ fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffProm
         input.lifecycle_key, node_title
     );
 
-    let output_section = render_output_section(&input.active_step.output_ports);
+    let output_section = render_output_section(&input.active_activity.output_ports);
     let input_section = render_input_section(
-        &input.active_step.input_ports,
+        &input.active_activity.input_ports,
         node_key,
         input.edges,
         &input.ready_port_keys,
@@ -427,21 +427,26 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        CapabilityConfig, LifecycleStepDefinition, MountDirective, WorkflowBindingKind,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, CapabilityConfig,
+        MountDirective, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        WorkflowDefinitionSource,
     };
 
     fn sample_step(
         output_ports: Vec<agentdash_domain::workflow::OutputPortDefinition>,
-    ) -> LifecycleStepDefinition {
-        LifecycleStepDefinition {
+    ) -> ActivityDefinition {
+        ActivityDefinition {
             key: "implement".to_string(),
             description: "实现并记录结果".to_string(),
-            workflow_key: Some("wf_impl".to_string()),
-            node_type: Default::default(),
-            output_ports,
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: "wf_impl".to_string(),
+                session_policy: Default::default(),
+            }),
             input_ports: vec![],
-            capability_config: Default::default(),
+            output_ports,
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         }
     }
 
@@ -496,7 +501,7 @@ mod tests {
                 story_id,
                 task_id,
             },
-            active_step: &step,
+            active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "trellis_dev_task",
@@ -531,7 +536,7 @@ mod tests {
 
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_admin",
@@ -563,7 +568,7 @@ mod tests {
 
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
@@ -601,7 +606,7 @@ mod tests {
 
         let base_input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: Some(&full_read_workflow),
             run_id,
             lifecycle_key: "lc_phase",
@@ -637,26 +642,40 @@ mod tests {
 
     #[test]
     fn step_mount_directives_change_capability_state_vfs() {
-        let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
-        let mut step = sample_step(vec![]);
-        step.capability_config = CapabilityConfig {
-            mount_directives: vec![
-                MountDirective::RemoveMount {
-                    mount_id: "secret".to_string(),
-                },
-                MountDirective::AddMount {
-                    mount: mount("review", "inline_fs"),
-                },
-                MountDirective::SetDefaultMount {
-                    mount_id: Some("review".to_string()),
-                },
-            ],
-            ..Default::default()
+        // mount overlay 现统一来自 workflow contract（Activity 无 step 级 capability_config）。
+        let contract = WorkflowContract {
+            capability_config: CapabilityConfig {
+                tool_directives: vec![ToolCapabilityDirective::add_simple("file_read")],
+                mount_directives: vec![
+                    MountDirective::RemoveMount {
+                        mount_id: "secret".to_string(),
+                    },
+                    MountDirective::AddMount {
+                        mount: mount("review", "inline_fs"),
+                    },
+                    MountDirective::SetDefaultMount {
+                        mount_id: Some("review".to_string()),
+                    },
+                ],
+                ..Default::default()
+            },
+            ..WorkflowContract::default()
         };
+        let workflow = WorkflowDefinition::new(
+            Uuid::new_v4(),
+            "wf_impl",
+            "Workflow Implement",
+            "desc",
+            vec![WorkflowBindingKind::Story],
+            WorkflowDefinitionSource::BuiltinSeed,
+            contract,
+        )
+        .expect("workflow");
+        let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc_phase",
@@ -717,7 +736,7 @@ mod tests {
         // PhaseNode 热更新场景:baseline 来自 hook_runtime.current_capabilities()
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
@@ -761,7 +780,7 @@ mod tests {
 
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",
@@ -795,12 +814,13 @@ mod tests {
 
     #[test]
     fn kickoff_prompt_fragment_marks_ready_ports() {
-        let step = LifecycleStepDefinition {
+        let step = ActivityDefinition {
             key: "b".to_string(),
             description: String::new(),
-            workflow_key: None,
-            node_type: Default::default(),
-            output_ports: vec![],
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: "wf_impl".to_string(),
+                session_policy: Default::default(),
+            }),
             input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                 key: "ctx".to_string(),
                 description: "前驱上下文".to_string(),
@@ -808,7 +828,10 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
-            capability_config: Default::default(),
+            output_ports: vec![],
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         };
         let edges = vec![LifecycleEdge::artifact("a", "out", "b", "ctx")];
         let project_id = Uuid::new_v4();
@@ -816,7 +839,7 @@ mod tests {
 
         let input = StepActivationInput {
             owner_ctx: SessionOwnerCtx::Project { project_id },
-            active_step: &step,
+            active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
             lifecycle_key: "lc",

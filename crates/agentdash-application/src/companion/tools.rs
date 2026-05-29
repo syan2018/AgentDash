@@ -895,31 +895,28 @@ impl CompanionRequestTool {
                 ))
             })?;
 
-        // 搜索项目中包含该 workflow 的 lifecycle（选择 entry step 使用该 workflow 的第一个）
-        let (lifecycle, entry_step) = self
+        // 搜索项目中包含该 workflow 的 activity lifecycle（选择 entry activity 使用该 workflow 的第一个）
+        let (lifecycle, entry_activity) = self
             .find_lifecycle_for_workflow(project_id, workflow_key)
             .await?;
 
-        let run_service = crate::workflow::LifecycleRunService::new(
-            self.repos.lifecycle_definition_repo.as_ref(),
-            self.repos.lifecycle_run_repo.as_ref(),
+        let state = crate::workflow::LifecycleEngine::initialize(&lifecycle).map_err(|e| {
+            AgentToolError::ExecutionFailed(format!("初始化 activity lifecycle run 失败: {e}"))
+        })?;
+        let run = agentdash_domain::workflow::LifecycleRun::new_activity(
+            project_id,
+            lifecycle.id,
+            target_binding.session_id.clone(),
+            state,
         )
-        .with_projector(crate::workflow::build_step_projector_from_repos(
-            &self.repos,
-        ));
-        let run = run_service
-            .start_run(crate::workflow::StartLifecycleRunCommand {
-                project_id,
-                lifecycle_id: Some(lifecycle.id),
-                lifecycle_key: Some(lifecycle.key.clone()),
-                session_id: target_binding.session_id.clone(),
-            })
+        .map_err(|e| AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}")))?;
+        self.repos
+            .lifecycle_run_repo
+            .create(&run)
             .await
-            .map_err(|e| {
-                AgentToolError::ExecutionFailed(format!("创建 lifecycle run 失败: {e}"))
-            })?;
+            .map_err(|e| AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}")))?;
 
-        let node_label = crate::workflow::build_lifecycle_node_label(&entry_step.key);
+        let node_label = crate::workflow::build_lifecycle_node_label(&entry_activity.key);
         let lifecycle_binding = SessionBinding::new(
             project_id,
             target_binding.session_id.clone(),
@@ -937,47 +934,58 @@ impl CompanionRequestTool {
         Ok(CompanionLaunchWorkflowSource {
             run,
             lifecycle,
-            step: entry_step,
+            activity: entry_activity,
             workflow: Some(workflow),
         })
     }
 
-    /// 在项目的 lifecycle 定义中搜索第一个 entry step 绑定到指定 workflow 的 lifecycle。
+    /// 在项目的 activity lifecycle 定义中搜索第一个 entry activity 绑定到指定 workflow 的 lifecycle。
     async fn find_lifecycle_for_workflow(
         &self,
         project_id: Uuid,
         workflow_key: &str,
     ) -> Result<
         (
-            agentdash_domain::workflow::LifecycleDefinition,
-            agentdash_domain::workflow::LifecycleStepDefinition,
+            agentdash_domain::workflow::ActivityLifecycleDefinition,
+            agentdash_domain::workflow::ActivityDefinition,
         ),
         AgentToolError,
     > {
+        use agentdash_domain::workflow::ActivityExecutorSpec;
+
+        fn activity_workflow_key(
+            activity: &agentdash_domain::workflow::ActivityDefinition,
+        ) -> Option<&str> {
+            match &activity.executor {
+                ActivityExecutorSpec::Agent(spec) => Some(spec.workflow_key.as_str()),
+                _ => None,
+            }
+        }
+
         let lifecycles = self
             .repos
-            .lifecycle_definition_repo
+            .activity_lifecycle_definition_repo
             .list_by_project(project_id)
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(format!("查询 lifecycles 失败: {e}")))?;
 
         for lifecycle in &lifecycles {
             let entry = lifecycle
-                .steps
+                .activities
                 .iter()
-                .find(|s| s.key == lifecycle.entry_step_key);
-            if let Some(step) = entry {
-                if step.effective_workflow_key() == Some(workflow_key) {
-                    return Ok((lifecycle.clone(), step.clone()));
+                .find(|a| a.key == lifecycle.entry_activity_key);
+            if let Some(activity) = entry {
+                if activity_workflow_key(activity) == Some(workflow_key) {
+                    return Ok((lifecycle.clone(), activity.clone()));
                 }
             }
         }
 
-        // fallback: 搜索所有 step 中引用该 workflow 的第一个 lifecycle
+        // fallback: 搜索所有 activity 中引用该 workflow 的第一个 lifecycle
         for lifecycle in &lifecycles {
-            for step in &lifecycle.steps {
-                if step.effective_workflow_key() == Some(workflow_key) {
-                    return Ok((lifecycle.clone(), step.clone()));
+            for activity in &lifecycle.activities {
+                if activity_workflow_key(activity) == Some(workflow_key) {
+                    return Ok((lifecycle.clone(), activity.clone()));
                 }
             }
         }

@@ -2,6 +2,8 @@
 
 `deploy/` 维护 AgentDash 从仓库构建产物到可部署运行环境的交付链路。当前基准是先用 Docker Compose 固定单机交付模型，再把同一套产物和运行语义映射到 Kubernetes。
 
+学习这条链路时，先读 [部署学习指南](../docs/deployment/deployment-learning-guide.md)，再回到本目录执行构建和验证命令。
+
 ## 目录结构
 
 | 目录 | 职责 |

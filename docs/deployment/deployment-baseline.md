@@ -2,6 +2,8 @@
 
 本文维护 AgentDash 产品化部署预研期间形成的部署基准、运行模型和后续验证项。当前阶段聚焦云端项目的部署、维护、更新，以及桌面端如何指向目标服务器并正确发布。
 
+如果需要按学习路径回看部署链路，可以先读 [部署学习指南](./deployment-learning-guide.md)。
+
 ## 目标
 
 AgentDash 的基准部署方案以 Docker Compose 为第一交付形态，并保持向 Kubernetes 平滑映射的运行模型。Compose 方案需要能够支撑预研期内测、小规模稳定部署和后续部署脚本打磨；Kubernetes 方案在此基础上扩展为 Deployment、Job、Ingress、Secret、ConfigMap 等资源，而不是重写一套运行语义。

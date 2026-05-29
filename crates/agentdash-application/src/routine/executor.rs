@@ -15,7 +15,7 @@ use crate::session::types::UserPromptInput;
 use crate::session::{
     LaunchCommand, RoutineLaunchSource, SessionCoreService, SessionLaunchService,
 };
-use crate::vfs::RelayVfsService;
+use crate::vfs::VfsService;
 use crate::workspace::BackendAvailability;
 
 use super::template::render_prompt_template;
@@ -63,7 +63,7 @@ impl RoutineExecutor {
         repos: RepositorySet,
         session_core: SessionCoreService,
         session_launch: SessionLaunchService,
-        _vfs_service: Arc<RelayVfsService>,
+        _vfs_service: Arc<VfsService>,
         _connector: Arc<dyn AgentConnector>,
         _platform_config: crate::platform_config::SharedPlatformConfig,
         availability: Arc<dyn BackendAvailability>,

@@ -7,9 +7,11 @@ use agentdash_spi::session_persistence::{
     CompactionProjectionCommitResult, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
     SessionCompactionRecord, SessionCompactionStatus, SessionEventBacklog, SessionEventPage,
-    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionMeta,
-    SessionPersistence, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    TerminalEffectRecord, TerminalEffectStatus, TitleSource,
+    SessionCompactionStore, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionTerminalEffectStore, TerminalEffectRecord,
+    TerminalEffectStatus, TitleSource,
 };
 use agentdash_spi::session_persistence::{
     NewTerminalEffectRecord, PendingCapabilityStateTransition, TerminalEffectType,
@@ -434,7 +436,7 @@ impl PostgresSessionRepository {
 }
 
 #[async_trait::async_trait]
-impl SessionPersistence for PostgresSessionRepository {
+impl SessionMetaStore for PostgresSessionRepository {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
         let executor_config_json =
@@ -633,6 +635,10 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(())
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionEventStore for PostgresSessionRepository {
     async fn append_event(
         &self,
         session_id: &str,
@@ -830,6 +836,10 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(events)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionTerminalEffectStore for PostgresSessionRepository {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
@@ -965,6 +975,10 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(records)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionRuntimeCommandStore for PostgresSessionRepository {
     async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
@@ -1100,6 +1114,10 @@ impl SessionPersistence for PostgresSessionRepository {
         Ok(records)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionCompactionStore for PostgresSessionRepository {
     async fn get_compaction(
         &self,
         session_id: &str,
@@ -1151,6 +1169,10 @@ impl SessionPersistence for PostgresSessionRepository {
         rows.iter().map(Self::compaction_from_row).collect()
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionProjectionStore for PostgresSessionRepository {
     async fn list_projection_segments(
         &self,
         session_id: &str,
@@ -1362,6 +1384,10 @@ impl SessionPersistence for PostgresSessionRepository {
         })
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionLineageStore for PostgresSessionRepository {
     async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
         if record.child_session_id == record.parent_session_id {
             return Err(io::Error::new(

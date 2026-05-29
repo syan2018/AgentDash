@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn session_for_workspace_creates_main_mount() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session should build");
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn build_task_vfs_merges_project_story_and_workspace_policy() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         let bindings = vec![inline_mount(project.id, "spec")];
 
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn story_containers_can_disable_and_override_project_defaults() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         let bindings = vec![
             inline_mount(project.id, "shared"),
@@ -401,7 +401,7 @@ mod tests {
                 "todo: verify inline search",
             ),
         ]);
-        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
+        let service = VfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -478,7 +478,7 @@ mod tests {
                 "remove me\n",
             ),
         ]);
-        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
+        let service = VfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let runtime_vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -602,7 +602,7 @@ mod tests {
         mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
             registry.clone(),
         )));
-        let service = RelayVfsService::new(Arc::new(mount_registry));
+        let service = VfsService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -678,7 +678,7 @@ mod tests {
         mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
             registry.clone(),
         )));
-        let service = RelayVfsService::new(Arc::new(mount_registry));
+        let service = VfsService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -733,7 +733,7 @@ mod tests {
 
     #[test]
     fn runtime_tool_schemas_are_openai_compatible() {
-        let service = Arc::new(RelayVfsService::new(empty_mount_registry()));
+        let service = Arc::new(VfsService::new(empty_mount_registry()));
         let vfs = Vfs {
             mounts: vec![agentdash_spi::Mount {
                 id: "brief".to_string(),

@@ -11,7 +11,7 @@ use agentdash_application::session::{
     SessionEffectsService, SessionEventingService, SessionHookService, SessionLaunchService,
     SessionPersistence, SessionRuntimeBuilder, SessionRuntimeService, SessionTitleService,
 };
-use agentdash_application::vfs::RelayVfsService;
+use agentdash_application::vfs::VfsService;
 use agentdash_application::vfs::tools::provider::{
     SessionToolServices, SharedSessionToolServicesHandle,
 };
@@ -28,7 +28,7 @@ pub(crate) struct SessionBootstrapInput {
     pub repos: RepositorySet,
     pub session_persistence: Arc<dyn SessionPersistence>,
     pub backend_registry: Arc<BackendRegistry>,
-    pub vfs_service: Arc<RelayVfsService>,
+    pub vfs_service: Arc<VfsService>,
     pub session_services_handle: SharedSessionToolServicesHandle,
     pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
     pub mcp_relay_provider: Arc<dyn agentdash_spi::McpRelayProvider>,

@@ -8,9 +8,10 @@ use tokio::sync::Mutex;
 use super::hub_support::parse_turn_terminal_event_from_envelope;
 use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    SessionCompactionRecord, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+    SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
@@ -38,7 +39,7 @@ struct MemorySessionPersistenceState {
 }
 
 #[async_trait::async_trait]
-impl SessionPersistence for MemorySessionPersistence {
+impl SessionMetaStore for MemorySessionPersistence {
     async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
         let mut guard = self.inner.lock().await;
         guard.metas.insert(meta.id.clone(), meta.clone());
@@ -93,6 +94,10 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(())
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionEventStore for MemorySessionPersistence {
     async fn append_event(
         &self,
         session_id: &str,
@@ -224,6 +229,10 @@ impl SessionPersistence for MemorySessionPersistence {
             .clone())
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionTerminalEffectStore for MemorySessionPersistence {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
@@ -317,6 +326,10 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(records)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionRuntimeCommandStore for MemorySessionPersistence {
     async fn upsert_runtime_command_request(
         &self,
         session_id: &str,
@@ -408,6 +421,10 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(records)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionCompactionStore for MemorySessionPersistence {
     async fn get_compaction(
         &self,
         session_id: &str,
@@ -439,6 +456,10 @@ impl SessionPersistence for MemorySessionPersistence {
         Ok(records)
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionProjectionStore for MemorySessionPersistence {
     async fn list_projection_segments(
         &self,
         session_id: &str,
@@ -579,6 +600,10 @@ impl SessionPersistence for MemorySessionPersistence {
         })
     }
 
+}
+
+#[async_trait::async_trait]
+impl SessionLineageStore for MemorySessionPersistence {
     async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
         let mut guard = self.inner.lock().await;
         if record.child_session_id == record.parent_session_id {

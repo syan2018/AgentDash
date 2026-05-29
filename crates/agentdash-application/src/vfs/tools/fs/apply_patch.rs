@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::vfs::inline_persistence::InlineContentOverlay;
 use crate::vfs::mutation_queue::MutationQueue;
-use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::SharedRuntimeVfs;
 use crate::vfs::{PatchEntry, normalize_mount_relative_path, parse_patch_text, resolve_mount_id};
 
@@ -70,7 +70,7 @@ Important:\n\
 
 #[derive(Clone)]
 pub struct FsApplyPatchTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
@@ -78,7 +78,7 @@ pub struct FsApplyPatchTool {
 }
 impl FsApplyPatchTool {
     pub fn new(
-        service: Arc<RelayVfsService>,
+        service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::platform::auth::AuthIdentity>,

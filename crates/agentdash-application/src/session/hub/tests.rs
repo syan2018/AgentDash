@@ -59,7 +59,7 @@ use crate::session::capability_state::{
 };
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, ReadResult, RelayVfsService, RuntimeFileEntry,
+    MountProvider, MountProviderRegistry, ReadResult, VfsService, RuntimeFileEntry,
     SearchQuery, SearchResult,
 };
 
@@ -785,10 +785,10 @@ impl MountProvider for SkillFixtureMountProvider {
     }
 }
 
-fn skill_fixture_vfs_service() -> Arc<RelayVfsService> {
+fn skill_fixture_vfs_service() -> Arc<VfsService> {
     let mut registry = MountProviderRegistry::new();
     registry.register(Arc::new(SkillFixtureMountProvider));
-    Arc::new(RelayVfsService::new(Arc::new(registry)))
+    Arc::new(VfsService::new(Arc::new(registry)))
 }
 
 fn canvas_skill_vfs() -> agentdash_spi::Vfs {

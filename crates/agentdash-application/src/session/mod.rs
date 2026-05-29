@@ -98,8 +98,10 @@ pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
+    PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+    SessionLineageStore, SessionMetaStore, SessionPersistence, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionTerminalEffectStore,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,

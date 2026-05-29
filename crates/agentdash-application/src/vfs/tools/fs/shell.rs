@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::vfs::inline_persistence::InlineContentOverlay;
-use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::service::VfsService;
 use crate::vfs::rewrite::find_mount_uri_candidates;
 use crate::vfs::tools::common::{SharedRuntimeVfs, resolve_uri_path};
 use crate::vfs::{
@@ -22,7 +22,7 @@ use crate::vfs::{
 
 #[derive(Clone)]
 pub struct ShellExecTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     shell_output_registry: Option<Arc<agentdash_relay::ShellOutputRegistry>>,
     materialization: Option<Arc<VfsMaterializationService>>,
@@ -32,7 +32,7 @@ pub struct ShellExecTool {
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl ShellExecTool {
-    pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
+    pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
         Self {
             service,
             vfs,

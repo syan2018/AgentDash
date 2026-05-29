@@ -1,6 +1,6 @@
 //! 通用 Mount 文件发现模块
 //!
-//! 基于 VFS 的 `RelayVfsService` 扫描约定路径下的已知文件（如 AGENTS.md / MEMORY.md），
+//! 基于 VFS 的 `VfsService` 扫描约定路径下的已知文件（如 AGENTS.md / MEMORY.md），
 //! 返回文件内容供调用方按场景注入到 session context 中。
 //!
 //! 设计参考 `skill/loader.rs` 的 VFS scan 模式，但抽象为通用的"规则 + 扫描"机制，
@@ -11,7 +11,7 @@ use agentdash_spi::{Mount, MountCapability, Vfs};
 use crate::vfs::types::ResourceRef;
 use crate::vfs::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
-    PROVIDER_SKILL_ASSET_FS, RelayVfsService,
+    PROVIDER_SKILL_ASSET_FS, VfsService,
 };
 
 const AUTO_DISCOVERY_METADATA_KEY: &str = "agentdash_auto_discovery";
@@ -107,7 +107,7 @@ pub static BUILTIN_SKILL_RULES: &[MountFileDiscoveryRule] = &[MountFileDiscovery
 ///
 /// 同一 `rule_key` 下可能发现多个文件（来自根 + 不同子目录），全部保留。
 pub async fn discover_mount_files(
-    service: &RelayVfsService,
+    service: &VfsService,
     vfs: &Vfs,
     rules: &[MountFileDiscoveryRule],
 ) -> MountFileDiscoveryResult {
@@ -205,7 +205,7 @@ fn should_scan_mount_for_discovery(mount: &Mount) -> bool {
 
 /// 尝试从 mount 中读取单个文件，成功则追加到结果。
 async fn try_read_file(
-    service: &RelayVfsService,
+    service: &VfsService,
     vfs: &Vfs,
     mount_id: &str,
     path: &str,
@@ -249,7 +249,7 @@ async fn try_read_file(
 
 /// 列出指定目录下的一级子目录路径。
 async fn list_children_at(
-    service: &RelayVfsService,
+    service: &VfsService,
     vfs: &Vfs,
     mount_id: &str,
     dir_path: &str,
@@ -280,7 +280,7 @@ async fn list_children_at(
 }
 
 /// 列出 mount 根目录下的一级子目录名。
-async fn list_root_children(service: &RelayVfsService, vfs: &Vfs, mount_id: &str) -> Vec<String> {
+async fn list_root_children(service: &VfsService, vfs: &Vfs, mount_id: &str) -> Vec<String> {
     let list_result = service
         .list(
             vfs,

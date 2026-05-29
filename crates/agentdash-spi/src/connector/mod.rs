@@ -458,36 +458,8 @@ pub struct SessionMcpServer {
     pub uses_relay: bool,
 }
 
-/// MCP server 的传输配置。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpTransportConfig {
-    Http {
-        url: String,
-        headers: Vec<McpHeader>,
-    },
-    Sse {
-        url: String,
-        headers: Vec<McpHeader>,
-    },
-    Stdio {
-        command: String,
-        args: Vec<String>,
-        env: Vec<McpEnvVar>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct McpHeader {
-    pub name: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct McpEnvVar {
-    pub name: String,
-    pub value: String,
-}
+// MCP transport 配置统一归 domain，spi 直接复用，避免领域/SPI 两份等价定义漂移。
+pub use agentdash_domain::mcp_preset::{McpEnvVar, McpHttpHeader, McpTransportConfig};
 
 impl SessionMcpServer {}
 

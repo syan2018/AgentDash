@@ -47,7 +47,7 @@ pub struct SessionRuntimeInner {
     pub(super) turn_supervisor: TurnSupervisor,
     pub(super) stores: SessionStoreSet,
     pub(super) persistence: Arc<dyn SessionPersistence>,
-    pub(crate) vfs_service: Option<Arc<crate::vfs::RelayVfsService>>,
+    pub(crate) vfs_service: Option<Arc<crate::vfs::VfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
     pub companion_wait_registry: CompanionWaitRegistry,
     pub(super) terminal_callback:

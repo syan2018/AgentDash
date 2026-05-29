@@ -2,9 +2,6 @@
 
 use agentdash_relay::*;
 use rmcp::transport::child_process::TokioChildProcess;
-use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
-};
 
 use super::CommandHandler;
 
@@ -45,10 +42,7 @@ impl CommandHandler {
                     Ok::<Vec<rmcp::model::Tool>, String>(tools)
                 }
                 McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
-                    let worker = StreamableHttpClientWorker::new(
-                        reqwest::Client::new(),
-                        StreamableHttpClientTransportConfig::with_uri(url.clone()),
-                    );
+                    let worker = crate::mcp_connect::mcp_http_worker(url);
                     let client = rmcp::ServiceExt::serve((), worker)
                         .await
                         .map_err(|e| format!("连接 MCP Server 失败: {e}"))?;

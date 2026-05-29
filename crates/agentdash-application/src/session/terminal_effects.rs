@@ -443,7 +443,7 @@ mod tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
-    use crate::session::{MemorySessionPersistence, SessionPersistence};
+    use crate::session::{MemorySessionPersistence, SessionMetaStore};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {

@@ -39,7 +39,7 @@ impl SessionRuntimeBuilder {
         }
     }
 
-    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::RelayVfsService>) -> Self {
+    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::VfsService>) -> Self {
         self.inner = self.inner.with_vfs_service(service);
         self
     }

@@ -675,7 +675,7 @@ mod tests {
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::vfs::tools::fs::FsApplyPatchTool;
     use crate::vfs::tools::provider::SessionToolServices;
-    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, RelayVfsService};
+    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
 
     use super::*;
 
@@ -904,7 +904,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
 
         let start_tool = StartCanvasTool::new(
@@ -1068,7 +1068,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),

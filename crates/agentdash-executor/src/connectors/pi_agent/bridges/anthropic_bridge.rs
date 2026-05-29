@@ -5,7 +5,6 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
-use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::bridge::{
     BridgeError, BridgeRequest, BridgeResponse, LlmBridge, StreamChunk, ToolCallDeltaContent,
@@ -44,20 +43,14 @@ impl LlmBridge for AnthropicBridge {
         &self,
         request: BridgeRequest,
     ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
-        let (tx, rx) = tokio::sync::mpsc::channel::<StreamChunk>(64);
-
         let client = self.client.clone();
         let url = format!("{}/v1/messages", self.base_url);
         let api_key = self.api_key.clone();
         let model_id = self.model_id.clone();
 
-        tokio::spawn(async move {
-            if let Err(e) = run_stream(&client, &url, &api_key, &model_id, &request, &tx).await {
-                let _ = tx.send(StreamChunk::Error(e)).await;
-            }
-        });
-
-        Box::pin(ReceiverStream::new(rx))
+        super::spawn_bridge_stream(move |tx| async move {
+            run_stream(&client, &url, &api_key, &model_id, &request, &tx).await
+        })
     }
 }
 
@@ -92,13 +85,7 @@ async fn run_stream(
         .await
         .map_err(|e| BridgeError::CompletionFailed(format!("HTTP 请求失败: {e}")))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        return Err(BridgeError::CompletionFailed(format!(
-            "API 返回 {status}: {body_text}"
-        )));
-    }
+    let response = super::check_http_response(response, "API").await?;
 
     let mut parser = SseParser::new();
     let mut state = StreamState::default();

@@ -19,7 +19,7 @@ use crate::session::context::{
 };
 use crate::session::{ExecutorResolution, load_available_presets};
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
-use crate::vfs::{RelayVfsService, SessionMountTarget};
+use crate::vfs::{VfsService, SessionMountTarget};
 use crate::workflow::{
     ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount,
     resolve_active_workflow_projection_for_session,
@@ -45,7 +45,7 @@ pub struct BuiltTaskSessionContext {
 /// 上下文数据一致。
 pub async fn build_task_session_context(
     repos: &RepositorySet,
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
     platform_config: &PlatformConfig,
     task_id: Uuid,
     session_meta: Option<&crate::session::SessionMeta>,

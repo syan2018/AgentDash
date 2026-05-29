@@ -75,7 +75,7 @@ use crate::story::context_builder::{StoryContextBuildInput, contribute_story_con
 use crate::task::execution::TaskExecutionError;
 use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
 use crate::vfs::{
-    RelayVfsService, SessionMountTarget, apply_agent_vfs_access_grants,
+    VfsService, SessionMountTarget, apply_agent_vfs_access_grants,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::workflow::{
@@ -423,7 +423,7 @@ impl SessionAssemblyBuilder {
 /// 由 `AppState` / 各 handler 构造后传入各 compose 函数,避免每个 compose
 /// 签名都携带 6-7 个 service 参数。
 pub struct SessionRequestAssembler<'a> {
-    pub vfs_service: &'a RelayVfsService,
+    pub vfs_service: &'a VfsService,
     pub canvas_repo: &'a dyn CanvasRepository,
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
@@ -797,7 +797,7 @@ fn owner_scope_phase(owner: &OwnerScope<'_>) -> ContextBuildPhase {
 
 impl<'a> SessionRequestAssembler<'a> {
     pub fn new(
-        vfs_service: &'a RelayVfsService,
+        vfs_service: &'a VfsService,
         canvas_repo: &'a dyn CanvasRepository,
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,

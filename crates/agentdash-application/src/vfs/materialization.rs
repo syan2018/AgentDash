@@ -11,7 +11,7 @@ use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use super::inline_persistence::InlineContentOverlay;
-use super::relay_service::RelayVfsService;
+use super::service::VfsService;
 use super::rewrite::{
     RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
 };
@@ -32,13 +32,13 @@ pub trait VfsMaterializationTransport: Send + Sync {
 
 #[derive(Clone)]
 pub struct VfsMaterializationService {
-    vfs_service: Arc<RelayVfsService>,
+    vfs_service: Arc<VfsService>,
     transport: Arc<dyn VfsMaterializationTransport>,
 }
 
 impl VfsMaterializationService {
     pub fn new(
-        vfs_service: Arc<RelayVfsService>,
+        vfs_service: Arc<VfsService>,
         transport: Arc<dyn VfsMaterializationTransport>,
     ) -> Self {
         Self {

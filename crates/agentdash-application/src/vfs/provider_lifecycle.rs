@@ -795,8 +795,8 @@ impl MountProvider for LifecycleMountProvider {
 mod tests {
     use super::*;
     use crate::session::{
-        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionMeta,
-        SessionPersistence, TitleSource,
+        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
+        SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use agentdash_agent_protocol::{
@@ -1545,7 +1545,7 @@ mod tests {
         let (provider, mount, _persistence) = fixture().await;
         let mut registry = crate::vfs::MountProviderRegistry::new();
         registry.register(Arc::new(provider));
-        let service = crate::vfs::RelayVfsService::new(Arc::new(registry));
+        let service = crate::vfs::VfsService::new(Arc::new(registry));
         let vfs = agentdash_spi::Vfs {
             mounts: vec![mount],
             default_mount_id: None,

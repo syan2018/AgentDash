@@ -19,7 +19,7 @@ use crate::canvas::{BindCanvasDataTool, ListCanvasesTool, PresentCanvasTool, Sta
 use crate::companion::tools::{CompanionRequestTool, CompanionRespondTool};
 use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::inline_persistence::{InlineContentOverlay, InlineContentPersister};
-use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::service::VfsService;
 use crate::vfs::tools::fs::{
     FsApplyPatchTool, FsGlobTool, FsGrepTool, FsReadTool, MountsListTool, SharedRuntimeVfs,
     ShellExecTool,
@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RelayRuntimeToolProvider {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
     inline_persister: Option<Arc<dyn InlineContentPersister>>,
@@ -41,7 +41,7 @@ pub struct RelayRuntimeToolProvider {
 
 impl RelayRuntimeToolProvider {
     pub fn new(
-        service: Arc<RelayVfsService>,
+        service: Arc<VfsService>,
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         inline_persister: Option<Arc<dyn InlineContentPersister>>,

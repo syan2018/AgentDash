@@ -6,9 +6,6 @@ use agentdash_relay::{McpServerInfoRelay, McpToolInfoRelay, ResponseMcpCallToolP
 use rmcp::model::{CallToolRequestParams, Content};
 use rmcp::service::RunningService;
 use rmcp::transport::child_process::TokioChildProcess;
-use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
-};
 use rmcp::{RoleClient, ServiceExt};
 use tokio::sync::RwLock;
 
@@ -149,11 +146,7 @@ impl McpClientManager {
             }
             agentdash_domain::mcp_preset::McpTransportConfig::Http { url, .. }
             | agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, .. } => {
-                let worker = StreamableHttpClientWorker::new(
-                    reqwest::Client::new(),
-                    StreamableHttpClientTransportConfig::with_uri(url.clone()),
-                );
-                ().serve(worker)
+                ().serve(crate::mcp_connect::mcp_http_worker(url))
                     .await
                     .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?
             }

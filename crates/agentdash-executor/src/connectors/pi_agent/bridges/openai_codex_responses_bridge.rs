@@ -6,7 +6,6 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use base64::Engine;
-use tokio_stream::wrappers::ReceiverStream;
 
 use agentdash_agent::bridge::{BridgeError, BridgeRequest, LlmBridge, StreamChunk};
 
@@ -46,22 +45,14 @@ impl LlmBridge for OpenAiCodexResponsesBridge {
         &self,
         request: BridgeRequest,
     ) -> Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>> {
-        let (tx, rx) = tokio::sync::mpsc::channel::<StreamChunk>(64);
-
         let client = self.client.clone();
         let url = resolve_codex_url(&self.base_url);
         let credential = self.credential.clone();
         let model_id = self.model_id.clone();
 
-        tokio::spawn(async move {
-            if let Err(error) =
-                run_stream(&client, &url, &credential, &model_id, &request, &tx).await
-            {
-                let _ = tx.send(StreamChunk::Error(error)).await;
-            }
-        });
-
-        Box::pin(ReceiverStream::new(rx))
+        super::spawn_bridge_stream(move |tx| async move {
+            run_stream(&client, &url, &credential, &model_id, &request, &tx).await
+        })
     }
 }
 

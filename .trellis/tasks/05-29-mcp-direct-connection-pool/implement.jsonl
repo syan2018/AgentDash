@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/architecture.md","reason":"确认 executor 属于运行时协议适配边界，domain/application 不承载 direct MCP 连接状态。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"确认 MCP runtime action 与 capability surface 的边界，连接池不得改变工具暴露裁决。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"确认 Rust 异步共享状态、错误处理与后端基础检查要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"确认新增池类型前需比较 local McpClientManager，并记录不抽共享 manager 的理由。"}

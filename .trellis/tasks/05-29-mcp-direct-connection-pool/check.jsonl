@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/architecture.md","reason":"检查分层依赖是否仍为外层 executor 适配协议，domain 不依赖 transport 状态。"}
+{"file":".trellis/spec/backend/runtime-gateway.md","reason":"检查 direct MCP 工具发现仍由 CapabilityState 决定，连接池只优化 transport 生命周期。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查异步锁、错误返回、cargo check 与测试要求。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复核是否存在应复用或应抽出的 MCP client 管理逻辑。"}

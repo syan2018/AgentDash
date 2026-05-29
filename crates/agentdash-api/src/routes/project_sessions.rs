@@ -5,34 +5,19 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::session::SessionExecutionState;
 use agentdash_application::session::construction_planner::SessionConstructionPlanner;
-use agentdash_application::session::context::SessionContextSnapshot;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    dto::{ListProjectSessionsQuery, ProjectSessionDetailResponse, ProjectSessionEntry},
     rpc::ApiError,
     session_construction::build_session_context_plan,
 };
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-#[derive(Debug, Serialize)]
-pub struct ProjectSessionDetailResponse {
-    pub binding_id: String,
-    pub session_id: String,
-    pub label: String,
-    pub session_title: Option<String>,
-    pub last_activity: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vfs: Option<agentdash_spi::Vfs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<SessionContextSnapshot>,
-}
 
 pub async fn get_project_session(
     State(state): State<Arc<AppState>>,
@@ -101,48 +86,6 @@ pub async fn get_project_session(
 }
 
 // ─── Project Sessions 聚合 API ────────────────────────────────────────────────
-
-/// 项目级 Session 聚合条目
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ProjectSessionEntry {
-    pub session_id: String,
-    pub session_title: Option<String>,
-    /// Unix 时间戳（毫秒），最后活跃时间
-    pub last_activity: Option<i64>,
-
-    /// 执行状态: "idle" | "running" | "completed" | "failed" | "interrupted"
-    pub execution_status: String,
-
-    /// 归属层级: "project" | "story" | "task"
-    pub owner_type: String,
-    pub owner_id: String,
-    /// owner 实体标题（task: task.title / story: story.title）
-    pub owner_title: Option<String>,
-    /// 当 owner_type = "task" 时有值，表示所属 Story ID
-    pub story_id: Option<String>,
-    /// 直接内联的 Story 名（当 owner_type = "task" 时有值）
-    pub story_title: Option<String>,
-
-    /// Agent key（project 级从 label 解析；story/task 级从 executor_config 推断）
-    pub agent_key: Option<String>,
-    /// Agent 显示名称（project 级有值；story/task 级暂为 null）
-    pub agent_display_name: Option<String>,
-
-    /// 非 null 表示这是 Companion 子会话
-    pub parent_session_id: Option<String>,
-    /// 父子关系类型：fork / companion / spawned_agent / rollback_branch
-    pub parent_relation_kind: Option<String>,
-}
-
-/// GET /api/projects/{project_id}/sessions 查询参数
-#[derive(Debug, Deserialize)]
-pub struct ListProjectSessionsQuery {
-    /// 逗号分隔状态过滤，如 "running,idle"；不传时返回全部
-    pub status: Option<String>,
-    /// 最大返回条数（默认 50，上限 500）
-    pub limit: Option<i64>,
-}
 
 /// GET /api/projects/{project_id}/sessions
 ///

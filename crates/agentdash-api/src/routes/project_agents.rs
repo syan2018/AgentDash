@@ -13,7 +13,6 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedFlagResponse;
@@ -26,6 +25,7 @@ use agentdash_contracts::project_agent::{
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    dto::OpenSessionQuery,
     rpc::ApiError,
 };
 
@@ -113,12 +113,6 @@ pub async fn list_project_agents(
 
     response.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(Json(response))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OpenSessionQuery {
-    #[serde(default)]
-    pub force_new: bool,
 }
 
 pub async fn open_project_agent_session(

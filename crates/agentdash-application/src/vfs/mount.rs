@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub const PROVIDER_RELAY_FS: &str = "relay_fs";
 pub const PROVIDER_INLINE_FS: &str = "inline_fs";
 pub const PROVIDER_LIFECYCLE_VFS: &str = "lifecycle_vfs";
+pub const PROVIDER_ROUTINE_VFS: &str = "routine_vfs";
 pub const PROVIDER_CANVAS_FS: &str = "canvas_fs";
 pub const PROVIDER_SKILL_ASSET_FS: &str = "skill_asset_fs";
 pub(crate) const CONTEXT_OWNER_KIND_METADATA_KEY: &str = "agentdash_context_owner_kind";
@@ -492,6 +493,9 @@ pub fn mount_owner_kind(mount: &Mount) -> ResolvedMountOwnerKind {
     if mount.provider == PROVIDER_LIFECYCLE_VFS {
         return ResolvedMountOwnerKind::Session;
     }
+    if mount.provider == PROVIDER_ROUTINE_VFS {
+        return ResolvedMountOwnerKind::Session;
+    }
     if mount.provider == PROVIDER_CANVAS_FS {
         return ResolvedMountOwnerKind::Canvas;
     }
@@ -535,6 +539,7 @@ pub fn mount_purpose(mount: &Mount) -> ResolvedMountPurpose {
     match mount.provider.as_str() {
         PROVIDER_RELAY_FS => ResolvedMountPurpose::Workspace,
         PROVIDER_LIFECYCLE_VFS => ResolvedMountPurpose::Lifecycle,
+        PROVIDER_ROUTINE_VFS => ResolvedMountPurpose::ExternalService,
         PROVIDER_CANVAS_FS => ResolvedMountPurpose::Canvas,
         PROVIDER_SKILL_ASSET_FS => ResolvedMountPurpose::ProjectContainer,
         PROVIDER_INLINE_FS => match mount_owner_kind(mount) {
@@ -777,6 +782,48 @@ pub fn normalize_inline_files(
 
 pub fn build_lifecycle_mount(run_id: Uuid, lifecycle_key: &str) -> Mount {
     build_lifecycle_mount_with_ports(run_id, lifecycle_key, &[])
+}
+
+pub fn build_routine_mount(
+    routine_id: Uuid,
+    execution_id: Uuid,
+    trigger_source: &str,
+    entity_key: Option<&str>,
+) -> Mount {
+    Mount {
+        id: "routine".to_string(),
+        provider: PROVIDER_ROUTINE_VFS.to_string(),
+        backend_id: String::new(),
+        root_ref: format!("routine://routine/{routine_id}"),
+        capabilities: vec![
+            MountCapability::Read,
+            MountCapability::Write,
+            MountCapability::List,
+            MountCapability::Search,
+        ],
+        default_write: false,
+        display_name: "Routine Memory".to_string(),
+        metadata: serde_json::json!({
+            "routine_id": routine_id.to_string(),
+            "execution_id": execution_id.to_string(),
+            "trigger_source": trigger_source,
+            "entity_key": entity_key,
+            "directory_hint": [
+                "current/trigger.json",
+                "current/execution.json",
+                "current/resolved-prompt.md",
+                "memory/brief.md",
+                "memory/facts.md",
+                "memory/decisions.md",
+                "memory/open-items.md",
+                "memory/changelog.md",
+                "entities/{entity_key}/brief.md",
+                "entities/{entity_key}/facts.md",
+                "entities/{entity_key}/open-items.md",
+                "entities/{entity_key}/last-run.md"
+            ]
+        }),
+    }
 }
 
 /// 构建带 output port 写入权限的 lifecycle mount。

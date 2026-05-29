@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "Routine mount 必须遵守 runtime mount、provider、capability 与 final VFS 不变量。"}
+{"file": ".trellis/spec/backend/vfs/vfs-access.md", "reason": "实现 provider 读写、路径 normalize 与 Agent-facing VFS 工具行为前必须读取。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "Routine mount 注入必须符合 Session construction 与 launch 主链路事实源约束。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "确认 LaunchCommand、SessionConstructionPlan、CapabilityState 与 final VFS 的职责边界。"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "Routine 信息管理 skill 应复用 embedded skill bundle / SkillAsset projection 机制。"}
+{"file": ".trellis/spec/backend/domain-payload-typing.md", "reason": "Routine trigger payload、execution projection 与 provider metadata 涉及 JSON payload typing。"}

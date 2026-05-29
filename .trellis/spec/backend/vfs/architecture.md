@@ -25,6 +25,7 @@ Provider baseline：
 | `inline_fs` | 暴露 Project / Story / Agent Knowledge 等内联文件 |
 | `skill_asset_fs` | 暴露 Skill asset 文件视图 |
 | `lifecycle_vfs` | 暴露 lifecycle run、node、artifact、record 投影 |
+| `routine_vfs` | 暴露 Routine 当前触发投影、Routine 级 memory 与当前 entity memory |
 | `canvas_fs` | 暴露 Canvas 虚拟内容 |
 
 Tool module baseline：
@@ -44,6 +45,7 @@ Tool module baseline：
 
 - Project VFS Mount 使用外部 `mount_id` 作为路径身份，数据库 UUID 只服务持久化和 inline owner，原因是 runtime address 必须稳定可读。
 - VFS 物化默认使用公共稳定路径，只有语义明确绑定 session 的动态投影进入 session scope，原因是公共资源需要跨 session 复用。
+- Routine memory 使用 session-scoped `routine` runtime mount 承载当前触发投影和长期工作记忆，原因是 Routine 的跨轮次上下文应脱离 prompt template 与 session history，并通过 VFS 的路径级能力边界管理读写。
 
 ## Contract Appendices
 

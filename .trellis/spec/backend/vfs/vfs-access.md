@@ -38,6 +38,7 @@ Provider 负责读、列、搜索、stat、binary read 等数据访问。
 | `inline_fs` | 暴露 Project / Story / Agent Knowledge 等内联文件 |
 | `skill_asset_fs` | 暴露 Skill asset 文件视图，文件内容复用 InlineFile 存储 |
 | `lifecycle_vfs` | 暴露 lifecycle run、node、artifact、record 投影 |
+| `routine_vfs` | 暴露 Routine 当前触发投影、Routine 级 memory 与当前 entity memory |
 | `canvas_fs` | 暴露 Canvas 相关虚拟内容 |
 
 Provider 返回的 `RuntimeFileEntry.attributes` 是结构化 metadata 通道，例如 `content_kind`、`mime_type`、`skill_asset_file_kind`。不要把这类 metadata 塞进文件文本内容。
@@ -103,6 +104,8 @@ pub struct InlineStorageKey {
 | Project config inline container | `project` | `project.id` | container mount identity |
 | Story inline container | `story` | `story.id` | container mount identity |
 | Project Agent Knowledge | `project_agent` | `project_agent.id` | knowledge container identity |
+| Routine memory | `routine` | `routine.id` | `memory` |
+| Routine entity memory | `routine` | `routine.id` | `entity:{entity_key}` |
 
 `container_id` 只表示 inline storage container。展示或 lineage 需要独立命名，例如 `context_container_id`。
 
@@ -135,6 +138,20 @@ path         = Skill 根目录内相对路径
 ```
 
 Skill 领域对象仍负责 `SKILL.md` 主文档、metadata validation、文件 kind 等业务语义。binary asset 在 JSON DTO 中只返回 metadata，不内联 bytes；`skill_asset_fs` 通过 provider 读取 text 或 binary。
+
+## Routine Runtime Mount
+
+Routine 触发的 session 使用 runtime mount 暴露跨轮次上下文：
+
+```text
+mount_id = "routine"
+provider = "routine_vfs"
+root_ref = "routine://routine/{routine_id}"
+```
+
+`routine_vfs` 的 `current/*` 路径来自当前 `RoutineExecution` 与 resolved prompt，是只读触发投影。`memory/*.md` 是 Routine 级长期 memory，当前 `entities/{entity_key}/*.md` 是 per-entity memory。写入只开放给 Routine 级 memory 与当前 entity memory，原因是 Agent 需要维护长期工作记忆，但触发事实仍应由后端事实源提供。
+
+Routine memory 复用 InlineFile 存储，provider 由 mount metadata 中的 `routine_id`、`execution_id`、`trigger_source` 与 `entity_key` 解析当前投影和允许写入的 inline storage key。通用 VFS Browser 可通过 session runtime surface 消费该 mount；Routine 页面入口只需要跳转到同一 VFS surface。
 
 ## Project VFS Mount
 

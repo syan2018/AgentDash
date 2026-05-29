@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/vfs/architecture.md", "reason": "检查 mount id、provider/root_ref、capability、final VFS 与 materialization 边界是否符合不变量。"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "检查 Routine source metadata 是否只表达来源意图，最终 VFS 是否由 construction 形成。"}
+{"file": ".trellis/spec/backend/session/session-startup-pipeline.md", "reason": "检查 LaunchCommand 到 SessionConstructionPlan 再到 LaunchPlan 的阶段职责是否被保持。"}
+{"file": ".trellis/spec/backend/embedded-skill-bundles.md", "reason": "检查 Routine memory skill 是否通过统一 bundle/materialization 契约管理。"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "如新增 Routine memory repository，检查 aggregate repository 边界。"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "如新增 migration，检查数据库字段、索引、迁移方式与项目约定。"}

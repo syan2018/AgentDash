@@ -80,9 +80,9 @@ pub use capability_state::{
     replay_runtime_capability_transition, replay_runtime_capability_transitions,
 };
 pub use construction_provider::{
-    CompanionLaunchSource, CompanionLaunchWorkflowSource, SessionConstructionProvider,
-    SessionConstructionProviderInput, SharedSessionConstructionProvider, TaskLaunchPhase,
-    TaskLaunchSource,
+    CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
+    SessionConstructionProvider, SessionConstructionProviderInput,
+    SharedSessionConstructionProvider, TaskLaunchPhase, TaskLaunchSource,
 };
 pub use context::ExecutorResolution;
 pub use context_projector::ContextProjector;

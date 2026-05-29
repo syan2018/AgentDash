@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use agentdash_spi::SessionMcpServer;
 
 use crate::session::construction_provider::{
-    CompanionLaunchSource, TaskLaunchPhase, TaskLaunchSource,
+    CompanionLaunchSource, RoutineLaunchSource, TaskLaunchPhase, TaskLaunchSource,
 };
 use crate::session::types::UserPromptInput;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,7 @@ pub struct LaunchCommand {
     follow_up_session_id: Option<String>,
     identity: Option<agentdash_spi::AuthIdentity>,
     task: Option<TaskLaunchSource>,
+    routine: Option<RoutineLaunchSource>,
     companion: Option<CompanionLaunchSource>,
     local_relay_mcp_declarations: Vec<SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
@@ -44,6 +45,7 @@ impl LaunchCommand {
             follow_up_session_id: None,
             identity: None,
             task: None,
+            routine: None,
             companion: None,
             local_relay_mcp_declarations: Vec::new(),
             local_relay_workspace_root: None,
@@ -69,6 +71,10 @@ impl LaunchCommand {
 
     pub fn companion_hint(&self) -> Option<CompanionLaunchSource> {
         self.companion.clone()
+    }
+
+    pub fn routine_hint(&self) -> Option<RoutineLaunchSource> {
+        self.routine.clone()
     }
 
     pub fn local_relay_mcp_declarations(&self) -> &[SessionMcpServer] {
@@ -108,12 +114,14 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
         task: Option<TaskLaunchSource>,
+        routine: Option<RoutineLaunchSource>,
         companion: Option<CompanionLaunchSource>,
         source: LaunchSource,
     ) -> Self {
         let mut command = Self::new(input, source);
         command.identity = identity;
         command.task = task;
+        command.routine = routine;
         command.companion = companion;
         command
     }
@@ -122,7 +130,7 @@ impl LaunchCommand {
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
     ) -> Self {
-        Self::command_with(input, identity, None, None, LaunchSource::HttpPrompt)
+        Self::command_with(input, identity, None, None, None, LaunchSource::HttpPrompt)
     }
 
     pub fn hook_auto_resume_input(input: UserPromptInput) -> Self {
@@ -141,6 +149,7 @@ impl LaunchCommand {
             input,
             None,
             None,
+            None,
             Some(companion),
             LaunchSource::CompanionDispatch,
         )
@@ -153,8 +162,16 @@ impl LaunchCommand {
     pub fn routine_executor_input(
         input: UserPromptInput,
         identity: Option<agentdash_spi::AuthIdentity>,
+        routine: RoutineLaunchSource,
     ) -> Self {
-        Self::command_with(input, identity, None, None, LaunchSource::RoutineExecutor)
+        Self::command_with(
+            input,
+            identity,
+            None,
+            Some(routine),
+            None,
+            LaunchSource::RoutineExecutor,
+        )
     }
 
     pub fn task_service_input(
@@ -172,6 +189,7 @@ impl LaunchCommand {
                 override_prompt,
                 additional_prompt,
             }),
+            None,
             None,
             LaunchSource::TaskService,
         )

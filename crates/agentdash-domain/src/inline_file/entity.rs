@@ -15,6 +15,7 @@ pub use crate::common::{
 /// - Agent Knowledge files（owner_kind = "project_agent"）
 /// - Skill asset files（owner_kind = "skill_asset"）
 /// - Project VFS Mount files（owner_kind = "project_vfs_mount"）
+/// - Routine memory files（owner_kind = "routine"）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineFile {
     pub id: Uuid,
@@ -141,6 +142,8 @@ pub enum InlineFileOwnerKind {
     SkillAsset,
     /// Project VFS Mount 级文件容器
     ProjectVfsMount,
+    /// Routine 级长期 memory / entity memory
+    Routine,
 }
 
 impl InlineFileOwnerKind {
@@ -152,6 +155,7 @@ impl InlineFileOwnerKind {
             Self::ProjectAgent => "project_agent",
             Self::SkillAsset => "skill_asset",
             Self::ProjectVfsMount => "project_vfs_mount",
+            Self::Routine => "routine",
         }
     }
 }
@@ -167,6 +171,7 @@ impl std::str::FromStr for InlineFileOwnerKind {
             "project_agent" => Ok(Self::ProjectAgent),
             "skill_asset" => Ok(Self::SkillAsset),
             "project_vfs_mount" => Ok(Self::ProjectVfsMount),
+            "routine" => Ok(Self::Routine),
             _ => Err(()),
         }
     }

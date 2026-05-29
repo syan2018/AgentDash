@@ -11,6 +11,7 @@ pub mod provider;
 pub mod provider_canvas;
 pub mod provider_inline;
 pub mod provider_lifecycle;
+pub mod provider_routine;
 pub mod provider_skill_asset;
 pub mod relay_service;
 pub mod rewrite;
@@ -32,11 +33,12 @@ pub use materialization::{
 };
 pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
-    PROVIDER_RELAY_FS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget, append_agent_knowledge_mounts,
-    append_canvas_mounts, append_skill_asset_projection, apply_agent_vfs_access_grants,
-    build_canvas_mount, build_canvas_mount_id, build_context_container_mount, build_derived_vfs,
-    build_lifecycle_mount, build_lifecycle_mount_with_ports, build_project_agent_knowledge_vfs,
-    build_project_skill_asset_management_mount, build_project_vfs_mount_mount,
+    PROVIDER_RELAY_FS, PROVIDER_ROUTINE_VFS, PROVIDER_SKILL_ASSET_FS, SessionMountTarget,
+    append_agent_knowledge_mounts, append_canvas_mounts, append_skill_asset_projection,
+    apply_agent_vfs_access_grants, build_canvas_mount, build_canvas_mount_id,
+    build_context_container_mount, build_derived_vfs, build_lifecycle_mount,
+    build_lifecycle_mount_with_ports, build_project_agent_knowledge_vfs,
+    build_project_skill_asset_management_mount, build_project_vfs_mount_mount, build_routine_mount,
     build_skill_asset_mount, build_workspace_vfs, effective_context_containers,
     list_inline_entries, mount_purpose, normalize_inline_files, parse_inline_mount_owner,
     selected_workspace_binding, workspace_mount,
@@ -58,6 +60,7 @@ pub use provider::{
 pub use provider_canvas::CanvasFsMountProvider;
 pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
+pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
 pub use relay_service::{RelayVfsService, TextSearchParams};
 pub use surface::{

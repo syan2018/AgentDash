@@ -15,6 +15,7 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
+use uuid::Uuid;
 
 use super::construction::SessionConstructionPlan;
 use super::launch::LaunchCommand;
@@ -32,6 +33,14 @@ pub struct TaskLaunchSource {
     pub phase: Option<TaskLaunchPhase>,
     pub override_prompt: Option<String>,
     pub additional_prompt: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoutineLaunchSource {
+    pub routine_id: Uuid,
+    pub execution_id: Uuid,
+    pub trigger_source: String,
+    pub entity_key: Option<String>,
 }
 
 #[derive(Clone)]

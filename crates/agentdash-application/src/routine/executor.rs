@@ -12,7 +12,9 @@ use agentdash_spi::AgentConnector;
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::types::UserPromptInput;
-use crate::session::{LaunchCommand, SessionCoreService, SessionLaunchService};
+use crate::session::{
+    LaunchCommand, RoutineLaunchSource, SessionCoreService, SessionLaunchService,
+};
 use crate::vfs::RelayVfsService;
 use crate::workspace::BackendAvailability;
 
@@ -226,6 +228,12 @@ impl RoutineExecutor {
             Some(agentdash_spi::platform::auth::AuthIdentity::system_routine(
                 routine.id,
             )),
+            RoutineLaunchSource {
+                routine_id: routine.id,
+                execution_id: execution.id,
+                trigger_source: execution.trigger_source.clone(),
+                entity_key: execution.entity_key.clone(),
+            },
         );
 
         execution.mark_running(&session_id, prompt.to_string());

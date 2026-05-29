@@ -37,6 +37,7 @@ pub(crate) fn build_vfs_kernel(
             repos.lifecycle_run_repo.clone(),
             repos.canvas_repo.clone(),
             repos.inline_file_repo.clone(),
+            repos.routine_execution_repo.clone(),
             repos.skill_asset_repo.clone(),
             session_persistence,
         )

@@ -1,6 +1,7 @@
 use agentdash_domain::canvas::CANVAS_SYSTEM_BUNDLE;
 use agentdash_domain::companion::COMPANION_SYSTEM_BUNDLE;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
+use agentdash_domain::routine::ROUTINE_MEMORY_BUNDLE;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BuiltinSkillAssetTemplate {
@@ -19,6 +20,11 @@ const BUILTIN_SKILL_TEMPLATES: &[BuiltinSkillAssetTemplate] = &[
         builtin_key: "companion-system",
         display_name: "Companion System",
         bundle: &COMPANION_SYSTEM_BUNDLE,
+    },
+    BuiltinSkillAssetTemplate {
+        builtin_key: "routine-memory",
+        display_name: "Routine Memory",
+        bundle: &ROUTINE_MEMORY_BUNDLE,
     },
 ];
 

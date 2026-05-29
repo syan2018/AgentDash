@@ -401,6 +401,7 @@ fn validate_reserved_mount_id(mount: &Mount) -> Result<(), String> {
     let valid = match mount.id.as_str() {
         "main" => matches!(mount.provider.as_str(), "relay_fs" | "local_fs"),
         "lifecycle" => mount.provider == "lifecycle_vfs",
+        "routine" => mount.provider == "routine_vfs",
         "skill-assets" => mount.provider == "skill_asset_fs",
         id if id.starts_with("cvs-") => mount.provider == "canvas_fs",
         _ => true,
@@ -425,6 +426,10 @@ fn validate_mount_root_ref(mount: &Mount) -> Result<(), String> {
         )),
         "lifecycle_vfs" if root_ref.scheme() != Some("lifecycle") => Err(format!(
             "mount `{}` lifecycle_vfs root_ref 必须使用 lifecycle://",
+            mount.id
+        )),
+        "routine_vfs" if root_ref.scheme() != Some("routine") => Err(format!(
+            "mount `{}` routine_vfs root_ref 必须使用 routine://",
             mount.id
         )),
         "skill_asset_fs" if root_ref.scheme() != Some("skill-assets") => Err(format!(
@@ -454,13 +459,15 @@ fn validate_provider_capabilities(mount: &Mount) -> Result<(), String> {
                     | MountCapability::Search
                     | MountCapability::Exec
             ),
-            "inline_fs" | "lifecycle_vfs" | "skill_asset_fs" | "canvas_fs" => matches!(
-                capability,
-                MountCapability::Read
-                    | MountCapability::Write
-                    | MountCapability::List
-                    | MountCapability::Search
-            ),
+            "inline_fs" | "lifecycle_vfs" | "routine_vfs" | "skill_asset_fs" | "canvas_fs" => {
+                matches!(
+                    capability,
+                    MountCapability::Read
+                        | MountCapability::Write
+                        | MountCapability::List
+                        | MountCapability::Search
+                )
+            }
             _ => true,
         };
         if !supported {

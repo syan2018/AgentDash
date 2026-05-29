@@ -17,7 +17,8 @@ use agentdash_application::session::construction::{
 };
 use agentdash_application::session::construction_planner::SessionConstructionPlanner;
 use agentdash_application::session::construction_provider::{
-    CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase, TaskLaunchSource,
+    CompanionLaunchSource, RoutineLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase,
+    TaskLaunchSource,
 };
 use agentdash_application::session::local_workspace_vfs;
 use agentdash_application::session::ownership::SessionOwnerResolver;
@@ -32,9 +33,11 @@ use agentdash_application::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
 };
+use agentdash_application::skill_asset::SkillAssetService;
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
 use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
+use agentdash_domain::routine::ROUTINE_MEMORY_SKILL_NAME;
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
@@ -182,13 +185,39 @@ pub(crate) async fn build_session_construction_for_launch(
                         ApiError::NotFound(format!("Project {} 不存在", owner.owner_id))
                     })?;
 
+                let binding_label = if let Some(routine_source) = facts.command.routine_hint() {
+                    let routine = state
+                        .repos
+                        .routine_repo
+                        .get_by_id(routine_source.routine_id)
+                        .await
+                        .map_err(|e| ApiError::Internal(e.to_string()))?
+                        .ok_or_else(|| {
+                            ApiError::NotFound(format!(
+                                "Routine {} 不存在",
+                                routine_source.routine_id
+                            ))
+                        })?;
+                    if routine.project_id != project.id {
+                        return Err(ApiError::BadRequest(format!(
+                            "Routine {} 不属于 Project {}",
+                            routine.id, project.id
+                        )));
+                    }
+                    SessionConstructionPlanner::project_agent_session_label(
+                        &routine.project_agent_id.to_string(),
+                    )
+                } else {
+                    owner.label.clone()
+                };
+
                 let plan = build_project_owner_prompt_request(
                     state,
                     session_id,
                     user_input,
                     plan,
                     &project,
-                    &owner.label,
+                    &binding_label,
                     meta,
                     lifecycle_kind,
                     &visible_canvas_mount_ids,
@@ -226,7 +255,7 @@ pub(crate) async fn finalize_session_construction_projection(
         plan.identity.identity = facts.command.identity();
     }
 
-    let (base_vfs, vfs_source) = if let Some(vfs) = plan.surface.vfs.clone() {
+    let (mut base_vfs, mut vfs_source) = if let Some(vfs) = plan.surface.vfs.clone() {
         (vfs, "construction.surface.vfs".to_string())
     } else if let Some(root) = local_relay_workspace_root.as_ref() {
         (
@@ -238,6 +267,12 @@ pub(crate) async fn finalize_session_construction_projection(
             "construction 未产出 VFS，且来源事实中没有可解析 workspace root".to_string(),
         ));
     };
+
+    if let Some(routine_source) = facts.command.routine_hint() {
+        append_routine_projection(state, &mut base_vfs, plan.owner.project_id, &routine_source)
+            .await?;
+        vfs_source = format!("{vfs_source}+routine_source");
+    }
 
     let (base_mcp_servers, base_mcp_source) = if !plan.projections.mcp_servers.is_empty() {
         (
@@ -435,6 +470,41 @@ async fn build_extension_runtime_projection(
     Ok(extension_runtime_projection_from_installations(
         installations,
     )?)
+}
+
+async fn append_routine_projection(
+    state: &Arc<AppState>,
+    vfs: &mut agentdash_spi::Vfs,
+    project_id: uuid::Uuid,
+    source: &RoutineLaunchSource,
+) -> Result<(), ApiError> {
+    SkillAssetService::new(state.repos.skill_asset_repo.as_ref())
+        .bootstrap_builtins(project_id, Some(ROUTINE_MEMORY_SKILL_NAME))
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+
+    let routine_mount = agentdash_application::vfs::build_routine_mount(
+        source.routine_id,
+        source.execution_id,
+        &source.trigger_source,
+        source.entity_key.as_deref(),
+    );
+    if let Some(existing) = vfs
+        .mounts
+        .iter_mut()
+        .find(|candidate| candidate.id == routine_mount.id)
+    {
+        *existing = routine_mount;
+    } else {
+        vfs.mounts.push(routine_mount);
+    }
+
+    agentdash_application::vfs::append_skill_asset_projection(
+        vfs,
+        project_id,
+        &[ROUTINE_MEMORY_SKILL_NAME.to_string()],
+    );
+    Ok(())
 }
 
 fn clear_plain_lifecycle_context(

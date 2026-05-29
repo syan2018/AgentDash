@@ -139,7 +139,7 @@ impl AgentTool for FsApplyPatchTool {
                 ),
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         let mut lines = Vec::new();
         if !result.added.is_empty() {

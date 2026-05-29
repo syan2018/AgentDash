@@ -145,7 +145,8 @@ impl VfsMaterializationService {
                 input.overlay,
                 input.identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         let entries = self
             .read_plan_entries(input.vfs, target, &plan, input.overlay, input.identity)
             .await?;
@@ -181,7 +182,8 @@ impl VfsMaterializationService {
                 input.overlay,
                 input.identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         let entries = self
             .read_plan_entries(
                 input.vfs,
@@ -327,7 +329,8 @@ impl VfsMaterializationService {
                 overlay,
                 identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(result
             .entries
             .into_iter()
@@ -357,7 +360,8 @@ impl VfsMaterializationService {
                     overlay,
                     identity,
                 )
-                .await?;
+                .await
+                .map_err(|e| e.to_string())?;
             let digest = format!("sha256:{}", sha256_hex(read.content.as_bytes()));
             let size_bytes = read.content.len() as u64;
             entries.push(VfsMaterializeEntry {

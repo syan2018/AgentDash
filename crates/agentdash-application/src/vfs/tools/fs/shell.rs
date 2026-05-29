@@ -200,7 +200,7 @@ impl AgentTool for ShellExecTool {
                 },
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         // 清理通道
         if let Some(ref call_id) = streaming_call_id {

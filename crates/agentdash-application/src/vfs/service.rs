@@ -60,6 +60,13 @@ pub struct VfsService {
     mount_provider_registry: Arc<MountProviderRegistry>,
 }
 
+struct MountDispatch {
+    mount: Mount,
+    path: String,
+    provider: Arc<dyn MountProvider>,
+    ctx: MountOperationContext,
+}
+
 impl VfsService {
     pub fn new(mount_provider_registry: Arc<MountProviderRegistry>) -> Self {
         Self {
@@ -97,6 +104,36 @@ impl VfsService {
         vfs.mounts.clone()
     }
 
+    fn resolve_provider_dispatch(
+        &self,
+        vfs: &Vfs,
+        mount_id: &str,
+        capability: MountCapability,
+        raw_path: &str,
+        allow_empty: bool,
+        identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
+    ) -> Result<MountDispatch, MountError> {
+        let mount = resolve_mount(vfs, mount_id, capability)
+            .map_err(MountError::OperationFailed)?
+            .clone();
+        let path = normalize_mount_relative_path(raw_path, allow_empty)
+            .map_err(MountError::OperationFailed)?;
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+
+        Ok(MountDispatch {
+            mount,
+            path,
+            provider,
+            ctx,
+        })
+    }
+
     /// 按行号 range 读取文本文件。
     ///
     /// 与 `read_text` 的区别：
@@ -113,14 +150,17 @@ impl VfsService {
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<ReadResult, agentdash_spi::platform::mount::MountError> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)
-            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
-        let path = normalize_mount_relative_path(&target.path, false)
-            .map_err(agentdash_spi::platform::mount::MountError::OperationFailed)?;
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::Read,
+            &target.path,
+            false,
+            identity,
+        )?;
 
         if let Some(ov) = overlay
-            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+            && let Some(override_state) = ov.read_override(&dispatch.mount.id, &dispatch.path).await
         {
             return match override_state {
                 Some(content) => {
@@ -130,30 +170,30 @@ impl VfsService {
                         .take(limit.unwrap_or(usize::MAX))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    Ok(ReadResult::new(path, sliced))
+                    Ok(ReadResult::new(dispatch.path, sliced))
                 }
-                None => Err(agentdash_spi::platform::mount::MountError::NotFound(
-                    target.path.clone(),
-                )),
+                None => Err(MountError::NotFound(target.path.clone())),
             };
         }
 
-        let provider = self
-            .mount_provider_registry
-            .get(&mount.provider)
-            .ok_or_else(|| {
-                agentdash_spi::platform::mount::MountError::ProviderNotRegistered(
-                    mount.provider.clone(),
-                )
-            })?;
-        let ctx = MountOperationContext {
-            identity: identity.cloned(),
-        };
         let started_at = Instant::now();
-        let result = provider
-            .read_text_range(mount, &path, offset, limit, &ctx)
+        let result = dispatch
+            .provider
+            .read_text_range(
+                &dispatch.mount,
+                &dispatch.path,
+                offset,
+                limit,
+                &dispatch.ctx,
+            )
             .await;
-        log_vfs_operation_result(mount, "read_text_range", &path, started_at, result.is_ok());
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "read_text_range",
+            &dispatch.path,
+            started_at,
+            result.is_ok(),
+        );
         result
     }
 
@@ -165,24 +205,23 @@ impl VfsService {
         target: &ResourceRef,
         limit: usize,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<Vec<String>, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::List)?;
-        let provider = self
-            .mount_provider_registry
-            .get(&mount.provider)
-            .ok_or_else(|| format!("unregistered mount provider: {}", mount.provider))?;
-        let ctx = MountOperationContext {
-            identity: identity.cloned(),
-        };
+    ) -> Result<Vec<String>, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::List,
+            &target.path,
+            true,
+            identity,
+        )?;
         let basename = std::path::Path::new(&target.path)
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| target.path.clone());
-        provider
-            .suggest_paths(mount, &basename, limit, &ctx)
+        dispatch
+            .provider
+            .suggest_paths(&dispatch.mount, &basename, limit, &dispatch.ctx)
             .await
-            .map_err(|e| e.to_string())
     }
 
     pub async fn read_text(
@@ -191,31 +230,38 @@ impl VfsService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ReadResult, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)?;
-        let path = normalize_mount_relative_path(&target.path, false)?;
+    ) -> Result<ReadResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::Read,
+            &target.path,
+            false,
+            identity,
+        )?;
 
         if let Some(ov) = overlay
-            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+            && let Some(override_state) = ov.read_override(&dispatch.mount.id, &dispatch.path).await
         {
             return match override_state {
-                Some(content) => Ok(ReadResult::new(path, content)),
-                None => Err(format!("文件不存在: {}", target.path)),
+                Some(content) => Ok(ReadResult::new(dispatch.path, content)),
+                None => Err(MountError::NotFound(target.path.clone())),
             };
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider.read_text(mount, &path, &ctx).await;
-            log_vfs_operation_result(mount, "read_text", &path, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .read_text(&dispatch.mount, &dispatch.path, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "read_text",
+            &dispatch.path,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn read_binary(
@@ -224,31 +270,41 @@ impl VfsService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<BinaryReadResult, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Read)?;
-        let path = normalize_mount_relative_path(&target.path, false)?;
+    ) -> Result<BinaryReadResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::Read,
+            &target.path,
+            false,
+            identity,
+        )?;
 
         if let Some(ov) = overlay
-            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+            && let Some(override_state) = ov.read_override(&dispatch.mount.id, &dispatch.path).await
         {
             return match override_state {
-                Some(_) => Err(format!("文件是文本 overlay，不能按二进制读取: {path}")),
-                None => Err(format!("文件不存在: {}", target.path)),
+                Some(_) => Err(MountError::OperationFailed(format!(
+                    "文件是文本 overlay，不能按二进制读取: {}",
+                    dispatch.path
+                ))),
+                None => Err(MountError::NotFound(target.path.clone())),
             };
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider.read_binary(mount, &path, &ctx).await;
-            log_vfs_operation_result(mount, "read_binary", &path, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .read_binary(&dispatch.mount, &dispatch.path, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "read_binary",
+            &dispatch.path,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn write_text(
@@ -258,32 +314,42 @@ impl VfsService {
         content: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<(), String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Write)?;
-        let path = normalize_mount_relative_path(&target.path, false)?;
+    ) -> Result<(), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::Write,
+            &target.path,
+            false,
+            identity,
+        )?;
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(&dispatch.mount) {
             let ov = overlay.ok_or_else(|| {
-                format!(
+                MountError::OperationFailed(format!(
                     "mount `{}` 是内联容器，需要 InlineContentOverlay 才能写入",
-                    mount.id
-                )
+                    dispatch.mount.id
+                ))
             })?;
-            return ov.write(mount, &path, content).await;
+            return ov
+                .write(&dispatch.mount, &dispatch.path, content)
+                .await
+                .map_err(MountError::OperationFailed);
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider.write_text(mount, &path, content, &ctx).await;
-            log_vfs_operation_result(mount, "write_text", &path, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .write_text(&dispatch.mount, &dispatch.path, content, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "write_text",
+            &dispatch.path,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn create_text(
@@ -293,9 +359,14 @@ impl VfsService {
         content: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MountError> {
         match self.read_text(vfs, target, overlay, identity).await {
-            Ok(_) => return Err(format!("目标文件已存在: {}", target.path)),
+            Ok(_) => {
+                return Err(MountError::OperationFailed(format!(
+                    "目标文件已存在: {}",
+                    target.path
+                )));
+            }
             Err(_) => {
                 // 读取失败在 create 语义下按“不存在或不可读”处理；真正的权限、
                 // backend 离线等错误仍会在 write_text 阶段返回。
@@ -312,43 +383,53 @@ impl VfsService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<(), String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::Write)?;
-        let path = normalize_mount_relative_path(&target.path, false)?;
+    ) -> Result<(), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::Write,
+            &target.path,
+            false,
+            identity,
+        )?;
 
         self.read_text(
             vfs,
             &ResourceRef {
                 mount_id: target.mount_id.clone(),
-                path: path.clone(),
+                path: dispatch.path.clone(),
             },
             overlay,
             identity,
         )
         .await?;
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(&dispatch.mount) {
             let ov = overlay.ok_or_else(|| {
-                format!(
+                MountError::OperationFailed(format!(
                     "mount `{}` 是内联容器，需要 InlineContentOverlay 才能删除",
-                    mount.id
-                )
+                    dispatch.mount.id
+                ))
             })?;
-            return ov.delete(mount, &path).await;
+            return ov
+                .delete(&dispatch.mount, &dispatch.path)
+                .await
+                .map_err(MountError::OperationFailed);
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider.delete_text(mount, &path, &ctx).await;
-            log_vfs_operation_result(mount, "delete_text", &path, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .delete_text(&dispatch.mount, &dispatch.path, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "delete_text",
+            &dispatch.path,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn rename_text(
@@ -359,11 +440,18 @@ impl VfsService {
         to_path: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<(), String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::Write)?;
-        let from_path = normalize_mount_relative_path(from_path, false)?;
-        let to_path = normalize_mount_relative_path(to_path, false)?;
+    ) -> Result<(), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            mount_id,
+            MountCapability::Write,
+            from_path,
+            false,
+            identity,
+        )?;
+        let from_path = dispatch.path.clone();
+        let to_path =
+            normalize_mount_relative_path(to_path, false).map_err(MountError::OperationFailed)?;
         if from_path == to_path {
             return Ok(());
         }
@@ -393,39 +481,40 @@ impl VfsService {
             .await
             .is_ok()
         {
-            return Err(format!("目标文件已存在: {to_path}"));
+            return Err(MountError::OperationFailed(format!(
+                "目标文件已存在: {to_path}"
+            )));
         }
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(&dispatch.mount) {
             let ov = overlay.ok_or_else(|| {
-                format!(
+                MountError::OperationFailed(format!(
                     "mount `{}` 是内联容器，需要 InlineContentOverlay 才能重命名",
-                    mount.id
-                )
+                    dispatch.mount.id
+                ))
             })?;
-            ov.write(mount, &to_path, &source.content).await?;
-            return ov.delete(mount, &from_path).await;
+            ov.write(&dispatch.mount, &to_path, &source.content)
+                .await
+                .map_err(MountError::OperationFailed)?;
+            return ov
+                .delete(&dispatch.mount, &from_path)
+                .await
+                .map_err(MountError::OperationFailed);
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider
-                .rename_text(mount, &from_path, &to_path, &ctx)
-                .await;
-            log_vfs_operation_result(
-                mount,
-                "rename_text",
-                &format!("{from_path} -> {to_path}"),
-                started_at,
-                result.is_ok(),
-            );
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .rename_text(&dispatch.mount, &from_path, &to_path, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "rename_text",
+            &format!("{from_path} -> {to_path}"),
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn stat(
@@ -434,18 +523,24 @@ impl VfsService {
         target: &ResourceRef,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<RuntimeFileEntry, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &target.mount_id, MountCapability::List)?;
-        let path = normalize_mount_relative_path(&target.path, true)?;
+    ) -> Result<RuntimeFileEntry, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &target.mount_id,
+            MountCapability::List,
+            &target.path,
+            true,
+            identity,
+        )?;
+        let path = dispatch.path.clone();
 
         if path.is_empty() || path == "." {
             return Ok(RuntimeFileEntry::dir("."));
         }
 
-        if mount.provider == PROVIDER_INLINE_FS
+        if is_inline_mount(&dispatch.mount)
             && let Some(ov) = overlay
-            && let Some(override_state) = ov.read_override(&mount.id, &path).await
+            && let Some(override_state) = ov.read_override(&dispatch.mount.id, &path).await
         {
             return match override_state {
                 Some(content) => {
@@ -462,22 +557,20 @@ impl VfsService {
                         .with_size(content.len() as u64)
                         .with_attributes(attrs))
                 }
-                None => Err(format!("文件不存在: {}", target.path)),
+                None => Err(MountError::NotFound(target.path.clone())),
             };
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let started_at = Instant::now();
-            let result = provider.stat(mount, &path, &ctx).await;
-            log_vfs_operation_result(mount, "stat", &path, started_at, result.is_ok());
-            match result {
-                Ok(entry) => return Ok(entry),
-                Err(MountError::NotSupported(_)) => {}
-                Err(error) => return Err(error.to_string()),
-            }
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .stat(&dispatch.mount, &path, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(&dispatch.mount, "stat", &path, started_at, result.is_ok());
+        match result {
+            Ok(entry) => return Ok(entry),
+            Err(MountError::NotSupported(_)) => {}
+            Err(error) => return Err(error),
         }
 
         let parent = path
@@ -507,7 +600,7 @@ impl VfsService {
             .entries
             .into_iter()
             .find(|entry| entry.path == path)
-            .ok_or_else(|| format!("文件不存在: {path}"))
+            .ok_or_else(|| MountError::NotFound(path))
     }
 
     pub async fn apply_patch(
@@ -517,16 +610,16 @@ impl VfsService {
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ApplyPatchResult, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::Write)?;
+    ) -> Result<ApplyPatchResult, MountError> {
+        let mount = resolve_mount(vfs, mount_id, MountCapability::Write)
+            .map_err(MountError::OperationFailed)?;
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(mount) {
             let ov = overlay.ok_or_else(|| {
-                format!(
+                MountError::OperationFailed(format!(
                     "mount `{}` 是内联容器，需要 InlineContentOverlay 才能应用 patch",
                     mount.id
-                )
+                ))
             })?;
             let target = InlineOverlayPatchTarget {
                 mount,
@@ -535,7 +628,7 @@ impl VfsService {
             };
             let result = crate::vfs::apply_patch_to_target(&target, patch)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| MountError::OperationFailed(e.to_string()))?;
             return Ok(ApplyPatchResult {
                 added: result.added,
                 modified: result.modified,
@@ -543,41 +636,41 @@ impl VfsService {
             });
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let target = ProviderPatchTarget {
-                provider: provider.as_ref(),
-                mount,
-                ctx: &ctx,
-            };
-            match crate::vfs::apply_patch_to_target(&target, patch).await {
-                Ok(result) => {
-                    return Ok(ApplyPatchResult {
-                        added: result.added,
-                        modified: result.modified,
-                        deleted: result.deleted,
-                    });
-                }
-                Err(crate::vfs::ApplyPatchError::Capabilities(cap_error)) => {
-                    let request = ApplyPatchRequest {
-                        patch: patch.to_string(),
-                    };
-                    return provider
-                        .apply_patch(mount, &request, &ctx)
-                        .await
-                        .map_err(|native_err| {
-                            format!(
-                                "patch 组合执行不可用（{cap_error}），且 provider 原生 apply_patch 失败: {native_err}"
-                            )
-                        });
-                }
-                Err(other) => return Err(other.to_string()),
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let target = ProviderPatchTarget {
+            provider: provider.as_ref(),
+            mount,
+            ctx: &ctx,
+        };
+        match crate::vfs::apply_patch_to_target(&target, patch).await {
+            Ok(result) => {
+                return Ok(ApplyPatchResult {
+                    added: result.added,
+                    modified: result.modified,
+                    deleted: result.deleted,
+                });
             }
+            Err(crate::vfs::ApplyPatchError::Capabilities(cap_error)) => {
+                let request = ApplyPatchRequest {
+                    patch: patch.to_string(),
+                };
+                return provider
+                    .apply_patch(mount, &request, &ctx)
+                    .await
+                    .map_err(|native_err| {
+                        MountError::OperationFailed(format!(
+                            "patch 组合执行不可用（{cap_error}），且 provider 原生 apply_patch 失败: {native_err}"
+                        ))
+                    });
+            }
+            Err(other) => Err(MountError::OperationFailed(other.to_string())),
         }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
     }
 
     /// 跨 mount apply_patch —— 解析 patch 条目中的路径前缀，按 mount 分组独立执行。
@@ -592,21 +685,25 @@ impl VfsService {
         patch: &str,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<MultiMountPatchResult, String> {
-        let entries = parse_patch_text(patch).map_err(|e| format!("patch 解析失败: {e}"))?;
+    ) -> Result<MultiMountPatchResult, MountError> {
+        let entries = parse_patch_text(patch)
+            .map_err(|e| MountError::OperationFailed(format!("patch 解析失败: {e}")))?;
         if entries.is_empty() {
-            return Err("没有检测到任何文件改动".to_string());
+            return Err(MountError::OperationFailed(
+                "没有检测到任何文件改动".to_string(),
+            ));
         }
 
         let fallback_mount_id = match default_mount_id {
             Some(id) if !id.trim().is_empty() => id.to_string(),
-            _ => resolve_mount_id(vfs, None)?,
+            _ => resolve_mount_id(vfs, None).map_err(MountError::OperationFailed)?,
         };
 
         // 按 mount 分组
         let mut grouped: BTreeMap<String, Vec<PatchEntry>> = BTreeMap::new();
         for mut entry in entries {
-            let mount_id = normalize_patch_entry_paths(&mut entry, &fallback_mount_id)?;
+            let mount_id = normalize_patch_entry_paths(&mut entry, &fallback_mount_id)
+                .map_err(MountError::OperationFailed)?;
             grouped.entry(mount_id).or_default().push(entry);
         }
 
@@ -638,7 +735,7 @@ impl VfsService {
                         result.errors.push(PatchEntryError {
                             mount_id: mount_id.clone(),
                             path: entry.path().to_string_lossy().to_string(),
-                            message: error.clone(),
+                            message: error.to_string(),
                         });
                     }
                 }
@@ -656,15 +753,16 @@ impl VfsService {
         entries: &[PatchEntry],
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ApplyPatchAffectedPaths, String> {
-        let mount = resolve_mount(vfs, mount_id, MountCapability::Write)?;
+    ) -> Result<ApplyPatchAffectedPaths, MountError> {
+        let mount = resolve_mount(vfs, mount_id, MountCapability::Write)
+            .map_err(MountError::OperationFailed)?;
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(mount) {
             let ov = overlay.ok_or_else(|| {
-                format!(
+                MountError::OperationFailed(format!(
                     "mount `{}` 是内联容器，需要 InlineContentOverlay 才能应用 patch",
                     mount.id
-                )
+                ))
             })?;
             let target = InlineOverlayPatchTarget {
                 mount,
@@ -673,24 +771,24 @@ impl VfsService {
             };
             return apply_entries_to_target(&target, entries)
                 .await
-                .map_err(|e| e.to_string());
+                .map_err(|e| MountError::OperationFailed(e.to_string()));
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let target = ProviderPatchTarget {
-                provider: provider.as_ref(),
-                mount,
-                ctx: &ctx,
-            };
-            return apply_entries_to_target(&target, entries)
-                .await
-                .map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let provider = self
+            .mount_provider_registry
+            .get(&mount.provider)
+            .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
+        let ctx = MountOperationContext {
+            identity: identity.cloned(),
+        };
+        let target = ProviderPatchTarget {
+            provider: provider.as_ref(),
+            mount,
+            ctx: &ctx,
+        };
+        apply_entries_to_target(&target, entries)
+            .await
+            .map_err(|e| MountError::OperationFailed(e.to_string()))
     }
 
     pub async fn list(
@@ -700,31 +798,38 @@ impl VfsService {
         options: ListOptions,
         overlay: Option<&InlineContentOverlay>,
         identity: Option<&agentdash_spi::platform::auth::AuthIdentity>,
-    ) -> Result<ListResult, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, mount_id, MountCapability::List)?;
-        let path = normalize_mount_relative_path(&options.path, true)?;
+    ) -> Result<ListResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            mount_id,
+            MountCapability::List,
+            &options.path,
+            true,
+            identity,
+        )?;
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(&dispatch.mount) {
             // 从 provider（DB）加载文件列表，再合并 overlay
-            let provider = self
-                .mount_provider_registry
-                .get(&mount.provider)
-                .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
             if overlay.is_none() {
                 // 无 overlay 直接委托 provider
                 let opts = ListOptions {
-                    path,
+                    path: dispatch.path,
                     pattern: options.pattern,
                     recursive: options.recursive,
                 };
                 let started_at = Instant::now();
-                let result = provider.list(mount, &opts, &ctx).await;
-                log_vfs_operation_result(mount, "list", &opts.path, started_at, result.is_ok());
-                return result.map_err(|e| e.to_string());
+                let result = dispatch
+                    .provider
+                    .list(&dispatch.mount, &opts, &dispatch.ctx)
+                    .await;
+                log_vfs_operation_result(
+                    &dispatch.mount,
+                    "list",
+                    &opts.path,
+                    started_at,
+                    result.is_ok(),
+                );
+                return result;
             }
             // 有 overlay：从 provider 读取完整文件映射，合并 overlay，再列出
             let full_opts = ListOptions {
@@ -733,15 +838,18 @@ impl VfsService {
                 recursive: true,
             };
             let started_at = Instant::now();
-            let full_result = provider.list(mount, &full_opts, &ctx).await;
+            let full_result = dispatch
+                .provider
+                .list(&dispatch.mount, &full_opts, &dispatch.ctx)
+                .await;
             log_vfs_operation_result(
-                mount,
+                &dispatch.mount,
                 "list",
                 &full_opts.path,
                 started_at,
                 full_result.is_ok(),
             );
-            let full_result = full_result.map_err(|e| e.to_string())?;
+            let full_result = full_result?;
             let mut files = BTreeMap::new();
             for entry in full_result.entries {
                 if !entry.is_dir {
@@ -749,57 +857,67 @@ impl VfsService {
                 }
             }
             if let Some(ov) = overlay {
-                ov.apply_to_files(&mount.id, &mut files).await;
+                ov.apply_to_files(&dispatch.mount.id, &mut files).await;
             }
             return Ok(ListResult {
                 entries: list_inline_entries(
                     &files,
-                    &path,
+                    &dispatch.path,
                     options.pattern.as_deref(),
                     options.recursive,
                 ),
             });
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext {
-                identity: identity.cloned(),
-            };
-            let opts = ListOptions {
-                path,
-                pattern: options.pattern,
-                recursive: options.recursive,
-            };
-            let started_at = Instant::now();
-            let result = provider.list(mount, &opts, &ctx).await;
-            log_vfs_operation_result(mount, "list", &opts.path, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+        let opts = ListOptions {
+            path: dispatch.path,
+            pattern: options.pattern,
+            recursive: options.recursive,
+        };
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .list(&dispatch.mount, &opts, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "list",
+            &opts.path,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
-    pub async fn exec(&self, vfs: &Vfs, request: &ExecRequest) -> Result<ExecResult, String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, &request.mount_id, MountCapability::Exec)?;
-        let cwd = normalize_mount_relative_path(&request.cwd, true)?;
-
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
-            let req = ExecRequest {
-                mount_id: request.mount_id.clone(),
-                cwd,
-                command: request.command.clone(),
-                timeout_ms: request.timeout_ms,
-                streaming_call_id: request.streaming_call_id.clone(),
-            };
-            let started_at = Instant::now();
-            let result = provider.exec(mount, &req, &ctx).await;
-            log_vfs_operation_result(mount, "exec", &req.cwd, started_at, result.is_ok());
-            return result.map_err(|e| e.to_string());
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+    pub async fn exec(&self, vfs: &Vfs, request: &ExecRequest) -> Result<ExecResult, MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            &request.mount_id,
+            MountCapability::Exec,
+            &request.cwd,
+            true,
+            None,
+        )?;
+        let req = ExecRequest {
+            mount_id: request.mount_id.clone(),
+            cwd: dispatch.path,
+            command: request.command.clone(),
+            timeout_ms: request.timeout_ms,
+            streaming_call_id: request.streaming_call_id.clone(),
+        };
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .exec(&dispatch.mount, &req, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "exec",
+            &req.cwd,
+            started_at,
+            result.is_ok(),
+        );
+        result
     }
 
     pub async fn search_text(
@@ -810,7 +928,7 @@ impl VfsService {
         query: &str,
         max_results: usize,
         overlay: Option<&InlineContentOverlay>,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<String>, MountError> {
         self.search_text_extended(
             vfs,
             &TextSearchParams {
@@ -837,60 +955,64 @@ impl VfsService {
         &self,
         vfs: &Vfs,
         params: &TextSearchParams<'_>,
-    ) -> Result<(Vec<String>, bool), String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, params.mount_id, MountCapability::Search)?;
-        let base_path = normalize_mount_relative_path(params.path, true)?;
+    ) -> Result<(Vec<String>, bool), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            params.mount_id,
+            MountCapability::Search,
+            params.path,
+            true,
+            None,
+        )?;
+        let base_path = dispatch.path.clone();
 
-        if mount.provider == PROVIDER_INLINE_FS {
+        if is_inline_mount(&dispatch.mount) {
             // 通用 inline 搜索复用 grep_inline；当 params 的 grep 字段为空时
             // 行为与 substring 等价（is_regex=false → substring，include_glob/
             // context_lines/multiline 都默认零值）。
-            return self.grep_inline(mount, &base_path, params).await;
+            return self.grep_inline(&dispatch.mount, &base_path, params).await;
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
-            // search_text_extended 仅承载通用搜索语义（substring）；grep 字段在
-            // grep_text_extended 路径处理。这里只填 SearchQuery 的 4 个通用字段。
-            let sq = SearchQuery {
-                path: if base_path.is_empty() {
-                    None
+        // search_text_extended 仅承载通用搜索语义（substring）；grep 字段在
+        // grep_text_extended 路径处理。这里只填 SearchQuery 的 4 个通用字段。
+        let sq = SearchQuery {
+            path: if base_path.is_empty() {
+                None
+            } else {
+                Some(base_path)
+            },
+            pattern: params.query.to_string(),
+            case_sensitive: params.case_sensitive,
+            max_results: Some(params.max_results),
+        };
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .search_text(&dispatch.mount, &sq, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "search_text",
+            sq.path.as_deref().unwrap_or("."),
+            started_at,
+            result.is_ok(),
+        );
+        let result = result?;
+        let truncated = result.truncated;
+        let hits: Vec<String> = result
+            .matches
+            .iter()
+            .filter(|m| !is_vcs_path(&m.path))
+            .map(|m| {
+                let trimmed = trim_long_line(&m.content);
+                if let Some(line) = m.line {
+                    format!("{}:{}: {}", m.path, line, trimmed)
                 } else {
-                    Some(base_path)
-                },
-                pattern: params.query.to_string(),
-                case_sensitive: params.case_sensitive,
-                max_results: Some(params.max_results),
-            };
-            let started_at = Instant::now();
-            let result = provider.search_text(mount, &sq, &ctx).await;
-            log_vfs_operation_result(
-                mount,
-                "search_text",
-                sq.path.as_deref().unwrap_or("."),
-                started_at,
-                result.is_ok(),
-            );
-            let result = result.map_err(|e| e.to_string())?;
-            let truncated = result.truncated;
-            let hits: Vec<String> = result
-                .matches
-                .iter()
-                .filter(|m| !is_vcs_path(&m.path))
-                .map(|m| {
-                    let trimmed = trim_long_line(&m.content);
-                    if let Some(line) = m.line {
-                        format!("{}:{}: {}", m.path, line, trimmed)
-                    } else {
-                        format!("{}: {}", m.path, trimmed)
-                    }
-                })
-                .collect();
-            return Ok((hits, truncated));
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+                    format!("{}: {}", m.path, trimmed)
+                }
+            })
+            .collect();
+        Ok((hits, truncated))
     }
 
     /// grep 风格搜索（pattern 始终正则；支持 include_glob / context / multiline /
@@ -899,63 +1021,67 @@ impl VfsService {
         &self,
         vfs: &Vfs,
         params: &TextSearchParams<'_>,
-    ) -> Result<(Vec<String>, bool), String> {
-        let runtime_vfs = vfs.clone();
-        let mount = resolve_mount(&runtime_vfs, params.mount_id, MountCapability::Search)?;
-        let base_path = normalize_mount_relative_path(params.path, true)?;
+    ) -> Result<(Vec<String>, bool), MountError> {
+        let dispatch = self.resolve_provider_dispatch(
+            vfs,
+            params.mount_id,
+            MountCapability::Search,
+            params.path,
+            true,
+            None,
+        )?;
+        let base_path = dispatch.path.clone();
 
-        if mount.provider == PROVIDER_INLINE_FS {
-            return self.grep_inline(mount, &base_path, params).await;
+        if is_inline_mount(&dispatch.mount) {
+            return self.grep_inline(&dispatch.mount, &base_path, params).await;
         }
 
-        if let Some(provider) = self.mount_provider_registry.get(&mount.provider) {
-            let ctx = MountOperationContext::default();
-            let gq = GrepQuery {
-                base: SearchQuery {
-                    path: if base_path.is_empty() {
-                        None
-                    } else {
-                        Some(base_path)
-                    },
-                    pattern: params.query.to_string(),
-                    case_sensitive: params.case_sensitive,
-                    max_results: Some(params.max_results),
+        let gq = GrepQuery {
+            base: SearchQuery {
+                path: if base_path.is_empty() {
+                    None
+                } else {
+                    Some(base_path)
                 },
-                include_glob: params.include_glob.map(|s| s.to_string()),
-                context_lines: params.context_lines,
-                before_lines: params.before_lines,
-                after_lines: params.after_lines,
-                multiline: params.multiline,
-                output_mode: params.output_mode,
-            };
-            let started_at = Instant::now();
-            let result = provider.grep_text(mount, &gq, &ctx).await;
-            log_vfs_operation_result(
-                mount,
-                "grep_text",
-                gq.base.path.as_deref().unwrap_or("."),
-                started_at,
-                result.is_ok(),
-            );
-            let result = result.map_err(|e| e.to_string())?;
-            let truncated = result.truncated;
-            let hits: Vec<String> = result
-                .matches
-                .iter()
-                .filter(|m| !is_vcs_path(&m.path))
-                .map(|m| {
-                    let trimmed = trim_long_line(&m.content);
-                    if let Some(line) = m.line {
-                        format!("{}:{}: {}", m.path, line, trimmed)
-                    } else {
-                        format!("{}: {}", m.path, trimmed)
-                    }
-                })
-                .collect();
-            return Ok((hits, truncated));
-        }
-
-        Err(format!("unregistered mount provider: {}", mount.provider))
+                pattern: params.query.to_string(),
+                case_sensitive: params.case_sensitive,
+                max_results: Some(params.max_results),
+            },
+            include_glob: params.include_glob.map(|s| s.to_string()),
+            context_lines: params.context_lines,
+            before_lines: params.before_lines,
+            after_lines: params.after_lines,
+            multiline: params.multiline,
+            output_mode: params.output_mode,
+        };
+        let started_at = Instant::now();
+        let result = dispatch
+            .provider
+            .grep_text(&dispatch.mount, &gq, &dispatch.ctx)
+            .await;
+        log_vfs_operation_result(
+            &dispatch.mount,
+            "grep_text",
+            gq.base.path.as_deref().unwrap_or("."),
+            started_at,
+            result.is_ok(),
+        );
+        let result = result?;
+        let truncated = result.truncated;
+        let hits: Vec<String> = result
+            .matches
+            .iter()
+            .filter(|m| !is_vcs_path(&m.path))
+            .map(|m| {
+                let trimmed = trim_long_line(&m.content);
+                if let Some(line) = m.line {
+                    format!("{}:{}: {}", m.path, line, trimmed)
+                } else {
+                    format!("{}: {}", m.path, trimmed)
+                }
+            })
+            .collect();
+        Ok((hits, truncated))
     }
 
     /// inline mount 的 grep 实现（含 overlay）。当 params.grep 字段全为零时
@@ -965,32 +1091,26 @@ impl VfsService {
         mount: &Mount,
         base_path: &str,
         params: &TextSearchParams<'_>,
-    ) -> Result<(Vec<String>, bool), String> {
+    ) -> Result<(Vec<String>, bool), MountError> {
         // 从 provider（DB）加载全部文件内容，再合并 overlay 后搜索
         let provider = self
             .mount_provider_registry
             .get(&mount.provider)
-            .ok_or_else(|| "inline_fs provider 未注册".to_string())?;
+            .ok_or_else(|| MountError::ProviderNotRegistered(mount.provider.clone()))?;
         let ctx = MountOperationContext::default();
         let full_opts = ListOptions {
             path: String::new(),
             pattern: None,
             recursive: true,
         };
-        let full_result = provider
-            .list(mount, &full_opts, &ctx)
-            .await
-            .map_err(|e| e.to_string())?;
+        let full_result = provider.list(mount, &full_opts, &ctx).await?;
         let mut files = BTreeMap::new();
         for entry in full_result.entries {
             if !entry.is_dir {
                 if entry_content_kind(&entry).as_deref() == Some("binary") {
                     continue;
                 }
-                let read_result = provider
-                    .read_text(mount, &entry.path, &ctx)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let read_result = provider.read_text(mount, &entry.path, &ctx).await?;
                 files.insert(entry.path, read_result.content);
             }
         }
@@ -1004,7 +1124,11 @@ impl VfsService {
                 .case_insensitive(!params.case_sensitive)
                 .multi_line(params.multiline)
                 .dot_matches_new_line(params.multiline);
-            Some(builder.build().map_err(|e| format!("无效正则: {e}"))?)
+            Some(
+                builder
+                    .build()
+                    .map_err(|e| MountError::OperationFailed(format!("无效正则: {e}")))?,
+            )
         } else {
             None
         };
@@ -1012,7 +1136,7 @@ impl VfsService {
         let glob_matcher = match params.include_glob {
             Some(pat) => Some(
                 globset::Glob::new(pat)
-                    .map_err(|e| format!("无效 glob: {e}"))?
+                    .map_err(|e| MountError::OperationFailed(format!("无效 glob: {e}")))?
                     .compile_matcher(),
             ),
             None => None,
@@ -1113,6 +1237,10 @@ fn log_vfs_operation_result(
         success,
         "VFS mount operation completed"
     );
+}
+
+fn is_inline_mount(mount: &Mount) -> bool {
+    mount.provider == PROVIDER_INLINE_FS
 }
 
 /// 从 patch 内的路径拆出 mount 前缀，并规范化 mount 相对路径。

@@ -159,13 +159,16 @@ impl ApplyPatchTarget for FsPatchTarget {
                 .await
                 .map_err(|e| ApplyPatchError::Apply(format!("创建目录失败: {e}")))?;
         }
-        tokio::fs::OpenOptions::new()
+        let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&target)
             .await
-            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?
-            .write_all(content.as_bytes())
+            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
+        file.write_all(content.as_bytes())
+            .await
+            .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))?;
+        file.flush()
             .await
             .map_err(|e| ApplyPatchError::Apply(format!("写入文件失败: {e}")))
     }

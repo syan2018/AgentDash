@@ -122,7 +122,7 @@ pub async fn list_address_entries(
                     Some(&current_user),
                 )
                 .await
-                .map_err(ApiError::Internal)?;
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
 
             let entries = listed
                 .entries

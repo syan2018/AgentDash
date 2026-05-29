@@ -81,7 +81,7 @@ pub async fn list_surface_mount_entries(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(SurfaceEntriesResponse {
         surface_ref,
@@ -132,7 +132,7 @@ pub async fn read_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(SurfaceReadFileResponse {
         surface_ref: req.surface_ref,
@@ -170,7 +170,7 @@ pub async fn read_surface_file_blob(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::BadRequest)?;
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let content_type = HeaderValue::from_str(&result.mime_type)
         .map_err(|error| ApiError::Internal(format!("MIME 类型无效: {error}")))?;
 
@@ -456,7 +456,7 @@ pub async fn stat_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok(Json(surface_stat_response(
         req.surface_ref,

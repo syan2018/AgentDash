@@ -107,7 +107,7 @@ impl AgentTool for FsGlobTool {
                 self.identity.as_ref(),
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         // VCS 过滤
         let mut entries: Vec<_> = result

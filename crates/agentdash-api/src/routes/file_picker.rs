@@ -305,7 +305,7 @@ async fn relay_list_files(
             Some(current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let files = listed
         .entries
@@ -350,7 +350,7 @@ async fn relay_read_file(
             Some(current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
     let mime = guess_mime(&read.path);
     let size = read.content.len() as u64;
     Ok(Json(ReadFileResponse {
@@ -413,7 +413,7 @@ async fn relay_batch_read_files(
                     mime_type: String::new(),
                     content: None,
                     size: 0,
-                    error: Some(err),
+                    error: Some(err.to_string()),
                 });
                 continue;
             }

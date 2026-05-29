@@ -231,6 +231,7 @@ impl AppState {
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
                 session_binding_repo: repos.session_binding_repo.clone(),
+                lifecycle_run_link_repo: repos.lifecycle_run_link_repo.clone(),
                 workflow_definition_repo: repos.workflow_definition_repo.clone(),
                 activity_lifecycle_definition_repo: repos
                     .activity_lifecycle_definition_repo

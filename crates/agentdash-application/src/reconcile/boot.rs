@@ -18,19 +18,21 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository,
 };
 
 /// 启动对账管线的依赖集合
 ///
 /// M2-c：Task view 改为"从 LifecycleRun/step state 反投影"（Scheme A）。
-/// projector 通过 Story session binding 找到 Story，再以 `Task.lifecycle_step_key` 定位 Task。
+/// projector 通过 `LifecycleRunLink(Story)` 找到 Story，再以 `Task.lifecycle_step_key` 定位 Task。
 pub struct BootReconcileDeps {
     pub session_runtime: SessionRuntimeService,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub session_binding_repo: Arc<dyn SessionBindingRepository>,
+    pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -221,7 +223,7 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.project_repo,
         &deps.state_change_repo,
         &deps.story_repo,
-        &deps.session_binding_repo,
+        &deps.lifecycle_run_link_repo,
         &deps.lifecycle_run_repo,
     )
     .await

@@ -771,7 +771,7 @@ async fn auto_start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: lifecycle_key.to_string(),
-            root_session_id: run.session_id.clone(),
+            root_session_id: run.session_id.clone().unwrap_or_default(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),

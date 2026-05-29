@@ -58,6 +58,18 @@ pub async fn list_story_sessions(
     Ok(Json(responses))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/stories/{id}/sessions",
+            axum::routing::get(list_story_sessions).post(create_story_session),
+        )
+        .route(
+            "/stories/{id}/sessions/{binding_id}",
+            axum::routing::get(get_story_session).delete(unbind_story_session),
+        )
+}
+
 /// GET /stories/{id}/sessions/{binding_id}
 pub async fn get_story_session(
     State(state): State<Arc<AppState>>,

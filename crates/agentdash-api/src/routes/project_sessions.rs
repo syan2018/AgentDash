@@ -85,6 +85,18 @@ pub async fn get_project_session(
     }))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{id}/sessions",
+            axum::routing::get(list_project_sessions),
+        )
+        .route(
+            "/projects/{id}/sessions/{binding_id}",
+            axum::routing::get(get_project_session),
+        )
+}
+
 // ─── Project Sessions 聚合 API ────────────────────────────────────────────────
 
 /// GET /api/projects/{project_id}/sessions

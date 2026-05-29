@@ -31,6 +31,22 @@ pub struct ProjectExtensionsPath {
     pub project_id: String,
 }
 
+const EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/extensions",
+            axum::routing::get(list_project_extensions),
+        )
+        .route(
+            "/projects/{project_id}/extensions/import-package",
+            axum::routing::post(import_extension_package).layer(
+                axum::extract::DefaultBodyLimit::max(EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES),
+            ),
+        )
+}
+
 /// GET `/api/projects/:project_id/extensions`
 pub async fn list_project_extensions(
     State(state): State<Arc<AppState>>,

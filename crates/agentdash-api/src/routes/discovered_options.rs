@@ -75,6 +75,13 @@ pub async fn discovered_options_stream(
     )
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route(
+        "/agents/discovered-options/stream",
+        axum::routing::get(discovered_options_stream),
+    )
+}
+
 fn to_ndjson_line(value: &serde_json::Value) -> Option<Bytes> {
     match serde_json::to_vec(value) {
         Ok(mut bytes) => {

@@ -116,6 +116,77 @@ pub async fn list_sessions(
     Ok(Json(visible_sessions))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/sessions",
+            axum::routing::get(list_sessions).post(create_session),
+        )
+        .route(
+            "/sessions/{id}",
+            axum::routing::get(get_session).delete(delete_session),
+        )
+        .route(
+            "/sessions/{id}/meta",
+            axum::routing::get(get_session_meta).patch(update_session_meta),
+        )
+        .route(
+            "/sessions/{id}/hook-runtime",
+            axum::routing::get(get_session_hook_runtime),
+        )
+        .route(
+            "/sessions/{id}/state",
+            axum::routing::get(get_session_state),
+        )
+        .route(
+            "/sessions/{id}/events",
+            axum::routing::get(list_session_events),
+        )
+        .route(
+            "/sessions/{id}/bindings",
+            axum::routing::get(get_session_bindings),
+        )
+        .route(
+            "/sessions/{id}/context",
+            axum::routing::get(get_session_context),
+        )
+        .route(
+            "/sessions/{id}/context/projection",
+            axum::routing::get(get_session_context_projection),
+        )
+        .route(
+            "/sessions/{id}/lineage",
+            axum::routing::get(get_session_lineage),
+        )
+        .route("/sessions/{id}/fork", axum::routing::post(fork_session))
+        .route(
+            "/sessions/{id}/projection/rollback",
+            axum::routing::post(rollback_session_projection),
+        )
+        .route(
+            "/sessions/{id}/context/audit",
+            axum::routing::get(get_session_context_audit),
+        )
+        .route("/sessions/{id}/prompt", axum::routing::post(prompt_session))
+        .route("/sessions/{id}/cancel", axum::routing::post(cancel_session))
+        .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
+            axum::routing::post(approve_tool_call),
+        )
+        .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/reject",
+            axum::routing::post(reject_tool_call),
+        )
+        .route(
+            "/sessions/{id}/companion-requests/{request_id}/respond",
+            axum::routing::post(respond_companion_request),
+        )
+        .route(
+            "/acp/sessions/{id}/stream/ndjson",
+            axum::routing::get(acp_session_stream_ndjson),
+        )
+}
+
 pub async fn create_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

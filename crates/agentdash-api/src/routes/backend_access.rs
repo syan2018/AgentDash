@@ -60,6 +60,43 @@ pub async fn list_project_backend_access(
     ))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/workspaces/candidates",
+            axum::routing::get(list_workspace_candidates),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/sync-backend-bindings",
+            axum::routing::post(sync_workspace_bindings),
+        )
+        .route(
+            "/projects/{project_id}/backend-access",
+            axum::routing::get(list_project_backend_access).post(create_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}",
+            axum::routing::patch(update_project_backend_access)
+                .delete(revoke_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory",
+            axum::routing::get(list_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/refresh",
+            axum::routing::post(refresh_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/register",
+            axum::routing::post(register_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/browse",
+            axum::routing::post(browse_project_backend_access),
+        )
+}
+
 pub async fn create_project_backend_access(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

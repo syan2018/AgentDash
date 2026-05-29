@@ -29,6 +29,61 @@ use helpers::{
 use resolver::{resolve_surface_bundle, resolve_surface_from_source};
 
 const MAX_ENTRIES: usize = 200;
+const VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/vfs-surfaces/resolve",
+            axum::routing::post(resolve_surface),
+        )
+        .route(
+            "/vfs-surfaces/{surface_ref}",
+            axum::routing::get(get_surface),
+        )
+        .route(
+            "/vfs-surfaces/{surface_ref}/mounts/{mount_id}/entries",
+            axum::routing::get(list_surface_mount_entries),
+        )
+        .route(
+            "/vfs-surfaces/read-file",
+            axum::routing::post(read_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/read-file-blob",
+            axum::routing::post(read_surface_file_blob),
+        )
+        .route(
+            "/vfs-surfaces/upload-file-blob",
+            axum::routing::post(upload_surface_file_blob).layer(
+                axum::extract::DefaultBodyLimit::max(VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES),
+            ),
+        )
+        .route(
+            "/vfs-surfaces/write-file",
+            axum::routing::post(write_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/create-file",
+            axum::routing::post(create_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/delete-file",
+            axum::routing::post(delete_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/rename-file",
+            axum::routing::post(rename_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/stat-file",
+            axum::routing::post(stat_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/apply-patch",
+            axum::routing::post(apply_surface_patch),
+        )
+}
 
 pub async fn resolve_surface(
     State(state): State<Arc<AppState>>,

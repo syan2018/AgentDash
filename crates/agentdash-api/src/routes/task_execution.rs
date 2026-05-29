@@ -54,6 +54,14 @@ pub async fn start_task(
     }))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/tasks/{id}/start", axum::routing::post(start_task))
+        .route("/tasks/{id}/continue", axum::routing::post(continue_task))
+        .route("/tasks/{id}/cancel", axum::routing::post(cancel_task))
+        .route("/tasks/{id}/session", axum::routing::get(get_task_session))
+}
+
 pub async fn continue_task(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

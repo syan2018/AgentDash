@@ -59,6 +59,29 @@ pub async fn list_workspaces(
     ))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/workspaces",
+            axum::routing::get(list_workspaces).post(create_workspace),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/detect",
+            axum::routing::post(detect_workspace),
+        )
+        .route("/workspaces/detect-git", axum::routing::post(detect_git))
+        .route(
+            "/workspaces/{id}",
+            axum::routing::get(get_workspace)
+                .put(update_workspace)
+                .delete(delete_workspace),
+        )
+        .route(
+            "/workspaces/{id}/status",
+            axum::routing::patch(update_workspace_status),
+        )
+}
+
 pub async fn create_workspace(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

@@ -81,6 +81,30 @@ mod tests {
     }
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{id}/agents",
+            axum::routing::get(list_project_agent_configs).post(create_project_agent),
+        )
+        .route(
+            "/projects/{id}/agents/summary",
+            axum::routing::get(list_project_agents),
+        )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}",
+            axum::routing::put(update_project_agent).delete(delete_project_agent),
+        )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}/session",
+            axum::routing::post(open_project_agent_session),
+        )
+        .route(
+            "/projects/{id}/agents/{project_agent_id}/sessions",
+            axum::routing::get(list_project_agent_sessions),
+        )
+}
+
 pub async fn list_project_agents(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

@@ -32,6 +32,28 @@ pub struct ProjectMcpPresetsPath {
     pub project_id: String,
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/mcp-presets",
+            axum::routing::get(list_mcp_presets).post(create_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/probe",
+            axum::routing::post(probe_mcp_transport_handler),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}",
+            axum::routing::get(get_mcp_preset)
+                .patch(update_mcp_preset)
+                .delete(delete_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}/clone",
+            axum::routing::post(clone_mcp_preset),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct McpPresetItemPath {
     pub project_id: String,
@@ -353,12 +375,12 @@ mod tests {
         let err: ApiError = McpPresetApplicationError::Internal("io error".to_string()).into();
         assert!(matches!(err, ApiError::Internal(_)));
 
-        // Internal(unique 关键字) → 409（兜底 race 场景）
+        // Internal 保持 500；唯一冲突应由仓储/应用层结构化抛出 Conflict。
         let err: ApiError = McpPresetApplicationError::Internal(
             "duplicate key value violates unique constraint \"idx_mcp_presets_project_key\""
                 .to_string(),
         )
         .into();
-        assert!(matches!(err, ApiError::Conflict(_)));
+        assert!(matches!(err, ApiError::Internal(_)));
     }
 }

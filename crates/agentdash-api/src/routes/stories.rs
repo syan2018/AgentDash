@@ -43,6 +43,30 @@ pub async fn list_stories(
     Ok(Json(stories.into_iter().map(StoryResponse::from).collect()))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/stories",
+            axum::routing::get(list_stories).post(create_story),
+        )
+        .route(
+            "/stories/{id}",
+            axum::routing::get(get_story)
+                .put(update_story)
+                .delete(delete_story),
+        )
+        .route(
+            "/stories/{id}/tasks",
+            axum::routing::get(list_tasks).post(create_task),
+        )
+        .route(
+            "/tasks/{id}",
+            axum::routing::get(get_task)
+                .put(update_task)
+                .delete(delete_task),
+        )
+}
+
 pub async fn create_story(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

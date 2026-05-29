@@ -35,6 +35,35 @@ pub struct ProjectExtensionArtifactsPath {
     pub project_id: String,
 }
 
+const EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/extension-artifacts",
+            axum::routing::get(list_extension_package_artifacts)
+                .post(upload_extension_package_artifact)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    EXTENSION_PACKAGE_UPLOAD_BODY_LIMIT_BYTES,
+                )),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/install",
+            axum::routing::post(install_extension_package_artifact_route),
+        )
+        .route(
+            "/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+            axum::routing::get(download_extension_package_archive),
+        )
+}
+
+pub fn public_router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route(
+        "/local-runtime/projects/{project_id}/extension-artifacts/{artifact_id}/archive",
+        axum::routing::get(download_extension_package_archive_for_backend),
+    )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionArtifactItemPath {
     pub project_id: String,

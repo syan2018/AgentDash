@@ -43,6 +43,16 @@ pub async fn list_files(
     relay_list_files(&state, backend_id, &workspace, &pattern, &current_user).await
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/file-picker", axum::routing::get(list_files))
+        .route("/file-picker/read", axum::routing::post(read_file))
+        .route(
+            "/file-picker/batch-read",
+            axum::routing::post(batch_read_files),
+        )
+}
+
 /// POST /api/file-picker/read
 pub async fn read_file(
     State(state): State<Arc<AppState>>,

@@ -40,6 +40,33 @@ pub async fn list_projects(
     Ok(Json(responses))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects",
+            axum::routing::get(list_projects).post(create_project),
+        )
+        .route(
+            "/projects/{id}",
+            axum::routing::get(get_project)
+                .put(update_project)
+                .delete(delete_project),
+        )
+        .route("/projects/{id}/clone", axum::routing::post(clone_project))
+        .route(
+            "/projects/{id}/grants",
+            axum::routing::get(list_project_grants),
+        )
+        .route(
+            "/projects/{id}/grants/users/{user_id}",
+            axum::routing::put(grant_project_user).delete(revoke_project_user),
+        )
+        .route(
+            "/projects/{id}/grants/groups/{group_id}",
+            axum::routing::put(grant_project_group).delete(revoke_project_group),
+        )
+}
+
 pub async fn create_project(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

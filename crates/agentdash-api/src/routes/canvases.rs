@@ -53,6 +53,32 @@ pub async fn list_project_canvases(
     ))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/canvases",
+            axum::routing::get(list_project_canvases).post(create_canvas),
+        )
+        .route(
+            "/canvases/{id}",
+            axum::routing::get(get_canvas)
+                .put(update_canvas)
+                .delete(delete_canvas),
+        )
+        .route(
+            "/canvases/{id}/runtime-snapshot",
+            axum::routing::get(get_canvas_runtime_snapshot),
+        )
+        .route(
+            "/canvases/{id}/runtime-invoke",
+            axum::routing::post(invoke_canvas_runtime_action),
+        )
+        .route(
+            "/canvases/{id}/promote-extension",
+            axum::routing::post(promote_canvas_to_extension),
+        )
+}
+
 pub async fn create_canvas(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

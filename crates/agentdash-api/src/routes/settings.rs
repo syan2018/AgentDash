@@ -22,6 +22,15 @@ fn is_sensitive_key(key: &str) -> bool {
     SENSITIVE_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/settings",
+            axum::routing::get(list_settings).put(update_settings),
+        )
+        .route("/settings/{key}", axum::routing::delete(delete_setting))
+}
+
 /// 对敏感值做脱敏处理：保留首尾各 4 字符，中间以 `...` 替代
 fn mask_value(value: &serde_json::Value) -> serde_json::Value {
     if let Some(s) = value.as_str() {

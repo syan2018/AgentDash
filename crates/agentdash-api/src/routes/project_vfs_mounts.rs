@@ -27,6 +27,20 @@ pub struct ProjectPath {
     pub project_id: String,
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/vfs-mounts",
+            axum::routing::get(list_vfs_mounts).post(create_vfs_mount),
+        )
+        .route(
+            "/projects/{project_id}/vfs-mounts/{mount_id}",
+            axum::routing::get(get_vfs_mount)
+                .put(update_vfs_mount)
+                .delete(delete_vfs_mount),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct VfsMountPath {
     pub project_id: String,

@@ -43,6 +43,39 @@ fn backend_authz(
     )
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/backends",
+            axum::routing::get(list_backends).post(add_backend),
+        )
+        .route(
+            "/local-runtime/ensure",
+            axum::routing::post(ensure_local_runtime),
+        )
+        .route(
+            "/backends/runtime-health",
+            axum::routing::get(list_runtime_health),
+        )
+        .route(
+            "/backends/runtime-summary",
+            axum::routing::get(list_runtime_summary),
+        )
+        .route(
+            "/backends/{id}",
+            axum::routing::get(get_backend).delete(remove_backend),
+        )
+        .route(
+            "/backends/{id}/runtime-health",
+            axum::routing::get(get_runtime_health),
+        )
+        .route("/backends/online", axum::routing::get(list_online_backends))
+        .route(
+            "/backends/{backend_id}/browse",
+            axum::routing::post(browse_directory),
+        )
+}
+
 pub async fn list_backends(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

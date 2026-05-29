@@ -33,6 +33,20 @@ pub async fn list_terminals(
     Ok(Json(terminals))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/sessions/{id}/terminals",
+            axum::routing::get(list_terminals).post(spawn_terminal),
+        )
+        .route("/terminals/{id}/input", axum::routing::post(terminal_input))
+        .route(
+            "/terminals/{id}/resize",
+            axum::routing::post(terminal_resize),
+        )
+        .route("/terminals/{id}", axum::routing::delete(terminal_kill))
+}
+
 pub async fn spawn_terminal(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

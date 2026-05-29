@@ -22,6 +22,19 @@ use crate::{
 
 const MAX_ENTRIES: usize = 200;
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/mount-providers",
+            axum::routing::get(list_configurable_mount_providers),
+        )
+        .route("/vfs", axum::routing::get(list_vfs))
+        .route(
+            "/vfs/{space_id}/entries",
+            axum::routing::get(list_address_entries),
+        )
+}
+
 // ─── 能力发现 ──────────────────────────────────────────────
 
 /// `GET /api/vfs` — 能力发现端点

@@ -48,6 +48,30 @@ pub struct ProjectExtensionRuntimePath {
     pub project_id: String,
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/extension-runtime",
+            axum::routing::get(get_project_extension_runtime),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-action",
+            axum::routing::post(invoke_project_extension_runtime_action),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-channel",
+            axum::routing::post(invoke_project_extension_runtime_channel),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
+            axum::routing::get(get_project_extension_webview_asset),
+        )
+        .route(
+            "/projects/{project_id}/extensions/{installation_id}",
+            axum::routing::delete(uninstall_extension_installation_route),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimeWebviewPath {
     pub project_id: String,

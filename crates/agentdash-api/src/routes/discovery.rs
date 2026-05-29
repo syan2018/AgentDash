@@ -48,3 +48,7 @@ pub async fn get_discovery(
         executors,
     }))
 }
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route("/agents/discovery", axum::routing::get(get_discovery))
+}

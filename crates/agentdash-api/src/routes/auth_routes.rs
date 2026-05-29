@@ -39,6 +39,20 @@ pub async fn login(
     Ok(Json(response))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/auth/logout", axum::routing::post(logout))
+        .route("/auth/revoke", axum::routing::post(revoke_token))
+}
+
+pub fn public_router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/auth/login", axum::routing::post(login))
+        .route("/auth/oidc/start", axum::routing::post(start_oidc_login))
+        .route("/auth/oidc/callback", axum::routing::get(oidc_callback))
+        .route("/auth/metadata", axum::routing::get(metadata))
+}
+
 /// POST /api/auth/oidc/start — 启动重定向式 OIDC 登录。
 pub async fn start_oidc_login(
     State(state): State<Arc<AppState>>,

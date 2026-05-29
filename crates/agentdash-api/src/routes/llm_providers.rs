@@ -61,6 +61,60 @@ enum CodexOAuthCredentialTarget {
     UserByok { user_id: String },
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/llm-providers",
+            axum::routing::get(list_providers).post(create_provider),
+        )
+        .route(
+            "/llm-providers/effective",
+            axum::routing::get(list_effective_providers),
+        )
+        .route(
+            "/llm-providers/reorder",
+            axum::routing::post(reorder_providers),
+        )
+        .route(
+            "/llm-providers/probe-models",
+            axum::routing::post(probe_models),
+        )
+        .route(
+            "/llm-providers/codex-oauth/{flow_id}",
+            axum::routing::get(get_codex_oauth_status),
+        )
+        .route(
+            "/llm-providers/codex-oauth/{flow_id}/cancel",
+            axum::routing::post(cancel_codex_oauth),
+        )
+        .route(
+            "/llm-providers/{id}",
+            axum::routing::get(get_provider)
+                .put(update_provider)
+                .delete(delete_provider),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential",
+            axum::routing::put(upsert_user_credential).delete(delete_user_credential),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential/verify",
+            axum::routing::post(verify_user_credential),
+        )
+        .route(
+            "/llm-providers/{id}/user-credential/codex-oauth/start",
+            axum::routing::post(start_user_codex_oauth),
+        )
+        .route(
+            "/llm-providers/{id}/probe-models",
+            axum::routing::post(probe_user_provider_models),
+        )
+        .route(
+            "/llm-providers/{id}/codex-oauth/start",
+            axum::routing::post(start_codex_oauth),
+        )
+}
+
 // ─── Access control ───
 
 fn require_system_access(

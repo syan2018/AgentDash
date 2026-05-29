@@ -31,6 +31,36 @@ pub struct ProjectSkillAssetsPath {
     pub project_id: String,
 }
 
+const SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/skill-assets",
+            axum::routing::get(list_skill_assets).post(create_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/upload",
+            axum::routing::post(upload_skill_assets).layer(axum::extract::DefaultBodyLimit::max(
+                SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES,
+            )),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/import",
+            axum::routing::post(import_remote_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}",
+            axum::routing::get(get_skill_asset)
+                .patch(update_skill_asset)
+                .delete(delete_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}/files/blob",
+            axum::routing::get(read_skill_asset_file_blob),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SkillAssetItemPath {
     pub project_id: String,

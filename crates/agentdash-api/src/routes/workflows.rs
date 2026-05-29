@@ -62,6 +62,65 @@ pub async fn list_workflows(
     Ok(Json(definitions))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/workflow-definitions",
+            axum::routing::get(list_workflows).post(create_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions",
+            axum::routing::get(list_activity_lifecycles).post(create_activity_lifecycle_definition),
+        )
+        .route(
+            "/workflow-definitions/validate",
+            axum::routing::post(validate_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/validate",
+            axum::routing::post(validate_activity_lifecycle_definition),
+        )
+        .route(
+            "/workflow-definitions/{id}",
+            axum::routing::get(get_workflow_definition)
+                .put(update_workflow_definition)
+                .delete(delete_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/{id}",
+            axum::routing::get(get_activity_lifecycle_definition)
+                .put(update_activity_lifecycle_definition)
+                .delete(delete_activity_lifecycle_definition),
+        )
+        .route("/tool-catalog", axum::routing::get(query_tool_catalog))
+        .route("/hook-presets", axum::routing::get(list_hook_presets))
+        .route(
+            "/hook-scripts/validate",
+            axum::routing::post(validate_hook_script),
+        )
+        .route(
+            "/hook-presets/custom",
+            axum::routing::post(register_hook_preset),
+        )
+        .route(
+            "/hook-presets/custom/{key}",
+            axum::routing::delete(delete_hook_preset),
+        )
+        .route("/lifecycle-runs", axum::routing::post(start_lifecycle_run))
+        .route(
+            "/lifecycle-runs/{id}",
+            axum::routing::get(get_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/by-session/{session_id}",
+            axum::routing::get(list_lifecycle_runs_by_session),
+        )
+        .route(
+            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            axum::routing::post(submit_human_decision),
+        )
+}
+
 pub async fn list_activity_lifecycles(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

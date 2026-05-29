@@ -41,6 +41,39 @@ pub async fn list_routines(
     ))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{id}/routines",
+            axum::routing::get(list_routines).post(create_routine),
+        )
+        .route(
+            "/routines/{id}",
+            axum::routing::get(get_routine)
+                .put(update_routine)
+                .delete(delete_routine),
+        )
+        .route(
+            "/routines/{id}/enable",
+            axum::routing::patch(enable_routine),
+        )
+        .route(
+            "/routines/{id}/regenerate-token",
+            axum::routing::post(regenerate_webhook_token),
+        )
+        .route(
+            "/routines/{id}/executions",
+            axum::routing::get(list_executions),
+        )
+}
+
+pub fn public_router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route(
+        "/routine-triggers/{endpoint_id}/fire",
+        axum::routing::post(fire_webhook),
+    )
+}
+
 pub async fn create_routine(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,

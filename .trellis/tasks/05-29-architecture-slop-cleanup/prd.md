@@ -23,13 +23,15 @@
 
 ## 任务图（child）
 
-| child | 病灶 | 优先级 | 风险 | 依赖 |
+> **2026-05-29 修订**：执行调查发现 Step lifecycle **不是死代码**而是 load-bearing 活跃 runtime（task 启动/续跑、companion overlay、VFS 投影、session 构造均依赖，Activity 轨无对应入口）。`drop-step-lifecycle` 因此从"删死代码"重新定性为"feature 迁移"，**降级冻结**，待 P0a/b/c 设计 + 人工决策（详见该 task prd 冲突记录）。其余后端任务经核查并不真正依赖 Step 删除，已解除依赖。
+
+| child | 病灶 | 优先级 | 风险 | 状态/依赖 |
 |---|---|---|---|---|
-| `05-29-drop-step-lifecycle` | 2 | P0 | 中（跨 3 crate 删除） | 无（最先做，缩小他人编辑面） |
-| `05-29-dedup-naming-boilerplate` | 4/5/6 低风险 | P0 | 低（机械改名/supertrait/去重） | drop-step 之后 |
-| `05-29-app-infra-leak-to-spi` | 1 | P1 | 中（port 抽取 + 下沉） | drop-step 之后（agent_executor 已瘦身） |
-| `05-29-infra-persistence-dedup` | 5 | P1 | 中（共享映射层） | drop-step 之后（kind 列/step 删除已定） |
-| `05-29-session-assembly-converge` | 3 | P1 | 高（深逻辑重构） | dedup-naming 之后 |
+| `05-29-drop-step-lifecycle` | 2 | P0 | 高（feature 迁移，非删除） | **冻结**：需 P0a/b/c 设计 + 人工决策，不自主执行 |
+| `05-29-dedup-naming-boilerplate` | 4/5/6 低风险 | P0 | 低（机械改名/supertrait/去重） | 独立，立即可做 |
+| `05-29-app-infra-leak-to-spi` | 1 | P1 | 中（port 抽取 + 下沉） | 独立（与 Step 无关） |
+| `05-29-infra-persistence-dedup` | 5 | P1 | 中（共享映射层） | session_repository 去重独立可做；workflow_repository discriminator 部分被 drop-step 冻结阻塞，本轮跳过 |
+| `05-29-session-assembly-converge` | 3 | P1 | 高（深逻辑重构） | dedup-naming 之后；执行前需先调查确认（参考 drop-step 教训：review 描述可能低估耦合） |
 | `05-29-capability-state-unify` | 4 | P2 | 高（深逻辑重构） | session-assembly 之后（同改 session/） |
 | `05-29-frontend-server-state-refactor` | 前端 | P2 | 中（独立 TS 包） | 无（全程可并行） |
 
@@ -40,11 +42,14 @@
 
 **执行模型**：依赖驱动分波 + 每任务 build-gate + 逐任务 commit。subagent 执行用 opus(4.8)，失败回退 sonnet。
 
-**波次**：
-- Wave 1：`drop-step-lifecycle`（后端基础）‖ `frontend-server-state-refactor`（独立，全程并行）
-- Wave 2：`dedup-naming-boilerplate`（机械，后端代码已稳定）
-- Wave 3：`app-infra-leak-to-spi` ‖ `infra-persistence-dedup`（不同 crate，worktree 隔离）
-- Wave 4：`session-assembly-converge` → `capability-state-unify`（同改 session/，串行）
+**波次（2026-05-29 修订后）**：
+- ~~Wave 1：drop-step-lifecycle~~ → **冻结**（feature 迁移，非删除；见上）
+- Wave 1（实际）：`dedup-naming-boilerplate`（crates/，机械）‖ `frontend-server-state-refactor`（packages/，独立）
+- Wave 2：`app-infra-leak-to-spi`（reqwest/rmcp/rhai/tokio::process 下沉，与 Step 无关）
+- Wave 3：`infra-persistence-dedup`（仅 session_repository 去重部分；workflow discriminator 跳过）
+- Wave 4：`session-assembly-converge` → `capability-state-unify`（执行前先调查确认耦合，高风险标注人工 review）
+
+**教训（drop-step 触发）**：review 的"病灶"严重度可能低估真实耦合（把 live 代码当死代码）。深逻辑任务执行前，subagent 必须先调查"实际是否如 review 所述"，不符即停并记录，不强改。
 
 **Gate（每任务完成后由 orchestrator 执行，subagent 不得 commit）**：
 1. `cargo check --workspace`（Rust）/ 前端 `pnpm -C packages/app-web exec tsc --noEmit` 必须通过。

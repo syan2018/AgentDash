@@ -3,8 +3,6 @@
 //! 这里集中行解析（`*_from_row`）、值编解码辅助、业务不变量校验
 //! （`validate_commit_session`）以及从 `BackboneEnvelope` 推导 session 投影的纯逻辑。
 
-use std::io;
-
 use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
 };
@@ -13,8 +11,8 @@ use agentdash_spi::session_persistence::{
     PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
     SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
-    TitleSource,
+    SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
+    TerminalEffectStatus, TerminalEffectType, TitleSource,
 };
 use sqlx::Row;
 
@@ -30,7 +28,7 @@ impl SessionRow for sqlx::postgres::PgRow {
     }
 }
 
-pub(crate) fn map_meta_row<R>(row: &R) -> io::Result<SessionMeta>
+pub(crate) fn map_meta_row<R>(row: &R) -> SessionStoreResult<SessionMeta>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -75,10 +73,7 @@ where
             "visible_canvas_mount_ids_json",
         )?
         .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "缺少 visible_canvas_mount_ids_json",
-            )
+            SessionStoreError::InvalidData("缺少 visible_canvas_mount_ids_json".to_string())
         })?,
         bootstrap_state: parse_bootstrap_state(
             row.get::<String, _>("bootstrap_state"),
@@ -87,7 +82,7 @@ where
     })
 }
 
-pub(crate) fn persisted_event_from_row<R>(row: &R) -> io::Result<PersistedSessionEvent>
+pub(crate) fn persisted_event_from_row<R>(row: &R) -> SessionStoreResult<PersistedSessionEvent>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -98,7 +93,7 @@ where
 {
     let notification_json = row.get::<String, _>("notification_json");
     let notification = serde_json::from_str::<BackboneEnvelope>(&notification_json)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let event_seq_i64 = row.get::<i64, _>("event_seq");
     let event_seq = parse_non_negative_u64(event_seq_i64, "session_events.event_seq")?;
     let entry_index = row
@@ -118,7 +113,7 @@ where
     })
 }
 
-pub(crate) fn terminal_effect_from_row<R>(row: &R) -> io::Result<TerminalEffectRecord>
+pub(crate) fn terminal_effect_from_row<R>(row: &R) -> SessionStoreResult<TerminalEffectRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -128,7 +123,7 @@ where
 {
     let id_raw = row.get::<String, _>("id");
     let id = uuid::Uuid::parse_str(&id_raw)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let terminal_event_seq = parse_non_negative_u64(
         row.get::<i64, _>("terminal_event_seq"),
         "session_terminal_effects.terminal_event_seq",
@@ -139,7 +134,7 @@ where
     )?;
     let payload_json = row.get::<String, _>("payload_json");
     let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     Ok(TerminalEffectRecord {
         id,
         session_id: row.get::<String, _>("session_id"),
@@ -161,7 +156,7 @@ where
     })
 }
 
-pub(crate) fn runtime_command_from_row<R>(row: &R) -> io::Result<RuntimeCommandRecord>
+pub(crate) fn runtime_command_from_row<R>(row: &R) -> SessionStoreResult<RuntimeCommandRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -172,10 +167,10 @@ where
 {
     let id_raw = row.get::<String, _>("id");
     let id = uuid::Uuid::parse_str(&id_raw)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let payload_json = row.get::<String, _>("payload_json");
     let transition = serde_json::from_str::<PendingCapabilityStateTransition>(&payload_json)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     Ok(RuntimeCommandRecord {
         id,
         session_id: row.get::<String, _>("session_id"),
@@ -194,7 +189,7 @@ where
     })
 }
 
-pub(crate) fn compaction_from_row<R>(row: &R) -> io::Result<SessionCompactionRecord>
+pub(crate) fn compaction_from_row<R>(row: &R) -> SessionStoreResult<SessionCompactionRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -268,7 +263,9 @@ where
     })
 }
 
-pub(crate) fn projection_segment_from_row<R>(row: &R) -> io::Result<SessionProjectionSegmentRecord>
+pub(crate) fn projection_segment_from_row<R>(
+    row: &R,
+) -> SessionStoreResult<SessionProjectionSegmentRecord>
 where
     R: Row + SessionRow,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -317,7 +314,9 @@ where
     })
 }
 
-pub(crate) fn projection_head_from_row<R>(row: &R) -> io::Result<SessionProjectionHeadRecord>
+pub(crate) fn projection_head_from_row<R>(
+    row: &R,
+) -> SessionStoreResult<SessionProjectionHeadRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -346,7 +345,7 @@ where
     })
 }
 
-pub(crate) fn lineage_from_row<R>(row: &R) -> io::Result<SessionLineageRecord>
+pub(crate) fn lineage_from_row<R>(row: &R) -> SessionStoreResult<SessionLineageRecord>
 where
     R: Row,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
@@ -381,19 +380,18 @@ where
     })
 }
 
-pub(crate) fn json_string<T: serde::Serialize>(value: &T, column: &str) -> io::Result<String> {
-    serde_json::to_string(value).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("序列化 {column} 失败: {error}"),
-        )
-    })
+pub(crate) fn json_string<T: serde::Serialize>(
+    value: &T,
+    column: &str,
+) -> SessionStoreResult<String> {
+    serde_json::to_string(value)
+        .map_err(|error| SessionStoreError::InvalidData(format!("序列化 {column} 失败: {error}")))
 }
 
 pub(crate) fn optional_json_string<T: serde::Serialize>(
     value: Option<&T>,
     column: &str,
-) -> io::Result<Option<String>> {
+) -> SessionStoreResult<Option<String>> {
     value.map(|inner| json_string(inner, column)).transpose()
 }
 
@@ -405,74 +403,78 @@ pub(crate) fn title_source_to_str(source: TitleSource) -> &'static str {
     }
 }
 
-pub(crate) fn parse_execution_status(value: String, field: &str) -> io::Result<ExecutionStatus> {
+pub(crate) fn parse_execution_status(
+    value: String,
+    field: &str,
+) -> SessionStoreResult<ExecutionStatus> {
     match value.as_str() {
         "idle" => Ok(ExecutionStatus::Idle),
         "running" => Ok(ExecutionStatus::Running),
         "completed" => Ok(ExecutionStatus::Completed),
         "failed" => Ok(ExecutionStatus::Failed),
         "interrupted" => Ok(ExecutionStatus::Interrupted),
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 非法: {other}"),
-        )),
+        other => Err(SessionStoreError::InvalidData(format!(
+            "{field} 非法: {other}"
+        ))),
     }
 }
 
 pub(crate) fn parse_terminal_effect_type(
     value: String,
     field: &str,
-) -> io::Result<TerminalEffectType> {
+) -> SessionStoreResult<TerminalEffectType> {
     TerminalEffectType::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
 pub(crate) fn parse_terminal_effect_status(
     value: String,
     field: &str,
-) -> io::Result<TerminalEffectStatus> {
+) -> SessionStoreResult<TerminalEffectStatus> {
     TerminalEffectStatus::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
 pub(crate) fn parse_runtime_command_status(
     value: String,
     field: &str,
-) -> io::Result<RuntimeCommandStatus> {
+) -> SessionStoreResult<RuntimeCommandStatus> {
     RuntimeCommandStatus::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
 pub(crate) fn parse_compaction_status(
     value: String,
     field: &str,
-) -> io::Result<SessionCompactionStatus> {
+) -> SessionStoreResult<SessionCompactionStatus> {
     SessionCompactionStatus::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
 pub(crate) fn parse_lineage_relation_kind(
     value: String,
     field: &str,
-) -> io::Result<SessionLineageRelationKind> {
+) -> SessionStoreResult<SessionLineageRelationKind> {
     SessionLineageRelationKind::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
-pub(crate) fn parse_lineage_status(value: String, field: &str) -> io::Result<SessionLineageStatus> {
+pub(crate) fn parse_lineage_status(
+    value: String,
+    field: &str,
+) -> SessionStoreResult<SessionLineageStatus> {
     SessionLineageStatus::try_from(value.as_str())
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{field}: {error}")))
+        .map_err(|error| SessionStoreError::InvalidData(format!("{field}: {error}")))
 }
 
-pub(crate) fn parse_title_source(value: String, field: &str) -> io::Result<TitleSource> {
+pub(crate) fn parse_title_source(value: String, field: &str) -> SessionStoreResult<TitleSource> {
     match value.as_str() {
         "auto" => Ok(TitleSource::Auto),
         "source" => Ok(TitleSource::Source),
         "user" => Ok(TitleSource::User),
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 非法: {other}"),
-        )),
+        other => Err(SessionStoreError::InvalidData(format!(
+            "{field} 非法: {other}"
+        ))),
     }
 }
 
@@ -487,133 +489,106 @@ pub(crate) fn bootstrap_state_to_str(state: SessionBootstrapState) -> &'static s
 pub(crate) fn parse_bootstrap_state(
     value: String,
     field: &str,
-) -> io::Result<SessionBootstrapState> {
+) -> SessionStoreResult<SessionBootstrapState> {
     match value.as_str() {
         "plain" => Ok(SessionBootstrapState::Plain),
         "pending" => Ok(SessionBootstrapState::Pending),
         "bootstrapped" => Ok(SessionBootstrapState::Bootstrapped),
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 非法: {other}"),
-        )),
+        other => Err(SessionStoreError::InvalidData(format!(
+            "{field} 非法: {other}"
+        ))),
     }
 }
 
-pub(crate) fn encode_u64_as_i64(value: u64, field: &str) -> io::Result<i64> {
+pub(crate) fn encode_u64_as_i64(value: u64, field: &str) -> SessionStoreResult<i64> {
     i64::try_from(value).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 超出 i64 可表示范围: {value}"),
-        )
+        SessionStoreError::InvalidData(format!("{field} 超出 i64 可表示范围: {value}"))
     })
 }
 
 pub(crate) fn encode_optional_u64_as_i64(
     value: Option<u64>,
     field: &str,
-) -> io::Result<Option<i64>> {
+) -> SessionStoreResult<Option<i64>> {
     value
         .map(|inner| encode_u64_as_i64(inner, field))
         .transpose()
 }
 
-pub(crate) fn parse_non_negative_u64(value: i64, field: &str) -> io::Result<u64> {
-    u64::try_from(value).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 不能为负数: {value}"),
-        )
-    })
+pub(crate) fn parse_non_negative_u64(value: i64, field: &str) -> SessionStoreResult<u64> {
+    u64::try_from(value)
+        .map_err(|_| SessionStoreError::InvalidData(format!("{field} 不能为负数: {value}")))
 }
 
 pub(crate) fn parse_optional_non_negative_u64(
     value: Option<i64>,
     field: &str,
-) -> io::Result<Option<u64>> {
+) -> SessionStoreResult<Option<u64>> {
     value
         .map(|inner| parse_non_negative_u64(inner, field))
         .transpose()
 }
 
-pub(crate) fn parse_non_negative_u32(value: i64, field: &str) -> io::Result<u32> {
-    u32::try_from(value).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{field} 超出 u32 范围: {value}"),
-        )
-    })
+pub(crate) fn parse_non_negative_u32(value: i64, field: &str) -> SessionStoreResult<u32> {
+    u32::try_from(value)
+        .map_err(|_| SessionStoreError::InvalidData(format!("{field} 超出 u32 范围: {value}")))
 }
 
 pub(crate) fn parse_optional_json_column<T: serde::de::DeserializeOwned>(
     raw: Option<String>,
     column: &str,
-) -> io::Result<Option<T>> {
+) -> SessionStoreResult<Option<T>> {
     match raw {
         Some(value) => serde_json::from_str(&value).map(Some).map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("解析 {column} 失败: {error}"),
-            )
+            SessionStoreError::InvalidData(format!("解析 {column} 失败: {error}"))
         }),
         None => Ok(None),
     }
 }
 
-pub(crate) fn parse_json_column(raw: String, column: &str) -> io::Result<serde_json::Value> {
-    serde_json::from_str(&raw).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("解析 {column} 失败: {error}"),
-        )
-    })
+pub(crate) fn parse_json_column(
+    raw: String,
+    column: &str,
+) -> SessionStoreResult<serde_json::Value> {
+    serde_json::from_str(&raw)
+        .map_err(|error| SessionStoreError::InvalidData(format!("解析 {column} 失败: {error}")))
 }
 
 pub(crate) fn validate_commit_session(
     session_id: &str,
     commit: &NewCompactionProjectionCommit,
-) -> io::Result<()> {
+) -> SessionStoreResult<()> {
     if commit.compaction.session_id != session_id || commit.head.session_id != session_id {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("compaction projection commit session_id 不一致: {session_id}"),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection commit session_id 不一致: {session_id}"
+        )));
     }
     if commit
         .segments
         .iter()
         .any(|segment| segment.session_id != session_id)
     {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("projection segment session_id 不一致: {session_id}"),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "projection segment session_id 不一致: {session_id}"
+        )));
     }
     if commit.compaction.projection_kind != commit.head.projection_kind {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "compaction projection kind {} 与 head kind {} 不一致",
-                commit.compaction.projection_kind, commit.head.projection_kind
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection kind {} 与 head kind {} 不一致",
+            commit.compaction.projection_kind, commit.head.projection_kind
+        )));
     }
     if commit.compaction.projection_version != commit.head.projection_version {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "compaction projection version {} 与 head version {} 不一致",
-                commit.compaction.projection_version, commit.head.projection_version
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "compaction projection version {} 与 head version {} 不一致",
+            commit.compaction.projection_version, commit.head.projection_version
+        )));
     }
     if commit.head.active_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "projection head active_compaction_id 必须指向当前 compaction {}",
-                commit.compaction.id
-            ),
-        ));
+        return Err(SessionStoreError::InvalidInput(format!(
+            "projection head active_compaction_id 必须指向当前 compaction {}",
+            commit.compaction.id
+        )));
     }
     let compaction_range = source_range_pair(
         "session_compactions",
@@ -622,31 +597,22 @@ pub(crate) fn validate_commit_session(
     )?;
     for segment in &commit.segments {
         if segment.projection_kind != commit.compaction.projection_kind {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} kind {} 与 compaction kind {} 不一致",
-                    segment.id, segment.projection_kind, commit.compaction.projection_kind
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} kind {} 与 compaction kind {} 不一致",
+                segment.id, segment.projection_kind, commit.compaction.projection_kind
+            )));
         }
         if segment.projection_version != commit.compaction.projection_version {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} version {} 与 compaction version {} 不一致",
-                    segment.id, segment.projection_version, commit.compaction.projection_version
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} version {} 与 compaction version {} 不一致",
+                segment.id, segment.projection_version, commit.compaction.projection_version
+            )));
         }
         if segment.generated_by_compaction_id.as_deref() != Some(commit.compaction.id.as_str()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "projection segment {} 必须归属于 compaction {}",
-                    segment.id, commit.compaction.id
-                ),
-            ));
+            return Err(SessionStoreError::InvalidInput(format!(
+                "projection segment {} 必须归属于 compaction {}",
+                segment.id, commit.compaction.id
+            )));
         }
         let segment_range = source_range_pair(
             "session_projection_segments",
@@ -657,22 +623,16 @@ pub(crate) fn validate_commit_session(
             (Some((compaction_start, compaction_end)), Some((segment_start, segment_end)))
                 if segment_start < compaction_start || segment_end > compaction_end =>
             {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "projection segment {} source range 不在 compaction {} source range 内",
-                        segment.id, commit.compaction.id
-                    ),
-                ));
+                return Err(SessionStoreError::InvalidInput(format!(
+                    "projection segment {} source range 不在 compaction {} source range 内",
+                    segment.id, commit.compaction.id
+                )));
             }
             (None, Some(_)) | (Some(_), None) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "projection segment {} source range 与 compaction {} 不一致",
-                        segment.id, commit.compaction.id
-                    ),
-                ));
+                return Err(SessionStoreError::InvalidInput(format!(
+                    "projection segment {} source range 与 compaction {} 不一致",
+                    segment.id, commit.compaction.id
+                )));
             }
             _ => {}
         }
@@ -684,23 +644,21 @@ pub(crate) fn source_range_pair(
     label: &str,
     start: Option<u64>,
     end: Option<u64>,
-) -> io::Result<Option<(u64, u64)>> {
+) -> SessionStoreResult<Option<(u64, u64)>> {
     match (start, end) {
         (Some(start), Some(end)) if start <= end => Ok(Some((start, end))),
-        (Some(start), Some(end)) => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} source range 非法: {start}>{end}"),
-        )),
+        (Some(start), Some(end)) => Err(SessionStoreError::InvalidInput(format!(
+            "{label} source range 非法: {start}>{end}"
+        ))),
         (None, None) => Ok(None),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{label} source range 必须同时包含 start/end"),
-        )),
+        _ => Err(SessionStoreError::InvalidInput(format!(
+            "{label} source range 必须同时包含 start/end"
+        ))),
     }
 }
 
-pub(crate) fn sqlx_to_io(error: sqlx::Error) -> io::Error {
-    io::Error::other(error.to_string())
+pub(crate) fn sqlx_to_session_store_error(error: sqlx::Error) -> SessionStoreError {
+    SessionStoreError::Database(error.to_string())
 }
 
 /// 从 envelope 推导出需要回写到 `sessions` 行的投影字段。

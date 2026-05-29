@@ -190,7 +190,8 @@ impl SessionRuntimeInner {
         if self
             .persistence
             .get_session_meta(session_id)
-            .await?
+            .await
+            .map_err(std::io::Error::from)?
             .is_none()
         {
             return Ok(None);

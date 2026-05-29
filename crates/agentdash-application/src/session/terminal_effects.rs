@@ -1,4 +1,4 @@
-﻿use std::io;
+use std::io;
 use std::sync::Arc;
 
 use agentdash_agent_protocol::SourceInfo;
@@ -357,12 +357,12 @@ impl SessionTerminalEffectDispatcher {
         };
 
         match result {
-            Ok(()) => {
-                self.deps
-                    .terminal_effects
-                    .mark_terminal_effect_succeeded(item.record.id)
-                    .await
-            }
+            Ok(()) => self
+                .deps
+                .terminal_effects
+                .mark_terminal_effect_succeeded(item.record.id)
+                .await
+                .map_err(Into::into),
             Err(error) => {
                 if next_attempt_count >= MAX_TERMINAL_EFFECT_ATTEMPTS {
                     self.deps

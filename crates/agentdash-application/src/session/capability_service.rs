@@ -48,6 +48,7 @@ impl SessionCapabilityService {
             .runtime_commands
             .list_requested_runtime_commands(session_id)
             .await
+            .map_err(Into::into)
     }
 
     pub async fn enqueue_pending_capability_state_transition(

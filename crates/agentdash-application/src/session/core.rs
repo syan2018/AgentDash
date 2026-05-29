@@ -73,11 +73,15 @@ impl SessionCoreService {
     }
 
     pub async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
-        self.stores.meta.list_sessions().await
+        self.stores.meta.list_sessions().await.map_err(Into::into)
     }
 
     pub async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>> {
-        self.stores.meta.get_session_meta(session_id).await
+        self.stores
+            .meta
+            .get_session_meta(session_id)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn get_session_metas_bulk(
@@ -123,7 +127,11 @@ impl SessionCoreService {
 
     pub async fn delete_session(&self, session_id: &str) -> io::Result<()> {
         self.runtime_registry.remove(session_id).await;
-        self.stores.meta.delete_session(session_id).await
+        self.stores
+            .meta
+            .delete_session(session_id)
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn inspect_execution_states_bulk(

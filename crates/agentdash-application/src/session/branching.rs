@@ -128,7 +128,7 @@ impl SessionBranchingService {
             .await
         {
             let _ = self.stores.meta.delete_session(&child.id).await;
-            return Err(error);
+            return Err(error.into());
         }
 
         let commit = build_initial_fork_projection_commit(
@@ -148,7 +148,7 @@ impl SessionBranchingService {
             Ok(result) => result,
             Err(error) => {
                 let _ = self.stores.meta.delete_session(&child.id).await;
-                return Err(error);
+                return Err(error.into());
             }
         };
 
@@ -273,7 +273,11 @@ impl SessionBranchingService {
         &self,
         session_id: &str,
     ) -> io::Result<Option<SessionLineageRecord>> {
-        self.stores.lineage.get_session_lineage(session_id).await
+        self.stores
+            .lineage
+            .get_session_lineage(session_id)
+            .await
+            .map_err(Into::into)
     }
 
     async fn resolve_fork_point(

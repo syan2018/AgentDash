@@ -25,7 +25,7 @@ todos:
     status: completed
   - id: phase-8-verify
     content: "Phase 8: 全量验证 + Spec 更新"
-    status: in_progress
+    status: completed
 isProject: false
 ---
 

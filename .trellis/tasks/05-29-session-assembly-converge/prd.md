@@ -26,3 +26,43 @@
 - 仅改 `crates/agentdash-application/src/session/`（及必要的调用方）。**不要 git commit**，orchestrator gate 后提交。
 - **高风险**：行为须等价（启动/恢复/查询三路径产出一致）。完成后 commit message + journal 标注建议人工 review。
 - 与 `capability-state-unify` 同改 session/，本任务先做。
+
+## 调查结论（2026-05-29，执行者落地后回填）
+
+> 结论：review 的两条命题**一对一错**。激进的 `SessionSurfaceResolver` 抽取被**中止**（耦合比 review 描述深，路径间存在真实契约差异）；镜像拍平**部分执行**（删掉一处确实死掉的镜像，保留两处各有独立消费方的镜像）。全套测试等价（604 passed 不变）。
+
+### 命题 A —「compose_* 与 plan_*_context_query 把六步装配链各手写一遍」→ 与事实不符，不应强抽 `SessionSurfaceResolver`
+
+两条路径**不是**同一条链的复制，而是**两个不同的输出契约**，且**已经在正确的层共享了真正的收敛点**：
+
+- **launch 路径**（`api/session_use_cases/construction.rs::build_session_construction_for_launch` → `assembler.rs::compose_owner_bootstrap`/`compose_story_step`）：产出**执行期完整载荷** —— `SessionContextBundle`（含 bootstrap fragments）、`prompt_blocks`、`capability_state`（`CapabilityResolver` 输出被保留并下传）、audit emit、continuation lifecycle 三态处理、terminal hook effect binding。错误类型 `String` / `TaskExecutionError`。
+- **query 路径**（`api/session_use_cases/context_query.rs::build_session_context_plan` → `construction_planner.rs::plan_*_context_query`）：产出**只读前端快照** —— 仅 `context_snapshot`，**不产 bundle**，`CapabilityResolver` 的 `cap_output` 被**丢弃**（只抽 `tool.mcp_servers` 喂给 snapshot），不产 `capability_state`，不产 prompt。`task` 子路径甚至不跑 `CapabilityResolver`，走 `task/context_builder.rs::build_task_session_context`（其 doc 明确："只读视图构建器…与启动链路无关，仅复用底层相同的 executor/VFS 解析逻辑以保持上下文数据一致"）。
+- **真正的共享已存在**，无需新抽：
+  1. snapshot 派生层 `session/bootstrap.rs::build_bootstrap_plan` + `derive_session_context_snapshot` —— launch 的 session_plan fragments 与 query 的 snapshot 都从这里派生，确保两路 executor/tool_visibility/runtime_policy 一致。
+  2. 解析收敛 sink `api/session_use_cases/construction.rs::finalize_session_construction_projection` —— **launch 与 query 都调用同一个函数**（仅 `Launch`/`Inspect` mode 不同）补齐 working_dir / executor / session_capabilities / 最终 capability_state / extension_runtime / 镜像同步 / trace。
+
+强抽单一 `SessionSurfaceResolver`（OwnerScope → ResolvedSessionSurface{vfs,capability_state,mcp_servers}）会把"产 bundle 的执行链"和"丢弃 cap_output 的只读快照链"强行揉成一个返回类型，破坏两者刻意的差异（bundle 生成时机、cap_output 是否保留、错误类型、`use_vfs` 条件分支、grants 应用范围）。这正是姊妹任务 drop-step 警示的"低估耦合"。**故中止此项。**
+
+### 命题 B —「SessionConstructionPlan vfs 镜像 3 字段」→ 部分属实，已安全拍平死镜像
+
+三处 vfs 镜像的消费方**并不对称**：
+
+| 镜像字段 | 写 | 读 | 处置 |
+|---|---|---|---|
+| `surface.vfs` | launch/query/finalize | launch 链（`launch/orchestrator`/`planner`/`plan`）、`finalize`、extension_runtime route、canvas tools | **保留**（launch 主数据源） |
+| `context_projection.vfs`（顶层 `SessionConstructionContextProjection`） | finalize/assembler | query DTO 路由（`acp_sessions`/`canvases`/`project_sessions`/`story_sessions`/`task_execution`/`terminals`/`vfs_surfaces`）| **保留**（query 只读模型） |
+| `projections.context.*`（嵌套 `ConstructionProjections.context`） | `new()` / `assembler` / `canvas/tools` / `finalize` / `context_query` 共 5 处 | **全工程零读取** | **已删除**（纯 write-only 死状态） |
+
+`projections.context` 这个嵌套投影是真正的 slop：5 处写、0 处读，与顶层 `context_projection` 完全冗余。已删除该字段及其全部写点，行为等价。`surface.vfs` 与 `context_projection.vfs` 始终在 `apply_session_assembly`/`finalize` 中成对写入同值，理论上可进一步合并为"单存储 + 派生"，但二者**消费方语义不同**（一个喂 launch executor，一个喂 query DTO），合并需引入派生访问器并改动 7+ 个路由调用方，属于命名/读模型重构，**风险收益比不如留作 `capability-state-unify` 时一并处理**，本任务不强改。
+
+`validate_for_launch` 的 `capability_state.vfs.active == surface.vfs` / `mcp_servers` / `skill.skills` 三条断言**保留** —— 它们守护的是 `surface.vfs` 与 `projections.capability_state` 的真实一致性（`finalize` 会同步两者），不是死镜像，删之会失去 launch 前的漂移防护。
+
+### 本任务实际改动
+- 删 `ConstructionProjections.context` 字段（`session/construction.rs`）及 `new()` 构造里对它的 seed。
+- 删 4 处死写点：`assembler.rs::apply_session_assembly`、`canvas/tools.rs`（测试 helper）、`api/.../construction.rs::finalize`（2 行）、`api/.../context_query.rs::attach_runtime_surface`（1 行）。
+- `cargo check --workspace` 通过；`cargo test -p agentdash-application --lib` 604 passed（与基线一致）；api session/construction 相关测试全过。`agentdash-api` 有 1 个**先前既存且无关**的失败 `vfs_access::tests::runtime_tool_schemas_are_openai_compatible`（fs builtin 工具 schema `offset` 必填校验，与本任务无交集）。
+
+### 给后续的建议
+- `SessionSurfaceResolver` 不必抽；若要继续减重，应针对 `compose_owner_bootstrap`/`compose_story_step` 内部**各自**按阶段拆小函数（纯内部重构，不跨路径合并），属低风险 follow-up。
+- `surface.vfs` 与 `context_projection.vfs` 的"单存储 + 派生"合并放到 `capability-state-unify` 一并做（届时 `CapabilityState.vfs.active` 已是权威源，可让两镜像都派生自它）。
+- 建议人工 review。

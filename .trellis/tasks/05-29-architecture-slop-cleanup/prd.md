@@ -68,5 +68,21 @@
 - [ ] 各 child 的 acceptance 全部满足
 - [ ] 最终集成 review：跨 child 接口一致、无残留死代码
 
+## 执行结果（2026-05-29 自主执行完成）
+
+落地详情见 `docs/reviews/2026-05-29-slop-cleanup-review/01-execution-outcome.md`。11 个 commit，均过 build-gate + 测试。最终测试态：spi/application/infrastructure/executor/前端全绿，api 88 绿 + 1 预存无关失败。
+
+各 child 终态：
+- `dedup-naming-boilerplate` ✅ 落地（部分项按"行为不变"收窄，偏差已记录）
+- `app-infra-leak-to-spi` ✅ 5 port 全下沉
+- `infra-persistence-dedup` ✅ session_repository 去重（workflow discriminator 部分按冻结跳过）
+- `session-assembly-converge` ⚠️ 调查后只删死镜像，未强抽 resolver（review 高估耦合）— 建议人工 review
+- `capability-state-unify` ⚠️ 调查后只上移 delta 类型，未合并 trait（review 高估耦合）— 建议人工 review
+- `frontend-server-state-refactor` 🟡 A/B + workspace-layout 拆分完成；activity-inspector/SettingsPage 拆分 + stage C 未完成
+- `drop-step-lifecycle` ❄️ 冻结（非死代码，需 P0a/b/c feature 迁移 + 人工决策）
+
+**元结论**：3 个最深病灶（drop-step/session-assembly/capability）经执行调查均证明 review 高估耦合；机械/结构类发现全部准确。详见 outcome 文档。
+
 ## Notes
 - parent 保持 planning，待全部 child archive 后再做集成 review 并归档（遵循"父任务不要早归档"）。
+- 高风险 commit（699b11cc/4ff640fb）建议人工 review 后再决定 child 归档。

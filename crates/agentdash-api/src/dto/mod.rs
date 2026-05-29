@@ -4,6 +4,7 @@
 /// 使 API 序列化结构与领域模型解耦，便于独立演进。
 mod auth;
 mod backend;
+mod backend_access;
 mod canvas;
 mod discovered_options;
 mod discovery;
@@ -27,6 +28,7 @@ pub use agentdash_contracts::core::{
 };
 pub use auth::*;
 pub use backend::*;
+pub use backend_access::*;
 pub use canvas::*;
 pub use discovered_options::*;
 pub use discovery::*;

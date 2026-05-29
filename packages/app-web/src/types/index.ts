@@ -20,7 +20,7 @@ import type {
   WorkspaceResponse,
 } from "../generated/core-contracts";
 import type {
-  ProjectVfsMountContent,
+  ProjectVfsMountContentDto,
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
 import type {
@@ -240,7 +240,7 @@ export interface AgentVfsAccessGrant {
   capabilities: Array<"read" | "write" | "list" | "search">;
 }
 
-export type { ProjectVfsMountContent };
+export type ProjectVfsMountContent = ProjectVfsMountContentDto;
 export type ProjectVfsMount = ProjectVfsMountResponse;
 
 // ─── Project Agent 项目实例 ───

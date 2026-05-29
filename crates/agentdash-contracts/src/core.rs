@@ -4,7 +4,7 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum MountCapability {
+pub enum VfsCapabilityDto {
     Read,
     Write,
     List,
@@ -13,7 +13,7 @@ pub enum MountCapability {
     Watch,
 }
 
-impl From<agentdash_domain::common::MountCapability> for MountCapability {
+impl From<agentdash_domain::common::MountCapability> for VfsCapabilityDto {
     fn from(value: agentdash_domain::common::MountCapability) -> Self {
         match value {
             agentdash_domain::common::MountCapability::Read => Self::Read,
@@ -79,7 +79,7 @@ pub struct ContextContainerDefinition {
     pub mount_id: String,
     pub display_name: String,
     pub provider: ContextContainerProvider,
-    pub capabilities: Vec<MountCapability>,
+    pub capabilities: Vec<VfsCapabilityDto>,
     pub default_write: bool,
 }
 
@@ -94,7 +94,7 @@ impl From<agentdash_domain::context_container::ContextContainerDefinition>
             capabilities: value
                 .capabilities
                 .into_iter()
-                .map(MountCapability::from)
+                .map(VfsCapabilityDto::from)
                 .collect(),
             default_write: value.default_write,
         }
@@ -432,7 +432,7 @@ pub struct WorkspaceResponse {
     pub default_binding_id: Option<String>,
     pub status: WorkspaceStatus,
     pub bindings: Vec<WorkspaceBindingResponse>,
-    pub mount_capabilities: Vec<MountCapability>,
+    pub mount_capabilities: Vec<VfsCapabilityDto>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -456,7 +456,7 @@ impl From<agentdash_domain::workspace::Workspace> for WorkspaceResponse {
             mount_capabilities: value
                 .mount_capabilities
                 .into_iter()
-                .map(MountCapability::from)
+                .map(VfsCapabilityDto::from)
                 .collect(),
             created_at: value.created_at.to_rfc3339(),
             updated_at: value.updated_at.to_rfc3339(),

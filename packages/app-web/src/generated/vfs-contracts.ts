@@ -3,7 +3,7 @@
 
 export type ConfigurableProviderInfo = { service_id: string, display_name: string, root_ref_hint: string, supported_capabilities: Array<string>, };
 
-export type CreateProjectVfsMountRequest = { mount_id: string, display_name: string, description?: string, capabilities: Array<MountCapability>, content: ProjectVfsMountContent, };
+export type CreateProjectVfsMountRequest = { mount_id: string, display_name: string, description?: string, capabilities: Array<VfsCapabilityDto>, content: ProjectVfsMountContentDto, };
 
 export type InstalledAssetSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 
@@ -11,11 +11,9 @@ export type ListEntriesResponse = { entries: Array<VfsEntry>, };
 
 export type ListVfssResponse = { spaces: Array<VfsDescriptor>, };
 
-export type MountCapability = "read" | "write" | "list" | "search" | "exec" | "watch";
+export type ProjectVfsMountContentDto = { "kind": "inline" } | { "kind": "external_service", service_id: string, root_ref: string, };
 
-export type ProjectVfsMountContent = { "kind": "inline" } | { "kind": "external_service", service_id: string, root_ref: string, };
-
-export type ProjectVfsMountResponse = { project_id: string, mount_id: string, display_name: string, description?: string, capabilities: Array<MountCapability>, installed_source?: InstalledAssetSourceResponse, content: ProjectVfsMountContent, surface_ref: string, created_at: string, updated_at: string, };
+export type ProjectVfsMountResponse = { project_id: string, mount_id: string, display_name: string, description?: string, capabilities: Array<VfsCapabilityDto>, installed_source?: InstalledAssetSourceResponse, content: ProjectVfsMountContentDto, surface_ref: string, created_at: string, updated_at: string, };
 
 export type ResolveSurfaceRequest = { source: ResolvedVfsSurfaceSource, };
 
@@ -66,6 +64,8 @@ export type SurfaceUploadBinaryFileResponse = { surface_ref: string, mount_id: s
 export type SurfaceWriteFileRequest = { surface_ref: string, mount_id: string, path: string, content: string, };
 
 export type SurfaceWriteFileResponse = { surface_ref: string, mount_id: string, path: string, size: number, persisted: boolean, content_kind: string, mime_type?: string, };
+
+export type VfsCapabilityDto = "read" | "write" | "list" | "search" | "exec" | "watch";
 
 export type VfsDescriptor = { id: string, label: string, kind: string, provider: string, supports: Array<string>, selector?: SelectorHint, };
 

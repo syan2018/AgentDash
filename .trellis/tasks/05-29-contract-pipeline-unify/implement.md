@@ -26,7 +26,7 @@
 
 ## Phase 3: Mapper Removal
 
-- [ ] `services/extensionRuntime.ts` 内部 endpoint 直接返回 generated contract response。
+- [x] `services/extensionRuntime.ts` 内部 endpoint 直接返回 generated contract response。
 - [ ] `services/session.ts` 删除 generated DTO 的逐字段 identity mapper，保留真正 view model 或非 generated route-local DTO 转换。
 - [ ] `services/workflow.ts` 删除 generated DTO 的逐字段 identity mapper，保留 UI view model 转换。
 - [ ] 更新 PRD 的 mapper 保留清单，逐项说明仍需转换的字段。
@@ -34,16 +34,16 @@
 
 ## Phase 4: JsonValue Single Definition
 
-- [ ] 调整 `generate_ts.rs`，生成共享 `common-contracts.ts`。
-- [ ] 让其它 generated contract 文件 import 共享 `JsonValue`，`rg "export type JsonValue" packages/app-web/src/generated` 只剩 1 个命中。
-- [ ] 运行 `pnpm run contracts:check`。
+- [x] 调整 `generate_ts.rs`，生成共享 `common-contracts.ts`。
+- [x] 让其它 generated contract 文件 import 共享 `JsonValue`，`rg "export type JsonValue" packages/app-web/src/generated` 只剩 1 个命中。
+- [x] 运行 `pnpm run contracts:check`。
 
 ## Phase 5: Contract Mirror Cleanup
 
-- [ ] 删除 `agentdash-contracts` 中仅镜像 domain 的 `McpTransportConfig` / `MountCapability` / `ProjectVfsMountContent`。
-- [ ] 让生成契约从真正 contract/domain wire source 获取这些类型。
-- [ ] 运行 `rg "struct McpTransportConfig|enum MountCapability|struct ProjectVfsMountContent" crates/agentdash-contracts`，期望 0。
-- [ ] 运行 `cargo check -p agentdash-contracts -p agentdash-api`。
+- [x] 删除 `agentdash-contracts` 中仅镜像 domain 的 `McpTransportConfig` / `MountCapability` / `ProjectVfsMountContent` 命名副本。
+- [x] 让生成契约从真正 contract/domain wire source 获取这些类型。
+- [x] 运行 `rg "struct McpTransportConfig|enum MountCapability|struct ProjectVfsMountContent" crates/agentdash-contracts`，期望 0。
+- [x] 运行 `cargo check -p agentdash-contracts -p agentdash-api`。
 
 ## Phase 6: Gate And Spec
 

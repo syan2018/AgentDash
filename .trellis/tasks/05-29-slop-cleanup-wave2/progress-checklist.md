@@ -33,6 +33,9 @@
   - API 旧 `dto/project.rs`、`dto/story.rs`、`dto/task.rs`、`dto/workspace.rs` 已删除，route 通过 contract response 输出。
   - `packages/app-web/src/types/index.ts` 的 Project / Workspace / Story / Task wire 类型改为 generated alias，手写 core interface/type grep 已清零。
   - 根 `package.json` 默认 `check` 链路已加入 `contracts:check`。
+  - `common-contracts.ts` 已成为 generated 目录唯一 `JsonValue` 定义。
+  - `extensionRuntime.ts` 已删除逐字段 mapper，内部 endpoint 直接信任 generated contract response。
+  - `McpTransportConfig` / `MountCapability` / `ProjectVfsMountContent` 纯镜像命名副本已清到 PRD grep 为 0。
   - 当前 spec 仍描述前端 service mapper 做 `unknown -> typed object` 校验；本 child 已拍板改为内部端点信任 generated wire，因此后续 mapper cleanup 与 spec 同步仍需完成。
 
 ## 全程推进队列
@@ -41,7 +44,7 @@
 |---:|---|---|---|
 | 0 | `05-29-quickfix-swarm` | 已归档 | archive 中 task completed；quickfix commit 已存在 |
 | 1 | `05-29-error-model-unify` | 已归档 | 提交 `c2fb8f78`；归档提交 `8f1d232d`；本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
-| 2 | `05-29-contract-pipeline-unify` | 进行中：core DTO 已迁移 | `Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`contracts:check` / API cargo check / app-web tsc 通过；待 mapper 删除、JsonValue 单源、mirror cleanup、spec sync |
+| 2 | `05-29-contract-pipeline-unify` | 进行中：core DTO / JsonValue / extensionRuntime mapper 已收敛 | `Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`JsonValue` 单源；mirror grep 清零；`contracts:check` / API cargo check / app-web tsc 通过；待 session/workflow mapper 保留清单与 spec sync |
 | 3 | `05-29-mcp-direct-connection-pool` | 待 design | `direct.rs` 每次 connect/cancel 路径消除；连接池失效/重连策略有测试或说明 |
 | 4 | `05-29-vfs-dedup` | 待执行 | VFS dispatch 单一 helper；patch executor 单份；`MountProvider` 拆 trait；VFS `to_string()` 抹平显著收敛 |
 | 5 | `05-29-infra-residual` | 待 error-model | sqlite 后端移除；TIMESTAMPTZ migration；session port 错误类型化；DB spec 同步当前决策 |
@@ -66,10 +69,9 @@
 
 ## 当前 child 下一步
 
-1. 提交 `contract-pipeline-unify` 第一批 core DTO 迁移。
-2. 继续 Phase 3：删除 `extensionRuntime.ts` / `session.ts` / `workflow.ts` 中 generated DTO 的 identity mapper，保留真正 view model 转换。
-3. 继续 Phase 4：generator 生成共享 `JsonValue`，让 generated 目录只剩 1 个 `export type JsonValue`。
-4. 继续 Phase 5/6：删除 contracts 纯镜像副本，更新 spec，并跑完整 child gates。
+1. 提交 `contract-pipeline-unify` 第二批：JsonValue 单源、extensionRuntime mapper 删除、mirror 命名副本清理。
+2. 继续 Phase 3：审计 `session.ts` / `workflow.ts` mapper，删除 generated DTO identity mapper，保留 route-local/view-model 转换并写入 PRD 清单。
+3. 继续 Phase 6：更新 cross-layer/frontend spec，并跑完整 child gates。
 
 ## 全局验收 Gates
 

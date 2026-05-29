@@ -7,7 +7,7 @@ export type {
   McpPresetResponse as McpPresetDto,
   McpPresetSourceTag as McpPresetSource,
   McpRoutePolicy,
-  McpTransportConfig,
+  McpTransportConfigDto as McpTransportConfig,
   ProbeMcpPresetResponse,
   ProbeMcpToolInfo,
   UpdateMcpPresetRequest,

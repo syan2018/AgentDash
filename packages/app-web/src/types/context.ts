@@ -3,9 +3,9 @@ import type {
   ContextContainerDefinition,
   ContextContainerFile,
   ContextContainerProvider,
-  MountCapability,
   SessionComposition,
   SessionRequiredContextBlock,
+  VfsCapabilityDto,
 } from "../generated/core-contracts";
 import type {
   ResolvedMountEditCapabilities,
@@ -30,7 +30,7 @@ export type {
 
 // ─── VFS Mount 配置 / 会话编排 ──────────────────
 
-export type ContextContainerCapability = MountCapability;
+export type ContextContainerCapability = VfsCapabilityDto;
 
 // ─── 执行时 Mount / VFS ─────────────────────────────
 

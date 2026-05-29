@@ -8,9 +8,8 @@ use uuid::Uuid;
 
 use agentdash_contracts::vfs::{
     CreateProjectVfsMountRequest, InstalledAssetSourceResponse,
-    MountCapability as ContractMountCapability,
-    ProjectVfsMountContent as ContractProjectVfsMountContent, ProjectVfsMountResponse,
-    UpdateProjectVfsMountRequest,
+    ProjectVfsMountContentDto as ContractProjectVfsMountContent, ProjectVfsMountResponse,
+    UpdateProjectVfsMountRequest, VfsCapabilityDto as ContractMountCapability,
 };
 use agentdash_domain::common::MountCapability as DomainMountCapability;
 use agentdash_domain::inline_file::InlineFileOwnerKind;

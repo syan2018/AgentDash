@@ -16,6 +16,7 @@ fn main() {
     let mut declarations: BTreeMap<String, String> = BTreeMap::new();
 
     collect_ts_files(tmp_dir.path(), &mut declarations);
+    let uses_json_value = declarations.remove("JsonValue").is_some();
 
     let mut lines = Vec::new();
     lines.push(
@@ -24,6 +25,10 @@ fn main() {
     );
     lines.push("// Do not edit manually.".to_string());
     lines.push(String::new());
+    if uses_json_value {
+        lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
+        lines.push(String::new());
+    }
 
     for decl in declarations.values() {
         lines.push(decl.clone());

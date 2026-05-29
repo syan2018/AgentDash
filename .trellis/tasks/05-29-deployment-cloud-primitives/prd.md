@@ -51,7 +51,8 @@
 ## First Implementation Notes
 
 - 第一轮已实现 `GET /api/version` 与 `GET /.well-known/agentdash`。
-- 第一轮暂缓拆出 `agentdash-server migrate` / `doctor` 子命令；当前启动时 migration 与 schema readiness check 仍保留，后续由部署 runbook 和 server CLI 切片继续推进显式 migration。
+- 已实现 `agentdash-server serve` / `migrate` / `doctor` 子命令；无子命令时默认 `serve`。
+- `migrate` 执行 PostgreSQL migrations 并检查 schema readiness；`doctor` 只检查 PostgreSQL 连接与 schema readiness，不执行 migration。
 - Discovery 默认 Relay WebSocket path 为 `/ws/backend`，可用 `AGENTDASH_RELAY_WS_URL` 覆盖。
 - `AGENTDASH_BIND_HOST` / `AGENTDASH_PORT` 已作为部署命名进入 server options；`HOST` / `PORT` 仍服务当前开发脚本入口。
 

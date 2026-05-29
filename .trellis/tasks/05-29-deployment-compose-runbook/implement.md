@@ -39,3 +39,13 @@ docker compose up -d
 - 当前是否可运行。
 - 依赖哪些尚未实现的 server command 或 endpoint。
 - K8s 映射剩余缺口。
+
+## Current Slice Result
+
+- 已落地 Compose scaffold：
+  - `deploy/compose/docker-compose.yml`
+  - `deploy/compose/.env.example`
+  - `deploy/compose/reverse-proxy/Caddyfile`
+- 当前 scaffold 依赖 `agentdash-cloud:${AGENTDASH_VERSION}` 目标镜像。
+- 已通过 `docker compose config` 静态校验。
+- 下一步需要补 cloud Dockerfile、backup / restore runbook 和完整 upgrade runbook。

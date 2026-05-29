@@ -33,13 +33,21 @@
 
 ## Acceptance Criteria
 
-- [ ] Compose 基准能表达 cloud app、PostgreSQL、migration、reverse proxy 的关系。
-- [ ] `.env.example` 覆盖 public origin、database URL、secret、日志等核心配置。
+- [x] Compose 基准能表达 cloud app、PostgreSQL、migration、reverse proxy 的关系。
+- [x] `.env.example` 覆盖 public origin、database URL、secret、日志等核心配置。
 - [ ] upgrade runbook 包含 pull、backup、migrate、restart、health/version check。
 - [ ] rollback / restore 边界写清楚。
 - [ ] K8s 映射保持在资源级别，不实现完整 Helm chart。
 - [ ] 不实现 `/api/version` 或 discovery endpoint。
 - [ ] 不修改桌面端连接服务器流程。
+
+## Current Scaffold
+
+- 已新增 `deploy/compose/docker-compose.yml`。
+- 已新增 `deploy/compose/.env.example`。
+- 已新增 `deploy/compose/reverse-proxy/Caddyfile`。
+- 已验证 `docker compose -f deploy/compose/docker-compose.yml --env-file deploy/compose/.env config`。
+- Compose 当前消费目标镜像 `agentdash-cloud:${AGENTDASH_VERSION}`；镜像构建入口仍由 `deploy/docker/` 后续落地。
 
 ## Dependencies
 

@@ -61,7 +61,8 @@ Compose 基准升级流程：
 4. 启动 agentdash-cloud 和 reverse-proxy
 5. 检查 /api/health
 6. 检查 /api/version
-7. 记录升级结果
+7. 执行 `docker compose run --rm agentdash-cloud agentdash-server doctor`
+8. 记录升级结果
 ```
 
 涉及 schema 变更的回退以升级前数据库备份恢复为准；同 schema 兼容范围内可以回滚 cloud image。

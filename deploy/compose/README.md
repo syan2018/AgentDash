@@ -32,9 +32,12 @@ RUST_LOG=info
 Compose scaffold 落地后，最小验证命令为：
 
 ```bash
+cp .env.example .env
 docker compose config
 docker compose run --rm migrate
 docker compose up -d agentdash-cloud reverse-proxy
 ```
+
+当前 Compose 使用 `agentdash-cloud:${AGENTDASH_VERSION}` 作为目标镜像。镜像构建入口仍由 `deploy/docker/` 后续落地；本目录只表达运行拓扑和部署配置。
 
 升级 runbook 统一记录在 `deploy/runbooks/release-workflow.md`。

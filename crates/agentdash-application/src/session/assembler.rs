@@ -1763,20 +1763,18 @@ pub enum StoryStepPhase {
     Continue,
 }
 
-/// Story step 场景下 compose 所需的完整上下文。
+/// Task execution session 场景下 compose 所需的完整上下文。
 ///
-/// 用于 `StoryStepActivationService` facade 的 step activation 路径
-/// （`start_task` / `continue_task` 内部先定位 task 对应 step，再调 compose）。
+/// 用于 `StoryStepActivationService` 的 task 启动 / 续跑路径
+/// （`start_task` / `continue_task` 直接以 task 为入口调 compose）。
 ///
 /// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
 /// - `StoryStepSpec` 持有 task/story/project/workspace 完整 entity 引用
 /// - 承载 user prompt 注入（`override_prompt` / `additional_prompt`）
 /// - 承载 explicit executor config（HTTP 请求透传）
-/// - 承载 `ActiveWorkflowProjection`（由 facade 通过 SessionBinding 两跳定位后传入）
+/// - `active_workflow` 可选：task execution session 无 lifecycle binding 时为 `None`，
+///   走纯 task 装配（不带 lifecycle workflow injection）
 pub struct StoryStepSpec<'a> {
-    pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
     pub task: &'a Task,
     pub story: &'a Story,
     pub project: &'a Project,

@@ -962,6 +962,9 @@ async fn build_task_owner_prompt_request(
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
         .map_err(ApiError::from)?;
+    // Task execution session 没有 `lifecycle_activity:*` binding，因此容忍无 active
+    // workflow projection：此时走纯 task 装配（`StoryStepSpec.active_workflow = None`），
+    // 不带 lifecycle workflow injection。
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),
@@ -970,12 +973,7 @@ async fn build_task_owner_prompt_request(
         state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(ApiError::Internal)?
-    .ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "Task session {session_id} 未绑定活跃 lifecycle step"
-        ))
-    })?;
+    .map_err(ApiError::Internal)?;
 
     let user_prompt_blocks = user_input
         .prompt_blocks
@@ -991,9 +989,6 @@ async fn build_task_owner_prompt_request(
         .compose_story_step_prompt(
             plan,
             StoryStepSpec {
-                run: &active_workflow.run,
-                lifecycle: &active_workflow.lifecycle,
-                step: &active_workflow.active_step,
                 task: &task,
                 story: &story,
                 project: &project,
@@ -1011,7 +1006,7 @@ async fn build_task_owner_prompt_request(
                 request_mcp_servers: &source_mcp_declarations,
                 explicit_executor_config: effective_executor_config.clone(),
                 strict_config_resolution: true,
-                active_workflow: Some(active_workflow.clone()),
+                active_workflow,
                 audit_session_key: Some(session_id.to_string()),
             },
         )

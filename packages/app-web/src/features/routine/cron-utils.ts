@@ -49,3 +49,90 @@ export function describeCron(freq: CronFrequency, interval: number, hour: number
     case "custom": return "自定义表达式";
   }
 }
+
+// ─── Next Run Preview ───
+
+function parseCronField(field: string, min: number, max: number): number[] {
+  const results = new Set<number>();
+  for (const part of field.split(",")) {
+    const stepMatch = part.match(/^(.+)\/(\d+)$/);
+    const step = stepMatch ? Number(stepMatch[2]) : 1;
+    const range = stepMatch ? stepMatch[1] : part;
+
+    if (range === "*") {
+      for (let i = min; i <= max; i += step) results.add(i);
+    } else if (range.includes("-")) {
+      const [a, b] = range.split("-").map(Number);
+      for (let i = a; i <= b; i += step) results.add(i);
+    } else {
+      results.add(Number(range));
+    }
+  }
+  return [...results].filter((n) => n >= min && n <= max).sort((a, b) => a - b);
+}
+
+export function getNextCronRuns(cron: string, count: number, from?: Date): Date[] | null {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+
+  const [minField, hourField, domField, monField, dowField] = parts;
+
+  let minutes: number[];
+  let hours: number[];
+  let doms: number[];
+  let months: number[];
+  let dows: number[];
+  try {
+    minutes = parseCronField(minField, 0, 59);
+    hours = parseCronField(hourField, 0, 23);
+    doms = parseCronField(domField, 1, 31);
+    months = parseCronField(monField, 1, 12);
+    dows = parseCronField(dowField, 0, 6);
+  } catch {
+    return null;
+  }
+
+  if (!minutes.length || !hours.length || !doms.length || !months.length || !dows.length) return null;
+
+  const domIsWild = domField === "*";
+  const dowIsWild = dowField === "*";
+
+  const results: Date[] = [];
+  const start = from ?? new Date();
+  const cursor = new Date(start);
+  cursor.setSeconds(0, 0);
+  cursor.setMinutes(cursor.getMinutes() + 1);
+
+  const maxIterations = 525960; // ~1 year of minutes
+  for (let i = 0; i < maxIterations && results.length < count; i++) {
+    const m = cursor.getMinutes();
+    const h = cursor.getHours();
+    const dom = cursor.getDate();
+    const mon = cursor.getMonth() + 1;
+    const dow = cursor.getDay();
+
+    const minuteMatch = minutes.includes(m);
+    const hourMatch = hours.includes(h);
+    const monthMatch = months.includes(mon);
+
+    // Standard cron: if both DOM and DOW are restricted, match is OR; if one is *, the other decides
+    let dateMatch: boolean;
+    if (domIsWild && dowIsWild) {
+      dateMatch = true;
+    } else if (domIsWild) {
+      dateMatch = dows.includes(dow);
+    } else if (dowIsWild) {
+      dateMatch = doms.includes(dom);
+    } else {
+      dateMatch = doms.includes(dom) || dows.includes(dow);
+    }
+
+    if (minuteMatch && hourMatch && monthMatch && dateMatch) {
+      results.push(new Date(cursor));
+    }
+
+    cursor.setMinutes(cursor.getMinutes() + 1);
+  }
+
+  return results.length > 0 ? results : null;
+}

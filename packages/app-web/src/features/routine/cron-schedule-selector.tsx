@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { type CronFrequency, CRON_FREQ_OPTIONS, cronToSegments, segmentsToCron, describeCron } from "./cron-utils";
+import { type CronFrequency, CRON_FREQ_OPTIONS, cronToSegments, segmentsToCron, describeCron, getNextCronRuns } from "./cron-utils";
 
 export function CronScheduleSelector({ value, onChange }: { value: string; onChange: (cron: string) => void }) {
   const parsed = useMemo(() => cronToSegments(value), [value]);
@@ -72,6 +72,39 @@ export function CronScheduleSelector({ value, onChange }: { value: string; onCha
           <span className="text-[10px] text-muted-foreground/70">{describeCron(freq, interval, hour, minute)}</span>
         </div>
       )}
+
+      {/* Next runs preview */}
+      <NextRunsPreview cron={isCustomMode ? value : segmentsToCron(freq, interval, hour, minute)} />
+    </div>
+  );
+}
+
+function NextRunsPreview({ cron }: { cron: string }) {
+  const nextRuns = useMemo(() => getNextCronRuns(cron, 3), [cron]);
+
+  if (!nextRuns) return null;
+
+  const formatTime = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const mon = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const h = pad(d.getHours());
+    const m = pad(d.getMinutes());
+    const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+    return `${mon}-${day} (周${weekdays[d.getDay()]}) ${h}:${m}`;
+  };
+
+  return (
+    <div className="rounded-[6px] border border-border/50 bg-secondary/10 px-2.5 py-2">
+      <p className="text-[10px] font-medium text-muted-foreground mb-1">接下来触发</p>
+      <ul className="space-y-0.5">
+        {nextRuns.map((d, i) => (
+          <li key={i} className="flex items-center gap-1.5 text-[11px] text-foreground/80">
+            <span className="inline-block h-1 w-1 rounded-[4px] bg-info/60" />
+            {formatTime(d)}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

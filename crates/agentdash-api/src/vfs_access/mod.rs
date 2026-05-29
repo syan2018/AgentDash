@@ -777,12 +777,16 @@ mod tests {
                 .iter()
                 .filter_map(serde_json::Value::as_str)
                 .collect::<std::collections::BTreeSet<_>>();
+            // 运行时工具走非 strict function calling：sanitizer 强制 object +
+            // additionalProperties:false 并清除装饰关键字，但保留 derive 的可选性
+            // （offset/limit 等对齐 Claude Code fs 工具，短文件读取无需传参）。
+            // 因此 required 是 properties 的子集，约束方向是「不得有悬空 required」。
             assert_eq!(schema["type"], "object");
             assert_eq!(schema["additionalProperties"], false);
-            for key in properties.keys() {
+            for key in &required {
                 assert!(
-                    required.contains(key.as_str()),
-                    "required should contain `{key}`"
+                    properties.contains_key(*key),
+                    "required key `{key}` must be a declared property"
                 );
             }
         }

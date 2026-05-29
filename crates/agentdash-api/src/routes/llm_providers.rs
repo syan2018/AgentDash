@@ -1,6 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agentdash_application::llm_provider::{
+    CreateLlmProviderInput, UpdateLlmProviderInput, create_llm_provider, delete_llm_provider,
+    get_llm_provider, list_llm_providers, reorder_llm_providers, update_llm_provider,
+};
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
     DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
@@ -76,12 +80,7 @@ pub async fn list_providers(
     CurrentUser(current_user): CurrentUser,
 ) -> Result<Json<Vec<LlmProviderAdminDto>>, ApiError> {
     require_system_access(&current_user)?;
-    let providers = state
-        .repos
-        .llm_provider_repo
-        .list_all()
-        .await
-        .map_err(ApiError::from)?;
+    let providers = list_llm_providers(&state.repos).await?;
     let response = providers
         .into_iter()
         .map(|provider| admin_provider_dto(provider, &state))
@@ -95,71 +94,26 @@ pub async fn create_provider(
     Json(req): Json<CreateLlmProviderRequest>,
 ) -> Result<Json<LlmProviderAdminDto>, ApiError> {
     require_system_access(&current_user)?;
-
-    let name = req.name.trim().to_string();
-    if name.is_empty() {
-        return Err(ApiError::BadRequest("name 不能为空".into()));
-    }
-    let slug = req.slug.trim().to_lowercase();
-    if slug.is_empty() {
-        return Err(ApiError::BadRequest("slug 不能为空".into()));
-    }
-    if !slug
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(ApiError::BadRequest("slug 仅允许字母、数字、- 和 _".into()));
-    }
-    let protocol: WireProtocol = req.protocol.into();
-
-    // 获取当前最大 sort_order 作为新 provider 的默认排序
-    let all = state
-        .repos
-        .llm_provider_repo
-        .list_all()
-        .await
-        .map_err(ApiError::from)?;
-    let max_sort = all.iter().map(|p| p.sort_order).max().unwrap_or(-1);
-
-    let mut provider = LlmProvider::new(name, slug, protocol);
-    provider.sort_order = max_sort + 1;
-    if let Some(mode) = req.credential_mode {
-        provider.credential_mode = mode.into();
-    }
-    if let Some(v) = req.global_api_key {
-        provider.global_api_key_ciphertext = encrypt_optional_secret(&state, &v)?;
-    }
-    if let Some(v) = req.base_url {
-        provider.base_url = v;
-    }
-    if let Some(v) = req.wire_api {
-        provider.wire_api = v;
-    }
-    if let Some(v) = req.default_model {
-        provider.default_model = v;
-    }
-    if let Some(v) = req.models {
-        provider.models = v;
-    }
-    if let Some(v) = req.blocked_models {
-        provider.blocked_models = v;
-    }
-    if let Some(v) = req.env_api_key {
-        provider.env_api_key = v;
-    }
-    if let Some(v) = req.discovery_url {
-        provider.discovery_url = v;
-    }
-    if let Some(v) = req.enabled {
-        provider.enabled = v;
-    }
-
-    state
-        .repos
-        .llm_provider_repo
-        .create(&provider)
-        .await
-        .map_err(ApiError::from)?;
+    let provider = create_llm_provider(
+        &state.repos,
+        state.secrets.llm_provider_secret.as_ref(),
+        CreateLlmProviderInput {
+            name: req.name,
+            slug: req.slug,
+            protocol: req.protocol.into(),
+            credential_mode: req.credential_mode.map(Into::into),
+            global_api_key: req.global_api_key,
+            base_url: req.base_url,
+            wire_api: req.wire_api,
+            default_model: req.default_model,
+            models: req.models,
+            blocked_models: req.blocked_models,
+            env_api_key: req.env_api_key,
+            discovery_url: req.discovery_url,
+            enabled: req.enabled,
+        },
+    )
+    .await?;
 
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
@@ -171,13 +125,7 @@ pub async fn get_provider(
 ) -> Result<Json<LlmProviderAdminDto>, ApiError> {
     require_system_access(&current_user)?;
     let id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, id).await?;
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
 
@@ -189,68 +137,27 @@ pub async fn update_provider(
 ) -> Result<Json<LlmProviderAdminDto>, ApiError> {
     require_system_access(&current_user)?;
     let id = parse_id(&id)?;
-    let mut provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {id} 不存在")))?;
-
-    if let Some(name) = req.name {
-        let trimmed = name.trim().to_string();
-        if trimmed.is_empty() {
-            return Err(ApiError::BadRequest("name 不能为空".into()));
-        }
-        provider.name = trimmed;
-    }
-    if let Some(protocol) = req.protocol {
-        provider.protocol = protocol.into();
-    }
-    if let Some(mode) = req.credential_mode {
-        provider.credential_mode = mode.into();
-    }
-    if let Some(api_key) = req.global_api_key {
-        if !is_masked_placeholder(&api_key) {
-            provider.global_api_key_ciphertext = encrypt_optional_secret(&state, &api_key)?;
-        }
-    }
-    if let Some(v) = req.base_url {
-        provider.base_url = v;
-    }
-    if let Some(v) = req.wire_api {
-        provider.wire_api = v;
-    }
-    if let Some(v) = req.default_model {
-        provider.default_model = v;
-    }
-    if let Some(v) = req.models {
-        provider.models = v;
-    }
-    if let Some(v) = req.blocked_models {
-        provider.blocked_models = v;
-    }
-    if let Some(v) = req.env_api_key {
-        provider.env_api_key = v;
-    }
-    if let Some(v) = req.discovery_url {
-        provider.discovery_url = v;
-    }
-    if let Some(v) = req.sort_order {
-        provider.sort_order = v;
-    }
-    if let Some(v) = req.enabled {
-        provider.enabled = v;
-    }
-
-    provider.updated_at = chrono::Utc::now();
-
-    state
-        .repos
-        .llm_provider_repo
-        .update(&provider)
-        .await
-        .map_err(ApiError::from)?;
+    let provider = update_llm_provider(
+        &state.repos,
+        state.secrets.llm_provider_secret.as_ref(),
+        id,
+        UpdateLlmProviderInput {
+            name: req.name,
+            protocol: req.protocol.map(Into::into),
+            credential_mode: req.credential_mode.map(Into::into),
+            global_api_key: req.global_api_key,
+            base_url: req.base_url,
+            wire_api: req.wire_api,
+            default_model: req.default_model,
+            models: req.models,
+            blocked_models: req.blocked_models,
+            env_api_key: req.env_api_key,
+            discovery_url: req.discovery_url,
+            sort_order: req.sort_order,
+            enabled: req.enabled,
+        },
+    )
+    .await?;
 
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
@@ -262,12 +169,7 @@ pub async fn delete_provider(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_system_access(&current_user)?;
     let id = parse_id(&id)?;
-    state
-        .repos
-        .llm_provider_repo
-        .delete(id)
-        .await
-        .map_err(ApiError::from)?;
+    delete_llm_provider(&state.repos, id).await?;
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
@@ -282,12 +184,7 @@ pub async fn reorder_providers(
         .iter()
         .map(|s| parse_id(s))
         .collect::<Result<Vec<_>, _>>()?;
-    state
-        .repos
-        .llm_provider_repo
-        .reorder(&ids)
-        .await
-        .map_err(ApiError::from)?;
+    reorder_llm_providers(&state.repos, &ids).await?;
     Ok(Json(serde_json::json!({ "reordered": true })))
 }
 
@@ -316,13 +213,7 @@ pub async fn upsert_user_credential(
     Json(req): Json<UpsertLlmProviderUserCredentialRequest>,
 ) -> Result<Json<EffectiveLlmProviderDto>, ApiError> {
     let provider_id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, provider_id).await?;
     ensure_provider_allows_user_credential(&provider)?;
     if provider.protocol == WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
@@ -374,13 +265,7 @@ pub async fn verify_user_credential(
     Path(id): Path<String>,
 ) -> Result<Json<EffectiveLlmProviderDto>, ApiError> {
     let provider_id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, provider_id).await?;
     ensure_provider_allows_user_credential(&provider)?;
     if provider.protocol == WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
@@ -421,13 +306,7 @@ pub async fn start_codex_oauth(
 ) -> Result<Json<StartCodexOAuthResponse>, ApiError> {
     require_system_access(&current_user)?;
     let provider_id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, provider_id).await?;
     if provider.protocol != WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
             "只有 openai_codex Provider 支持 Codex 登录向导".into(),
@@ -463,13 +342,7 @@ pub async fn start_user_codex_oauth(
     Path(id): Path<String>,
 ) -> Result<Json<StartCodexOAuthResponse>, ApiError> {
     let provider_id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, provider_id).await?;
     if provider.protocol != WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
             "只有 openai_codex Provider 支持 Codex 登录向导".into(),
@@ -576,13 +449,7 @@ pub async fn probe_user_provider_models(
     Json(req): Json<ProbeLlmProviderModelsRequest>,
 ) -> Result<Json<Vec<ProbeLlmProviderModelDto>>, ApiError> {
     let provider_id = parse_id(&id)?;
-    let provider = state
-        .repos
-        .llm_provider_repo
-        .get_by_id(provider_id)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
+    let provider = get_llm_provider(&state.repos, provider_id).await?;
     ensure_provider_allows_user_credential(&provider)?;
     let protocol = provider.protocol;
     let api_key =
@@ -632,7 +499,7 @@ async fn resolve_admin_probe_api_key(
     }
     if let Some(pid) = &req.provider_id {
         if let Ok(id) = Uuid::parse_str(pid) {
-            if let Ok(Some(provider)) = state.repos.llm_provider_repo.get_by_id(id).await {
+            if let Ok(provider) = get_llm_provider(&state.repos, id).await {
                 if let Some(resolved) =
                     resolve_global_credential(&provider, state.secrets.llm_provider_secret.as_ref())
                         .map_err(ApiError::from)?
@@ -1084,18 +951,6 @@ fn effective_provider_status(
         return "no_key_endpoint".to_string();
     }
     "unavailable".to_string()
-}
-
-fn encrypt_optional_secret(state: &AppState, value: &str) -> Result<String, ApiError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(String::new());
-    }
-    state
-        .secrets
-        .llm_provider_secret
-        .encrypt(trimmed)
-        .map_err(ApiError::from)
 }
 
 fn ensure_provider_allows_user_credential(provider: &LlmProvider) -> Result<(), ApiError> {

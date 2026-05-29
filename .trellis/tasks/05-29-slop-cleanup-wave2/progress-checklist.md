@@ -6,7 +6,7 @@
 
 - 当前分支：`refactor/architecture-slop-cleanup`
 - 当前推进 child：`05-29-api-handler-thinning`（已启动；正在按批次瘦身 API handler）
-- 当前 child 状态：`in_progress`（`session_use_cases` 已迁入 application，下一步推进低风险 CRUD 下沉）
+- 当前 child 状态：`in_progress`（`session_use_cases`、低风险 CRUD 已推进；当前正在下沉 `llm_providers`）
 - 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual` 已提交并归档；当前推进 `api-handler-thinning`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
@@ -49,7 +49,7 @@
 | 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；归档提交 `93a64a05`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
 | 4 | `05-29-vfs-dedup` | 已归档 | 提交 `4d2e9105` / `05016cf0` / `b7db5bbc` / `6641d289`；归档提交 `c815b4ba`；provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
 | 5 | `05-29-infra-residual` | 已归档 | 规划提交 `27cd34e7`；实现提交 `d500c892` / `f346b96c` / `f93112d9`；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；历史 migrations 中 `*_at TEXT` 已改 `TIMESTAMPTZ`，新增 `0069_timestamp_columns_timestamptz.sql` 迁移已有开发库，repository bind/read 已改 `DateTime<Utc>`，`parse_pg_timestamp_checked` 删除，infra `to_rfc3339` grep 为 0；`cargo test -p agentdash-infrastructure`、`cargo check --workspace` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-infra-residual` |
-| 6 | `05-29-api-handler-thinning` | in-progress | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 list/create/update/delete 已下沉 application story management，route direct repo grep 显式剩余 2 处 task command adapter，`cargo check -p agentdash-application -p agentdash-api` 通过（仅既存 warning）；下一步处理 stories task command 下沉或转入 `llm_providers` |
+| 6 | `05-29-api-handler-thinning` | in-progress | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` admin catalog list/get/create/update/delete/reorder 已下沉 application `llm_provider` 模块，route direct repo grep 显式剩余 effective/profile/probe/OAuth adapter；`cargo check -p agentdash-application -p agentdash-api` 与 `pnpm run contracts:check` 通过（仅既存 warning）；下一步提交 LLM slice 后处理 `backends` |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
 | 8 | `05-29-frontend-server-state-refactor` | 待执行 | server-state 真迁 react-query；active project 单源；跨 store 命令式耦合清理；目标 god component 拆分 |
 | 9 | `05-29-session-assembly-converge` | 待复核/拆分 | resolver 争议完成复核；builder/compose helper 拆分；VFS 单存储派生有明确落地或证据结论 |
@@ -70,8 +70,8 @@
 
 ## 当前 child 下一步
 
-1. 提交 `stories.rs` Story 聚合 CRUD 下沉 slice。
-2. 继续阶段 3：处理 `stories` task command 下沉，或按风险切到阶段 4 `llm_providers`。
+1. 提交 `llm_providers.rs` admin catalog 下沉 slice。
+2. 继续阶段 5：处理 `backends` 下沉。
 3. 每完成一个 route slice，更新 repo 直调保留清单并运行对应 grep / `cargo check -p agentdash-application -p agentdash-api`。
 
 ## 今日子代理可行性复核

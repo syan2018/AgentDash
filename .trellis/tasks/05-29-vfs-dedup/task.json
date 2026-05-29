@@ -3,7 +3,7 @@
   "name": "vfs-dedup",
   "title": "vfs 去重（dispatch helper / MountProvider 拆 trait / patch 收一份 / MountError 贯通）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

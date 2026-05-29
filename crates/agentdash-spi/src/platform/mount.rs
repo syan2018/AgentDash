@@ -328,55 +328,6 @@ pub struct ExecResult {
 }
 
 // ============================================================================
-// Watch / events
-// ============================================================================
-
-/// 文件变更事件 kind。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MountEventKind {
-    Created,
-    Modified,
-    Deleted,
-    /// 重命名/移动。并非所有 provider 都能精确区分此类别，
-    /// 不支持时应降级为 Deleted + Created。
-    Renamed,
-}
-
-/// 单次 mount 内容变更事件。
-///
-/// 由 `MountProvider::watch` 返回的通道推送。供编排引擎、UI、hook
-/// 等消费者响应存储变更，替代轮询。
-#[derive(Debug, Clone)]
-pub struct MountEvent {
-    pub mount_id: String,
-    pub path: String,
-    pub kind: MountEventKind,
-    /// Unix 毫秒时间戳。
-    pub timestamp_ms: i64,
-}
-
-impl MountEvent {
-    pub fn new(mount_id: impl Into<String>, path: impl Into<String>, kind: MountEventKind) -> Self {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        Self {
-            mount_id: mount_id.into(),
-            path: path.into(),
-            kind,
-            timestamp_ms: now_ms,
-        }
-    }
-}
-
-/// 事件订阅句柄。
-///
-/// 基于 tokio broadcast channel：多订阅者共享同一事件流，掉队的订阅者
-/// 会收到 `RecvError::Lagged`（由消费侧自行处理）。
-pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
-
-// ============================================================================
 // Context
 // ============================================================================
 
@@ -395,21 +346,13 @@ pub struct MountOperationContext {
 }
 
 // ============================================================================
-// MountProvider trait
+// Mount provider traits
 // ============================================================================
 
-/// Unified mount I/O provider trait.
-///
-/// Each provider handles a specific `provider` string (e.g. `"relay_fs"`,
-/// `"inline_fs"`, `"km_bridge"`).  The mount dispatcher resolves the
-/// mount, looks up the matching provider, and delegates.
+/// Provider metadata and availability descriptor.
 #[async_trait]
-pub trait MountProvider: Send + Sync {
+pub trait ProviderDescriptor: Send + Sync {
     fn provider_id(&self) -> &str;
-
-    // ---- 服务协商元信息 ----
-    // 内置 provider (relay_fs, inline_fs, lifecycle_vfs) 不需要覆盖这些方法。
-    // 插件 provider 覆盖后，前端通过 /api/mount-providers 自动发现可配置的服务。
 
     /// 用户可见的显示名称。默认返回 provider_id。
     fn display_name(&self) -> &str {
@@ -430,6 +373,43 @@ pub trait MountProvider: Send + Sync {
     /// 内置 provider 返回 false，插件 provider 按需返回 true。
     fn is_user_configurable(&self) -> bool {
         false
+    }
+
+    /// Whether this mount can be used right now (e.g. relay backend connected).
+    async fn is_available(&self, _mount: &Mount) -> bool {
+        true
+    }
+}
+
+/// Unified mount provider object used by the dispatcher registry.
+#[async_trait]
+pub trait MountProvider: Send + Sync {
+    fn provider_id(&self) -> &str;
+
+    /// 用户可见的显示名称。默认返回 provider_id。
+    fn display_name(&self) -> &str {
+        self.provider_id()
+    }
+
+    /// root_ref 的格式提示，前端作为 placeholder 展示。
+    fn root_ref_hint(&self) -> &str {
+        ""
+    }
+
+    /// 该 provider 支持的 capability 列表（用于前端预填）。
+    fn supported_capabilities(&self) -> Vec<&str> {
+        vec!["read", "list"]
+    }
+
+    /// 是否允许用户在 Context Container 编辑器中直接配置。
+    /// 内置 provider 返回 false，插件 provider 按需返回 true。
+    fn is_user_configurable(&self) -> bool {
+        false
+    }
+
+    /// Whether this mount can be used right now (e.g. relay backend connected).
+    async fn is_available(&self, _mount: &Mount) -> bool {
+        true
     }
 
     async fn read_text(
@@ -468,47 +448,6 @@ pub trait MountProvider: Send + Sync {
             version_token: full.version_token,
             modified_at: full.modified_at,
         })
-    }
-
-    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
-    ///
-    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
-    ///
-    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
-    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
-    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
-    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
-    async fn suggest_paths(
-        &self,
-        mount: &Mount,
-        prefix: &str,
-        limit: usize,
-        ctx: &MountOperationContext,
-    ) -> Result<Vec<String>, MountError> {
-        const MAX_SCAN_FILES: usize = 1000;
-        let listing = self
-            .list(
-                mount,
-                &ListOptions {
-                    path: String::new(),
-                    pattern: None,
-                    recursive: true,
-                },
-                ctx,
-            )
-            .await?;
-        let mut scored: Vec<(usize, String)> = listing
-            .entries
-            .into_iter()
-            .filter(|e| !e.is_dir)
-            .take(MAX_SCAN_FILES)
-            .map(|e| {
-                let dist = strsim::levenshtein(prefix, &e.path);
-                (dist, e.path)
-            })
-            .collect();
-        scored.sort_by_key(|(d, _)| *d);
-        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
     }
 
     async fn read_binary(
@@ -584,12 +523,84 @@ pub trait MountProvider: Send + Sync {
         ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError>;
 
+    async fn exec(
+        &self,
+        mount: &Mount,
+        request: &ExecRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support exec",
+            self.provider_id()
+        )))
+    }
+
+    /// 查询文件元数据（不读取内容）。
+    ///
+    /// 类比 POSIX `stat()`：只返回 path/size/mtime/attributes 等属性，
+    /// 不读取 content。适合需要元数据但不需要正文的场景。
+    /// 默认实现回退为 `list` + 过滤。插件 provider 如果有更高效的元数据通道
+    /// （例如 KM 的 metadata API），应覆盖此方法。
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support stat",
+            self.provider_id()
+        )))
+    }
     async fn search_text(
         &self,
         mount: &Mount,
         query: &SearchQuery,
         ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError>;
+
+    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
+    ///
+    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
+    ///
+    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
+    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
+    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
+    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        const MAX_SCAN_FILES: usize = 1000;
+        let listing = self
+            .list(
+                mount,
+                &ListOptions {
+                    path: String::new(),
+                    pattern: None,
+                    recursive: true,
+                },
+                ctx,
+            )
+            .await?;
+        let mut scored: Vec<(usize, String)> = listing
+            .entries
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .take(MAX_SCAN_FILES)
+            .map(|e| {
+                let dist = strsim::levenshtein(prefix, &e.path);
+                (dist, e.path)
+            })
+            .collect();
+        scored.sort_by_key(|(d, _)| *d);
+        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
+    }
 
     /// grep 风格搜索：`base.pattern` 始终正则，支持 include_glob / context /
     /// multiline / output_mode。
@@ -716,63 +727,17 @@ pub trait MountProvider: Send + Sync {
             truncated: false,
         })
     }
-
-    async fn exec(
-        &self,
-        mount: &Mount,
-        request: &ExecRequest,
-        ctx: &MountOperationContext,
-    ) -> Result<ExecResult, MountError> {
-        let _ = (mount, request, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support exec",
-            self.provider_id()
-        )))
-    }
-
-    /// 查询文件元数据（不读取内容）。
-    ///
-    /// 类比 POSIX `stat()`：只返回 path/size/mtime/attributes 等属性，
-    /// 不读取 content。适合需要元数据但不需要正文的场景。
-    /// 默认实现回退为 `list` + 过滤。插件 provider 如果有更高效的元数据通道
-    /// （例如 KM 的 metadata API），应覆盖此方法。
-    async fn stat(
-        &self,
-        mount: &Mount,
-        path: &str,
-        ctx: &MountOperationContext,
-    ) -> Result<RuntimeFileEntry, MountError> {
-        let _ = (mount, path, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support stat",
-            self.provider_id()
-        )))
-    }
-
-    /// 订阅 mount 内容变更事件。
-    ///
-    /// 返回一个 broadcast receiver；调用方可通过 `.recv().await` 消费事件。
-    /// `path` 为空串表示订阅整个 mount；非空则表示订阅该子树。
-    ///
-    /// 该能力与 `MountCapability::Watch` 对应。默认返回 `NotSupported`。
-    async fn watch(
-        &self,
-        mount: &Mount,
-        path: &str,
-        ctx: &MountOperationContext,
-    ) -> Result<MountEventReceiver, MountError> {
-        let _ = (mount, path, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support watch",
-            self.provider_id()
-        )))
-    }
-
-    /// Whether this mount can be used right now (e.g. relay backend connected).
-    async fn is_available(&self, _mount: &Mount) -> bool {
-        true
-    }
 }
+
+/// Marker trait for provider I/O responsibilities.
+pub trait MountIo: MountProvider {}
+
+impl<T> MountIo for T where T: MountProvider + ?Sized {}
+
+/// Marker trait for provider search responsibilities.
+pub trait MountSearch: MountProvider {}
+
+impl<T> MountSearch for T where T: MountProvider + ?Sized {}
 
 #[cfg(test)]
 mod tests {

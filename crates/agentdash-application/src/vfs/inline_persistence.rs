@@ -4,7 +4,6 @@ use std::sync::Arc;
 use crate::runtime::Mount;
 use crate::vfs::mount::parse_inline_mount_owner;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
-use agentdash_spi::platform::mount::{MountEvent, MountEventKind, MountEventReceiver};
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -12,6 +11,42 @@ use uuid::Uuid;
 /// broadcast channel 容量。
 /// 溢出时老订阅者会收到 Lagged；128 对 inline 写入频率足够。
 const MOUNT_EVENT_CHANNEL_CAPACITY: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InlineOverlayEventKind {
+    Created,
+    Modified,
+    Deleted,
+}
+
+#[derive(Debug, Clone)]
+pub struct InlineOverlayEvent {
+    pub mount_id: String,
+    pub path: String,
+    pub kind: InlineOverlayEventKind,
+    pub timestamp_ms: i64,
+}
+
+impl InlineOverlayEvent {
+    pub fn new(
+        mount_id: impl Into<String>,
+        path: impl Into<String>,
+        kind: InlineOverlayEventKind,
+    ) -> Self {
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        Self {
+            mount_id: mount_id.into(),
+            path: path.into(),
+            kind,
+            timestamp_ms,
+        }
+    }
+}
+
+pub type InlineOverlayEventReceiver = broadcast::Receiver<InlineOverlayEvent>;
 
 // ─── Inline Content Persistence ─────────────────────────────
 
@@ -46,11 +81,11 @@ type InlineOverrideMap = HashMap<(String, String), Option<String>>;
 /// - 同一 session 内 write 后立即可 read（write-through cache）
 /// - 写入同时通过 `InlineContentPersister` 持久化到 DB
 /// - 多个 Agent 工具共享同一个 overlay（`Arc<InlineContentOverlay>`）
-/// - 写入/删除时通过 broadcast channel 推送 `MountEvent`，供编排引擎订阅
+/// - 写入/删除时通过 broadcast channel 推送 `InlineOverlayEvent`，供编排引擎订阅
 pub struct InlineContentOverlay {
     overrides: tokio::sync::RwLock<InlineOverrideMap>,
     persister: Arc<dyn InlineContentPersister>,
-    event_tx: broadcast::Sender<MountEvent>,
+    event_tx: broadcast::Sender<InlineOverlayEvent>,
 }
 
 impl InlineContentOverlay {
@@ -64,7 +99,7 @@ impl InlineContentOverlay {
     }
 
     /// 订阅该 overlay 上的所有 inline mount 事件。
-    pub fn subscribe_events(&self) -> MountEventReceiver {
+    pub fn subscribe_events(&self) -> InlineOverlayEventReceiver {
         self.event_tx.subscribe()
     }
 
@@ -126,11 +161,13 @@ impl InlineContentOverlay {
 
         // 3. 推送事件（订阅者缺失时 send 返回 Err，忽略即可）
         let kind = if existed_before {
-            MountEventKind::Modified
+            InlineOverlayEventKind::Modified
         } else {
-            MountEventKind::Created
+            InlineOverlayEventKind::Created
         };
-        let _ = self.event_tx.send(MountEvent::new(&mount.id, path, kind));
+        let _ = self
+            .event_tx
+            .send(InlineOverlayEvent::new(&mount.id, path, kind));
 
         Ok(())
     }
@@ -147,9 +184,11 @@ impl InlineContentOverlay {
             .persist_delete(owner_kind, owner_id, &container_id, path)
             .await?;
 
-        let _ = self
-            .event_tx
-            .send(MountEvent::new(&mount.id, path, MountEventKind::Deleted));
+        let _ = self.event_tx.send(InlineOverlayEvent::new(
+            &mount.id,
+            path,
+            InlineOverlayEventKind::Deleted,
+        ));
 
         Ok(())
     }
@@ -354,18 +393,18 @@ mod tests {
         let evt = rx.recv().await.expect("event 1");
         assert_eq!(evt.mount_id, "brief");
         assert_eq!(evt.path, "note.md");
-        assert_eq!(evt.kind, MountEventKind::Created);
+        assert_eq!(evt.kind, InlineOverlayEventKind::Created);
 
         overlay
             .write(&mount, "note.md", "v2")
             .await
             .expect("write 2");
         let evt = rx.recv().await.expect("event 2");
-        assert_eq!(evt.kind, MountEventKind::Modified);
+        assert_eq!(evt.kind, InlineOverlayEventKind::Modified);
 
         overlay.delete(&mount, "note.md").await.expect("delete");
         let evt = rx.recv().await.expect("event 3");
-        assert_eq!(evt.kind, MountEventKind::Deleted);
+        assert_eq!(evt.kind, InlineOverlayEventKind::Deleted);
     }
 
     #[test]

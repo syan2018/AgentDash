@@ -1,5 +1,7 @@
 import { Suspense, lazy, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./api/queryClient";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
@@ -307,11 +309,13 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthGate>
-        <AppContent />
-      </AuthGate>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthGate>
+          <AppContent />
+        </AuthGate>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 

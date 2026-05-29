@@ -1,33 +1,17 @@
 import { create } from 'zustand';
 import type {
-  ContextContainerCapability,
   Workspace,
   WorkspaceBinding,
-  WorkspaceBindingStatus,
   WorkspaceDetectionResult,
   WorkspaceIdentityKind,
   WorkspaceResolutionPolicy,
   WorkspaceStatus,
+  ContextContainerCapability,
 } from '../types';
-import { api } from '../api/client';
+import * as workspaceService from '../services/workspace';
+import type { WorkspaceBindingInput, CreateWorkspaceOpts } from '../services/workspace';
 
-export interface WorkspaceBindingInput {
-  id?: string;
-  backend_id: string;
-  root_ref: string;
-  status?: WorkspaceBindingStatus;
-  detected_facts?: Record<string, unknown>;
-  priority?: number;
-}
-
-export interface CreateWorkspaceOpts {
-  identity_kind?: WorkspaceIdentityKind;
-  identity_payload?: Record<string, unknown>;
-  resolution_policy?: WorkspaceResolutionPolicy;
-  bindings?: WorkspaceBindingInput[];
-  shortcut_binding?: WorkspaceBindingInput;
-  mount_capabilities?: ContextContainerCapability[];
-}
+export type { WorkspaceBindingInput, CreateWorkspaceOpts } from '../services/workspace';
 
 interface WorkspaceState {
   workspacesByProjectId: Record<string, Workspace[]>;
@@ -73,7 +57,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   fetchWorkspaces: async (projectId) => {
     set({ isLoading: true, error: null });
     try {
-      const workspaces = await api.get<Workspace[]>(`/projects/${projectId}/workspaces`);
+      const workspaces = await workspaceService.fetchWorkspaces(projectId);
       set((state) => ({
         workspacesByProjectId: { ...state.workspacesByProjectId, [projectId]: workspaces },
         isLoading: false,
@@ -86,10 +70,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   detectWorkspace: async (projectId, backendId, rootRef) => {
     try {
       set({ error: null });
-      return await api.post<WorkspaceDetectionResult>(
-        `/projects/${projectId}/workspaces/detect`,
-        { backend_id: backendId, root_ref: rootRef },
-      );
+      return await workspaceService.detectWorkspace(projectId, backendId, rootRef);
     } catch (error) {
       set({ error: (error as Error).message });
       return null;
@@ -99,15 +80,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   createWorkspace: async (projectId, name, opts) => {
     try {
       set({ error: null });
-      const workspace = await api.post<Workspace>(`/projects/${projectId}/workspaces`, {
-        name,
-        identity_kind: opts?.identity_kind,
-        identity_payload: opts?.identity_payload,
-        resolution_policy: opts?.resolution_policy ?? 'prefer_online',
-        bindings: opts?.bindings,
-        shortcut_binding: opts?.shortcut_binding,
-        mount_capabilities: opts?.mount_capabilities,
-      });
+      const workspace = await workspaceService.createWorkspace(projectId, name, opts);
       set((state) => {
         const existing = state.workspacesByProjectId[projectId] ?? [];
         return {
@@ -127,7 +100,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   updateWorkspace: async (id, projectId, payload) => {
     try {
       set({ error: null });
-      const workspace = await api.put<Workspace>(`/workspaces/${id}`, payload);
+      const workspace = await workspaceService.updateWorkspace(id, payload);
       set((state) => {
         const existing = state.workspacesByProjectId[projectId] ?? [];
         return {
@@ -146,7 +119,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   updateStatus: async (id, status) => {
     try {
-      await api.patch(`/workspaces/${id}/status`, { status });
+      await workspaceService.updateWorkspaceStatus(id, status);
       set((state) => {
         const updated = { ...state.workspacesByProjectId };
         for (const projectId in updated) {
@@ -163,7 +136,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   deleteWorkspace: async (id, projectId) => {
     try {
-      await api.delete(`/workspaces/${id}`);
+      await workspaceService.deleteWorkspace(id);
       set((state) => ({
         workspacesByProjectId: {
           ...state.workspacesByProjectId,

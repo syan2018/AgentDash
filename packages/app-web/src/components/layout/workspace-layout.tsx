@@ -8,7 +8,7 @@ import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
 import { useAuthStore } from "../../stores/authStore";
-import { useSidebarSessionsStore } from "../../stores/sidebarSessionsStore";
+import { useProjectSessions } from "../../queries/projectSessions";
 import { useTheme } from "../../hooks/use-theme";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project, ProjectSessionEntry } from "../../types";
@@ -101,7 +101,8 @@ export function WorkspaceLayout() {
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
-  const { sessions, loadForProject, clearForProject } = useSidebarSessionsStore();
+  // Sidebar 会话列表：30s 轮询保持最近会话不过期（与 agent tab 各自独立刷新）
+  const { sessions } = useProjectSessions(currentProjectId, { refetchInterval: 30_000 });
 
   const [activeFooterPanel, setActiveFooterPanel] = useState<FooterPanelKey | null>(null);
 
@@ -119,25 +120,6 @@ export function WorkspaceLayout() {
       void fetchWorkspaces(currentProjectId);
     }
   }, [currentProjectId, fetchWorkspaces]);
-
-  // Sidebar 会话列表：独立 store，独立刷新生命周期（与 agent-tab-view 脱钩）
-  const prevProjectIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!currentProjectId) return;
-    if (prevProjectIdRef.current === currentProjectId) return;
-    prevProjectIdRef.current = currentProjectId;
-    clearForProject(currentProjectId);
-    void loadForProject(currentProjectId);
-  }, [currentProjectId, clearForProject, loadForProject]);
-
-  // 定时轮询（30s），保证 sidebar 最近会话不过期；Agent tab 各自按需刷新
-  useEffect(() => {
-    if (!currentProjectId) return;
-    const interval = window.setInterval(() => {
-      void loadForProject(currentProjectId);
-    }, 30_000);
-    return () => window.clearInterval(interval);
-  }, [currentProjectId, loadForProject]);
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");

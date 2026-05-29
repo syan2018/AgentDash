@@ -35,7 +35,7 @@
 
 ## 已知遗留（需人工处理，非本次回归）
 
-1. **预存失败测试** `agentdash-api vfs_access::tests::runtime_tool_schemas_are_openai_compatible`：断言 fs builtin 工具 schema `offset` 必填。本次重构对 vfs_access 仅做 `RelayVfsService→VfsService` 改名（已核 diff，零触及 schema/offset），与本任务无关。属 fs-tools-align 范畴的历史不一致，建议在该专项处理。
+1. ~~**预存失败测试** `agentdash-api vfs_access::tests::runtime_tool_schemas_are_openai_compatible`~~ **已修复（commit 247de71a）**：经评估非 schema bug 而是测试断言方向错误——它要求「所有 property 必进 required」（strict 解读），与项目既定的非 strict schema 设计（sanitizer 明确保留可选性、fs 工具对齐 Claude Code 的可省略语义）冲突，且在第一个 Option 工具即 panic 使 grep/glob/shell 从未被验证。改为「required ⊆ properties」子集断言，api 89 全绿，6 个 fs 工具 schema 全部受验。
 2. **drop-step 冻结**：删 Step lifecycle 需先做 P0a（Activity 版 task-start/companion 入口）→ P0b（provider_lifecycle/journey/advance_node/construction 投影改读 activity_state）→ P0c（删 domain Step + migration）。这是 feature 迁移，需人工设计与决策。
 3. **前端 god component**：仅 workspace-layout 拆完；activity-inspector(1304)、SettingsPageContent(2014) 的拆分与 stage C（@agentdash/ui 基线）因 agent 反复 stall 未完成，留待后续小步处理。
 4. **3 个高风险 commit 建议人工 review**：699b11cc / 4ff640fb（及它们的调查结论），尽管测试等价。
@@ -44,4 +44,4 @@
 
 - `surface.vfs` / `context_projection.vfs` 的"单存储+派生"合并：两次调查都判定高 blast-radius、零行为收益，暂不动。
 - `compose_owner_bootstrap`/`compose_story_step` 可做**路径内**按阶段拆小函数（低风险，不跨路径合并）。
-- contracts 层的第三份 `McpTransportConfig` 是否合并：属 API 契约 DTO 边界问题，单独评估。
+- contracts 层的第三份 `McpTransportConfig` 是否合并：**已评估，维持独立**。它与 domain 版序列化表示逐字一致，但额外携带 `TS` derive（生成前端 TS 类型）+ 双向 `From`；domain 按 DDD 不应依赖 `ts_rs`，故这是刻意的 API 契约 DTO 边界，`From` 逐字段转换是该边界的标准代价而非 slop。application/infra 两份已在 commit 42cb3a35 收敛为复用 domain，全工作区现仅 domain（领域模型）+ contracts（DTO）两处，符合分层预期。

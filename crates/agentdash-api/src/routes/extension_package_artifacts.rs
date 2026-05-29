@@ -287,7 +287,8 @@ pub(crate) fn extension_package_error_to_api(
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            ApiError::Internal(error.to_string())
+            tracing::error!(error = %error, "extension package artifact storage error");
+            ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::Integrity(error) => ApiError::Internal(error),
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),

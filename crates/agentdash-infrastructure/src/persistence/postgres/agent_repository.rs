@@ -103,7 +103,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(ProjectAgent::try_from).transpose()
     }
 
@@ -130,7 +130,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(ProjectAgent::try_from).transpose()
     }
 
@@ -147,7 +147,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .bind(name)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(ProjectAgent::try_from).transpose()
     }
 
@@ -159,7 +159,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .bind(project_id.to_string())
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(ProjectAgent::try_from).collect()
     }
 
@@ -185,7 +185,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
         .bind(agent.project_id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -195,7 +195,7 @@ impl ProjectAgentRepository for PostgresProjectAgentRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 }
@@ -252,7 +252,7 @@ fn parse_installed_source(
     };
     Ok(Some(InstalledAssetSource {
         library_asset_id: Uuid::parse_str(&library_asset_id).map_err(|_| {
-            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.library_asset_id 无效"))
         })?,
         source_ref: required_installed_source_field(source_ref, "installed_source.source_ref")?,
         source_version: required_installed_source_field(

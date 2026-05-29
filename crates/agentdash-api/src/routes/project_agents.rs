@@ -99,7 +99,7 @@ pub async fn list_project_agents(
         .project_agent_repo
         .list_by_project(project_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
@@ -141,7 +141,7 @@ pub async fn open_project_agent_session(
         .project_agent_repo
         .get_by_project_and_id(project_id, project_agent_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let agent =
         SessionConstructionPlanner::build_project_agent_context(&state.repos, &project_agent)
@@ -156,7 +156,7 @@ pub async fn open_project_agent_session(
             .session_binding_repo
             .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+            .map_err(ApiError::from)?;
 
         if let Some(binding) = existing_binding
             && let Some(meta) = state
@@ -164,7 +164,7 @@ pub async fn open_project_agent_session(
                 .session_core
                 .get_session_meta(&binding.session_id)
                 .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .map_err(ApiError::from)?
         {
             let session_id = binding.session_id.clone();
             let binding_id = binding.id.to_string();
@@ -190,14 +190,14 @@ pub async fn open_project_agent_session(
         .session_binding_repo
         .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
     {
         let session_alive = state
             .services
             .session_core
             .get_session_meta(&binding.session_id)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .map_err(ApiError::from)?
             .is_some();
 
         if !session_alive {
@@ -206,7 +206,7 @@ pub async fn open_project_agent_session(
                 .session_binding_repo
                 .delete(binding.id)
                 .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?;
+                .map_err(ApiError::from)?;
         }
     }
 
@@ -215,7 +215,7 @@ pub async fn open_project_agent_session(
         .session_core
         .create_session("")
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let binding = SessionBinding::new(
         project.id,
         meta.id.clone(),
@@ -228,13 +228,13 @@ pub async fn open_project_agent_session(
         .session_binding_repo
         .create(&binding)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     state
         .services
         .session_core
         .mark_owner_bootstrap_pending(&meta.id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     // 自动启动显式 Lifecycle；未配置时归属到 freeform LifecycleRun。
     if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref() {
@@ -330,7 +330,7 @@ async fn find_project_agent_session(
             &SessionConstructionPlanner::project_agent_session_label(agent_key),
         )
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let Some(binding) = binding else {
         return Ok(None);
@@ -341,7 +341,7 @@ async fn find_project_agent_session(
         .session_core
         .get_session_meta(&binding.session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Some(ProjectAgentSession {
         binding_id: binding.id.to_string(),
@@ -371,7 +371,7 @@ pub async fn list_project_agent_sessions(
         .session_binding_repo
         .list_by_owner(SessionOwnerType::Project, project.id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let matching: Vec<_> = bindings.into_iter().filter(|b| b.label == label).collect();
 
@@ -382,7 +382,7 @@ pub async fn list_project_agent_sessions(
             .session_core
             .get_session_meta(&binding.session_id)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+            .map_err(ApiError::from)?;
 
         sessions.push(ProjectAgentSession {
             binding_id: binding.id.to_string(),
@@ -449,7 +449,7 @@ pub async fn list_project_agent_configs(
         .project_agent_repo
         .list_by_project(project_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let response = agents
         .iter()
@@ -487,7 +487,7 @@ pub async fn create_project_agent(
         .project_agent_repo
         .get_by_project_and_name(project_id, &name)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .is_some()
     {
         return Err(ApiError::Conflict(format!(
@@ -516,7 +516,7 @@ pub async fn create_project_agent(
         .project_agent_repo
         .create(&agent)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(build_project_agent_response(&agent)?))
 }
@@ -543,7 +543,7 @@ pub async fn update_project_agent(
         .project_agent_repo
         .get_by_project_and_id(project_id, project_agent_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent {project_agent_id} 不存在")))?;
 
     if let Some(name) = req.name {
@@ -588,7 +588,7 @@ pub async fn update_project_agent(
         .project_agent_repo
         .update(&agent)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(build_project_agent_response(&agent)?))
 }
@@ -614,7 +614,7 @@ pub async fn delete_project_agent(
         .routine_repo
         .list_by_project(project_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     if routines
         .iter()
         .any(|routine| routine.project_agent_id == project_agent_id)
@@ -629,14 +629,14 @@ pub async fn delete_project_agent(
         .inline_file_repo
         .delete_by_owner(InlineFileOwnerKind::ProjectAgent, project_agent_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     state
         .repos
         .project_agent_repo
         .delete(project_id, project_agent_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
@@ -661,7 +661,7 @@ async fn resolve_lifecycle_key_for_project_agent(
             .activity_lifecycle_definition_repo
             .get_by_project_and_key(project_id, &trimmed)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NotFound(format!("Lifecycle `{trimmed}` 不存在")))?;
         return Ok(Some(trimmed));
     }
@@ -677,7 +677,7 @@ async fn resolve_lifecycle_key_for_project_agent(
             .workflow_definition_repo
             .get_by_project_and_key(project_id, &wk)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NotFound(format!("Workflow `{wk}` 不存在")))?;
 
         let auto_key = format!("auto:{wk}");
@@ -687,7 +687,7 @@ async fn resolve_lifecycle_key_for_project_agent(
             .activity_lifecycle_definition_repo
             .get_by_project_and_key(project_id, &auto_key)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(ApiError::from)?;
 
         if existing.is_none() {
             use agentdash_domain::workflow::{
@@ -728,7 +728,7 @@ async fn resolve_lifecycle_key_for_project_agent(
                 .activity_lifecycle_definition_repo
                 .create(&lifecycle)
                 .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::from)?;
         }
 
         return Ok(Some(auto_key));

@@ -28,6 +28,7 @@ use super::workflow_snapshot::WorkflowSnapshotBuilder;
 use super::{
     dedupe_tags, global_builtin_source, map_hook_error, workflow_scope_key, workflow_source,
 };
+use crate::ApplicationError;
 
 /// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
 /// 对外仍实现 ExecutionHookProvider trait。
@@ -80,7 +81,7 @@ impl AppExecutionHookProvider {
     }
 
     /// 运行时注册/更新一个自定义 preset。
-    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), String> {
+    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), ApplicationError> {
         self.script_engine.register_preset(key, script)
     }
 

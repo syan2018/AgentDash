@@ -19,8 +19,8 @@ use rmcp::{
 };
 use tokio_util::sync::CancellationToken;
 
-use agentdash_spi::ConnectorError;
 use agentdash_mcp::render_content;
+use agentdash_spi::ConnectorError;
 
 use super::DiscoveredMcpTool;
 

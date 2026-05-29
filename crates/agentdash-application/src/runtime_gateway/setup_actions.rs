@@ -466,11 +466,9 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_probe_provider_rejects_invalid_input_shape() {
-        let gateway =
-            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(
-                None,
-                Arc::new(RmcpProbeTransport::new()),
-            )));
+        let gateway = RuntimeGateway::new().with_provider(Arc::new(
+            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+        ));
         let request = RuntimeInvocationRequest::new(
             RuntimeActionKey::parse(MCP_PROBE_TRANSPORT_ACTION).expect("valid action key"),
             RuntimeActor::EnvironmentSetup { request_id: None },
@@ -496,11 +494,9 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_probe_provider_returns_probe_result_payload() {
-        let gateway =
-            RuntimeGateway::new().with_provider(Arc::new(McpProbeTransportProvider::new(
-                None,
-                Arc::new(RmcpProbeTransport::new()),
-            )));
+        let gateway = RuntimeGateway::new().with_provider(Arc::new(
+            McpProbeTransportProvider::new(None, Arc::new(RmcpProbeTransport::new())),
+        ));
         let input = serde_json::to_value(McpTransportConfig::Stdio {
             command: "npx".to_string(),
             args: vec![],

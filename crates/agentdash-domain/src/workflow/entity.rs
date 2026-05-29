@@ -5,9 +5,7 @@ use uuid::Uuid;
 use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
-use super::validation::{
-    validate_activity_lifecycle_definition, validate_workflow_definition,
-};
+use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
@@ -322,7 +320,6 @@ pub fn build_effective_contract(
         },
     }
 }
-
 
 #[cfg(test)]
 mod tests {

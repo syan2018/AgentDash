@@ -49,7 +49,10 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
         "conflict" => Some(ApiError::Conflict(detail.to_string())),
         "unprocessable_entity" => Some(ApiError::UnprocessableEntity(detail.to_string())),
         "service_unavailable" => Some(ApiError::ServiceUnavailable(detail.to_string())),
-        "internal" => Some(ApiError::Internal(detail.to_string())),
+        "internal" => {
+            tracing::error!(detail, "session construction internal error");
+            Some(ApiError::Internal(String::from("内部 session 构建错误")))
+        }
         _ => None,
     }
 }

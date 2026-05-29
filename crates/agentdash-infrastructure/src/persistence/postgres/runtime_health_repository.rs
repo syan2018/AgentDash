@@ -71,7 +71,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -96,7 +96,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(now.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(seen_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -138,7 +138,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(reason)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -170,7 +170,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(backend_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -199,7 +199,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }

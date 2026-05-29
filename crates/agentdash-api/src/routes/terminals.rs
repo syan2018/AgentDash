@@ -150,7 +150,12 @@ pub async fn terminal_input(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal input relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端输入命令发送失败",
+            )))
+        }
     }
 }
 
@@ -188,7 +193,12 @@ pub async fn terminal_resize(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal resize relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端尺寸调整命令发送失败",
+            )))
+        }
     }
 }
 
@@ -218,7 +228,12 @@ pub async fn terminal_kill(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal kill relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端结束命令发送失败",
+            )))
+        }
     }
 }
 

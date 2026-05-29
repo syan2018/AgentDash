@@ -254,7 +254,7 @@ pub async fn clone_project(
     }
 
     let clone_name =
-        normalize_clone_name(req.name, &source_project.name).map_err(ApiError::BadRequest)?;
+        normalize_clone_name(req.name, &source_project.name).map_err(ApiError::from)?;
     let cloned_project = build_cloned_project(
         &source_project,
         current_user.user_id.clone(),

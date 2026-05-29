@@ -167,12 +167,7 @@ pub async fn list_routines(
         ProjectPermission::View,
     )
     .await?;
-    let routines = state
-        .repos
-        .routine_repo
-        .list_by_project(project_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let routines = state.repos.routine_repo.list_by_project(project_id).await?;
     Ok(Json(
         routines.into_iter().map(RoutineResponse::from).collect(),
     ))
@@ -235,12 +230,7 @@ pub async fn create_routine(
         session_strategy,
     );
 
-    state
-        .repos
-        .routine_repo
-        .create(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.create(&routine).await?;
 
     // 通知 cron 调度器配置变更
     state.services.cron_scheduler.notify_config_changed();
@@ -301,12 +291,7 @@ pub async fn update_routine(
 
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
@@ -321,12 +306,7 @@ pub async fn delete_routine(
     let routine =
         load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
-    state
-        .repos
-        .routine_repo
-        .delete(routine.id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.delete(routine.id).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
@@ -346,12 +326,7 @@ pub async fn enable_routine(
     routine.enabled = req.enabled;
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
@@ -375,8 +350,7 @@ pub async fn list_executions(
         .repos
         .routine_execution_repo
         .list_by_routine(routine.id, query.limit, query.offset)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     Ok(Json(
         executions
             .into_iter()
@@ -411,12 +385,7 @@ pub async fn regenerate_webhook_token(
     };
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     Ok(Json(RegenerateTokenResponse {
         endpoint_id,
@@ -435,8 +404,7 @@ pub async fn fire_webhook(
         .repos
         .routine_repo
         .find_by_endpoint_id(&endpoint_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Endpoint {endpoint_id} 不存在")))?;
 
     if !routine.enabled {
@@ -454,7 +422,7 @@ pub async fn fire_webhook(
     let exec_id = executor
         .fire_webhook(routine.id, req.text.as_deref(), req.payload)
         .await
-        .map_err(|e| ApiError::Internal(e))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({
         "execution_id": exec_id.to_string(),
@@ -479,8 +447,7 @@ async fn load_routine_with_permission(
         .repos
         .routine_repo
         .get_by_id(routine_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Routine {routine_id} 不存在")))?;
     load_project_with_permission(state, current_user, routine.project_id, permission).await?;
     Ok(routine)
@@ -495,8 +462,7 @@ async fn ensure_project_agent_exists(
         .repos
         .project_agent_repo
         .get_by_project_and_id(project_id, project_agent_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     if agent.is_none() {
         return Err(ApiError::BadRequest(format!(
             "Project {project_id} 不存在 Project Agent {project_agent_id}"

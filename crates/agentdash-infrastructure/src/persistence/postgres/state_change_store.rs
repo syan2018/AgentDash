@@ -23,7 +23,7 @@ pub async fn append_state_change(
     .bind(chrono::Utc::now().to_rfc3339())
     .execute(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     Ok(())
 }
@@ -48,7 +48,7 @@ pub async fn append_state_change_in_tx(
     .bind(chrono::Utc::now().to_rfc3339())
     .execute(&mut **tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     Ok(())
 }
@@ -66,7 +66,7 @@ pub async fn get_state_changes_since(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
@@ -89,7 +89,7 @@ pub async fn get_state_changes_since_by_project(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
@@ -98,7 +98,7 @@ pub async fn latest_state_change_id(pool: &PgPool) -> Result<i64, DomainError> {
     let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes")
         .fetch_one(pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
     Ok(row.0)
 }
 
@@ -111,7 +111,7 @@ pub async fn latest_state_change_id_by_project(
             .bind(project_id.to_string())
             .fetch_one(pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
     Ok(row.0)
 }
 

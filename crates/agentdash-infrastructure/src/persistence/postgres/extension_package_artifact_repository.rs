@@ -108,7 +108,9 @@ impl ExtensionPackageArtifactRepository for PostgresExtensionPackageArtifactRepo
 }
 
 fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifact, DomainError> {
-    let manifest: Json<serde_json::Value> = row.try_get("manifest").map_err(|error| sql_err_for("extension_package_artifacts", error))?;
+    let manifest: Json<serde_json::Value> = row
+        .try_get("manifest")
+        .map_err(|error| sql_err_for("extension_package_artifacts", error))?;
     let manifest: ExtensionTemplatePayload =
         serde_json::from_value(manifest.0).map_err(DomainError::Serialization)?;
     manifest.validate()?;
@@ -123,16 +125,34 @@ fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifac
             )?,
             id: parse_uuid(&row, "owner_id")?,
         },
-        extension_id: row.try_get("extension_id").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        package_name: row.try_get("package_name").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        package_version: row.try_get("package_version").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        asset_version: row.try_get("asset_version").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        source_version: row.try_get("source_version").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        storage_ref: row.try_get("storage_ref").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        archive_digest: row.try_get("archive_digest").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
-        manifest_digest: row.try_get("manifest_digest").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        extension_id: row
+            .try_get("extension_id")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        package_name: row
+            .try_get("package_name")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        package_version: row
+            .try_get("package_version")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        asset_version: row
+            .try_get("asset_version")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        source_version: row
+            .try_get("source_version")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        storage_ref: row
+            .try_get("storage_ref")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        archive_digest: row
+            .try_get("archive_digest")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        manifest_digest: row
+            .try_get("manifest_digest")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
         manifest,
-        byte_size: row.try_get("byte_size").map_err(|error| sql_err_for("extension_package_artifacts", error))?,
+        byte_size: row
+            .try_get("byte_size")
+            .map_err(|error| sql_err_for("extension_package_artifacts", error))?,
         created_at: parse_pg_timestamp_checked(
             row.try_get::<String, _>("created_at")
                 .map_err(|error| sql_err_for("extension_package_artifacts", error))?
@@ -151,7 +171,9 @@ fn row_to_artifact(row: sqlx::postgres::PgRow) -> Result<ExtensionPackageArtifac
 }
 
 fn parse_uuid(row: &sqlx::postgres::PgRow, field: &str) -> Result<Uuid, DomainError> {
-    let raw: String = row.try_get(field).map_err(|error| sql_err_for("extension_package_artifacts", error))?;
+    let raw: String = row
+        .try_get(field)
+        .map_err(|error| sql_err_for("extension_package_artifacts", error))?;
     Uuid::parse_str(&raw).map_err(|error| {
         DomainError::InvalidConfig(format!("extension_package_artifacts.{field}: {error}"))
     })

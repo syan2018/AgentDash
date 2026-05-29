@@ -68,7 +68,7 @@ pub(crate) async fn build_session_construction_for_launch(
         .session_binding_repo
         .list_by_session(session_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let visible_canvas_mount_ids = meta.visible_canvas_mount_ids.clone();
     let effective_executor = user_input
         .executor_config
@@ -132,7 +132,7 @@ pub(crate) async fn build_session_construction_for_launch(
                     .story_repo
                     .get_by_id(owner.owner_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                     .ok_or_else(|| {
                         ApiError::NotFound(format!("Story {} 不存在", owner.owner_id))
                     })?;
@@ -141,7 +141,7 @@ pub(crate) async fn build_session_construction_for_launch(
                     .project_repo
                     .get_by_id(story.project_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                     .ok_or_else(|| {
                         ApiError::NotFound(format!("Project {} 不存在", story.project_id))
                     })?;
@@ -180,7 +180,7 @@ pub(crate) async fn build_session_construction_for_launch(
                     .project_repo
                     .get_by_id(owner.owner_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                     .ok_or_else(|| {
                         ApiError::NotFound(format!("Project {} 不存在", owner.owner_id))
                     })?;
@@ -191,7 +191,7 @@ pub(crate) async fn build_session_construction_for_launch(
                         .routine_repo
                         .get_by_id(routine_source.routine_id)
                         .await
-                        .map_err(|e| ApiError::Internal(e.to_string()))?
+                        .map_err(ApiError::from)?
                         .ok_or_else(|| {
                             ApiError::NotFound(format!(
                                 "Routine {} 不存在",
@@ -464,7 +464,7 @@ async fn build_extension_runtime_projection(
         .project_extension_installation_repo
         .list_enabled_by_project(project_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(extension_runtime_projection_from_installations(
         installations,
     )?)
@@ -479,7 +479,7 @@ async fn append_routine_projection(
     SkillAssetService::new(state.repos.skill_asset_repo.as_ref())
         .bootstrap_builtins(project_id, Some(ROUTINE_MEMORY_SKILL_NAME))
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let routine_mount = agentdash_application::vfs::build_routine_mount(
         source.routine_id,
@@ -748,7 +748,7 @@ async fn build_lifecycle_node_prompt_request(
         .lifecycle_run_repo
         .list_by_session(session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let run = select_active_run(runs).ok_or_else(|| {
         ApiError::BadRequest(format!("Lifecycle node session {session_id} 无活跃 run"))
     })?;
@@ -757,10 +757,12 @@ async fn build_lifecycle_node_prompt_request(
         .activity_lifecycle_definition_repo
         .get_by_id(run.lifecycle_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id)))?;
     let current_step_key = run.current_step_key().ok_or_else(|| {
-        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无当前 activity"))
+        ApiError::BadRequest(format!(
+            "Lifecycle node session {session_id} 无当前 activity"
+        ))
     })?;
     let activity = lifecycle
         .activities
@@ -779,7 +781,7 @@ async fn build_lifecycle_node_prompt_request(
             .workflow_definition_repo
             .get_by_project_and_key(run.project_id, &spec.workflow_key)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?,
+            .map_err(ApiError::from)?,
         _ => None,
     };
     let audit_bus = Some(state.services.audit_bus.clone());
@@ -869,7 +871,7 @@ async fn build_continuation_context_frame_for_session(
         .session_eventing
         .build_projected_transcript(session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(
         agentdash_application::session::continuation::build_continuation_context_frame(
             &transcript,
@@ -940,7 +942,7 @@ async fn build_task_owner_prompt_request(
         .story_repo
         .find_by_task_id(task_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
     let task = story
         .find_task(task_id)
@@ -957,7 +959,7 @@ async fn build_task_owner_prompt_request(
         .project_repo
         .get_by_id(story.project_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
@@ -1021,7 +1023,7 @@ async fn build_task_owner_prompt_request(
             visible_canvas_mount_ids,
         )
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     }
 
     let mut continuation_context_frame = None;

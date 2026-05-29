@@ -65,7 +65,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,
-        FunctionActivityExecutorSpec, BashExecExecutorSpec, LifecycleRun, OutputPortDefinition,
+        BashExecExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition,
         WorkflowBindingKind, WorkflowDefinitionSource,
     };
     use uuid::Uuid;
@@ -120,8 +120,9 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(project_id, lifecycle.id, "sess-owner", activity_state)
-            .expect("run");
+        let run =
+            LifecycleRun::new_activity(project_id, lifecycle.id, "sess-owner", activity_state)
+                .expect("run");
 
         ActiveWorkflowProjection {
             run,

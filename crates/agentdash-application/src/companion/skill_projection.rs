@@ -2,6 +2,7 @@ use agentdash_domain::companion::COMPANION_SYSTEM_SKILL_NAME;
 use agentdash_spi::Vfs;
 use uuid::Uuid;
 
+use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_skill_asset_projection};
@@ -10,12 +11,12 @@ use crate::workflow::StepActivation;
 pub(crate) async fn ensure_companion_system_skill_asset(
     repos: &RepositorySet,
     project_id: Uuid,
-) -> Result<(), String> {
+) -> Result<(), ApplicationError> {
     SkillAssetService::new(repos.skill_asset_repo.as_ref())
         .bootstrap_builtins(project_id, Some(COMPANION_SYSTEM_SKILL_NAME))
         .await
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| ApplicationError::Internal(error.to_string()))
 }
 
 pub(crate) fn has_lifecycle_mount(vfs: &Vfs) -> bool {
@@ -50,7 +51,7 @@ pub(crate) async fn project_companion_system_skill_to_activation(
     repos: &RepositorySet,
     project_id: Uuid,
     activation: &mut StepActivation,
-) -> Result<(), String> {
+) -> Result<(), ApplicationError> {
     ensure_companion_system_skill_asset(repos, project_id).await?;
     let mut skill_asset_keys = Vec::new();
     append_companion_system_skill_key(&mut skill_asset_keys);

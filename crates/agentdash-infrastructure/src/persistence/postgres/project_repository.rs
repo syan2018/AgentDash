@@ -27,11 +27,7 @@ impl PostgresProjectRepository {
 #[async_trait::async_trait]
 impl ProjectRepository for PostgresProjectRepository {
     async fn create(&self, project: &Project) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         sqlx::query(
             "INSERT INTO projects (
@@ -52,7 +48,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.updated_at.to_rfc3339())
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let owner_grant = ProjectSubjectGrant::new(
             project.id,
@@ -64,9 +60,7 @@ impl ProjectRepository for PostgresProjectRepository {
         self.upsert_subject_grant_in_tx(&mut tx, &owner_grant)
             .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -80,7 +74,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(|r| r.try_into()).transpose()
     }
@@ -93,7 +87,7 @@ impl ProjectRepository for PostgresProjectRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(|r| r.try_into()).collect()
     }
@@ -124,7 +118,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -140,7 +134,7 @@ impl ProjectRepository for PostgresProjectRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -166,23 +160,17 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
     async fn upsert_subject_grant(&self, grant: &ProjectSubjectGrant) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         self.upsert_subject_grant_in_tx(&mut tx, grant).await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -204,7 +192,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(subject_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -236,7 +224,7 @@ impl PostgresProjectRepository {
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&mut **tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -308,7 +296,7 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
     fn try_from(row: ProjectSubjectGrantRow) -> Result<Self, Self::Error> {
         Ok(ProjectSubjectGrant {
             project_id: row.project_id.parse().map_err(|_| {
-                DomainError::InvalidConfig("无效的 project grant project_id".to_string())
+                DomainError::InvalidConfig(String::from("无效的 project grant project_id"))
             })?,
             subject_type: parse_project_subject_type(&row.subject_type)?,
             subject_id: row.subject_id,

@@ -10,15 +10,18 @@ use agentdash_spi::session_persistence::{
     SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
     TerminalEffectRecord, TerminalEffectStatus,
 };
-use agentdash_spi::session_persistence::{NewTerminalEffectRecord, PendingCapabilityStateTransition};
+use agentdash_spi::session_persistence::{
+    NewTerminalEffectRecord, PendingCapabilityStateTransition,
+};
 use sqlx::{Row, SqlitePool};
 
 use crate::persistence::session_core::{
-    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row, encode_optional_u64_as_i64,
-    encode_u64_as_i64, json_string, lineage_from_row, map_meta_row, optional_json_string,
-    parse_non_negative_u64, persisted_event_from_row, projection_from_envelope,
-    projection_head_from_row, projection_segment_from_row, runtime_command_from_row, sqlx_to_io,
-    terminal_effect_from_row, title_source_to_str, validate_commit_session,
+    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row,
+    encode_optional_u64_as_i64, encode_u64_as_i64, json_string, lineage_from_row, map_meta_row,
+    optional_json_string, parse_non_negative_u64, persisted_event_from_row,
+    projection_from_envelope, projection_head_from_row, projection_segment_from_row,
+    runtime_command_from_row, sqlx_to_io, terminal_effect_from_row, title_source_to_str,
+    validate_commit_session,
 };
 
 pub struct SqliteSessionRepository {
@@ -605,7 +608,6 @@ impl SessionMetaStore for SqliteSessionRepository {
         tx.commit().await.map_err(sqlx_to_io)?;
         Ok(())
     }
-
 }
 
 #[async_trait::async_trait]
@@ -806,7 +808,6 @@ impl SessionEventStore for SqliteSessionRepository {
         }
         Ok(events)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -946,7 +947,6 @@ impl SessionTerminalEffectStore for SqliteSessionRepository {
             .map_err(sqlx_to_io)?;
         rows.iter().map(terminal_effect_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -1086,7 +1086,6 @@ impl SessionRuntimeCommandStore for SqliteSessionRepository {
             .map_err(sqlx_to_io)?;
         rows.iter().map(runtime_command_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -1141,7 +1140,6 @@ impl SessionCompactionStore for SqliteSessionRepository {
         .map_err(sqlx_to_io)?;
         rows.iter().map(compaction_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -1356,7 +1354,6 @@ impl SessionProjectionStore for SqliteSessionRepository {
             head,
         })
     }
-
 }
 
 #[async_trait::async_trait]
@@ -1815,7 +1812,8 @@ mod tests {
     };
     use agentdash_spi::session_persistence::{
         ExecutionStatus, SessionBootstrapState, SessionCompactionRecord, SessionCompactionStatus,
-        SessionProjectionHeadRecord, SessionProjectionSegmentRecord, TerminalEffectType, TitleSource,
+        SessionProjectionHeadRecord, SessionProjectionSegmentRecord, TerminalEffectType,
+        TitleSource,
     };
     use chrono::Utc;
 

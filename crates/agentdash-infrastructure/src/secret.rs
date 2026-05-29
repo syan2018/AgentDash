@@ -107,7 +107,7 @@ impl LlmSecretCodec for LlmProviderSecretCipher {
             .decode(nonce_b64)
             .map_err(|error| DomainError::InvalidConfig(format!("LLM 密文 nonce 非法: {error}")))?;
         let nonce_bytes: [u8; 12] = nonce_bytes.try_into().map_err(|_| {
-            DomainError::InvalidConfig("LLM 密文 nonce 长度无效，请重新保存密钥".to_string())
+            DomainError::InvalidConfig(String::from("LLM 密文 nonce 长度无效，请重新保存密钥"))
         })?;
         let nonce = Nonce::from(nonce_bytes);
         let ciphertext_bytes = base64::engine::general_purpose::STANDARD

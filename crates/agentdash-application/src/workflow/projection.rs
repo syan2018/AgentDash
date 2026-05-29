@@ -139,9 +139,7 @@ async fn build_activity_projection_from_run(
 /// 测试夹具:构造 Activity 形态的 [`ActiveWorkflowProjection`]，供 hooks / vfs
 /// 等模块的单元测试复用，避免每处手搓 Activity lifecycle/run。
 #[cfg(test)]
-pub(crate) fn activity_projection(
-    guidance: Option<String>,
-) -> ActiveWorkflowProjection {
+pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowProjection {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,

@@ -115,7 +115,7 @@ pub(crate) async fn resolve_surface_bundle(
                     .workspace_repo
                     .get_by_id(workspace_id)
                     .await
-                    .map_err(|error| ApiError::Internal(error.to_string()))?
+                    .map_err(ApiError::from)?
             } else {
                 SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
                     .await
@@ -146,7 +146,7 @@ pub(crate) async fn resolve_surface_bundle(
                 .project_agent_repo
                 .get_by_project_and_id(*project_id, *project_agent_id)
                 .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .map_err(ApiError::from)?
                 .ok_or_else(|| ApiError::NotFound("Project Agent 不存在".into()))?;
             build_project_agent_knowledge_vfs(&agent).map_err(|error| {
                 ApiError::Internal(format!("构建 Agent 知识库 VFS 失败: {error}"))
@@ -186,7 +186,7 @@ pub(crate) async fn resolve_surface_bundle(
                 .project_vfs_mount_repo
                 .get_by_project_and_mount_id(*project_id, mount_id)
                 .await
-                .map_err(|error| ApiError::Internal(error.to_string()))?
+                .map_err(ApiError::from)?
                 .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
             let runtime_mount = build_project_vfs_mount_mount(&mount).map_err(|error| {
                 ApiError::Internal(format!("构建 Project VFS Mount 失败: {error}"))
@@ -224,7 +224,7 @@ async fn load_project_vfs_mounts(
         .project_vfs_mount_repo
         .list_by_project(project_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))
+        .map_err(ApiError::from)
 }
 
 pub(crate) async fn build_surface_summary(

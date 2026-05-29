@@ -190,7 +190,7 @@ pub async fn get_task_session(
             .session_binding_repo
             .list_by_session(session_id)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?;
+            .map_err(ApiError::from)?;
         build_session_context_plan(&state, &current_user, session_id, &bindings)
             .await?
             .map(|plan| plan.context_projection)

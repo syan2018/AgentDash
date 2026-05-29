@@ -447,7 +447,8 @@ impl MountProvider for LifecycleMountProvider {
             ["active", "steps"] => step_states_from_run(&active)
                 .iter()
                 .map(|step| {
-                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key)).as_virtual()
+                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key))
+                        .as_virtual()
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
@@ -587,7 +588,9 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["nodes"] => step_states_from_run(&active)
                 .iter()
-                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual())
+                .map(|step| {
+                    RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual()
+                })
                 .collect(),
             ["nodes", key] => {
                 if let Some(step) = step_states_from_run(&active)
@@ -798,7 +801,6 @@ impl MountProvider for LifecycleMountProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::session::{
         ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
         SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
@@ -820,6 +822,7 @@ mod tests {
         SessionCompactionRecord, SessionCompactionStatus, SessionProjectionHeadRecord,
         SessionProjectionSegmentRecord,
     };
+    use chrono::Utc;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -1186,13 +1189,9 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            "sess-root",
-            activity_state,
-        )
-        .expect("run");
+        let run =
+            LifecycleRun::new_activity(Uuid::new_v4(), Uuid::new_v4(), "sess-root", activity_state)
+                .expect("run");
         run_repo.create(&run).await.expect("store run");
 
         persistence

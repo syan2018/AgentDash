@@ -85,9 +85,7 @@ pub use hooks::{
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
-pub use platform::function_runner::{
-    ApiRequestOutcome, BashExecOutcome, FunctionRunner,
-};
+pub use platform::function_runner::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
 pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,

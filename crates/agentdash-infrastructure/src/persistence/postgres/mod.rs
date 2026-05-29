@@ -109,11 +109,10 @@ pub(crate) fn parse_pg_timestamp_checked(
 
 /// 统一的 sqlx 错误映射 helper。
 ///
-/// 各 repo 原本各自实现近似的 `db_err`，部分带表名前缀、部分不带，
-/// 现合并为此单一来源（仅机械去重，语义仍映射到现有 `DomainError::InvalidConfig`，
-/// `Database`/`Conflict` 等语义变体由 error-model-unify 另行处理）。
+/// Repository 在基础设施边界保留数据库错误语义，API 层再根据 `DomainError`
+/// 映射 HTTP status，避免靠字符串嗅探恢复唯一约束冲突。
 pub(crate) fn db_err(error: sqlx::Error) -> DomainError {
-    DomainError::InvalidConfig(error.to_string())
+    map_sqlx_error("database", "database", error)
 }
 
 /// 带表名前缀的 sqlx 错误映射，便于定位出错的表。
@@ -121,7 +120,64 @@ pub(crate) fn db_err(error: sqlx::Error) -> DomainError {
 /// 与 [`db_err`] 共用一处实现，仅多一个可选的表名前缀；命名刻意不以 `db_err`
 /// 开头，以保证 `db_err` helper 在工作区内唯一。
 pub(crate) fn sql_err_for(table: &'static str, error: sqlx::Error) -> DomainError {
-    DomainError::InvalidConfig(format!("{table}: {error}"))
+    map_sqlx_error(table, table, error)
+}
+
+fn map_sqlx_error(
+    entity: &'static str,
+    operation: &'static str,
+    error: sqlx::Error,
+) -> DomainError {
+    match error {
+        sqlx::Error::RowNotFound => DomainError::NotFound {
+            entity,
+            id: "row_not_found".to_string(),
+        },
+        sqlx::Error::Database(error) => map_database_error(entity, operation, error.as_ref()),
+        other => DomainError::Database {
+            operation,
+            message: other.to_string(),
+        },
+    }
+}
+
+fn map_database_error(
+    entity: &'static str,
+    operation: &'static str,
+    error: &(dyn sqlx::error::DatabaseError + 'static),
+) -> DomainError {
+    let code = error.code().map(|code| code.into_owned());
+    match code.as_deref() {
+        Some("23505") => DomainError::Conflict {
+            entity,
+            constraint: "unique",
+            message: database_constraint_message("唯一约束冲突", error),
+        },
+        Some("23503") => DomainError::Conflict {
+            entity,
+            constraint: "foreign_key",
+            message: database_constraint_message("外键约束冲突", error),
+        },
+        Some("23P01") => DomainError::Conflict {
+            entity,
+            constraint: "exclusion",
+            message: database_constraint_message("排他约束冲突", error),
+        },
+        _ => DomainError::Database {
+            operation,
+            message: error.message().to_string(),
+        },
+    }
+}
+
+fn database_constraint_message(
+    fallback: &'static str,
+    error: &(dyn sqlx::error::DatabaseError + 'static),
+) -> String {
+    error
+        .constraint()
+        .map(|constraint| format!("{fallback}: {constraint}"))
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;

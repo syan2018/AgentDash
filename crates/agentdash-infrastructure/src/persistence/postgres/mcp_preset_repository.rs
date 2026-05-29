@@ -210,20 +210,20 @@ fn parse_installed_source(
     };
     Ok(Some(InstalledAssetSource {
         library_asset_id: library_asset_id.parse().map_err(|_| {
-            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.library_asset_id 无效"))
         })?,
         source_ref: source_ref.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_ref 为空"))
         })?,
         source_version: source_version.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_version 为空"))
         })?,
         source_digest: source_digest.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_digest 为空"))
         })?,
         installed_at: super::parse_pg_timestamp_checked(
             installed_at.as_deref().ok_or_else(|| {
-                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
+                DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
             })?,
             "installed_source.installed_at",
         )?,

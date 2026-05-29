@@ -81,7 +81,7 @@ pub async fn list_providers(
         .llm_provider_repo
         .list_all()
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let response = providers
         .into_iter()
         .map(|provider| admin_provider_dto(provider, &state))
@@ -118,7 +118,7 @@ pub async fn create_provider(
         .llm_provider_repo
         .list_all()
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let max_sort = all.iter().map(|p| p.sort_order).max().unwrap_or(-1);
 
     let mut provider = LlmProvider::new(name, slug, protocol);
@@ -159,7 +159,7 @@ pub async fn create_provider(
         .llm_provider_repo
         .create(&provider)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
@@ -176,7 +176,7 @@ pub async fn get_provider(
         .llm_provider_repo
         .get_by_id(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {id} 不存在")))?;
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
@@ -194,7 +194,7 @@ pub async fn update_provider(
         .llm_provider_repo
         .get_by_id(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {id} 不存在")))?;
 
     if let Some(name) = req.name {
@@ -250,7 +250,7 @@ pub async fn update_provider(
         .llm_provider_repo
         .update(&provider)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(admin_provider_dto(provider, &state)?))
 }
@@ -267,7 +267,7 @@ pub async fn delete_provider(
         .llm_provider_repo
         .delete(id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
@@ -287,7 +287,7 @@ pub async fn reorder_providers(
         .llm_provider_repo
         .reorder(&ids)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(Json(serde_json::json!({ "reordered": true })))
 }
 
@@ -321,7 +321,7 @@ pub async fn upsert_user_credential(
         .llm_provider_repo
         .get_by_id(provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     ensure_provider_allows_user_credential(&provider)?;
     if provider.protocol == WireProtocol::OpenaiCodex {
@@ -337,7 +337,7 @@ pub async fn upsert_user_credential(
         .secrets
         .llm_provider_secret
         .encrypt(api_key)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let mut credential =
         LlmProviderUserCredential::new(provider.id, current_user.user_id.clone(), encrypted);
     let (status, message) = verify_user_api_key(&provider, api_key).await;
@@ -347,7 +347,7 @@ pub async fn upsert_user_credential(
         .llm_provider_credential_repo
         .upsert_for_user_provider(&credential)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(Json(
         effective_provider_dto_for_provider(provider, &state, &current_user).await?,
     ))
@@ -364,7 +364,7 @@ pub async fn delete_user_credential(
         .llm_provider_credential_repo
         .delete_for_user_provider(&current_user.user_id, provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(Json(DeleteLlmProviderUserCredentialResponse { deleted }))
 }
 
@@ -379,7 +379,7 @@ pub async fn verify_user_credential(
         .llm_provider_repo
         .get_by_id(provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     ensure_provider_allows_user_credential(&provider)?;
     if provider.protocol == WireProtocol::OpenaiCodex {
@@ -392,13 +392,13 @@ pub async fn verify_user_credential(
         .llm_provider_credential_repo
         .get_for_user_provider(&current_user.user_id, provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound("尚未保存个人 BYOK Key".into()))?;
     let api_key = state
         .secrets
         .llm_provider_secret
         .decrypt(&credential.api_key_ciphertext)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let (status, message) = verify_user_api_key(&provider, &api_key).await;
     credential.mark_verification(status, message);
     state
@@ -406,7 +406,7 @@ pub async fn verify_user_credential(
         .llm_provider_credential_repo
         .upsert_for_user_provider(&credential)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     Ok(Json(
         effective_provider_dto_for_provider(provider, &state, &current_user).await?,
     ))
@@ -426,7 +426,7 @@ pub async fn start_codex_oauth(
         .llm_provider_repo
         .get_by_id(provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     if provider.protocol != WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
@@ -468,7 +468,7 @@ pub async fn start_user_codex_oauth(
         .llm_provider_repo
         .get_by_id(provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     if provider.protocol != WireProtocol::OpenaiCodex {
         return Err(ApiError::BadRequest(
@@ -581,7 +581,7 @@ pub async fn probe_user_provider_models(
         .llm_provider_repo
         .get_by_id(provider_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("LLM Provider {provider_id} 不存在")))?;
     ensure_provider_allows_user_credential(&provider)?;
     let protocol = provider.protocol;
@@ -635,7 +635,7 @@ async fn resolve_admin_probe_api_key(
             if let Ok(Some(provider)) = state.repos.llm_provider_repo.get_by_id(id).await {
                 if let Some(resolved) =
                     resolve_global_credential(&provider, state.secrets.llm_provider_secret.as_ref())
-                        .map_err(|e| ApiError::Internal(e.to_string()))?
+                        .map_err(ApiError::from)?
                 {
                     return Ok(resolved.api_key);
                 }
@@ -663,7 +663,7 @@ async fn resolve_user_probe_api_key(
         Some(user_id),
     )
     .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .map_err(ApiError::from)?
     else {
         return Ok(String::new());
     };
@@ -957,7 +957,7 @@ async fn effective_provider_dto(
         .llm_provider_credential_repo
         .get_for_user_provider(user_id, provider.id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
     let user_api_key_preview = user_credential
         .as_ref()
         .and_then(|credential| {
@@ -1095,7 +1095,7 @@ fn encrypt_optional_secret(state: &AppState, value: &str) -> Result<String, ApiE
         .secrets
         .llm_provider_secret
         .encrypt(trimmed)
-        .map_err(|e| ApiError::Internal(e.to_string()))
+        .map_err(ApiError::from)
 }
 
 fn ensure_provider_allows_user_credential(provider: &LlmProvider) -> Result<(), ApiError> {

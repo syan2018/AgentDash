@@ -265,8 +265,7 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
             })),
         )
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
+        .await?;
 
         let session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
@@ -448,8 +447,7 @@ impl CompanionRequestTool {
                 "constraint_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot == "constraint").count(),
             })),
         )
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
+        .await?;
         record_subagent_trace(
             hook_session.as_ref(),
             Some(&session_services),
@@ -631,8 +629,7 @@ impl CompanionRequestTool {
                 &companion_context.companion_label,
                 Some(review_payload.clone()),
             )
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .await?;
             if let Some(action) = build_subagent_pending_action(
                 &companion_context.parent_turn_id,
                 &companion_context.companion_label,
@@ -914,7 +911,9 @@ impl CompanionRequestTool {
             .lifecycle_run_repo
             .create(&run)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}")))?;
+            .map_err(|e| {
+                AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}"))
+            })?;
 
         let node_label = crate::workflow::build_lifecycle_node_label(&entry_activity.key);
         let lifecycle_binding = SessionBinding::new(
@@ -1445,8 +1444,7 @@ impl CompanionRespondTool {
                 &companion_context.companion_label,
                 Some(hook_payload.clone()),
             )
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .await?;
             if let Some(action) = build_subagent_pending_action(
                 &companion_context.parent_turn_id,
                 &companion_context.companion_label,
@@ -1721,7 +1719,7 @@ async fn evaluate_subagent_hook(
     turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
-) -> Result<agentdash_spi::HookResolution, String> {
+) -> Result<agentdash_spi::HookResolution, AgentToolError> {
     let resolution = hook_session
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
@@ -1735,7 +1733,7 @@ async fn evaluate_subagent_hook(
             token_stats: None,
         })
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
     if resolution.refresh_snapshot {
         hook_session
@@ -1745,7 +1743,7 @@ async fn evaluate_subagent_hook(
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
     }
 
     Ok(resolution)

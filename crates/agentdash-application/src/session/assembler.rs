@@ -75,7 +75,7 @@ use crate::story::context_builder::{StoryContextBuildInput, contribute_story_con
 use crate::task::execution::TaskExecutionError;
 use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
 use crate::vfs::{
-    VfsService, SessionMountTarget, apply_agent_vfs_access_grants,
+    SessionMountTarget, VfsService, apply_agent_vfs_access_grants,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::workflow::{
@@ -900,7 +900,9 @@ impl<'a> SessionRequestAssembler<'a> {
         let mut skill_asset_keys = spec.agent_skill_asset_keys.clone();
         if let Some(space) = vfs.as_mut() {
             if has_lifecycle_mount(space) {
-                ensure_companion_system_skill_asset(self.repos, project_id).await?;
+                ensure_companion_system_skill_asset(self.repos, project_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 append_companion_system_skill_key(&mut skill_asset_keys);
             }
             append_visible_canvas_mounts(
@@ -996,7 +998,8 @@ impl<'a> SessionRequestAssembler<'a> {
                     *workspace,
                     60,
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 (resolved.fragments, resolved.warnings)
             }
             OwnerScope::Project { .. } => (Vec::new(), Vec::new()),
@@ -1230,7 +1233,7 @@ impl<'a> SessionRequestAssembler<'a> {
             86,
         )
         .await
-        .map_err(TaskExecutionError::UnprocessableEntity)?;
+        .map_err(|error| TaskExecutionError::UnprocessableEntity(error.to_string()))?;
 
         let task_phase = match spec.phase {
             StoryStepPhase::Start => TaskExecutionPhase::Start,
@@ -1526,7 +1529,8 @@ async fn compose_lifecycle_node_with_audit(
         platform_config,
     );
     project_companion_system_skill_to_activation(repos, spec.run.project_id, &mut activation)
-        .await?;
+        .await
+        .map_err(|error| error.to_string())?;
 
     // SessionPlan 在 PR 5b 前 lifecycle node 路径完全不产出，导致 lifecycle agent
     // 的 bundle 相比 owner / task 路径最薄。此处补上 SessionPlan contribution，
@@ -2017,9 +2021,7 @@ async fn resolve_owner_workflow_tool_directives(
         .iter()
         .find(|a| a.key == lifecycle.entry_activity_key)?;
     let workflow_key = match &entry_activity.executor {
-        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => {
-            spec.workflow_key.as_str()
-        }
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => spec.workflow_key.as_str(),
         _ => return None,
     };
 
@@ -2038,9 +2040,10 @@ async fn resolve_owner_workflow_tool_directives(
 mod tests {
     use super::*;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, InputPortDefinition, OutputPortDefinition, WorkflowBindingKind,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
+        ActivityLifecycleRunState, AgentActivityExecutorSpec, InputPortDefinition,
+        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 

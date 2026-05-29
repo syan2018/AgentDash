@@ -13,8 +13,8 @@ pub mod provider_inline;
 pub mod provider_lifecycle;
 pub mod provider_routine;
 pub mod provider_skill_asset;
-pub mod service;
 pub mod rewrite;
+pub mod service;
 pub mod surface;
 pub mod surface_query;
 pub mod tools;
@@ -62,7 +62,7 @@ pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
-pub use service::{VfsService, TextSearchParams};
+pub use service::{TextSearchParams, VfsService};
 pub use surface::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource,

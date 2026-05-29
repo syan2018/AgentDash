@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository,
-    ValidationIssue, ValidationSeverity,
-    WorkflowDefinition, WorkflowDefinitionRepository, workflow_binding_kinds_cover,
+    ValidationIssue, ValidationSeverity, WorkflowDefinition, WorkflowDefinitionRepository,
+    workflow_binding_kinds_cover,
 };
 
 use super::definition::BuiltinWorkflowBundle;

@@ -145,7 +145,7 @@ pub async fn get_story_session(
         .session_binding_repo
         .list_by_session(&binding.session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let context_projection = build_session_context_plan(
         &state,
         &current_user,
@@ -306,7 +306,7 @@ pub async fn create_story_session(
                 .session_core
                 .create_session(&title)
                 .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::from)?;
             meta.id
         }
     };
@@ -324,7 +324,7 @@ pub async fn create_story_session(
             .session_core
             .mark_owner_bootstrap_pending(&session_id)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(ApiError::from)?;
         crate::routes::acp_sessions::ensure_freeform_lifecycle_run(
             state.as_ref(),
             story.project_id,

@@ -172,8 +172,8 @@ where
         &self,
         project_id: Uuid,
     ) -> Result<Vec<McpPreset>, McpPresetApplicationError> {
-        let templates =
-            list_builtin_mcp_preset_templates().map_err(McpPresetApplicationError::Internal)?;
+        let templates = list_builtin_mcp_preset_templates()
+            .map_err(|error| McpPresetApplicationError::Internal(error.to_string()))?;
         let mut results = Vec::with_capacity(templates.len());
         for template in templates {
             results.push(self.bootstrap_single_builtin(project_id, &template).await?);
@@ -188,7 +188,7 @@ where
         builtin_key: &str,
     ) -> Result<McpPreset, McpPresetApplicationError> {
         let template = super::definition::get_builtin_mcp_preset_template(builtin_key)
-            .map_err(McpPresetApplicationError::Internal)?
+            .map_err(|error| McpPresetApplicationError::Internal(error.to_string()))?
             .ok_or_else(|| {
                 McpPresetApplicationError::NotFound(format!(
                     "builtin MCP Preset 模板不存在: {builtin_key}"

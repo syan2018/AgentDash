@@ -90,7 +90,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(routine.last_fired_at.map(|t| t.to_rfc3339()))
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -102,7 +102,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(Routine::try_from).transpose()
     }
 
@@ -114,7 +114,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(Routine::try_from).collect()
     }
 
@@ -131,7 +131,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(containment)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(Routine::try_from).collect()
     }
 
@@ -156,7 +156,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(routine.last_fired_at.map(|t| t.to_rfc3339()))
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -165,7 +165,7 @@ impl RoutineRepository for PostgresRoutineRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -179,7 +179,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(containment)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(Routine::try_from).transpose()
     }
 }
@@ -272,7 +272,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.entity_key)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -284,7 +284,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(RoutineExecution::try_from).transpose()
     }
 
@@ -309,7 +309,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.entity_key)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -328,7 +328,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(offset as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(RoutineExecution::try_from).collect()
     }
 
@@ -345,7 +345,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(entity_key)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(RoutineExecution::try_from).transpose()
     }
 }

@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查错误分层、结构化映射和禁止 stringly error 是否满足"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "检查 sqlx/Postgres 错误是否在 infra 边界结构化转换"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查批量替换后的后端代码质量、unwrap/to_string/error handling"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "检查 API 错误响应是否符合跨层契约与 drift gate 背景"}

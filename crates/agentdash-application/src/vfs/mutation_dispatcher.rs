@@ -587,11 +587,7 @@ mod tests {
 
     fn dispatcher(repo: Arc<MemoryInlineFileRepo>) -> VfsMutationDispatcher {
         let registry = Arc::new(MountProviderRegistry::new());
-        VfsMutationDispatcher::new(
-            Arc::new(VfsService::new(registry.clone())),
-            repo,
-            registry,
-        )
+        VfsMutationDispatcher::new(Arc::new(VfsService::new(registry.clone())), repo, registry)
     }
 
     fn vfs_with_mount(mount: Mount) -> Vfs {

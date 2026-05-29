@@ -209,7 +209,9 @@ fn row_to_installation(
 ) -> Result<ProjectExtensionInstallation, DomainError> {
     let id = parse_uuid(&row, "id")?;
     let project_id = parse_uuid(&row, "project_id")?;
-    let manifest: Json<serde_json::Value> = row.try_get("manifest").map_err(|error| sql_err_for("project_extension_installations", error))?;
+    let manifest: Json<serde_json::Value> = row
+        .try_get("manifest")
+        .map_err(|error| sql_err_for("project_extension_installations", error))?;
     let manifest: ExtensionTemplatePayload =
         serde_json::from_value(manifest.0).map_err(DomainError::Serialization)?;
     manifest.validate()?;
@@ -218,9 +220,15 @@ fn row_to_installation(
     Ok(ProjectExtensionInstallation {
         id,
         project_id,
-        extension_key: row.try_get("extension_key").map_err(|error| sql_err_for("project_extension_installations", error))?,
-        display_name: row.try_get("display_name").map_err(|error| sql_err_for("project_extension_installations", error))?,
-        enabled: row.try_get("enabled").map_err(|error| sql_err_for("project_extension_installations", error))?,
+        extension_key: row
+            .try_get("extension_key")
+            .map_err(|error| sql_err_for("project_extension_installations", error))?,
+        display_name: row
+            .try_get("display_name")
+            .map_err(|error| sql_err_for("project_extension_installations", error))?,
+        enabled: row
+            .try_get("enabled")
+            .map_err(|error| sql_err_for("project_extension_installations", error))?,
         config: row
             .try_get::<Json<serde_json::Value>, _>("config")
             .map_err(|error| sql_err_for("project_extension_installations", error))?
@@ -318,8 +326,9 @@ fn artifact_manifest_digest(artifact: &Option<ExtensionPackageArtifactRef>) -> O
 fn row_to_installed_source(
     row: &sqlx::postgres::PgRow,
 ) -> Result<Option<InstalledAssetSource>, DomainError> {
-    let library_asset_id: Option<String> =
-        row.try_get("installed_library_asset_id").map_err(|error| sql_err_for("project_extension_installations", error))?;
+    let library_asset_id: Option<String> = row
+        .try_get("installed_library_asset_id")
+        .map_err(|error| sql_err_for("project_extension_installations", error))?;
     let Some(library_asset_id) = library_asset_id else {
         return Ok(None);
     };
@@ -342,7 +351,9 @@ fn row_to_installed_source(
 fn row_to_package_artifact(
     row: &sqlx::postgres::PgRow,
 ) -> Result<Option<ExtensionPackageArtifactRef>, DomainError> {
-    let artifact_id: Option<String> = row.try_get("package_artifact_id").map_err(|error| sql_err_for("project_extension_installations", error))?;
+    let artifact_id: Option<String> = row
+        .try_get("package_artifact_id")
+        .map_err(|error| sql_err_for("project_extension_installations", error))?;
     let Some(artifact_id) = artifact_id else {
         return Ok(None);
     };
@@ -372,7 +383,9 @@ fn required_optional_column(
 }
 
 fn parse_uuid(row: &sqlx::postgres::PgRow, field: &str) -> Result<Uuid, DomainError> {
-    let raw: String = row.try_get(field).map_err(|error| sql_err_for("project_extension_installations", error))?;
+    let raw: String = row
+        .try_get(field)
+        .map_err(|error| sql_err_for("project_extension_installations", error))?;
     parse_uuid_value(&raw, field)
 }
 

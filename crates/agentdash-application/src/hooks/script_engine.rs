@@ -8,6 +8,7 @@ use agentdash_spi::{
 use super::snapshot_helpers::*;
 
 use super::rules::HookEvaluationContext;
+use crate::ApplicationError;
 
 // ── 脚本返回值（中间态，merge 进 HookResolution 前的结构） ──
 
@@ -53,8 +54,10 @@ impl HookScriptEngine {
     }
 
     /// 运行时注册/更新自定义 preset 脚本。
-    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), String> {
-        self.evaluator.register_preset(key, script)
+    pub fn register_preset(&self, key: &str, script: &str) -> Result<(), ApplicationError> {
+        self.evaluator
+            .register_preset(key, script)
+            .map_err(ApplicationError::InvalidConfig)
     }
 
     /// 移除一个 preset（仅 UserDefined 类型应调用此接口）。
@@ -68,9 +71,12 @@ impl HookScriptEngine {
         preset_key: &str,
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
-    ) -> Result<ScriptDecision, String> {
+    ) -> Result<ScriptDecision, ApplicationError> {
         let ctx_json = Self::build_ctx_value(ctx, params);
-        let raw = self.evaluator.eval_preset(preset_key, &ctx_json)?;
+        let raw = self
+            .evaluator
+            .eval_preset(preset_key, &ctx_json)
+            .map_err(ApplicationError::Internal)?;
         Self::parse_decision(&raw)
     }
 
@@ -80,9 +86,12 @@ impl HookScriptEngine {
         script: &str,
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
-    ) -> Result<ScriptDecision, String> {
+    ) -> Result<ScriptDecision, ApplicationError> {
         let ctx_json = Self::build_ctx_value(ctx, params);
-        let raw = self.evaluator.eval_script(script, &ctx_json)?;
+        let raw = self
+            .evaluator
+            .eval_script(script, &ctx_json)
+            .map_err(ApplicationError::InvalidConfig)?;
         Self::parse_decision(&raw)
     }
 
@@ -170,7 +179,7 @@ impl HookScriptEngine {
         })
     }
 
-    fn parse_decision(result: &serde_json::Value) -> Result<ScriptDecision, String> {
+    fn parse_decision(result: &serde_json::Value) -> Result<ScriptDecision, ApplicationError> {
         if result.is_null() {
             return Ok(empty_decision());
         }

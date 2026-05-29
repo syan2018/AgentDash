@@ -52,7 +52,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(Utc::now().to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -68,7 +68,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -84,7 +84,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(group_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -99,7 +99,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -114,7 +114,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -132,7 +132,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -142,11 +142,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         user_id: &str,
         groups: &[Group],
     ) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let now = Utc::now().to_rfc3339();
         if !groups.is_empty() {
@@ -166,14 +162,14 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
                 .build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
 
         sqlx::query("DELETE FROM group_memberships WHERE user_id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if !groups.is_empty() {
             let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
@@ -189,12 +185,10 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
                 .build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }

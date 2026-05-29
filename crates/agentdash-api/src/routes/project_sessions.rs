@@ -56,8 +56,7 @@ pub async fn get_project_session(
         .repos
         .session_binding_repo
         .list_by_owner(SessionOwnerType::Project, project_uuid)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .await?;
     let binding = bindings
         .into_iter()
         .find(|item| item.id == binding_uuid)
@@ -69,14 +68,12 @@ pub async fn get_project_session(
         .services
         .session_core
         .get_session_meta(&binding.session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .await?;
     let context_bindings = state
         .repos
         .session_binding_repo
         .list_by_session(&binding.session_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .await?;
     let context_projection = build_session_context_plan(
         &state,
         &current_user,
@@ -179,7 +176,7 @@ pub async fn list_project_sessions(
 
     let _project = project_result?;
 
-    let project_bindings = bindings_result.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let project_bindings = bindings_result?;
 
     if project_bindings.is_empty() {
         return Ok(Json(vec![]));

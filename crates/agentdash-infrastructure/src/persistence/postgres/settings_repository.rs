@@ -52,7 +52,7 @@ impl SettingsRepository for PostgresSettingsRepository {
                 .await
             }
         }
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(Setting::try_from).collect()
     }
@@ -68,7 +68,7 @@ impl SettingsRepository for PostgresSettingsRepository {
         .bind(key)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(Setting::try_from).transpose()
     }
@@ -92,7 +92,7 @@ impl SettingsRepository for PostgresSettingsRepository {
         .bind(value_str)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -117,7 +117,7 @@ impl SettingsRepository for PostgresSettingsRepository {
         .bind(key)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(result.rows_affected() > 0)
     }

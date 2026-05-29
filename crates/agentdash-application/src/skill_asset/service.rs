@@ -5,7 +5,10 @@ use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
 };
-use agentdash_spi::{RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource, RemoteSkillSourceError};
+use agentdash_spi::{
+    RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
+    RemoteSkillSourceError,
+};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

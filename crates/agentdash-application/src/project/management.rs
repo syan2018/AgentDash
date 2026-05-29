@@ -6,6 +6,8 @@ use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workspace::WorkspaceRepository;
 
+use crate::ApplicationError;
+
 #[derive(Debug, Clone, Default)]
 pub struct ProjectMutationInput {
     pub name: Option<String>,
@@ -59,12 +61,17 @@ pub fn apply_project_mutation(
     }
 }
 
-pub fn normalize_clone_name(raw_name: Option<String>, source_name: &str) -> Result<String, String> {
+pub fn normalize_clone_name(
+    raw_name: Option<String>,
+    source_name: &str,
+) -> Result<String, ApplicationError> {
     match raw_name {
         Some(name) => {
             let trimmed = name.trim();
             if trimmed.is_empty() {
-                Err("clone 后的 Project 名称不能为空".to_string())
+                Err(ApplicationError::BadRequest(
+                    "clone 后的 Project 名称不能为空".to_string(),
+                ))
             } else {
                 Ok(trimmed.to_string())
             }
@@ -121,7 +128,7 @@ mod tests {
     fn normalize_clone_name_rejects_blank_name() {
         let err = normalize_clone_name(Some("   ".to_string()), "Source")
             .expect_err("blank name should be rejected");
-        assert!(err.contains("不能为空"));
+        assert!(err.to_string().contains("不能为空"));
     }
 
     #[test]

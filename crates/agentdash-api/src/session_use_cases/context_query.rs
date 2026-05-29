@@ -38,7 +38,7 @@ pub(crate) async fn build_session_context_plan(
         .session_core
         .get_session_meta(session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
 
     let mut plan = match owner.owner_type {
@@ -143,7 +143,7 @@ pub(crate) async fn build_session_context_plan(
         .session_capability
         .list_requested_runtime_commands(session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let facts = SessionConstructionProviderInput {
         session_id: session_id.to_string(),
         command: LaunchCommand::http_prompt_input(user_input, Some(current_user.clone())),

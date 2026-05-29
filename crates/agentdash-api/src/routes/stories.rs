@@ -647,7 +647,10 @@ async fn append_required_story_change(
 ) -> Result<(), ApiError> {
     repo.append_change(project_id, entity_id, kind, payload, backend_id)
         .await
-        .map_err(|err| ApiError::Internal(format!("写入 StateChange 失败: {err}")))
+        .map_err(|err| {
+            tracing::error!(error = %err, "failed to append required story state change");
+            ApiError::Internal(String::from("写入 StateChange 失败"))
+        })
 }
 
 #[cfg(test)]
@@ -659,7 +662,7 @@ mod tests {
     use std::sync::Mutex;
 
     struct RecordingStoryRepo {
-        append_error: Option<DomainError>,
+        append_error: Mutex<Option<DomainError>>,
         recorded: Mutex<Vec<(Uuid, Uuid, ChangeKind)>>,
     }
 
@@ -698,21 +701,8 @@ mod tests {
             _payload: serde_json::Value,
             _backend_id: Option<&str>,
         ) -> Result<(), DomainError> {
-            if let Some(err) = &self.append_error {
-                return Err(match err {
-                    DomainError::NotFound { entity, id } => DomainError::NotFound {
-                        entity,
-                        id: id.clone(),
-                    },
-                    DomainError::InvalidTransition { from, to } => DomainError::InvalidTransition {
-                        from: from.clone(),
-                        to: to.clone(),
-                    },
-                    DomainError::Serialization(err) => DomainError::InvalidConfig(err.to_string()),
-                    DomainError::InvalidConfig(message) => {
-                        DomainError::InvalidConfig(message.clone())
-                    }
-                });
+            if let Some(err) = self.append_error.lock().expect("lock append_error").take() {
+                return Err(err);
             }
             self.recorded
                 .lock()
@@ -737,7 +727,10 @@ mod tests {
     #[tokio::test]
     async fn append_required_story_change_maps_repo_failure_to_internal_error() {
         let repo = RecordingStoryRepo {
-            append_error: Some(DomainError::InvalidConfig("db down".to_string())),
+            append_error: Mutex::new(Some(DomainError::Database {
+                operation: "append_state_change",
+                message: "db down".to_string(),
+            })),
             recorded: Mutex::new(Vec::new()),
         };
 
@@ -755,7 +748,7 @@ mod tests {
         match err {
             ApiError::Internal(message) => {
                 assert!(message.contains("写入 StateChange 失败"));
-                assert!(message.contains("db down"));
+                assert!(!message.contains("db down"));
             }
             other => panic!("unexpected error: {other:?}"),
         }

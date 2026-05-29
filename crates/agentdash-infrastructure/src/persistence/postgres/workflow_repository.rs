@@ -5,9 +5,8 @@ use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
     ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository, ExecutorRunRef,
-    LifecycleRun, LifecycleRunRepository,
-    WorkflowBindingKind, WorkflowDefinition, WorkflowDefinitionRepository,
-    WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    LifecycleRun, LifecycleRunRepository, WorkflowBindingKind, WorkflowDefinition,
+    WorkflowDefinitionRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
 
@@ -265,13 +264,11 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
-        let result = sqlx::query(
-            "DELETE FROM lifecycle_definitions WHERE id = $1",
-        )
-        .bind(id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
+        let result = sqlx::query("DELETE FROM lifecycle_definitions WHERE id = $1")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
         ensure_rows_affected(result.rows_affected(), "activity_lifecycle_definition", &id)
     }
 }
@@ -538,7 +535,6 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
     }
 }
 
-
 #[async_trait::async_trait]
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
@@ -766,7 +762,6 @@ impl TryFrom<ActivityLifecycleDefinitionRow> for ActivityLifecycleDefinition {
     }
 }
 
-
 #[derive(sqlx::FromRow)]
 struct LifecycleRunRow {
     id: String,
@@ -948,20 +943,20 @@ fn parse_installed_source(
     };
     Ok(Some(InstalledAssetSource {
         library_asset_id: library_asset_id.parse().map_err(|_| {
-            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.library_asset_id 无效"))
         })?,
         source_ref: source_ref.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_ref 为空"))
         })?,
         source_version: source_version.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_version 为空"))
         })?,
         source_digest: source_digest.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_digest 为空"))
         })?,
         installed_at: super::parse_pg_timestamp_checked(
             installed_at.as_deref().ok_or_else(|| {
-                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
+                DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
             })?,
             "installed_source.installed_at",
         )?,

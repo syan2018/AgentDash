@@ -81,7 +81,7 @@ pub async fn list_sessions(
             .session_binding_repo
             .list_by_owner(owner_type, owner_id)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(ApiError::from)?;
 
         let mut sessions = Vec::with_capacity(bindings.len());
         for binding in &bindings {
@@ -97,11 +97,7 @@ pub async fn list_sessions(
         return Ok(Json(sessions));
     }
 
-    let mut sessions = state
-        .services
-        .session_core
-        .list_sessions()
-        .await?;
+    let mut sessions = state.services.session_core.list_sessions().await?;
 
     let exclude_bound = query.exclude_bound.unwrap_or(false);
     let mut visible_sessions = Vec::with_capacity(sessions.len());
@@ -111,7 +107,7 @@ pub async fn list_sessions(
             .session_binding_repo
             .list_by_session(&session.id)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(ApiError::from)?;
 
         if bindings.is_empty() {
             visible_sessions.push(session);
@@ -155,11 +151,7 @@ pub async fn create_session(
     )
     .await?;
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
-    let meta = state
-        .services
-        .session_core
-        .create_session(&title)
-        .await?;
+    let meta = state.services.session_core.create_session(&title).await?;
     let binding = SessionBinding::new(
         project.id,
         meta.id.clone(),
@@ -232,7 +224,7 @@ pub async fn get_session_hook_runtime(
         .session_hooks
         .ensure_hook_session_runtime(&session_id, None)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
                 "session {} 当前没有可用的 hook runtime",
@@ -346,7 +338,7 @@ pub async fn list_session_events(
         .session_eventing
         .list_event_page(&session_id, after_seq, limit)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(SessionEventsPageResponse {
         snapshot_seq: page.snapshot_seq,
@@ -575,7 +567,7 @@ pub async fn get_session_context_projection(
         .session_eventing
         .build_agent_context_envelope(&session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(SessionProjectionViewResponse::from(envelope)))
 }
@@ -757,7 +749,7 @@ pub async fn get_session_bindings(
                     .project_repo
                     .get_by_id(binding.owner_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                 {
                     owner_title = Some(project.name);
                 }
@@ -768,7 +760,7 @@ pub async fn get_session_bindings(
                     .story_repo
                     .get_by_id(binding.owner_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                 {
                     owner_title = Some(story.title);
                     story_id = Some(story.id.to_string());
@@ -781,7 +773,7 @@ pub async fn get_session_bindings(
                     .story_repo
                     .find_by_task_id(binding.owner_id)
                     .await
-                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .map_err(ApiError::from)?
                 {
                     if let Some(task) = story.find_task(binding.owner_id) {
                         owner_title = Some(task.title.clone());
@@ -868,7 +860,7 @@ pub async fn update_session_meta(
             }
         })
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
 
     Ok(Json(meta))
@@ -897,7 +889,7 @@ pub async fn delete_session(
             .session_binding_repo
             .delete(binding.id)
             .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            .map_err(ApiError::from)?;
     }
     Ok(Json(
         serde_json::json!({ "deleted": true, "sessionId": session_id }),
@@ -930,7 +922,7 @@ pub async fn prompt_session(
             agentdash_spi::ConnectorError::Runtime(msg) => {
                 decode_construction_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
             }
-            other => ApiError::Internal(other.to_string()),
+            other => ApiError::from(other),
         })?;
 
     Ok(Json(
@@ -955,7 +947,7 @@ pub async fn cancel_session(
         .session_runtime
         .cancel(&session_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let execution_state = state
         .services
@@ -1009,7 +1001,7 @@ pub async fn approve_tool_call(
         .session_control
         .approve_tool_call(&session_id, &tool_call_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({
         "approved": true,
@@ -1036,7 +1028,7 @@ pub async fn reject_tool_call(
         .session_control
         .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({
         "rejected": true,
@@ -1068,7 +1060,7 @@ pub async fn respond_companion_request(
         .session_control
         .respond_companion_request(&session_id, &request_id, req.payload)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(serde_json::json!({
         "responded": true,
@@ -1106,7 +1098,7 @@ pub async fn acp_session_stream_ndjson(
         .session_eventing
         .subscribe_after(&session_id, resume_from)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let replayed = subscription.backlog.len();
     tracing::info!(
         session_id = %session_id,
@@ -1364,7 +1356,7 @@ fn api_error_from_io(error: io::Error) -> ApiError {
         }
         io::ErrorKind::NotFound => ApiError::NotFound(error.to_string()),
         io::ErrorKind::AlreadyExists => ApiError::Conflict(error.to_string()),
-        _ => ApiError::Internal(error.to_string()),
+        _ => ApiError::Internal(String::from("内部 IO 错误")),
     }
 }
 

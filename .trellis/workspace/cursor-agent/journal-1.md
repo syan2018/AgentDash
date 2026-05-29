@@ -55,6 +55,35 @@
 - None - task complete
 
 
+## Session 25: Wave2 error-model-unify 收口
+
+**Date**: 2026-05-29
+**Task**: `05-29-error-model-unify`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成错误模型统一的代码验收：`DomainError` / `ApplicationError` 骨架落地，PostgreSQL repository 错误统一经 `db_err` 保留 NotFound / Conflict / Database 语义，API 删除 `Internal(e.to_string())` 与 unique violation 字符串嗅探，8 个指定 application 模块的 `Result<_, String>` 已清零。
+
+### Testing
+
+- `rg "InvalidConfig\(.*to_string" crates/agentdash-infrastructure` 无输出
+- `rg "ApiError::Internal\(.*to_string" crates/agentdash-api` 无输出
+- `rg "looks_like_unique_violation|looks_like_skill_asset_unique_violation" crates/agentdash-api` 无输出
+- `rg "Result<[^>]*, *String>" <8 application modules>` 无输出
+- `cargo test -p agentdash-api append_required_story_change_maps_repo_failure_to_internal_error`
+- `cargo check --workspace`
+
+### Status
+
+[OK] Code and validation complete; commit/archive pending because the current worktree contains broad pre-existing and formatting-touched changes that need staging review.
+
+### Next Steps
+
+- Confirm a safe staging boundary for `05-29-error-model-unify`, then commit/archive or proceed with explicit no-commit handoff.
+- Continue Wave2 with `05-29-contract-pipeline-unify`.
+
+
 ## Session 2: 收口虚拟容器与统一会话编排
 
 **Date**: 2026-03-19

@@ -24,7 +24,7 @@ use agentdash_application::session::{
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::{VfsService, VfsMutationDispatcher};
+use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};

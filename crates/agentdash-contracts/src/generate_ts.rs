@@ -69,8 +69,8 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
-    LifecycleExecutionEntry, LifecycleRunStatus,
-    ValidationIssue, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
+    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, WorkflowBindingKind,
+    WorkflowContract, WorkflowDefinitionSource,
 };
 use ts_rs::TS;
 

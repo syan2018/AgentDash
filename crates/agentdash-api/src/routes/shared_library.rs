@@ -248,7 +248,7 @@ async fn resolve_project_asset_id(
             .project_vfs_mount_repo
             .get_by_project_and_mount_id(project_id, trimmed)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
         return Ok(mount.id);
     }

@@ -6,6 +6,10 @@
 
 方向不变：**骨架不动，执行收紧**——消灭"同一件事做两遍 + 没有编译器兜底"的系统性病灶。
 
+## Progress Checklist
+
+全程推进状态以 [`progress-checklist.md`](./progress-checklist.md) 为恢复入口。上下文压缩或跨会话恢复时，先读取该 checklist，再进入当前 active child 的 `prd.md` / `design.md` / `implement.md`。
+
 ## 定性更正（重要，2026-05-29 用户拍板）
 
 用户指出：第一波除 workflow 外的 child 都标称"搞定待收"。**盲审又翻出来，就等于前轮没收干净**——不得把这些粉饰成"wave2 新发现"。本轮所有项按下表如实定性：

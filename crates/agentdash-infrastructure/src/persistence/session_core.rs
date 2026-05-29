@@ -7,13 +7,16 @@
 
 use std::io;
 
-use agentdash_agent_protocol::{AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent};
+use agentdash_agent_protocol::{
+    AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
+};
 use agentdash_spi::session_persistence::{
-    ExecutionStatus, NewCompactionProjectionCommit, PersistedSessionEvent, RuntimeCommandRecord,
-    RuntimeCommandStatus, SessionBootstrapState, SessionCompactionRecord, SessionCompactionStatus,
-    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionMeta, TerminalEffectRecord,
-    TerminalEffectStatus, TerminalEffectType, PendingCapabilityStateTransition, TitleSource,
+    ExecutionStatus, NewCompactionProjectionCommit, PendingCapabilityStateTransition,
+    PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
+    SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType,
+    TitleSource,
 };
 use sqlx::Row;
 
@@ -274,9 +277,7 @@ where
     })
 }
 
-pub(crate) fn projection_segment_from_row<R>(
-    row: &R,
-) -> io::Result<SessionProjectionSegmentRecord>
+pub(crate) fn projection_segment_from_row<R>(row: &R) -> io::Result<SessionProjectionSegmentRecord>
 where
     R: Row + SessionRow,
     for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,

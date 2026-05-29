@@ -47,7 +47,7 @@ impl PostgresCanvasRepository {
         .bind(canvas_ids)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         for row in rows {
             file_map
@@ -81,7 +81,7 @@ impl PostgresCanvasRepository {
         .bind(canvas_ids)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         for row in rows {
             binding_map
@@ -105,7 +105,7 @@ impl PostgresCanvasRepository {
             .bind(canvas.id.to_string())
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if canvas.files.is_empty() {
             return Ok(());
@@ -122,7 +122,7 @@ impl PostgresCanvasRepository {
             .build()
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -136,7 +136,7 @@ impl PostgresCanvasRepository {
             .bind(canvas.id.to_string())
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if canvas.bindings.is_empty() {
             return Ok(());
@@ -155,7 +155,7 @@ impl PostgresCanvasRepository {
             .build()
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -164,11 +164,7 @@ impl PostgresCanvasRepository {
 #[async_trait::async_trait]
 impl CanvasRepository for PostgresCanvasRepository {
     async fn create(&self, canvas: &Canvas) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         sqlx::query(
             r#"
@@ -188,14 +184,12 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(canvas.updated_at.to_rfc3339())
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         self.replace_files(&mut tx, canvas).await?;
         self.replace_bindings(&mut tx, canvas).await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -211,7 +205,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -239,7 +233,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(mount_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -263,7 +257,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(mount_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -287,7 +281,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let canvas_ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
         let files = self.load_files(&canvas_ids).await?;
@@ -299,11 +293,7 @@ impl CanvasRepository for PostgresCanvasRepository {
     }
 
     async fn update(&self, canvas: &Canvas) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let result = sqlx::query(
             r#"
@@ -321,7 +311,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         .bind(canvas.id.to_string())
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -333,9 +323,7 @@ impl CanvasRepository for PostgresCanvasRepository {
         self.replace_files(&mut tx, canvas).await?;
         self.replace_bindings(&mut tx, canvas).await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -345,7 +333,7 @@ impl CanvasRepository for PostgresCanvasRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -405,10 +393,9 @@ impl CanvasRow {
                 entity: "canvas",
                 id: self.id.clone(),
             })?,
-            project_id: self
-                .project_id
-                .parse()
-                .map_err(|_| DomainError::InvalidConfig("无效的 canvas project_id".to_string()))?,
+            project_id: self.project_id.parse().map_err(|_| {
+                DomainError::InvalidConfig(String::from("无效的 canvas project_id"))
+            })?,
             mount_id: self.mount_id,
             title: self.title,
             description: self.description,

@@ -142,7 +142,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(provider.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -152,7 +152,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(LlmProvider::try_from).transpose()
     }
 
@@ -161,7 +161,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         let rows: Vec<LlmProviderRow> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(LlmProvider::try_from).collect()
     }
 
@@ -172,7 +172,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         let rows: Vec<LlmProviderRow> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(LlmProvider::try_from).collect()
     }
 
@@ -206,7 +206,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(provider.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -215,7 +215,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -227,7 +227,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
                 .bind(id.to_string())
                 .execute(&self.pool)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
         Ok(())
     }
@@ -308,7 +308,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
             .bind(provider_id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(LlmProviderUserCredential::try_from).transpose()
     }
 
@@ -326,7 +326,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
             .bind(user_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter()
             .map(LlmProviderUserCredential::try_from)
             .collect()
@@ -358,7 +358,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .bind(credential.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -375,7 +375,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .bind(provider_id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(result.rows_affected() > 0)
     }
 }

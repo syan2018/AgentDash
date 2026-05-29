@@ -278,7 +278,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 definition.project_id,
                 &mut activation,
             )
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
             apply_to_running_session(
                 &activation,
                 &hook_session,
@@ -323,7 +324,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 definition.project_id,
                 &mut activation,
             )
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
             let mut declarations =
                 ToolCapabilityDimensionModule::capability_directive_declarations(
@@ -914,7 +916,8 @@ mod tests {
             state: &ActivityLifecycleRunState,
         ) -> Result<FunctionExecutionResult, String> {
             let runner = agentdash_infrastructure::DefaultFunctionRunner::new();
-            super::execute_function_activity(&runner, definition, activity, claim, spec, state).await
+            super::execute_function_activity(&runner, definition, activity, claim, spec, state)
+                .await
         }
     }
 

@@ -11,10 +11,10 @@ use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use super::inline_persistence::InlineContentOverlay;
-use super::service::VfsService;
 use super::rewrite::{
     RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
 };
+use super::service::VfsService;
 use super::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     PROVIDER_SKILL_ASSET_FS, ResourceRef, format_mount_uri, join_root_ref,

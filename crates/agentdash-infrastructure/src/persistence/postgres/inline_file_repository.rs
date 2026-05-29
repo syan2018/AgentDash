@@ -57,7 +57,9 @@ impl TryFrom<InlineFileRow> for InlineFile {
         let content = match content_kind {
             InlineFileContentKind::Text => InlineFileContent::Text {
                 content: row.text_content.ok_or_else(|| {
-                    DomainError::InvalidConfig("inline_fs_files.text_content 不能为空".to_string())
+                    DomainError::InvalidConfig(String::from(
+                        "inline_fs_files.text_content 不能为空",
+                    ))
                 })?,
             },
             InlineFileContentKind::Binary => InlineFileContent::Binary {
@@ -67,7 +69,7 @@ impl TryFrom<InlineFileRow> for InlineFile {
                     )
                 })?,
                 mime_type: row.mime_type.ok_or_else(|| {
-                    DomainError::InvalidConfig("inline_fs_files.mime_type 不能为空".to_string())
+                    DomainError::InvalidConfig(String::from("inline_fs_files.mime_type 不能为空"))
                 })?,
             },
         };

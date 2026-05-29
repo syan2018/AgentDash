@@ -30,10 +30,7 @@ impl McpProbeTransport for RmcpProbeTransport {
             reqwest::Client::new(),
             StreamableHttpClientTransportConfig::with_uri(url.to_string()),
         );
-        let client = ()
-            .serve(worker)
-            .await
-            .map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
+        let client = ().serve(worker).await.map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
         let tools = client
             .list_all_tools()
             .await

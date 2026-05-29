@@ -19,7 +19,7 @@ use crate::session::context::{
 };
 use crate::session::{ExecutorResolution, load_available_presets};
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
-use crate::vfs::{VfsService, SessionMountTarget};
+use crate::vfs::{SessionMountTarget, VfsService};
 use crate::workflow::{
     ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount,
     resolve_active_workflow_projection_for_session,

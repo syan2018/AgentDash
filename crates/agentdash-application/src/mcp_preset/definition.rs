@@ -3,6 +3,8 @@ use uuid::Uuid;
 
 use agentdash_domain::mcp_preset::{McpPreset, McpRoutePolicy, McpTransportConfig};
 
+use crate::ApplicationError;
+
 /// 首批内置 MCP Preset key——与 `builtins/<key>.json` 文件名一一对应。
 ///
 /// 约定：`builtins/` 下 JSON 文件的文件名根即为 `builtin_key`，
@@ -47,7 +49,8 @@ impl BuiltinMcpPresetTemplate {
 ///
 /// 对齐 `workflow::definition::list_builtin_workflow_templates` 的模式——
 /// 模板 JSON 通过 `include_str!` 在编译期嵌入 binary，保证单测与运行时一致。
-pub fn list_builtin_mcp_preset_templates() -> Result<Vec<BuiltinMcpPresetTemplate>, String> {
+pub fn list_builtin_mcp_preset_templates() -> Result<Vec<BuiltinMcpPresetTemplate>, ApplicationError>
+{
     [
         include_str!("builtins/filesystem.json"),
         include_str!("builtins/fetch.json"),
@@ -60,14 +63,17 @@ pub fn list_builtin_mcp_preset_templates() -> Result<Vec<BuiltinMcpPresetTemplat
 /// 按 key 获取单个 builtin 模板。
 pub fn get_builtin_mcp_preset_template(
     builtin_key: &str,
-) -> Result<Option<BuiltinMcpPresetTemplate>, String> {
+) -> Result<Option<BuiltinMcpPresetTemplate>, ApplicationError> {
     let templates = list_builtin_mcp_preset_templates()?;
     Ok(templates.into_iter().find(|item| item.key == builtin_key))
 }
 
-fn parse_builtin_mcp_preset_template(raw: &str) -> Result<BuiltinMcpPresetTemplate, String> {
-    serde_json::from_str::<BuiltinMcpPresetTemplate>(raw)
-        .map_err(|error| format!("解析 builtin MCP Preset 模板失败: {error}"))
+fn parse_builtin_mcp_preset_template(
+    raw: &str,
+) -> Result<BuiltinMcpPresetTemplate, ApplicationError> {
+    serde_json::from_str::<BuiltinMcpPresetTemplate>(raw).map_err(|error| {
+        ApplicationError::Internal(format!("解析 builtin MCP Preset 模板失败: {error}"))
+    })
 }
 
 #[cfg(test)]

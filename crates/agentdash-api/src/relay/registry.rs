@@ -82,10 +82,7 @@ impl BackendRegistry {
         session_id: &str,
         event: agentdash_application::backend_transport::RelaySessionEvent,
     ) -> bool {
-        let sinks = self
-            .session_sinks
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let sinks = self.session_sinks.read().unwrap_or_else(|e| e.into_inner());
         if let Some(tx) = sinks.get(session_id) {
             tx.tx.send(event).is_ok()
         } else {

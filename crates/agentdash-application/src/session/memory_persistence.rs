@@ -10,8 +10,9 @@ use super::persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
     SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
     SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
-    SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
+    SessionLineageStore, SessionMetaStore, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
+    SessionTerminalEffectStore,
 };
 use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
 use super::terminal_effects::{
@@ -93,7 +94,6 @@ impl SessionMetaStore for MemorySessionPersistence {
         });
         Ok(())
     }
-
 }
 
 #[async_trait::async_trait]
@@ -228,7 +228,6 @@ impl SessionEventStore for MemorySessionPersistence {
             })?
             .clone())
     }
-
 }
 
 #[async_trait::async_trait]
@@ -325,7 +324,6 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -420,7 +418,6 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -455,7 +452,6 @@ impl SessionCompactionStore for MemorySessionPersistence {
         records.sort_by_key(|record| record.projection_version);
         Ok(records)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -599,7 +595,6 @@ impl SessionProjectionStore for MemorySessionPersistence {
             head,
         })
     }
-
 }
 
 #[async_trait::async_trait]

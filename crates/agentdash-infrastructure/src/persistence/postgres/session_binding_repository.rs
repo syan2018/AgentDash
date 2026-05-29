@@ -29,7 +29,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(&binding.session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         if existing_project_ids
             .iter()
@@ -50,7 +50,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
             .bind(&binding.label)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
             if let Some((existing_session_id,)) = existing_story_root {
                 return Err(DomainError::InvalidConfig(format!(
@@ -73,7 +73,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(binding.created_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -83,7 +83,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -108,7 +108,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(owner_id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -128,7 +128,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(owner_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(|r| r.try_into()).collect()
     }
@@ -143,7 +143,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(|r| r.try_into()).collect()
     }
@@ -165,7 +165,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(label)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(|r| r.try_into()).transpose()
     }
@@ -175,7 +175,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
             sqlx::query_as("SELECT DISTINCT session_id FROM session_bindings")
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
 
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
@@ -245,7 +245,7 @@ impl SessionBindingRepository for PostgresSessionBindingRepository {
         .bind(&pid)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter()
             .map(|row| {

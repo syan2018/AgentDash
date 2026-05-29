@@ -1,0 +1,59 @@
+use agentdash_domain::DomainError;
+use agentdash_spi::ConnectorError;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApplicationError {
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{0}")]
+    InvalidConfig(String),
+    #[error("{0}")]
+    Unavailable(String),
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl From<DomainError> for ApplicationError {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::NotFound { .. } => Self::NotFound(error.to_string()),
+            DomainError::Forbidden { .. } => Self::Forbidden(error.to_string()),
+            DomainError::Conflict { .. } | DomainError::InvalidTransition { .. } => {
+                Self::Conflict(error.to_string())
+            }
+            DomainError::InvalidConfig(message) => Self::InvalidConfig(message),
+            DomainError::Serialization(error) => Self::BadRequest(error.to_string()),
+            DomainError::Database { .. } => Self::Internal("内部数据库错误".to_string()),
+        }
+    }
+}
+
+impl From<ConnectorError> for ApplicationError {
+    fn from(error: ConnectorError) -> Self {
+        match error {
+            ConnectorError::InvalidConfig(message) => Self::BadRequest(message),
+            ConnectorError::ConnectionFailed(message) => Self::Unavailable(message),
+            ConnectorError::SpawnFailed(message) | ConnectorError::Runtime(message) => {
+                Self::Internal(message)
+            }
+            ConnectorError::Io(error) => {
+                tracing::error!(error = %error, "connector IO error");
+                Self::Internal("内部连接器 IO 错误".to_string())
+            }
+            ConnectorError::Json(error) => Self::BadRequest(error.to_string()),
+        }
+    }
+}
+
+impl From<std::io::Error> for ApplicationError {
+    fn from(error: std::io::Error) -> Self {
+        tracing::error!(error = %error, "application IO error");
+        Self::Internal("内部 IO 错误".to_string())
+    }
+}

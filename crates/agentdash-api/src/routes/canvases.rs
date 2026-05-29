@@ -365,7 +365,8 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            ApiError::Internal(error.to_string())
+            tracing::error!(error = %error, "extension package artifact storage error");
+            ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
         ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),

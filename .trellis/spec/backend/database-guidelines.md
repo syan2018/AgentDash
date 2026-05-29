@@ -16,6 +16,7 @@
 ## 核心约定
 
 - 基础设施层错误必须转换为 `DomainError`，不泄露 `sqlx::Error`
+- PostgreSQL repository 统一通过 `persistence::postgres::db_err` / `sql_err_for` 映射 SQLx 错误，保留 NotFound、Conflict、Database 三类可映射语义
 - 数据库列名和 JSON 序列化统一 `snake_case`
 - 复杂值对象以 JSON 文本存入 `TEXT`
 - 时间字段存 `TEXT`，读取时做健壮解析

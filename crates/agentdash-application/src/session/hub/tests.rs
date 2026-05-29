@@ -59,8 +59,8 @@ use crate::session::capability_state::{
 };
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, ReadResult, VfsService, RuntimeFileEntry,
-    SearchQuery, SearchResult,
+    MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
+    VfsService,
 };
 
 fn test_hub(

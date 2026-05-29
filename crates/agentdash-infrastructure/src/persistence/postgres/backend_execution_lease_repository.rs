@@ -48,7 +48,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         .bind(lease.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -129,7 +129,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         .bind(lost_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(result.rows_affected())
     }
 
@@ -142,7 +142,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
             .bind(lease_id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(|row| lease_from_row(&row)).transpose()
     }
 
@@ -153,7 +153,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         let rows = sqlx::query(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(|row| lease_from_row(&row)).collect()
     }
 
@@ -173,7 +173,7 @@ impl BackendExecutionLeaseRepository for PostgresBackendExecutionLeaseRepository
         .bind(backend_ids)
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         let mut counts = backend_ids
             .iter()
             .map(|backend_id| (backend_id.clone(), 0_i64))
@@ -223,7 +223,7 @@ async fn update_state(
     .bind(lease_id.to_string())
     .execute(pool)
     .await
-    .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+    .map_err(super::db_err)?;
     if result.rows_affected() == 0 {
         return Err(DomainError::NotFound {
             entity: "backend_execution_lease",

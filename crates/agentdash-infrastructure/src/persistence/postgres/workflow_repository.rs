@@ -37,7 +37,7 @@ impl PostgresWorkflowRepository {
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const ACTIVITY_LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,execution_log,activity_state,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,step_states,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -161,7 +161,7 @@ impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
 impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
         sqlx::query(
-            "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','[]',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+            "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
         )
         .bind(lifecycle.id.to_string())
         .bind(lifecycle.project_id.to_string())
@@ -171,7 +171,6 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
         .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
         .bind(serde_json::to_string(&lifecycle.source)?)
         .bind(lifecycle.version)
-        .bind(&lifecycle.entry_activity_key)
         .bind(&lifecycle.entry_activity_key)
         .bind(serde_json::to_string(&lifecycle.activities)?)
         .bind(serde_json::to_string(&lifecycle.transitions)?)
@@ -193,7 +192,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
         id: uuid::Uuid,
     ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
         sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
-            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE id = $1 AND entry_activity_key <> ''"
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE id = $1"
         ))
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -209,7 +208,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
         key: &str,
     ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
         sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
-            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND key = $2 AND entry_activity_key <> ''"
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND key = $2"
         ))
         .bind(project_id.to_string())
         .bind(key)
@@ -225,7 +224,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
         project_id: uuid::Uuid,
     ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
         sqlx::query_as::<_, ActivityLifecycleDefinitionRow>(&format!(
-            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 AND entry_activity_key <> '' ORDER BY created_at DESC"
+            "SELECT {ACTIVITY_LC_COLS} FROM lifecycle_definitions WHERE project_id = $1 ORDER BY created_at DESC"
         ))
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
@@ -237,7 +236,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,entry_activity_key=$9,activities=$10,transitions=$11,library_asset_id=$12,source_ref=$13,source_version=$14,source_digest=$15,installed_at=$16,updated_at=$17 WHERE id=$18")
+        let result = sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_activity_key=$8,activities=$9,transitions=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
             .bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key)
             .bind(&lifecycle.name)
@@ -245,7 +244,6 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
             .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version)
-            .bind(&lifecycle.entry_activity_key)
             .bind(&lifecycle.entry_activity_key)
             .bind(serde_json::to_string(&lifecycle.activities)?)
             .bind(serde_json::to_string(&lifecycle.transitions)?)
@@ -268,7 +266,7 @@ impl ActivityLifecycleDefinitionRepository for PostgresWorkflowRepository {
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
         let result = sqlx::query(
-            "DELETE FROM lifecycle_definitions WHERE id = $1 AND entry_activity_key <> ''",
+            "DELETE FROM lifecycle_definitions WHERE id = $1",
         )
         .bind(id.to_string())
         .execute(&self.pool)
@@ -369,7 +367,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
 
         let mut lifecycle = bundle.lifecycle;
         let existing = sqlx::query_as::<_, ExistingProjectResourceRow>(
-            "SELECT id,version,created_at FROM lifecycle_definitions WHERE project_id = $1 AND key = $2 AND entry_activity_key <> ''",
+            "SELECT id,version,created_at FROM lifecycle_definitions WHERE project_id = $1 AND key = $2",
         )
         .bind(lifecycle.project_id.to_string())
         .bind(&lifecycle.key)
@@ -388,7 +386,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             lifecycle.version = existing.version + 1;
             lifecycle.created_at = parse_time(&existing.created_at)?;
             lifecycle.updated_at = chrono::Utc::now();
-            sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_step_key=$8,steps='[]',edges='[]',entry_activity_key=$9,activities=$10,transitions=$11,library_asset_id=$12,source_ref=$13,source_version=$14,source_digest=$15,installed_at=$16,updated_at=$17 WHERE id=$18")
+            sqlx::query("UPDATE lifecycle_definitions SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_activity_key=$8,activities=$9,transitions=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
                 .bind(lifecycle.project_id.to_string())
                 .bind(&lifecycle.key)
                 .bind(&lifecycle.name)
@@ -396,7 +394,6 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
                 .bind(serde_json::to_string(&lifecycle.source)?)
                 .bind(lifecycle.version)
-                .bind(&lifecycle.entry_activity_key)
                 .bind(&lifecycle.entry_activity_key)
                 .bind(serde_json::to_string(&lifecycle.activities)?)
                 .bind(serde_json::to_string(&lifecycle.transitions)?)
@@ -412,7 +409,7 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 .map_err(db_err)?;
         } else {
             sqlx::query(
-                "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_step_key,steps,edges,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','[]',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+                "INSERT INTO lifecycle_definitions (id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
             )
             .bind(lifecycle.id.to_string())
             .bind(lifecycle.project_id.to_string())
@@ -422,7 +419,6 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version)
-            .bind(&lifecycle.entry_activity_key)
             .bind(&lifecycle.entry_activity_key)
             .bind(serde_json::to_string(&lifecycle.activities)?)
             .bind(serde_json::to_string(&lifecycle.transitions)?)
@@ -547,14 +543,13 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(run.lifecycle_id.to_string())
         .bind(&run.session_id)
         .bind(serde_json::to_string(&run.status)?)
-        .bind("[]")
         .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
         .bind(serialize_activity_state(&run.activity_state)?)
@@ -625,10 +620,9 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,step_states=$5,execution_log=$6,activity_state=$7,updated_at=$8,last_activity_at=$9 WHERE id=$10")
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,execution_log=$5,activity_state=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
             .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
             .bind(serde_json::to_string(&run.status)?)
-            .bind("[]")
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(serialize_activity_state(&run.activity_state)?)
             .bind(chrono::Utc::now().to_rfc3339()).bind(run.last_activity_at.to_rfc3339()).bind(run.id.to_string())

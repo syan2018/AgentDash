@@ -66,6 +66,17 @@ pub struct ContextContributions {
     pub companion: Option<CompanionContribution>,
 }
 
+/// 增强型能力解析上下文 — 包含 session owner 与 run link 两条解析路径。
+///
+/// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
+/// `run_context` 为新的 LifecycleRunLink-based 路径（后续 AgentPermission 在此扩展）。
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityContext {
+    /// Run 关联的 subject kinds（由 LifecycleRunLink 投影）。
+    /// 例如 run 关联 Story → 此处含 `RunLinkSubjectKind::Story`。
+    pub run_subject_kinds: Vec<agentdash_domain::workflow::RunLinkSubjectKind>,
+}
+
 /// Resolver 输入 — 纯粹的 session 上下文描述。
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverInput {
@@ -75,6 +86,9 @@ pub struct CapabilityResolverInput {
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
+    /// LifecycleRunLink-based 解析上下文（可选，新路径）。
+    #[allow(dead_code)]
+    pub capability_context: Option<CapabilityContext>,
 }
 
 /// agent config 中注册的 MCP server 条目（用于 `mcp:*` key 解析）
@@ -470,6 +484,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         }
     }
 
@@ -578,6 +593,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -601,6 +617,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1040,6 +1057,7 @@ mod tests {
             owner_ctx: SessionOwnerCtx::Project { project_id },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1077,6 +1095,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1118,6 +1137,7 @@ mod tests {
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

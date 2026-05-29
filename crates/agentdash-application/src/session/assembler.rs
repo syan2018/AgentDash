@@ -973,6 +973,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, project_id).await,
                 agent_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
             },
+            capability_context: None,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1209,6 +1210,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, spec.task.project_id).await,
                 agent_servers: vec![],
             },
+            capability_context: None,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -2330,7 +2332,7 @@ mod tests {
         let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
-            "sess-story",
+            Some("sess-story".to_string()),
             activity_state,
         )
         .expect("run");

@@ -255,6 +255,7 @@ impl SessionConstructionPlanner {
                     presets: load_project_presets(repos, story.project_id).await,
                     agent_servers: vec![],
                 },
+                capability_context: None,
             },
             platform_config,
         );
@@ -420,6 +421,7 @@ impl SessionConstructionPlanner {
                     presets: load_project_presets(repos, project.id).await,
                     agent_servers: agent_mcp_entries,
                 },
+                capability_context: None,
             },
             platform_config,
         );

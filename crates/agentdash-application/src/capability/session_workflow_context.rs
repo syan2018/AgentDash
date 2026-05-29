@@ -803,6 +803,7 @@ mod tests {
                 },
                 contributions,
                 mcp_candidates: Default::default(),
+                capability_context: None,
             },
             &platform,
         );

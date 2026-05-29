@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::Utc;
+use chrono_tz::Tz;
 use cron::Schedule;
 use tokio::sync::Notify;
 use uuid::Uuid;
@@ -44,8 +45,13 @@ struct CronEntry {
     /// 原始 cron 表达式，用于 reload 时比对是否变更
     cron_expr: String,
     schedule: Schedule,
+    /// 该条目应使用的时区（来自 Routine trigger_config.timezone），默认 Asia/Shanghai
+    tz: Tz,
     next_fire: chrono::DateTime<Utc>,
 }
+
+/// 默认服务器时区：未配置 timezone 时使用东八区
+const DEFAULT_TZ: Tz = Tz::Asia__Shanghai;
 
 /// 用于 diff merge 的 entry 唯一键（以 routine_id 为唯一标识）
 type EntryKey = Uuid;
@@ -104,7 +110,7 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
     for routine in &routines {
         let RoutineTriggerConfig::Scheduled {
             ref cron_expression,
-            ..
+            ref timezone,
         } = routine.trigger_config
         else {
             continue;
@@ -123,8 +129,14 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
             }
         };
 
-        let next_fire = match schedule.upcoming(Utc).next() {
-            Some(t) => t,
+        let tz = timezone
+            .as_deref()
+            .and_then(|s| s.parse::<Tz>().ok())
+            .unwrap_or(DEFAULT_TZ);
+
+        let now_in_tz = Utc::now().with_timezone(&tz);
+        let next_fire = match schedule.upcoming(tz).next() {
+            Some(t) => t.with_timezone(&Utc),
             None => continue,
         };
 
@@ -132,7 +144,9 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
             routine_id = %routine.id,
             routine_name = %routine.name,
             cron = cron_expression,
+            timezone = %tz,
             next_fire = %next_fire,
+            now_local = %now_in_tz,
             "注册 Routine cron 调度条目"
         );
 
@@ -140,6 +154,7 @@ async fn load_cron_entries(repos: &RepositorySet) -> Result<Vec<CronEntry>, Stri
             routine_id: routine.id,
             cron_expr: cron_expression.clone(),
             schedule,
+            tz,
             next_fire,
         });
     }
@@ -159,7 +174,7 @@ fn merge_entries(existing: Vec<CronEntry>, fresh: Vec<CronEntry>) -> Vec<CronEnt
     for mut new_entry in fresh {
         let key = entry_key(&new_entry);
         if let Some(old) = existing_map.remove(&key) {
-            if old.cron_expr == new_entry.cron_expr {
+            if old.cron_expr == new_entry.cron_expr && old.tz == new_entry.tz {
                 new_entry.next_fire = old.next_fire;
                 kept += 1;
             } else {
@@ -235,8 +250,9 @@ async fn run_cron_loop(
 
             entry.next_fire = entry
                 .schedule
-                .upcoming(Utc)
+                .upcoming(entry.tz)
                 .next()
+                .map(|t| t.with_timezone(&Utc))
                 .unwrap_or_else(|| now + chrono::Duration::hours(24));
         }
     }

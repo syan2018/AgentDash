@@ -139,8 +139,7 @@ pub async fn get_story_session(
         .services
         .session_core
         .get_session_meta(&binding.session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     let context_bindings = state
         .repos
         .session_binding_repo
@@ -296,8 +295,7 @@ pub async fn create_story_session(
                 .services
                 .session_core
                 .get_session_meta(&sid)
-                .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .await?
                 .ok_or_else(|| ApiError::NotFound(format!("Session {sid} 不存在")))?;
             sid
         }

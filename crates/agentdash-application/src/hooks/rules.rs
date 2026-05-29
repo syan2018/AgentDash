@@ -140,6 +140,9 @@ pub(crate) fn merge_script_decision(
 mod tests {
     use super::*;
 
+    use std::sync::Arc;
+
+    use agentdash_infrastructure::RhaiHookScriptEvaluator;
     use agentdash_spi::{HookInjection, HookOwnerSummary, HookTrigger, SessionHookSnapshot};
 
     use super::super::presets::builtin_preset_scripts;
@@ -147,7 +150,7 @@ mod tests {
 
     fn test_script_engine() -> HookScriptEngine {
         let scripts = builtin_preset_scripts();
-        HookScriptEngine::new(&scripts)
+        HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&scripts)))
     }
 
     #[test]

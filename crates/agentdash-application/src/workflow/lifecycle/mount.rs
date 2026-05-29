@@ -20,7 +20,7 @@ fn empty_vfs() -> Vfs {
 
 pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjection) -> Vec<String> {
     workflow
-        .active_step
+        .active_activity
         .output_ports
         .iter()
         .map(|port| port.key.clone())
@@ -63,28 +63,38 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, OutputPortDefinition,
+        ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
+        ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,
+        FunctionActivityExecutorSpec, BashExecExecutorSpec, LifecycleRun, OutputPortDefinition,
         WorkflowBindingKind, WorkflowDefinitionSource,
     };
     use uuid::Uuid;
 
     fn active_workflow_projection() -> ActiveWorkflowProjection {
         let project_id = Uuid::new_v4();
-        let step = LifecycleStepDefinition {
+        let activity = ActivityDefinition {
             key: "plan".to_string(),
             description: "规划".to_string(),
-            workflow_key: None,
-            node_type: Default::default(),
+            // 无 agent workflow 绑定 → manual node;用 function executor 表达"无 workflow"。
+            executor: ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::BashExec(
+                BashExecExecutorSpec {
+                    command: "true".to_string(),
+                    args: vec![],
+                    working_directory: None,
+                },
+            )),
+            input_ports: Vec::new(),
             output_ports: vec![OutputPortDefinition {
                 key: "brief".to_string(),
                 description: "规划记录".to_string(),
                 gate_strategy: Default::default(),
                 gate_params: None,
             }],
-            input_ports: Vec::new(),
-            capability_config: Default::default(),
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         };
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle = ActivityLifecycleDefinition::new(
             project_id,
             "workflow_admin",
             "Workflow Admin",
@@ -92,25 +102,33 @@ mod tests {
             vec![WorkflowBindingKind::Project],
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
-            vec![step.clone()],
+            vec![activity.clone()],
             vec![],
         )
         .expect("lifecycle");
-        let mut run = LifecycleRun::new(
-            project_id,
-            lifecycle.id,
-            "sess-owner",
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
-        )
-        .expect("run");
-        run.activate_step("plan").expect("activate step");
+        let activity_state = ActivityLifecycleRunState {
+            status: ActivityRunStatus::Running,
+            attempts: vec![ActivityAttemptState {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                status: ActivityAttemptStatus::Running,
+                executor_run: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+            }],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        };
+        let run = LifecycleRun::new_activity(project_id, lifecycle.id, "sess-owner", activity_state)
+            .expect("run");
 
         ActiveWorkflowProjection {
             run,
             lifecycle,
-            active_step: step,
+            active_activity: activity,
+            active_node_type: agentdash_domain::workflow::LifecycleNodeType::AgentNode,
+            active_workflow_key: None,
             primary_workflow: None,
         }
     }

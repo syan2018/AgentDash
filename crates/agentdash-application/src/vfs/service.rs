@@ -56,11 +56,11 @@ pub struct TextSearchParams<'a> {
 // ─── Service ────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct RelayVfsService {
+pub struct VfsService {
     mount_provider_registry: Arc<MountProviderRegistry>,
 }
 
-impl RelayVfsService {
+impl VfsService {
     pub fn new(mount_provider_registry: Arc<MountProviderRegistry>) -> Self {
         Self {
             mount_provider_registry,

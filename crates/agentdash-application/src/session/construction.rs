@@ -91,7 +91,6 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
-    pub context: SessionConstructionContextProjection,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
@@ -161,7 +160,6 @@ impl SessionConstructionPlan {
             ],
         };
         let projections = ConstructionProjections {
-            context: context_projection.clone(),
             session_capabilities: context_projection.session_capabilities.clone(),
             ..Default::default()
         };

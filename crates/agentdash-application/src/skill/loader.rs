@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use agentdash_spi::{SkillRef, Vfs};
 
-use crate::vfs::RelayVfsService;
+use crate::vfs::VfsService;
 
 use super::{MAX_NAME_LENGTH, SkillDiagnostic, SkillFrontmatter, parse_skill_file};
 
@@ -102,7 +102,7 @@ pub fn load_skills_from_local_dirs(
 ///
 /// 使用通用 `discover_mount_files` 底层机制发现 SKILL.md，
 /// 再对每个文件做 frontmatter 解析 + 验证。
-pub async fn load_skills_from_vfs(service: &RelayVfsService, vfs: &Vfs) -> LoadSkillsResult {
+pub async fn load_skills_from_vfs(service: &VfsService, vfs: &Vfs) -> LoadSkillsResult {
     use crate::context::mount_file_discovery::{BUILTIN_SKILL_RULES, discover_mount_files};
 
     let discovered = discover_mount_files(service, vfs, BUILTIN_SKILL_RULES).await;

@@ -1,25 +1,12 @@
 import type { Routine, RoutineTriggerType, ProjectAgent } from "../../types";
 import { DetailMenu } from "@agentdash/ui";
+import { formatRelativeTime } from "../../lib/format";
 
 const TRIGGER_TYPE_BADGE: Record<RoutineTriggerType, { label: string; className: string }> = {
   scheduled: { label: "定时", className: "border-info/30 bg-info/10 text-info" },
   webhook: { label: "Webhook", className: "border-success/30 bg-success/10 text-success" },
   plugin: { label: "Plugin", className: "border-primary/30 bg-primary/10 text-primary" },
 };
-
-function formatRelativeTime(iso: string | null): string {
-  if (!iso) return "从未触发";
-  const diffMs = Date.now() - new Date(iso).getTime();
-  if (diffMs < 0) return "刚刚";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return "刚刚";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
-}
 
 export function RoutineCard({
   routine,
@@ -75,7 +62,7 @@ export function RoutineCard({
           </div>
 
           <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-            <span>最近触发: {formatRelativeTime(routine.last_fired_at)}</span>
+            <span>最近触发: {formatRelativeTime(routine.last_fired_at, { emptyLabel: "从未触发" })}</span>
             <span>·</span>
             <span>{routine.enabled ? "已启用" : "已禁用"}</span>
           </div>

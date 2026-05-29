@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::vfs::ResourceRef;
 use crate::vfs::inline_persistence::InlineContentOverlay;
-use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ impl DedupCache {
 
 #[derive(Clone)]
 pub struct FsReadTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
@@ -72,7 +72,7 @@ pub struct FsReadTool {
 }
 impl FsReadTool {
     pub fn new(
-        service: Arc<RelayVfsService>,
+        service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
@@ -600,7 +600,7 @@ mod fs_read_tests {
     fn tool_with_provider(provider: Arc<MemoryReadProvider>) -> FsReadTool {
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let vfs = Vfs {
             mounts: vec![Mount {
                 id: "mem".to_string(),

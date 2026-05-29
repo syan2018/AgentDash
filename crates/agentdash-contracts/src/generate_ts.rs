@@ -69,7 +69,7 @@ use agentdash_contracts::vfs::{
 };
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
-    LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
+    LifecycleExecutionEntry, LifecycleRunStatus,
     ValidationIssue, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
 };
 use ts_rs::TS;
@@ -153,8 +153,6 @@ fn main() {
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
             export_all::<ActivityLifecycleRunState>(dir);
-            export_all::<LifecycleEdge>(dir);
-            export_all::<LifecycleStepDefinition>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
             export_all::<LifecycleRunStatus>(dir);
             export_all::<EffectiveSessionContract>(dir);

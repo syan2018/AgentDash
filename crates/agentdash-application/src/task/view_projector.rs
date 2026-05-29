@@ -28,8 +28,7 @@ use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerTy
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus, LifecycleStepExecutionStatus, LifecycleStepState,
+    ActivityAttemptState, LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -98,7 +97,7 @@ pub async fn project_task_views_on_boot(
                     .tasks
                     .iter()
                     .find(|task| {
-                        task.lifecycle_step_key.as_deref() == Some(state.step_key.as_str())
+                        task.lifecycle_step_key.as_deref() == Some(state.activity_key.as_str())
                     })
                     .map(|task| task.id)
                 else {
@@ -107,7 +106,7 @@ pub async fn project_task_views_on_boot(
 
                 let previous_status = story.find_task(task_id).map(|t| t.status().clone());
                 let changed = story
-                    .apply_task_projection(task_id, &state)
+                    .apply_task_projection(task_id, state.status)
                     .unwrap_or(false);
                 covered_tasks.insert(task_id);
 
@@ -126,7 +125,7 @@ pub async fn project_task_views_on_boot(
                     "story_id": story_id,
                     "run_id": run.id,
                     "lifecycle_id": run.lifecycle_id,
-                    "step_key": state.step_key,
+                    "step_key": state.activity_key,
                     "step_status": state.status,
                     "from": previous_status,
                     "to": next_status,
@@ -157,7 +156,7 @@ pub async fn project_task_views_on_boot(
                     task_id = %task_id,
                     story_id = %story_id,
                     run_id = %run.id,
-                    step_key = %state.step_key,
+                    step_key = %state.activity_key,
                     from = ?previous_status,
                     to = ?next_status,
                     "Task view 投影：已从 step state 投影 Task view"
@@ -245,39 +244,11 @@ fn is_run_active(status: LifecycleRunStatus) -> bool {
     )
 }
 
-fn lifecycle_task_projection_states(run: &LifecycleRun) -> Vec<LifecycleStepState> {
-    let Some(activity_state) = &run.activity_state else {
-        return Vec::new();
-    };
-    activity_state
-        .attempts
-        .iter()
-        .map(|attempt| LifecycleStepState {
-            step_key: attempt.activity_key.clone(),
-            status: match attempt.status {
-                ActivityAttemptStatus::Pending => LifecycleStepExecutionStatus::Pending,
-                ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
-                    LifecycleStepExecutionStatus::Ready
-                }
-                ActivityAttemptStatus::Running => LifecycleStepExecutionStatus::Running,
-                ActivityAttemptStatus::Completed => LifecycleStepExecutionStatus::Completed,
-                ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
-                    LifecycleStepExecutionStatus::Failed
-                }
-            },
-            session_id: match &attempt.executor_run {
-                Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
-                Some(ExecutorRunRef::FunctionRun { .. })
-                | Some(ExecutorRunRef::HumanDecision { .. })
-                | None => None,
-            },
-            started_at: attempt.started_at,
-            completed_at: attempt.completed_at,
-            summary: attempt.summary.clone(),
-            context_snapshot: None,
-            gate_collision_count: 0,
-        })
-        .collect()
+fn lifecycle_task_projection_states(run: &LifecycleRun) -> Vec<ActivityAttemptState> {
+    run.activity_state
+        .as_ref()
+        .map(|state| state.attempts.clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

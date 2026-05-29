@@ -11,7 +11,7 @@ use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
 use rmcp::{
     ServiceExt,
-    model::{CallToolRequestParams, CallToolResult, Content, ResourceContents, Tool},
+    model::{CallToolRequestParams, CallToolResult, Tool},
     service::ServiceError,
     transport::streamable_http_client::{
         StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
@@ -20,6 +20,7 @@ use rmcp::{
 use tokio_util::sync::CancellationToken;
 
 use agentdash_spi::ConnectorError;
+use agentdash_mcp::render_content;
 
 use super::DiscoveredMcpTool;
 
@@ -207,7 +208,8 @@ fn convert_call_result(
     tool_name: &str,
     result: CallToolResult,
 ) -> AgentToolResult {
-    let mut sections = vec![format!("MCP tool: {tool_name}")];
+    let _ = tool_name;
+    let mut sections: Vec<String> = Vec::new();
 
     if let Some(structured) = &result.structured_content {
         sections.push(format!(
@@ -233,22 +235,6 @@ fn convert_call_result(
         is_error: result.is_error.unwrap_or(false),
         details: None,
     }
-}
-
-fn render_content(content: &Content) -> String {
-    if let Some(text) = content.raw.as_text() {
-        return text.text.clone();
-    }
-
-    if let Some(resource) = content.raw.as_resource() {
-        return match &resource.resource {
-            ResourceContents::TextResourceContents { text, .. } => text.clone(),
-            other => serde_json::to_string_pretty(other)
-                .unwrap_or_else(|_| "<无法解析 MCP 资源内容>".to_string()),
-        };
-    }
-
-    serde_json::to_string_pretty(content).unwrap_or_else(|_| "<无法解析 MCP 内容>".to_string())
 }
 
 fn format_service_error(error: &ServiceError) -> String {

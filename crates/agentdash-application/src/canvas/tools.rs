@@ -675,7 +675,7 @@ mod tests {
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::vfs::tools::fs::FsApplyPatchTool;
     use crate::vfs::tools::provider::SessionToolServices;
-    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, RelayVfsService};
+    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
 
     use super::*;
 
@@ -882,8 +882,7 @@ mod tests {
         capability_state.vfs.active = Some(vfs.clone());
         construction.workspace.working_directory = Some(working_dir.to_path_buf());
         construction.execution_profile.executor_config = user_input.executor_config;
-        construction.surface.vfs = Some(vfs.clone());
-        construction.projections.context.vfs = Some(vfs);
+        construction.surface.vfs = Some(vfs);
         construction.projections.capability_state = Some(capability_state);
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("test.local_workspace_vfs".to_string()),
@@ -904,7 +903,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
 
         let start_tool = StartCanvasTool::new(
@@ -1068,7 +1067,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),

@@ -1,6 +1,9 @@
 pub mod auth;
+pub mod function_runner;
+pub mod mcp_probe;
 pub mod mcp_relay;
 pub mod mount;
 pub mod routine;
 pub mod skill;
+pub mod skill_source;
 pub mod tool_capability;

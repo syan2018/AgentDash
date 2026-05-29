@@ -2,8 +2,6 @@ use agentdash_spi::HookInjection;
 
 use crate::workflow::ActiveWorkflowProjection;
 
-use super::lifecycle_step_advance_label;
-
 pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -> String {
     let wf_line = match workflow.primary_workflow.as_ref() {
         Some(w) => format!("- workflow: {} (`{}`)", w.name, w.key),
@@ -13,11 +11,11 @@ pub(super) fn build_step_summary_markdown(workflow: &ActiveWorkflowProjection) -
         "## Active Workflow Step\n- lifecycle: {} (`{}`)\n- step: `{}`\n{}\n- advance: `{}`\n- status: `{}`\n\n{}",
         workflow.lifecycle.name,
         workflow.lifecycle.key,
-        workflow.active_step.key,
+        workflow.active_activity.key,
         wf_line,
-        lifecycle_step_advance_label(&workflow.active_step),
+        workflow.advance_label(),
         super::snapshot_helpers::workflow_run_status_tag(workflow.run.status),
-        workflow.active_step.description
+        workflow.active_activity.description
     )
 }
 
@@ -54,71 +52,11 @@ fn build_guidance_injection_markdown(guidance: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
-    use crate::workflow::ActiveWorkflowProjection;
-    use agentdash_domain::workflow::{
-        LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowBindingKind,
-        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
-    };
+    use crate::workflow::{ActiveWorkflowProjection, activity_projection};
 
     fn workflow_projection_with_guidance(guidance: Option<String>) -> ActiveWorkflowProjection {
-        let contract = WorkflowContract {
-            injection: WorkflowInjectionSpec {
-                guidance,
-                ..WorkflowInjectionSpec::default()
-            },
-            ..WorkflowContract::default()
-        };
-        let definition = WorkflowDefinition::new(
-            Uuid::new_v4(),
-            "trellis_dev_task_implement",
-            "Trellis Dev Workflow / Implement",
-            "workflow desc",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            contract,
-        )
-        .expect("workflow definition should build");
-        let active_step = LifecycleStepDefinition {
-            key: "implement".to_string(),
-            description: "实现并记录结果".to_string(),
-            workflow_key: Some(definition.key.clone()),
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
-        };
-        let project_id = Uuid::new_v4();
-        let lifecycle = LifecycleDefinition::new(
-            project_id,
-            "trellis_dev_task",
-            "Trellis Dev Lifecycle",
-            "lifecycle desc",
-            vec![WorkflowBindingKind::Story],
-            WorkflowDefinitionSource::BuiltinSeed,
-            "implement",
-            vec![active_step.clone()],
-            vec![],
-        )
-        .expect("lifecycle definition should build");
-        let mut run = LifecycleRun::new(
-            project_id,
-            lifecycle.id,
-            "sess-test-contribution",
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
-        )
-        .expect("workflow run should build");
-        run.activate_step("implement")
-            .expect("implement step should activate");
-        ActiveWorkflowProjection {
-            run,
-            lifecycle,
-            active_step,
-            primary_workflow: Some(definition),
-        }
+        activity_projection(guidance)
     }
 
     #[test]

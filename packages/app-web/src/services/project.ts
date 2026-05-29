@@ -1,0 +1,280 @@
+/**
+ * Project service 层。
+ *
+ * 收口 project / project-agent / grant / project-session 相关的 api.client 调用，
+ * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / OpenProjectAgentSession /
+ * ProjectSessionInfo）集中于此。projectStore 只消费此层导出的函数，不直连 api。
+ */
+
+import { api } from "../api/client";
+import { requireStringField } from "../api/mappers";
+import type {
+  ContextContainerDefinition,
+  OpenProjectAgentSessionResult,
+  Project,
+  ProjectAgent,
+  ProjectAgentSession,
+  ProjectAgentSummary,
+  ProjectConfig,
+  ProjectRole,
+  ProjectSessionInfo,
+  ProjectSubjectGrant,
+  SessionContextSnapshot,
+} from "../types";
+import { isThinkingLevel } from "../types";
+
+// ─── Mapper ──────────────────────────────────────────────
+
+function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSummary {
+  const rawExecutor =
+    raw.executor && typeof raw.executor === "object" ? (raw.executor as Record<string, unknown>) : {};
+  const rawSession =
+    raw.session && typeof raw.session === "object" ? (raw.session as Record<string, unknown>) : null;
+  const thinkingLevel = isThinkingLevel(rawExecutor.thinking_level) ? rawExecutor.thinking_level : null;
+
+  return {
+    key: String(raw.key ?? ""),
+    display_name: String(raw.display_name ?? "未命名 Agent"),
+    description: String(raw.description ?? ""),
+    executor: {
+      executor: String(rawExecutor.executor ?? ""),
+      provider_id: rawExecutor.provider_id != null ? String(rawExecutor.provider_id) : null,
+      model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
+      agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,
+      thinking_level: thinkingLevel,
+      permission_policy:
+        rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
+    },
+    preset_name: raw.preset_name != null ? String(raw.preset_name) : null,
+    source: String(raw.source ?? ""),
+    session: rawSession
+      ? {
+          binding_id: requireStringField(rawSession, "binding_id"),
+          session_id: String(rawSession.session_id ?? ""),
+          session_title: rawSession.session_title != null ? String(rawSession.session_title) : null,
+          last_activity: rawSession.last_activity != null ? Number(rawSession.last_activity) : null,
+        }
+      : null,
+  };
+}
+
+function mapOpenProjectAgentSessionResult(
+  raw: Record<string, unknown>,
+): OpenProjectAgentSessionResult {
+  const rawAgent =
+    raw.agent && typeof raw.agent === "object" ? (raw.agent as Record<string, unknown>) : {};
+
+  return {
+    created: Boolean(raw.created),
+    session_id: String(raw.session_id ?? ""),
+    binding_id: requireStringField(raw, "binding_id"),
+    agent: mapProjectAgentSummary(rawAgent),
+  };
+}
+
+function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo {
+  const contextSnapshot =
+    raw.context_snapshot && typeof raw.context_snapshot === "object"
+      ? (raw.context_snapshot as SessionContextSnapshot)
+      : null;
+
+  return {
+    binding_id: requireStringField(raw, "binding_id"),
+    session_id: String(raw.session_id ?? ""),
+    session_title: raw.session_title != null ? String(raw.session_title) : null,
+    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
+    vfs: (raw.vfs as ProjectSessionInfo["vfs"]) ?? null,
+    runtime_surface: (raw.runtime_surface as ProjectSessionInfo["runtime_surface"]) ?? null,
+    context_snapshot: contextSnapshot,
+  };
+}
+
+function mapProjectAgentSession(raw: Record<string, unknown>): ProjectAgentSession {
+  return {
+    binding_id: requireStringField(raw, "binding_id"),
+    session_id: String(raw.session_id ?? ""),
+    session_title: raw.session_title != null ? String(raw.session_title) : null,
+    last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
+  };
+}
+
+// ─── Project API ─────────────────────────────────────────
+
+export async function fetchProjects(): Promise<Project[]> {
+  return api.get<Project[]>("/projects");
+}
+
+export async function createProject(
+  name: string,
+  description: string,
+  config?: Partial<ProjectConfig>,
+): Promise<Project> {
+  return api.post<Project>("/projects", {
+    name,
+    description,
+    config: config ?? {
+      agent_presets: [],
+      context_containers: [],
+    },
+  });
+}
+
+export interface UpdateProjectPayload {
+  name?: string;
+  description?: string;
+  config?: ProjectConfig;
+  context_containers?: ContextContainerDefinition[];
+  visibility?: Project["visibility"];
+  is_template?: boolean;
+}
+
+export async function updateProject(id: string, payload: UpdateProjectPayload): Promise<Project> {
+  return api.put<Project>(`/projects/${id}`, payload);
+}
+
+export async function updateProjectConfig(
+  id: string,
+  config: Partial<ProjectConfig>,
+): Promise<Project> {
+  return api.put<Project>(`/projects/${id}`, { config });
+}
+
+export async function cloneProject(
+  projectId: string,
+  payload?: { name?: string; description?: string },
+): Promise<Project> {
+  return api.post<Project>(`/projects/${projectId}/clone`, payload ?? {});
+}
+
+export async function deleteProject(id: string): Promise<void> {
+  await api.delete(`/projects/${id}`);
+}
+
+// ─── Project Agent 配置 API ──────────────────────────────
+
+export interface CreateProjectAgentPayload {
+  name: string;
+  agent_type: string;
+  config?: Record<string, unknown>;
+  default_lifecycle_key?: string;
+  default_workflow_key?: string;
+  is_default_for_story?: boolean;
+  is_default_for_task?: boolean;
+}
+
+export interface UpdateProjectAgentPayload {
+  name?: string;
+  agent_type?: string;
+  config?: Record<string, unknown>;
+  default_lifecycle_key?: string;
+  default_workflow_key?: string;
+  is_default_for_story?: boolean;
+  is_default_for_task?: boolean;
+  knowledge_enabled?: boolean;
+}
+
+export async function fetchProjectAgentConfigs(projectId: string): Promise<ProjectAgent[]> {
+  return api.get<ProjectAgent[]>(`/projects/${projectId}/agents`);
+}
+
+export async function createProjectAgent(
+  projectId: string,
+  payload: CreateProjectAgentPayload,
+): Promise<ProjectAgent> {
+  return api.post<ProjectAgent>(`/projects/${projectId}/agents`, payload);
+}
+
+export async function updateProjectAgent(
+  projectId: string,
+  agentId: string,
+  payload: UpdateProjectAgentPayload,
+): Promise<ProjectAgent> {
+  return api.put<ProjectAgent>(`/projects/${projectId}/agents/${agentId}`, payload);
+}
+
+export async function deleteProjectAgent(projectId: string, agentId: string): Promise<void> {
+  await api.delete(`/projects/${projectId}/agents/${agentId}`);
+}
+
+// ─── Project Agent Summary / Session API ─────────────────
+
+export async function fetchProjectAgents(projectId: string): Promise<ProjectAgentSummary[]> {
+  const response = await api.get<Record<string, unknown>[]>(`/projects/${projectId}/agents/summary`);
+  return response.map(mapProjectAgentSummary);
+}
+
+export async function openProjectAgentSession(
+  projectId: string,
+  agentKey: string,
+): Promise<OpenProjectAgentSessionResult> {
+  const response = await api.post<Record<string, unknown>>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session`,
+    {},
+  );
+  return mapOpenProjectAgentSessionResult(response);
+}
+
+export async function forceNewProjectAgentSession(
+  projectId: string,
+  agentKey: string,
+): Promise<OpenProjectAgentSessionResult> {
+  const response = await api.post<Record<string, unknown>>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
+    {},
+  );
+  return mapOpenProjectAgentSessionResult(response);
+}
+
+export async function fetchProjectAgentSessions(
+  projectId: string,
+  agentKey: string,
+): Promise<ProjectAgentSession[]> {
+  const response = await api.get<Record<string, unknown>[]>(
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
+  );
+  return response.map(mapProjectAgentSession);
+}
+
+export async function fetchProjectSessionInfo(
+  projectId: string,
+  bindingId: string,
+): Promise<ProjectSessionInfo> {
+  const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${bindingId}`);
+  return mapProjectSessionInfo(raw);
+}
+
+// ─── Grant API ───────────────────────────────────────────
+
+export async function fetchProjectGrants(projectId: string): Promise<ProjectSubjectGrant[]> {
+  return api.get<ProjectSubjectGrant[]>(`/projects/${projectId}/grants`);
+}
+
+export async function grantProjectUser(
+  projectId: string,
+  userId: string,
+  role: ProjectRole,
+): Promise<ProjectSubjectGrant> {
+  return api.put<ProjectSubjectGrant>(
+    `/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`,
+    { role },
+  );
+}
+
+export async function revokeProjectUser(projectId: string, userId: string): Promise<void> {
+  await api.delete(`/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`);
+}
+
+export async function grantProjectGroup(
+  projectId: string,
+  groupId: string,
+  role: ProjectRole,
+): Promise<ProjectSubjectGrant> {
+  return api.put<ProjectSubjectGrant>(
+    `/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`,
+    { role },
+  );
+}
+
+export async function revokeProjectGroup(projectId: string, groupId: string): Promise<void> {
+  await api.delete(`/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`);
+}

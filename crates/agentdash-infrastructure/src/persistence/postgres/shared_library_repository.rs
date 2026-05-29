@@ -7,6 +7,8 @@ use agentdash_domain::shared_library::{
     LibraryAssetSource, LibraryAssetType,
 };
 
+use super::sql_err_for;
+
 pub struct PostgresSharedLibraryRepository {
     pool: PgPool,
 }
@@ -47,7 +49,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(asset.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|error| sql_err_for("library_assets", error))?;
         Ok(())
     }
 
@@ -58,7 +60,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err)?
+        .map_err(|error| sql_err_for("library_assets", error))?
         .map(TryInto::try_into)
         .transpose()
     }
@@ -79,7 +81,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(key)
         .fetch_optional(&self.pool)
         .await
-        .map_err(db_err)?
+        .map_err(|error| sql_err_for("library_assets", error))?
         .map(TryInto::try_into)
         .transpose()
     }
@@ -99,7 +101,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(filter.include_deprecated)
         .fetch_all(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|error| sql_err_for("library_assets", error))?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -125,7 +127,7 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
         .bind(asset.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(db_err)?;
+        .map_err(|error| sql_err_for("library_assets", error))?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -163,10 +165,6 @@ impl LibraryAssetRepository for PostgresSharedLibraryRepository {
             }
         }
     }
-}
-
-fn db_err(error: sqlx::Error) -> DomainError {
-    DomainError::InvalidConfig(format!("library_assets: {error}"))
 }
 
 #[derive(sqlx::FromRow)]

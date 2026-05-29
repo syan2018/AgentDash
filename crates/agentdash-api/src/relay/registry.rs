@@ -82,7 +82,10 @@ impl BackendRegistry {
         session_id: &str,
         event: agentdash_application::backend_transport::RelaySessionEvent,
     ) -> bool {
-        let sinks = self.session_sinks.read().unwrap();
+        let sinks = self
+            .session_sinks
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(tx) = sinks.get(session_id) {
             tx.tx.send(event).is_ok()
         } else {
@@ -117,7 +120,7 @@ impl BackendRegistry {
             .retain(|_, pending| pending.backend_id != backend_id);
         self.session_sinks
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .retain(|_, route| route.backend_id != backend_id);
         tracing::info!(backend_id = %backend_id, "本机后端已断开");
     }
@@ -175,24 +178,30 @@ impl BackendRegistry {
     pub fn register_session_sink(&self, route: RelaySessionRoute) {
         self.session_sinks
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .insert(route.session_id.clone(), route);
     }
 
     /// 注销 per-session 通知接收端。
     pub fn unregister_session_sink(&self, session_id: &str) {
-        self.session_sinks.write().unwrap().remove(session_id);
+        self.session_sinks
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(session_id);
     }
 
     /// 检查指定 session 是否有已注册的通知接收端。
     pub fn has_session_sink(&self, session_id: &str) -> bool {
-        self.session_sinks.read().unwrap().contains_key(session_id)
+        self.session_sinks
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(session_id)
     }
 
     pub fn session_route(&self, session_id: &str) -> Option<RelaySessionRouteInfo> {
         self.session_sinks
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .get(session_id)
             .map(|route| RelaySessionRouteInfo {
                 session_id: route.session_id.clone(),
@@ -214,7 +223,10 @@ impl BackendRegistry {
     }
 
     pub fn list_online_executors_snapshot(&self) -> Vec<RemoteExecutorInfo> {
-        self.executor_snapshot.read().unwrap().clone()
+        self.executor_snapshot
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn rebuild_executor_snapshot(&self, backends: &HashMap<String, ConnectedBackend>) {
@@ -230,7 +242,10 @@ impl BackendRegistry {
                 });
             }
         }
-        *self.executor_snapshot.write().unwrap() = snapshot;
+        *self
+            .executor_snapshot
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = snapshot;
     }
 
     /// 查找提供指定 MCP server 的在线 backend

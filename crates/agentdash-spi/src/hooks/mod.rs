@@ -1,3 +1,4 @@
+pub mod script;
 pub mod trace;
 
 use std::sync::Arc;

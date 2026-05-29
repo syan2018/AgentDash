@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    LifecycleDefinition, LifecycleRun, LifecycleStepDefinition, WorkflowDefinition,
+    ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
 };
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
@@ -46,8 +46,8 @@ pub struct RoutineLaunchSource {
 #[derive(Clone)]
 pub struct CompanionLaunchWorkflowSource {
     pub run: LifecycleRun,
-    pub lifecycle: LifecycleDefinition,
-    pub step: LifecycleStepDefinition,
+    pub lifecycle: ActivityLifecycleDefinition,
+    pub activity: ActivityDefinition,
     pub workflow: Option<WorkflowDefinition>,
 }
 

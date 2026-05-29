@@ -7,13 +7,11 @@ import type {
   ProjectSessionInfo,
   ProjectRole,
   ProjectSubjectGrant,
-  SessionContextSnapshot,
   ProjectAgentSummary,
   Project,
   ProjectConfig,
 } from '../types';
-import { isThinkingLevel } from '../types';
-import { api } from '../api/client';
+import * as projectService from '../services/project';
 
 interface ProjectState {
   projects: Project[];
@@ -79,83 +77,14 @@ interface ProjectState {
   deleteProject: (id: string) => Promise<boolean>;
 }
 
-function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSummary {
-  const rawExecutor = raw.executor && typeof raw.executor === 'object'
-    ? raw.executor as Record<string, unknown>
-    : {};
-  const rawSession = raw.session && typeof raw.session === 'object'
-    ? raw.session as Record<string, unknown>
-    : null;
-  const thinkingLevel = isThinkingLevel(rawExecutor.thinking_level)
-    ? rawExecutor.thinking_level
-    : null;
-
-  return {
-    key: String(raw.key ?? ''),
-    display_name: String(raw.display_name ?? '未命名 Agent'),
-    description: String(raw.description ?? ''),
-    executor: {
-      executor: String(rawExecutor.executor ?? ''),
-      provider_id: rawExecutor.provider_id != null ? String(rawExecutor.provider_id) : null,
-      model_id: rawExecutor.model_id != null ? String(rawExecutor.model_id) : null,
-      agent_id: rawExecutor.agent_id != null ? String(rawExecutor.agent_id) : null,
-      thinking_level: thinkingLevel,
-      permission_policy: rawExecutor.permission_policy != null ? String(rawExecutor.permission_policy) : null,
-    },
-    preset_name: raw.preset_name != null
-      ? String(raw.preset_name)
-      : null,
-    source: String(raw.source ?? ''),
-    session: rawSession
-      ? {
-          binding_id: requireStringField(rawSession, 'binding_id'),
-          session_id: String(rawSession.session_id ?? ''),
-          session_title: rawSession.session_title != null
-            ? String(rawSession.session_title)
-            : null,
-          last_activity: rawSession.last_activity != null
-            ? Number(rawSession.last_activity)
-            : null,
-        }
-      : null,
-  };
-}
-
-function mapOpenProjectAgentSessionResult(raw: Record<string, unknown>): OpenProjectAgentSessionResult {
-  const rawAgent = raw.agent && typeof raw.agent === 'object'
-    ? raw.agent as Record<string, unknown>
-    : {};
-
-  return {
-    created: Boolean(raw.created),
-    session_id: String(raw.session_id ?? ''),
-    binding_id: requireStringField(raw, 'binding_id'),
-    agent: mapProjectAgentSummary(rawAgent),
-  };
-}
-
-function requireStringField(raw: Record<string, unknown>, field: string): string {
-  const value = raw[field];
-  if (typeof value === 'string' && value.length > 0) {
-    return value;
-  }
-  throw new Error(`ProjectSessionInfo 缺少必填字段: ${field}`);
-}
-
-function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo {
-  const contextSnapshot = raw.context_snapshot && typeof raw.context_snapshot === 'object'
-    ? (raw.context_snapshot as SessionContextSnapshot)
-    : null;
-
-  return {
-    binding_id: requireStringField(raw, 'binding_id'),
-    session_id: String(raw.session_id ?? ''),
-    session_title: raw.session_title != null ? String(raw.session_title) : null,
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ProjectSessionInfo['vfs']) ?? null,
-    runtime_surface: (raw.runtime_surface as ProjectSessionInfo['runtime_surface']) ?? null,
-    context_snapshot: contextSnapshot,
-  };
+function upsertAgentSummary(
+  existing: ProjectAgentSummary[],
+  agent: ProjectAgentSummary,
+): ProjectAgentSummary[] {
+  const hasExisting = existing.some((item) => item.key === agent.key);
+  return hasExisting
+    ? existing.map((item) => (item.key === agent.key ? agent : item))
+    : [...existing, agent];
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -181,7 +110,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectAgentConfigs: async (projectId) => {
     try {
-      const projectAgents = await api.get<ProjectAgent[]>(`/projects/${projectId}/agents`);
+      const projectAgents = await projectService.fetchProjectAgentConfigs(projectId);
       set((s) => ({
         projectAgentConfigsByProjectId: { ...s.projectAgentConfigsByProjectId, [projectId]: projectAgents },
         error: null,
@@ -195,7 +124,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   createProjectAgent: async (projectId, payload) => {
     try {
-      const projectAgent = await api.post<ProjectAgent>(`/projects/${projectId}/agents`, payload);
+      const projectAgent = await projectService.createProjectAgent(projectId, payload);
       set((s) => {
         const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
         return {
@@ -215,7 +144,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   updateProjectAgent: async (projectId, agentId, payload) => {
     try {
-      const projectAgent = await api.put<ProjectAgent>(`/projects/${projectId}/agents/${agentId}`, payload);
+      const projectAgent = await projectService.updateProjectAgent(projectId, agentId, payload);
       set((s) => {
         const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
         return {
@@ -235,7 +164,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   deleteProjectAgent: async (projectId, agentId) => {
     try {
-      await api.delete(`/projects/${projectId}/agents/${agentId}`);
+      await projectService.deleteProjectAgent(projectId, agentId);
       set((s) => {
         const existing = s.projectAgentConfigsByProjectId[projectId] ?? [];
         return {
@@ -258,7 +187,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fetchProjects: async () => {
     set({ isLoading: true, error: null });
     try {
-      const projects = await api.get<Project[]>('/projects');
+      const projects = await projectService.fetchProjects();
       set({ projects, isLoading: false });
       if (!get().currentProjectId && projects.length > 0) {
         set({ currentProjectId: projects[0].id });
@@ -270,14 +199,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   createProject: async (name, description, config) => {
     try {
-      const project = await api.post<Project>('/projects', {
-        name,
-        description,
-        config: config ?? {
-          agent_presets: [],
-          context_containers: [],
-        },
-      });
+      const project = await projectService.createProject(name, description, config);
       set((s) => ({
         projects: [project, ...s.projects],
         currentProjectId: project.id,
@@ -291,7 +213,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   updateProject: async (id, payload) => {
     try {
-      const project = await api.put<Project>(`/projects/${id}`, payload);
+      const project = await projectService.updateProject(id, payload);
       set((s) => ({
         projects: s.projects.map((item) => (item.id === id ? project : item)),
       }));
@@ -304,9 +226,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   updateProjectConfig: async (id, config) => {
     try {
-      const project = await api.put<Project>(`/projects/${id}`, {
-        config,
-      });
+      const project = await projectService.updateProjectConfig(id, config);
       set((s) => ({
         projects: s.projects.map((item) => (item.id === id ? project : item)),
       }));
@@ -319,7 +239,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectGrants: async (projectId) => {
     try {
-      const grants = await api.get<ProjectSubjectGrant[]>(`/projects/${projectId}/grants`);
+      const grants = await projectService.fetchProjectGrants(projectId);
       set((state) => ({
         grantsByProjectId: {
           ...state.grantsByProjectId,
@@ -336,9 +256,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   grantProjectUser: async (projectId, userId, role) => {
     try {
-      const grant = await api.put<ProjectSubjectGrant>(`/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`, {
-        role,
-      });
+      const grant = await projectService.grantProjectUser(projectId, userId, role);
       set((state) => {
         const current = state.grantsByProjectId[projectId] ?? [];
         const next = current.filter((item) => !(item.subject_type === "user" && item.subject_id === userId));
@@ -361,7 +279,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   revokeProjectUser: async (projectId, userId) => {
     try {
-      await api.delete(`/projects/${projectId}/grants/users/${encodeURIComponent(userId)}`);
+      await projectService.revokeProjectUser(projectId, userId);
       set((state) => ({
         grantsByProjectId: {
           ...state.grantsByProjectId,
@@ -380,9 +298,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   grantProjectGroup: async (projectId, groupId, role) => {
     try {
-      const grant = await api.put<ProjectSubjectGrant>(`/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`, {
-        role,
-      });
+      const grant = await projectService.grantProjectGroup(projectId, groupId, role);
       set((state) => {
         const current = state.grantsByProjectId[projectId] ?? [];
         const next = current.filter((item) => !(item.subject_type === "group" && item.subject_id === groupId));
@@ -405,7 +321,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   revokeProjectGroup: async (projectId, groupId) => {
     try {
-      await api.delete(`/projects/${projectId}/grants/groups/${encodeURIComponent(groupId)}`);
+      await projectService.revokeProjectGroup(projectId, groupId);
       set((state) => ({
         grantsByProjectId: {
           ...state.grantsByProjectId,
@@ -424,7 +340,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   cloneProject: async (projectId, payload) => {
     try {
-      const project = await api.post<Project>(`/projects/${projectId}/clone`, payload ?? {});
+      const project = await projectService.cloneProject(projectId, payload);
       set((state) => ({
         projects: [project, ...state.projects],
         currentProjectId: project.id,
@@ -439,10 +355,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectAgents: async (projectId) => {
     try {
-      const response = await api.get<Record<string, unknown>[]>(
-        `/projects/${projectId}/agents/summary`,
-      );
-      const agents = response.map(mapProjectAgentSummary);
+      const agents = await projectService.fetchProjectAgents(projectId);
       set((state) => ({
         agentsByProjectId: {
           ...state.agentsByProjectId,
@@ -459,25 +372,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   openProjectAgentSession: async (projectId, agentKey) => {
     try {
-      const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session`,
-        {},
-      );
-      const result = mapOpenProjectAgentSessionResult(response);
-      set((state) => {
-        const existing = state.agentsByProjectId[projectId] ?? [];
-        const hasExisting = existing.some((item) => item.key === result.agent.key);
-        const nextAgents = hasExisting
-          ? existing.map((item) => (item.key === result.agent.key ? result.agent : item))
-          : [...existing, result.agent];
-        return {
-          agentsByProjectId: {
-            ...state.agentsByProjectId,
-            [projectId]: nextAgents,
-          },
-          error: null,
-        };
-      });
+      const result = await projectService.openProjectAgentSession(projectId, agentKey);
+      set((state) => ({
+        agentsByProjectId: {
+          ...state.agentsByProjectId,
+          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
+        },
+        error: null,
+      }));
       return result;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -487,25 +389,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   forceNewProjectAgentSession: async (projectId, agentKey) => {
     try {
-      const response = await api.post<Record<string, unknown>>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
-        {},
-      );
-      const result = mapOpenProjectAgentSessionResult(response);
-      set((state) => {
-        const existing = state.agentsByProjectId[projectId] ?? [];
-        const hasExisting = existing.some((item) => item.key === result.agent.key);
-        const nextAgents = hasExisting
-          ? existing.map((item) => (item.key === result.agent.key ? result.agent : item))
-          : [...existing, result.agent];
-        return {
-          agentsByProjectId: {
-            ...state.agentsByProjectId,
-            [projectId]: nextAgents,
-          },
-          error: null,
-        };
-      });
+      const result = await projectService.forceNewProjectAgentSession(projectId, agentKey);
+      set((state) => ({
+        agentsByProjectId: {
+          ...state.agentsByProjectId,
+          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
+        },
+        error: null,
+      }));
       return result;
     } catch (e) {
       set({ error: (e as Error).message });
@@ -515,15 +406,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectAgentSessions: async (projectId, agentKey) => {
     try {
-      const response = await api.get<Record<string, unknown>[]>(
-        `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
-      );
-      return response.map((raw) => ({
-        binding_id: requireStringField(raw, 'binding_id'),
-        session_id: String(raw.session_id ?? ''),
-        session_title: raw.session_title != null ? String(raw.session_title) : null,
-        last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
-      }));
+      return await projectService.fetchProjectAgentSessions(projectId, agentKey);
     } catch (e) {
       set({ error: (e as Error).message });
       return [];
@@ -532,8 +415,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   fetchProjectSessionInfo: async (projectId, bindingId) => {
     try {
-      const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${bindingId}`);
-      return mapProjectSessionInfo(raw);
+      return await projectService.fetchProjectSessionInfo(projectId, bindingId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
@@ -544,7 +426,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   deleteProject: async (id) => {
     try {
-      await api.delete(`/projects/${id}`);
+      await projectService.deleteProject(id);
       set((s) => {
         const remaining = s.projects.filter((p) => p.id !== id);
         const nextCurrentProjectId =

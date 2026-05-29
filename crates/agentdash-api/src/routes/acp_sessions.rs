@@ -101,8 +101,7 @@ pub async fn list_sessions(
         .services
         .session_core
         .list_sessions()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
 
     let exclude_bound = query.exclude_bound.unwrap_or(false);
     let mut visible_sessions = Vec::with_capacity(sessions.len());
@@ -160,8 +159,7 @@ pub async fn create_session(
         .services
         .session_core
         .create_session(&title)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     let binding = SessionBinding::new(
         project.id,
         meta.id.clone(),
@@ -174,8 +172,7 @@ pub async fn create_session(
         .services
         .session_core
         .mark_owner_bootstrap_pending(&meta.id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     ensure_freeform_lifecycle_run(state.as_ref(), project.id, &meta.id).await?;
     Ok(Json(meta))
 }
@@ -213,8 +210,7 @@ pub async fn get_session(
         .services
         .session_core
         .get_session_meta(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
     Ok(Json(meta))
 }
@@ -284,16 +280,14 @@ pub async fn get_session_state(
         .services
         .session_core
         .get_session_meta(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
 
     let execution_state = state
         .services
         .session_core
         .inspect_session_execution_state(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
 
     let response = match execution_state {
         SessionExecutionState::Idle => SessionExecutionStateResponse {
@@ -896,8 +890,7 @@ pub async fn delete_session(
         .services
         .session_core
         .delete_session(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     for binding in bindings {
         state
             .repos
@@ -968,8 +961,7 @@ pub async fn cancel_session(
         .services
         .session_core
         .inspect_session_execution_state(&session_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
 
     let state_payload = match execution_state {
         SessionExecutionState::Idle => serde_json::json!({ "status": "idle" }),

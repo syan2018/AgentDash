@@ -11,7 +11,7 @@ use super::inline_persistence::{DbInlineContentPersister, InlineContentOverlay};
 use super::mount::{PROVIDER_INLINE_FS, parse_inline_mount_owner};
 use super::path::{normalize_mount_relative_path, resolve_mount};
 use super::provider::MountProviderRegistry;
-use super::relay_service::RelayVfsService;
+use super::service::VfsService;
 use super::types::{ApplyPatchResult, ResourceRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,19 +76,19 @@ impl From<agentdash_domain::DomainError> for VfsMutationError {
 
 #[derive(Clone)]
 pub struct VfsMutationDispatcher {
-    relay_service: Arc<RelayVfsService>,
+    vfs_service: Arc<VfsService>,
     inline_file_repo: Arc<dyn InlineFileRepository>,
     mount_provider_registry: Arc<MountProviderRegistry>,
 }
 
 impl VfsMutationDispatcher {
     pub fn new(
-        relay_service: Arc<RelayVfsService>,
+        vfs_service: Arc<VfsService>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         mount_provider_registry: Arc<MountProviderRegistry>,
     ) -> Self {
         Self {
-            relay_service,
+            vfs_service,
             inline_file_repo,
             mount_provider_registry,
         }
@@ -129,7 +129,7 @@ impl VfsMutationDispatcher {
             return Ok(text_result(path, content.len() as u64, true));
         }
 
-        self.relay_service
+        self.vfs_service
             .create_text(
                 vfs,
                 &ResourceRef {
@@ -164,7 +164,7 @@ impl VfsMutationDispatcher {
             return Ok(text_result(path, content.len() as u64, true));
         }
 
-        self.relay_service
+        self.vfs_service
             .write_text(
                 vfs,
                 &ResourceRef {
@@ -206,7 +206,7 @@ impl VfsMutationDispatcher {
             return Ok(());
         }
 
-        self.relay_service
+        self.vfs_service
             .delete_text(
                 vfs,
                 &ResourceRef {
@@ -272,7 +272,7 @@ impl VfsMutationDispatcher {
             return Ok((from_path, to_path));
         }
 
-        self.relay_service
+        self.vfs_service
             .rename_text(vfs, mount_id, &from_path, &to_path, None, identity)
             .await
             .map_err(VfsMutationError::Provider)?;
@@ -291,13 +291,13 @@ impl VfsMutationDispatcher {
         if mount.provider == PROVIDER_INLINE_FS {
             let overlay = self.db_inline_overlay();
             return self
-                .relay_service
+                .vfs_service
                 .apply_patch(vfs, mount_id, patch, Some(&overlay), identity)
                 .await
                 .map_err(VfsMutationError::Provider);
         }
 
-        self.relay_service
+        self.vfs_service
             .apply_patch(vfs, mount_id, patch, None, identity)
             .await
             .map_err(VfsMutationError::Provider)
@@ -588,7 +588,7 @@ mod tests {
     fn dispatcher(repo: Arc<MemoryInlineFileRepo>) -> VfsMutationDispatcher {
         let registry = Arc::new(MountProviderRegistry::new());
         VfsMutationDispatcher::new(
-            Arc::new(RelayVfsService::new(registry.clone())),
+            Arc::new(VfsService::new(registry.clone())),
             repo,
             registry,
         )

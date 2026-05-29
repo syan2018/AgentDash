@@ -22,6 +22,7 @@ import {
 } from "./agent-preset-editor";
 import type { PresetFormState } from "./agent-preset-editor";
 import { filterAgents } from "./agent-filter";
+import { formatRelativeTime } from "../../lib/format";
 import {
   CardMenu,
   CreateButton,
@@ -40,22 +41,6 @@ export interface ProjectAgentViewProps {
   error?: string | null;
   onOpenAgent: (agent: ProjectAgentSummary) => void;
   onForceNewSession?: (agent: ProjectAgentSummary) => void;
-}
-
-function formatRelativeTime(timestamp: number | null | undefined): string {
-  if (timestamp == null) return "无活动";
-  const now = Date.now();
-  const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const diffMs = now - ts;
-  if (diffMs < 0) return "刚刚";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return "刚刚";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
 }
 
 type ActivityLevel = "active" | "recent" | "idle" | "none";
@@ -139,7 +124,7 @@ function SessionHistoryPanel({
               className="flex w-full items-center justify-between rounded-[8px] border border-border bg-secondary/30 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary"
             >
               <span className="truncate text-xs text-foreground">{s.session_title ?? "无标题会话"}</span>
-              <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{formatRelativeTime(s.last_activity)}</span>
+              <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{formatRelativeTime(s.last_activity, { emptyLabel: "无活动" })}</span>
             </button>
           ))}
         </div>
@@ -549,7 +534,7 @@ export function ProjectAgentView({
                       tone={activityDotTone[activity]}
                       size="md"
                       className="mt-1.5 shrink-0"
-                      title={formatRelativeTime(agent.session?.last_activity)}
+                      title={formatRelativeTime(agent.session?.last_activity, { emptyLabel: "无活动" })}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground" title={agent.display_name}>
@@ -756,7 +741,7 @@ export function ProjectAgentView({
                       {agent.session && (
                         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                           <span className="truncate">{agent.session.session_title ?? "会话进行中"}</span>
-                          <span className="ml-2 shrink-0">{formatRelativeTime(agent.session.last_activity)}</span>
+                          <span className="ml-2 shrink-0">{formatRelativeTime(agent.session.last_activity, { emptyLabel: "无活动" })}</span>
                         </div>
                       )}
 

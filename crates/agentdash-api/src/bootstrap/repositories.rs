@@ -129,7 +129,6 @@ pub(crate) async fn build_repositories(
         project_vfs_mount_repo: project_vfs_mount_repo.clone(),
         workflow_definition_repo: workflow_repo.clone(),
         workflow_template_install_repo: workflow_repo.clone(),
-        lifecycle_definition_repo: workflow_repo.clone(),
         activity_lifecycle_definition_repo: workflow_repo.clone(),
         activity_execution_claim_repo: workflow_repo.clone(),
         lifecycle_run_repo: workflow_repo.clone(),

@@ -1,6 +1,6 @@
 //! relay MCP Server 配置解析——从 relay 协议 JSON 转换为 SessionMcpServer
 
-use agentdash_spi::{McpEnvVar, McpHeader, McpTransportConfig, SessionMcpServer};
+use agentdash_spi::{McpEnvVar, McpHttpHeader, McpTransportConfig, SessionMcpServer};
 
 /// 从中继 `CommandPromptPayload.mcp_servers` JSON 列表解析出 `SessionMcpServer` 列表。
 ///
@@ -46,7 +46,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<SessionMcpServe
                         continue;
                     }
                 };
-                let headers: Vec<McpHeader> = obj
+                let headers: Vec<McpHttpHeader> = obj
                     .get("headers")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
@@ -55,7 +55,7 @@ pub fn parse_relay_mcp_servers(raw: &[serde_json::Value]) -> Vec<SessionMcpServe
                                 let ho = h.as_object()?;
                                 let hname = ho.get("name")?.as_str()?.to_string();
                                 let hvalue = ho.get("value")?.as_str()?.to_string();
-                                Some(McpHeader {
+                                Some(McpHttpHeader {
                                     name: hname,
                                     value: hvalue,
                                 })

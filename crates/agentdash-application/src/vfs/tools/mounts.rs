@@ -4,7 +4,7 @@ use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ToolUpdateCallba
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::vfs::{RelayVfsService, capability_name};
+use crate::vfs::{VfsService, capability_name};
 
 use super::common::{SharedRuntimeVfs, ok_text};
 
@@ -14,12 +14,12 @@ use super::common::{SharedRuntimeVfs, ok_text};
 
 #[derive(Clone)]
 pub struct MountsListTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
 }
 
 impl MountsListTool {
-    pub fn new(service: Arc<RelayVfsService>, vfs: SharedRuntimeVfs) -> Self {
+    pub fn new(service: Arc<VfsService>, vfs: SharedRuntimeVfs) -> Self {
         Self { service, vfs }
     }
 }

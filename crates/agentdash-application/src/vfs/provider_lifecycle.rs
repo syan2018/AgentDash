@@ -17,9 +17,10 @@ use super::types::{ExecRequest, ExecResult, ListOptions, ListResult, ReadResult}
 use crate::runtime::{Mount, RuntimeFileEntry};
 use crate::session::SessionPersistence;
 use crate::workflow::lifecycle::journey::{
-    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, current_step,
-    current_step_session_id, filter_session_items, find_step, group_events_into_turn_summaries,
-    item_file_name, run_overview, session_summary_archives, step_session_id, to_json_pretty,
+    LifecycleJourneyError, LifecycleJourneyProjection, SessionItemView, attempt_session_id,
+    current_step, current_step_session_id, filter_session_items, find_step,
+    group_events_into_turn_summaries, item_file_name, run_overview, session_summary_archives,
+    step_session_id, step_states_from_run, to_json_pretty,
 };
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::skill_asset::SkillAssetRepository;
@@ -210,30 +211,30 @@ impl MountProvider for LifecycleMountProvider {
                         to_json_pretty(&run_overview(&active)).map_err(map_journey_err)?
                     }
                     ["active", "steps"] => {
-                        to_json_pretty(&active.step_states).map_err(map_journey_err)?
+                        to_json_pretty(&step_states_from_run(&active)).map_err(map_journey_err)?
                     }
                     ["active", "steps", key] => {
                         let step = find_step(&active, key).map_err(map_journey_err)?;
-                        to_json_pretty(step).map_err(map_journey_err)?
+                        to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["active", "log"] => {
                         to_json_pretty(&active.execution_log).map_err(map_journey_err)?
                     }
                     ["state"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
-                        to_json_pretty(step).map_err(map_journey_err)?
+                        to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["session", "summary"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_node_summary(run_id, step)
+                            .read_node_summary(run_id, &step)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["session", "conclusions"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_node_conclusions(run_id, &step.step_key)
+                            .read_node_conclusions(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -241,21 +242,21 @@ impl MountProvider for LifecycleMountProvider {
                         let (_, session_id) =
                             current_step_session_id(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_session_projection(session_id, rest)
+                            .read_session_projection(&session_id, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["records"] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_records_map(run_id, &step.step_key)
+                            .read_records_map(run_id, &step.activity_key)
                             .await
                             .map_err(map_journey_err)?
                     }
                     ["records", rest @ ..] => {
                         let step = current_step(&active).map_err(map_journey_err)?;
                         self.journey
-                            .read_record(run_id, &step.step_key, rest)
+                            .read_record(run_id, &step.activity_key, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -283,7 +284,7 @@ impl MountProvider for LifecycleMountProvider {
                     }
                     ["nodes", key, "state"] => {
                         let step = find_step(&active, key).map_err(map_journey_err)?;
-                        to_json_pretty(step).map_err(map_journey_err)?
+                        to_json_pretty(&step).map_err(map_journey_err)?
                     }
                     ["nodes", key, "records"] => {
                         find_step(&active, key).map_err(map_journey_err)?;
@@ -302,7 +303,7 @@ impl MountProvider for LifecycleMountProvider {
                     ["nodes", key, "session", "summary"] => {
                         let step = find_step(&active, key).map_err(map_journey_err)?;
                         self.journey
-                            .read_node_summary(run_id, step)
+                            .read_node_summary(run_id, &step)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -316,7 +317,7 @@ impl MountProvider for LifecycleMountProvider {
                     ["nodes", key, "session", rest @ ..] => {
                         let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                         self.journey
-                            .read_session_projection(session_id, rest)
+                            .read_session_projection(&session_id, rest)
                             .await
                             .map_err(map_journey_err)?
                     }
@@ -383,12 +384,12 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let name = self
                     .journey
-                    .write_record(run_id, &step.step_key, rest, content)
+                    .write_record(run_id, &step.activity_key, rest, content)
                     .await
                     .map_err(map_journey_err)?;
                 info!(
                     run_id = %run_id,
-                    step_key = %step.step_key,
+                    step_key = %step.activity_key,
                     record = %name,
                     content_len = content.len(),
                     "lifecycle VFS: wrote journey record"
@@ -443,11 +444,10 @@ impl MountProvider for LifecycleMountProvider {
                     .map(|content| content.len() as u64)
                     .unwrap_or(0),
             ),
-            ["active", "steps"] => active
-                .step_states
+            ["active", "steps"] => step_states_from_run(&active)
                 .iter()
                 .map(|step| {
-                    RuntimeFileEntry::file(format!("active/steps/{}", step.step_key)).as_virtual()
+                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key)).as_virtual()
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
@@ -489,7 +489,7 @@ impl MountProvider for LifecycleMountProvider {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     "session/items",
                     SessionItemView::Items,
                 )
@@ -499,7 +499,7 @@ impl MountProvider for LifecycleMountProvider {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     "session/messages",
                     SessionItemView::Messages,
                 )
@@ -509,7 +509,7 @@ impl MountProvider for LifecycleMountProvider {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     "session/tools",
                     SessionItemView::Tools,
                 )
@@ -519,7 +519,7 @@ impl MountProvider for LifecycleMountProvider {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     "session/writes",
                     SessionItemView::Writes,
                 )
@@ -527,13 +527,14 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["session", "summaries"] => {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
-                list_session_summary_entries(&self.journey, session_id, "session/summaries").await?
+                list_session_summary_entries(&self.journey, &session_id, "session/summaries")
+                    .await?
             }
             ["session", "turns"] => {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 let events = self
                     .journey
-                    .session_events(session_id)
+                    .session_events(&session_id)
                     .await
                     .map_err(map_journey_err)?;
                 group_events_into_turn_summaries(&events)
@@ -548,7 +549,7 @@ impl MountProvider for LifecycleMountProvider {
                 let (_, session_id) = current_step_session_id(&active).map_err(map_journey_err)?;
                 let events = self
                     .journey
-                    .session_events(session_id)
+                    .session_events(&session_id)
                     .await
                     .map_err(map_journey_err)?;
                 if events
@@ -568,7 +569,7 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
-                    .records_map(run_id, &step.step_key)
+                    .records_map(run_id, &step.activity_key)
                     .await
                     .map_err(map_journey_err)?;
                 list_projected_entries(files, "records", "records", options)
@@ -578,22 +579,24 @@ impl MountProvider for LifecycleMountProvider {
                 let run_id = parse_run_id_from_metadata(mount)?;
                 let files = self
                     .journey
-                    .records_map(run_id, &step.step_key)
+                    .records_map(run_id, &step.activity_key)
                     .await
                     .map_err(map_journey_err)?;
                 let display_base = format!("records/{}", rest.join("/"));
                 list_projected_entries(files, "records", &display_base, options)
             }
-            ["nodes"] => active
-                .step_states
+            ["nodes"] => step_states_from_run(&active)
                 .iter()
-                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.step_key)).as_virtual())
+                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual())
                 .collect(),
             ["nodes", key] => {
-                if let Some(step) = active.step_states.iter().find(|step| step.step_key == *key) {
+                if let Some(step) = step_states_from_run(&active)
+                    .iter()
+                    .find(|step| step.activity_key == *key)
+                {
                     let mut entries =
                         vec![RuntimeFileEntry::file(format!("nodes/{key}/state")).as_virtual()];
-                    if step.session_id.is_some() {
+                    if attempt_session_id(step).is_some() {
                         entries.push(
                             RuntimeFileEntry::dir(format!("nodes/{key}/session")).as_virtual(),
                         );
@@ -605,8 +608,9 @@ impl MountProvider for LifecycleMountProvider {
                 }
             }
             ["nodes", key, "session"] => {
-                let step = active.step_states.iter().find(|step| step.step_key == *key);
-                if step.and_then(|step| step.session_id.as_ref()).is_none() {
+                let states = step_states_from_run(&active);
+                let step = states.iter().find(|step| step.activity_key == *key);
+                if step.and_then(attempt_session_id).is_none() {
                     Vec::new()
                 } else {
                     vec![
@@ -631,7 +635,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     &format!("nodes/{key}/session/items"),
                     SessionItemView::Items,
                 )
@@ -641,7 +645,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     &format!("nodes/{key}/session/messages"),
                     SessionItemView::Messages,
                 )
@@ -651,7 +655,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     &format!("nodes/{key}/session/tools"),
                     SessionItemView::Tools,
                 )
@@ -661,7 +665,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 list_session_item_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     &format!("nodes/{key}/session/writes"),
                     SessionItemView::Writes,
                 )
@@ -671,7 +675,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 list_session_summary_entries(
                     &self.journey,
-                    session_id,
+                    &session_id,
                     &format!("nodes/{key}/session/summaries"),
                 )
                 .await?
@@ -680,7 +684,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 let events = self
                     .journey
-                    .session_events(session_id)
+                    .session_events(&session_id)
                     .await
                     .map_err(map_journey_err)?;
                 group_events_into_turn_summaries(&events)
@@ -695,7 +699,7 @@ impl MountProvider for LifecycleMountProvider {
                 let session_id = step_session_id(&active, key).map_err(map_journey_err)?;
                 let events = self
                     .journey
-                    .session_events(session_id)
+                    .session_events(&session_id)
                     .await
                     .map_err(map_journey_err)?;
                 if events
@@ -794,9 +798,10 @@ impl MountProvider for LifecycleMountProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use crate::session::{
-        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionMeta,
-        SessionPersistence, TitleSource,
+        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
+        SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use agentdash_agent_protocol::{
@@ -806,7 +811,10 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind};
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetRepository};
-    use agentdash_domain::workflow::{LifecycleStepDefinition, LifecycleStepExecutionStatus};
+    use agentdash_domain::workflow::{
+        ActivityAttemptState, ActivityAttemptStatus, ActivityLifecycleRunState, ActivityRunStatus,
+        ExecutorRunRef,
+    };
     use agentdash_spi::{
         NewCompactionProjectionCommit, SESSION_PROJECTION_KIND_MODEL_CONTEXT,
         SessionCompactionRecord, SessionCompactionStatus, SessionProjectionHeadRecord,
@@ -1076,15 +1084,17 @@ mod tests {
         }
     }
 
-    fn test_step(key: &str) -> LifecycleStepDefinition {
-        LifecycleStepDefinition {
-            key: key.to_string(),
-            description: String::new(),
-            workflow_key: None,
-            node_type: Default::default(),
-            output_ports: vec![],
-            input_ports: vec![],
-            capability_config: Default::default(),
+    fn running_attempt(key: &str, session_id: &str) -> ActivityAttemptState {
+        ActivityAttemptState {
+            activity_key: key.to_string(),
+            attempt: 1,
+            status: ActivityAttemptStatus::Running,
+            executor_run: Some(ExecutorRunRef::AgentSession {
+                session_id: session_id.to_string(),
+            }),
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            summary: Some("节点摘要".to_string()),
         }
     }
 
@@ -1170,20 +1180,19 @@ mod tests {
         let persistence = MemorySessionPersistence::default();
         let session_id = "sess-node";
 
-        let steps = vec![test_step("analyze")];
-        let mut run = LifecycleRun::new(
+        let activity_state = ActivityLifecycleRunState {
+            status: ActivityRunStatus::Running,
+            attempts: vec![running_attempt("analyze", session_id)],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        };
+        let run = LifecycleRun::new_activity(
             Uuid::new_v4(),
             Uuid::new_v4(),
             "sess-root",
-            &steps,
-            "analyze",
-            &[],
+            activity_state,
         )
         .expect("run");
-        run.activate_step("analyze").expect("activate");
-        run.bind_step_session("analyze", session_id).expect("bind");
-        run.step_states[0].status = LifecycleStepExecutionStatus::Running;
-        run.step_states[0].summary = Some("节点摘要".to_string());
         run_repo.create(&run).await.expect("store run");
 
         persistence
@@ -1545,7 +1554,7 @@ mod tests {
         let (provider, mount, _persistence) = fixture().await;
         let mut registry = crate::vfs::MountProviderRegistry::new();
         registry.register(Arc::new(provider));
-        let service = crate::vfs::RelayVfsService::new(Arc::new(registry));
+        let service = crate::vfs::VfsService::new(Arc::new(registry));
         let vfs = agentdash_spi::Vfs {
             mounts: vec![mount],
             default_mount_id: None,

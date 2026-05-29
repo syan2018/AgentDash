@@ -245,7 +245,7 @@ fn project_vfs_mount_response(mount: ProjectVfsMount) -> ProjectVfsMountResponse
         capabilities: mount
             .capabilities
             .into_iter()
-            .filter_map(contract_capability_from_domain)
+            .map(contract_capability_from_domain)
             .collect(),
         installed_source: mount.installed_source.map(installed_source_response),
         content: contract_content_from_domain(mount.content),
@@ -348,19 +348,19 @@ fn domain_capability_from_contract(capability: ContractMountCapability) -> Domai
         ContractMountCapability::Write => DomainMountCapability::Write,
         ContractMountCapability::List => DomainMountCapability::List,
         ContractMountCapability::Search => DomainMountCapability::Search,
+        ContractMountCapability::Exec => DomainMountCapability::Exec,
+        ContractMountCapability::Watch => DomainMountCapability::Watch,
     }
 }
 
-fn contract_capability_from_domain(
-    capability: DomainMountCapability,
-) -> Option<ContractMountCapability> {
+fn contract_capability_from_domain(capability: DomainMountCapability) -> ContractMountCapability {
     match capability {
-        DomainMountCapability::Read => Some(ContractMountCapability::Read),
-        DomainMountCapability::Write => Some(ContractMountCapability::Write),
-        DomainMountCapability::List => Some(ContractMountCapability::List),
-        DomainMountCapability::Search => Some(ContractMountCapability::Search),
-        DomainMountCapability::Watch => None,
-        DomainMountCapability::Exec => None,
+        DomainMountCapability::Read => ContractMountCapability::Read,
+        DomainMountCapability::Write => ContractMountCapability::Write,
+        DomainMountCapability::List => ContractMountCapability::List,
+        DomainMountCapability::Search => ContractMountCapability::Search,
+        DomainMountCapability::Exec => ContractMountCapability::Exec,
+        DomainMountCapability::Watch => ContractMountCapability::Watch,
     }
 }
 

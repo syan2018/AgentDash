@@ -9,10 +9,13 @@
 //!
 //! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
 
+use std::sync::Arc;
+
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityPortValue, ExecutorRunRef, LifecycleRun,
     WorkflowSessionTerminalState,
 };
+use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookSessionRuntime};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -84,6 +87,7 @@ pub struct LifecycleOrchestrator {
     session_capability: SessionCapabilityService,
     repos: RepositorySet,
     platform_config: SharedPlatformConfig,
+    function_runner: Arc<dyn FunctionRunner>,
 }
 
 impl LifecycleOrchestrator {
@@ -94,6 +98,7 @@ impl LifecycleOrchestrator {
         session_capability: SessionCapabilityService,
         repos: RepositorySet,
         platform_config: SharedPlatformConfig,
+        function_runner: Arc<dyn FunctionRunner>,
     ) -> Self {
         Self {
             session_core,
@@ -102,6 +107,7 @@ impl LifecycleOrchestrator {
             session_capability,
             repos,
             platform_config,
+            function_runner,
         }
     }
 
@@ -312,6 +318,7 @@ impl LifecycleOrchestrator {
                 self.session_core.clone(),
                 self.session_launch.clone(),
                 self.repos.clone(),
+                self.function_runner.clone(),
             )
             .with_runtime_context(
                 self.session_hooks.clone(),

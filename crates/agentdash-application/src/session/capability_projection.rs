@@ -5,14 +5,14 @@ use agentdash_spi::context::capability::{SessionBaselineCapabilities, SkillEntry
 use agentdash_spi::{DiscoveredGuideline, SessionMcpServer, Vfs};
 
 use crate::context::mount_file_discovery::{BUILTIN_GUIDELINE_RULES, discover_mount_files};
-use crate::vfs::RelayVfsService;
+use crate::vfs::VfsService;
 
 use super::baseline_capabilities::build_session_baseline_capabilities;
 use super::types::CapabilityState;
 
 #[derive(Clone, Copy)]
 pub struct SessionCapabilityProjectionInput<'a> {
-    pub vfs_service: Option<&'a RelayVfsService>,
+    pub vfs_service: Option<&'a VfsService>,
     pub active_vfs: Option<&'a Vfs>,
     pub extra_skill_dirs: &'a [PathBuf],
     pub diagnostics_label: &'static str,
@@ -79,7 +79,7 @@ pub async fn derive_session_skill_baseline(
 }
 
 pub async fn derive_session_guidelines(
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
     active_vfs: &Vfs,
     diagnostics_label: &'static str,
 ) -> Vec<DiscoveredGuideline> {

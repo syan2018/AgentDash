@@ -121,7 +121,7 @@ impl MountProvider for InlineFsMountProvider {
     ) -> Result<(), MountError> {
         let _ = (mount, path);
         Err(MountError::NotSupported(
-            "inline_fs 写入由 RelayVfsService 与 InlineContentOverlay 处理".into(),
+            "inline_fs 写入由 VfsService 与 InlineContentOverlay 处理".into(),
         ))
     }
 

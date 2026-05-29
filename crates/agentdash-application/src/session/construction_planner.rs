@@ -30,7 +30,7 @@ use crate::{
         derive_session_skill_baseline,
     },
     vfs::{
-        RelayVfsService, SessionMountTarget, append_agent_knowledge_mounts,
+        VfsService, SessionMountTarget, append_agent_knowledge_mounts,
         apply_agent_vfs_access_grants,
     },
     workflow::{
@@ -96,7 +96,7 @@ impl SessionConstructionPlanner {
     }
 
     pub async fn build_session_capabilities(
-        vfs_service: &RelayVfsService,
+        vfs_service: &VfsService,
         vfs: Option<&agentdash_spi::Vfs>,
         extra_skill_dirs: &[PathBuf],
     ) -> Option<agentdash_spi::SessionBaselineCapabilities> {
@@ -112,7 +112,7 @@ impl SessionConstructionPlanner {
 
     pub async fn plan_task_context_query(
         repos: &RepositorySet,
-        vfs_service: &RelayVfsService,
+        vfs_service: &VfsService,
         extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,
@@ -154,7 +154,7 @@ impl SessionConstructionPlanner {
 
     pub async fn plan_story_context_query(
         repos: &RepositorySet,
-        vfs_service: &RelayVfsService,
+        vfs_service: &VfsService,
         extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,
@@ -302,7 +302,7 @@ impl SessionConstructionPlanner {
 
     pub async fn plan_project_context_query(
         repos: &RepositorySet,
-        vfs_service: &RelayVfsService,
+        vfs_service: &VfsService,
         extra_skill_dirs: &[PathBuf],
         platform_config: &PlatformConfig,
         session_id: impl Into<String>,

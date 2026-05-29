@@ -8,7 +8,7 @@ use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
-use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
+use agentdash_application::vfs::{VfsService, VfsMutationDispatcher};
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 
@@ -17,7 +17,7 @@ use crate::relay::registry::BackendRegistry;
 
 pub(crate) struct VfsBootstrapOutput {
     pub mount_provider_registry: Arc<MountProviderRegistry>,
-    pub vfs_service: Arc<RelayVfsService>,
+    pub vfs_service: Arc<VfsService>,
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     pub session_services_handle: SharedSessionToolServicesHandle,
     pub runtime_tool_provider: Arc<dyn agentdash_spi::connector::RuntimeToolProvider>,
@@ -51,7 +51,7 @@ pub(crate) fn build_vfs_kernel(
     }
 
     let mount_provider_registry = Arc::new(mount_registry_builder.build());
-    let vfs_service = Arc::new(RelayVfsService::new(mount_provider_registry.clone()));
+    let vfs_service = Arc::new(VfsService::new(mount_provider_registry.clone()));
     let vfs_mutation_dispatcher = Arc::new(VfsMutationDispatcher::new(
         vfs_service.clone(),
         repos.inline_file_repo.clone(),
@@ -83,6 +83,7 @@ pub(crate) fn build_vfs_kernel(
             session_services_handle.clone(),
             Some(inline_persister),
             platform_config,
+            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
         )
         .with_materialization_service(materialization_service.clone())
         .with_shell_output_registry(shell_output_registry),

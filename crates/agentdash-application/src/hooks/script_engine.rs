@@ -1,12 +1,8 @@
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
-use std::sync::RwLock;
-
-use rhai::{AST, Dynamic, Engine, Scope};
+use std::sync::Arc;
 
 use agentdash_spi::{
     HookApprovalRequest, HookCompactionDecision, HookCompletionStatus, HookDiagnosticEntry,
-    HookEffect, HookInjection,
+    HookEffect, HookInjection, HookScriptEvaluator,
 };
 
 use super::snapshot_helpers::*;
@@ -41,63 +37,29 @@ impl ScriptDecision {
     }
 }
 
-// ── 脚本引擎 ──
+// ── 脚本引擎 facade ──
+//
+// 应用层只负责把 `HookEvaluationContext` 折叠为上下文 JSON、调用注入的
+// [`HookScriptEvaluator`] port，再把原始决策 JSON 解析回 [`ScriptDecision`]。
+// 具体脚本引擎（rhai）实现下沉至 infrastructure。
 
 pub(crate) struct HookScriptEngine {
-    engine: Engine,
-    ast_cache: RwLock<HashMap<u64, AST>>,
-    preset_asts: RwLock<HashMap<String, AST>>,
+    evaluator: Arc<dyn HookScriptEvaluator>,
 }
 
 impl HookScriptEngine {
-    pub fn new(preset_scripts: &[(&str, &str)]) -> Self {
-        let mut engine = Engine::new();
-
-        // 安全沙箱
-        engine.set_max_operations(10_000);
-        engine.set_max_call_levels(32);
-        engine.set_max_string_size(1_048_576);
-        engine.set_max_array_size(1_000);
-        engine.set_max_map_size(500);
-
-        Self::register_helpers(&mut engine);
-
-        let mut preset_asts = HashMap::new();
-        for (key, script) in preset_scripts {
-            match engine.compile(script) {
-                Ok(ast) => {
-                    preset_asts.insert(key.to_string(), ast);
-                }
-                Err(e) => {
-                    tracing::error!(preset_key = key, error = %e, "preset Rhai 脚本编译失败");
-                }
-            }
-        }
-
-        Self {
-            engine,
-            ast_cache: RwLock::new(HashMap::new()),
-            preset_asts: RwLock::new(preset_asts),
-        }
+    pub fn new(evaluator: Arc<dyn HookScriptEvaluator>) -> Self {
+        Self { evaluator }
     }
 
     /// 运行时注册/更新自定义 preset 脚本。
     pub fn register_preset(&self, key: &str, script: &str) -> Result<(), String> {
-        let ast = self.engine.compile(script).map_err(|e| e.to_string())?;
-        self.preset_asts
-            .write()
-            .map_err(|e| format!("preset lock: {e}"))?
-            .insert(key.to_string(), ast);
-        Ok(())
+        self.evaluator.register_preset(key, script)
     }
 
     /// 移除一个 preset（仅 UserDefined 类型应调用此接口）。
     pub fn remove_preset(&self, key: &str) -> bool {
-        self.preset_asts
-            .write()
-            .ok()
-            .map(|mut map| map.remove(key).is_some())
-            .unwrap_or(false)
+        self.evaluator.remove_preset(key)
     }
 
     /// 执行 preset 脚本
@@ -107,41 +69,9 @@ impl HookScriptEngine {
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
     ) -> Result<ScriptDecision, String> {
-        let ast = self
-            .preset_asts
-            .read()
-            .map_err(|e| format!("preset lock: {e}"))?
-            .get(preset_key)
-            .cloned()
-            .ok_or_else(|| format!("未知 preset: {preset_key}"))?;
-
-        let start = std::time::Instant::now();
-        let result = self.eval_ast(&ast, ctx, params);
-        let elapsed = start.elapsed();
-
-        match &result {
-            Ok(decision) => {
-                tracing::debug!(
-                    preset = preset_key,
-                    trigger = ?ctx.query.trigger,
-                    elapsed_us = elapsed.as_micros() as u64,
-                    has_block = decision.block.is_some(),
-                    injections = decision.inject.len(),
-                    diagnostics = decision.diagnostics.len(),
-                    "rhai preset 执行完成"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    preset = preset_key,
-                    trigger = ?ctx.query.trigger,
-                    elapsed_us = elapsed.as_micros() as u64,
-                    error = %e,
-                    "rhai preset 执行失败"
-                );
-            }
-        }
-        result
+        let ctx_json = Self::build_ctx_value(ctx, params);
+        let raw = self.evaluator.eval_preset(preset_key, &ctx_json)?;
+        Self::parse_decision(&raw)
     }
 
     /// 执行用户自定义脚本
@@ -151,84 +81,17 @@ impl HookScriptEngine {
         ctx: &HookEvaluationContext<'_>,
         params: Option<&serde_json::Value>,
     ) -> Result<ScriptDecision, String> {
-        let hash = Self::hash_script(script);
-
-        let cached = self
-            .ast_cache
-            .read()
-            .ok()
-            .and_then(|cache| cache.get(&hash).cloned());
-
-        let ast = match cached {
-            Some(ast) => ast,
-            None => {
-                let ast = self.engine.compile(script).map_err(|e| e.to_string())?;
-                if let Ok(mut cache) = self.ast_cache.write() {
-                    cache.insert(hash, ast.clone());
-                }
-                ast
-            }
-        };
-
-        let start = std::time::Instant::now();
-        let result = self.eval_ast(&ast, ctx, params);
-        let elapsed = start.elapsed();
-
-        match &result {
-            Ok(decision) => {
-                tracing::debug!(
-                    script_hash = hash,
-                    trigger = ?ctx.query.trigger,
-                    elapsed_us = elapsed.as_micros() as u64,
-                    has_block = decision.block.is_some(),
-                    injections = decision.inject.len(),
-                    diagnostics = decision.diagnostics.len(),
-                    "rhai 自定义脚本执行完成"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    script_hash = hash,
-                    trigger = ?ctx.query.trigger,
-                    elapsed_us = elapsed.as_micros() as u64,
-                    error = %e,
-                    "rhai 自定义脚本执行失败"
-                );
-            }
-        }
-        result
+        let ctx_json = Self::build_ctx_value(ctx, params);
+        let raw = self.evaluator.eval_script(script, &ctx_json)?;
+        Self::parse_decision(&raw)
     }
 
     /// 仅编译，不执行——用于验证 API (R11)
     pub fn validate_script(&self, script: &str) -> Result<(), Vec<String>> {
-        self.engine
-            .compile(script)
-            .map(|_| ())
-            .map_err(|e| vec![e.to_string()])
+        self.evaluator.validate_script(script)
     }
 
     // ── 内部方法 ──
-
-    fn eval_ast(
-        &self,
-        ast: &AST,
-        ctx: &HookEvaluationContext<'_>,
-        params: Option<&serde_json::Value>,
-    ) -> Result<ScriptDecision, String> {
-        let ctx_json = Self::build_ctx_value(ctx, params);
-        let ctx_dynamic =
-            rhai::serde::to_dynamic(&ctx_json).map_err(|e| format!("ctx 序列化失败: {e}"))?;
-
-        let mut scope = Scope::new();
-        scope.push("ctx", ctx_dynamic);
-
-        let result: Dynamic = self
-            .engine
-            .eval_ast_with_scope(&mut scope, ast)
-            .map_err(|e| format!("Rhai 脚本执行错误: {e}"))?;
-
-        Self::parse_decision(&result)
-    }
 
     fn build_ctx_value(
         ctx: &HookEvaluationContext<'_>,
@@ -307,15 +170,12 @@ impl HookScriptEngine {
         })
     }
 
-    fn parse_decision(result: &Dynamic) -> Result<ScriptDecision, String> {
-        if result.is_unit() {
+    fn parse_decision(result: &serde_json::Value) -> Result<ScriptDecision, String> {
+        if result.is_null() {
             return Ok(empty_decision());
         }
 
-        let result_json: serde_json::Value =
-            rhai::serde::from_dynamic(result).map_err(|e| format!("返回值解析失败: {e}"))?;
-
-        let obj = match result_json.as_object() {
+        let obj = match result.as_object() {
             Some(obj) if obj.is_empty() => return Ok(empty_decision()),
             Some(obj) => obj,
             None => return Ok(empty_decision()),
@@ -431,106 +291,6 @@ impl HookScriptEngine {
             compaction,
         })
     }
-
-    fn register_helpers(engine: &mut Engine) {
-        engine.register_fn("requires_supervised_approval", |name: &str| -> bool {
-            let normalized = name.to_ascii_lowercase();
-            normalized.ends_with("shell_exec")
-                || normalized.ends_with("shell")
-                || normalized.ends_with("write_file")
-                || normalized.ends_with("fs_apply_patch")
-                || normalized.contains("delete")
-                || normalized.contains("remove")
-                || normalized.contains("move")
-                || normalized.contains("rename")
-        });
-
-        engine.register_fn(
-            "make_injection",
-            |slot: &str, content: &str, source: &str| -> rhai::Map {
-                let mut m = rhai::Map::new();
-                m.insert("slot".into(), Dynamic::from(slot.to_string()));
-                m.insert("content".into(), Dynamic::from(content.to_string()));
-                m.insert("source".into(), Dynamic::from(source.to_string()));
-                m
-            },
-        );
-
-        engine.register_fn(
-            "make_diagnostic",
-            |code: &str, message: &str| -> rhai::Map {
-                let mut m = rhai::Map::new();
-                m.insert("code".into(), Dynamic::from(code.to_string()));
-                m.insert("message".into(), Dynamic::from(message.to_string()));
-                m
-            },
-        );
-
-        engine.register_fn("block", |reason: &str| -> rhai::Map {
-            let mut m = rhai::Map::new();
-            m.insert("block".into(), Dynamic::from(reason.to_string()));
-            m
-        });
-
-        engine.register_fn(
-            "inject",
-            |slot: &str, content: &str, source: &str| -> rhai::Map {
-                let mut m = rhai::Map::new();
-                m.insert(
-                    "inject".into(),
-                    Dynamic::from(rhai::Array::from(vec![{
-                        let mut inj = rhai::Map::new();
-                        inj.insert("slot".into(), Dynamic::from(slot.to_string()));
-                        inj.insert("content".into(), Dynamic::from(content.to_string()));
-                        inj.insert("source".into(), Dynamic::from(source.to_string()));
-                        Dynamic::from(inj)
-                    }])),
-                );
-                m
-            },
-        );
-
-        engine.register_fn("approve", |reason: &str| -> rhai::Map {
-            let mut m = rhai::Map::new();
-            let mut approval = rhai::Map::new();
-            approval.insert("reason".into(), Dynamic::from(reason.to_string()));
-            m.insert("approval".into(), Dynamic::from(approval));
-            m
-        });
-
-        engine.register_fn(
-            "complete",
-            |mode: &str, satisfied: bool, reason: &str| -> rhai::Map {
-                let mut m = rhai::Map::new();
-                let mut comp = rhai::Map::new();
-                comp.insert("mode".into(), Dynamic::from(mode.to_string()));
-                comp.insert("satisfied".into(), Dynamic::from(satisfied));
-                comp.insert("reason".into(), Dynamic::from(reason.to_string()));
-                m.insert("completion".into(), Dynamic::from(comp));
-                m
-            },
-        );
-
-        engine.register_fn("log", |message: &str| -> rhai::Map {
-            let mut m = rhai::Map::new();
-            m.insert(
-                "diagnostics".into(),
-                Dynamic::from(rhai::Array::from(vec![{
-                    let mut d = rhai::Map::new();
-                    d.insert("code".into(), Dynamic::from("script_log".to_string()));
-                    d.insert("message".into(), Dynamic::from(message.to_string()));
-                    Dynamic::from(d)
-                }])),
-            );
-            m
-        });
-    }
-
-    fn hash_script(script: &str) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        script.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 fn empty_decision() -> ScriptDecision {
@@ -550,10 +310,11 @@ fn empty_decision() -> ScriptDecision {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_infrastructure::RhaiHookScriptEvaluator;
     use agentdash_spi::{HookEvaluationQuery, HookTrigger, SessionHookSnapshot};
 
     fn test_engine() -> HookScriptEngine {
-        HookScriptEngine::new(&[])
+        HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[])))
     }
 
     fn base_ctx() -> (SessionHookSnapshot, HookEvaluationQuery) {
@@ -677,7 +438,10 @@ mod tests {
 
     #[test]
     fn preset_registration_and_eval() {
-        let engine = HookScriptEngine::new(&[("test_preset", r#"#{ block: "from preset" }"#)]);
+        let engine = HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[(
+            "test_preset",
+            r#"#{ block: "from preset" }"#,
+        )])));
         let (snapshot, query) = base_ctx();
         let ctx = HookEvaluationContext {
             snapshot: &snapshot,

@@ -15,7 +15,7 @@ use crate::session::types::UserPromptInput;
 use crate::session::{
     LaunchCommand, RoutineLaunchSource, SessionCoreService, SessionLaunchService,
 };
-use crate::vfs::RelayVfsService;
+use crate::vfs::VfsService;
 use crate::workspace::BackendAvailability;
 
 use super::template::render_prompt_template;
@@ -63,7 +63,7 @@ impl RoutineExecutor {
         repos: RepositorySet,
         session_core: SessionCoreService,
         session_launch: SessionLaunchService,
-        _vfs_service: Arc<RelayVfsService>,
+        _vfs_service: Arc<VfsService>,
         _connector: Arc<dyn AgentConnector>,
         _platform_config: crate::platform_config::SharedPlatformConfig,
         availability: Arc<dyn BackendAvailability>,
@@ -155,7 +155,9 @@ impl RoutineExecutor {
             }
             Err(err) => {
                 execution.mark_failed(format!("模板渲染失败: {err}"));
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
+                }
                 return Err(err);
             }
         };
@@ -165,7 +167,9 @@ impl RoutineExecutor {
             Err(err) => {
                 let reason = format!("加载 Routine Agent 配置失败: {err}");
                 execution.mark_failed(&reason);
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
+                }
                 return Err(reason);
             }
         };
@@ -179,13 +183,21 @@ impl RoutineExecutor {
             match admission {
                 RoutineAdmissionError::Failed(reason) => {
                     execution.mark_failed(&reason);
-                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    if let Err(update_err) =
+                        self.repos.routine_execution_repo.update(&execution).await
+                    {
+                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
+                    }
                     return Err(reason);
                 }
                 RoutineAdmissionError::Skipped(reason) => {
                     execution.mark_skipped(reason);
                     let exec_id = execution.id;
-                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    if let Err(update_err) =
+                        self.repos.routine_execution_repo.update(&execution).await
+                    {
+                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入跳过）落库失败");
+                    }
                     return Ok(exec_id);
                 }
             }
@@ -199,15 +211,21 @@ impl RoutineExecutor {
                 let mut updated_routine = routine;
                 updated_routine.last_fired_at = Some(Utc::now());
                 updated_routine.updated_at = Utc::now();
-                let _ = self.repos.routine_repo.update(&updated_routine).await;
+                if let Err(update_err) = self.repos.routine_repo.update(&updated_routine).await {
+                    tracing::error!(target: "routine", routine_id = %updated_routine.id, error = %update_err, "更新 Routine（last_fired_at）落库失败");
+                }
 
                 let exec_id = execution.id;
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行完成）落库失败");
+                }
                 Ok(exec_id)
             }
             Err(err) => {
                 execution.mark_failed(&err);
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行失败）落库失败");
+                }
                 Err(err)
             }
         }
@@ -237,7 +255,9 @@ impl RoutineExecutor {
         );
 
         execution.mark_running(&session_id, prompt.to_string());
-        let _ = self.repos.routine_execution_repo.update(execution).await;
+        if let Err(update_err) = self.repos.routine_execution_repo.update(execution).await {
+            tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（标记 running）落库失败");
+        }
 
         let _turn_id = self
             .session_launch

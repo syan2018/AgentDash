@@ -6,7 +6,7 @@
 use agentdash_domain::workflow::WorkflowContextBinding;
 
 use super::path::parse_mount_uri;
-use super::relay_service::RelayVfsService;
+use super::service::VfsService;
 use crate::runtime::Vfs;
 
 /// 单个 binding 的解析结果
@@ -36,7 +36,7 @@ pub struct ResolveBindingsOutput {
 pub async fn resolve_context_bindings(
     bindings: &[WorkflowContextBinding],
     vfs: &Vfs,
-    service: &RelayVfsService,
+    service: &VfsService,
 ) -> Result<ResolveBindingsOutput, String> {
     if bindings.is_empty() {
         return Ok(ResolveBindingsOutput::default());

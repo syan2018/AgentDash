@@ -395,10 +395,8 @@ pub(crate) async fn finalize_session_construction_projection(
     plan.workspace.working_directory = Some(working_directory);
     plan.execution_profile.executor_config = executor_config;
     plan.surface.vfs = Some(effective_vfs.clone());
-    plan.context_projection.vfs = Some(effective_vfs.clone());
+    plan.context_projection.vfs = Some(effective_vfs);
     plan.context_projection.session_capabilities = Some(session_capabilities.clone());
-    plan.projections.context.vfs = Some(effective_vfs);
-    plan.projections.context.session_capabilities = Some(session_capabilities.clone());
     plan.projections.mcp_servers = mcp_servers;
     plan.projections.capability_state = Some(final_capability_state);
     plan.projections.session_capabilities = Some(session_capabilities);
@@ -756,33 +754,33 @@ async fn build_lifecycle_node_prompt_request(
     })?;
     let lifecycle = state
         .repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .get_by_id(run.lifecycle_id)
         .await
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id)))?;
     let current_step_key = run.current_step_key().ok_or_else(|| {
-        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无当前 step"))
+        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无当前 activity"))
     })?;
-    let step = lifecycle
-        .steps
+    let activity = lifecycle
+        .activities
         .iter()
         .find(|item| item.key == current_step_key)
         .cloned()
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "Lifecycle {} 中不存在当前 step `{}`",
+                "Lifecycle {} 中不存在当前 activity `{}`",
                 lifecycle.id, current_step_key
             ))
         })?;
-    let workflow = match step.effective_workflow_key() {
-        Some(key) => state
+    let workflow = match &activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => state
             .repos
             .workflow_definition_repo
-            .get_by_project_and_key(run.project_id, key)
+            .get_by_project_and_key(run.project_id, &spec.workflow_key)
             .await
             .map_err(|error| ApiError::Internal(error.to_string()))?,
-        None => None,
+        _ => None,
     };
     let audit_bus = Some(state.services.audit_bus.clone());
 
@@ -793,7 +791,7 @@ async fn build_lifecycle_node_prompt_request(
         LifecycleNodeSpec {
             run: &run,
             lifecycle: &lifecycle,
-            step: &step,
+            activity: &activity,
             workflow: workflow.as_ref(),
             inherited_executor_config: None,
         },
@@ -828,7 +826,7 @@ async fn build_companion_dispatch_prompt_request(
                     },
                     run: &workflow.run,
                     lifecycle: &workflow.lifecycle,
-                    step: &workflow.step,
+                    activity: &workflow.activity,
                     workflow: workflow.workflow.as_ref(),
                 },
             )
@@ -964,6 +962,9 @@ async fn build_task_owner_prompt_request(
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
         .map_err(ApiError::from)?;
+    // Task execution session 没有 `lifecycle_activity:*` binding，因此容忍无 active
+    // workflow projection：此时走纯 task 装配（`StoryStepSpec.active_workflow = None`），
+    // 不带 lifecycle workflow injection。
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.session_binding_repo.as_ref(),
@@ -972,12 +973,7 @@ async fn build_task_owner_prompt_request(
         state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(ApiError::Internal)?
-    .ok_or_else(|| {
-        ApiError::BadRequest(format!(
-            "Task session {session_id} 未绑定活跃 lifecycle step"
-        ))
-    })?;
+    .map_err(ApiError::Internal)?;
 
     let user_prompt_blocks = user_input
         .prompt_blocks
@@ -993,9 +989,6 @@ async fn build_task_owner_prompt_request(
         .compose_story_step_prompt(
             plan,
             StoryStepSpec {
-                run: &active_workflow.run,
-                lifecycle: &active_workflow.lifecycle,
-                step: &active_workflow.active_step,
                 task: &task,
                 story: &story,
                 project: &project,
@@ -1013,7 +1006,7 @@ async fn build_task_owner_prompt_request(
                 request_mcp_servers: &source_mcp_declarations,
                 explicit_executor_config: effective_executor_config.clone(),
                 strict_config_resolution: true,
-                active_workflow: Some(active_workflow.clone()),
+                active_workflow,
                 audit_session_key: Some(session_id.to_string()),
             },
         )

@@ -31,6 +31,7 @@ pub(crate) mod hub;
 mod hub_support;
 mod identity_context_frame;
 pub mod launch;
+#[cfg(test)]
 mod memory_persistence;
 pub mod ownership;
 pub(crate) mod path_policy;
@@ -96,10 +97,13 @@ pub use hook_runtime::HookSessionRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};
+#[cfg(test)]
 pub use memory_persistence::MemorySessionPersistence;
 pub use persistence::{
-    PersistedSessionEvent, SessionEventBacklog, SessionEventPage, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionPersistence,
+    PersistedSessionEvent, SessionCompactionStore, SessionEventBacklog, SessionEventPage,
+    SessionEventStore, SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus,
+    SessionLineageStore, SessionMetaStore, SessionPersistence, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionTerminalEffectStore,
 };
 pub use post_turn_handler::{
     DynPostTurnHandler, DynSessionTerminalCallback, DynTerminalHookEffectHandlerRegistry,

@@ -157,7 +157,7 @@ impl SessionRuntimeInner {
     }
 
     /// 注入 VFS 访问服务（用于 skill 扫描等需要跨 mount 读取的场景）
-    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::RelayVfsService>) -> Self {
+    pub fn with_vfs_service(mut self, service: Arc<crate::vfs::VfsService>) -> Self {
         self.vfs_service = Some(service);
         self
     }

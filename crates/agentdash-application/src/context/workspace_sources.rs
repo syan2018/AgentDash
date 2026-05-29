@@ -6,7 +6,7 @@ use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
 use crate::runtime::RuntimeFileEntry;
-use crate::vfs::{ListOptions, RelayVfsService, ResourceRef, selected_workspace_binding};
+use crate::vfs::{ListOptions, VfsService, ResourceRef, selected_workspace_binding};
 use crate::workspace::BackendAvailability;
 
 use super::builder::Contribution;
@@ -29,7 +29,7 @@ pub fn contribute_workspace_static_sources(fragments: Vec<ContextFragment>) -> C
 /// 非 required 来源会生成 warning 而非报错。
 pub async fn resolve_workspace_declared_sources(
     availability: &dyn BackendAvailability,
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
     sources: &[ContextSourceRef],
     workspace: Option<&Workspace>,
     base_order: i32,
@@ -147,7 +147,7 @@ fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String>
 }
 
 async fn resolve_workspace_file_source(
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
@@ -185,7 +185,7 @@ async fn resolve_workspace_file_source(
 }
 
 async fn resolve_workspace_snapshot_source(
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,

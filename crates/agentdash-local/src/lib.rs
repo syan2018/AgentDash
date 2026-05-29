@@ -9,6 +9,7 @@ pub mod local_backend_config;
 mod machine_identity;
 mod materialization;
 mod mcp_client_manager;
+mod mcp_connect;
 mod terminal_manager;
 mod tool_executor;
 mod workspace_prepare;

@@ -51,21 +51,6 @@ impl SessionRuntimeInner {
         self.runtime_registry.hook_session_runtime(session_id).await
     }
 
-    /// 持久化一条结构化能力状态变更事件。
-    ///
-    /// 这是 UI / 审计 / 回放的事实源；connector steering 消息只是 live agent 的
-    /// 尽力投递通道。
-    pub(crate) async fn emit_capability_state_changed(
-        &self,
-        session_id: &str,
-        turn_id: Option<&str>,
-        value: serde_json::Value,
-    ) -> io::Result<super::super::persistence::PersistedSessionEvent> {
-        self.eventing_service()
-            .emit_capability_state_changed(session_id, turn_id, value)
-            .await
-    }
-
     pub(crate) async fn emit_context_frame(
         &self,
         session_id: &str,

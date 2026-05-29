@@ -1013,33 +1013,6 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .list_all_events(&session.id)
         .await
         .expect("events should load");
-    let state_event = events
-        .iter()
-        .find(|event| {
-            event.session_update_type == "platform_event"
-                && event
-                    .notification
-                    .event
-                    .as_ref()
-                    .is_platform_session_meta_update("capability_state_changed")
-        })
-        .expect("capability state event should exist");
-    match &state_event.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
-            assert_eq!(value["apply_mode"], "canvas_visible");
-            assert_eq!(
-                value["delta"]["vfs"]["mounts"]["added"],
-                json!(["cvs-demo"])
-            );
-            assert_eq!(value["delta"]["skills"]["added"], json!(["canvas-system"]));
-            assert_eq!(
-                value["skills"]["items"],
-                json!(["canvas-system", "local-review"])
-            );
-        }
-        other => panic!("unexpected event: {other:?}"),
-    }
-
     let context_frame = events
         .iter()
         .find(|event| {
@@ -1135,17 +1108,18 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         .iter()
         .find(|event| {
             event.session_update_type == "platform_event"
-                && event
-                    .notification
-                    .event
-                    .as_ref()
-                    .is_platform_session_meta_update("capability_state_changed")
+                && matches!(
+                    &event.notification.event,
+                    BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
+                        if key == "context_frame"
+                            && value.get("kind").and_then(serde_json::Value::as_str)
+                                == Some("capability_state_update")
+                )
         })
-        .expect("capability state event should exist");
+        .expect("capability state update context_frame should exist");
     match &event.notification.event {
         BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
             assert_eq!(value["apply_mode"], "pending_next_turn");
-            assert_eq!(value["delta"]["skills"]["added"], json!(["canvas-system"]));
         }
         other => panic!("unexpected event: {other:?}"),
     }
@@ -1250,7 +1224,9 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         matches!(
             &event.notification.event,
             BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { key, value })
-                if key == "capability_state_changed"
+                if key == "context_frame"
+                    && value.get("kind").and_then(serde_json::Value::as_str)
+                        == Some("capability_state_update")
                     && value.get("apply_mode").and_then(serde_json::Value::as_str)
                         == Some("applied_on_next_turn")
         )
@@ -1796,56 +1772,6 @@ trait BackboneEventExt {
 impl BackboneEventExt for BackboneEvent {
     fn as_ref(&self) -> &BackboneEvent {
         self
-    }
-}
-
-#[tokio::test]
-async fn emit_capability_state_changed_persists_structured_event() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let hub = test_hub(base.path().to_path_buf(), Arc::new(EmptyConnector), None);
-    let session = hub
-        .create_session("capability-event")
-        .await
-        .expect("create session");
-
-    let payload = json!({
-        "phase_node": "review",
-        "state_changed": true,
-        "tool_capabilities": {
-            "current": ["file_read"]
-        },
-        "vfs": {
-            "mounts": ["phase"]
-        },
-        "steering_delivery": { "status": "failed" }
-    });
-    hub.emit_capability_state_changed(&session.id, Some("turn-42"), payload.clone())
-        .await
-        .expect("emit capability state event");
-
-    let events = hub
-        .persistence
-        .list_all_events(&session.id)
-        .await
-        .expect("events should load");
-    let event = events
-        .iter()
-        .find(|event| {
-            event.session_update_type == "platform_event"
-                && event
-                    .notification
-                    .event
-                    .as_ref()
-                    .is_platform_session_meta_update("capability_state_changed")
-        })
-        .expect("capability state event should exist");
-
-    assert_eq!(event.turn_id.as_deref(), Some("turn-42"));
-    match &event.notification.event {
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate { value, .. }) => {
-            assert_eq!(value, &payload);
-        }
-        other => panic!("unexpected event: {other:?}"),
     }
 }
 

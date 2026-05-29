@@ -329,17 +329,20 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const handleSystemEvent = useCallback((eventType: string, _event: BackboneEvent) => {
     switch (eventType) {
       case "hook_event":
-      case "hook_trace":
       case "hook_action_resolved":
       case "companion_dispatch_registered":
       case "companion_result_available":
       case "companion_result_returned":
         scheduleHookRuntimeRefresh(eventType);
         break;
-      case "capability_state_changed":
-        void refreshSessionRuntimeContext();
-        scheduleHookRuntimeRefresh(eventType);
+      case "context_frame": {
+        const frameData = extractPlatformEventData(_event);
+        if (frameData?.kind === "capability_state_update") {
+          void refreshSessionRuntimeContext();
+          scheduleHookRuntimeRefresh(eventType);
+        }
         break;
+      }
       case "session_meta_updated": {
         const data = extractPlatformEventData(_event);
         const newTitle = typeof data?.title === "string" ? (data.title as string).trim() : "";

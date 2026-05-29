@@ -62,7 +62,6 @@ pub(crate) struct PendingRuntimeContextTransitionInput {
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PendingRuntimeContextApplication {
-    pub capability_events: Vec<serde_json::Value>,
     pub context_frames: Vec<ContextFrame>,
 }
 
@@ -110,31 +109,6 @@ impl SessionRuntimeInner {
 
         let delta = hook_session.update_capabilities(input.capability_keys.clone());
         let notification_delta = delta.clone().unwrap_or_else(|| input.key_delta.clone());
-        let steering_delivery = serde_json::json!({
-            "status": "queued_for_transform_context"
-        });
-
-        let event = RuntimeContextTransition {
-            phase_node: &input.phase_node,
-            run_id: input.run_id,
-            lifecycle_key: input.lifecycle_key.as_deref(),
-            apply_mode: input.apply_mode,
-            before_state: input.before_state.as_ref(),
-            after_state: &input.after_state,
-            capability_keys: &input.capability_keys,
-            steering_delivery,
-            state_changed_override: None,
-            steering_capability_delta: Some(&notification_delta),
-        }
-        .event_payload();
-
-        self.emit_capability_state_changed(
-            &input.session_id,
-            input.turn_id.as_deref(),
-            event.clone(),
-        )
-        .await
-        .map_err(|error| format!("Phase node capability state 事件持久化失败: {error}"))?;
 
         let injections = self
             .collect_runtime_context_update_injections(&input.session_id)
@@ -208,18 +182,33 @@ impl SessionRuntimeInner {
                 )
             })?;
 
-        self.emit_capability_state_changed(
-            &input.session_id,
-            input.turn_id.as_deref(),
-            transition.event_payload(),
-        )
-        .await
-        .map_err(|error| {
-            format!(
-                "PhaseNode `{}` pending 事件持久化失败: {error}",
-                input.phase_node
-            )
-        })?;
+        let state_delta = compute_capability_state_delta(
+            input.before_state.as_ref(),
+            &input.after_state,
+            &input.capability_keys,
+        );
+        let capability_delta = CapabilityDelta {
+            added: state_delta.tool_capabilities.added.clone(),
+            removed: state_delta.tool_capabilities.removed.clone(),
+        };
+        let notice = build_context_frame(
+            &input.phase_node,
+            Some("pending_next_turn"),
+            "deferred_until_next_turn",
+            &capability_delta,
+            &input.capability_keys,
+            Some(&state_delta),
+            &[],
+            &input.after_state.skill.skills,
+        );
+        self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
+            .await
+            .map_err(|error| {
+                format!(
+                    "PhaseNode `{}` pending 事件持久化失败: {error}",
+                    input.phase_node
+                )
+            })?;
 
         Ok(())
     }
@@ -265,53 +254,36 @@ impl SessionRuntimeInner {
                     }
                 }
             };
-            let payload = RuntimeContextTransition {
-                phase_node: &pending.phase_node,
-                run_id: Some(pending.run_id),
-                lifecycle_key: Some(&pending.lifecycle_key),
-                apply_mode: "applied_on_next_turn",
-                before_state: Some(&pending_event_before_state),
-                after_state: &pending_after_state,
-                capability_keys: &pending.capability_keys,
-                steering_delivery: serde_json::json!({ "status": "applied_before_prompt" }),
-                state_changed_override: None,
-                steering_capability_delta: None,
-            }
-            .event_payload();
-            application.capability_events.push(payload);
+            let state_delta = compute_capability_state_delta(
+                Some(&pending_event_before_state),
+                &pending_after_state,
+                &pending.capability_keys,
+            );
+            let capability_delta = CapabilityDelta {
+                added: state_delta.tool_capabilities.added.clone(),
+                removed: state_delta.tool_capabilities.removed.clone(),
+            };
+            let notice = build_context_frame(
+                &pending.phase_node,
+                Some("applied_on_next_turn"),
+                "applied_before_prompt",
+                &capability_delta,
+                &pending.capability_keys,
+                Some(&state_delta),
+                tools,
+                &pending_after_state.skill.skills,
+            );
+            application.context_frames.push(notice);
+
             let injections = self
                 .collect_runtime_context_update_injections(session_id)
                 .await;
-            if let Some(_hook_session) = hook_session {
-                let state_delta = compute_capability_state_delta(
-                    Some(&pending_event_before_state),
-                    &pending_after_state,
-                    &pending.capability_keys,
-                );
-                let capability_delta = CapabilityDelta {
-                    added: state_delta.tool_capabilities.added.clone(),
-                    removed: state_delta.tool_capabilities.removed.clone(),
-                };
-                let notice = build_context_frame(
-                    &pending.phase_node,
-                    Some("applied_on_next_turn"),
-                    "applied_before_prompt",
-                    &capability_delta,
-                    &pending.capability_keys,
-                    Some(&state_delta),
-                    tools,
-                    &pending_after_state.skill.skills,
-                );
-                application.context_frames.push(notice.clone());
-
-                // assignment_context 独立 frame，保持 frame 一职一责。
-                if let Some(workflow_frame) = build_workflow_assignment_context_frame(
-                    &pending.phase_node,
-                    "applied_on_next_turn",
-                    &injections,
-                ) {
-                    application.context_frames.push(workflow_frame);
-                }
+            if let Some(workflow_frame) = build_workflow_assignment_context_frame(
+                &pending.phase_node,
+                "applied_on_next_turn",
+                &injections,
+            ) {
+                application.context_frames.push(workflow_frame);
             }
             pending_event_before_state = pending_after_state;
         }

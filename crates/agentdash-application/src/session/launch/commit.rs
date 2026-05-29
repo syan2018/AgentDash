@@ -42,11 +42,11 @@ impl TurnCommitter {
         )
         .await;
 
-        for payload in &prepared.pending_transition_application.capability_events {
+        for frame in &prepared.pending_transition_application.context_frames {
             let _ = self
                 .deps
                 .eventing
-                .emit_capability_state_changed(session_id, Some(turn_id), payload.clone())
+                .emit_context_frame(session_id, Some(turn_id), frame)
                 .await;
         }
         for frame in &prepared.accepted_context_frames_to_emit {

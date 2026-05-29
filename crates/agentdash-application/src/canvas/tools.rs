@@ -1160,11 +1160,12 @@ mod tests {
                 matches!(
                     &event.notification.event,
                     agentdash_agent_protocol::BackboneEvent::Platform(
-                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, .. }
-                    ) if key == "capability_state_changed"
+                        agentdash_agent_protocol::PlatformEvent::SessionMetaUpdate { key, value }
+                    ) if key == "context_frame"
+                        && value.get("kind").and_then(|v| v.as_str()) == Some("capability_state_update")
                 )
             })
-            .expect("应写入 capability_state_changed 事件");
+            .expect("应写入 context_frame(capability_state_update) 事件");
         let presented_index = events
             .iter()
             .position(|event| {

@@ -8,7 +8,6 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "executor_session_bound",
   "turn_interrupted",
   "hook_event",
-  "hook_trace",
   "system_message",
   "error",
   "permission_denied",
@@ -25,7 +24,6 @@ const VISIBLE_SYSTEM_EVENT_TYPES = new Set<string>([
   "companion_human_response",
   "companion_review_request",
   "canvas_presented",
-  "capability_state_changed",
   "context_frame",
 ]);
 
@@ -107,7 +105,7 @@ export function isRenderableSystemEventUpdate(event: BackboneEvent): boolean {
   if (!eventType) return false;
 
   if (VISIBLE_SYSTEM_EVENT_TYPES.has(eventType)) {
-    if (eventType === "hook_event" || eventType === "hook_trace") {
+    if (eventType === "hook_event") {
       const data = extractPlatformEventData(event);
       return isSignificantHookEvent(data);
     }

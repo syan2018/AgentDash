@@ -223,28 +223,6 @@ impl SessionEventingService {
         Ok(())
     }
 
-    pub(crate) async fn emit_capability_state_changed(
-        &self,
-        session_id: &str,
-        turn_id: Option<&str>,
-        value: serde_json::Value,
-    ) -> io::Result<PersistedSessionEvent> {
-        let envelope = BackboneEnvelope::new(
-            BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-                key: "capability_state_changed".to_string(),
-                value,
-            }),
-            session_id,
-            self.connector_source(None),
-        )
-        .with_trace(TraceInfo {
-            turn_id: turn_id.map(ToString::to_string),
-            entry_index: None,
-        });
-
-        self.persist_notification(session_id, envelope).await
-    }
-
     pub(crate) async fn emit_context_frame(
         &self,
         session_id: &str,

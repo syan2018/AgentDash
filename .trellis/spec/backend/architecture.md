@@ -20,7 +20,7 @@
 
 | Crate | 当前职责 |
 | --- | --- |
-| `agentdash-api` | HTTP 路由、DTO、中间件、AppState 装配 |
+| `agentdash-api` | HTTP 路由模块、API-only DTO、中间件、AppState 装配 |
 | `agentdash-application` | 用例编排、session/context/workflow/VFS/capability 服务 |
 | `agentdash-domain` | 实体、值对象、Repository trait、领域错误 |
 | `agentdash-infrastructure` | PostgreSQL / SQLite 持久化实现 |
@@ -54,7 +54,9 @@ Session bootstrap 负责组合 Pi / relay / plugin connectors，构建 `Composit
 
 Auth、runtime gateway 与 background worker bootstrap 分别负责认证模式校验、runtime action provider 组合、以及 AppState 构建完成后的 terminal effect replay、stall detector、routine scheduler 和 auth session cleanup。后台 worker 只在 AppState 已完成延迟绑定检查后启动。
 
-`bootstrap` 只承载宿主装配，不承载业务/查询 helper。Session construction、project-agent context、workspace resolution 等 session 运行上下文逻辑归 `agentdash-application::session`；VFS surface summary 归 `agentdash-application::vfs`，API 侧只实现 backend online / mount edit capability 等 runtime projection adapter。仍依赖 `AppState` / `ApiError` / 鉴权的 session adapter 放在 `agentdash-api/src/session_use_cases/`，不回流到 bootstrap。
+`bootstrap` 只承载宿主装配，不承载业务/查询 helper。Session construction、project-agent context、workspace resolution 等 session 运行上下文逻辑归 `agentdash-application::session`；VFS surface summary 归 `agentdash-application::vfs`，API 侧只实现 backend online / mount edit capability 等 runtime projection adapter。需要 `AppState` 与鉴权身份的 session adapter 留在 API 的 `session_construction` 边界，负责把 HTTP/runtime state 投影为 application use case 输入，不持有业务编排事实。
+
+`agentdash-api/src/routes.rs` 是 composition root。每个 `agentdash-api/src/routes/*.rs` 资源模块导出 `pub fn router() -> Router<Arc<AppState>>`，并在模块内声明自己的 endpoint table；根 router 只合并 secured/public routers、MCP router、WebSocket route 与全局 CORS/trace layer。API-only request/query/response DTO 放在 `agentdash-api/src/dto/`，跨端共享 DTO 放在 `agentdash-contracts`，route 模块不内联 HTTP DTO。
 
 Project extension runtime projection 归 `agentdash-application::extension_runtime`，API 入口为 `agentdash-api/src/routes/extension_runtime.rs`。该 projection 从 Project enabled extension installations 派生 runtime actions、workspace tabs、permissions 与 bundle refs；Shared Library 只保留安装来源职责，Session construction 只读取 projection 作为启动/检查上下文。
 
@@ -76,6 +78,7 @@ Project 授权规则由 `agentdash-domain::project::ProjectAuthorizationService`
 - `agentdash-executor` 直接维护 Codex app-server bridge，原因是本机进程生命周期、connector 能力声明与 Backbone 事件投影属于 AgentDash runtime 边界，外部编排 crate 不应成为该边界的事实源。
 - Extension package artifact 独立于 LibraryAsset payload，原因是正式插件包是平台可下载、可校验、可审计的运行产物；owner 模型让 Project 本地导入与 LibraryAsset Marketplace 模板共享同一套 digest、storage 与访问校验。
 - Extension package archive object storage 端口放在 `agentdash-spi`，原因是 application 需要消费该端口表达用例意图，而 infrastructure 需要实现该端口且不应反向依赖 application 编排层。
+- Route module 自持 router 表，原因是 endpoint ownership 应与 handler/module ownership 对齐；根 router 只表达 secured/public 装配，避免跨资源长链路表成为协议事实源。
 
 ## Contract Appendices
 

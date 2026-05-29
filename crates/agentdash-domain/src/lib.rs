@@ -12,6 +12,7 @@ pub mod identity;
 pub mod inline_file;
 pub mod llm_provider;
 pub mod mcp_preset;
+pub mod permission;
 pub mod project;
 pub mod project_vfs_mount;
 pub mod routine;

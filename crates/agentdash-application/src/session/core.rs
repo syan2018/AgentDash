@@ -67,6 +67,7 @@ impl SessionCoreService {
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
+            project_id: None,
         };
         self.stores.meta.create_session(&meta).await?;
         Ok(meta)

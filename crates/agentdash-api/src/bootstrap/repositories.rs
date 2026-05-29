@@ -16,7 +16,7 @@ use agentdash_infrastructure::{
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRunLinkRepository,
-    PostgresRuntimeHealthRepository, PostgresSessionBindingRepository, PostgresSessionRepository,
+    PostgresRuntimeHealthRepository, PostgresSessionRepository,
     PostgresSettingsRepository, PostgresSharedLibraryRepository, PostgresSkillAssetRepository,
     PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
     PostgresWorkflowRepository, PostgresWorkspaceRepository,
@@ -47,7 +47,6 @@ pub(crate) async fn build_repositories(
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
-    let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
@@ -110,7 +109,6 @@ pub(crate) async fn build_repositories(
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),
-        session_binding_repo: session_binding_repo.clone(),
         backend_repo: backend_repo.clone(),
         runtime_health_repo: runtime_health_repo.clone(),
         backend_execution_lease_repo: backend_execution_lease_repo.clone(),

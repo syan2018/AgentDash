@@ -33,7 +33,6 @@ mod identity_context_frame;
 pub mod launch;
 #[cfg(test)]
 mod memory_persistence;
-pub mod ownership;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;
 pub mod persistence;

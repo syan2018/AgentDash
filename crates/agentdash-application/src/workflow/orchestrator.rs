@@ -136,7 +136,6 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_activity_session_association(
             session_id,
-            self.repos.session_binding_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -182,7 +181,6 @@ impl LifecycleOrchestrator {
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_session_association(
             &input.session_id,
-            self.repos.session_binding_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?

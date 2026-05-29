@@ -4,7 +4,6 @@ import type {
   Task,
   AgentBinding,
   StateChange,
-  SessionBinding,
   StoryRunOverviewDto,
   ContextSourceRef,
   ContextContainerDefinition,
@@ -17,6 +16,7 @@ import {
   mapStoryFromPayload,
   mapTaskFromPayload,
   type CreateStorySessionInput,
+  type StorySessionEntry,
   type TaskSessionPayload,
 } from '../services/story';
 import type { StorySessionInfo } from '../types';
@@ -38,7 +38,7 @@ interface StoryState {
   storiesByProjectId: Record<string, Story[]>;
   tasksByStoryId: Record<string, Task[]>;
   runsByStoryId: Record<string, StoryRunOverviewDto[]>;
-  sessionsByStoryId: Record<string, SessionBinding[]>;
+  sessionsByStoryId: Record<string, StorySessionEntry[]>;
   selectedStoryId: string | null;
   selectedTaskId: string | null;
   isLoading: boolean;
@@ -120,7 +120,7 @@ interface StoryState {
   fetchTasks: (storyId: string) => Promise<void>;
   fetchStoryRuns: (storyId: string) => Promise<void>;
   fetchStorySessions: (storyId: string) => Promise<void>;
-  createStorySession: (storyId: string, input: CreateStorySessionInput) => Promise<SessionBinding | null>;
+  createStorySession: (storyId: string, input: CreateStorySessionInput) => Promise<StorySessionEntry | null>;
   unbindStorySession: (storyId: string, bindingId: string) => Promise<void>;
   handleStateChange: (change: StateChange) => void;
 }

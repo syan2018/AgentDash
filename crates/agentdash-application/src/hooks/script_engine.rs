@@ -120,7 +120,7 @@ impl HookScriptEngine {
             "payload": ctx.query.payload,
 
             "snapshot": {
-                "owners": ctx.snapshot.owners,
+                "run_context": ctx.snapshot.run_context,
                 "tags": ctx.snapshot.tags,
                 "injections": ctx.snapshot.injections,
             },

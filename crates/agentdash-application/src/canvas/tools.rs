@@ -659,7 +659,6 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
-    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_spi::hooks::{
         ExecutionHookProvider, HookEvaluationQuery, HookResolution, SessionHookRefreshQuery,
         SessionHookSnapshot, SessionHookSnapshotQuery,
@@ -669,9 +668,11 @@ mod tests {
     use futures::stream;
     use tokio::sync::RwLock;
 
-    use crate::session::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
+    use crate::session::construction::{
+        ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
+        SessionConstructionPlan,
+    };
     use crate::session::hub::SessionRuntimeInner;
-    use crate::session::ownership::SessionOwnerResolver;
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::vfs::tools::fs::FsApplyPatchTool;
     use crate::vfs::tools::provider::SessionToolServices;
@@ -866,14 +867,13 @@ mod tests {
             executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
             ..UserPromptInput::from_text("present canvas")
         };
-        let binding = SessionBinding::new(
-            uuid::Uuid::new_v4(),
-            session_id.to_string(),
-            SessionOwnerType::Project,
-            project_id,
-            "project_agent:test",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner {
+            owner_type: agentdash_spi::CapabilityScope::Project,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "test".to_string(),
+            },
+        };
         let mut construction =
             SessionConstructionPlan::from_source_input(session_id, owner, &user_input);
         let vfs = local_workspace_vfs(working_dir);

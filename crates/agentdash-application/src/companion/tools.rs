@@ -8,9 +8,7 @@ use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
 };
 use agentdash_domain::agent::ProjectAgentRepository;
-use agentdash_domain::session_binding::{
-    SessionBinding, SessionBindingRepository, SessionOwnerType, StorySessionId,
-};
+use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
 use agentdash_spi::{
@@ -28,6 +26,12 @@ use uuid::Uuid;
 use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
 
 pub use agentdash_spi::CompanionSliceMode;
+
+/// 替代已移除的 SessionBinding —— companion session 查找/创建后返回的最小引用。
+#[derive(Debug, Clone)]
+struct CompanionSessionRef {
+    pub session_id: String,
+}
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -63,7 +67,6 @@ pub struct CompanionRequestParams {
 
 #[derive(Clone)]
 pub struct CompanionRequestTool {
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
     project_agent_repo: Arc<dyn ProjectAgentRepository>,
     repos: crate::repository_set::RepositorySet,
     session_services_handle: SharedSessionToolServicesHandle,
@@ -76,14 +79,12 @@ pub struct CompanionRequestTool {
 
 impl CompanionRequestTool {
     pub fn new(
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
         project_agent_repo: Arc<dyn ProjectAgentRepository>,
         repos: crate::repository_set::RepositorySet,
         session_services_handle: SharedSessionToolServicesHandle,
         context: &ExecutionContext,
     ) -> Self {
         Self {
-            session_binding_repo,
             project_agent_repo,
             repos,
             session_services_handle,
@@ -314,7 +315,7 @@ impl CompanionRequestTool {
 
         let isolated_label = format!("companion:{}:{}", current_session_id, companion_label);
         let target_binding = self
-            .resolve_or_create_companion_binding(
+            .resolve_or_create_companion_session(
                 hook_session.as_ref(),
                 &isolated_label,
                 auto_create,
@@ -868,15 +869,14 @@ impl CompanionRequestTool {
     async fn setup_companion_workflow(
         &self,
         hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-        target_binding: &SessionBinding,
+        target_binding: &CompanionSessionRef,
         workflow_key: &str,
     ) -> Result<CompanionLaunchWorkflowSource, AgentToolError> {
         let snapshot = hook_session.snapshot();
         let project_id = snapshot
-            .owners
-            .first()
-            .and_then(|o| o.project_id.as_deref())
-            .and_then(|id| id.parse::<Uuid>().ok())
+            .run_context
+            .as_ref()
+            .map(|ctx| ctx.project_id)
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed(
                     "无法从当前 session 确定 project_id，无法解析 workflow_key".to_string(),
@@ -916,20 +916,7 @@ impl CompanionRequestTool {
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}")))?;
 
-        let node_label = crate::workflow::build_lifecycle_node_label(&entry_activity.key);
-        let lifecycle_binding = SessionBinding::new(
-            project_id,
-            target_binding.session_id.clone(),
-            agentdash_domain::session_binding::SessionOwnerType::Project,
-            project_id,
-            node_label,
-        );
-        if let Err(error) = self.session_binding_repo.create(&lifecycle_binding).await {
-            let _ = self.repos.lifecycle_run_repo.delete(run.id).await;
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "创建 lifecycle session binding 失败: {error}"
-            )));
-        }
+        // SessionBinding creation removed; lifecycle run 已关联 session_id
 
         Ok(CompanionLaunchWorkflowSource {
             run,
@@ -1003,10 +990,9 @@ impl CompanionRequestTool {
     ) -> Result<AgentConfig, AgentToolError> {
         let snapshot = hook_session.snapshot();
         let project_id = snapshot
-            .owners
-            .first()
-            .and_then(|o| o.project_id.as_deref())
-            .and_then(|id| id.parse::<Uuid>().ok())
+            .run_context
+            .as_ref()
+            .map(|ctx| ctx.project_id)
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed(
                     "无法从当前 session 确定 project_id，无法解析 agent_key".to_string(),
@@ -1035,38 +1021,33 @@ impl CompanionRequestTool {
         )))
     }
 
-    async fn resolve_or_create_companion_binding(
+    async fn resolve_or_create_companion_session(
         &self,
         hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
-        label: &str,
+        _label: &str,
         auto_create: bool,
         title: Option<String>,
-    ) -> Result<SessionBinding, AgentToolError> {
-        let snapshot = hook_session.snapshot();
-        let candidates = companion_owner_candidates(&snapshot)?;
-        for (owner_type, owner_id, _) in &candidates {
-            if let Some(binding) = self
-                .session_binding_repo
-                .find_by_owner_and_label(*owner_type, *owner_id, label)
-                .await
-                .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
-            {
-                return Ok(binding);
-            }
-        }
-
+    ) -> Result<CompanionSessionRef, AgentToolError> {
+        // TODO: migrate companion session lookup to LifecycleRunLink query
         if !auto_create {
-            return Err(AgentToolError::ExecutionFailed(format!(
-                "当前 owner 还没有 label=`{label}` 的 companion session，且 auto_create=false"
-            )));
+            return Err(AgentToolError::ExecutionFailed(
+                "companion session lookup 已移除 SessionBinding，当前仅支持 auto_create=true"
+                    .to_string(),
+            ));
         }
 
-        let (owner_type, owner_id, owner_title) = candidates.first().cloned().ok_or_else(|| {
-            AgentToolError::ExecutionFailed(
-                "当前 session 没有关联 owner，无法创建 companion session".to_string(),
-            )
-        })?;
-        let project_id = companion_project_id_for_owner(&snapshot, owner_type, owner_id)?;
+        let snapshot = hook_session.snapshot();
+        let display_title = title
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                snapshot
+                    .run_context
+                    .as_ref()
+                    .and_then(|ctx| ctx.story_title.as_deref())
+            })
+            .unwrap_or("Companion Session");
+
         let session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "Session services 尚未完成初始化，无法创建 companion session".to_string(),
@@ -1074,26 +1055,17 @@ impl CompanionRequestTool {
         })?;
         let meta = session_services
             .core
-            .create_session(
-                title
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| owner_title.as_deref().unwrap_or("Companion Session")),
-            )
-            .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        let binding =
-            SessionBinding::new(project_id, meta.id, owner_type, owner_id, label.to_string());
-        self.session_binding_repo
-            .create(&binding)
+            .create_session(display_title)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
         session_services
             .core
-            .mark_owner_bootstrap_pending(&binding.session_id)
+            .mark_owner_bootstrap_pending(&meta.id)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        Ok(binding)
+        Ok(CompanionSessionRef {
+            session_id: meta.id,
+        })
     }
 }
 
@@ -1885,7 +1857,7 @@ pub struct CompanionDispatchPlan {
     pub dispatch_id: String,
     pub companion_label: String,
     /// 主（父）Story session ID — companion 的 owner（Model C: Story root）。
-    pub parent_session_id: StorySessionId,
+    pub parent_session_id: String,
     pub parent_turn_id: String,
     pub adoption_mode: CompanionAdoptionMode,
     pub slice: CompanionDispatchSlice,
@@ -1955,7 +1927,7 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
 }
 
 struct CompanionDispatchConfig<'a> {
-    /// 主（父）Story session ID（borrow；类型语义等价于 `&StorySessionId`）。
+    /// 主（父）Story session ID（borrow；类型语义等价于 `&String`）。
     parent_session_id: &'a str,
     parent_turn_id: &'a str,
     companion_label: &'a str,
@@ -2169,22 +2141,18 @@ fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vf
 }
 
 fn build_companion_owner_summary(snapshot: &agentdash_spi::SessionHookSnapshot) -> Option<String> {
-    if snapshot.owners.is_empty() {
-        return None;
+    let ctx = snapshot.run_context.as_ref()?;
+    let mut lines = Vec::new();
+    lines.push(format!("- Project: {}", ctx.project_id));
+    if let Some(story_id) = ctx.story_id {
+        let label = ctx.story_title.as_deref().unwrap_or("(unnamed)");
+        lines.push(format!("- Story: {} ({})", story_id, label));
     }
-    Some(format!(
-        "## 当前归属\n{}",
-        snapshot
-            .owners
-            .iter()
-            .map(|owner| format!(
-                "- {}: {}",
-                owner.owner_type,
-                owner.label.as_deref().unwrap_or(owner.owner_id.as_str())
-            ))
-            .collect::<Vec<_>>()
-            .join("\n")
-    ))
+    if let Some(task_id) = ctx.task_id {
+        let label = ctx.task_title.as_deref().unwrap_or("(unnamed)");
+        lines.push(format!("- Task: {} ({})", task_id, label));
+    }
+    Some(format!("## 当前归属\n{}", lines.join("\n")))
 }
 
 fn build_companion_event_notification(
@@ -2248,69 +2216,49 @@ fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
 
 pub fn companion_owner_candidates(
     snapshot: &agentdash_spi::SessionHookSnapshot,
-) -> Result<Vec<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
+) -> Result<Vec<(CapabilityScope, Uuid, Option<String>)>, AgentToolError> {
     let mut owners = Vec::new();
-    for owner in &snapshot.owners {
-        if let Some(candidate) =
-            parse_owner_candidate(owner.owner_type, &owner.owner_id, owner.label.clone())?
-        {
-            owners.push(candidate);
-        }
-        if owner.owner_type == SessionOwnerType::Task
-            && let Some(story_id) = owner.story_id.as_deref()
-            && let Some(candidate) =
-                parse_owner_candidate(SessionOwnerType::Story, story_id, owner.label.clone())?
-        {
-            owners.push(candidate);
+    if let Some(ctx) = &snapshot.run_context {
+        match ctx.scope {
+            CapabilityScope::Task => {
+                if let Some(task_id) = ctx.task_id {
+                    owners.push((CapabilityScope::Task, task_id, ctx.task_title.clone()));
+                }
+                if let Some(story_id) = ctx.story_id {
+                    owners.push((CapabilityScope::Story, story_id, ctx.story_title.clone()));
+                }
+                owners.push((CapabilityScope::Project, ctx.project_id, None));
+            }
+            CapabilityScope::Story => {
+                if let Some(story_id) = ctx.story_id {
+                    owners.push((CapabilityScope::Story, story_id, ctx.story_title.clone()));
+                }
+                owners.push((CapabilityScope::Project, ctx.project_id, None));
+            }
+            CapabilityScope::Project => {
+                owners.push((CapabilityScope::Project, ctx.project_id, None));
+            }
         }
     }
     owners.dedup_by(|left, right| left.0 == right.0 && left.1 == right.1);
     Ok(owners)
 }
 
-fn parse_owner_candidate(
-    owner_type: SessionOwnerType,
-    owner_id: &str,
-    label: Option<String>,
-) -> Result<Option<(SessionOwnerType, Uuid, Option<String>)>, AgentToolError> {
-    let owner_id = Uuid::parse_str(owner_id).map_err(|error| {
-        AgentToolError::ExecutionFailed(format!("owner_id 不是有效 UUID: {error}"))
-    })?;
-    Ok(Some((owner_type, owner_id, label)))
-}
 
 fn companion_project_id_for_owner(
     snapshot: &agentdash_spi::SessionHookSnapshot,
-    owner_type: SessionOwnerType,
-    owner_id: Uuid,
+    _owner_type: CapabilityScope,
+    _owner_id: Uuid,
 ) -> Result<Uuid, AgentToolError> {
-    let owner_id_raw = owner_id.to_string();
-    let matching_owner = snapshot
-        .owners
-        .iter()
-        .find(|owner| owner.owner_type == owner_type && owner.owner_id == owner_id_raw)
+    snapshot
+        .run_context
+        .as_ref()
+        .map(|ctx| ctx.project_id)
         .ok_or_else(|| {
-            AgentToolError::ExecutionFailed("当前 session owner 缺少 project 范围信息".to_string())
-        })?;
-
-    match owner_type {
-        SessionOwnerType::Project => Ok(owner_id),
-        SessionOwnerType::Story | SessionOwnerType::Task => matching_owner
-            .project_id
-            .as_deref()
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 session owner 缺少 project_id，无法创建 companion session".to_string(),
-                )
-            })
-            .and_then(|project_id| {
-                Uuid::parse_str(project_id).map_err(|error| {
-                    AgentToolError::ExecutionFailed(format!(
-                        "owner.project_id 不是有效 UUID: {error}"
-                    ))
-                })
-            }),
-    }
+            AgentToolError::ExecutionFailed(
+                "当前 session 缺少 run_context，无法确定 project_id".to_string(),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -2321,7 +2269,7 @@ mod companion_tests {
         build_companion_execution_slice, build_platform_capability_grant_payload,
         companion_owner_candidates,
     };
-    use agentdash_domain::session_binding::SessionOwnerType;
+    use agentdash_spi::CapabilityScope;
     use agentdash_spi::AgentTool;
     use agentdash_spi::{
         AgentConfig, AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError,
@@ -2346,25 +2294,29 @@ mod companion_tests {
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {
         let story_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let project_id = Uuid::new_v4();
         let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-test".to_string(),
-            owners: vec![agentdash_spi::HookOwnerSummary {
-                owner_type: SessionOwnerType::Task,
-                owner_id: Uuid::new_v4().to_string(),
-                label: Some("Task A".to_string()),
-                project_id: None,
-                story_id: Some(story_id.to_string()),
-                task_id: None,
-            }],
+            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+                project_id,
+                story_id: Some(story_id),
+                task_id: Some(task_id),
+                story_title: None,
+                task_title: Some("Task A".to_string()),
+                scope: CapabilityScope::Task,
+            }),
             ..agentdash_spi::SessionHookSnapshot::default()
         };
 
         let candidates = companion_owner_candidates(&snapshot).expect("candidates");
 
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].0, SessionOwnerType::Task);
-        assert_eq!(candidates[1].0, SessionOwnerType::Story);
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates[0].0, CapabilityScope::Task);
+        assert_eq!(candidates[0].1, task_id);
+        assert_eq!(candidates[1].0, CapabilityScope::Story);
         assert_eq!(candidates[1].1, story_id);
+        assert_eq!(candidates[2].0, CapabilityScope::Project);
     }
 
     #[test]
@@ -2400,14 +2352,14 @@ mod companion_tests {
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
         let snapshot = agentdash_spi::SessionHookSnapshot {
             session_id: "sess-parent".to_string(),
-            owners: vec![agentdash_spi::HookOwnerSummary {
-                owner_type: SessionOwnerType::Task,
-                owner_id: Uuid::new_v4().to_string(),
-                label: Some("Task A".to_string()),
-                project_id: None,
+            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+                project_id: Uuid::new_v4(),
                 story_id: None,
-                task_id: None,
-            }],
+                task_id: Some(Uuid::new_v4()),
+                story_title: None,
+                task_title: Some("Task A".to_string()),
+                scope: CapabilityScope::Task,
+            }),
             ..agentdash_spi::SessionHookSnapshot::default()
         };
         let resolution = agentdash_spi::HookResolution {

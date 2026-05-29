@@ -230,7 +230,6 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                session_binding_repo: repos.session_binding_repo.clone(),
                 lifecycle_run_link_repo: repos.lifecycle_run_link_repo.clone(),
                 workflow_definition_repo: repos.workflow_definition_repo.clone(),
                 activity_lifecycle_definition_repo: repos
@@ -260,7 +259,8 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
-                repos.session_binding_repo.clone(),
+                repos.lifecycle_run_link_repo.clone(),
+                repos.lifecycle_run_repo.clone(),
             ),
         );
 

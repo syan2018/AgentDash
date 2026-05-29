@@ -15,7 +15,6 @@ pub mod mcp_preset;
 pub mod project;
 pub mod project_vfs_mount;
 pub mod routine;
-pub mod session_binding;
 pub mod session_composition;
 pub mod settings;
 pub mod shared_library;

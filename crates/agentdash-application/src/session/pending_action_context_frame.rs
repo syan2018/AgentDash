@@ -23,20 +23,12 @@ impl PendingActionFrame {
         if action.summary.trim().is_empty() && action.injections.is_empty() {
             return None;
         }
-        let owners_md = (!snapshot.owners.is_empty()).then(|| {
-            snapshot
-                .owners
-                .iter()
-                .map(|owner| {
-                    format!(
-                        "- {}: {} {}",
-                        owner.owner_type,
-                        owner.label.as_deref().unwrap_or("??"),
-                        owner.owner_id
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
+        let owners_md = snapshot.run_context.as_ref().map(|ctx| {
+            format!(
+                "- scope: {} project: {}",
+                ctx.scope,
+                ctx.project_id,
+            )
         });
         Some(Self {
             action: action.clone(),

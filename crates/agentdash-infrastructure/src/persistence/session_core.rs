@@ -51,6 +51,7 @@ where
             row.get::<String, _>("title_source"),
             "sessions.title_source",
         )?,
+        project_id: row.try_get::<Option<String>, _>("project_id").unwrap_or(None),
         created_at: row.get::<i64, _>("created_at"),
         updated_at: row.get::<i64, _>("updated_at"),
         last_event_seq: parse_non_negative_u64(

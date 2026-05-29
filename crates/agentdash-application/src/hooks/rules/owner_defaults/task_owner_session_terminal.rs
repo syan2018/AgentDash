@@ -21,8 +21,9 @@ fn build_rule(snapshot: &SessionHookSnapshot) -> Option<WorkflowHookRuleSpec> {
 }
 
 fn has_task_owner(snapshot: &SessionHookSnapshot) -> bool {
-    snapshot.owners.iter().any(|o| {
-        o.owner_type == agentdash_domain::session_binding::SessionOwnerType::Task
-            && o.task_id.is_some()
-    })
+    snapshot
+        .run_context
+        .as_ref()
+        .map(|ctx| ctx.scope == agentdash_spi::CapabilityScope::Task && ctx.task_id.is_some())
+        .unwrap_or(false)
 }

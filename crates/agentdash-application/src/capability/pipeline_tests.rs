@@ -12,7 +12,7 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_domain::session_binding::SessionOwnerCtx;
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_spi::ToolCluster;
 use agentdash_spi::hooks::CapabilityDelta;
@@ -63,7 +63,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
@@ -114,7 +114,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
@@ -179,7 +179,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
 #[test]
 fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: Vec::new(),
@@ -212,7 +212,7 @@ fn phase_node_invalid_directives_are_tolerated() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {

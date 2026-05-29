@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use agentdash_domain::{
     common::AgentConfig,
-    session_binding::SessionOwnerType,
+    
     story::ChangeKind,
     task::{Task, TaskStatus},
 };
@@ -362,34 +362,23 @@ impl StoryStepActivationService {
         &self,
         task_id: Uuid,
     ) -> Result<Option<String>, TaskExecutionError> {
-        super::find_task_execution_session_id(self.repos.session_binding_repo.as_ref(), task_id)
-            .await
-            .map_err(map_domain_error)
+        super::find_task_execution_session_id(
+            self.repos.lifecycle_run_link_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            task_id,
+        )
+        .await
+        .map_err(map_domain_error)
     }
 
     async fn bind_session_to_owner(
         &self,
         session_id: &str,
-        owner_type: &str,
-        owner_id: Uuid,
-        label: &str,
+        _owner_type: &str,
+        _owner_id: Uuid,
+        _label: &str,
     ) -> Result<(), TaskExecutionError> {
-        let owner_type = owner_type.parse::<SessionOwnerType>().map_err(|_| {
-            TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
-        })?;
-        let project_id = resolve_project_scope_for_owner(&self.repos, owner_type, owner_id).await?;
-        let binding = agentdash_domain::session_binding::SessionBinding::new(
-            project_id,
-            session_id.to_string(),
-            owner_type,
-            owner_id,
-            label,
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(map_domain_error)?;
+        // TODO: migrate to LifecycleRunLink-based session association
         self.session_core
             .mark_owner_bootstrap_pending(session_id)
             .await

@@ -1111,6 +1111,7 @@ mod tests {
             id: session_id.to_string(),
             title: "Lifecycle node".to_string(),
             title_source: TitleSource::Auto,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

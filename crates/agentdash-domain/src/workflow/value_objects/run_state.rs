@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
-use crate::session_binding::ChildSessionId;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -88,7 +87,7 @@ pub enum ActivityRunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    AgentSession { session_id: ChildSessionId },
+    AgentSession { session_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

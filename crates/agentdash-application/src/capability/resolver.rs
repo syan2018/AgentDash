@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::McpPreset;
-use agentdash_domain::session_binding::SessionOwnerCtx;
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_domain::workflow::{
     ToolCapabilityDirective, ToolCapabilityReduction, ToolCapabilitySlotState,
     reduce_tool_capability_directives,
@@ -81,7 +81,7 @@ pub struct CapabilityContext {
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverInput {
     /// session 归属上下文（决定 visibility 基线 + platform MCP scope）。
-    pub owner_ctx: SessionOwnerCtx,
+    pub owner_ctx: CapabilityScopeCtx,
     /// 各来源按 directive 应用顺序排列的 contributions；授权语义由 `source` 显式决定。
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
@@ -114,7 +114,7 @@ struct MergedToolInput {
 
 /// 从 contributions 合并产出 MergedToolInput。
 fn merge_contributions(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     contributions: &[ContextContributions],
 ) -> MergedToolInput {
     let mut agent_declared_keys = BTreeSet::new();
@@ -355,7 +355,7 @@ fn compute_tool_policy(
 }
 
 fn default_visible_capabilities(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
 ) -> BTreeSet<ToolCapability> {
     let mut effective = BTreeSet::new();
@@ -377,7 +377,7 @@ fn default_visible_capabilities(
 
 fn can_enable_well_known_capability(
     cap: &ToolCapability,
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
 ) -> bool {
     let workflow_declares_this = cap.key() == CAP_WORKFLOW && merged.has_active_workflow;
@@ -390,7 +390,7 @@ fn can_enable_well_known_capability(
 }
 
 fn source_can_enable_capability(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     source: ContextContributionSource,
     has_active_workflow: bool,
     capability_key: &str,
@@ -434,7 +434,7 @@ fn apply_companion_slice(base: CapabilityState, mode: CompanionSliceMode) -> Cap
 fn build_platform_mcp_config(
     scope: PlatformMcpScope,
     mcp_base_url: Option<&str>,
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
 ) -> Option<McpInjectionConfig> {
     let base_url = mcp_base_url?;
 
@@ -479,7 +479,7 @@ mod tests {
 
     fn base_input() -> CapabilityResolverInput {
         CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Project {
+            owner_ctx: CapabilityScopeCtx::Project {
                 project_id: Uuid::new_v4(),
             },
             contributions: Vec::new(),
@@ -586,7 +586,7 @@ mod tests {
         let task_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
                 task_id,
@@ -611,7 +611,7 @@ mod tests {
         let story_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Story {
+            owner_ctx: CapabilityScopeCtx::Story {
                 project_id,
                 story_id,
             },
@@ -1048,13 +1048,13 @@ mod tests {
         ));
     }
 
-    // ── SessionOwnerCtx 变体 × MCP 注入边界回归 ──────────────────────────────
+    // ── CapabilityScope 变体 × MCP 注入边界回归 ──────────────────────────────
 
     #[test]
     fn project_owner_ctx_injects_relay_with_project_id() {
         let project_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
             capability_context: None,
@@ -1089,7 +1089,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Story {
+            owner_ctx: CapabilityScopeCtx::Story {
                 project_id,
                 story_id,
             },
@@ -1130,7 +1130,7 @@ mod tests {
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
                 task_id,

@@ -148,7 +148,7 @@ export type ValidationSeverity = "error" | "warning";
  * definition 统一归到 Story binding。详见
  * `.trellis/spec/backend/story-task-runtime.md`。
  *
- * 注意：`SessionOwnerType::Task` 仍然存在（session binding 的 owner 坐标系
+ * 注意：`CapabilityScope::Task` 仍然存在（run_context 的 scope 坐标系
  * 不受影响），但当需要把它映射到 `WorkflowBindingKind` 时，会落到 `Story`。
  */
 export type WorkflowBindingKind = "project" | "story";

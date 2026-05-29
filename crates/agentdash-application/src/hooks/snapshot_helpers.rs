@@ -1,12 +1,5 @@
 use agentdash_domain::workflow::{LifecycleRunStatus, WorkflowHookRuleSpec};
-use agentdash_spi::{
-    ActiveWorkflowMeta, HookDiagnosticEntry, HookOwnerSummary, SessionHookSnapshot,
-};
-
-pub struct ResolvedOwnerSummary {
-    pub summary: HookOwnerSummary,
-    pub diagnostics: Vec<HookDiagnosticEntry>,
-}
+use agentdash_spi::{ActiveWorkflowMeta, SessionHookSnapshot};
 
 pub(crate) fn workflow_run_status_tag(status: LifecycleRunStatus) -> &'static str {
     match status {

@@ -1059,3 +1059,38 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Status
 
 [OK] **Implementation complete; ready to archive**
+
+
+## Session 26: wave2 frontend-server-state-refactor
+
+**Date**: 2026-05-30
+**Task**: `05-29-frontend-server-state-refactor`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成前端 wave2 server-state 与 store 事实源收敛。React Query 不再只是 wired：LLM Provider 与 Routine 已迁入 feature model query hooks；active project、项目事件 fan-out 和 workflow selection 的重复事实已清理；Settings 与 Activity Inspector 入口组件拆分到 600 行以下。
+
+### Main Changes
+
+- `features/stores` 中 `useQuery|useMutation` 命中从 0 增至 28；store `isLoading|loading|saving|error` 命中从 233 降到 178。
+- 删除 `llmProviderStore.ts`、`routineStore.ts`；新增 `features/settings/model/llmProviderQueries.ts`、`features/routine/model/routineQueries.ts` 与 `services/routine.ts`。
+- `eventStore` 删除 `activeProjectId`，改为 `subscribeProjectEvents`；App 层负责 `storyStore.handleStateChange` 与 backend refresh。
+- `sessionHistoryStore.createNew` 显式接收 `projectId`；`workflowStore.selectedActivityKey` 字段删除，改由 `selection` 派生。
+- `SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行。
+
+### Testing
+
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+- [OK] `pnpm -C packages/app-web exec vitest run src/stores/workflowStore.test.ts src/features/workflow/ui/activity-inspector.test.tsx`（27 passed）
+- [OK] `rg "activeProjectId" packages/app-web/src/stores/eventStore.ts` 无命中。
+- [OK] `rg "getState\\(\\)\\.(handleStateChange|fetchBackends)" packages/app-web/src/stores` 无命中。
+- [OK] `rg "selectedActivityKey" packages/app-web/src/stores/workflowStore.ts` 无命中。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**
+
+### Follow-up
+
+建议人工复核后续批次：`projectStore`、`storyStore`、`workspaceStore` 未全量迁移，原因分别是 active project / project-agent config、事件流 patch、workspace binding UI 消费面更宽，适合后续独立切片。

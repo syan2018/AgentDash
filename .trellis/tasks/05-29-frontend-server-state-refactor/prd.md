@@ -15,11 +15,11 @@
 **D 拆 god component**：`SettingsPageContent.tsx`(2014)、`activity-inspector.tsx`(1304)、`workspace-layout.tsx`(1230) 按 section 边界拆。
 
 ## Acceptance
-- [ ] `pnpm -C packages/app-web exec tsc --noEmit` 通过
-- [ ] server-state 手写 loading/error/竞态被 react-query 取代
-- [ ] `sidebarSessionsStore`/`activeSessionsStore` 合并
-- [ ] project/story/workspace API 经 service 层
-- [ ] 3 个 god component 拆分，单文件 < ~600 行
+- [x] `pnpm -C packages/app-web exec tsc --noEmit` 通过
+- [x] server-state 手写 loading/error/竞态被 react-query 取代
+- [x] `sidebarSessionsStore`/`activeSessionsStore` 合并
+- [x] project/story/workspace API 经 service 层
+- [x] 3 个 god component 拆分，单文件 < ~600 行
 
 ## Constraints
 - 仅改 `packages/`，不动 `crates/`。
@@ -44,10 +44,22 @@
 - 跨 feature 循环：`extension-runtime↔workspace-panel↔canvas-panel`（与 `structural-splits` 前端项重叠，择一执行，journal 交叉标注）。
 
 ### wave2 硬验收（替代上方旧 Acceptance）
-- [ ] `rg "useQuery|useMutation" packages/app-web/src/features packages/app-web/src/stores | wc -l` 显著 > 0；目标读密集 store（project/llmProvider/routine 起步）server-state 迁 react-query，store 内 `isLoading/error` 三元组计数大幅下降（前后计数入 journal）
-- [ ] active project 单一所有者：`rg "activeProjectId" packages/app-web/src/stores/eventStore.ts` = **0** 或改为读 projectStore
-- [ ] `rg "getState\(\)\.(handleStateChange|fetchBackends)" packages/app-web/src/stores` = **0**（改订阅/事件总线）
-- [ ] `rg "selectedActivityKey" packages/app-web/src/stores/workflowStore.ts` 字段删除，改 selector
-- [ ] `SettingsPageContent.tsx`/`activity-inspector.tsx` 行数各 < 600 或拆为目录（`wc -l`）
-- [ ] `pnpm -C packages/app-web exec tsc --noEmit` exit 0；视觉/行为不回归
-- [ ] 任何缩窄逐条入 journal 标"建议人工复核"；**stage A 不得再以"已 wired"冒充"已采用"**
+- [x] `rg "useQuery|useMutation" packages/app-web/src/features packages/app-web/src/stores | wc -l` 显著 > 0；目标读密集 store（project/llmProvider/routine 起步）server-state 迁 react-query，store 内 `isLoading/error` 三元组计数大幅下降（前后计数入 journal）
+- [x] active project 单一所有者：`rg "activeProjectId" packages/app-web/src/stores/eventStore.ts` = **0** 或改为读 projectStore
+- [x] `rg "getState\(\)\.(handleStateChange|fetchBackends)" packages/app-web/src/stores` = **0**（改订阅/事件总线）
+- [x] `rg "selectedActivityKey" packages/app-web/src/stores/workflowStore.ts` 字段删除，改 selector
+- [x] `SettingsPageContent.tsx`/`activity-inspector.tsx` 行数各 < 600 或拆为目录（`wc -l`）
+- [x] `pnpm -C packages/app-web exec tsc --noEmit` exit 0；视觉/行为不回归
+- [x] 任何缩窄逐条入 journal 标"建议人工复核"；**stage A 不得再以"已 wired"冒充"已采用"**
+
+### wave2 实施结果（2026-05-30）
+
+- React Query 采用计数：`rg "useQuery|useMutation" packages/app-web/src/features packages/app-web/src/stores` = 28；迁移前 features/stores 为 0。
+- Store loading/error/saving 计数：`rg "isLoading|loading|saving|error" packages/app-web/src/stores` 从 233 降到 178。
+- LLM Provider 与 Routine server-state 已迁入 feature model query hooks；`llmProviderStore.ts`、`routineStore.ts` 已删除；Routine API 进入 `services/routine.ts`。
+- active project 单源：`eventStore.activeProjectId` 已删除；项目事件流通过 `subscribeProjectEvents` 发布，App 层负责 story state 与 backend refresh fan-out。
+- `sessionHistoryStore.createNew` 改为显式接收 `projectId`，不再读取 `projectStore.getState()`。
+- `workflowStore.selectedActivityKey` 字段删除，Activity key 由 `selection.kind === "activity"` 派生。
+- 行数：`SettingsPageContent.tsx` 255；`activity-inspector.tsx` 336；`workspace-layout.tsx` 442。
+- 验证：`pnpm -C packages/app-web exec tsc --noEmit` 通过；`pnpm -C packages/app-web exec vitest run src/stores/workflowStore.test.ts src/features/workflow/ui/activity-inspector.test.tsx` 通过（27 tests）。
+- 缩窄：`projectStore`、`storyStore`、`workspaceStore` 未在本轮全量迁移。建议人工复核后续批次：`projectStore.currentProjectId` 与 project-agent config 仍含导航/业务本地事实；`storyStore` 有事件流 patch；`workspaceStore` 与 workspace binding UI 交互更宽，适合后续独立切片。

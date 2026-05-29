@@ -3,7 +3,7 @@
   "name": "mcp-direct-connection-pool",
   "title": "executor direct MCP 连接池（S5-A descope）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

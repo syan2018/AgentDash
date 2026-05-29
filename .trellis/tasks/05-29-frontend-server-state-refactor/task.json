@@ -3,7 +3,7 @@
   "name": "frontend-server-state-refactor",
   "title": "前端 server-state 与组件结构重构",
   "description": "引入 react-query、补齐 service 层、@agentdash/ui 基线、拆 god component",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

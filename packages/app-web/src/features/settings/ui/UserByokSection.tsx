@@ -1,25 +1,31 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { llmProvidersApi, type EffectiveLlmProvider } from "../../../api/llmProviders";
-import { useLlmByokStore } from "../../../stores/llmProviderStore";
+import {
+  useDeleteUserCredentialMutation,
+  useEffectiveLlmProvidersQuery,
+  useSaveUserCredentialMutation,
+  useVerifyUserCredentialMutation,
+} from "../model/llmProviderQueries";
 import { OAuthLoginWizard } from "./OAuthLoginWizard";
 import { btnPrimaryCls, inputCls, SectionCard } from "./primitives";
 
 export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => void }) {
-  const {
-    providers,
-    loading,
-    error,
-    saving,
-    fetchProviders,
-    saveCredential,
-    verifyCredential,
-    deleteCredential,
-  } = useLlmByokStore();
+  const providersQuery = useEffectiveLlmProvidersQuery();
+  const saveCredential = useSaveUserCredentialMutation();
+  const verifyCredential = useVerifyUserCredentialMutation();
+  const deleteCredential = useDeleteUserCredentialMutation();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    void fetchProviders();
-  }, [fetchProviders]);
+  const providers = providersQuery.data ?? [];
+  const error =
+    providersQuery.error ??
+    saveCredential.error ??
+    verifyCredential.error ??
+    deleteCredential.error;
+  const saving =
+    saveCredential.isPending ||
+    verifyCredential.isPending ||
+    deleteCredential.isPending;
 
   const updateDraft = (providerId: string, value: string) => {
     setDrafts((current) => ({ ...current, [providerId]: value }));
@@ -28,7 +34,7 @@ export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => vo
   const handleSaveCredential = async (providerId: string) => {
     const apiKey = drafts[providerId]?.trim() ?? "";
     if (!apiKey) return;
-    const saved = await saveCredential(providerId, apiKey);
+    const saved = await saveCredential.mutateAsync({ providerId, apiKey });
     if (saved) {
       setDrafts((current) => ({ ...current, [providerId]: "" }));
       onRefreshModels();
@@ -36,19 +42,19 @@ export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => vo
   };
 
   const handleDeleteCredential = async (providerId: string) => {
-    await deleteCredential(providerId);
+    await deleteCredential.mutateAsync(providerId);
     onRefreshModels();
   };
 
   const handleVerifyCredential = async (providerId: string) => {
-    const verified = await verifyCredential(providerId);
+    const verified = await verifyCredential.mutateAsync(providerId);
     if (verified) {
       onRefreshModels();
     }
   };
 
   const handleOAuthCredentialChanged = async () => {
-    await fetchProviders();
+    await providersQuery.refetch();
     onRefreshModels();
   };
 
@@ -59,10 +65,10 @@ export function UserByokSection({ onRefreshModels }: { onRefreshModels: () => vo
       </p>
       {error && (
         <p className="rounded-[8px] border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {error}
+          {error instanceof Error ? error.message : String(error)}
         </p>
       )}
-      {loading ? (
+      {providersQuery.isPending ? (
         <p className="text-xs text-muted-foreground py-2">加载中…</p>
       ) : (
         <div className="space-y-2">

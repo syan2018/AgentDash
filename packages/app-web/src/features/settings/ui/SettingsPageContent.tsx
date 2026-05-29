@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../../../stores/settingsStore";
-import { useLlmProviderStore } from "../../../stores/llmProviderStore";
 import { useCoordinatorStore } from "../../../stores/coordinatorStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import { useProjectStore } from "../../../stores/projectStore";
@@ -12,6 +11,12 @@ import { getStoredToken } from "../../../api/client";
 import { API_ORIGIN } from "../../../api/origin";
 import { llmProvidersApi } from "../../../api/llmProviders";
 import type { JsonValue, LlmProvider, UpdateLlmProviderRequest, ProbeModelEntry } from "../../../api/llmProviders";
+import {
+  useCreateLlmProviderMutation,
+  useDeleteLlmProviderMutation,
+  useLlmProvidersQuery,
+  useUpdateLlmProviderMutation,
+} from "../model/llmProviderQueries";
 import type { BackendConfig, BackendRuntimeSummary } from "../../../types";
 import { LocalRuntimeView } from "@agentdash/views/local-runtime";
 import { ConfirmDialog } from "@agentdash/ui";
@@ -191,10 +196,15 @@ function LlmProvidersSection({
   discoveryRefreshKey: number;
   onRefreshModels: () => void;
 }) {
-  const { providers, loading, saving, fetchProviders, createProvider, updateProvider, deleteProvider } = useLlmProviderStore();
+  const providersQuery = useLlmProvidersQuery();
+  const createProvider = useCreateLlmProviderMutation();
+  const updateProvider = useUpdateLlmProviderMutation();
+  const deleteProvider = useDeleteLlmProviderMutation();
   const discovered = useExecutorDiscoveredOptions("PI_AGENT", discoveryRefreshKey);
   const discoveredModels = discovered.options?.model_selector.models ?? [];
   const isLoadingModels = discovered.options?.loading_models ?? true;
+  const providers = providersQuery.data ?? [];
+  const saving = createProvider.isPending || updateProvider.isPending || deleteProvider.isPending;
 
   // 创建流程: null = 未开始, ProviderPreset|null = 选中的模板(null=自定义)
   const [createStep, setCreateStep] = useState<"idle" | "pick" | "form">("idle");
@@ -203,10 +213,6 @@ function LlmProvidersSection({
   const [createSlug, setCreateSlug] = useState("");
   const [createProtocol, setCreateProtocol] = useState<ProviderProtocol>("openai_compatible");
   const [createError, setCreateError] = useState("");
-
-  useEffect(() => {
-    fetchProviders();
-  }, [fetchProviders]);
 
   const startCreateFromPreset = (preset: ProviderPreset) => {
     setCreatePreset(preset);
@@ -243,7 +249,7 @@ function LlmProvidersSection({
     if (providers.some((p) => p.slug === slug)) { setCreateError(`标识 "${slug}" 已被占用`); return; }
     setCreateError("");
 
-    const result = await createProvider({
+    const result = await createProvider.mutateAsync({
       name,
       slug,
       protocol: createProtocol,
@@ -265,7 +271,7 @@ function LlmProvidersSection({
       <p className="text-xs text-muted-foreground -mt-2 mb-1">
         配置各 LLM 服务商的 API 密钥和端点，支持同一协议的多个实例
       </p>
-      {loading ? (
+      {providersQuery.isPending ? (
         <p className="text-xs text-muted-foreground py-2">加载中…</p>
       ) : (
         <div className="space-y-2">
@@ -278,15 +284,15 @@ function LlmProvidersSection({
               onRefreshModels={onRefreshModels}
               saving={saving}
               onSave={async (req) => {
-                await updateProvider(provider.id, req);
+                await updateProvider.mutateAsync({ id: provider.id, request: req });
                 onRefreshModels();
               }}
               onDelete={async () => {
-                await deleteProvider(provider.id);
+                await deleteProvider.mutateAsync(provider.id);
                 onRefreshModels();
               }}
               onProviderChanged={async () => {
-                await fetchProviders();
+                await providersQuery.refetch();
                 onRefreshModels();
               }}
             />

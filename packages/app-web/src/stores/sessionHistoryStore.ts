@@ -13,7 +13,6 @@ import {
   updateSessionTitle as apiUpdateSessionTitle,
   type SessionMeta,
 } from "../services/session";
-import { useProjectStore } from "./projectStore";
 
 interface SessionHistoryState {
   sessions: SessionMeta[];
@@ -23,7 +22,7 @@ interface SessionHistoryState {
 
   setActiveSessionId: (id: string | null) => void;
   reload: () => Promise<void>;
-  createNew: (title?: string) => Promise<SessionMeta>;
+  createNew: (projectId: string, title?: string) => Promise<SessionMeta>;
   removeSession: (id: string) => Promise<void>;
   /** 用户手动修改标题 */
   updateTitle: (id: string, title: string) => Promise<void>;
@@ -54,8 +53,7 @@ export const useSessionHistoryStore = create<SessionHistoryState>()((set, get) =
     }
   },
 
-  createNew: async (title?: string) => {
-    const projectId = useProjectStore.getState().currentProjectId;
+  createNew: async (projectId: string, title?: string) => {
     if (!projectId) {
       throw new Error("创建会话需要先选择 Project");
     }

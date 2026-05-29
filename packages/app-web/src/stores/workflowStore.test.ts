@@ -8,6 +8,10 @@ import {
 } from "./workflowStore";
 import type { ActivityCompletionPolicy } from "../types";
 
+function selectedActivityKey(editor: ReturnType<typeof useWorkflowStore.getState>["lifecycleEditor"]) {
+  return editor.selection?.kind === "activity" ? editor.selection.activityKey : null;
+}
+
 describe("workflow lifecycle draft defaults", () => {
   it("creates the initial lifecycle node as an AgentNode", () => {
     const draft = createEmptyLifecycleDraft("project-1", { initial_activity_key: "start" });
@@ -44,7 +48,7 @@ describe("unified lifecycle editor", () => {
     });
     expect(editor.workflowDraftsByActivityKey["start"]).toBeDefined();
     expect(editor.workflowDraftsByActivityKey["start"].key).toBe("my_wf_start");
-    expect(editor.selectedActivityKey).toBe("start");
+    expect(selectedActivityKey(editor)).toBe("start");
   });
 
   it("addLifecycleEditorActivity 添加新 step 自动派生 workflow_key 并选中", () => {
@@ -55,7 +59,7 @@ describe("unified lifecycle editor", () => {
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(newKey).toBeTruthy();
     expect(editor.draft?.activities).toHaveLength(2);
-    expect(editor.selectedActivityKey).toBe(newKey);
+    expect(selectedActivityKey(editor)).toBe(newKey);
     expect(editor.workflowDraftsByActivityKey[newKey!]?.key).toBe(`lc1_${newKey}`);
   });
 
@@ -89,7 +93,7 @@ describe("unified lifecycle editor", () => {
     }
   });
 
-  it("updateLifecycleEditorActivity rename 时同步 edges + entry + selectedActivityKey + drafts 索引", () => {
+  it("updateLifecycleEditorActivity rename 时同步 edges + entry + selection + drafts 索引", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc4", initial_activity_key: "start" });
     const second = store.addLifecycleEditorActivity()!;
@@ -111,21 +115,21 @@ describe("selection 模型", () => {
     useWorkflowStore.getState().closeLifecycleEditor();
   });
 
-  it("selectLifecycleActivity 同步 selection 与派生 selectedActivityKey", () => {
+  it("selectLifecycleActivity 更新 selection 并可派生 activity key", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc", initial_activity_key: "start" });
     store.selectLifecycleActivity(null);
     let editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.selection).toBeNull();
-    expect(editor.selectedActivityKey).toBeNull();
+    expect(selectedActivityKey(editor)).toBeNull();
 
     store.selectLifecycleActivity("start");
     editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.selection).toEqual({ kind: "activity", activityKey: "start" });
-    expect(editor.selectedActivityKey).toBe("start");
+    expect(selectedActivityKey(editor)).toBe("start");
   });
 
-  it("selectLifecycleTransition 切换 selection 并清空 selectedActivityKey 派生", () => {
+  it("selectLifecycleTransition 切换 selection 并派生空 activity key", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc", initial_activity_key: "start" });
     const second = store.addLifecycleEditorActivity()!;
@@ -138,7 +142,7 @@ describe("selection 模型", () => {
     store.selectLifecycleTransition(id);
     const editor = useWorkflowStore.getState().lifecycleEditor;
     expect(editor.selection).toEqual({ kind: "transition", transitionId: id });
-    expect(editor.selectedActivityKey).toBeNull();
+    expect(selectedActivityKey(editor)).toBeNull();
   });
 
   it("removeLifecycleEditorActivity 删除当前选中节点时落到首个剩余 activity", () => {
@@ -148,7 +152,7 @@ describe("selection 模型", () => {
     store.selectLifecycleActivity(second);
     store.removeLifecycleEditorActivity(second);
     const editor = useWorkflowStore.getState().lifecycleEditor;
-    expect(editor.selectedActivityKey).toBe("start");
+    expect(selectedActivityKey(editor)).toBe("start");
     expect(editor.selection).toEqual({ kind: "activity", activityKey: "start" });
   });
 

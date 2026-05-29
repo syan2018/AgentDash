@@ -307,9 +307,12 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [chatWorkspaceId, ownerProjectId, workspacesByProjectId]);
 
   const handleCreateSession = useCallback(async (title: string) => {
-    const meta = await createNew(title);
+    if (!ownerProjectId) {
+      throw new Error("创建会话需要先选择 Project");
+    }
+    const meta = await createNew(ownerProjectId, title);
     return meta.id;
-  }, [createNew]);
+  }, [createNew, ownerProjectId]);
 
   const handleSessionIdChange = useCallback((id: string) => {
     setActiveSessionId(id);

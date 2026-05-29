@@ -13,6 +13,7 @@ use agentdash_application::runtime_gateway::{
     WorkspaceDetectGitOutput, WorkspaceDetectInput,
 };
 use agentdash_application::workspace::WorkspaceDetectionResult;
+use agentdash_contracts::core::{DeletedIdResponse, UpdatedIdResponse};
 use agentdash_domain::common::MountCapability;
 use agentdash_domain::workspace::{
     Workspace, WorkspaceBinding, WorkspaceBindingStatus, WorkspaceIdentityKind,
@@ -258,7 +259,7 @@ pub async fn update_workspace_status(
     CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
     Json(req): Json<UpdateWorkspaceStatusRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<UpdatedIdResponse>, ApiError> {
     let workspace_id = parse_workspace_id(&id)?;
     let (mut workspace, _) = load_workspace_and_project_with_permission(
         state.as_ref(),
@@ -271,14 +272,14 @@ pub async fn update_workspace_status(
     workspace.refresh_default_binding();
     state.repos.workspace_repo.update(&workspace).await?;
 
-    Ok(Json(serde_json::json!({ "updated": id })))
+    Ok(Json(UpdatedIdResponse { updated: id }))
 }
 
 pub async fn delete_workspace(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     AxumPath(id): AxumPath<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let workspace_id = parse_workspace_id(&id)?;
     load_workspace_and_project_with_permission(
         state.as_ref(),
@@ -289,7 +290,7 @@ pub async fn delete_workspace(
     .await?;
 
     state.repos.workspace_repo.delete(workspace_id).await?;
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn detect_workspace(

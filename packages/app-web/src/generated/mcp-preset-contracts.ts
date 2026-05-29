@@ -5,6 +5,8 @@ export type CloneMcpPresetRequest = { key?: string, display_name?: string, };
 
 export type CreateMcpPresetRequest = { key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, };
 
+export type DeleteMcpPresetResponse = { deleted: string, };
+
 export type InstalledAssetSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 
 export type ListMcpPresetQuery = { source?: McpPresetSourceTag, };

@@ -63,6 +63,12 @@ mount_directives?: Array<unknown>, };
  */
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
+export type DeleteActivityLifecycleDefinitionResponse = { deleted: boolean, };
+
+export type DeleteHookPresetResponse = { removed: boolean, key: string, };
+
+export type DeleteWorkflowDefinitionResponse = { deleted: boolean, };
+
 export type EffectiveSessionContract = { lifecycle_key?: string | null, active_step_key?: string | null, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
 export type ExecutorRunRef = { "kind": "agent_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
@@ -74,6 +80,10 @@ export type FunctionActivityExecutorSpec = { "type": "api_request" } & ApiReques
  * 实际检查逻辑由对应的 Rhai Hook Preset 实现。
  */
 export type GateStrategy = "existence" | "schema" | "llm_judge";
+
+export type HookPresetResponse = { key: string, trigger: JsonValue, label: string, description: string, param_schema: JsonValue, script: string, source: string, };
+
+export type HookPresetsResponse = { presets: { [key in string]?: Array<HookPresetResponse> }, };
 
 export type HumanActivityExecutorSpec = { "type": "approval" } & HumanApprovalExecutorSpec;
 
@@ -92,6 +102,8 @@ export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | 
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue | null, };
+
+export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
 /**
  * Standalone 场景下 input port 的满足策略。
@@ -124,6 +136,8 @@ export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove"
 export type ToolCapabilityPath = string;
 
 export type TransitionCondition = { "kind": "always" } | { "kind": "artifact_field_equals", activity: string, port: string, path: string, value: JsonValue, } | { "kind": "human_decision_equals", activity: string, decision_port: string, value: string, } | { "kind": "agent_signal_equals", activity: string, signal_key: string, value: JsonValue, };
+
+export type ValidateHookScriptResponse = { valid: boolean, errors?: Array<string>, };
 
 export type ValidationIssue = { code: string, message: string, field_path: string, severity: ValidationSeverity, };
 

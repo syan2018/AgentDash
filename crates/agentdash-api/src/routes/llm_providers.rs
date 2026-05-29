@@ -7,9 +7,10 @@ use agentdash_application::llm_provider::{
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
-    DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
-    LlmProviderAdminDto, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
-    ReorderLlmProvidersRequest, StartCodexOAuthResponse, UpdateLlmProviderRequest,
+    DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
+    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmProviderAdminDto,
+    ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest,
+    ReorderLlmProvidersResponse, StartCodexOAuthResponse, UpdateLlmProviderRequest,
     UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_domain::llm_provider::{
@@ -166,18 +167,18 @@ pub async fn delete_provider(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteLlmProviderResponse>, ApiError> {
     require_system_access(&current_user)?;
     let id = parse_id(&id)?;
     delete_llm_provider(&state.repos, id).await?;
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    Ok(Json(DeleteLlmProviderResponse { deleted: true }))
 }
 
 pub async fn reorder_providers(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<ReorderLlmProvidersRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ReorderLlmProvidersResponse>, ApiError> {
     require_system_access(&current_user)?;
     let ids: Vec<Uuid> = req
         .ids
@@ -185,7 +186,7 @@ pub async fn reorder_providers(
         .map(|s| parse_id(s))
         .collect::<Result<Vec<_>, _>>()?;
     reorder_llm_providers(&state.repos, &ids).await?;
-    Ok(Json(serde_json::json!({ "reordered": true })))
+    Ok(Json(ReorderLlmProvidersResponse { reordered: true }))
 }
 
 pub async fn list_effective_providers(

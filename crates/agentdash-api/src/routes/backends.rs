@@ -7,6 +7,7 @@ use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLease, BackendRepository, BackendShareScopeKind, BackendType,
@@ -584,9 +585,9 @@ pub async fn remove_backend(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     remove_backend_record(&state.repos, &current_user, &id).await?;
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 // ─── 目录浏览 ─────────────────────────────────────────────

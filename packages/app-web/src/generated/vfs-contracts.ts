@@ -5,6 +5,8 @@ export type ConfigurableProviderInfo = { service_id: string, display_name: strin
 
 export type CreateProjectVfsMountRequest = { mount_id: string, display_name: string, description?: string, capabilities: Array<VfsCapabilityDto>, content: ProjectVfsMountContentDto, };
 
+export type DeleteProjectVfsMountResponse = { ok: boolean, };
+
 export type InstalledAssetSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 
 export type ListEntriesResponse = { entries: Array<VfsEntry>, };

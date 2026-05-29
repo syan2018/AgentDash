@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use agentdash_contracts::core::{DeletedFlagResponse, PendingExecutionResponse};
 use agentdash_domain::routine::{Routine, RoutineExecution, RoutineTriggerConfig, SessionStrategy};
 use axum::{
     Json,
@@ -302,7 +303,7 @@ pub async fn delete_routine(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedFlagResponse>, ApiError> {
     let routine =
         load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
@@ -310,7 +311,7 @@ pub async fn delete_routine(
 
     state.services.cron_scheduler.notify_config_changed();
 
-    Ok(Json(serde_json::json!({"deleted": true})))
+    Ok(Json(DeletedFlagResponse { deleted: true }))
 }
 
 pub async fn enable_routine(
@@ -398,7 +399,7 @@ pub async fn fire_webhook(
     headers: HeaderMap,
     Path(endpoint_id): Path<String>,
     Json(req): Json<FireWebhookRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PendingExecutionResponse>, ApiError> {
     // 通过 endpoint_id 查找 Routine
     let routine = state
         .repos
@@ -424,10 +425,10 @@ pub async fn fire_webhook(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "execution_id": exec_id.to_string(),
-        "status": "pending"
-    })))
+    Ok(Json(PendingExecutionResponse {
+        execution_id: exec_id.to_string(),
+        status: "pending".to_string(),
+    }))
 }
 
 // ────────────────────────── Helpers ──────────────────────────

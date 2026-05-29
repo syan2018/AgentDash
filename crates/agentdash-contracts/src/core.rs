@@ -2,6 +2,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DeletedIdResponse {
+    pub deleted: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DeletedFlagResponse {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct UpdatedIdResponse {
+    pub updated: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct RevokedIdResponse {
+    pub revoked: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct UnboundBindingResponse {
+    pub unbound: bool,
+    pub binding_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct PendingExecutionResponse {
+    pub execution_id: String,
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum VfsCapabilityDto {
@@ -283,6 +315,18 @@ impl From<agentdash_domain::project::ProjectSubjectGrant> for ProjectSubjectGran
             updated_at: value.updated_at.to_rfc3339(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DeletedProjectSubjectGrantResponse {
+    pub project_id: String,
+    pub subject_type: ProjectSubjectType,
+    pub subject_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct RevokeProjectGrantResponse {
+    pub deleted: DeletedProjectSubjectGrantResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

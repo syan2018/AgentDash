@@ -10,6 +10,7 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::session_composition::SessionComposition;
@@ -256,7 +257,7 @@ pub async fn delete_story(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
@@ -270,7 +271,7 @@ pub async fn delete_story(
 
     delete_story_record(&state.repos, &story).await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn list_tasks(
@@ -553,7 +554,7 @@ pub async fn delete_task(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
     load_task_story_project_with_permission(
@@ -572,7 +573,7 @@ pub async fn delete_task(
         .remove_task_from_story(task_id)
         .await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -> ChangeKind {

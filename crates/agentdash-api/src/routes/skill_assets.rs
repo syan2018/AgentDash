@@ -15,6 +15,7 @@ use agentdash_application::skill_asset::{
     CreateSkillAssetInput, ImportRemoteSkillAssetInput, SkillAssetApplicationError,
     SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
 };
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
 use crate::app_state::AppState;
@@ -156,7 +157,7 @@ pub async fn delete_skill_asset(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<SkillAssetItemPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let (_project_id, asset) = load_asset_with_project(
         state.as_ref(),
         &current_user,
@@ -166,7 +167,9 @@ pub async fn delete_skill_asset(
     .await?;
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     service.delete(asset.id).await?;
-    Ok(Json(serde_json::json!({ "deleted": asset.id })))
+    Ok(Json(DeletedIdResponse {
+        deleted: asset.id.to_string(),
+    }))
 }
 
 pub async fn read_skill_asset_file_blob(

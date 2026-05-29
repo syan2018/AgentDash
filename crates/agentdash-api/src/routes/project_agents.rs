@@ -16,6 +16,7 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent as ProjectAgentResponse,
     ProjectAgentExecutor, ProjectAgentSession, ProjectAgentSummary, ThinkingLevel,
@@ -598,7 +599,7 @@ pub async fn delete_project_agent(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, project_agent_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedFlagResponse>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     load_project_with_permission(
         state.as_ref(),
@@ -638,7 +639,7 @@ pub async fn delete_project_agent(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    Ok(Json(DeletedFlagResponse { deleted: true }))
 }
 
 /// 统一处理 lifecycle_key / workflow_key 的解析

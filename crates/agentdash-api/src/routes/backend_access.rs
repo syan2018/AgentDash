@@ -16,6 +16,7 @@ use agentdash_application::workspace::{
     WorkspaceBindingSyncResult, WorkspaceDetectionResult, WorkspaceInventoryCandidate,
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
+use agentdash_contracts::core::RevokedIdResponse;
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
     ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
@@ -253,7 +254,7 @@ pub async fn revoke_project_backend_access(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, access_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokedIdResponse>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let access_id = parse_uuid(&access_id, "ProjectBackendAccess ID")?;
     load_project_with_permission(
@@ -269,7 +270,9 @@ pub async fn revoke_project_backend_access(
         .project_backend_access_repo
         .set_status(access.id, ProjectBackendAccessStatus::Revoked)
         .await?;
-    Ok(Json(serde_json::json!({ "revoked": access.id })))
+    Ok(Json(RevokedIdResponse {
+        revoked: access.id.to_string(),
+    }))
 }
 
 pub async fn list_project_backend_inventory(

@@ -6,7 +6,7 @@
 
 - 当前分支：`refactor/architecture-slop-cleanup`
 - 当前推进 child：`05-29-api-handler-thinning`（已启动；正在按批次瘦身 API handler）
-- 当前 child 状态：`in_progress`（`session_use_cases`、低风险 CRUD 已推进；当前正在下沉 `llm_providers`）
+- 当前 child 状态：`in_progress`（`session_use_cases`、低风险 CRUD、`llm_providers` catalog、`backends` 写命令已推进；`Json<Value>` route response 已清零；当前进入 inline DTO / router 收尾）
 - 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual` 已提交并归档；当前推进 `api-handler-thinning`。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
@@ -49,13 +49,14 @@
 | 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；归档提交 `93a64a05`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
 | 4 | `05-29-vfs-dedup` | 已归档 | 提交 `4d2e9105` / `05016cf0` / `b7db5bbc` / `6641d289`；归档提交 `c815b4ba`；provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
 | 5 | `05-29-infra-residual` | 已归档 | 规划提交 `27cd34e7`；实现提交 `d500c892` / `f346b96c` / `f93112d9`；本机 runtime 已切到 `PostgresRuntime` + `PostgresSessionRepository`；sqlite repository 目录已删除；`SqliteSessionRepository` / `SqlitePool` / `SqliteConnectOptions` grep 清零；Session persistence trait、`session_core.rs`、`PostgresSessionRepository` 已改为 `SessionStoreError` / `SessionStoreResult`，application 边缘显式映射；`io::Result` 在 SPI/session_core/Postgres session repo grep 清零；历史 migrations 中 `*_at TEXT` 已改 `TIMESTAMPTZ`，新增 `0069_timestamp_columns_timestamptz.sql` 迁移已有开发库，repository bind/read 已改 `DateTime<Utc>`，`parse_pg_timestamp_checked` 删除，infra `to_rfc3339` grep 为 0；`cargo test -p agentdash-infrastructure`、`cargo check --workspace` 通过；archive 位于 `.trellis/tasks/archive/2026-05/05-29-infra-residual` |
-| 6 | `05-29-api-handler-thinning` | in-progress | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` catalog 已提交 `80a97d6a`；`backends.rs` add/remove/ensure-local-runtime 写命令已下沉 application backend management，route direct repo grep 显式剩余 runtime read projection adapter；`cargo check -p agentdash-application -p agentdash-api` 通过（仅既存 warning）；下一步提交 Backend slice 后进入 DTO/router 收尾 |
+| 6 | `05-29-api-handler-thinning` | in-progress | 已补齐 `design.md` / `implement.md`；`session_use_cases` 迁移 slice 已提交 `ab52be01`；`canvases.rs` CRUD 已提交 `ee51ce88`；`projects.rs` CRUD 已提交 `54ea4818`；`stories.rs` Story 聚合 CRUD 已提交 `8923888a`；`llm_providers.rs` catalog 已提交 `80a97d6a`；`backends.rs` add/remove/ensure-local-runtime 写命令已提交 `08fc0574`；route direct repo grep 显式剩余 runtime read projection adapter；`Json<serde_json::Value>` / `Json<Value>` route response grep 已清零；`cargo check -p agentdash-contracts -p agentdash-api` 与 `pnpm run contracts:check` 通过；下一步处理 inline route DTO 与 router 拆分 |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
 | 8 | `05-29-frontend-server-state-refactor` | 待执行 | server-state 真迁 react-query；active project 单源；跨 store 命令式耦合清理；目标 god component 拆分 |
 | 9 | `05-29-session-assembly-converge` | 待复核/拆分 | resolver 争议完成复核；builder/compose helper 拆分；VFS 单存储派生有明确落地或证据结论 |
 | 10 | `05-29-structural-splits` | 待 design | `agentdash-application-ports` crate 存在；session 目录按职责重排；重叠前端/session 项已从本 child 排除或交叉标注 |
 | 11 | `05-29-domain-purification` | 待 contract | domain `ts-rs/schemars` 移除；session id 假 alias 消失；contracts 生成仍完整 |
 | 12 | 父级集成 review | 待所有 child | wave2 parent AC 全部逐条验收；第一波三个 reopen child 已给出最终结论；父任务可归档 |
+| 13 | （用户补充）整理远端pr合并 | 首尾和补充 | 将远端 #pr38 拉到本地完成 merge，解决相关模块重构和当前项目重构产生的冲突；包含 migrations（需重排序号） & 模块约束处理相关，随后推送至远端创建一个新的重构分支pr   |
 
 ## 每次恢复的固定检查
 
@@ -70,18 +71,18 @@
 
 ## 当前 child 下一步
 
-1. 提交 `backends.rs` 写命令下沉 slice。
-2. 继续阶段 6：DTO 与 Router 收尾；先跑 `Json<Value>` / inline DTO / router baseline，再按最小批次处理。
-3. 每完成一个 route slice，更新 repo 直调保留清单并运行对应 grep / `cargo check -p agentdash-application -p agentdash-api`。
+1. 继续阶段 6：inline DTO 搬迁；当前 `Json<Value>` route response 已清零，inline route DTO 仍有 109 处。
+2. DTO 搬迁后拆 `routes.rs`：当前 `rg -c "pub fn router" crates/agentdash-api/src/routes` 无命中，根 router 仍为单表组合。
+3. 收尾前修复既知 application test-only `SessionStoreError` 编译债务，并运行 child PRD 指定验收命令。
 
 ## 今日子代理可行性复核
 
-- `api-handler-thinning`：方向可行，但现有 child 缺 `design.md` / `implement.md`；开工前需补 `session_use_cases` 迁移边界、DTO 归属、repo 直调保留清单与分批顺序。建议先迁 `session_use_cases`，再低风险 CRUD，下沉 `llm_providers`，最后处理 `backends` 与 router 机械拆分。
-- `frontend-server-state-refactor`：方向可行，但需先补 query key、invalidate 策略、Zustand/React Query/shared event state 边界。建议第一批做 `llmProviderStore` / `routineStore` / `coordinatorStore`，再处理 project/story/workspace/session/workflow。
-- `capability-state-unify`：小闭环可行；建议把 `CapabilityDelta::compute()` 迁到 `SetDelta::compute()`，删除 hooks 里的重复 `CapabilityDelta`，trait merge 维持不合并并记录证据。
-- `session-assembly-converge`：不适合直接抽完整 resolver；建议先拆 `SessionAssemblyBuilder` 和 compose helper，再单独处理 VFS 单存储派生，保留 launch 与 query 的真实契约差异。
-- `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层依赖 domain 并转换。开工前先拆 `agentdash-contracts::workflow` 对 domain workflow 的 re-export，再移除 domain 的 `ts-rs` / `schemars`。
-- `structural-splits`：可行但需补 crate dependency ceiling 与迁移文件清单；优先新建 `agentdash-application-ports` 并迁 backend transport 相关 port，前端 god component 拆分应留给 frontend child 或独立 child。
+- `api-handler-thinning`：DTO/router 收尾可行；最后 baseline 为 `Json<Value>` 26 处，已在本轮清零；inline route DTO 仍 109 处。下一批先搬 `projects/stories/workspaces/acp_sessions/workflows/project_agents/project_sessions/story_sessions/task_execution` 到 contracts，再搬 `backend_access/backends/routines/settings/canvases`，最后拆 router。
+- `frontend-server-state-refactor`：React Query 已接入但采用面很窄；建议先迁 `llmProviderStore`，再迁 `routineStore`，再清 `eventStore.activeProjectId` 与跨 store `getState()`，最后处理 `workflowStore.selectedActivityKey`；`storyStore` 延后。
+- `capability-state-unify`：小闭环可行；`hooks::CapabilityDelta` 与 `connector::capability_delta::SetDelta` 结构重复，先把 `CapabilityDelta` 合并到 `SetDelta` / `SetDelta::compute`；`CapabilityDimensionModule` 与 `DimensionDelta` 分属 validate/replay 与 render/section 两条轴，trait merge 推迟。
+- `session-assembly-converge`：不适合直接抽完整 resolver；建议先拆 `SessionAssemblyBuilder` 到独立文件，再拆 `compose_owner_bootstrap` / `compose_story_step` helper，最后设计 `surface.vfs` / `context_projection.vfs` 单存储派生 accessor。
+- `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层依赖 domain 并转换。当前关键风险是 `agentdash-contracts::workflow` 直接 re-export domain workflow 类型；先在 contracts 侧复制/定义 workflow wire DTO 并保留 domain -> contract mapper，再移除 domain 的 `ts-rs` / `schemars`。
+- `structural-splits`：可行但需控制依赖上限；第一批只迁 `backend_transport.rs` 这类纯 port，第二批只迁 `ExtensionRuntimeActionTransport` / `ExtensionRuntimeChannelTransport` / error，第三批只迁 `VfsMaterializationTransport`；provider/use case/service 留 application，避免新 crate 反向依赖 application。
 
 ## 全局验收 Gates
 

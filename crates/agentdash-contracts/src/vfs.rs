@@ -388,6 +388,11 @@ pub struct ProjectVfsMountResponse {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DeleteProjectVfsMountResponse {
+    pub ok: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct InstalledAssetSourceResponse {
     pub library_asset_id: String,

@@ -4,11 +4,25 @@
 import type { JsonValue } from "./common-contracts";
 import type { BackboneEnvelope } from "./backbone-protocol";
 
+export type ApproveToolCallResponse = { approved: boolean, sessionId: string, toolCallId: string, };
+
+export type CancelSessionResponse = { cancelled: boolean, sessionId: string, state: SessionCommandStateResponse, };
+
+export type CompanionRespondResponse = { responded: boolean, sessionId: string, requestId: string, };
+
 export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
+
+export type DeleteSessionResponse = { deleted: boolean, sessionId: string, };
+
+export type PromptSessionResponse = { started: boolean, sessionId: string, turnId: string, };
+
+export type RejectToolCallResponse = { rejected: boolean, sessionId: string, toolCallId: string, };
 
 export type RollbackSessionProjectionRequest = { target_event_seq: number, active_compaction_id?: string, reason?: string, };
 
 export type SessionAttachmentContextContributionResponse = { name: string, tokens: number, };
+
+export type SessionCommandStateResponse = { status: string, turn_id?: string, message?: string, };
 
 export type SessionContextUsageAnalysisResponse = { categories: Array<SessionContextUsageCategoryResponse>, messages: SessionMessageContextBreakdownResponse, top_tools: Array<SessionToolContextContributionResponse>, top_attachments: Array<SessionAttachmentContextContributionResponse>, };
 

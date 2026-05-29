@@ -3,11 +3,13 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 use agentdash_contracts::core::{
     AgentBinding, AgentPreset, Artifact, ArtifactType, ContextContainerDefinition,
     ContextContainerFile, ContextContainerProvider, ContextDelivery, ContextSlot,
-    ContextSourceKind, ContextSourceRef, ProjectAccessSummaryResponse, ProjectConfig,
-    ProjectDetailResponse, ProjectResponse, ProjectRole, ProjectSubjectGrantResponse,
-    ProjectSubjectType, ProjectVisibility, SchedulingConfig, SessionComposition,
-    SessionRequiredContextBlock, StoryContext, StoryPriority, StoryResponse, StoryStatus,
-    StoryType, TaskResponse, TaskStatus, VfsCapabilityDto, WorkspaceBindingResponse,
+    ContextSourceKind, ContextSourceRef, DeletedFlagResponse, DeletedIdResponse,
+    DeletedProjectSubjectGrantResponse, PendingExecutionResponse, ProjectAccessSummaryResponse,
+    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
+    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
+    RevokedIdResponse, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
+    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus,
+    UnboundBindingResponse, UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
     WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
     WorkspaceStatus,
 };
@@ -40,22 +42,25 @@ use agentdash_contracts::extension_runtime::{
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
-    DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
-    LlmCredentialModeDto, LlmCredentialSourceDto, LlmCredentialVerificationStatusDto,
-    LlmProviderAdminDto, LlmProviderProtocol, ProbeLlmProviderModelDto,
-    ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest, StartCodexOAuthResponse,
+    DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
+    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmCredentialModeDto,
+    LlmCredentialSourceDto, LlmCredentialVerificationStatusDto, LlmProviderAdminDto,
+    LlmProviderProtocol, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    ReorderLlmProvidersRequest, ReorderLlmProvidersResponse, StartCodexOAuthResponse,
     UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_contracts::mcp_preset::{
-    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
-    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
+    McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent, ProjectAgentExecutor,
     ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
+    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
     SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
@@ -69,19 +74,23 @@ use agentdash_contracts::shared_library::{
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
-    ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
-    ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface, SurfaceApplyPatchRequest,
-    SurfaceApplyPatchResponse, SurfaceCreateFileRequest, SurfaceCreateFileResponse,
-    SurfaceDeleteFileRequest, SurfaceDeleteFileResponse, SurfaceEntriesResponse,
-    SurfaceReadBinaryFileRequest, SurfaceReadFileRequest, SurfaceReadFileResponse,
-    SurfaceRenameFileRequest, SurfaceRenameFileResponse, SurfaceStatFileRequest,
-    SurfaceStatFileResponse, SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest,
-    SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
+    ConfigurableProviderInfo, CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse,
+    ListEntriesResponse, ListVfssResponse, ProjectVfsMountResponse, ResolveSurfaceRequest,
+    ResolvedVfsSurface, SurfaceApplyPatchRequest, SurfaceApplyPatchResponse,
+    SurfaceCreateFileRequest, SurfaceCreateFileResponse, SurfaceDeleteFileRequest,
+    SurfaceDeleteFileResponse, SurfaceEntriesResponse, SurfaceReadBinaryFileRequest,
+    SurfaceReadFileRequest, SurfaceReadFileResponse, SurfaceRenameFileRequest,
+    SurfaceRenameFileResponse, SurfaceStatFileRequest, SurfaceStatFileResponse,
+    SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest, SurfaceWriteFileResponse,
+    UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
-    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinitionSource,
+    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition,
+    DeleteActivityLifecycleDefinitionResponse, DeleteHookPresetResponse,
+    DeleteWorkflowDefinitionResponse, EffectiveSessionContract, HookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunStatus, RegisterHookPresetResponse,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowBindingKind, WorkflowContract,
+    WorkflowDefinitionSource,
 };
 use ts_rs::TS;
 
@@ -110,6 +119,8 @@ fn main() {
             export_all::<ProjectAccessSummaryResponse>(dir);
             export_all::<ProjectResponse>(dir);
             export_all::<ProjectSubjectGrantResponse>(dir);
+            export_all::<DeletedProjectSubjectGrantResponse>(dir);
+            export_all::<RevokeProjectGrantResponse>(dir);
             export_all::<ProjectDetailResponse>(dir);
             export_all::<WorkspaceIdentityKind>(dir);
             export_all::<WorkspaceBindingStatus>(dir);
@@ -121,6 +132,12 @@ fn main() {
             export_all::<ContextSlot>(dir);
             export_all::<ContextDelivery>(dir);
             export_all::<ContextSourceRef>(dir);
+            export_all::<DeletedIdResponse>(dir);
+            export_all::<DeletedFlagResponse>(dir);
+            export_all::<UpdatedIdResponse>(dir);
+            export_all::<RevokedIdResponse>(dir);
+            export_all::<UnboundBindingResponse>(dir);
+            export_all::<PendingExecutionResponse>(dir);
             export_all::<SessionRequiredContextBlock>(dir);
             export_all::<SessionComposition>(dir);
             export_all::<StoryContext>(dir);
@@ -147,6 +164,7 @@ fn main() {
             export_all::<CloneMcpPresetRequest>(dir);
             export_all::<ListMcpPresetQuery>(dir);
             export_all::<ProbeMcpPresetResponse>(dir);
+            export_all::<DeleteMcpPresetResponse>(dir);
         },
     );
 
@@ -158,6 +176,13 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
+            export_all::<SessionCommandStateResponse>(dir);
+            export_all::<DeleteSessionResponse>(dir);
+            export_all::<PromptSessionResponse>(dir);
+            export_all::<CancelSessionResponse>(dir);
+            export_all::<ApproveToolCallResponse>(dir);
+            export_all::<RejectToolCallResponse>(dir);
+            export_all::<CompanionRespondResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
@@ -191,6 +216,8 @@ fn main() {
             export_all::<CreateLlmProviderRequest>(dir);
             export_all::<UpdateLlmProviderRequest>(dir);
             export_all::<ReorderLlmProvidersRequest>(dir);
+            export_all::<ReorderLlmProvidersResponse>(dir);
+            export_all::<DeleteLlmProviderResponse>(dir);
             export_all::<ProbeLlmProviderModelsRequest>(dir);
             export_all::<ProbeLlmProviderModelDto>(dir);
             export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
@@ -216,6 +243,13 @@ fn main() {
             export_all::<ValidationIssue>(dir);
             export_all::<WorkflowBindingKind>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
+            export_all::<DeleteActivityLifecycleDefinitionResponse>(dir);
+            export_all::<DeleteWorkflowDefinitionResponse>(dir);
+            export_all::<HookPresetResponse>(dir);
+            export_all::<HookPresetsResponse>(dir);
+            export_all::<ValidateHookScriptResponse>(dir);
+            export_all::<RegisterHookPresetResponse>(dir);
+            export_all::<DeleteHookPresetResponse>(dir);
         },
     );
 
@@ -245,6 +279,7 @@ fn main() {
         export_all::<CreateProjectVfsMountRequest>(dir);
         export_all::<UpdateProjectVfsMountRequest>(dir);
         export_all::<ProjectVfsMountResponse>(dir);
+        export_all::<DeleteProjectVfsMountResponse>(dir);
     });
 
     write_domain(

@@ -9,6 +9,8 @@ export type CodexOAuthStatusResponse = { flow_id: string, status: CodexOAuthFlow
 
 export type CreateLlmProviderRequest = { name: string, slug: string, protocol: LlmProviderProtocol, credential_mode?: LlmCredentialModeDto, global_api_key?: string, base_url?: string, wire_api?: string, default_model?: string, models?: JsonValue, blocked_models?: JsonValue, env_api_key?: string, discovery_url?: string, enabled?: boolean, };
 
+export type DeleteLlmProviderResponse = { deleted: boolean, };
+
 export type DeleteLlmProviderUserCredentialResponse = { deleted: boolean, };
 
 export type EffectiveLlmModelProfileDto = { id: string, name: string, provider_id: string, reasoning: boolean, supports_image: boolean, context_window: bigint, blocked: boolean, discovered: boolean, source: string, };
@@ -30,6 +32,8 @@ export type ProbeLlmProviderModelDto = { id: string, name: string, };
 export type ProbeLlmProviderModelsRequest = { protocol: LlmProviderProtocol, api_key?: string, base_url?: string, discovery_url?: string, env_api_key?: string, provider_id?: string, };
 
 export type ReorderLlmProvidersRequest = { ids: Array<string>, };
+
+export type ReorderLlmProvidersResponse = { reordered: boolean, };
 
 export type StartCodexOAuthResponse = { flow_id: string, auth_url: string, expires_at: string, };
 

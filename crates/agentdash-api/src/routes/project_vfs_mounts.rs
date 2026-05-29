@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_contracts::vfs::{
-    CreateProjectVfsMountRequest, InstalledAssetSourceResponse,
+    CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse, InstalledAssetSourceResponse,
     ProjectVfsMountContentDto as ContractProjectVfsMountContent, ProjectVfsMountResponse,
     UpdateProjectVfsMountRequest, VfsCapabilityDto as ContractMountCapability,
 };
@@ -187,7 +187,7 @@ pub async fn delete_vfs_mount(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<VfsMountPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteProjectVfsMountResponse>, ApiError> {
     let project_id = parse_uuid(&path.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -213,7 +213,7 @@ pub async fn delete_vfs_mount(
         .project_vfs_mount_repo
         .delete(project_id, mount_id)
         .await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+    Ok(Json(DeleteProjectVfsMountResponse { ok: true }))
 }
 
 fn project_vfs_mount_response(mount: ProjectVfsMount) -> ProjectVfsMountResponse {

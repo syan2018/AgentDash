@@ -25,7 +25,9 @@ use agentdash_application::session::{
     UserPromptInput,
 };
 use agentdash_contracts::session::{
-    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
+    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
     SessionProjectionViewResponse,
@@ -315,6 +317,38 @@ pub async fn get_session_state(
     };
 
     Ok(Json(response))
+}
+
+fn session_command_state_response(
+    execution_state: SessionExecutionState,
+) -> SessionCommandStateResponse {
+    match execution_state {
+        SessionExecutionState::Idle => SessionCommandStateResponse {
+            status: "idle".to_string(),
+            turn_id: None,
+            message: None,
+        },
+        SessionExecutionState::Running { turn_id } => SessionCommandStateResponse {
+            status: "running".to_string(),
+            turn_id,
+            message: None,
+        },
+        SessionExecutionState::Completed { turn_id } => SessionCommandStateResponse {
+            status: "completed".to_string(),
+            turn_id: Some(turn_id),
+            message: None,
+        },
+        SessionExecutionState::Failed { turn_id, message } => SessionCommandStateResponse {
+            status: "failed".to_string(),
+            turn_id: Some(turn_id),
+            message,
+        },
+        SessionExecutionState::Interrupted { turn_id, message } => SessionCommandStateResponse {
+            status: "interrupted".to_string(),
+            turn_id,
+            message,
+        },
+    }
 }
 
 pub async fn list_session_events(
@@ -870,7 +904,7 @@ pub async fn delete_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteSessionResponse>, ApiError> {
     let bindings = ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -891,9 +925,10 @@ pub async fn delete_session(
             .await
             .map_err(ApiError::from)?;
     }
-    Ok(Json(
-        serde_json::json!({ "deleted": true, "sessionId": session_id }),
-    ))
+    Ok(Json(DeleteSessionResponse {
+        deleted: true,
+        session_id,
+    }))
 }
 
 pub async fn prompt_session(
@@ -901,7 +936,7 @@ pub async fn prompt_session(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(user_input): Json<UserPromptInput>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PromptSessionResponse>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -925,16 +960,18 @@ pub async fn prompt_session(
             other => ApiError::from(other),
         })?;
 
-    Ok(Json(
-        serde_json::json!({ "started": true, "sessionId": session_id, "turnId": turn_id }),
-    ))
+    Ok(Json(PromptSessionResponse {
+        started: true,
+        session_id,
+        turn_id,
+    }))
 }
 
 pub async fn cancel_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<CancelSessionResponse>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -955,27 +992,11 @@ pub async fn cancel_session(
         .inspect_session_execution_state(&session_id)
         .await?;
 
-    let state_payload = match execution_state {
-        SessionExecutionState::Idle => serde_json::json!({ "status": "idle" }),
-        SessionExecutionState::Running { turn_id } => {
-            serde_json::json!({ "status": "running", "turn_id": turn_id })
-        }
-        SessionExecutionState::Completed { turn_id } => {
-            serde_json::json!({ "status": "completed", "turn_id": turn_id })
-        }
-        SessionExecutionState::Failed { turn_id, message } => {
-            serde_json::json!({ "status": "failed", "turn_id": turn_id, "message": message })
-        }
-        SessionExecutionState::Interrupted { turn_id, message } => {
-            serde_json::json!({ "status": "interrupted", "turn_id": turn_id, "message": message })
-        }
-    };
-
-    Ok(Json(serde_json::json!({
-        "cancelled": true,
-        "sessionId": session_id,
-        "state": state_payload,
-    })))
+    Ok(Json(CancelSessionResponse {
+        cancelled: true,
+        session_id,
+        state: session_command_state_response(execution_state),
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -988,7 +1009,7 @@ pub async fn approve_tool_call(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ApproveToolCallResponse>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -1003,11 +1024,11 @@ pub async fn approve_tool_call(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "approved": true,
-        "sessionId": session_id,
-        "toolCallId": tool_call_id,
-    })))
+    Ok(Json(ApproveToolCallResponse {
+        approved: true,
+        session_id,
+        tool_call_id,
+    }))
 }
 
 pub async fn reject_tool_call(
@@ -1015,7 +1036,7 @@ pub async fn reject_tool_call(
     CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
     Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RejectToolCallResponse>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -1030,11 +1051,11 @@ pub async fn reject_tool_call(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "rejected": true,
-        "sessionId": session_id,
-        "toolCallId": tool_call_id,
-    })))
+    Ok(Json(RejectToolCallResponse {
+        rejected: true,
+        session_id,
+        tool_call_id,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -1047,7 +1068,7 @@ pub async fn respond_companion_request(
     CurrentUser(current_user): CurrentUser,
     Path((session_id, request_id)): Path<(String, String)>,
     Json(req): Json<CompanionRespondRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<CompanionRespondResponse>, ApiError> {
     ensure_session_permission(
         state.as_ref(),
         &current_user,
@@ -1062,11 +1083,11 @@ pub async fn respond_companion_request(
         .await
         .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "responded": true,
-        "session_id": session_id,
-        "request_id": request_id,
-    })))
+    Ok(Json(CompanionRespondResponse {
+        responded: true,
+        session_id,
+        request_id,
+    }))
 }
 
 /// ACP 会话流（Fetch Streaming / NDJSON）

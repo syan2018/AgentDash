@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::session::context::SessionContextSnapshot;
+use agentdash_contracts::core::UnboundBindingResponse;
 
 use crate::{
     app_state::AppState,
@@ -352,7 +353,7 @@ pub async fn unbind_story_session(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((story_id, binding_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<UnboundBindingResponse>, ApiError> {
     let story_uuid: Uuid = story_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("无效的 story_id: {story_id}")))?;
@@ -386,8 +387,8 @@ pub async fn unbind_story_session(
         .delete(binding_uuid)
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "unbound": true,
-        "binding_id": binding_id,
-    })))
+    Ok(Json(UnboundBindingResponse {
+        unbound: true,
+        binding_id,
+    }))
 }

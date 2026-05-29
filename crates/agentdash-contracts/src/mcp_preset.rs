@@ -227,6 +227,11 @@ impl From<domain::McpPreset> for McpPresetResponse {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DeleteMcpPresetResponse {
+    pub deleted: String,
+}
+
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct CreateMcpPresetRequest {
     pub key: String,

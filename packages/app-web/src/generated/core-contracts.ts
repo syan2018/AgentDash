@@ -25,6 +25,14 @@ export type ContextSourceKind = "manual_text" | "file" | "project_snapshot" | "h
 
 export type ContextSourceRef = { kind: ContextSourceKind, locator: string, label: string | null, slot: ContextSlot, priority: number, required: boolean, max_chars: number | null, delivery: ContextDelivery, };
 
+export type DeletedFlagResponse = { deleted: boolean, };
+
+export type DeletedIdResponse = { deleted: string, };
+
+export type DeletedProjectSubjectGrantResponse = { project_id: string, subject_type: ProjectSubjectType, subject_id: string, };
+
+export type PendingExecutionResponse = { execution_id: string, status: string, };
+
 export type ProjectAccessSummaryResponse = { role: ProjectRole | null, can_view: boolean, can_edit: boolean, can_manage_sharing: boolean, via_admin_bypass: boolean, via_template_visibility: boolean, };
 
 export type ProjectConfig = { default_agent_type: string | null, default_workspace_id: string | null, agent_presets: Array<AgentPreset>, context_containers: Array<ContextContainerDefinition>, scheduling: SchedulingConfig, };
@@ -40,6 +48,10 @@ export type ProjectSubjectGrantResponse = { project_id: string, subject_type: Pr
 export type ProjectSubjectType = "user" | "group";
 
 export type ProjectVisibility = "private" | "template_visible";
+
+export type RevokeProjectGrantResponse = { deleted: DeletedProjectSubjectGrantResponse, };
+
+export type RevokedIdResponse = { revoked: string, };
 
 export type SchedulingConfig = { stall_timeout_ms: number | null, };
 
@@ -60,6 +72,10 @@ export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "o
 export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, lifecycle_step_key: string | null, title: string, description: string, status: TaskStatus, agent_binding: AgentBinding, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
 
 export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed";
+
+export type UnboundBindingResponse = { unbound: boolean, binding_id: string, };
+
+export type UpdatedIdResponse = { updated: string, };
 
 export type VfsCapabilityDto = "read" | "write" | "list" | "search" | "exec" | "watch";
 

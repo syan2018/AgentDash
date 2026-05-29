@@ -18,8 +18,8 @@ use agentdash_application::runtime_gateway::{
     RuntimeInvocationRequest,
 };
 use agentdash_contracts::mcp_preset::{
-    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
-    McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
+    McpPresetResponse, McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
 
@@ -158,7 +158,7 @@ pub async fn delete_mcp_preset(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<McpPresetItemPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteMcpPresetResponse>, ApiError> {
     let (_project_id, preset) = load_preset_with_project(
         state.as_ref(),
         &current_user,
@@ -169,7 +169,9 @@ pub async fn delete_mcp_preset(
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     service.delete(preset.id).await?;
-    Ok(Json(serde_json::json!({ "deleted": preset.id })))
+    Ok(Json(DeleteMcpPresetResponse {
+        deleted: preset.id.to_string(),
+    }))
 }
 
 /// POST `/api/projects/:project_id/mcp-presets/:id/clone`

@@ -22,6 +22,7 @@ use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult,
 };
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
 use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
@@ -180,13 +181,13 @@ pub async fn delete_canvas(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
     delete_canvas_record(&state.repos, &canvas).await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn promote_canvas_to_extension(

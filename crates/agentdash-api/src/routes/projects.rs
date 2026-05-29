@@ -11,6 +11,10 @@ use axum::extract::{Path, State};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use agentdash_contracts::core::{
+    DeletedIdResponse, DeletedProjectSubjectGrantResponse,
+    ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
+};
 use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::project::{
     Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
@@ -182,7 +186,7 @@ pub async fn delete_project(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
     let project = load_project_or_not_found(state.as_ref(), project_id, &id).await?;
@@ -195,7 +199,7 @@ pub async fn delete_project(
     .await?;
 
     delete_project_record(&state.repos, project_id).await?;
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn clone_project(
@@ -282,7 +286,7 @@ pub async fn revoke_project_user(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((id, user_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokeProjectGrantResponse>, ApiError> {
     revoke_project_grant(
         state.as_ref(),
         &current_user,
@@ -316,7 +320,7 @@ pub async fn revoke_project_group(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((id, group_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokeProjectGrantResponse>, ApiError> {
     revoke_project_grant(
         state.as_ref(),
         &current_user,
@@ -424,7 +428,7 @@ async fn revoke_project_grant(
     raw_project_id: &str,
     subject_type: ProjectSubjectType,
     subject_id: &str,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<RevokeProjectGrantResponse, ApiError> {
     let project_id = parse_project_id(raw_project_id)?;
     let project = load_project_or_not_found(state, project_id, raw_project_id).await?;
     require_project_permission(
@@ -463,13 +467,13 @@ async fn revoke_project_grant(
         .delete_subject_grant(project_id, subject_type, &subject_id)
         .await?;
 
-    Ok(serde_json::json!({
-        "deleted": {
-            "project_id": project_id,
-            "subject_type": existing.subject_type,
-            "subject_id": existing.subject_id,
-        }
-    }))
+    Ok(RevokeProjectGrantResponse {
+        deleted: DeletedProjectSubjectGrantResponse {
+            project_id: project_id.to_string(),
+            subject_type: ContractProjectSubjectType::from(existing.subject_type),
+            subject_id: existing.subject_id,
+        },
+    })
 }
 
 async fn find_project_grant(

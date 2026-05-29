@@ -101,7 +101,8 @@ pub(crate) async fn build_repositories(
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
-    let run_link_repo = Arc::new(PostgresRunLinkRepository::new(pool));
+    let run_link_repo = Arc::new(PostgresRunLinkRepository::new(pool.clone()));
+    let permission_grant_repo = Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
 
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
@@ -135,6 +136,7 @@ pub(crate) async fn build_repositories(
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
+        permission_grant_repo: permission_grant_repo.clone(),
     };
 
     let plugin_asset_count = plugin_library_asset_seeds.len();

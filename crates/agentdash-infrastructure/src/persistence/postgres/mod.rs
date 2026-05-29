@@ -7,6 +7,7 @@ mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
+mod permission_grant_repository;
 mod project_backend_access_repository;
 mod project_extension_installation_repository;
 mod project_repository;
@@ -135,6 +136,7 @@ pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
+pub use permission_grant_repository::PostgresPermissionGrantRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
 pub use project_extension_installation_repository::PostgresProjectExtensionInstallationRepository;
 pub use project_repository::PostgresProjectRepository;

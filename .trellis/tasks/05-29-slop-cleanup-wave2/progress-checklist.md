@@ -6,7 +6,7 @@
 
 - 当前分支：`refactor/architecture-slop-cleanup`
 - 当前 active child：`05-29-vfs-dedup`
-- 当前 child 状态：`in_progress`（已完成 provider SPI watch 清理、trait marker 拆分、patch executor 单源、service dispatch helper 与 MountError 贯通；下一步推进 orchestrator JSON strict）
+- 当前 child 状态：`in_progress`（`05-29-vfs-dedup` AC 已完成并待归档；下一步切到 `05-29-infra-residual`）
 - 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool` 已提交并归档；`vfs-dedup` 正在按阶段推进。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
@@ -47,7 +47,7 @@
 | 1 | `05-29-error-model-unify` | 已归档 | 提交 `c2fb8f78`；归档提交 `8f1d232d`；本 child AC 全满足；`cargo check --workspace` 通过；stringly error grep 清零；无豁免 |
 | 2 | `05-29-contract-pipeline-unify` | 已归档 | 提交 `0edb6833` / `5a5316c4` / `2dea9bf9` / `eb026433`；归档提交 `a4336c55`；`Task/Story/Workspace/Project` 已进 contracts；前端 core 手写类型 grep 清零；`JsonValue` 单源；mirror grep 清零；mapper 保留清单已写；spec 已同步；`contracts:check` / `cargo check --workspace` / app-web `tsc --noEmit` 通过 |
 | 3 | `05-29-mcp-direct-connection-pool` | 已归档 | 规划提交 `10c33f64`；实现提交 `79872c0c`；归档提交 `93a64a05`；`DirectMcpClientPool` 已接入 discovery/execute；`client.cancel().await` grep 清零；`connect_http_server` 仅剩池内建连；失效后 invalidate、后续 ensure 重连；`cargo check -p agentdash-executor` / `cargo test -p agentdash-executor` 通过 |
-| 4 | `05-29-vfs-dedup` | in_progress | provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；`cargo check -p agentdash-application -p agentdash-api -p agentdash-local`、`cargo test -p agentdash-application vfs` 通过；待 orchestrator JSON strict |
+| 4 | `05-29-vfs-dedup` | 待归档 | provider SPI `watch` / `MountEventReceiver` 已清零；`ProviderDescriptor` / `MountIo` / `MountSearch` 已落地；`FsPatchTarget` 已接入本机 `ToolExecutor`；`apply_patch_to_fs` / `apply_patch_to_inline_files` grep 清零；`VfsService::resolve_provider_dispatch` 已集中 provider dispatch；`PROVIDER_INLINE_FS` 在 service 内仅剩 `is_inline_mount()` 1 处；service 内 `map_err(|e| e.to_string())` grep 清零；orchestrator output port JSON fallback grep 清零；`cargo test -p agentdash-application vfs`、`cargo test -p agentdash-application activity_outputs`、`cargo check --workspace` 通过；workflow spec 已记录 output port JSON contract |
 | 5 | `05-29-infra-residual` | 待 error-model | sqlite 后端移除；TIMESTAMPTZ migration；session port 错误类型化；DB spec 同步当前决策 |
 | 6 | `05-29-api-handler-thinning` | 待 error/contract/session | API handler repo 直调下沉；`session_use_cases` 迁 application；`Json<Value>` 和 inline DTO 清零 |
 | 7 | `05-29-capability-state-unify` | 待小闭环 | `hooks::CapabilityDelta` 并入 `SetDelta`；trait merge 争议有新证据结论 |
@@ -73,7 +73,7 @@
 1. 已提交 `vfs-dedup` 第一阶段：provider SPI watch 清理与 trait marker 拆分。
 2. 已提交 patch executor 单源：删除 `apply_patch_to_fs` / `apply_patch_to_inline_files`，local executor 改走 `ApplyPatchTarget`。
 3. 已完成 `VfsService` dispatch helper 与 `MountError` 贯通。
-4. 推进 orchestrator JSON strict 并完成全量 grep + cargo 验收。
+4. 已完成 orchestrator JSON strict 与全量 grep + cargo 验收。
 
 ## 全局验收 Gates
 

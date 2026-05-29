@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityCompletionPolicy, ActivityPortValue, ExecutorRunRef, LifecycleRun,
+    ActivityCompletionPolicy, ActivityDefinition, ActivityPortValue, ExecutorRunRef, LifecycleRun,
     WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
@@ -242,20 +242,7 @@ impl LifecycleOrchestrator {
                     orchestration_warning: None,
                 });
             }
-            let declared_output_keys = activity
-                .output_ports
-                .iter()
-                .map(|port| port.key.as_str())
-                .collect::<Vec<_>>();
-            let outputs = port_output_map
-                .into_iter()
-                .filter(|(port_key, _)| declared_output_keys.contains(&port_key.as_str()))
-                .map(|(port_key, content)| ActivityPortValue {
-                    port_key,
-                    value: serde_json::from_str(&content)
-                        .unwrap_or_else(|_| serde_json::Value::String(content)),
-                })
-                .collect::<Vec<_>>();
+            let outputs = activity_outputs_from_port_map(activity, port_output_map)?;
             ActivityEvent::ActivityCompleted {
                 activity_key: association.activity_key.clone(),
                 attempt: association.attempt,
@@ -410,6 +397,31 @@ impl SessionTerminalCallback for LifecycleOrchestrator {
     }
 }
 
+fn activity_outputs_from_port_map(
+    activity: &ActivityDefinition,
+    port_output_map: std::collections::BTreeMap<String, String>,
+) -> Result<Vec<ActivityPortValue>, String> {
+    let declared_output_keys = activity
+        .output_ports
+        .iter()
+        .map(|port| port.key.as_str())
+        .collect::<Vec<_>>();
+
+    port_output_map
+        .into_iter()
+        .filter(|(port_key, _)| declared_output_keys.contains(&port_key.as_str()))
+        .map(|(port_key, content)| {
+            let value = serde_json::from_str(&content).map_err(|error| {
+                format!(
+                    "activity `{}` output port `{}` 必须写入 JSON 内容: {error}",
+                    activity.key, port_key
+                )
+            })?;
+            Ok(ActivityPortValue { port_key, value })
+        })
+        .collect()
+}
+
 fn activity_terminal_event(
     terminal_state: &str,
     activity_key: &str,
@@ -442,6 +454,12 @@ fn activity_terminal_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
+    use agentdash_domain::workflow::{
+        ActivityExecutorSpec, ActivityIterationPolicy, ActivityJoinPolicy,
+        AgentActivityExecutorSpec, AgentSessionPolicy, OutputPortDefinition,
+    };
 
     #[test]
     fn activity_terminal_failed_maps_to_failed_event() {
@@ -466,5 +484,59 @@ mod tests {
                 summary: Some("关联 session 已自然结束".to_string()),
             })
         );
+    }
+
+    #[test]
+    fn activity_outputs_parse_declared_json_ports() {
+        let activity = test_activity_with_outputs(&["result"]);
+        let outputs = activity_outputs_from_port_map(
+            &activity,
+            BTreeMap::from([
+                ("ignored".to_string(), "\"not declared\"".to_string()),
+                ("result".to_string(), "{\"ok\":true}".to_string()),
+            ]),
+        )
+        .expect("json output");
+
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].port_key, "result");
+        assert_eq!(outputs[0].value, serde_json::json!({ "ok": true }));
+    }
+
+    #[test]
+    fn activity_outputs_reject_invalid_json_port_content() {
+        let activity = test_activity_with_outputs(&["result"]);
+        let error = activity_outputs_from_port_map(
+            &activity,
+            BTreeMap::from([("result".to_string(), "plain text".to_string())]),
+        )
+        .expect_err("invalid json");
+
+        assert!(error.contains("output port `result`"));
+        assert!(error.contains("必须写入 JSON 内容"));
+    }
+
+    fn test_activity_with_outputs(keys: &[&str]) -> ActivityDefinition {
+        ActivityDefinition {
+            key: "build".to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: "workflow".to_string(),
+                session_policy: AgentSessionPolicy::SpawnChild,
+            }),
+            input_ports: Vec::new(),
+            output_ports: keys
+                .iter()
+                .map(|key| OutputPortDefinition {
+                    key: (*key).to_string(),
+                    description: String::new(),
+                    gate_strategy: Default::default(),
+                    gate_params: None,
+                })
+                .collect(),
+            completion_policy: ActivityCompletionPolicy::default(),
+            iteration_policy: ActivityIterationPolicy::default(),
+            join_policy: ActivityJoinPolicy::default(),
+        }
     }
 }

@@ -39,9 +39,12 @@ pub struct ApiServerOptions {
 
 impl ApiServerOptions {
     pub fn from_env() -> Result<Self> {
-        let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into());
-        let port = std::env::var("PORT")
-            .unwrap_or_else(|_| "3001".into())
+        let host = read_env("AGENTDASH_BIND_HOST")
+            .or_else(|| read_env("HOST"))
+            .unwrap_or_else(|| "0.0.0.0".into());
+        let port = read_env("AGENTDASH_PORT")
+            .or_else(|| read_env("PORT"))
+            .unwrap_or_else(|| "3001".into())
             .parse::<u16>()?;
 
         Ok(Self {
@@ -60,6 +63,13 @@ impl ApiServerOptions {
             max_connections: DEFAULT_POSTGRES_MAX_CONNECTIONS,
         }
     }
+}
+
+fn read_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Clone)]

@@ -40,13 +40,20 @@
 
 ## Acceptance Criteria
 
-- [ ] `docs/deployment/deployment-baseline.md` 中的版本/discovery/配置契约与实际实现或最终设计一致。
-- [ ] 有明确的 `/api/version` response schema。
-- [ ] 有明确的 `/.well-known/agentdash` response schema。
-- [ ] 有明确的 server CLI/subcommand 方案，或说明第一轮为什么暂缓实现。
-- [ ] 有测试或手动验证步骤覆盖 version/discovery endpoint。
-- [ ] 不修改桌面端服务器配置 UI。
-- [ ] 不创建 Compose 基准文件，除非只是为验证 endpoint 做最小说明。
+- [x] `docs/deployment/deployment-baseline.md` 中的版本/discovery/配置契约与实际实现或最终设计一致。
+- [x] 有明确的 `/api/version` response schema。
+- [x] 有明确的 `/.well-known/agentdash` response schema。
+- [x] 有明确的 server CLI/subcommand 方案，或说明第一轮为什么暂缓实现。
+- [x] 有测试或手动验证步骤覆盖 version/discovery endpoint。
+- [x] 不修改桌面端服务器配置 UI。
+- [x] 不创建 Compose 基准文件，除非只是为验证 endpoint 做最小说明。
+
+## First Implementation Notes
+
+- 第一轮已实现 `GET /api/version` 与 `GET /.well-known/agentdash`。
+- 第一轮暂缓拆出 `agentdash-server migrate` / `doctor` 子命令；当前启动时 migration 与 schema readiness check 仍保留，后续由部署 runbook 和 server CLI 切片继续推进显式 migration。
+- Discovery 默认 Relay WebSocket path 为 `/ws/backend`，可用 `AGENTDASH_RELAY_WS_URL` 覆盖。
+- `AGENTDASH_BIND_HOST` / `AGENTDASH_PORT` 已作为部署命名进入 server options；`HOST` / `PORT` 仍服务当前开发脚本入口。
 
 ## Coordination Notes
 

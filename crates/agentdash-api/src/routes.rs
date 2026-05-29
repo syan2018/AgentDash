@@ -21,6 +21,7 @@ pub mod project_agents;
 pub mod project_extensions;
 pub mod project_vfs_mounts;
 pub mod projects;
+pub mod release_info;
 pub mod routines;
 pub mod sessions;
 pub mod settings;
@@ -107,6 +108,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         ));
 
     let api = Router::new()
+        .route("/version", get(release_info::version_info))
         .merge(health::router())
         .merge(auth_routes::public_router())
         .merge(routines::public_router())
@@ -117,6 +119,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(mcp)
         .nest("/api", api)
+        .route(
+            "/.well-known/agentdash",
+            get(release_info::agentdash_discovery),
+        )
         .route(
             "/ws/backend",
             get(relay::ws_handler::ws_backend_handler).with_state(state),

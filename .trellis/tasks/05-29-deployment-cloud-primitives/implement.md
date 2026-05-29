@@ -36,3 +36,11 @@ git diff --check
 - CLI/subcommand 决策。
 - 配置命名。
 - Compose 和桌面端可依赖的契约。
+
+## Current Slice Result
+
+- 已实现 `/api/version`。
+- 已实现 `/.well-known/agentdash`。
+- 已加入 `agentdash-api` build script，从 migration 文件名注入 `schema_version`。
+- 已让 server options 识别 `AGENTDASH_BIND_HOST` / `AGENTDASH_PORT`。
+- 已验证 `cargo test -p agentdash-api release_info`。

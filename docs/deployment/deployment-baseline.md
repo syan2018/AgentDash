@@ -187,7 +187,7 @@ GET /.well-known/agentdash
   "product": "AgentDash",
   "public_origin": "https://agentdash.example.internal",
   "api_base_url": "https://agentdash.example.internal/api",
-  "relay_ws_url": "wss://agentdash.example.internal/relay/ws",
+  "relay_ws_url": "wss://agentdash.example.internal/ws/backend",
   "server_version": "0.2.3",
   "min_desktop_version": "0.2.0",
   "recommended_desktop_version": "0.2.3",
@@ -412,3 +412,5 @@ pnpm run release:metadata -- --out dist/release/agentdash-release.json
 ```
 
 该命令从根 `package.json`、Cargo workspace metadata 和当前 Git commit 生成 artifact manifest。后续云端版本端点、镜像标签和 release notes 都围绕这份元数据继续收敛。
+
+云端 release build 通过 `AGENTDASH_GIT_SHA` 和 `AGENTDASH_BUILD_TIME` 注入构建元数据；`schema_version` 由 `agentdash-api` build script 从 `agentdash-infrastructure/migrations` 自动注入。

@@ -25,7 +25,7 @@ AGENTDASH_ENCRYPTION_KEY=change-me
 RUST_LOG=info
 ```
 
-`AGENTDASH_PUBLIC_ORIGIN` 是部署事实源，API URL、Relay WebSocket URL 和桌面端 discovery response 都从它派生。
+`AGENTDASH_PUBLIC_ORIGIN` 是部署事实源，API URL、Relay WebSocket URL 和桌面端 discovery response 都从它派生。默认 Relay WebSocket path 为 `/ws/backend`；如果反代暴露不同路径，使用 `AGENTDASH_RELAY_WS_URL` 覆盖。
 
 ## 验证入口
 

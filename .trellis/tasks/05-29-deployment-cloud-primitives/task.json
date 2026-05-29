@@ -3,7 +3,7 @@
   "name": "deployment-cloud-primitives",
   "title": "云端发布原语与发现端点",
   "description": "实现或设计云端部署所需的基础原语：显式 migrate/doctor 入口、/api/version、/.well-known/agentdash、部署配置契约与外部 PostgreSQL 边界。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "backend,deployment",
   "package": null,

@@ -41,6 +41,15 @@ pnpm run release:metadata -- --out dist/release/agentdash-release.json
 
 该命令从根 `package.json`、Cargo workspace metadata 和当前 Git commit 生成 artifact manifest。后续由 cloud primitives 子任务把其中的字段落到 `/api/version` 与 `/.well-known/agentdash`。
 
+云端 release build 需要把 metadata 注入 Rust 编译环境：
+
+```env
+AGENTDASH_GIT_SHA=<git-sha>
+AGENTDASH_BUILD_TIME=<iso-time>
+```
+
+`schema_version` 由 `agentdash-api` build script 从 `agentdash-infrastructure/migrations` 自动注入。
+
 ## 基准发布顺序
 
 ```text

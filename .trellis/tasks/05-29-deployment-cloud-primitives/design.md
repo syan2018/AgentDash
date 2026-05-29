@@ -39,7 +39,7 @@
   "product": "AgentDash",
   "public_origin": "https://agentdash.example.internal",
   "api_base_url": "https://agentdash.example.internal/api",
-  "relay_ws_url": "wss://agentdash.example.internal/relay/ws",
+  "relay_ws_url": "wss://agentdash.example.internal/ws/backend",
   "server_version": "0.2.3",
   "min_desktop_version": "0.2.0",
   "recommended_desktop_version": "0.2.3",

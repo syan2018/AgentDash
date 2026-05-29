@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "后端分层、composition root 与 infrastructure 依赖方向"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PostgreSQL migration 与 timestamp schema 契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "SessionStoreError 到 ApplicationError/ApiError 的边界映射"}
+{"file": ".trellis/spec/backend/session/architecture.md", "reason": "session runtime persistence 与 lifecycle 边界"}

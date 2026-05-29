@@ -87,3 +87,19 @@
 ## 非目标
 
 - 不碰 `DomainError` 定义（→ `error-model-unify`）、不删 contracts 副本本体（→ `contract-pipeline-unify`）、不重构 services mapper 层（→ `contract-pipeline-unify`）。
+
+---
+
+## 执行结果（2026-05-29）
+
+并行派发遇通信中断 + subagent 误操作（偷偷 stash 与并行线打架），由主控接手手动收尾。最终 **9 路全部落地，分 3 笔 commit**（均在 `refactor/architecture-slop-cleanup`，未 push）：
+
+- `b14a2a4e` — 7 路解耦提交：S1 删 agent-protocol/compat 死代码（ACP 依赖因 lib.rs 另有 ContentBlock re-export 保留）、S3 修 MountCapability 4→6 变体漂移、S4 codex_bridge spawn 绑 cancel_token + drop guard、S6 first-party-plugins authorize 升级为带 debug_assert 的 Personal 不变量、S7 前端 formatter/CapabilityDirective/JsonValue 去重、S8 infra db_err 合并、S9 relay registry 锁加固。
+- `644808b5` — S2：routine 吞错归零 + artifact 请求路径去 panic。
+- `4e693849` — S5（render）：**经复核纠偏**——原 S5 把 direct 富格式 +「MCP tool:」头强加给 local/relay（非行为等价、把个别习惯当事实）。改为只共享 `render_content`、**删冗余头**（结果本就按 tool_call_id 绑定调用，头是噪声）、各站点行为等价。
+
+**descope**：S5-A 连接池 → 新任务 `05-29-mcp-direct-connection-pool`（有状态优化、非正确性、M-effort，不属 quickfix）。
+
+**验证态**：`cargo check -p agentdash-mcp -p agentdash-executor` 通过（开工前 workspace + tsc 基线全绿）。**workspace 整体编译当前受阻于并行的 drop-step WIP**（domain 删除 `LifecycleStepState`/`LifecycleEdge`/`LifecycleDefinition` 等，consumer 在 application/contracts/infra 未同步）——与本 swarm 9 路改动无关，待 drop-step 收口后可全绿复验。
+
+**偏差/人工复核点**：S1 ACP 依赖未去除（有真实 re-export 消费方，已说明）；S6 选"声明不变量"而非改行为；S5 删头是 LLM 可见输出的行为变更（已与用户对齐，判为去 slop）。

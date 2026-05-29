@@ -27,7 +27,7 @@ use agentdash_domain::workspace::{
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::routes::backends::{BrowseDirectoryEntryResponse, BrowseDirectoryResponse};
+use crate::dto::{BrowseDirectoryEntryResponse, BrowseDirectoryResponse};
 use crate::rpc::ApiError;
 
 #[derive(Debug, Deserialize)]

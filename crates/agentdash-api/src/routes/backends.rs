@@ -17,6 +17,7 @@ use agentdash_domain::project::ProjectRepository;
 
 use crate::app_state::AppState;
 use crate::auth::CurrentUser;
+use crate::dto::{BrowseDirectoryEntryResponse, BrowseDirectoryRequest, BrowseDirectoryResponse};
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
 use agentdash_application::backend::{
@@ -591,24 +592,6 @@ pub async fn remove_backend(
 }
 
 // ─── 目录浏览 ─────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct BrowseDirectoryRequest {
-    pub path: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct BrowseDirectoryResponse {
-    pub current_path: String,
-    pub entries: Vec<BrowseDirectoryEntryResponse>,
-}
-
-#[derive(Serialize)]
-pub struct BrowseDirectoryEntryResponse {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-}
 
 pub async fn browse_directory(
     State(state): State<Arc<AppState>>,

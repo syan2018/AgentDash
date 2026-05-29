@@ -23,7 +23,6 @@ use axum::{
     extract::{Path, State},
 };
 use base64::Engine;
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
@@ -34,6 +33,7 @@ use agentdash_executor::connectors::pi_agent::pi_agent_provider_registry::{
 use crate::{
     app_state::AppState,
     auth::CurrentUser,
+    dto::CodexTokenResponse,
     oauth_flow::{self, LocalOAuthProviderConfig},
     rpc::ApiError,
 };
@@ -617,13 +617,6 @@ fn codex_oauth_config() -> LocalOAuthProviderConfig {
             .collect(),
         timeout: Duration::from_secs(CODEX_OAUTH_TIMEOUT_SECS),
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct CodexTokenResponse {
-    access_token: String,
-    refresh_token: String,
-    expires_in: i64,
 }
 
 async fn exchange_codex_authorization_code(

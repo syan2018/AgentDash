@@ -7,6 +7,7 @@
  */
 
 import { api } from "../api/client";
+import { requireStringField } from "../api/mappers";
 import type {
   AgentBinding,
   ContextContainerDefinition,
@@ -24,14 +25,6 @@ import type {
 import { isThinkingLevel } from "../types";
 
 // ─── 字段读取工具 ────────────────────────────────────────
-
-export const requireStringField = (raw: Record<string, unknown>, field: string): string => {
-  const value = raw[field];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`缺少或非法的字段 ${field}`);
-  }
-  return value;
-};
 
 const readNullableStringField = (raw: Record<string, unknown>, field: string): string | null => {
   const value = raw[field];

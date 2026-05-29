@@ -13,6 +13,7 @@ import {
   getMarketplaceInstallBlocker,
   parseExtensionTemplateMarketplacePayload,
 } from "./extension/extensionTemplateMarketplace";
+import { formatBytes } from "../../../lib/format";
 
 const ASSET_TYPE_LABELS: Record<LibraryAssetType, string> = {
   agent_template: "Agent Template",
@@ -826,13 +827,6 @@ function MetaChip({
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n…（已截断 ${text.length - max} 字符）`;
-}
-
-function formatBytes(value: number | bigint): string {
-  const numericValue = typeof value === "bigint" ? Number(value) : value;
-  if (numericValue < 1024) return `${numericValue} B`;
-  if (numericValue < 1024 * 1024) return `${(numericValue / 1024).toFixed(1)} KB`;
-  return `${(numericValue / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /* ─── ConfirmOverwriteDialog ─── */

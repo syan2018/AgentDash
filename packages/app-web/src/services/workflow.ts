@@ -1,5 +1,6 @@
 import { api } from "../api/client";
-import { asRecord, asRecordArray, asStringArray, optString, optStringField } from "../api/mappers";
+import { asRecord, asRecordArray, asStringArray, optString, optStringField, requireStringField } from "../api/mappers";
+import { isWorkflowJsonValue } from "../types";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
   ActivityCompletionPolicy,
@@ -76,32 +77,8 @@ function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, f
   return s as T;
 }
 
-function requireStringField(raw: Record<string, unknown>, field: string): string {
-  const value = raw[field];
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error(`缺少或非法的字段 ${field}`);
-  }
-  return value;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-  const record = asRecord(value);
-  return record ? Object.values(record).every(isJsonValue) : false;
-}
-
 function mapJsonValue(value: unknown, field: string): JsonValue {
-  if (isJsonValue(value)) {
+  if (isWorkflowJsonValue(value)) {
     return value;
   }
   throw new Error(`${field} 必须是 JSON value`);

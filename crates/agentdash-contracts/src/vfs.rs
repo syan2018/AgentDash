@@ -341,6 +341,9 @@ pub enum MountCapability {
     Write,
     List,
     Search,
+    Exec,
+    /// 订阅内容变更事件。
+    Watch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

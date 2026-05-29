@@ -769,9 +769,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 }
 
-fn db_err(error: sqlx::Error) -> DomainError {
-    DomainError::InvalidConfig(error.to_string())
-}
+use super::db_err;
 
 fn ensure_rows_affected(
     rows_affected: u64,

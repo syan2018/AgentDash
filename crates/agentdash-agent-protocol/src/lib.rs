@@ -1,5 +1,4 @@
 pub mod backbone;
-pub mod compat;
 
 // ─── 集中 re-export（保持外部 API 不变）───────────────────
 
@@ -15,8 +14,6 @@ pub use backbone::usage::{
     ContextUsageSource, NormalizedContextUsage, ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification, TokenUsageBreakdown,
 };
-
-pub use compat::{envelope_to_session_notification, session_notification_to_envelope};
 
 pub use codex_app_server_protocol;
 

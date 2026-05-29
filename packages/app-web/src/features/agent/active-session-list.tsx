@@ -28,6 +28,7 @@ import {
   applySessionFilters,
   type SessionStatusFilter,
 } from "./session-filter";
+import { formatRelativeTime } from "../../lib/format";
 
 // ─── 通用工具 ──────────────────────────────────────────────────────────────
 
@@ -52,21 +53,6 @@ function getOwnerBadgeLabel(session: ProjectSessionEntry): string | null {
     return `Task · ${storyPart}${taskPart}`;
   }
   return null; // project 会话不展示归属
-}
-
-function formatRelativeTime(timestamp: number | null): string {
-  if (timestamp == null) return "无活动";
-  const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const diffMs = Date.now() - ts;
-  if (diffMs < 0) return "刚刚";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return "刚刚";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const date = new Date(ts);
-  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
 }
 
 const statusLabel: Record<ProjectSessionEntry["execution_status"], string> = {
@@ -119,7 +105,7 @@ function SessionRow({
   const leftPadPx = 12 + indent * 16;
 
   const agentText = getAgentLabel(session);
-  const timeText = formatRelativeTime(session.last_activity);
+  const timeText = formatRelativeTime(session.last_activity, { emptyLabel: "无活动", longStyle: "datetime" });
   const ownerLabel = getOwnerBadgeLabel(session);
   const relationLabel = parentRelationKind
     ? sessionParentRelationLabel(parentRelationKind)

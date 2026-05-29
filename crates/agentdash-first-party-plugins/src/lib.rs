@@ -34,10 +34,16 @@ impl AgentDashPlugin for PersonalAuthPlugin {
     }
 }
 
-/// 开源版默认连接器目录插件骨架。
+/// 开源版默认连接器目录插件骨架 —— **当前为非功能占位**。
 ///
-/// 当前连接器实际仍由宿主直接构建；该插件用于为 first-party plugin 目录预留位置，
-/// 后续可以逐步把内置连接器迁移到真正的插件装配模型。
+/// 不变量/现状声明：本插件**不**装配或暴露任何可用连接器。内置连接器目前仍由宿主直接
+/// 构建（见宿主装配代码），与本插件无关。它存在的唯一作用是：
+/// 1. 在 first-party plugin 目录里占住一个位置，使「连接器最终应走插件装配模型」这一意图可见；
+/// 2. 通过 [`library_asset_seeds`](AgentDashPlugin::library_asset_seeds) 提供一个示例
+///    extension asset seed，给后续真正的连接器插件化提供可参照样例。
+///
+/// 因此当前**不要**依赖本插件来获得任何连接器能力；后续若要迁移内置连接器到插件装配模型，
+/// 应在此处补全装配逻辑并同步移除「占位」声明。
 pub struct ConnectorCatalogPlugin;
 
 impl AgentDashPlugin for ConnectorCatalogPlugin {
@@ -138,10 +144,24 @@ impl AuthProvider for BuiltinPersonalAuthProvider {
 
     async fn authorize(
         &self,
-        _identity: &AuthIdentity,
+        identity: &AuthIdentity,
         _resource: &str,
         _action: &str,
     ) -> Result<bool, agentdash_plugin_api::AuthError> {
+        // 不变量（Personal 模式）：本插件不做 Provider 级（claim/provider 粗粒度）授权裁决。
+        //
+        // 个人模式只有一个固定本地用户（见 `BuiltinPersonalAuthProvider::from_env`），不存在
+        // 企业 SSO/代理头那种「该身份不属于有效组织」之类的粗粒度入口限制需要在这里拦截。
+        // 按 `AuthProvider::authorize` 契约，领域级授权（Project grant、owner/editor/viewer、
+        // 共享等）由宿主应用层负责，本 Provider 一律放行 —— 这是有意设计，不是缺失的鉴权。
+        //
+        // 该 `debug_assert!` 把「只在 Personal 模式下成立」这一前提固化为显式不变量：
+        // 一旦未来有人误把本 Provider 接到 Enterprise 身份上，debug 构建会立即报警。
+        debug_assert!(
+            identity.auth_mode == AuthMode::Personal,
+            "BuiltinPersonalAuthProvider 只服务 Personal 模式；收到 {:?} 身份说明装配错误",
+            identity.auth_mode
+        );
         Ok(true)
     }
 }

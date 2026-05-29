@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 
 import { useProjectStore } from "../../../stores/projectStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
+import { formatBytes } from "../../../lib/format";
 import { VfsBrowser, VfsCodeEditor, type VfsBrowserPanelInspectorContext } from "../../vfs";
 import {
   buildSkillYamlFrontmatter,
@@ -704,12 +705,6 @@ function InspectorTitleBar({
 
 function InspectorRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return <UiInspectorRow label={label} value={value} mono={mono} />;
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // ─── YAML Meta Panel ─────────────────────────────────────

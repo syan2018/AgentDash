@@ -50,6 +50,31 @@ fn is_codex_executor(executor: &str) -> bool {
 type PendingResponseMap =
     Arc<Mutex<HashMap<RequestId, oneshot::Sender<Result<Value, ConnectorError>>>>>;
 
+/// 包裹返回给消费者的事件流：当消费者提前丢弃 stream 时，
+/// 触发 `cancel_token`，使 writer/stdout/stderr 三个循环退出、
+/// waiter 杀掉子进程，避免遗留孤儿 `npx codex app-server`。
+struct CancelOnDropStream<S> {
+    inner: S,
+    cancel_token: CancellationToken,
+}
+
+impl<S> Drop for CancelOnDropStream<S> {
+    fn drop(&mut self) {
+        self.cancel_token.cancel();
+    }
+}
+
+impl<S: futures::Stream + Unpin> futures::Stream for CancelOnDropStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.inner).poll_next(cx)
+    }
+}
+
 pub struct CodexBridgeConnector {
     cancel_by_session: Arc<Mutex<HashMap<String, CancellationToken>>>,
 }
@@ -629,9 +654,18 @@ impl AgentConnector for CodexBridgeConnector {
         let request_counter = Arc::new(AtomicI64::new(1));
 
         let writer_tx = tx.clone();
+        let writer_cancel = cancel_token.clone();
         tokio::spawn(async move {
             let mut stdin = stdin;
-            while let Some(payload) = out_rx.recv().await {
+            loop {
+                let payload = tokio::select! {
+                    biased;
+                    _ = writer_cancel.cancelled() => break,
+                    payload = out_rx.recv() => match payload {
+                        Some(payload) => payload,
+                        None => break,
+                    },
+                };
                 let encoded = match serde_json::to_string(&payload) {
                     Ok(encoded) => encoded,
                     Err(e) => {
@@ -671,10 +705,16 @@ impl AgentConnector for CodexBridgeConnector {
         let read_source = source.clone();
         let read_turn_id = turn_id.clone();
         let read_session_id = stream_session_id.clone();
+        let read_cancel = cancel_token.clone();
         tokio::spawn(async move {
             let mut stdout_lines = BufReader::new(stdout).lines();
             loop {
-                let line = match stdout_lines.next_line().await {
+                let next = tokio::select! {
+                    biased;
+                    _ = read_cancel.cancelled() => break,
+                    next = stdout_lines.next_line() => next,
+                };
+                let line = match next {
                     Ok(Some(line)) => line,
                     Ok(None) => break,
                     Err(e) => {
@@ -733,13 +773,24 @@ impl AgentConnector for CodexBridgeConnector {
             }
         });
 
+        let stderr_cancel = cancel_token.clone();
         tokio::spawn(async move {
             let mut stderr_lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = stderr_lines.next_line().await {
-                if line.trim().is_empty() {
-                    continue;
+            loop {
+                let next = tokio::select! {
+                    biased;
+                    _ = stderr_cancel.cancelled() => break,
+                    next = stderr_lines.next_line() => next,
+                };
+                match next {
+                    Ok(Some(line)) => {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        tracing::debug!("codex app-server stderr: {}", line.trim());
+                    }
+                    _ => break,
                 }
-                tracing::debug!("codex app-server stderr: {}", line.trim());
             }
         });
 
@@ -863,7 +914,10 @@ impl AgentConnector for CodexBridgeConnector {
             return Err(err);
         }
 
-        Ok(Box::pin(ReceiverStream::new(rx)))
+        Ok(Box::pin(CancelOnDropStream {
+            inner: ReceiverStream::new(rx),
+            cancel_token,
+        }))
     }
 
     async fn cancel(&self, session_id: &str) -> Result<(), ConnectorError> {

@@ -7,6 +7,7 @@
  */
 
 import { api } from "../api/client";
+import { requireStringField } from "../api/mappers";
 import type {
   ContextContainerDefinition,
   OpenProjectAgentSessionResult,
@@ -23,14 +24,6 @@ import type {
 import { isThinkingLevel } from "../types";
 
 // ─── Mapper ──────────────────────────────────────────────
-
-function requireStringField(raw: Record<string, unknown>, field: string): string {
-  const value = raw[field];
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  throw new Error(`Project 响应缺少必填字段: ${field}`);
-}
 
 function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSummary {
   const rawExecutor =

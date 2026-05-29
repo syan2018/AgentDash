@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { formatDateTime } from "../../../lib/format";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useWorkflowStore } from "../../../stores/workflowStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
@@ -260,16 +261,3 @@ function LifecycleAssetCard({
   );
 }
 
-/* ─── 公共：时间格式化 ─── */
-
-function formatDateTime(value: string): string {
-  const time = new Date(value);
-  if (Number.isNaN(time.getTime())) return value;
-  return time.toLocaleString("zh-CN", {
-    hour12: false,
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}

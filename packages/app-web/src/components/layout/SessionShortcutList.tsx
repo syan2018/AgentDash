@@ -7,6 +7,7 @@ import {
   type SessionShortcutRow,
 } from "./session-shortcut-rows";
 import { sessionParentRelationLabel } from "../../features/agent/session-relations";
+import { formatRelativeTime } from "../../lib/format";
 
 // ─── Session 快捷列表（容器高度自适应 + 末尾 ...） ──────────
 
@@ -144,7 +145,7 @@ export function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntr
               const title = session.session_title?.trim() || "无标题会话";
               const agent = getShortcutAgentLabel(session);
               const owner = getShortcutOwnerLabel(session);
-              const time = formatRelativeTime(session.last_activity);
+              const time = formatRelativeTime(session.last_activity, { longStyle: "compact" });
               const indentClass = getShortcutIndentClass(row.depth);
               const metaParts = [
                 row.parentRelationKind
@@ -215,19 +216,3 @@ export function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntr
   );
 }
 
-function formatRelativeTime(timestamp: number | null): string {
-  if (timestamp == null) return "—";
-  const ts = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-  const diffMs = Date.now() - ts;
-  if (diffMs < 0) return "刚刚";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return "刚刚";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  const date = new Date(ts);
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}

@@ -1,4 +1,5 @@
 import type { Artifact } from "./acp";
+import type { CapabilityDirective } from "./workflow";
 import type {
   ContextContainerCapability,
   ContextContainerDefinition,
@@ -85,8 +86,6 @@ export type CapabilityKey =
   | "workflow"
   | "collaboration"
   | "canvas";
-
-export type CapabilityDirective = { add: string } | { remove: string };
 
 export type CapabilityGroup = "basic" | "extended";
 

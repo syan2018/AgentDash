@@ -254,7 +254,7 @@ async fn relay_list_files(
             Some(current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("VFS 文件列表失败: {e}")))?;
 
     let files = listed
         .entries
@@ -299,7 +299,7 @@ async fn relay_read_file(
             Some(current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("VFS 文件读取失败: {e}")))?;
     let mime = guess_mime(&read.path);
     let size = read.content.len() as u64;
     Ok(Json(ReadFileResponse {

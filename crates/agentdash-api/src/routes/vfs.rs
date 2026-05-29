@@ -119,7 +119,7 @@ pub async fn list_address_entries(
                     Some(&current_user),
                 )
                 .await
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(|e| ApiError::Internal(format!("VFS 条目检索失败: {e}")))?;
 
             let entries = listed
                 .entries

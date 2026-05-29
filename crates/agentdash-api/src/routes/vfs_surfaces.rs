@@ -136,7 +136,7 @@ pub async fn list_surface_mount_entries(
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface 条目检索失败: {e}")))?;
 
     Ok(Json(SurfaceEntriesResponse {
         surface_ref,
@@ -187,7 +187,7 @@ pub async fn read_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface 文件读取失败: {e}")))?;
 
     Ok(Json(SurfaceReadFileResponse {
         surface_ref: req.surface_ref,
@@ -511,7 +511,7 @@ pub async fn stat_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface stat 失败: {e}")))?;
 
     Ok(Json(surface_stat_response(
         req.surface_ref,

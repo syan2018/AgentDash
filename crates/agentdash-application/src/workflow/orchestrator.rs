@@ -4,7 +4,7 @@
 //! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
 //! LifecycleEngine 与 durable scheduler 统一推进。
 //!
-//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / SessionBinding / session services。
+//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
 //!
 //! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。

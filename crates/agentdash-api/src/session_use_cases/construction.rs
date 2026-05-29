@@ -83,7 +83,7 @@ pub(crate) async fn build_session_construction_for_launch(
         supports_repository_restore,
     );
 
-    // TODO: session_binding 已移除，owner 路由需基于 SessionMeta.project_id + CapabilityScope 重建。
+    // TODO(permission-system): owner 路由由 Permission System + CapabilityScope 接管
     // 当前通过 LifecycleRunLink 或 meta.project_id 推断 scope 并走 Project 分支。
     let scope = resolve_session_scope(state, session_id, meta).await?;
 

@@ -85,7 +85,7 @@ pub async fn list_sessions(
     CurrentUser(_current_user): CurrentUser,
     Query(_query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
-    // TODO: session_binding 已移除，owner 级过滤需基于 SessionMeta.project_id 实现
+    // TODO(permission-system): owner 级过滤由 Permission System 接管
     let sessions = state
         .services
         .session_core
@@ -566,14 +566,6 @@ impl SessionContextResponse {
     }
 }
 
-/// GET /sessions/{id}/bindings — 兼容端点（SessionBinding 已移除，总是返回空）
-pub async fn get_session_bindings(
-    State(_state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Path(_session_id): Path<String>,
-) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
-    Ok(Json(vec![]))
-}
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSessionMetaRequest {

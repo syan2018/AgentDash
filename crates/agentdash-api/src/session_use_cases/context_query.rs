@@ -38,7 +38,7 @@ pub(crate) async fn build_session_context_plan(
         .map_err(|error| ApiError::Internal(error.to_string()))?
         .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
 
-    // TODO: session_binding 已移除，context query 的 owner 路由需基于
+    // TODO(permission-system): context query 的 owner 路由由 Permission System 接管
     // SessionMeta.project_id + LifecycleRunLink scope 重建。
     // 当前默认走 Project scope。
     let project_id = session_meta

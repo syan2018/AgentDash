@@ -22,7 +22,7 @@ use crate::workspace::BackendAvailability;
 use super::execution::*;
 use super::gateway::{
     append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
-    clear_task_session_binding, create_task_session as gw_create_task_session,
+    create_task_session as gw_create_task_session,
     get_session_overview as gw_get_session_overview, get_task as gw_get_task, map_connector_error,
     map_domain_error, resolve_project_scope_for_owner, resolve_task_backend_id,
 };
@@ -155,10 +155,6 @@ impl StoryStepActivationService {
         {
             Ok(outcome) => outcome,
             Err(err) => {
-                if phase == ExecutionPhase::Start {
-                    clear_task_session_binding(&self.repos, task.id, &backend_id, "start_failed")
-                        .await;
-                }
                 return Err(map_connector_error(err));
             }
         };

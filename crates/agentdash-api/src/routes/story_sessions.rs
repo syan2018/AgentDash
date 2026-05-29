@@ -45,7 +45,7 @@ pub async fn list_story_sessions(
     )
     .await?;
 
-    // TODO: session_binding 已移除，需要通过 SessionMeta.project_id + story 关联查询
+    // TODO(permission-system): story session 查询由 LifecycleRunLink(Story, Subject) 提供
     Ok(Json(vec![]))
 }
 
@@ -182,7 +182,7 @@ pub async fn unbind_story_session(
     )
     .await?;
 
-    // TODO: session_binding 已移除，解绑逻辑需基于新的 session-story 关联方式实现
+    // TODO(permission-system): session-story 解绑由 LifecycleRunLink 删除 + Permission revoke 实现
     let _ = &session_id;
 
     Ok(Json(serde_json::json!({

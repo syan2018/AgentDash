@@ -149,7 +149,7 @@ pub async fn open_project_agent_session(
 
     let label = SessionConstructionPlanner::project_agent_session_label(&agent.key);
 
-    // TODO: session_binding 已移除，agent session 复用需基于新的关联方式实现
+    // TODO(permission-system): agent session 复用由 LifecycleRunLink + Permission Grant 管理
     let _ = query.force_new;
     let _ = &label;
 
@@ -251,7 +251,7 @@ async fn find_project_agent_session(
     _project_id: Uuid,
     _agent_key: &str,
 ) -> Result<Option<ProjectAgentSession>, ApiError> {
-    // TODO: session_binding 已移除，agent session 查找需基于新的关联方式实现
+    // TODO(permission-system): agent session 查找由 LifecycleRunLink 管理
     Ok(None)
 }
 
@@ -269,7 +269,7 @@ pub async fn list_project_agent_sessions(
     )
     .await?;
 
-    // TODO: session_binding 已移除，agent session 列表需基于新的关联方式实现
+    // TODO(permission-system): agent session 列表由 LifecycleRunLink 查询提供
     Ok(Json(vec![]))
 }
 

@@ -78,7 +78,7 @@ pub struct ListProjectSessionsQuery {
 
 /// GET /api/projects/{project_id}/sessions
 ///
-/// TODO: session_binding 已移除，需要通过 SessionMeta.project_id 查询项目下的 sessions
+/// TODO(permission-system): 项目 session 列表基于 SessionMeta.project_id 查询
 pub async fn list_project_sessions(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -96,7 +96,7 @@ pub async fn list_project_sessions(
     )
     .await?;
 
-    // TODO: session_binding 已移除，需基于 SessionMeta.project_id 重新实现列表查询
+    // TODO(permission-system): 基于 SessionMeta.project_id 实现列表查询
     Ok(Json(vec![]))
 }
 

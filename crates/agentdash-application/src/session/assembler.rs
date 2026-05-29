@@ -1798,7 +1798,7 @@ pub struct StoryStepSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 SessionBinding 两跳定位后传入）。
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 LifecycleRunLink 定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// 审计总线用于索引的 session key。
     pub audit_session_key: Option<String>,

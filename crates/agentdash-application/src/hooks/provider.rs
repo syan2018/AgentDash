@@ -276,10 +276,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 .diagnostics
                 .iter()
                 .filter(|entry| {
-                    matches!(
-                        entry.code.as_str(),
-                        "active_workflow_resolved" | "session_binding_found"
-                    )
+                    matches!(entry.code.as_str(), "active_workflow_resolved")
                 })
                 .cloned()
                 .collect(),

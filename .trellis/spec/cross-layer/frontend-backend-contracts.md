@@ -73,7 +73,7 @@ packages/app-web/src/generated/
 | Session event stream / projection view | `session-contracts.ts` | `agentdash-contracts::session` |
 | Extension Runtime | `extension-runtime-contracts.ts` | `agentdash-contracts::extension_runtime` |
 | Extension Package Artifact | `extension-package-contracts.ts` | `agentdash-contracts::extension_package` |
-| Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` + `agentdash-domain::workflow` wire value objects |
+| Workflow / lifecycle / activity | `workflow-contracts.ts` | `agentdash-contracts::workflow` wire DTO |
 | VFS surface / mount / Project VFS mount | `vfs-contracts.ts` | `agentdash-contracts::vfs` |
 | Shared Library | `shared-library-contracts.ts` | `agentdash-contracts::shared_library` |
 | Project Agent | `project-agent-contracts.ts` | `agentdash-contracts::project_agent` |
@@ -91,7 +91,7 @@ LLM Provider DTOs live in `agentdash-contracts::llm_provider`，原因是管理�
 
 ## Local Decisions
 
-- Workflow value objects derive `TS` in `agentdash-domain` because they are already persisted and transported as the workflow wire contract. Entity/repository/runtime-only structures are not exposed by that derive.
+- Workflow wire DTOs live in `agentdash-contracts::workflow` because browser-facing TS generation is a protocol concern. `agentdash-domain::workflow` owns persisted/domain value objects and keeps serialization derives needed by persistence, but does not depend on `ts-rs` or `schemars`.
 - VFS, Shared Library and Project Agent use narrow DTOs in `agentdash-contracts` because their API responses intentionally map application/domain internals into stable browser-facing shapes.
 - Generated request/response DTOs model serde wire fields. UI-level convenience such as nullable fields, normalized config objects or derived aliases belongs in frontend type entrypoints rather than in the generated file.
 - Project extension runtime surface 使用独立 `agentdash-contracts::extension_runtime` 与 `extension-runtime-contracts.ts`，原因是它是 Project enabled extension installations 派生出的全局 runtime surface，不属于 Shared Library marketplace/source-status，也不是 Session Context 私有字段。

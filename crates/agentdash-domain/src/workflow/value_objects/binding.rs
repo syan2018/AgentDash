@@ -1,10 +1,8 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use crate::session_binding::SessionOwnerType;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 owner。
 /// 这里只描述绑定范围，不表达 workflow 自身的业务主语。

@@ -1,11 +1,9 @@
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::TS;
 
 use super::{InputPortDefinition, OutputPortDefinition};
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityDefinition {
     pub key: String,
     #[serde(default)]
@@ -23,7 +21,7 @@ pub struct ActivityDefinition {
     pub join_policy: ActivityJoinPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityExecutorSpec {
     Agent(AgentActivityExecutorSpec),
@@ -41,14 +39,14 @@ impl ActivityExecutorSpec {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentActivityExecutorSpec {
     pub workflow_key: String,
     #[serde(default)]
     pub session_policy: AgentSessionPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSessionPolicy {
     #[default]
@@ -57,14 +55,14 @@ pub enum AgentSessionPolicy {
     AttachExisting,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FunctionActivityExecutorSpec {
     ApiRequest(ApiRequestExecutorSpec),
     BashExec(BashExecExecutorSpec),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ApiRequestExecutorSpec {
     pub method: String,
     pub url_template: String,
@@ -72,7 +70,7 @@ pub struct ApiRequestExecutorSpec {
     pub body_template: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BashExecExecutorSpec {
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -81,20 +79,20 @@ pub struct BashExecExecutorSpec {
     pub working_directory: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HumanActivityExecutorSpec {
     Approval(HumanApprovalExecutorSpec),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HumanApprovalExecutorSpec {
     pub form_schema_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActivityCompletionPolicy {
     OutputPorts {
@@ -111,7 +109,7 @@ pub enum ActivityCompletionPolicy {
     OpenEnded,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityIterationPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_attempts: Option<u32>,
@@ -128,7 +126,7 @@ impl Default for ActivityIterationPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactAliasPolicy {
     #[default]
@@ -137,7 +135,7 @@ pub enum ArtifactAliasPolicy {
     LatestAndHistory,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityJoinPolicy {
     #[default]
@@ -149,7 +147,7 @@ pub enum ActivityJoinPolicy {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityTransition {
     pub from: String,
     pub to: String,
@@ -167,14 +165,14 @@ fn default_activity_transition_kind() -> ActivityTransitionKind {
     ActivityTransitionKind::Flow
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityTransitionKind {
     Flow,
     Artifact,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransitionCondition {
     #[default]
@@ -197,7 +195,7 @@ pub enum TransitionCondition {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ArtifactBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_activity: Option<String>,

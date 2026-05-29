@@ -9,7 +9,7 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    ActivityAttemptState, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
 };
 use serde::Serialize;
 use uuid::Uuid;

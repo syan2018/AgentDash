@@ -5,9 +5,9 @@
 ## 当前恢复状态
 
 - 当前分支：`refactor/architecture-slop-cleanup`
-- 当前推进 child：`05-29-domain-purification`（下一步）
-- 当前 child 状态：`planning`（需按 DDD 方向补齐/复核 design、implement 后启动）
-- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify`、`frontend-server-state-refactor`、`session-assembly-converge`、`structural-splits` 已提交并归档；下一步推进 `domain-purification`。
+- 当前推进 child：`05-29-domain-purification`（实现与验证完成，待提交/归档）
+- 当前 child 状态：`in_progress`
+- 当前主线步骤：`error-model-unify`、`contract-pipeline-unify`、`mcp-direct-connection-pool`、`vfs-dedup`、`infra-residual`、`api-handler-thinning`、`capability-state-unify`、`frontend-server-state-refactor`、`session-assembly-converge`、`structural-splits` 已提交并归档；`domain-purification` 已完成代码与验证，下一步提交归档后进入父级集成 review。
 - 已完成的 `error-model-unify` 代码进展：
   - `DomainError` 增加 `Conflict` / `Forbidden` / `Database` 语义变体。
   - 新增 `agentdash_application::ApplicationError`。
@@ -54,7 +54,7 @@
 | 8 | `05-29-frontend-server-state-refactor` | 已归档 | 提交 `045cfa3d` / `eff74a2f` / `4421000f` / `7ee7ff15`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-frontend-server-state-refactor`；features/stores `useQuery|useMutation` 命中 28（迁移前 0）；store loading/error/saving 命中 233→178；`llmProviderStore` / `routineStore` 删除；`eventStore.activeProjectId`、store 内 `getState().handleStateChange/fetchBackends`、`workflowStore.selectedActivityKey` grep 清零；`SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行；`pnpm -C packages/app-web exec tsc --noEmit` 与相关 Vitest 通过 |
 | 9 | `05-29-session-assembly-converge` | 已归档 | 提交 `462f8ee3`；归档提交 `f82846ec`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-session-assembly-converge`；重新复核确认不抽跨路径 `SessionSurfaceResolver`，只抽路径内 helper；`SessionAssemblyBuilder` 已拆出；`compose_owner_bootstrap` 约 66 行、`compose_story_step` 约 51 行；VFS 投影改由 `SessionConstructionPlan` helper 集中同步；test-only session persistence mock 已对齐 `SessionStoreError`；`cargo check --workspace` 与 `cargo test -p agentdash-application --lib`（595 passed）通过 |
 | 10 | `05-29-structural-splits` | 已归档 | 提交 `97d12d15`；归档提交 `d899b162`；archive 位于 `.trellis/tasks/archive/2026-05/05-29-structural-splits`；`agentdash-application-ports` crate 已建立并迁入 backend/extension/VFS transport port；`vfs::tools::provider` 内部引用 grep 清零；`memory_persistence.rs` 已移出 `src/` 到 test-support；`SessionChatView.tsx` 584 行；`workspace-list.tsx` 4 行目录入口；`extension-runtime↔workspace-panel↔canvas-panel` 双向循环已打断；`cargo check --workspace`、`cargo test -p agentdash-application --lib`、`pnpm -C packages/app-web exec tsc --noEmit` 通过 |
-| 11 | `05-29-domain-purification` | 待 contract | domain `ts-rs/schemars` 移除；session id 假 alias 消失；contracts 生成仍完整 |
+| 11 | `05-29-domain-purification` | 待归档 | domain `ts-rs/schemars` 依赖与 derive/import 已清零；`contracts::workflow` 不再 re-export domain workflow 类型；MCP schema 不再要求 domain `JsonSchema`；session id 假 alias 已删除；`pnpm run contracts:check` / `cargo check --workspace` / `cargo test -p agentdash-domain --lib` / `cargo test -p agentdash-mcp --lib` / app-web `tsc --noEmit` 通过 |
 | 12 | 父级集成 review | 待所有 child | wave2 parent AC 全部逐条验收；第一波三个 reopen child 已给出最终结论；父任务可归档 |
 | 13 | （用户补充）整理远端pr合并 | 首尾和补充 | 将远端 #pr38 拉到本地完成 merge，解决相关模块重构和当前项目重构产生的冲突；包含 migrations（需重排序号） & 模块约束处理相关，随后推送至远端创建一个新的重构分支pr   |
 
@@ -71,9 +71,9 @@
 
 ## 当前 child 下一步
 
-1. 进入 `05-29-domain-purification`。
-2. 先把 `agentdash-contracts::workflow` 从 re-export domain 类型改为 contracts-side wire DTO + domain -> contract mapper。
-3. 再移除 domain 的 `ts-rs` / `schemars`，并确保 contracts 生成仍完整。
+1. 提交并归档 `05-29-domain-purification`。
+2. 更新本 checklist 的提交与归档证据。
+3. 进入父级集成 review，逐条复核 wave2 parent AC。
 
 ## 今日子代理可行性复核
 
@@ -81,7 +81,7 @@
 - `frontend-server-state-refactor`：硬验收已通过；React Query 真实采用进入 feature model，LLM Provider / Routine server-state 已迁移；active project 双源、跨 store 命令式耦合、`workflowStore.selectedActivityKey` 已清理；`SettingsPageContent` / `activity-inspector` 已拆分。
 - `capability-state-unify`：已归档；`hooks::CapabilityDelta` 与 `connector::capability_delta::SetDelta` 已合并为 `SetDelta` / `SetDelta::compute`；`CapabilityDimensionModule` 与 `DimensionDelta` 分属 validate/replay 与 render/section 两条轴，trait merge 推迟。
 - `session-assembly-converge`：已归档；不抽完整 resolver，因 launch/query 已共享 bootstrap/finalize 收敛点且剩余差异是真契约差异；`SessionAssemblyBuilder` 与 compose helper 已拆；`surface.vfs` / `context_projection.vfs` 保留双投影但改由 `SessionConstructionPlan` helper 集中同步。
-- `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层依赖 domain 并转换。当前关键风险是 `agentdash-contracts::workflow` 直接 re-export domain workflow 类型；先在 contracts 侧复制/定义 workflow wire DTO 并保留 domain -> contract mapper，再移除 domain 的 `ts-rs` / `schemars`。
+- `domain-purification`：DDD 方向确认：domain 不引用 contract/protocol DTO，contract/API/protocol 层位于外层并解析 wire payload 后进入 domain/application。已验证 `agentdash-contracts::workflow` 不再 re-export domain workflow 类型；MCP 工具 schema 通过 JSON payload 边界解析复杂 domain 片段，避免 domain 重新派生 `JsonSchema`。
 - `structural-splits`：可行但需控制依赖上限；第一批只迁 `backend_transport.rs` 这类纯 port，第二批只迁 `ExtensionRuntimeActionTransport` / `ExtensionRuntimeChannelTransport` / error，第三批只迁 `VfsMaterializationTransport`；provider/use case/service 留 application，避免新 crate 反向依赖 application。
 
 ## 全局验收 Gates

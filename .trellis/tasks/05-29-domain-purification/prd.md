@@ -14,12 +14,12 @@
 ## 已拍板决策（2026-05-29）
 
 - **ts-rs/schemars 逐出 domain**：TS 导出全部由 `contracts` 承接（与 `contract-pipeline-unify` 决策一致）。
-- **session id 升真 newtype**（默认选定）：`SessionId`/`StorySessionId`/`ChildSessionId` 改 newtype struct，接受 `.0` 样板换编译期安全；repository 签名统一用 newtype 而非裸 `&str`。（若执行中发现 newtype 改造面过大，可降级为"删 alias 直用 String + 字段名"，但须 journal 记录理由 + 标人工复核。）
+- **session id alias 删除**：执行复核后采用允许降级方案，删除 `SessionId`/`StorySessionId`/`ChildSessionId` 假 alias，字段保留 `String` 并由字段名表达语义。原因是这些 id 当前没有额外不变量，真 newtype 会牵动 repository、Postgres bind/read、API mapper 与大量 fixture，却不能提供对应收益。
 
 ## Scope
 
 1. 把 `ts-rs` + `schemars` derive 全移出 domain；导出给 TS 的 workflow value object 改在 `contracts` 镜像/derive。`serde` 若持久化确需则保留，否则评估收窄。
-2. session id 升真 newtype（见决策）；repository 签名统一。
+2. 删除 session id 假 alias；repository 继续用当前事实类型，避免引入没有不变量收益的样板类型。
 
 ## 依赖
 
@@ -27,8 +27,8 @@
 
 ## Acceptance Criteria（硬指标 + 验收命令）
 
-- [ ] `rg "ts-rs|schemars" crates/agentdash-domain/Cargo.toml` = **0**；`rg "derive\(.*TS|JsonSchema" crates/agentdash-domain/src | wc -l` = **0**
-- [ ] TS 导出经 contracts 单源仍完整（`generate_contracts_ts --check` 通过，前端无缺失类型报错）
-- [ ] `rg "pub type (SessionId|StorySessionId|ChildSessionId) = String" crates/agentdash-domain` = **0**（升 newtype；若降级删 alias 则同样 = 0 且 journal 记录）
-- [ ] repository 签名用选定类型（`rg "list_by_session\(.*&str" ` 等裸 &str 入口收敛，journal 记录）
-- [ ] `cargo check --workspace` + `tsc --noEmit` exit 0
+- [x] `rg "ts-rs|schemars" crates/agentdash-domain/Cargo.toml` = **0**；`rg "derive\(.*TS|JsonSchema" crates/agentdash-domain/src | wc -l` = **0**
+- [x] TS 导出经 contracts 单源仍完整（`pnpm run contracts:check` 通过，前端无缺失类型报错）
+- [x] `rg "pub type (SessionId|StorySessionId|ChildSessionId) = String" crates/agentdash-domain` = **0**（已删 alias，journal 记录降级理由）
+- [x] repository 签名按选定事实类型保留；`SessionId` / `StorySessionId` / `ChildSessionId` alias 引用已清零。
+- [x] `cargo check --workspace` + `pnpm -C packages/app-web exec tsc --noEmit` exit 0

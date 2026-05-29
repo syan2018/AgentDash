@@ -12,14 +12,16 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityTransition,
-    ActivityTransitionKind, ArtifactBinding, CapabilityConfig, InputPortDefinition,
-    OutputPortDefinition, TransitionCondition, ValidationSeverity, WorkflowBindingKind,
-    WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowHookRuleSpec,
-    WorkflowHookTrigger, WorkflowInjectionSpec, workflow_binding_kinds_cover,
+    ActivityTransitionKind, ArtifactBinding, InputPortDefinition, OutputPortDefinition,
+    ValidationSeverity, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    workflow_binding_kinds_cover,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -60,7 +62,7 @@ pub struct UpsertWorkflowParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WorkflowContractInput {
     #[schemars(description = "上下文注入配置（guidance、context_bindings）")]
-    pub injection: Option<WorkflowInjectionSpec>,
+    pub injection: Option<Value>,
     #[schemars(description = "Hook 规则列表")]
     pub hook_rules: Option<Vec<HookRuleInput>>,
     #[schemars(description = "输出端口定义 — 同时作为完成门禁（output 全部交付才可推进）")]
@@ -70,7 +72,7 @@ pub struct WorkflowContractInput {
     #[schemars(
         description = "顶层能力配置：tool_directives 声明工具能力，mount_directives 声明 VFS/mount 资源能力。"
     )]
-    pub capability_config: Option<CapabilityConfig>,
+    pub capability_config: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -122,17 +124,17 @@ pub struct ActivityInput {
     #[schemars(
         description = "Activity executor；agent executor 必须引用当前 Project 内已存在的 workflow_key"
     )]
-    pub executor: ActivityExecutorSpec,
+    pub executor: Value,
     #[schemars(description = "输入端口列表")]
     pub input_ports: Option<Vec<InputPortInput>>,
     #[schemars(description = "输出端口列表")]
     pub output_ports: Option<Vec<OutputPortInput>>,
     #[schemars(description = "完成策略，默认 executor_terminal")]
-    pub completion_policy: Option<agentdash_domain::workflow::ActivityCompletionPolicy>,
+    pub completion_policy: Option<Value>,
     #[schemars(description = "重试/产物别名策略，默认单次最新产物")]
-    pub iteration_policy: Option<agentdash_domain::workflow::ActivityIterationPolicy>,
+    pub iteration_policy: Option<Value>,
     #[schemars(description = "Join 策略，默认 all")]
-    pub join_policy: Option<agentdash_domain::workflow::ActivityJoinPolicy>,
+    pub join_policy: Option<Value>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -160,9 +162,9 @@ pub struct TransitionInput {
     #[schemars(description = "目标 Activity key")]
     pub to: String,
     #[schemars(description = "转换条件，默认 always")]
-    pub condition: Option<TransitionCondition>,
+    pub condition: Option<Value>,
     #[schemars(description = "artifact 端口绑定")]
-    pub artifact_bindings: Option<Vec<ArtifactBinding>>,
+    pub artifact_bindings: Option<Value>,
     #[schemars(description = "最大遍历次数")]
     pub max_traversals: Option<u32>,
 }
@@ -432,16 +434,30 @@ fn build_hook_rules(rules: &[HookRuleInput]) -> Result<Vec<WorkflowHookRuleSpec>
         .collect()
 }
 
+fn parse_domain_input<T: DeserializeOwned>(
+    field: &'static str,
+    value: &Value,
+) -> Result<T, McpError> {
+    serde_json::from_value(value.clone())
+        .map_err(|error| McpError::invalid_param(field, format!("参数结构无效: {error}")))
+}
+
 fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, McpError> {
     Ok(WorkflowContract {
-        injection: input.injection.clone().unwrap_or_default(),
+        injection: match &input.injection {
+            Some(value) => parse_domain_input("injection", value)?,
+            None => Default::default(),
+        },
         hook_rules: match &input.hook_rules {
             Some(rules) => build_hook_rules(rules)?,
             None => Vec::new(),
         },
         output_ports: build_output_ports(input.output_ports.as_deref().unwrap_or_default()),
         input_ports: build_input_ports(input.input_ports.as_deref().unwrap_or_default()),
-        capability_config: input.capability_config.clone().unwrap_or_default(),
+        capability_config: match &input.capability_config {
+            Some(value) => parse_domain_input("capability_config", value)?,
+            None => Default::default(),
+        },
     })
 }
 
@@ -470,28 +486,44 @@ fn build_output_ports(inputs: &[OutputPortInput]) -> Vec<OutputPortDefinition> {
         .collect()
 }
 
-fn build_activities(inputs: &[ActivityInput]) -> Vec<ActivityDefinition> {
+fn build_activities(inputs: &[ActivityInput]) -> Result<Vec<ActivityDefinition>, McpError> {
     inputs
         .iter()
-        .map(|activity| ActivityDefinition {
-            key: activity.key.clone(),
-            description: activity.description.clone().unwrap_or_default(),
-            executor: activity.executor.clone(),
-            input_ports: build_input_ports(activity.input_ports.as_deref().unwrap_or_default()),
-            output_ports: build_output_ports(activity.output_ports.as_deref().unwrap_or_default()),
-            completion_policy: activity.completion_policy.clone().unwrap_or_default(),
-            iteration_policy: activity.iteration_policy.clone().unwrap_or_default(),
-            join_policy: activity.join_policy.unwrap_or_default(),
+        .map(|activity| {
+            Ok(ActivityDefinition {
+                key: activity.key.clone(),
+                description: activity.description.clone().unwrap_or_default(),
+                executor: parse_domain_input("activities.executor", &activity.executor)?,
+                input_ports: build_input_ports(activity.input_ports.as_deref().unwrap_or_default()),
+                output_ports: build_output_ports(
+                    activity.output_ports.as_deref().unwrap_or_default(),
+                ),
+                completion_policy: match &activity.completion_policy {
+                    Some(value) => parse_domain_input("activities.completion_policy", value)?,
+                    None => Default::default(),
+                },
+                iteration_policy: match &activity.iteration_policy {
+                    Some(value) => parse_domain_input("activities.iteration_policy", value)?,
+                    None => Default::default(),
+                },
+                join_policy: match &activity.join_policy {
+                    Some(value) => parse_domain_input("activities.join_policy", value)?,
+                    None => Default::default(),
+                },
+            })
         })
         .collect()
 }
 
-fn build_transitions(inputs: &[TransitionInput]) -> Vec<ActivityTransition> {
+fn build_transitions(inputs: &[TransitionInput]) -> Result<Vec<ActivityTransition>, McpError> {
     inputs
         .iter()
         .map(|transition| {
-            let artifact_bindings = transition.artifact_bindings.clone().unwrap_or_default();
-            ActivityTransition {
+            let artifact_bindings: Vec<ArtifactBinding> = match &transition.artifact_bindings {
+                Some(value) => parse_domain_input("transitions.artifact_bindings", value)?,
+                None => Vec::new(),
+            };
+            Ok(ActivityTransition {
                 from: transition.from.clone(),
                 to: transition.to.clone(),
                 kind: if artifact_bindings.is_empty() {
@@ -499,10 +531,13 @@ fn build_transitions(inputs: &[TransitionInput]) -> Vec<ActivityTransition> {
                 } else {
                     ActivityTransitionKind::Artifact
                 },
-                condition: transition.condition.clone().unwrap_or_default(),
+                condition: match &transition.condition {
+                    Some(value) => parse_domain_input("transitions.condition", value)?,
+                    None => Default::default(),
+                },
                 artifact_bindings,
                 max_traversals: transition.max_traversals,
-            }
+            })
         })
         .collect()
 }
@@ -641,8 +676,8 @@ impl WorkflowMcpServer {
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
         let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
-        let activities = build_activities(&params.activities);
-        let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default());
+        let activities = build_activities(&params.activities)?;
+        let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default())?;
 
         let definition = ActivityLifecycleDefinition::new(
             self.project_id,

@@ -1061,6 +1061,39 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 [OK] **Implementation complete; ready to archive**
 
 
+## Session 29: wave2 domain-purification
+
+**Date**: 2026-05-30
+**Task**: `05-29-domain-purification`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 domain 净化批次：`agentdash-domain` 不再依赖 `ts-rs` / `schemars`，`agentdash-contracts::workflow` 不再 re-export domain workflow value object，MCP 工具 schema 不再要求 domain 类型派生 `JsonSchema`。DDD 方向保持为 domain 不依赖 protocol/contract DTO，外层协议入口解析 wire payload 后进入 domain/application。
+
+### Main Changes
+
+- `agentdash-contracts::workflow` 改为独立 workflow wire DTO，`workflow-contracts.ts` 由 contracts 侧生成。
+- domain 全量移除 `TS` / `JsonSchema` derive/import，并从 `Cargo.toml` 删除 `ts-rs` / `schemars`。
+- 删除 `session_binding/session_id.rs` 中 `SessionId` / `StorySessionId` / `ChildSessionId` 假 alias；相关字段改回 `String` 并由字段名表达语义。
+- MCP workflow/story/relay 输入边界对复杂 domain 片段使用 JSON payload + 解析进入 domain，tool schema 仍保持 OpenAI 兼容。
+- 选择删除 alias 而不是升真 newtype，原因是这些 id 当前没有额外不变量；强行 newtype 会扩大到 repository、Postgres bind/read、API mapper 与 fixture 全链路，却不能带来匹配收益。
+
+### Testing
+
+- [OK] `rg "ts-rs|schemars|derive\\(.*TS|JsonSchema|ts_rs::TS|schemars::JsonSchema|#\\[ts|#\\[schemars" crates/agentdash-domain/Cargo.toml crates/agentdash-domain/src` 无命中。
+- [OK] `rg "pub type (SessionId|StorySessionId|ChildSessionId) = String|StorySessionId|ChildSessionId|SessionId" crates/agentdash-domain crates/agentdash-application crates/agentdash-api crates/agentdash-infrastructure crates/agentdash-spi` 仅剩 `SessionIdentityPlan` 与测试字段文本。
+- [OK] `pnpm run contracts:check`
+- [OK] `cargo check --workspace`（仅剩既有 `LiveRuntimeContextTransitionInput` metadata 未读 warning）
+- [OK] `cargo test -p agentdash-domain --lib`（94 passed）
+- [OK] `cargo test -p agentdash-mcp --lib`（11 passed）
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+
+### Status
+
+[OK] **Implementation complete; ready to archive**
+
+
 ## Session 28: wave2 structural-splits
 
 **Date**: 2026-05-30

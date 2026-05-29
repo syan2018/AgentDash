@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::session_binding::StorySessionId;
 use crate::shared_library::InstalledAssetSource;
 
 use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
@@ -205,8 +204,7 @@ pub struct LifecycleRun {
     /// 指向当前 run 的根会话。详见
     /// `.trellis/spec/backend/story-task-runtime.md` §2.2 / §2.3。
     ///
-    /// 物理上仍是会话字符串 ID；此处以 [`StorySessionId`] 别名明确语义归属。
-    pub session_id: StorySessionId,
+    pub session_id: String,
     pub status: LifecycleRunStatus,
     /// 当前所有可执行（Ready/Running）的 node key 集合。
     /// 线性 lifecycle 中此集合只有 0 或 1 个元素。

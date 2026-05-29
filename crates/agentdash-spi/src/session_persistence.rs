@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_domain::session_binding::StorySessionId;
 use agentdash_domain::workflow::MountDirective;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -236,7 +235,7 @@ pub enum SessionBootstrapState {
 #[serde(rename_all = "camelCase")]
 pub struct CompanionSessionContext {
     pub dispatch_id: String,
-    pub parent_session_id: StorySessionId,
+    pub parent_session_id: String,
     pub parent_turn_id: String,
     pub companion_label: String,
     pub slice_mode: String,

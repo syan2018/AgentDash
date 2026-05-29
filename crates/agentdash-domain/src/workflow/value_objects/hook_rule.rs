@@ -1,9 +1,7 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowHookTrigger {
     UserPromptSubmit,
@@ -20,7 +18,7 @@ pub enum WorkflowHookTrigger {
     BeforeProviderRequest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkflowHookRuleSpec {
     pub key: String,
     pub trigger: WorkflowHookTrigger,

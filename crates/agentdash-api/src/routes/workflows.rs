@@ -378,7 +378,7 @@ pub async fn start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: String::new(),
-            root_session_id: run.session_id.clone(),
+            root_session_id: run.session_id.clone().unwrap_or_default(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
@@ -482,7 +482,7 @@ pub async fn submit_human_decision(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: String::new(),
-            root_session_id: run.session_id.clone(),
+            root_session_id: run.session_id.clone().unwrap_or_default(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
@@ -943,4 +943,86 @@ pub async fn query_tool_catalog(
         .collect();
     let catalog = agentdash_application::capability::query_tool_catalog(&keys);
     Json(catalog)
+}
+
+// -- Run Links --
+
+use agentdash_contracts::workflow::{AttachRunLinkRequest, LifecycleRunLinkDto, RunLinksResponse};
+use agentdash_domain::workflow::{LifecycleRunLink, RunLinkRole, RunLinkSubjectKind};
+
+fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
+    LifecycleRunLinkDto {
+        id: link.id.to_string(),
+        run_id: link.run_id.to_string(),
+        subject_kind: link.subject_kind.as_str().to_string(),
+        subject_id: link.subject_id.to_string(),
+        role: link.role.as_str().to_string(),
+        metadata: link.metadata.clone(),
+        created_at: link.created_at.to_rfc3339(),
+    }
+}
+
+/// GET /lifecycle-runs/{run_id}/links
+pub async fn list_run_links(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(run_id): Path<String>,
+) -> Result<Json<RunLinksResponse>, ApiError> {
+    let run_uuid = parse_uuid(&run_id, "run_id")?;
+    let run = load_lifecycle_run(&state, run_uuid).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    let links = state
+        .repos
+        .lifecycle_run_link_repo
+        .list_by_run(run_uuid)
+        .await?;
+
+    Ok(Json(RunLinksResponse {
+        run_id,
+        links: links.iter().map(link_to_dto).collect(),
+    }))
+}
+
+/// POST /lifecycle-runs/{run_id}/links
+pub async fn attach_run_link(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(run_id): Path<String>,
+    Json(req): Json<AttachRunLinkRequest>,
+) -> Result<Json<LifecycleRunLinkDto>, ApiError> {
+    let run_uuid = parse_uuid(&run_id, "run_id")?;
+    let run = load_lifecycle_run(&state, run_uuid).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let subject_kind = RunLinkSubjectKind::from_str(&req.subject_kind).ok_or_else(|| {
+        ApiError::BadRequest(format!("Invalid subject_kind: {}", req.subject_kind))
+    })?;
+    let subject_id: Uuid = req
+        .subject_id
+        .parse()
+        .map_err(|_| ApiError::BadRequest(format!("Invalid subject_id: {}", req.subject_id)))?;
+    let role = RunLinkRole::from_str(&req.role)
+        .ok_or_else(|| ApiError::BadRequest(format!("Invalid role: {}", req.role)))?;
+
+    let mut link = LifecycleRunLink::new(run_uuid, subject_kind, subject_id, role);
+    if let Some(metadata) = req.metadata {
+        link = link.with_metadata(metadata);
+    }
+
+    state.repos.lifecycle_run_link_repo.create(&link).await?;
+
+    Ok(Json(link_to_dto(&link)))
 }

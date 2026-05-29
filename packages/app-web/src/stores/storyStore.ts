@@ -5,6 +5,7 @@ import type {
   AgentBinding,
   StateChange,
   SessionBinding,
+  StoryRunOverviewDto,
   ContextSourceRef,
   ContextContainerDefinition,
   SessionComposition,
@@ -36,6 +37,7 @@ export type TaskSessionInfo = TaskSessionPayload;
 interface StoryState {
   storiesByProjectId: Record<string, Story[]>;
   tasksByStoryId: Record<string, Task[]>;
+  runsByStoryId: Record<string, StoryRunOverviewDto[]>;
   sessionsByStoryId: Record<string, SessionBinding[]>;
   selectedStoryId: string | null;
   selectedTaskId: string | null;
@@ -116,6 +118,7 @@ interface StoryState {
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
+  fetchStoryRuns: (storyId: string) => Promise<void>;
   fetchStorySessions: (storyId: string) => Promise<void>;
   createStorySession: (storyId: string, input: CreateStorySessionInput) => Promise<SessionBinding | null>;
   unbindStorySession: (storyId: string, bindingId: string) => Promise<void>;
@@ -207,6 +210,7 @@ const taskRefreshInFlight = new Set<string>();
 export const useStoryStore = create<StoryState>((set) => ({
   storiesByProjectId: {},
   tasksByStoryId: {},
+  runsByStoryId: {},
   sessionsByStoryId: {},
   selectedStoryId: null,
   selectedTaskId: null,
@@ -459,6 +463,17 @@ export const useStoryStore = create<StoryState>((set) => ({
       const tasks = await storyService.fetchTasks(storyId);
       set((s) => ({
         tasksByStoryId: { ...s.tasksByStoryId, [storyId]: tasks },
+      }));
+    } catch (e) {
+      set({ error: (e as Error).message });
+    }
+  },
+
+  fetchStoryRuns: async (storyId) => {
+    try {
+      const runs = await storyService.fetchStoryRuns(storyId);
+      set((s) => ({
+        runsByStoryId: { ...s.runsByStoryId, [storyId]: runs },
       }));
     } catch (e) {
       set({ error: (e as Error).message });

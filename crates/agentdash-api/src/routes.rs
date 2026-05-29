@@ -23,6 +23,7 @@ pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
+pub mod story_runs;
 pub mod story_sessions;
 pub mod task_execution;
 pub mod terminals;
@@ -323,6 +324,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(stories::delete_story),
         )
         .route(
+            "/stories/{id}/runs",
+            get(story_runs::list_story_runs),
+        )
+        .route(
+            "/stories/{id}/runs/active",
+            get(story_runs::get_active_story_run),
+        )
+        .route(
             "/stories/{id}/sessions",
             get(story_sessions::list_story_sessions).post(story_sessions::create_story_session),
         )
@@ -411,6 +420,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/lifecycle-runs/by-session/{session_id}",
             get(workflows::list_lifecycle_runs_by_session),
+        )
+        .route(
+            "/lifecycle-runs/{id}/links",
+            get(workflows::list_run_links).post(workflows::attach_run_link),
         )
         .route(
             "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",

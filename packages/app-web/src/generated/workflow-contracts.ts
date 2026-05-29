@@ -37,6 +37,8 @@ export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history
 
 export type ArtifactBinding = { from_activity?: string | null, from_port: string, to_port: string, alias: ArtifactAliasPolicy, };
 
+export type AttachRunLinkRequest = { subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, };
+
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string | null, };
 
 /**
@@ -89,9 +91,13 @@ export type LifecycleExecutionEntry = { timestamp: string, step_key: string, eve
 
 export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
+export type LifecycleRunLinkDto = { id: string, run_id: string, subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, created_at: string, };
+
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue | null, };
+
+export type RunLinksResponse = { run_id: string, links: Array<LifecycleRunLinkDto>, };
 
 /**
  * Standalone 场景下 input port 的满足策略。
@@ -100,6 +106,10 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
  * 分配 workflow）时由此字段指示调用方如何提供输入。
  */
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string | null, } };
+
+export type StoryRunOverviewDto = { id: string, lifecycle_id: string, status: LifecycleRunStatus, session_id?: string, created_at: string, updated_at: string, last_activity_at: string, links: Array<LifecycleRunLinkDto>, };
+
+export type StoryRunsResponse = { story_id: string, runs: Array<StoryRunOverviewDto>, };
 
 /**
  * 工具能力指令 —— 在 agent baseline 上执行 Add/Remove。

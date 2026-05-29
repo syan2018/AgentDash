@@ -553,6 +553,10 @@ export interface RegenerateTokenResponse {
   webhook_token: string;
 }
 
+// ─── Story Runs (LifecycleRunLink-based) ─────────────────
+
+export type { StoryRunsResponse, StoryRunOverviewDto, LifecycleRunLinkDto, RunLinksResponse, AttachRunLinkRequest } from "../generated/workflow-contracts";
+
 // ─── Re-exports from domain-split files ──────────────────
 
 export * from "./context";

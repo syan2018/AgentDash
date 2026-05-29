@@ -20,6 +20,8 @@ import type {
   Story,
   StoryContext,
   StorySessionInfo,
+  StoryRunsResponse,
+  StoryRunOverviewDto,
   Task,
 } from "../types";
 import { isThinkingLevel } from "../types";
@@ -519,6 +521,18 @@ export async function fetchTaskSession(taskId: string): Promise<TaskSessionPaylo
     runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
     context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
   };
+}
+
+// ─── Story Runs API (run-oriented) ───────────────────────
+
+export async function fetchStoryRuns(storyId: string): Promise<StoryRunOverviewDto[]> {
+  const response = await api.get<StoryRunsResponse>(`/stories/${storyId}/runs`);
+  return response.runs;
+}
+
+export async function fetchActiveStoryRun(storyId: string): Promise<StoryRunOverviewDto | null> {
+  const response = await api.get<StoryRunOverviewDto | null>(`/stories/${storyId}/runs/active`);
+  return response;
 }
 
 // ─── Story Session 绑定 API ──────────────────────────────

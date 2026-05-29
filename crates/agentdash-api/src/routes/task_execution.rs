@@ -15,7 +15,7 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
     dto::TaskResponse,
     rpc::ApiError,
-    session_use_cases::context_query::build_session_context_plan,
+    session_construction::build_session_context_plan,
 };
 
 #[derive(Debug, Deserialize, Default)]

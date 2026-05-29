@@ -7,53 +7,79 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agentdash_application::canvas::append_visible_canvas_mounts;
-use agentdash_application::extension_runtime::{
+use crate::canvas::append_visible_canvas_mounts;
+use crate::extension_runtime::{
     ExtensionRuntimeProjection, extension_runtime_projection_from_installations,
 };
-use agentdash_application::session::UserPromptInput;
-use agentdash_application::session::construction::{
+use crate::session::UserPromptInput;
+use crate::session::construction::{
     ConstructionResolutionPlan, SessionConstructionPlan, SessionConstructionTraceEntry,
 };
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
-use agentdash_application::session::construction_provider::{
+use crate::session::construction_planner::SessionConstructionPlanner;
+use crate::session::construction_provider::{
     CompanionLaunchSource, RoutineLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase,
     TaskLaunchSource,
 };
-use agentdash_application::session::local_workspace_vfs;
-use agentdash_application::session::ownership::SessionOwnerResolver;
-use agentdash_application::session::replay_runtime_capability_transitions;
-use agentdash_application::session::{
+use crate::session::local_workspace_vfs;
+use crate::session::ownership::SessionOwnerResolver;
+use crate::session::replay_runtime_capability_transitions;
+use crate::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
     OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
 };
-use agentdash_application::session::{
+use crate::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
 };
-use agentdash_application::skill_asset::SkillAssetService;
-use agentdash_application::task::gateway::resolve_effective_task_workspace;
-use agentdash_application::workflow::resolve_active_workflow_projection_for_session;
-use agentdash_application::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
+use crate::skill_asset::SkillAssetService;
+use crate::task::gateway::resolve_effective_task_workspace;
+use crate::workflow::resolve_active_workflow_projection_for_session;
+use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
 use agentdash_domain::routine::ROUTINE_MEMORY_SKILL_NAME;
 use agentdash_domain::{
     project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
 };
 use agentdash_spi::hooks::ContextFrame;
 
-use crate::app_state::AppState;
-use crate::rpc::ApiError;
+use crate::context::SharedContextAuditBus;
+use crate::error::ApplicationError;
+use crate::platform_config::SharedPlatformConfig;
+use crate::repository_set::RepositorySet;
+use crate::session::{SessionCapabilityService, SessionEventingService};
+use crate::vfs::VfsService;
+use crate::workspace::BackendAvailability;
+use agentdash_executor::AgentConnector;
+
+pub struct SessionConstructionUseCaseDeps<'a> {
+    pub repos: &'a RepositorySet,
+    pub services: SessionConstructionServiceDeps<'a>,
+    pub config: SessionConstructionConfigDeps,
+}
+
+pub struct SessionConstructionServiceDeps<'a> {
+    pub connector: Arc<dyn AgentConnector>,
+    pub vfs_service: Arc<VfsService>,
+    pub extra_skill_dirs: &'a [PathBuf],
+    pub backend_registry: Arc<dyn BackendAvailability>,
+    pub audit_bus: SharedContextAuditBus,
+    pub session_capability: &'a SessionCapabilityService,
+    pub session_eventing: &'a SessionEventingService,
+}
+
+pub struct SessionConstructionConfigDeps {
+    pub platform_config: SharedPlatformConfig,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SessionConstructionProjectionMode {
+pub enum SessionConstructionProjectionMode {
     Launch,
     Inspect,
 }
 
-pub(crate) async fn build_session_construction_for_launch(
-    state: &Arc<AppState>,
+pub async fn build_session_construction_for_launch(
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
     task_input: Option<TaskLaunchSource>,
@@ -61,14 +87,14 @@ pub(crate) async fn build_session_construction_for_launch(
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
     facts: SessionConstructionProviderInput,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let meta = &facts.session_meta;
     let bindings = state
         .repos
         .session_binding_repo
         .list_by_session(session_id)
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
     let visible_canvas_mount_ids = meta.visible_canvas_mount_ids.clone();
     let effective_executor = user_input
         .executor_config
@@ -132,23 +158,23 @@ pub(crate) async fn build_session_construction_for_launch(
                     .story_repo
                     .get_by_id(owner.owner_id)
                     .await
-                    .map_err(ApiError::from)?
+                    .map_err(ApplicationError::from)?
                     .ok_or_else(|| {
-                        ApiError::NotFound(format!("Story {} 不存在", owner.owner_id))
+                        ApplicationError::NotFound(format!("Story {} 不存在", owner.owner_id))
                     })?;
                 let project = state
                     .repos
                     .project_repo
                     .get_by_id(story.project_id)
                     .await
-                    .map_err(ApiError::from)?
+                    .map_err(ApplicationError::from)?
                     .ok_or_else(|| {
-                        ApiError::NotFound(format!("Project {} 不存在", story.project_id))
+                        ApplicationError::NotFound(format!("Project {} 不存在", story.project_id))
                     })?;
                 let workspace =
                     SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
                         .await
-                        .map_err(ApiError::Internal)?;
+                        .map_err(ApplicationError::Internal)?;
 
                 let plan = build_story_owner_prompt_request(
                     state,
@@ -180,9 +206,9 @@ pub(crate) async fn build_session_construction_for_launch(
                     .project_repo
                     .get_by_id(owner.owner_id)
                     .await
-                    .map_err(ApiError::from)?
+                    .map_err(ApplicationError::from)?
                     .ok_or_else(|| {
-                        ApiError::NotFound(format!("Project {} 不存在", owner.owner_id))
+                        ApplicationError::NotFound(format!("Project {} 不存在", owner.owner_id))
                     })?;
 
                 let binding_label = if let Some(routine_source) = facts.command.routine_hint() {
@@ -191,15 +217,15 @@ pub(crate) async fn build_session_construction_for_launch(
                         .routine_repo
                         .get_by_id(routine_source.routine_id)
                         .await
-                        .map_err(ApiError::from)?
+                        .map_err(ApplicationError::from)?
                         .ok_or_else(|| {
-                            ApiError::NotFound(format!(
+                            ApplicationError::NotFound(format!(
                                 "Routine {} 不存在",
                                 routine_source.routine_id
                             ))
                         })?;
                     if routine.project_id != project.id {
-                        return Err(ApiError::BadRequest(format!(
+                        return Err(ApplicationError::BadRequest(format!(
                             "Routine {} 不属于 Project {}",
                             routine.id, project.id
                         )));
@@ -237,19 +263,19 @@ pub(crate) async fn build_session_construction_for_launch(
         }
     }
 
-    Err(ApiError::BadRequest(format!(
+    Err(ApplicationError::BadRequest(format!(
         "session {session_id} 缺少 owner binding，无法构建 SessionConstructionPlan"
     )))
 }
 
-pub(crate) async fn finalize_session_construction_projection(
-    state: &Arc<AppState>,
+pub async fn finalize_session_construction_projection(
+    state: &SessionConstructionUseCaseDeps<'_>,
     mut plan: SessionConstructionPlan,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
     facts: &SessionConstructionProviderInput,
     mode: SessionConstructionProjectionMode,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     plan.source.launch_source = Some(facts.command.reason_tag().to_string());
     if plan.identity.identity.is_none() {
         plan.identity.identity = facts.command.identity();
@@ -263,7 +289,7 @@ pub(crate) async fn finalize_session_construction_projection(
             "source.local_relay_workspace_root".to_string(),
         )
     } else {
-        return Err(ApiError::BadRequest(
+        return Err(ApplicationError::BadRequest(
             "construction 未产出 VFS，且来源事实中没有可解析 workspace root".to_string(),
         ));
     };
@@ -306,7 +332,7 @@ pub(crate) async fn finalize_session_construction_projection(
     } else {
         Some(
             replay_runtime_capability_transitions(&base_capability_state, &requested_transitions)
-                .map_err(ApiError::BadRequest)?,
+                .map_err(ApplicationError::BadRequest)?,
         )
     };
     let effective_vfs = replay
@@ -337,7 +363,7 @@ pub(crate) async fn finalize_session_construction_projection(
         .map(|mount| PathBuf::from(mount.root_ref.trim()))
         .filter(|path| !path.as_os_str().is_empty())
         .ok_or_else(|| {
-            ApiError::BadRequest("vfs 缺少 default_mount 或 root_ref 无效".to_string())
+            ApplicationError::BadRequest("vfs 缺少 default_mount 或 root_ref 无效".to_string())
         })?;
 
     let projection = derive_session_capability_projection(SessionCapabilityProjectionInput {
@@ -368,7 +394,7 @@ pub(crate) async fn finalize_session_construction_projection(
         .or_else(|| facts.command.user_input().executor_config.clone())
         .or_else(|| facts.session_meta.executor_config.clone());
     if executor_config.is_none() && mode == SessionConstructionProjectionMode::Launch {
-        return Err(ApiError::BadRequest(
+        return Err(ApplicationError::BadRequest(
             "construction 未产出 executor_config，且来源/meta 中没有可复用配置".to_string(),
         ));
     }
@@ -450,38 +476,39 @@ pub(crate) async fn finalize_session_construction_projection(
         },
     ]);
     if mode == SessionConstructionProjectionMode::Launch {
-        plan.validate_for_launch().map_err(ApiError::BadRequest)?;
+        plan.validate_for_launch()
+            .map_err(ApplicationError::BadRequest)?;
     }
     Ok(plan)
 }
 
 async fn build_extension_runtime_projection(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     project_id: uuid::Uuid,
-) -> Result<ExtensionRuntimeProjection, ApiError> {
+) -> Result<ExtensionRuntimeProjection, ApplicationError> {
     let installations = state
         .repos
         .project_extension_installation_repo
         .list_enabled_by_project(project_id)
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
     Ok(extension_runtime_projection_from_installations(
         installations,
     )?)
 }
 
 async fn append_routine_projection(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     vfs: &mut agentdash_spi::Vfs,
     project_id: uuid::Uuid,
     source: &RoutineLaunchSource,
-) -> Result<(), ApiError> {
+) -> Result<(), ApplicationError> {
     SkillAssetService::new(state.repos.skill_asset_repo.as_ref())
         .bootstrap_builtins(project_id, Some(ROUTINE_MEMORY_SKILL_NAME))
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
 
-    let routine_mount = agentdash_application::vfs::build_routine_mount(
+    let routine_mount = crate::vfs::build_routine_mount(
         source.routine_id,
         source.execution_id,
         &source.trigger_source,
@@ -497,7 +524,7 @@ async fn append_routine_projection(
         vfs.mounts.push(routine_mount);
     }
 
-    agentdash_application::vfs::append_skill_asset_projection(
+    crate::vfs::append_skill_asset_projection(
         vfs,
         project_id,
         &[ROUTINE_MEMORY_SKILL_NAME.to_string()],
@@ -508,11 +535,11 @@ async fn append_routine_projection(
 fn clear_plain_lifecycle_context(
     user_input: &UserPromptInput,
     mut plan: SessionConstructionPlan,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+        .ok_or_else(|| ApplicationError::BadRequest("必须提供 promptBlocks".to_string()))?;
     plan.prompt.prompt_blocks = Some(user_prompt_blocks);
     plan.context.bundle = None;
     plan.context.bundle_id = None;
@@ -522,7 +549,7 @@ fn clear_plain_lifecycle_context(
 }
 
 async fn build_story_owner_prompt_request(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
     plan: SessionConstructionPlan,
@@ -533,7 +560,7 @@ async fn build_story_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let effective_executor_config = user_input
         .executor_config
         .clone()
@@ -547,7 +574,7 @@ async fn build_story_owner_prompt_request(
                 .map(agentdash_spi::AgentConfig::new)
         })
         .ok_or_else(|| {
-            ApiError::BadRequest(
+            ApplicationError::BadRequest(
                 "Story owner prompt 缺少 executor_config，且 project 没有 default_agent_type"
                     .to_string(),
             )
@@ -556,7 +583,7 @@ async fn build_story_owner_prompt_request(
     let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+        .ok_or_else(|| ApplicationError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let lifecycle = map_owner_prompt_lifecycle(lifecycle_kind, None);
     let (lifecycle, continuation_context_frame) =
@@ -569,7 +596,7 @@ async fn build_story_owner_prompt_request(
         state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(ApiError::Internal)?;
+    .map_err(ApplicationError::Internal)?;
 
     let existing_vfs = plan.surface.vfs.clone();
     let assembler = build_session_assembler(state);
@@ -598,7 +625,7 @@ async fn build_story_owner_prompt_request(
             },
         )
         .await
-        .map_err(ApiError::BadRequest)?;
+        .map_err(ApplicationError::BadRequest)?;
 
     plan.context.continuation_context_frame = continuation_context_frame;
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
@@ -608,7 +635,7 @@ async fn build_story_owner_prompt_request(
 }
 
 async fn build_project_owner_prompt_request(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
     plan: SessionConstructionPlan,
@@ -618,7 +645,7 @@ async fn build_project_owner_prompt_request(
     lifecycle_kind: SessionPromptLifecycle,
     visible_canvas_mount_ids: &[String],
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     if binding_label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX) {
         return build_lifecycle_node_prompt_request(
             state,
@@ -632,7 +659,7 @@ async fn build_project_owner_prompt_request(
 
     let agent_key = SessionConstructionPlanner::parse_project_agent_session_label(binding_label)
         .ok_or_else(|| {
-            ApiError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
+            ApplicationError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
         })?;
     let project_agent = SessionConstructionPlanner::resolve_project_agent_context(
         &state.repos,
@@ -640,11 +667,11 @@ async fn build_project_owner_prompt_request(
         agent_key,
     )
     .await
-    .map_err(ApiError::Internal)?
-    .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
+    .map_err(ApplicationError::Internal)?
+    .ok_or_else(|| ApplicationError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let workspace = SessionConstructionPlanner::resolve_project_workspace(&state.repos, project)
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(ApplicationError::Internal)?;
 
     let effective_executor_config = match user_input.executor_config.clone() {
         Some(mut user_ec) => {
@@ -663,7 +690,7 @@ async fn build_project_owner_prompt_request(
     let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+        .ok_or_else(|| ApplicationError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let agent_id = uuid::Uuid::parse_str(agent_key).ok();
     let agent_display_name = project_agent.display_name.clone();
@@ -696,7 +723,7 @@ async fn build_project_owner_prompt_request(
         state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(ApiError::Internal)?;
+    .map_err(ApplicationError::Internal)?;
 
     let existing_vfs = plan.surface.vfs.clone();
     let assembler = build_session_assembler(state);
@@ -727,7 +754,7 @@ async fn build_project_owner_prompt_request(
             },
         )
         .await
-        .map_err(ApiError::BadRequest)?;
+        .map_err(ApplicationError::BadRequest)?;
 
     plan.context.continuation_context_frame = continuation_context_frame;
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
@@ -737,30 +764,32 @@ async fn build_project_owner_prompt_request(
 }
 
 async fn build_lifecycle_node_prompt_request(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
     plan: SessionConstructionPlan,
     lifecycle_kind: SessionPromptLifecycle,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let runs = state
         .repos
         .lifecycle_run_repo
         .list_by_session(session_id)
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
     let run = select_active_run(runs).ok_or_else(|| {
-        ApiError::BadRequest(format!("Lifecycle node session {session_id} 无活跃 run"))
+        ApplicationError::BadRequest(format!("Lifecycle node session {session_id} 无活跃 run"))
     })?;
     let lifecycle = state
         .repos
         .activity_lifecycle_definition_repo
         .get_by_id(run.lifecycle_id)
         .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id)))?;
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id))
+        })?;
     let current_step_key = run.current_step_key().ok_or_else(|| {
-        ApiError::BadRequest(format!(
+        ApplicationError::BadRequest(format!(
             "Lifecycle node session {session_id} 无当前 activity"
         ))
     })?;
@@ -770,7 +799,7 @@ async fn build_lifecycle_node_prompt_request(
         .find(|item| item.key == current_step_key)
         .cloned()
         .ok_or_else(|| {
-            ApiError::BadRequest(format!(
+            ApplicationError::BadRequest(format!(
                 "Lifecycle {} 中不存在当前 activity `{}`",
                 lifecycle.id, current_step_key
             ))
@@ -781,7 +810,7 @@ async fn build_lifecycle_node_prompt_request(
             .workflow_definition_repo
             .get_by_project_and_key(run.project_id, &spec.workflow_key)
             .await
-            .map_err(ApiError::from)?,
+            .map_err(ApplicationError::from)?,
         _ => None,
     };
     let audit_bus = Some(state.services.audit_bus.clone());
@@ -801,7 +830,7 @@ async fn build_lifecycle_node_prompt_request(
         Some(session_id),
     )
     .await
-    .map_err(ApiError::BadRequest)?;
+    .map_err(ApplicationError::BadRequest)?;
 
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return clear_plain_lifecycle_context(user_input, plan);
@@ -810,10 +839,10 @@ async fn build_lifecycle_node_prompt_request(
 }
 
 async fn build_companion_dispatch_prompt_request(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     plan: SessionConstructionPlan,
     companion: CompanionLaunchSource,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let assembler = build_session_assembler(state);
     if let Some(workflow) = companion.workflow {
         assembler
@@ -833,7 +862,7 @@ async fn build_companion_dispatch_prompt_request(
                 },
             )
             .await
-            .map_err(ApiError::BadRequest)
+            .map_err(ApplicationError::BadRequest)
     } else {
         assembler
             .compose_companion_prompt_from_parent(
@@ -846,11 +875,13 @@ async fn build_companion_dispatch_prompt_request(
                 },
             )
             .await
-            .map_err(ApiError::BadRequest)
+            .map_err(ApplicationError::BadRequest)
     }
 }
 
-fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_> {
+fn build_session_assembler<'a>(
+    state: &'a SessionConstructionUseCaseDeps<'a>,
+) -> SessionRequestAssembler<'a> {
     SessionRequestAssembler::new(
         state.services.vfs_service.as_ref(),
         state.repos.canvas_repo.as_ref(),
@@ -859,25 +890,20 @@ fn build_session_assembler(state: &Arc<AppState>) -> SessionRequestAssembler<'_>
         &state.config.platform_config,
     )
     .with_audit_bus(state.services.audit_bus.clone())
-    .with_companion_parent_facts_provider(&state.services.session_capability)
+    .with_companion_parent_facts_provider(state.services.session_capability)
 }
 
 async fn build_continuation_context_frame_for_session(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
-) -> Result<Option<ContextFrame>, ApiError> {
+) -> Result<Option<ContextFrame>, ApplicationError> {
     let transcript = state
         .services
         .session_eventing
         .build_projected_transcript(session_id)
         .await
-        .map_err(ApiError::from)?;
-    Ok(
-        agentdash_application::session::continuation::build_continuation_context_frame(
-            &transcript,
-            None,
-        ),
-    )
+        .map_err(ApplicationError::from)?;
+    Ok(crate::session::continuation::build_continuation_context_frame(&transcript, None))
 }
 
 fn map_owner_prompt_lifecycle(
@@ -903,10 +929,10 @@ fn map_owner_prompt_lifecycle(
 }
 
 async fn resolve_continuation_system_context(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     lifecycle: OwnerPromptLifecycle,
-) -> Result<(OwnerPromptLifecycle, Option<ContextFrame>), ApiError> {
+) -> Result<(OwnerPromptLifecycle, Option<ContextFrame>), ApplicationError> {
     if let OwnerPromptLifecycle::RepositoryRehydrate {
         prebuilt_continuation_bundle: None,
         include_owner_bundle: false,
@@ -926,7 +952,7 @@ async fn resolve_continuation_system_context(
 }
 
 async fn build_task_owner_prompt_request(
-    state: &Arc<AppState>,
+    state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
     plan: SessionConstructionPlan,
@@ -936,18 +962,18 @@ async fn build_task_owner_prompt_request(
     visible_canvas_mount_ids: &[String],
     task_input: Option<TaskLaunchSource>,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-) -> Result<SessionConstructionPlan, ApiError> {
+) -> Result<SessionConstructionPlan, ApplicationError> {
     let story = state
         .repos
         .story_repo
         .find_by_task_id(task_id)
         .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| ApplicationError::NotFound(format!("Task {task_id} 不存在")))?;
     let task = story
         .find_task(task_id)
         .cloned()
-        .ok_or_else(|| ApiError::NotFound(format!("Task {task_id} 不存在")))?;
+        .ok_or_else(|| ApplicationError::NotFound(format!("Task {task_id} 不存在")))?;
 
     let effective_executor_config = user_input
         .executor_config
@@ -959,11 +985,13 @@ async fn build_task_owner_prompt_request(
         .project_repo
         .get_by_id(story.project_id)
         .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {} 不存在", story.project_id)))?;
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!("Project {} 不存在", story.project_id))
+        })?;
     let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
     // Task execution session 没有 `lifecycle_activity:*` binding，因此容忍无 active
     // workflow projection：此时走纯 task 装配（`StoryStepSpec.active_workflow = None`），
     // 不带 lifecycle workflow injection。
@@ -975,12 +1003,12 @@ async fn build_task_owner_prompt_request(
         state.repos.lifecycle_run_repo.as_ref(),
     )
     .await
-    .map_err(ApiError::Internal)?;
+    .map_err(ApplicationError::Internal)?;
 
     let user_prompt_blocks = user_input
         .prompt_blocks
         .clone()
-        .ok_or_else(|| ApiError::BadRequest("必须提供 promptBlocks".to_string()))?;
+        .ok_or_else(|| ApplicationError::BadRequest("必须提供 promptBlocks".to_string()))?;
 
     let task_phase = task_input
         .as_ref()
@@ -1013,7 +1041,7 @@ async fn build_task_owner_prompt_request(
             },
         )
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
 
     if let Some(space) = plan.surface.vfs.as_mut() {
         append_visible_canvas_mounts(
@@ -1023,7 +1051,7 @@ async fn build_task_owner_prompt_request(
             visible_canvas_mount_ids,
         )
         .await
-        .map_err(ApiError::from)?;
+        .map_err(ApplicationError::from)?;
     }
 
     let mut continuation_context_frame = None;
@@ -1054,7 +1082,7 @@ async fn build_task_owner_prompt_request(
     }
 
     if plan.projections.capability_state.is_none() {
-        return Err(ApiError::Internal(
+        return Err(ApplicationError::Internal(
             "Task session compose 未产出 capability_state".to_string(),
         ));
     }
@@ -1066,10 +1094,10 @@ async fn build_task_owner_prompt_request(
 
 #[cfg(test)]
 mod tests {
-    use agentdash_application::session::construction::{
+    use crate::session::construction::{
         SessionConstructionContextProjection, SessionConstructionPlan,
     };
-    use agentdash_application::session::ownership::SessionOwnerResolver;
+    use crate::session::ownership::SessionOwnerResolver;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};

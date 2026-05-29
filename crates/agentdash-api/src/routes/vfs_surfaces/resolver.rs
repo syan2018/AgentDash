@@ -16,7 +16,7 @@ use crate::{
     },
     routes::acp_sessions::ensure_session_permission,
     rpc::ApiError,
-    session_use_cases::context_query::build_session_context_plan,
+    session_construction::build_session_context_plan,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 

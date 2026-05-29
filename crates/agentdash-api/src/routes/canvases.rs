@@ -28,7 +28,7 @@ use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::CanvasResponse;
 use crate::rpc::ApiError;
-use crate::session_use_cases::context_query::build_session_context_plan;
+use crate::session_construction::build_session_context_plan;
 
 #[derive(Debug, Deserialize)]
 pub struct ListProjectCanvasesPath {

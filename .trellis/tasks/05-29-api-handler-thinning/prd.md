@@ -40,4 +40,4 @@
 
 | 路由 | 保留直调的理由 |
 |---|---|
-| （执行中按需补） | |
+| `session_construction.rs` adapter | composition / transport adapter：从 `AppState` 组装 application use case deps，并补充 runtime-only VFS surface projection；退出条件是后续若 runtime projection 也抽为 application port，再移除 adapter 内的直接 repo/runtime 读取 |

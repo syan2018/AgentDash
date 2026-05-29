@@ -57,3 +57,44 @@ impl From<std::io::Error> for ApplicationError {
         Self::Internal("内部 IO 错误".to_string())
     }
 }
+
+impl From<crate::skill_asset::SkillAssetApplicationError> for ApplicationError {
+    fn from(error: crate::skill_asset::SkillAssetApplicationError) -> Self {
+        match error {
+            crate::skill_asset::SkillAssetApplicationError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            crate::skill_asset::SkillAssetApplicationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            crate::skill_asset::SkillAssetApplicationError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            crate::skill_asset::SkillAssetApplicationError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}
+
+impl From<crate::task::execution::TaskExecutionError> for ApplicationError {
+    fn from(error: crate::task::execution::TaskExecutionError) -> Self {
+        match error {
+            crate::task::execution::TaskExecutionError::BadRequest(message) => {
+                Self::BadRequest(message)
+            }
+            crate::task::execution::TaskExecutionError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            crate::task::execution::TaskExecutionError::Conflict(message) => {
+                Self::Conflict(message)
+            }
+            crate::task::execution::TaskExecutionError::UnprocessableEntity(message) => {
+                Self::BadRequest(message)
+            }
+            crate::task::execution::TaskExecutionError::Internal(message) => {
+                Self::Internal(message)
+            }
+        }
+    }
+}

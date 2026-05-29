@@ -1,15 +1,19 @@
-//! Session context query use case.
-//!
-//! Route 层只负责权限与 DTO 投影；Task / Story / Project 的 context projection
-//! 由 application 层 `SessionConstructionPlanner` 产出。
-
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application::session::construction::SessionConstructionPlan;
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
-use agentdash_application::session::construction_provider::SessionConstructionProviderInput;
+use agentdash_application::session::construction_provider::{
+    CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchSource,
+};
+use agentdash_application::session::construction_use_case::{
+    SessionConstructionConfigDeps, SessionConstructionServiceDeps, SessionConstructionUseCaseDeps,
+};
+use agentdash_application::session::context_query_use_case::{
+    SessionContextQueryInput, SessionContextQueryOwnerFacts,
+};
 use agentdash_application::session::ownership::SessionOwnerResolver;
-use agentdash_application::session::{LaunchCommand, UserPromptInput};
+use agentdash_application::session::{UserPromptInput, construction_use_case};
+use agentdash_application::workspace::BackendAvailability;
 use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_plugin_api::AuthIdentity;
 
@@ -19,10 +23,53 @@ use crate::auth::{
     load_task_story_project_with_permission,
 };
 use crate::rpc::ApiError;
-use crate::session_use_cases::construction::{
-    SessionConstructionProjectionMode, finalize_session_construction_projection,
-};
 use crate::vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection;
+
+pub(crate) async fn build_session_construction_for_launch(
+    state: &Arc<AppState>,
+    session_id: &str,
+    user_input: &UserPromptInput,
+    task_input: Option<TaskLaunchSource>,
+    companion_input: Option<CompanionLaunchSource>,
+    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
+    local_relay_workspace_root: Option<PathBuf>,
+    facts: SessionConstructionProviderInput,
+) -> Result<SessionConstructionPlan, ApiError> {
+    let deps = session_construction_deps(state);
+    construction_use_case::build_session_construction_for_launch(
+        &deps,
+        session_id,
+        user_input,
+        task_input,
+        companion_input,
+        source_mcp_declarations,
+        local_relay_workspace_root,
+        facts,
+    )
+    .await
+    .map_err(ApiError::from)
+}
+
+pub(crate) fn session_construction_deps<'a>(
+    state: &'a Arc<AppState>,
+) -> SessionConstructionUseCaseDeps<'a> {
+    let backend_registry: Arc<dyn BackendAvailability> = state.services.backend_registry.clone();
+    SessionConstructionUseCaseDeps {
+        repos: &state.repos,
+        services: SessionConstructionServiceDeps {
+            connector: state.services.connector.clone(),
+            vfs_service: state.services.vfs_service.clone(),
+            extra_skill_dirs: &state.services.extra_skill_dirs,
+            backend_registry,
+            audit_bus: state.services.audit_bus.clone(),
+            session_capability: &state.services.session_capability,
+            session_eventing: &state.services.session_eventing,
+        },
+        config: SessionConstructionConfigDeps {
+            platform_config: state.config.platform_config.clone(),
+        },
+    }
+}
 
 pub(crate) async fn build_session_context_plan(
     state: &Arc<AppState>,
@@ -41,7 +88,7 @@ pub(crate) async fn build_session_context_plan(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
 
-    let mut plan = match owner.owner_type {
+    let owner_facts = match owner.owner_type {
         SessionOwnerType::Task => {
             let task_id = owner.owner_id;
             let (task, _, _) = load_task_story_project_with_permission(
@@ -57,19 +104,11 @@ pub(crate) async fn build_session_context_plan(
                 .get_task_session(task_id)
                 .await
                 .map_err(ApiError::from)?;
-            SessionConstructionPlanner::plan_task_context_query(
-                &state.repos,
-                &state.services.vfs_service,
-                &state.services.extra_skill_dirs,
-                &state.config.platform_config,
-                session_id.to_string(),
-                owner,
+            SessionContextQueryOwnerFacts::Task {
                 task_id,
-                task.workspace_id,
-                result.agent_binding,
-                Some(&session_meta),
-            )
-            .await
+                workspace_id: task.workspace_id,
+                agent_binding: result.agent_binding,
+            }
         }
         SessionOwnerType::Story => {
             let story_id = owner.owner_id;
@@ -80,22 +119,7 @@ pub(crate) async fn build_session_context_plan(
                 ProjectPermission::View,
             )
             .await?;
-            let Some(plan) = SessionConstructionPlanner::plan_story_context_query(
-                &state.repos,
-                &state.services.vfs_service,
-                &state.services.extra_skill_dirs,
-                &state.config.platform_config,
-                session_id.to_string(),
-                owner,
-                &story,
-                Some(&session_meta),
-            )
-            .await
-            .map_err(ApiError::Internal)?
-            else {
-                return Ok(None);
-            };
-            plan
+            SessionContextQueryOwnerFacts::Story { story }
         }
         SessionOwnerType::Project => {
             let project_id = owner.owner_id;
@@ -106,37 +130,13 @@ pub(crate) async fn build_session_context_plan(
                 ProjectPermission::View,
             )
             .await?;
-            let binding_label = owner.label.clone();
-            SessionConstructionPlanner::plan_project_context_query(
-                &state.repos,
-                &state.services.vfs_service,
-                &state.services.extra_skill_dirs,
-                &state.config.platform_config,
-                session_id.to_string(),
-                owner,
-                &project,
-                &binding_label,
-                &session_meta,
-            )
-            .await
-            .map_err(|error| {
-                if error.starts_with("无效的项目 Agent session label")
-                    || error.starts_with("Project Agent `")
-                {
-                    ApiError::NotFound(error)
-                } else {
-                    ApiError::Internal(error)
-                }
-            })?
+            SessionContextQueryOwnerFacts::Project {
+                project,
+                binding_label: owner.label.clone(),
+            }
         }
     };
 
-    let user_input = UserPromptInput {
-        prompt_blocks: None,
-        env: Default::default(),
-        executor_config: session_meta.executor_config.clone(),
-        backend_selection: None,
-    };
     let had_existing_runtime = state.services.connector.has_live_session(session_id).await;
     let requested_runtime_commands = state
         .services
@@ -144,25 +144,26 @@ pub(crate) async fn build_session_context_plan(
         .list_requested_runtime_commands(session_id)
         .await
         .map_err(ApiError::from)?;
-    let facts = SessionConstructionProviderInput {
+    let deps = session_construction_deps(state);
+    let input = SessionContextQueryInput {
         session_id: session_id.to_string(),
-        command: LaunchCommand::http_prompt_input(user_input, Some(current_user.clone())),
+        owner,
+        owner_facts,
         session_meta,
+        identity: Some(current_user.clone()),
         had_existing_runtime,
         requested_runtime_commands,
     };
-    plan = finalize_session_construction_projection(
-        state,
-        plan,
-        Vec::new(),
-        None,
-        &facts,
-        SessionConstructionProjectionMode::Inspect,
-    )
-    .await?;
-    attach_runtime_surface(state, session_id, &mut plan).await?;
-
-    Ok(Some(plan))
+    let mut plan =
+        agentdash_application::session::context_query_use_case::build_session_context_plan(
+            &deps, input,
+        )
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(plan) = plan.as_mut() {
+        attach_runtime_surface(state, session_id, plan).await?;
+    }
+    Ok(plan)
 }
 
 async fn attach_runtime_surface(
@@ -204,6 +205,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_spi::Vfs;
+    use uuid::Uuid;
 
     use super::*;
 
@@ -219,37 +221,32 @@ mod tests {
                 display_name: mount_id.to_string(),
                 metadata: serde_json::Value::Null,
             }],
-            default_mount_id: Some(mount_id.to_string()),
-            source_project_id: None,
-            source_story_id: None,
-            links: Vec::new(),
+            ..Default::default()
         }
     }
 
-    #[test]
-    fn runtime_surface_uses_final_surface_vfs_after_finalize() {
+    fn test_owner() -> agentdash_application::session::ownership::ResolvedSessionOwner {
         let binding = SessionBinding::new(
-            uuid::Uuid::new_v4(),
-            "sess-final-vfs".to_string(),
+            Uuid::new_v4(),
+            "s1".to_string(),
             SessionOwnerType::Project,
-            uuid::Uuid::new_v4(),
-            "project_agent:test",
+            Uuid::new_v4(),
+            "project",
         );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
-        let initial_vfs = vfs_with_mount("initial");
-        let final_vfs = vfs_with_mount("final");
+        SessionOwnerResolver::resolve_primary(&[binding]).expect("owner")
+    }
+
+    #[test]
+    fn runtime_surface_uses_surface_vfs() {
         let mut plan = SessionConstructionPlan::new(
-            "sess-final-vfs",
-            owner,
-            SessionConstructionContextProjection {
-                vfs: Some(initial_vfs),
-                ..Default::default()
-            },
+            "s1",
+            test_owner(),
+            SessionConstructionContextProjection::default(),
         );
-        plan.surface.vfs = Some(final_vfs);
+        plan.surface.vfs = Some(vfs_with_mount("surface"));
+        plan.context_projection.vfs = Some(vfs_with_mount("context"));
 
-        let selected = runtime_surface_vfs(&plan).expect("final vfs");
-
-        assert_eq!(selected.mounts[0].id, "final");
+        let vfs = runtime_surface_vfs(&plan).expect("surface vfs");
+        assert_eq!(vfs.mounts[0].id, "surface");
     }
 }

@@ -15,7 +15,7 @@ services:
 
   migrate:
     image: agentdash-cloud:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
-    command: ["agentdash-server", "migrate"]
+    command: ["migrate"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,7 +25,7 @@ services:
 
   agentdash-cloud:
     image: agentdash-cloud:${AGENTDASH_VERSION:?AGENTDASH_VERSION is required}
-    command: ["agentdash-server", "serve"]
+    command: ["serve"]
     depends_on:
       migrate:
         condition: service_completed_successfully

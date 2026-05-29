@@ -46,6 +46,11 @@ docker compose up -d
   - `deploy/compose/docker-compose.yml`
   - `deploy/compose/.env.example`
   - `deploy/compose/reverse-proxy/Caddyfile`
+- 已落地 cloud image 构建入口：
+  - `deploy/docker/Dockerfile.cloud`
+  - `pnpm run docker:cloud:build`
+- 已补充备份与恢复 runbook：
+  - `deploy/runbooks/backup-restore.md`
 - 当前 scaffold 依赖 `agentdash-cloud:${AGENTDASH_VERSION}` 目标镜像。
 - 已通过 `docker compose config` 静态校验。
-- 下一步需要补 cloud Dockerfile、backup / restore runbook 和完整 upgrade runbook。
+- 下一步在环境允许时跑完整镜像构建与 Compose 启动验证。

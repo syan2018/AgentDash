@@ -38,6 +38,10 @@ docker compose run --rm migrate
 docker compose up -d agentdash-cloud reverse-proxy
 ```
 
-当前 Compose 使用 `agentdash-cloud:${AGENTDASH_VERSION}` 作为目标镜像。镜像构建入口仍由 `deploy/docker/` 后续落地；本目录只表达运行拓扑和部署配置。
+当前 Compose 使用 `agentdash-cloud:${AGENTDASH_VERSION}` 作为目标镜像，镜像构建入口为：
 
-升级 runbook 统一记录在 `deploy/runbooks/release-workflow.md`。
+```bash
+pnpm run docker:cloud:build
+```
+
+升级 runbook 记录在 `deploy/runbooks/release-workflow.md`，备份与恢复 runbook 记录在 `deploy/runbooks/backup-restore.md`。

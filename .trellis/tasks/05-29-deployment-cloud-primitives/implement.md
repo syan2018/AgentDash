@@ -44,4 +44,5 @@ git diff --check
 - 已加入 `agentdash-api` build script，从 migration 文件名注入 `schema_version`。
 - 已让 server options 识别 `AGENTDASH_BIND_HOST` / `AGENTDASH_PORT`。
 - 已实现 `agentdash-server serve` / `migrate` / `doctor`。
+- 已实现 `AGENTDASH_WEB_DIST_DIR` 静态托管 Web Dashboard。
 - 已验证 `cargo test -p agentdash-api release_info`。

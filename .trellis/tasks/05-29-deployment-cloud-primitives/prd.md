@@ -55,6 +55,7 @@
 - `migrate` 执行 PostgreSQL migrations 并检查 schema readiness；`doctor` 只检查 PostgreSQL 连接与 schema readiness，不执行 migration。
 - Discovery 默认 Relay WebSocket path 为 `/ws/backend`，可用 `AGENTDASH_RELAY_WS_URL` 覆盖。
 - `AGENTDASH_BIND_HOST` / `AGENTDASH_PORT` 已作为部署命名进入 server options；`HOST` / `PORT` 仍服务当前开发脚本入口。
+- `AGENTDASH_WEB_DIST_DIR` 指向 Web Dashboard static assets 时，`agentdash-server` 会托管 SPA 静态入口。
 
 ## Coordination Notes
 
@@ -64,6 +65,4 @@
 
 ## Open Questions
 
-- 第一轮是否实现真实 CLI subcommands，还是先实现 endpoint 与文档契约。
-- `agentdash-server` 是否托管 Web Dashboard 静态资源。
 - `AGENTDASH_PUBLIC_ORIGIN` 缺失时，部署 profile 是否直接启动失败。

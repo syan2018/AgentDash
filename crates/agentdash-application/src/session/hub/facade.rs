@@ -16,15 +16,20 @@ use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
+#[cfg(test)]
+use agentdash_spi::session_persistence::SessionStoreResult;
 
 impl SessionRuntimeInner {
     #[cfg(test)]
-    pub async fn create_session(&self, title: &str) -> std::io::Result<SessionMeta> {
+    pub async fn create_session(&self, title: &str) -> SessionStoreResult<SessionMeta> {
         self.core_service().create_session(title).await
     }
 
     #[cfg(test)]
-    pub async fn get_session_meta(&self, session_id: &str) -> std::io::Result<Option<SessionMeta>> {
+    pub async fn get_session_meta(
+        &self,
+        session_id: &str,
+    ) -> SessionStoreResult<Option<SessionMeta>> {
         self.core_service().get_session_meta(session_id).await
     }
 
@@ -33,7 +38,7 @@ impl SessionRuntimeInner {
     pub async fn inspect_session_execution_state(
         &self,
         session_id: &str,
-    ) -> std::io::Result<SessionExecutionState> {
+    ) -> SessionStoreResult<SessionExecutionState> {
         self.core_service()
             .inspect_session_execution_state(session_id)
             .await
@@ -81,7 +86,7 @@ impl SessionRuntimeInner {
     }
 
     #[cfg(test)]
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> std::io::Result<()> {
+    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
         self.core_service()
             .mark_owner_bootstrap_pending(session_id)
             .await

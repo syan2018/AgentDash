@@ -1,9 +1,9 @@
-use std::{collections::HashMap, io, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use futures::future::join_all;
 
 use super::hub_support::meta_to_execution_state;
-use super::persistence::SessionStoreSet;
+use super::persistence::{SessionStoreError, SessionStoreResult, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::types::{ExecutionStatus, SessionBootstrapState, SessionExecutionState, SessionMeta};
 
@@ -27,7 +27,7 @@ impl SessionCoreService {
         }
     }
 
-    pub async fn recover_interrupted_sessions(&self) -> io::Result<Vec<SessionMeta>> {
+    pub async fn recover_interrupted_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let sessions = self.stores.meta.list_sessions().await?;
         Ok(sessions
             .into_iter()
@@ -35,7 +35,7 @@ impl SessionCoreService {
             .collect())
     }
 
-    pub async fn create_session(&self, title: &str) -> io::Result<SessionMeta> {
+    pub async fn create_session(&self, title: &str) -> SessionStoreResult<SessionMeta> {
         self.create_session_with_title_source(title, super::types::TitleSource::Auto)
             .await
     }
@@ -44,7 +44,7 @@ impl SessionCoreService {
         &self,
         title: &str,
         title_source: super::types::TitleSource,
-    ) -> io::Result<SessionMeta> {
+    ) -> SessionStoreResult<SessionMeta> {
         let id = format!(
             "sess-{}-{}",
             chrono::Utc::now().timestamp_millis(),
@@ -73,28 +73,27 @@ impl SessionCoreService {
         Ok(meta)
     }
 
-    pub async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
-        self.stores.meta.list_sessions().await.map_err(Into::into)
+    pub async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
+        self.stores.meta.list_sessions().await
     }
 
-    pub async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>> {
-        self.stores
-            .meta
-            .get_session_meta(session_id)
-            .await
-            .map_err(Into::into)
+    pub async fn get_session_meta(
+        &self,
+        session_id: &str,
+    ) -> SessionStoreResult<Option<SessionMeta>> {
+        self.stores.meta.get_session_meta(session_id).await
     }
 
     pub async fn get_session_metas_bulk(
         &self,
         session_ids: &[String],
-    ) -> io::Result<HashMap<String, SessionMeta>> {
+    ) -> SessionStoreResult<HashMap<String, SessionMeta>> {
         let futures = session_ids.iter().map(|id| {
             let meta_store = self.stores.meta.clone();
             let id = id.clone();
             async move {
                 let meta = meta_store.get_session_meta(&id).await?;
-                Ok::<_, io::Error>((id, meta))
+                Ok::<_, SessionStoreError>((id, meta))
             }
         });
 
@@ -113,7 +112,7 @@ impl SessionCoreService {
         &self,
         session_id: &str,
         updater: F,
-    ) -> io::Result<Option<SessionMeta>>
+    ) -> SessionStoreResult<Option<SessionMeta>>
     where
         F: FnOnce(&mut SessionMeta),
     {
@@ -126,19 +125,15 @@ impl SessionCoreService {
         Ok(Some(meta))
     }
 
-    pub async fn delete_session(&self, session_id: &str) -> io::Result<()> {
+    pub async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()> {
         self.runtime_registry.remove(session_id).await;
-        self.stores
-            .meta
-            .delete_session(session_id)
-            .await
-            .map_err(Into::into)
+        self.stores.meta.delete_session(session_id).await
     }
 
     pub async fn inspect_execution_states_bulk(
         &self,
         session_ids: &[String],
-    ) -> io::Result<HashMap<String, SessionExecutionState>> {
+    ) -> SessionStoreResult<HashMap<String, SessionExecutionState>> {
         let running_set = self.runtime_registry.running_set(session_ids).await;
 
         let mut result = HashMap::with_capacity(session_ids.len());
@@ -151,9 +146,7 @@ impl SessionCoreService {
                     .meta
                     .get_session_meta(id)
                     .await?
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::NotFound, format!("session {id} 不存在"))
-                    })?;
+                    .ok_or_else(|| SessionStoreError::NotFound(format!("session {id} 不存在")))?;
                 result.insert(id.clone(), meta_to_execution_state(&meta, id)?);
             }
         }
@@ -163,7 +156,7 @@ impl SessionCoreService {
     pub async fn inspect_session_execution_state(
         &self,
         session_id: &str,
-    ) -> io::Result<SessionExecutionState> {
+    ) -> SessionStoreResult<SessionExecutionState> {
         let (running, live_turn_id) = self
             .runtime_registry
             .execution_state_snapshot(session_id)
@@ -176,10 +169,9 @@ impl SessionCoreService {
         }
 
         let Some(meta) = self.stores.meta.get_session_meta(session_id).await? else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session {session_id} 不存在"
+            )));
         };
 
         meta_to_execution_state(&meta, session_id)
@@ -197,7 +189,7 @@ impl SessionCoreService {
         self.connector.has_live_session(session_id).await
     }
 
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> io::Result<()> {
+    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
         let _ = self
             .update_session_meta(session_id, |meta| {
                 meta.bootstrap_state = SessionBootstrapState::Pending;

@@ -164,12 +164,7 @@ pub async fn open_project_agent_session(
 
     let _ = query.force_new;
 
-    let meta = state
-        .services
-        .session_core
-        .create_session("")
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let meta = state.services.session_core.create_session("").await?;
     state
         .services
         .session_core

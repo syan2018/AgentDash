@@ -1,5 +1,3 @@
-use std::io;
-
 use agentdash_agent_protocol::ContentBlock;
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -326,24 +324,23 @@ impl From<TurnTerminalKind> for super::types::ExecutionStatus {
 pub(crate) fn meta_to_execution_state(
     meta: &SessionMeta,
     session_id: &str,
-) -> io::Result<SessionExecutionState> {
+) -> super::persistence::SessionStoreResult<SessionExecutionState> {
+    use super::persistence::SessionStoreError;
     use super::types::ExecutionStatus;
     match meta.last_execution_status {
         ExecutionStatus::Idle => Ok(SessionExecutionState::Idle),
         ExecutionStatus::Completed => Ok(SessionExecutionState::Completed {
             turn_id: meta.last_turn_id.clone().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("session {session_id} 的 completed 状态缺少 last_turn_id"),
-                )
+                SessionStoreError::InvalidData(format!(
+                    "session {session_id} 的 completed 状态缺少 last_turn_id"
+                ))
             })?,
         }),
         ExecutionStatus::Failed => Ok(SessionExecutionState::Failed {
             turn_id: meta.last_turn_id.clone().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("session {session_id} 的 failed 状态缺少 last_turn_id"),
-                )
+                SessionStoreError::InvalidData(format!(
+                    "session {session_id} 的 failed 状态缺少 last_turn_id"
+                ))
             })?,
             message: meta.last_terminal_message.clone(),
         }),

@@ -15,13 +15,13 @@ use crate::session::UserPromptInput;
 use crate::session::construction::{
     ConstructionResolutionPlan, SessionConstructionPlan, SessionConstructionTraceEntry,
 };
+use crate::session::construction::{OwnerResolutionTrace, ResolvedSessionOwner};
 use crate::session::construction_planner::SessionConstructionPlanner;
 use crate::session::construction_provider::{
     CompanionLaunchSource, RoutineLaunchSource, SessionConstructionProviderInput, TaskLaunchPhase,
     TaskLaunchSource,
 };
 use crate::session::local_workspace_vfs;
-use crate::session::ownership::SessionOwnerResolver;
 use crate::session::replay_runtime_capability_transitions;
 use crate::session::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
@@ -38,9 +38,8 @@ use crate::task::gateway::resolve_effective_task_workspace;
 use crate::workflow::resolve_active_workflow_projection_for_session;
 use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
 use agentdash_domain::routine::ROUTINE_MEMORY_SKILL_NAME;
-use agentdash_domain::{
-    project::Project, session_binding::SessionOwnerType, story::Story, workspace::Workspace,
-};
+use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
+use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::ContextFrame;
 
 use crate::context::SharedContextAuditBus;
@@ -89,12 +88,6 @@ pub async fn build_session_construction_for_launch(
     facts: SessionConstructionProviderInput,
 ) -> Result<SessionConstructionPlan, ApplicationError> {
     let meta = &facts.session_meta;
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await
-        .map_err(ApplicationError::from)?;
     let visible_canvas_mount_ids = meta.visible_canvas_mount_ids.clone();
     let effective_executor = user_input
         .executor_config
@@ -112,160 +105,134 @@ pub async fn build_session_construction_for_launch(
         supports_repository_restore,
     );
 
-    if let Some(owner) = SessionOwnerResolver::resolve_primary(&bindings) {
-        let plan =
-            SessionConstructionPlan::from_source_input(session_id, owner.clone(), user_input);
-        if let Some(companion) = companion_input {
-            let plan = build_companion_dispatch_prompt_request(state, plan, companion).await?;
-            return finalize_session_construction_projection(
-                state,
-                plan,
-                source_mcp_declarations,
-                local_relay_workspace_root,
-                &facts,
-                SessionConstructionProjectionMode::Launch,
-            )
-            .await;
+    // TODO(permission-system): owner 路由由 Permission System + CapabilityScope 接管
+    // 当前通过 LifecycleRunLink 或 meta.project_id 推断 scope 并走 Project 分支。
+    let scope = resolve_session_scope(state, session_id, meta).await?;
+
+    let owner = ResolvedSessionOwner {
+        owner_type: scope,
+        project_id: meta
+            .project_id
+            .as_deref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok()),
+        trace: OwnerResolutionTrace {
+            selected_reason: "meta.project_id + lifecycle scope".to_string(),
+        },
+    };
+    let plan = SessionConstructionPlan::from_source_input(session_id, owner, user_input);
+
+    if let Some(companion) = companion_input {
+        let plan = build_companion_dispatch_prompt_request(state, plan, companion).await?;
+        return finalize_session_construction_projection(
+            state,
+            plan,
+            source_mcp_declarations,
+            local_relay_workspace_root,
+            &facts,
+            SessionConstructionProjectionMode::Launch,
+        )
+        .await;
+    }
+
+    let _scope = scope;
+    let project_id = meta
+        .project_id
+        .as_deref()
+        .and_then(|id| uuid::Uuid::parse_str(id).ok());
+    let Some(project_id) = project_id else {
+        return Err(ApplicationError::BadRequest(format!(
+            "session {session_id} 没有关联 project_id，无法构建 SessionConstructionPlan"
+        )));
+    };
+
+    let project = state
+        .repos
+        .project_repo
+        .get_by_id(project_id)
+        .await
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| ApplicationError::NotFound(format!("Project {project_id} 不存在")))?;
+
+    let binding_label = if let Some(routine_source) = facts.command.routine_hint() {
+        let routine = state
+            .repos
+            .routine_repo
+            .get_by_id(routine_source.routine_id)
+            .await
+            .map_err(ApplicationError::from)?
+            .ok_or_else(|| {
+                ApplicationError::NotFound(format!("Routine {} 不存在", routine_source.routine_id))
+            })?;
+        if routine.project_id != project.id {
+            return Err(ApplicationError::BadRequest(format!(
+                "Routine {} 不属于 Project {}",
+                routine.id, project.id
+            )));
         }
-        match owner.owner_type {
-            SessionOwnerType::Task => {
-                let plan = build_task_owner_prompt_request(
-                    state,
-                    session_id,
-                    user_input,
-                    plan,
-                    owner.owner_id,
-                    meta,
-                    lifecycle_kind,
-                    &visible_canvas_mount_ids,
-                    task_input,
-                    source_mcp_declarations,
-                )
-                .await?;
-                return finalize_session_construction_projection(
-                    state,
-                    plan,
-                    Vec::new(),
-                    local_relay_workspace_root,
-                    &facts,
-                    SessionConstructionProjectionMode::Launch,
-                )
-                .await;
-            }
-            SessionOwnerType::Story => {
-                let story = state
-                    .repos
-                    .story_repo
-                    .get_by_id(owner.owner_id)
-                    .await
-                    .map_err(ApplicationError::from)?
-                    .ok_or_else(|| {
-                        ApplicationError::NotFound(format!("Story {} 不存在", owner.owner_id))
-                    })?;
-                let project = state
-                    .repos
-                    .project_repo
-                    .get_by_id(story.project_id)
-                    .await
-                    .map_err(ApplicationError::from)?
-                    .ok_or_else(|| {
-                        ApplicationError::NotFound(format!("Project {} 不存在", story.project_id))
-                    })?;
-                let workspace =
-                    SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
-                        .await
-                        .map_err(ApplicationError::Internal)?;
+        SessionConstructionPlanner::project_agent_session_label(
+            &routine.project_agent_id.to_string(),
+        )
+    } else {
+        crate::workflow::FREEFORM_SESSION_LABEL.to_string()
+    };
 
-                let plan = build_story_owner_prompt_request(
-                    state,
-                    session_id,
-                    user_input,
-                    plan,
-                    &story,
-                    &project,
-                    workspace.as_ref(),
-                    meta,
-                    lifecycle_kind,
-                    &visible_canvas_mount_ids,
-                    source_mcp_declarations,
-                )
-                .await?;
-                return finalize_session_construction_projection(
-                    state,
-                    plan,
-                    Vec::new(),
-                    local_relay_workspace_root,
-                    &facts,
-                    SessionConstructionProjectionMode::Launch,
-                )
-                .await;
-            }
-            SessionOwnerType::Project => {
-                let project = state
-                    .repos
-                    .project_repo
-                    .get_by_id(owner.owner_id)
-                    .await
-                    .map_err(ApplicationError::from)?
-                    .ok_or_else(|| {
-                        ApplicationError::NotFound(format!("Project {} 不存在", owner.owner_id))
-                    })?;
+    let plan = build_project_owner_prompt_request(
+        state,
+        session_id,
+        user_input,
+        plan,
+        &project,
+        &binding_label,
+        meta,
+        lifecycle_kind,
+        &visible_canvas_mount_ids,
+        source_mcp_declarations,
+    )
+    .await?;
+    finalize_session_construction_projection(
+        state,
+        plan,
+        Vec::new(),
+        local_relay_workspace_root,
+        &facts,
+        SessionConstructionProjectionMode::Launch,
+    )
+    .await
+}
 
-                let binding_label = if let Some(routine_source) = facts.command.routine_hint() {
-                    let routine = state
-                        .repos
-                        .routine_repo
-                        .get_by_id(routine_source.routine_id)
-                        .await
-                        .map_err(ApplicationError::from)?
-                        .ok_or_else(|| {
-                            ApplicationError::NotFound(format!(
-                                "Routine {} 不存在",
-                                routine_source.routine_id
-                            ))
-                        })?;
-                    if routine.project_id != project.id {
-                        return Err(ApplicationError::BadRequest(format!(
-                            "Routine {} 不属于 Project {}",
-                            routine.id, project.id
-                        )));
-                    }
-                    SessionConstructionPlanner::project_agent_session_label(
-                        &routine.project_agent_id.to_string(),
-                    )
-                } else {
-                    owner.label.clone()
-                };
+/// 根据 SessionMeta 或 LifecycleRunLink 推导 session 的 CapabilityScope。
+async fn resolve_session_scope(
+    state: &SessionConstructionUseCaseDeps<'_>,
+    session_id: &str,
+    _meta: &SessionMeta,
+) -> Result<CapabilityScope, ApplicationError> {
+    use agentdash_domain::workflow::RunLinkSubjectKind;
 
-                let plan = build_project_owner_prompt_request(
-                    state,
-                    session_id,
-                    user_input,
-                    plan,
-                    &project,
-                    &binding_label,
-                    meta,
-                    lifecycle_kind,
-                    &visible_canvas_mount_ids,
-                    source_mcp_declarations,
-                )
-                .await?;
-                return finalize_session_construction_projection(
-                    state,
-                    plan,
-                    Vec::new(),
-                    local_relay_workspace_root,
-                    &facts,
-                    SessionConstructionProjectionMode::Launch,
-                )
-                .await;
+    let runs = state
+        .repos
+        .lifecycle_run_repo
+        .list_by_session(session_id)
+        .await
+        .map_err(ApplicationError::from)?;
+    if !runs.is_empty() {
+        if let Some(run) = select_active_run(runs) {
+            if let Ok(links) = state
+                .repos
+                .lifecycle_run_link_repo
+                .list_by_run(run.id)
+                .await
+            {
+                for link in &links {
+                    return Ok(match link.subject_kind {
+                        RunLinkSubjectKind::Task => CapabilityScope::Task,
+                        RunLinkSubjectKind::Story => CapabilityScope::Story,
+                        _ => CapabilityScope::Project,
+                    });
+                }
             }
         }
     }
-
-    Err(ApplicationError::BadRequest(format!(
-        "session {session_id} 缺少 owner binding，无法构建 SessionConstructionPlan"
-    )))
+    Ok(CapabilityScope::Project)
 }
 
 pub async fn finalize_session_construction_projection(
@@ -295,8 +262,9 @@ pub async fn finalize_session_construction_projection(
     };
 
     if let Some(routine_source) = facts.command.routine_hint() {
-        append_routine_projection(state, &mut base_vfs, plan.owner.project_id, &routine_source)
-            .await?;
+        if let Some(pid) = plan.owner.project_id {
+            append_routine_projection(state, &mut base_vfs, pid, &routine_source).await?;
+        }
         vfs_source = format!("{vfs_source}+routine_source");
     }
 
@@ -415,8 +383,11 @@ pub async fn finalize_session_construction_projection(
         mcp_servers.clone(),
         &session_capabilities,
     );
-    let extension_runtime =
-        build_extension_runtime_projection(state, plan.owner.project_id).await?;
+    let extension_runtime = if let Some(pid) = plan.owner.project_id {
+        build_extension_runtime_projection(state, pid).await?
+    } else {
+        ExtensionRuntimeProjection::default()
+    };
 
     plan.workspace.working_directory = Some(working_directory);
     plan.execution_profile.executor_config = executor_config;
@@ -589,7 +560,6 @@ async fn build_story_owner_prompt_request(
         resolve_continuation_system_context(state, session_id, lifecycle).await?;
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
@@ -716,7 +686,6 @@ async fn build_project_owner_prompt_request(
         resolve_continuation_system_context(state, session_id, lifecycle).await?;
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
@@ -996,7 +965,6 @@ async fn build_task_owner_prompt_request(
     // 不带 lifecycle workflow injection。
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.session_binding_repo.as_ref(),
         state.repos.workflow_definition_repo.as_ref(),
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
@@ -1096,10 +1064,8 @@ mod tests {
     use crate::session::construction::{
         SessionConstructionContextProjection, SessionConstructionPlan,
     };
-    use crate::session::ownership::SessionOwnerResolver;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::extension_package::ExtensionPackageMetadata;
-    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_domain::shared_library::{
         ExtensionBundleKind, ExtensionBundleRef, ExtensionCommandDefinition,
         ExtensionCommandHandler, ExtensionFlagDefinition, ExtensionFlagType,
@@ -1114,14 +1080,13 @@ mod tests {
     use super::*;
 
     fn project_plan() -> SessionConstructionPlan {
-        let binding = SessionBinding::new(
-            uuid::Uuid::new_v4(),
-            "sess-plain".to_string(),
-            SessionOwnerType::Project,
-            uuid::Uuid::new_v4(),
-            "project_agent:test",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner {
+            owner_type: agentdash_spi::CapabilityScope::Project,
+            project_id: None,
+            trace: OwnerResolutionTrace {
+                selected_reason: "test".to_string(),
+            },
+        };
         let mut plan = SessionConstructionPlan::new(
             "sess-plain",
             owner,

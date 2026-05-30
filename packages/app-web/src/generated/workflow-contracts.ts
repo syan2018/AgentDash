@@ -39,6 +39,8 @@ export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history
 
 export type ArtifactBinding = { from_activity?: string, from_port: string, to_port: string, alias: ArtifactAliasPolicy, };
 
+export type AttachRunLinkRequest = { subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, };
+
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string, };
 
 export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective>, mount_directives?: Array<unknown>, };
@@ -73,13 +75,21 @@ export type LifecycleExecutionEntry = { timestamp: string, step_key: string, eve
 
 export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
+export type LifecycleRunLinkDto = { id: string, run_id: string, subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, created_at: string, };
+
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 
+export type RunLinksResponse = { run_id: string, links: Array<LifecycleRunLinkDto>, };
+
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
+
+export type StoryRunOverviewDto = { id: string, lifecycle_id: string, status: LifecycleRunStatus, session_id?: string, created_at: string, updated_at: string, last_activity_at: string, links: Array<LifecycleRunLinkDto>, };
+
+export type StoryRunsResponse = { story_id: string, runs: Array<StoryRunOverviewDto>, };
 
 export type ToolCapabilityDirective = { "add": ToolCapabilityPath } | { "remove": ToolCapabilityPath };
 

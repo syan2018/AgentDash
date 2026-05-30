@@ -1,19 +1,16 @@
 import type { AgentBinding } from "./index";
 
-// ─── SessionBinding ─────────────────────────────────
+// ─── Session Types ─────────────────────────────────
 
-export type SessionOwnerType = "project" | "story" | "task";
+export type CapabilityScope = "project" | "story" | "task";
 
-export interface SessionBinding {
-  id: string;
+export interface SessionRunContext {
   project_id: string;
-  session_id: string;
-  owner_type: SessionOwnerType;
-  owner_id: string;
-  label: string;
-  created_at: string;
-  session_title?: string;
-  session_updated_at?: number;
+  story_id?: string | null;
+  task_id?: string | null;
+  story_title?: string | null;
+  task_title?: string | null;
+  scope: CapabilityScope;
 }
 
 export interface SessionTaskContext {
@@ -35,28 +32,6 @@ export type SessionReturnTarget =
       story_id: string;
       task_id: string;
     };
-
-export interface SessionBindingOwner {
-  id: string;
-  project_id: string;
-  session_id: string;
-  owner_type: SessionOwnerType;
-  owner_id: string;
-  label: string;
-  created_at: string;
-  owner_title?: string | null;
-  story_id?: string | null;
-  task_id?: string | null;
-}
-
-export interface HookOwnerSummary {
-  owner_type: string;
-  owner_id: string;
-  label?: string | null;
-  project_id?: string | null;
-  story_id?: string | null;
-  task_id?: string | null;
-}
 
 export interface HookInjection {
   slot: string;
@@ -127,7 +102,6 @@ export interface ActiveWorkflowHookMetadata {
   step_key: string;
   step_title: string;
   primary_workflow_id: string;
-  /** Bound workflow key when step is workflow-driven; omit or null for manual steps. */
   workflow_key?: string | null;
   primary_workflow_name: string;
 }
@@ -138,7 +112,7 @@ export interface HookRuntimeMetadata {
 
 export interface SessionHookSnapshot {
   session_id: string;
-  owners: HookOwnerSummary[];
+  run_context?: SessionRunContext | null;
   sources: string[];
   tags: string[];
   injections: HookInjection[];
@@ -165,7 +139,6 @@ export interface SessionNavigationState {
   task_context?: SessionTaskContext;
   project_agent?: ProjectSessionAgentContext;
   return_to?: SessionReturnTarget;
-  /** 进入 session 页时自动展开右栏工作空间面板 */
   open_workspace_panel?: boolean;
 }
 

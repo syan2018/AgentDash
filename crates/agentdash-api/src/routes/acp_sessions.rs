@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
@@ -29,21 +28,36 @@ use agentdash_contracts::session::{
     SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
     SessionProjectionViewResponse,
 };
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
-
-use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
 
-use crate::auth::{
-    CurrentUser, ProjectPermission, load_project_with_permission,
-    load_story_and_project_with_permission, load_task_story_project_with_permission,
-};
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
     CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, CreateSessionRequest,
-    ListSessionsQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionBindingOwnerResponse,
-    SessionContextResponse, SessionEventsQuery, SessionExecutionStateResponse,
-    UpdateSessionMetaRequest,
+    ListSessionsQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionContextResponse,
+    SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
+
+/// Session 级权限检查 — 通过 SessionMeta.project_id 确认 session 归属后检查项目权限。
+pub async fn ensure_session_permission(
+    state: &AppState,
+    user: &agentdash_plugin_api::AuthIdentity,
+    session_id: &str,
+    permission: ProjectPermission,
+) -> Result<(), ApiError> {
+    let meta = state
+        .services
+        .session_core
+        .get_session_meta(session_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("读取 session meta 失败: {e}")))?
+        .ok_or_else(|| ApiError::NotFound(format!("session {session_id} 不存在")))?;
+    if let Some(project_id) = &meta.project_id {
+        let pid = uuid::Uuid::parse_str(project_id)
+            .map_err(|_| ApiError::Internal("session project_id 格式无效".into()))?;
+        load_project_with_permission(state, user, pid, permission).await?;
+    }
+    Ok(())
+}
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
@@ -52,68 +66,45 @@ pub async fn list_sessions(
     CurrentUser(current_user): CurrentUser,
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
-    if let (Some(owner_type_str), Some(owner_id_str)) = (&query.owner_type, &query.owner_id) {
-        let owner_type = owner_type_str
-            .parse::<SessionOwnerType>()
-            .map_err(|_| ApiError::BadRequest(format!("无效的 owner_type: {owner_type_str}")))?;
-        let owner_id: uuid::Uuid = owner_id_str
-            .parse()
-            .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id_str}")))?;
-        authorize_owner_scope(&state, &current_user, owner_type, owner_id).await?;
-
-        let bindings = state
-            .repos
-            .session_binding_repo
-            .list_by_owner(owner_type, owner_id)
-            .await
-            .map_err(ApiError::from)?;
-
-        let mut sessions = Vec::with_capacity(bindings.len());
-        for binding in &bindings {
-            if let Ok(Some(meta)) = state
-                .services
-                .session_core
-                .get_session_meta(&binding.session_id)
-                .await
-            {
-                sessions.push(meta);
-            }
+    let sessions = state.services.session_core.list_sessions().await?;
+    let owner_project_id = match (&query.owner_type, &query.owner_id) {
+        (Some(owner_type), Some(owner_id)) if owner_type == "project" => Some(
+            uuid::Uuid::parse_str(owner_id)
+                .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id}")))?,
+        ),
+        (Some(owner_type), _) => {
+            return Err(ApiError::BadRequest(format!(
+                "Session 列表仅支持 owner_type=project，收到: {owner_type}"
+            )));
         }
-        return Ok(Json(sessions));
-    }
+        _ => None,
+    };
 
-    let mut sessions = state.services.session_core.list_sessions().await?;
-
-    let exclude_bound = query.exclude_bound.unwrap_or(false);
-    let mut visible_sessions = Vec::with_capacity(sessions.len());
-    for session in sessions.drain(..) {
-        let bindings = state
-            .repos
-            .session_binding_repo
-            .list_by_session(&session.id)
-            .await
-            .map_err(ApiError::from)?;
-
-        if bindings.is_empty() {
-            visible_sessions.push(session);
+    let mut visible = Vec::new();
+    for session in sessions {
+        let Some(project_id) = session
+            .project_id
+            .as_deref()
+            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+        else {
+            continue;
+        };
+        if let Some(owner_project_id) = owner_project_id
+            && project_id != owner_project_id
+        {
             continue;
         }
-
-        if exclude_bound {
-            continue;
-        }
-
-        ensure_bindings_permission(
+        load_project_with_permission(
             state.as_ref(),
             &current_user,
-            &bindings,
+            project_id,
             ProjectPermission::View,
         )
         .await?;
-        visible_sessions.push(session);
+        visible.push(session);
     }
 
-    Ok(Json(visible_sessions))
+    Ok(Json(visible))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
@@ -201,14 +192,13 @@ pub async fn create_session(
     .await?;
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
     let meta = state.services.session_core.create_session(&title).await?;
-    let binding = SessionBinding::new(
-        project.id,
-        meta.id.clone(),
-        SessionOwnerType::Project,
-        project.id,
-        agentdash_application::workflow::FREEFORM_SESSION_LABEL,
-    );
-    state.repos.session_binding_repo.create(&binding).await?;
+    state
+        .services
+        .session_core
+        .update_session_meta(&meta.id, |meta| {
+            meta.project_id = Some(project.id.to_string());
+        })
+        .await?;
     state
         .services
         .session_core
@@ -237,16 +227,9 @@ pub(crate) async fn ensure_freeform_lifecycle_run(
 
 pub async fn get_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionMeta>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
     let meta = state
         .services
         .session_core
@@ -258,16 +241,9 @@ pub async fn get_session(
 
 pub async fn get_session_hook_runtime(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<HookSessionRuntimeSnapshot>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
     let runtime = state
         .services
         .session_hooks
@@ -297,16 +273,9 @@ fn stream_event_payload(
 
 pub async fn get_session_state(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionExecutionStateResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
     state
         .services
         .session_core
@@ -390,18 +359,10 @@ fn session_command_state_response(
 
 pub async fn list_session_events(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<SessionEventsQuery>,
 ) -> Result<Json<SessionEventsPageResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
     let after_seq = query.after_seq.unwrap_or(0);
     let limit = query.limit.unwrap_or(500).clamp(1, 2_000);
     let page = state
@@ -428,35 +389,12 @@ mod tests {
     };
 
     #[test]
-    fn session_binding_owner_response_serializes_as_snake_case() {
-        let value = serde_json::to_value(SessionBindingOwnerResponse {
-            id: "binding-1".to_string(),
-            session_id: "sess-1".to_string(),
-            owner_type: "project".to_string(),
-            owner_id: "project-1".to_string(),
-            label: "project_agent:default".to_string(),
-            created_at: "2026-03-20T00:00:00Z".to_string(),
-            owner_title: Some("AgentDash".to_string()),
-            project_id: "project-1".to_string(),
-            story_id: None,
-            task_id: None,
-        })
-        .expect("serialize session binding owner response");
-
-        assert!(value.get("session_id").is_some());
-        assert!(value.get("owner_title").is_some());
-        assert!(value.get("project_id").is_some());
-        assert!(value.get("sessionId").is_none());
-        assert!(value.get("ownerTitle").is_none());
-        assert!(value.get("projectId").is_none());
-    }
-
-    #[test]
     fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
         let meta = SessionMeta {
             id: "sess-1".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,
@@ -483,6 +421,7 @@ mod tests {
             id: "sess-2".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 12,
@@ -515,6 +454,7 @@ mod tests {
             id: "sess-3".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 5,
@@ -541,6 +481,7 @@ mod tests {
             id: "sess-4".to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 7,
@@ -564,23 +505,13 @@ mod tests {
     }
 }
 
-/// GET /sessions/{id}/context — 按会话绑定统一返回 workspace / agent_binding / vfs / snapshot
+/// GET /sessions/{id}/context — 返回 workspace / agent_binding / vfs / snapshot
 pub async fn get_session_context(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionContextResponse>, ApiError> {
-    let bindings = ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let Some(plan) =
-        build_session_context_plan(&state, &current_user, &session_id, &bindings).await?
-    else {
+    let Some(plan) = build_session_context_plan(&state, &current_user, &session_id).await? else {
         return Ok(Json(SessionContextResponse::empty()));
     };
 
@@ -590,17 +521,9 @@ pub async fn get_session_context(
 /// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
 pub async fn get_session_context_projection(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionProjectionViewResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
     let envelope = state
         .services
         .session_eventing
@@ -614,18 +537,10 @@ pub async fn get_session_context_projection(
 /// POST /sessions/{id}/fork — 基于当前模型投影创建可独立恢复的 child session。
 pub async fn fork_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<CreateSessionForkRequest>,
 ) -> Result<Json<SessionForkResponse>, ApiError> {
-    let parent_bindings = ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
     let result = state
         .services
         .session_branching
@@ -638,21 +553,6 @@ pub async fn fork_session(
         })
         .await
         .map_err(api_error_from_io)?;
-
-    if let Err(error) = copy_parent_session_bindings_to_child(
-        state.as_ref(),
-        &parent_bindings,
-        &result.child_session.id,
-    )
-    .await
-    {
-        let _ = state
-            .services
-            .session_core
-            .delete_session(&result.child_session.id)
-            .await;
-        return Err(error);
-    }
 
     Ok(Json(SessionForkResponse {
         parent_session_id: result.parent_session_id,
@@ -673,17 +573,9 @@ pub async fn fork_session(
 /// GET /sessions/{id}/lineage — 返回当前 session 的父边、祖先与直接 children。
 pub async fn get_session_lineage(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionLineageViewResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
     let view = state
         .services
         .session_branching
@@ -702,18 +594,10 @@ pub async fn get_session_lineage(
 /// POST /sessions/{id}/projection/rollback — 移动模型可见 projection head，不删除审计事件。
 pub async fn rollback_session_projection(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<RollbackSessionProjectionRequest>,
 ) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
     let result = state
         .services
         .session_branching
@@ -737,82 +621,11 @@ pub async fn rollback_session_projection(
 }
 
 pub async fn get_session_bindings(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<Vec<SessionBindingOwnerResponse>>, ApiError> {
-    let bindings = ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let mut responses = Vec::with_capacity(bindings.len());
-    for binding in bindings {
-        let mut owner_title = None;
-        let project_id = binding.project_id.to_string();
-        let mut story_id = None;
-        let mut task_id = None;
-
-        match binding.owner_type {
-            SessionOwnerType::Project => {
-                if let Some(project) = state
-                    .repos
-                    .project_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(ApiError::from)?
-                {
-                    owner_title = Some(project.name);
-                }
-            }
-            SessionOwnerType::Story => {
-                if let Some(story) = state
-                    .repos
-                    .story_repo
-                    .get_by_id(binding.owner_id)
-                    .await
-                    .map_err(ApiError::from)?
-                {
-                    owner_title = Some(story.title);
-                    story_id = Some(story.id.to_string());
-                }
-            }
-            SessionOwnerType::Task => {
-                // M1-b：Task 查询经 Story aggregate
-                if let Some(story) = state
-                    .repos
-                    .story_repo
-                    .find_by_task_id(binding.owner_id)
-                    .await
-                    .map_err(ApiError::from)?
-                {
-                    if let Some(task) = story.find_task(binding.owner_id) {
-                        owner_title = Some(task.title.clone());
-                        story_id = Some(task.story_id.to_string());
-                        task_id = Some(task.id.to_string());
-                    }
-                }
-            }
-        }
-
-        responses.push(SessionBindingOwnerResponse {
-            id: binding.id.to_string(),
-            session_id: binding.session_id,
-            owner_type: binding.owner_type.to_string(),
-            owner_id: binding.owner_id.to_string(),
-            label: binding.label,
-            created_at: binding.created_at.to_rfc3339(),
-            owner_title,
-            project_id,
-            story_id,
-            task_id,
-        });
-    }
-
-    Ok(Json(responses))
+    State(_state): State<Arc<AppState>>,
+    CurrentUser(_current_user): CurrentUser,
+    Path(_session_id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    Ok(Json(vec![]))
 }
 
 /// GET /sessions/{id}/meta — 返回完整 session meta。
@@ -827,18 +640,10 @@ pub async fn get_session_meta(
 /// PATCH /sessions/{id}/meta — 用户手动修改会话 meta。
 pub async fn update_session_meta(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(req): Json<UpdateSessionMetaRequest>,
 ) -> Result<Json<SessionMeta>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
     if req.title.is_none() && req.tab_layout.is_none() {
         return Err(ApiError::BadRequest(
             "必须提供 title 或 tab_layout".to_string(),
@@ -877,7 +682,7 @@ pub async fn delete_session(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<DeleteSessionResponse>, ApiError> {
-    let bindings = ensure_session_permission(
+    ensure_session_permission(
         state.as_ref(),
         &current_user,
         &session_id,
@@ -889,14 +694,6 @@ pub async fn delete_session(
         .session_core
         .delete_session(&session_id)
         .await?;
-    for binding in bindings {
-        state
-            .repos
-            .session_binding_repo
-            .delete(binding.id)
-            .await
-            .map_err(ApiError::from)?;
-    }
     Ok(Json(DeleteSessionResponse {
         deleted: true,
         session_id,
@@ -1054,18 +851,11 @@ pub async fn respond_companion_request(
 /// ACP 会话流（Fetch Streaming / NDJSON）
 pub async fn acp_session_stream_ndjson(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     headers: HeaderMap,
     Query(query): Query<NdjsonStreamQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
     let resume_from = parse_resume_from_header(&headers, "x-stream-since-id")?
         .or(query.since_id)
         .unwrap_or(0);
@@ -1192,145 +982,6 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
     }
 }
 
-async fn authorize_owner_scope(
-    state: &Arc<AppState>,
-    current_user: &AuthIdentity,
-    owner_type: SessionOwnerType,
-    owner_id: uuid::Uuid,
-) -> Result<(), ApiError> {
-    match owner_type {
-        SessionOwnerType::Project => {
-            load_project_with_permission(
-                state.as_ref(),
-                current_user,
-                owner_id,
-                ProjectPermission::View,
-            )
-            .await?;
-        }
-        SessionOwnerType::Story => {
-            load_story_and_project_with_permission(
-                state.as_ref(),
-                current_user,
-                owner_id,
-                ProjectPermission::View,
-            )
-            .await?;
-        }
-        SessionOwnerType::Task => {
-            load_task_story_project_with_permission(
-                state.as_ref(),
-                current_user,
-                owner_id,
-                ProjectPermission::View,
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) async fn ensure_session_permission(
-    state: &AppState,
-    current_user: &AuthIdentity,
-    session_id: &str,
-    permission: ProjectPermission,
-) -> Result<Vec<agentdash_domain::session_binding::SessionBinding>, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await?;
-    ensure_bindings_permission(state, current_user, &bindings, permission).await?;
-    Ok(bindings)
-}
-
-async fn ensure_bindings_permission(
-    state: &AppState,
-    current_user: &AuthIdentity,
-    bindings: &[agentdash_domain::session_binding::SessionBinding],
-    permission: ProjectPermission,
-) -> Result<(), ApiError> {
-    let mut visited_project_ids = HashSet::new();
-    for binding in bindings {
-        if visited_project_ids.insert(binding.project_id) {
-            load_project_with_permission(state, current_user, binding.project_id, permission)
-                .await?;
-        }
-    }
-    Ok(())
-}
-
-async fn copy_parent_session_bindings_to_child(
-    state: &AppState,
-    parent_bindings: &[SessionBinding],
-    child_session_id: &str,
-) -> Result<(), ApiError> {
-    let mut created_binding_ids = Vec::with_capacity(parent_bindings.len());
-    for binding in parent_bindings {
-        let child_binding = SessionBinding::new(
-            binding.project_id,
-            child_session_id.to_string(),
-            binding.owner_type,
-            binding.owner_id,
-            forked_binding_label(binding, child_session_id),
-        );
-        match state
-            .repos
-            .session_binding_repo
-            .create(&child_binding)
-            .await
-        {
-            Ok(()) => created_binding_ids.push(child_binding.id),
-            Err(error) => {
-                cleanup_session_bindings(state, created_binding_ids).await;
-                return Err(ApiError::from(error));
-            }
-        }
-    }
-
-    let mut freeform_project_ids = HashSet::new();
-    for binding in parent_bindings {
-        if binding.owner_type == SessionOwnerType::Project
-            && binding.label == agentdash_application::workflow::FREEFORM_SESSION_LABEL
-            && freeform_project_ids.insert(binding.project_id)
-            && let Err(error) =
-                ensure_freeform_lifecycle_run(state, binding.project_id, child_session_id).await
-        {
-            cleanup_session_bindings(state, created_binding_ids).await;
-            return Err(error);
-        }
-    }
-
-    Ok(())
-}
-
-async fn cleanup_session_bindings(state: &AppState, binding_ids: Vec<uuid::Uuid>) {
-    for binding_id in binding_ids {
-        let _ = state.repos.session_binding_repo.delete(binding_id).await;
-    }
-}
-
-fn forked_binding_label(binding: &SessionBinding, child_session_id: &str) -> String {
-    if binding.owner_type == SessionOwnerType::Story {
-        format!(
-            "{}:fork:{}",
-            binding.label,
-            short_session_suffix(child_session_id)
-        )
-    } else {
-        binding.label.clone()
-    }
-}
-
-fn short_session_suffix(session_id: &str) -> &str {
-    session_id
-        .rsplit('-')
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or(session_id)
-}
-
 fn api_error_from_io(error: io::Error) -> ApiError {
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
@@ -1381,18 +1032,10 @@ fn scope_set_to_tags(scope: agentdash_spi::FragmentScopeSet) -> Vec<String> {
 /// 返回按 `at_ms` 升序的事件列表（审计总线内部已保持插入顺序）。
 pub async fn get_session_context_audit(
     State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
+    CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
     Query(query): Query<ContextAuditQuery>,
 ) -> Result<Json<Vec<ContextAuditEventDto>>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
     let scope = match query.scope.as_deref() {
         Some(raw) => match parse_scope_tag(raw) {
             Some(s) => Some(s),

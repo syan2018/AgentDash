@@ -82,6 +82,12 @@ impl CapabilityArtifactSource {
             kind: "workflow".to_string(),
         }
     }
+
+    pub fn permission_grant() -> Self {
+        Self {
+            kind: "permission_grant".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +263,9 @@ pub struct SessionMeta {
     pub title: String,
     #[serde(default)]
     pub title_source: TitleSource,
+    /// 所属 project（session 创建时确定，不可变）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]

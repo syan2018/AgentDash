@@ -31,12 +31,12 @@ use std::collections::BTreeSet;
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
 use agentdash_domain::project::Project;
-use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
 use agentdash_domain::workflow::{ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun};
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
 use uuid::Uuid;
@@ -244,13 +244,13 @@ impl<'a> OwnerScope<'a> {
         }
     }
 
-    fn owner_ctx(&self) -> SessionOwnerCtx {
+    fn owner_ctx(&self) -> CapabilityScopeCtx {
         match self {
-            Self::Story { project, story, .. } => SessionOwnerCtx::Story {
+            Self::Story { project, story, .. } => CapabilityScopeCtx::Story {
                 project_id: project.id,
                 story_id: story.id,
             },
-            Self::Project { project, .. } => SessionOwnerCtx::Project {
+            Self::Project { project, .. } => CapabilityScopeCtx::Project {
                 project_id: project.id,
             },
         }
@@ -422,7 +422,7 @@ fn build_owner_session_plan_contribution(
             workspace,
         } => (
             SessionPlanPhase::StoryOwner,
-            agentdash_domain::session_binding::SessionOwnerCtx::Story {
+            CapabilityScopeCtx::Story {
                 project_id: project.id,
                 story_id: story.id,
             },
@@ -437,7 +437,7 @@ fn build_owner_session_plan_contribution(
             ..
         } => (
             SessionPlanPhase::ProjectAgent,
-            agentdash_domain::session_binding::SessionOwnerCtx::Project {
+            CapabilityScopeCtx::Project {
                 project_id: project.id,
             },
             None,
@@ -447,7 +447,7 @@ fn build_owner_session_plan_contribution(
     };
 
     let plan = build_session_plan_fragments(SessionPlanInput {
-        owner_ctx,
+        scope: owner_ctx.owner_type(),
         phase: plan_phase,
         vfs,
         mcp_servers,
@@ -597,7 +597,7 @@ impl<'a> SessionRequestAssembler<'a> {
         &self,
         spec: &OwnerBootstrapSpec<'_>,
         project_id: Uuid,
-        owner_ctx: SessionOwnerCtx,
+        owner_ctx: CapabilityScopeCtx,
         active_workflow: Option<&ActiveWorkflowProjection>,
     ) -> Result<CapabilityState, String> {
         let workflow_tool: Option<ToolContribution> = if let Some(workflow) = active_workflow {
@@ -654,6 +654,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, project_id).await,
                 agent_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
             },
+            capability_context: None,
         };
         Ok(CapabilityResolver::resolve(
             &cap_input,
@@ -887,7 +888,7 @@ impl<'a> SessionRequestAssembler<'a> {
             });
         }
         let cap_input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id: spec.task.project_id,
                 story_id: spec.task.story_id,
                 task_id: spec.task.id,
@@ -897,6 +898,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, spec.task.project_id).await,
                 agent_servers: vec![],
             },
+            capability_context: None,
         };
         let mut capability_state = CapabilityResolver::resolve(&cap_input, self.platform_config);
         let mut session_mcp_servers = spec.request_mcp_servers.to_vec();
@@ -971,11 +973,7 @@ impl<'a> SessionRequestAssembler<'a> {
             crate::session::plan::resolve_story_session_composition(Some(spec.story));
         let session_plan = crate::session::plan::build_session_plan_fragments(
             crate::session::plan::SessionPlanInput {
-                owner_ctx: SessionOwnerCtx::Task {
-                    project_id: spec.project.id,
-                    story_id: spec.story.id,
-                    task_id: spec.task.id,
-                },
+                scope: CapabilityScope::Task,
                 phase: match task_phase {
                     TaskExecutionPhase::Start => crate::session::plan::SessionPlanPhase::TaskStart,
                     TaskExecutionPhase::Continue => {
@@ -1234,7 +1232,7 @@ async fn compose_lifecycle_node_with_audit(
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
 ) -> Result<SessionAssemblyBuilder, String> {
-    let owner_ctx = SessionOwnerCtx::Project {
+    let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
     };
 
@@ -1273,9 +1271,7 @@ async fn compose_lifecycle_node_with_audit(
         .collect();
     let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
         crate::session::plan::SessionPlanInput {
-            owner_ctx: SessionOwnerCtx::Project {
-                project_id: spec.run.project_id,
-            },
+            scope: CapabilityScope::Project,
             phase: crate::session::plan::SessionPlanPhase::ProjectAgent,
             vfs: Some(&activation.lifecycle_vfs),
             mcp_servers: &lifecycle_mcp_runtime,
@@ -1495,7 +1491,7 @@ pub struct StoryStepSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 SessionBinding 两跳定位后传入）。
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 LifecycleRunLink 定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// 审计总线用于索引的 session key。
     pub audit_session_key: Option<String>,
@@ -1571,7 +1567,7 @@ async fn compose_companion_with_workflow(
         build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
 
     // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
-    let owner_ctx = SessionOwnerCtx::Project { project_id };
+    let owner_ctx = CapabilityScopeCtx::Project { project_id };
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
@@ -2023,7 +2019,7 @@ mod tests {
         let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
-            "sess-story",
+            Some("sess-story".to_string()),
             activity_state,
         )
         .expect("run");
@@ -2111,22 +2107,13 @@ mod tests {
     mod apply_session_assembly_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
-        use crate::session::construction::SessionConstructionPlan;
-        use crate::session::ownership::SessionOwnerResolver;
-        use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+        use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
 
         fn base_plan() -> SessionConstructionPlan {
             let user_input = UserPromptInput::from_text("ping");
-            let binding = SessionBinding::new(
-                uuid::Uuid::new_v4(),
-                "test-session".to_string(),
-                SessionOwnerType::Project,
-                uuid::Uuid::new_v4(),
-                "test-project",
-            );
-            let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+            let owner = ResolvedSessionOwner::project(uuid::Uuid::new_v4());
             SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
         }
 

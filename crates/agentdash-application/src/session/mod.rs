@@ -37,7 +37,6 @@ pub mod launch;
 #[cfg(test)]
 #[path = "../../test-support/session_memory_persistence.rs"]
 mod memory_persistence;
-pub mod ownership;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;
 pub mod persistence;

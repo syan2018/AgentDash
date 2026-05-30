@@ -309,29 +309,27 @@ fn execution_backend_placement_from_plan(
 #[cfg(test)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_spi::Vfs;
 
     use super::*;
     use crate::session::construction::{
-        ConstructionResolutionPlan, SessionConstructionContextProjection, SessionConstructionPlan,
+        ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
+        SessionConstructionContextProjection, SessionConstructionPlan,
     };
     use crate::session::launch::{LaunchCommand, LaunchSource};
-    use crate::session::ownership::SessionOwnerResolver;
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
     use std::path::Path;
 
     fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchPlanInput {
-        let binding = SessionBinding::new(
-            uuid::Uuid::new_v4(),
-            "sess-launch".to_string(),
-            SessionOwnerType::Project,
-            uuid::Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner {
+            owner_type: agentdash_spi::CapabilityScope::Project,
+            project_id: Some(uuid::Uuid::new_v4()),
+            trace: OwnerResolutionTrace {
+                selected_reason: "test".to_string(),
+            },
+        };
         let vfs = Vfs {
             mounts: vec![Mount {
                 id: "workspace".to_string(),

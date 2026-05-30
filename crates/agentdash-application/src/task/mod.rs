@@ -9,23 +9,30 @@ pub mod service;
 pub mod view_projector;
 
 use agentdash_domain::common::error::DomainError;
-use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::task::Task;
+use agentdash_domain::workflow::{
+    LifecycleRunLinkRepository, LifecycleRunRepository, RunLinkSubjectKind,
+};
 use uuid::Uuid;
 
-/// 从 SessionBinding 查询 Task 的执行 session ID。
+/// 从 LifecycleRunLink 查询 Task 的执行 session ID。
 ///
-/// Task 的 session 归属统一通过 `SessionBinding(owner_type=task, label="execution")` 管理，
-/// 不再在 Task entity 上持有 session_id。
+/// 通过 `lifecycle_run_link_repo.list_by_subject(Task, task_id)` 找到关联的 run，
+/// 再从 run 取 session_id。
 pub async fn find_task_execution_session_id(
-    session_binding_repo: &dyn SessionBindingRepository,
+    lifecycle_run_link_repo: &dyn LifecycleRunLinkRepository,
+    lifecycle_run_repo: &dyn LifecycleRunRepository,
     task_id: Uuid,
 ) -> Result<Option<String>, DomainError> {
-    let binding = session_binding_repo
-        .find_by_owner_and_label(SessionOwnerType::Task, task_id, "execution")
+    let links = lifecycle_run_link_repo
+        .list_by_subject(RunLinkSubjectKind::Task, task_id)
         .await?;
-    Ok(binding.map(|b| b.session_id))
+    let Some(link) = links.first() else {
+        return Ok(None);
+    };
+    let run = lifecycle_run_repo.get_by_id(link.run_id).await?;
+    Ok(run.and_then(|r| r.session_id))
 }
 
 /// 通过 Story aggregate 读取指定 Task（只读副本）。

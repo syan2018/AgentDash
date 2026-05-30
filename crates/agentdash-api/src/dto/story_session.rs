@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use agentdash_application::session::context::SessionContextSnapshot;
-use agentdash_domain::session_binding::SessionBinding;
 
 #[derive(Debug, Serialize)]
 pub struct StorySessionDetailResponse {
@@ -30,22 +29,6 @@ pub struct SessionBindingResponse {
     pub created_at: String,
     pub session_title: Option<String>,
     pub session_updated_at: Option<i64>,
-}
-
-impl SessionBindingResponse {
-    pub(crate) fn from_binding(binding: &SessionBinding) -> Self {
-        Self {
-            id: binding.id.to_string(),
-            project_id: binding.project_id.to_string(),
-            session_id: binding.session_id.clone(),
-            owner_type: binding.owner_type.to_string(),
-            owner_id: binding.owner_id.to_string(),
-            label: binding.label.clone(),
-            created_at: binding.created_at.to_rfc3339(),
-            session_title: None,
-            session_updated_at: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]

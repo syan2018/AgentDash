@@ -108,7 +108,6 @@ pub(crate) async fn build_session_runtime(
     let hook_provider = Arc::new(AppExecutionHookProvider::new(
         repos.project_repo.clone(),
         repos.story_repo.clone(),
-        repos.session_binding_repo.clone(),
         repos.workflow_definition_repo.clone(),
         repos.activity_lifecycle_definition_repo.clone(),
         repos.lifecycle_run_repo.clone(),

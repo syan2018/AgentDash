@@ -140,13 +140,7 @@ pub async fn get_task_session(
         .await
         .map_err(ApiError::from)?;
     let context_projection = if let Some(session_id) = result.session_id.as_ref() {
-        let bindings = state
-            .repos
-            .session_binding_repo
-            .list_by_session(session_id)
-            .await
-            .map_err(ApiError::from)?;
-        build_session_context_plan(&state, &current_user, session_id, &bindings)
+        build_session_context_plan(&state, &current_user, session_id)
             .await?
             .map(|plan| plan.context_projection)
     } else {

@@ -6,7 +6,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::mcp_preset::McpPreset;
-use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
     ToolCapabilityDirective, ToolCapabilityReduction, ToolCapabilitySlotState,
     reduce_tool_capability_directives,
@@ -16,6 +15,7 @@ use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_WORKFLOW, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
 
 use crate::platform_config::PlatformConfig;
@@ -66,15 +66,32 @@ pub struct ContextContributions {
     pub companion: Option<CompanionContribution>,
 }
 
+/// 增强型能力解析上下文 — 包含 session owner 与 run link 两条解析路径。
+///
+/// `owner_ctx` 为传统 Session-based visibility 路径（保留兼容）；
+/// `run_context` 为新的 LifecycleRunLink-based 路径（后续 AgentPermission 在此扩展）。
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityContext {
+    /// Run 关联的 subject kinds（由 LifecycleRunLink 投影）。
+    /// 例如 run 关联 Story → 此处含 `RunLinkSubjectKind::Story`。
+    pub run_subject_kinds: Vec<agentdash_domain::workflow::RunLinkSubjectKind>,
+    /// Permission Grant 授予的 capability keys（由 active grants 解析）。
+    /// 任何出现在此集合中的 well-known key 视为已授权可见，绕过静态规则。
+    pub granted_capability_keys: BTreeSet<String>,
+}
+
 /// Resolver 输入 — 纯粹的 session 上下文描述。
 #[derive(Debug, Clone)]
 pub struct CapabilityResolverInput {
     /// session 归属上下文（决定 visibility 基线 + platform MCP scope）。
-    pub owner_ctx: SessionOwnerCtx,
+    pub owner_ctx: CapabilityScopeCtx,
     /// 各来源按 directive 应用顺序排列的 contributions；授权语义由 `source` 显式决定。
     pub contributions: Vec<ContextContributions>,
     /// MCP server 候选数据源。
     pub mcp_candidates: McpCandidates,
+    /// LifecycleRunLink-based 解析上下文（可选，新路径）。
+    #[allow(dead_code)]
+    pub capability_context: Option<CapabilityContext>,
 }
 
 /// agent config 中注册的 MCP server 条目（用于 `mcp:*` key 解析）
@@ -100,7 +117,7 @@ struct MergedToolInput {
 
 /// 从 contributions 合并产出 MergedToolInput。
 fn merge_contributions(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     contributions: &[ContextContributions],
 ) -> MergedToolInput {
     let mut agent_declared_keys = BTreeSet::new();
@@ -194,7 +211,12 @@ impl CapabilityResolver {
         let merged = merge_contributions(&input.owner_ctx, &input.contributions);
 
         // baseline：只包含 well-known key 的 agent-level 能力
-        let mut effective_caps = default_visible_capabilities(&input.owner_ctx, &merged);
+        let granted_keys = input
+            .capability_context
+            .as_ref()
+            .map(|ctx| &ctx.granted_capability_keys);
+        let mut effective_caps =
+            default_visible_capabilities(&input.owner_ctx, &merged, granted_keys);
 
         let mut resolved_mcp_servers = Vec::<agentdash_spi::SessionMcpServer>::new();
         let mut seen_custom_mcp_names = BTreeSet::<String>::new();
@@ -341,12 +363,20 @@ fn compute_tool_policy(
 }
 
 fn default_visible_capabilities(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
+    granted_keys: Option<&BTreeSet<String>>,
 ) -> BTreeSet<ToolCapability> {
     let mut effective = BTreeSet::new();
     for &key in WELL_KNOWN_KEYS {
         let cap = ToolCapability::new(key);
+
+        // Permission Grant override: 如果 key 在 active grants 中，直接可见
+        if granted_keys.is_some_and(|gk| gk.contains(key)) {
+            effective.insert(cap);
+            continue;
+        }
+
         let agent_declares_this = merged.agent_declared_keys.contains(key);
         let workflow_declares_this = key == CAP_WORKFLOW && merged.has_active_workflow;
         if tool_capability::is_capability_visible(
@@ -363,7 +393,7 @@ fn default_visible_capabilities(
 
 fn can_enable_well_known_capability(
     cap: &ToolCapability,
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     merged: &MergedToolInput,
 ) -> bool {
     let workflow_declares_this = cap.key() == CAP_WORKFLOW && merged.has_active_workflow;
@@ -376,7 +406,7 @@ fn can_enable_well_known_capability(
 }
 
 fn source_can_enable_capability(
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
     source: ContextContributionSource,
     has_active_workflow: bool,
     capability_key: &str,
@@ -420,7 +450,7 @@ fn apply_companion_slice(base: CapabilityState, mode: CompanionSliceMode) -> Cap
 fn build_platform_mcp_config(
     scope: PlatformMcpScope,
     mcp_base_url: Option<&str>,
-    owner_ctx: &SessionOwnerCtx,
+    owner_ctx: &CapabilityScopeCtx,
 ) -> Option<McpInjectionConfig> {
     let base_url = mcp_base_url?;
 
@@ -465,11 +495,12 @@ mod tests {
 
     fn base_input() -> CapabilityResolverInput {
         CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Project {
+            owner_ctx: CapabilityScopeCtx::Project {
                 project_id: Uuid::new_v4(),
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         }
     }
 
@@ -571,13 +602,14 @@ mod tests {
         let task_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
                 task_id,
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -595,12 +627,13 @@ mod tests {
         let story_id = Uuid::new_v4();
 
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Story {
+            owner_ctx: CapabilityScopeCtx::Story {
                 project_id,
                 story_id,
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1031,15 +1064,16 @@ mod tests {
         ));
     }
 
-    // ── SessionOwnerCtx 变体 × MCP 注入边界回归 ──────────────────────────────
+    // ── CapabilityScope 变体 × MCP 注入边界回归 ──────────────────────────────
 
     #[test]
     fn project_owner_ctx_injects_relay_with_project_id() {
         let project_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1071,12 +1105,13 @@ mod tests {
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Story {
+            owner_ctx: CapabilityScopeCtx::Story {
                 project_id,
                 story_id,
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());
@@ -1111,13 +1146,14 @@ mod tests {
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
                 task_id,
             },
             contributions: Vec::new(),
             mcp_candidates: McpCandidates::default(),
+            capability_context: None,
         };
 
         let output = CapabilityResolver::resolve(&input, &test_platform());

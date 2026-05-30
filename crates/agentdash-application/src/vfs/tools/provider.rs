@@ -244,7 +244,6 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 Some(ToolCluster::Collaboration),
             ) {
                 tools.push(Arc::new(CompanionRequestTool::new(
-                    self.repos.session_binding_repo.clone(),
                     self.repos.project_agent_repo.clone(),
                     self.repos.clone(),
                     self.session_services_handle.clone(),
@@ -338,23 +337,8 @@ fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
     if let Some(hook_session) = context.turn.hook_session.as_ref() {
         let snapshot = hook_session.snapshot();
 
-        // project owner 直接使用 owner_id；story/task owner 使用 owner.project_id。
-        for owner in &snapshot.owners {
-            use agentdash_domain::session_binding::SessionOwnerType;
-            match owner.owner_type {
-                SessionOwnerType::Project => {
-                    if let Ok(project_id) = Uuid::parse_str(owner.owner_id.as_str()) {
-                        return Some(project_id);
-                    }
-                }
-                SessionOwnerType::Story | SessionOwnerType::Task => {
-                    if let Some(project_id) = owner.project_id.as_deref()
-                        && let Ok(project_id) = Uuid::parse_str(project_id)
-                    {
-                        return Some(project_id);
-                    }
-                }
-            }
+        if let Some(run_context) = &snapshot.run_context {
+            return Some(run_context.project_id);
         }
     }
 

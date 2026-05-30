@@ -82,15 +82,9 @@ pub fn build_bootstrap_plan(input: BootstrapPlanInput) -> SessionBootstrapPlan {
     }
 
     let owner_type = match &input.owner_variant {
-        BootstrapOwnerVariant::Task { .. } => {
-            agentdash_domain::session_binding::SessionOwnerType::Task
-        }
-        BootstrapOwnerVariant::Story { .. } => {
-            agentdash_domain::session_binding::SessionOwnerType::Story
-        }
-        BootstrapOwnerVariant::Project { .. } => {
-            agentdash_domain::session_binding::SessionOwnerType::Project
-        }
+        BootstrapOwnerVariant::Task { .. } => agentdash_spi::CapabilityScope::Task,
+        BootstrapOwnerVariant::Story { .. } => agentdash_spi::CapabilityScope::Story,
+        BootstrapOwnerVariant::Project { .. } => agentdash_spi::CapabilityScope::Project,
     };
     let tool_visibility = super::plan::summarize_tool_visibility_with_context(
         input.vfs.as_ref(),

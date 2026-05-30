@@ -18,10 +18,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::{
     ActivityDefinition, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
 };
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
 use agentdash_spi::{CapabilityState, SetDelta, Vfs};
 use uuid::Uuid;
@@ -42,8 +42,8 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 /// `LifecycleDefinitionRepository::get_by_project_and_key` 的 cached 结果。
 #[derive(Debug, Clone)]
 pub struct StepActivationInput<'a> {
-    /// session 所属的 owner sum type。
-    pub owner_ctx: SessionOwnerCtx,
+    /// Session 的能力作用域（包含 entity ID，用于 MCP scope 注入）。
+    pub owner_ctx: CapabilityScopeCtx,
     /// 当前激活的 activity 定义;提供 output/input ports、key、description。
     /// node_type / workflow_key 由 executor 推导,激活计算本身不需要。
     pub active_activity: &'a ActivityDefinition,
@@ -156,12 +156,13 @@ pub fn activate_step_with_platform(
         },
     });
     let cap_input = CapabilityResolverInput {
-        owner_ctx: input.owner_ctx,
+        owner_ctx: input.owner_ctx.clone(),
         contributions,
         mcp_candidates: McpCandidates {
             presets: input.available_presets.clone(),
             agent_servers: input.agent_mcp_servers.clone(),
         },
+        capability_context: None,
     };
     let mut cap_output = CapabilityResolver::resolve(&cap_input, platform);
     if let Some(slice_mode) = input.companion_slice_mode {
@@ -464,7 +465,7 @@ mod tests {
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
                 task_id,
@@ -502,7 +503,7 @@ mod tests {
         let project_id = Uuid::new_v4();
 
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
@@ -533,7 +534,7 @@ mod tests {
         let project_id = Uuid::new_v4();
 
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
@@ -570,7 +571,7 @@ mod tests {
         ]);
 
         let base_input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&full_read_workflow),
             run_id,
@@ -638,7 +639,7 @@ mod tests {
         let step = sample_step(vec![]);
         let project_id = Uuid::new_v4();
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
@@ -698,7 +699,7 @@ mod tests {
 
         // PhaseNode 热更新场景:baseline 来自 hook_runtime.current_capabilities()
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
             run_id: Uuid::new_v4(),
@@ -741,7 +742,7 @@ mod tests {
         let project_id = Uuid::new_v4();
 
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),
@@ -798,7 +799,7 @@ mod tests {
         let ready: BTreeSet<String> = ["out".to_string()].into_iter().collect();
 
         let input = StepActivationInput {
-            owner_ctx: SessionOwnerCtx::Project { project_id },
+            owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: None,
             run_id: Uuid::new_v4(),

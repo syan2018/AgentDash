@@ -260,14 +260,14 @@ async fn resolve_terminal_launch_target(
     current_user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
 ) -> Result<TerminalLaunchTarget, ApiError> {
-    let bindings = ensure_session_permission(
+    ensure_session_permission(
         state.as_ref(),
         current_user,
         session_id,
         ProjectPermission::View,
     )
     .await?;
-    let plan = build_session_context_plan(state, current_user, session_id, &bindings)
+    let plan = build_session_context_plan(state, current_user, session_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("Session 未绑定可用 owner，无法创建终端".into()))?;
     let vfs =

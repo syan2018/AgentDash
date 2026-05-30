@@ -4,7 +4,7 @@
 //! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
 //! LifecycleEngine 与 durable scheduler 统一推进。
 //!
-//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / SessionBinding / session services。
+//! 不维护自己的状态 — 所有状态读写都通过 LifecycleRun / session services。
 //! 不是后台进程 — 通过事件驱动（advance tool / session terminal）被调用。
 //!
 //! 实现 `SessionTerminalCallback`，由 `session runtime` 在 session 完全终止后自动调用。
@@ -136,7 +136,6 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_activity_session_association(
             session_id,
-            self.repos.session_binding_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -182,7 +181,6 @@ impl LifecycleOrchestrator {
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_session_association(
             &input.session_id,
-            self.repos.session_binding_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -299,7 +297,7 @@ impl LifecycleOrchestrator {
             AgentActivityLaunchContext {
                 project_id: run.project_id,
                 lifecycle_key: String::new(),
-                root_session_id: run.session_id.clone(),
+                root_session_id: run.session_id.clone().unwrap_or_default(),
             },
             AgentActivityRuntimePort::new(
                 self.session_core.clone(),

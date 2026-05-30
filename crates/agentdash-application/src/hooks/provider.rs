@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityLifecycleDefinitionRepository, LifecycleRunRepository,
@@ -33,7 +32,6 @@ use crate::ApplicationError;
 /// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
 /// 对外仍实现 ExecutionHookProvider trait。
 pub struct AppExecutionHookProvider {
-    pub(super) session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub(super) inline_file_repo: Arc<dyn InlineFileRepository>,
     pub(super) owner_resolver: SessionOwnerResolver,
     pub(super) workflow_builder: WorkflowSnapshotBuilder,
@@ -48,7 +46,6 @@ impl AppExecutionHookProvider {
     pub fn new<F>(
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -60,13 +57,10 @@ impl AppExecutionHookProvider {
     {
         let preset_scripts = builtin_preset_scripts();
         let evaluator = script_evaluator_factory(&preset_scripts);
-        let wf_binding = session_binding_repo.clone();
         Self {
-            session_binding_repo,
             inline_file_repo,
             owner_resolver: SessionOwnerResolver::new(project_repo, story_repo),
             workflow_builder: WorkflowSnapshotBuilder::new(
-                wf_binding,
                 workflow_definition_repo,
                 activity_lifecycle_definition_repo,
                 lifecycle_run_repo,
@@ -97,15 +91,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: SessionHookSnapshotQuery,
     ) -> Result<SessionHookSnapshot, HookError> {
-        let bindings = self
-            .session_binding_repo
-            .list_by_session(&query.session_id)
-            .await
-            .map_err(map_hook_error)?;
-
         let mut snapshot = SessionHookSnapshot {
             session_id: query.session_id.clone(),
-            owners: Vec::new(),
+            run_context: None,
             sources: Vec::new(),
             tags: Vec::new(),
             injections: Vec::new(),
@@ -125,176 +113,140 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             "hook_builtin:supervised_tool_approval".to_string(),
         ]);
 
-        if bindings.is_empty() {
+        // TODO: migrate to LifecycleRunLink query for full run_context resolution
+        // For now, run_context is populated by the session bootstrap path when available.
+
+        if let Some(workflow) = self
+            .workflow_builder
+            .resolve_active_workflow(&query.session_id)
+            .await?
+        {
+            let wf_source = workflow_source(&workflow);
+
             snapshot.diagnostics.push(HookDiagnosticEntry {
-                code: "session_binding_missing".to_string(),
-                message: "当前 session 没有关联的业务 owner，Hook snapshot 为空基线".to_string(),
+                code: "active_workflow_resolved".to_string(),
+                message: format!(
+                    "命中 active lifecycle step：{} / {}",
+                    workflow.lifecycle.key, workflow.active_activity.key
+                ),
             });
-        }
 
-        for binding in bindings.iter() {
-            let resolved_owner = self.owner_resolver.resolve(binding).await?;
-            snapshot.diagnostics.extend(resolved_owner.diagnostics);
-            let owner = resolved_owner.summary;
-            snapshot.tags.push(format!("owner:{}", owner.owner_type));
-            snapshot.tags.push(format!("owner_id:{}", owner.owner_id));
-            if let Some(project_id) = owner.project_id.as_deref() {
-                snapshot.tags.push(format!("project:{project_id}"));
-            }
-            if let Some(story_id) = owner.story_id.as_deref() {
-                snapshot.tags.push(format!("story:{story_id}"));
-            }
-            if let Some(task_id) = owner.task_id.as_deref() {
-                snapshot.tags.push(format!("task:{task_id}"));
+            // Derive run_context from workflow run project_id
+            snapshot.run_context = Some(
+                self.owner_resolver
+                    .build_default_run_context(workflow.run.project_id),
+            );
+            snapshot
+                .tags
+                .push(format!("project:{}", workflow.run.project_id));
 
-                let task_uuid = task_id.parse::<uuid::Uuid>().unwrap_or(uuid::Uuid::nil());
-                if let Ok(Some(task)) =
-                    crate::task::load_task(self.owner_resolver.story_repo(), task_uuid).await
-                {
-                    if let Some(meta) = snapshot.metadata.as_mut() {
-                        meta.extra.insert(
-                            "task_status".to_string(),
-                            serde_json::Value::String(format!("{:?}", task.status())),
-                        );
-                        meta.extra.insert(
-                            "task_id".to_string(),
-                            serde_json::Value::String(task.id.to_string()),
-                        );
+            if let Some(meta) = snapshot.metadata.as_mut() {
+                let transition_policy = workflow.advance_label();
+                let step_title = if workflow.active_activity.description.trim().is_empty() {
+                    workflow.active_activity.key.clone()
+                } else {
+                    workflow.active_activity.description.clone()
+                };
+                let step_status = workflow
+                    .run
+                    .activity_state
+                    .as_ref()
+                    .and_then(|state| {
+                        state
+                            .attempts
+                            .iter()
+                            .find(|a| a.activity_key == workflow.active_activity.key)
+                    })
+                    .map(|attempt| {
+                        match attempt.status {
+                            ActivityAttemptStatus::Pending => "pending",
+                            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
+                                "ready"
+                            }
+                            ActivityAttemptStatus::Running => "running",
+                            ActivityAttemptStatus::Completed => "completed",
+                            ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
+                                "failed"
+                            }
+                        }
+                        .to_string()
+                    });
+                let node_type = Some(match workflow.active_node_type {
+                    agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
+                        "agent_node".to_string()
                     }
-                }
-            }
-
-            if let Some(workflow) = self
-                .workflow_builder
-                .resolve_active_workflow(&query.session_id)
-                .await?
-            {
-                let wf_source = workflow_source(&workflow);
-
-                snapshot.diagnostics.push(HookDiagnosticEntry {
-                    code: "active_workflow_resolved".to_string(),
-                    message: format!(
-                        "命中 active lifecycle step：{} / {}",
-                        workflow.lifecycle.key, workflow.active_activity.key
-                    ),
+                    agentdash_domain::workflow::LifecycleNodeType::PhaseNode => {
+                        "phase_node".to_string()
+                    }
                 });
-
-                if let Some(meta) = snapshot.metadata.as_mut() {
-                    let transition_policy = workflow.advance_label();
-                    let step_title = if workflow.active_activity.description.trim().is_empty() {
-                        workflow.active_activity.key.clone()
-                    } else {
-                        workflow.active_activity.description.clone()
-                    };
-                    // P2：step_status 改读对应 Activity attempt 的状态。映射到
-                    // 与旧 LifecycleStepExecutionStatus Debug 输出一致的小写标签，
-                    // 保持 meta.step_status 语义不变。
-                    let step_status = workflow
-                        .run
-                        .activity_state
+                meta.active_workflow = Some(ActiveWorkflowMeta {
+                    lifecycle_id: Some(workflow.lifecycle.id),
+                    lifecycle_key: Some(workflow.lifecycle.key.clone()),
+                    lifecycle_name: Some(workflow.lifecycle.name.clone()),
+                    run_id: Some(workflow.run.id),
+                    run_status: Some(workflow.run.status),
+                    step_key: Some(workflow.active_activity.key.clone()),
+                    step_title: Some(step_title),
+                    step_status,
+                    node_type,
+                    workflow_key: workflow.active_workflow_key.clone(),
+                    transition_policy: Some(transition_policy.to_string()),
+                    primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
+                    primary_workflow_name: workflow
+                        .primary_workflow
                         .as_ref()
-                        .and_then(|state| {
-                            state
-                                .attempts
-                                .iter()
-                                .find(|a| a.activity_key == workflow.active_activity.key)
-                        })
-                        .map(|attempt| {
-                            match attempt.status {
-                                ActivityAttemptStatus::Pending => "pending",
-                                ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
-                                    "ready"
-                                }
-                                ActivityAttemptStatus::Running => "running",
-                                ActivityAttemptStatus::Completed => "completed",
-                                ActivityAttemptStatus::Failed
-                                | ActivityAttemptStatus::Cancelled => "failed",
-                            }
-                            .to_string()
-                        });
-                    let node_type = Some(match workflow.active_node_type {
-                        agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
-                            "agent_node".to_string()
+                        .map(|w| w.name.clone()),
+                    effective_contract: Some(build_effective_contract(
+                        &workflow.lifecycle.key,
+                        &workflow.active_activity.key,
+                        workflow.primary_workflow.as_ref(),
+                    )),
+                    output_port_keys: {
+                        let port_keys: Vec<String> = workflow
+                            .active_activity
+                            .output_ports
+                            .iter()
+                            .map(|p| p.key.clone())
+                            .collect();
+                        if port_keys.is_empty() {
+                            None
+                        } else {
+                            Some(port_keys)
                         }
-                        agentdash_domain::workflow::LifecycleNodeType::PhaseNode => {
-                            "phase_node".to_string()
+                    },
+                    fulfilled_port_keys: {
+                        let map = crate::workflow::load_port_output_map(
+                            self.inline_file_repo.as_ref(),
+                            workflow.run.id,
+                        )
+                        .await;
+                        if map.is_empty() {
+                            None
+                        } else {
+                            Some(map.into_keys().collect())
                         }
-                    });
-                    meta.active_workflow = Some(ActiveWorkflowMeta {
-                        lifecycle_id: Some(workflow.lifecycle.id),
-                        lifecycle_key: Some(workflow.lifecycle.key.clone()),
-                        lifecycle_name: Some(workflow.lifecycle.name.clone()),
-                        run_id: Some(workflow.run.id),
-                        run_status: Some(workflow.run.status),
-                        step_key: Some(workflow.active_activity.key.clone()),
-                        step_title: Some(step_title),
-                        step_status,
-                        node_type,
-                        workflow_key: workflow.active_workflow_key.clone(),
-                        transition_policy: Some(transition_policy.to_string()),
-                        primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
-                        primary_workflow_name: workflow
-                            .primary_workflow
-                            .as_ref()
-                            .map(|w| w.name.clone()),
-                        effective_contract: Some(build_effective_contract(
-                            &workflow.lifecycle.key,
-                            &workflow.active_activity.key,
-                            workflow.primary_workflow.as_ref(),
-                        )),
-                        output_port_keys: {
-                            // port 归属在 activity 级别
-                            let port_keys: Vec<String> = workflow
-                                .active_activity
-                                .output_ports
-                                .iter()
-                                .map(|p| p.key.clone())
-                                .collect();
-                            if port_keys.is_empty() {
-                                None
-                            } else {
-                                Some(port_keys)
-                            }
-                        },
-                        fulfilled_port_keys: {
-                            let map = crate::workflow::load_port_output_map(
-                                self.inline_file_repo.as_ref(),
-                                workflow.run.id,
-                            )
-                            .await;
-                            if map.is_empty() {
-                                None
-                            } else {
-                                Some(map.into_keys().collect())
-                            }
-                        },
-                        // P2：Activity attempt 模型无 gate_collision_count 等价字段，
-                        // 该计数仅存在于旧 step_states 上。Activity run 一律置 None，
-                        // 待 gate 碰撞计数若需要在 attempt 上补字段时再恢复。
-                        gate_collision_count: None,
-                    });
-                }
-
-                // Add workflow source
-                snapshot.sources.push(wf_source.clone());
-
-                // Add workflow tags
-                snapshot.tags.extend([
-                    format!("workflow:{}", workflow_scope_key(&workflow)),
-                    format!("workflow_step:{}", workflow.active_activity.key),
-                    format!(
-                        "workflow_status:{}",
-                        workflow_run_status_tag(workflow.run.status)
-                    ),
-                ]);
-
-                // Add workflow step injections
-                snapshot
-                    .injections
-                    .extend(build_workflow_step_fragments(&workflow, &wf_source));
+                    },
+                    gate_collision_count: None,
+                });
             }
 
-            snapshot.owners.push(owner);
+            // Add workflow source
+            snapshot.sources.push(wf_source.clone());
+
+            // Add workflow tags
+            snapshot.tags.extend([
+                format!("workflow:{}", workflow_scope_key(&workflow)),
+                format!("workflow_step:{}", workflow.active_activity.key),
+                format!(
+                    "workflow_status:{}",
+                    workflow_run_status_tag(workflow.run.status)
+                ),
+            ]);
+
+            // Add workflow step injections
+            snapshot
+                .injections
+                .extend(build_workflow_step_fragments(&workflow, &wf_source));
         }
 
         snapshot.tags = dedupe_tags(snapshot.tags);
@@ -324,12 +276,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             diagnostics: snapshot
                 .diagnostics
                 .iter()
-                .filter(|entry| {
-                    matches!(
-                        entry.code.as_str(),
-                        "active_workflow_resolved" | "session_binding_found"
-                    )
-                })
+                .filter(|entry| matches!(entry.code.as_str(), "active_workflow_resolved"))
                 .cloned()
                 .collect(),
             ..HookResolution::default()

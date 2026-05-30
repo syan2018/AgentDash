@@ -10,7 +10,6 @@ use crate::session::{DynPostTurnHandler, PostTurnHandler, TerminalHookEffectHand
 use super::{
     artifact_ops::{ToolCallArtifactInput, persist_tool_call_artifact},
     repo_ops::update_task_status,
-    session_bridge::clear_task_session_binding,
 };
 use agentdash_domain::task::TaskStatus;
 
@@ -104,7 +103,10 @@ impl TaskHookEffectExecutor {
     ) -> Result<(), String> {
         match effect.kind.as_str() {
             "task:set_status" => self.handle_set_status(turn_id, &effect.payload).await,
-            "task:clear_binding" => self.handle_clear_binding(&effect.payload).await,
+            "task:clear_binding" => {
+                tracing::debug!(task_id = %self.task_id, "task:clear_binding is no-op; Permission System will manage session dissociation");
+                Ok(())
+            }
             other => {
                 tracing::warn!(
                     task_id = %self.task_id,
@@ -151,16 +153,6 @@ impl TaskHookEffectExecutor {
         .await
         .map_err(|e| e.to_string())?;
 
-        Ok(())
-    }
-
-    async fn handle_clear_binding(&self, payload: &serde_json::Value) -> Result<(), String> {
-        let reason = payload
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("hook_clear_binding");
-
-        clear_task_session_binding(&self.repos, self.task_id, &self.backend_id, reason).await;
         Ok(())
     }
 }

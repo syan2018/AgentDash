@@ -1,4 +1,4 @@
-use agentdash_domain::session_binding::SessionOwnerCtx;
+use agentdash_spi::CapabilityScopeCtx;
 use uuid::Uuid;
 
 use crate::canvas::append_visible_canvas_mounts;
@@ -25,7 +25,6 @@ use crate::workflow::{
     resolve_active_workflow_projection_for_session,
 };
 use agentdash_domain::common::Vfs;
-use agentdash_domain::session_binding::SessionOwnerType;
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
@@ -93,7 +92,7 @@ pub async fn build_task_session_context(
         });
     }
     let cap_input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Task {
+        owner_ctx: CapabilityScopeCtx::Task {
             project_id: task.project_id,
             story_id: task.story_id,
             task_id: task.id,
@@ -103,6 +102,7 @@ pub async fn build_task_session_context(
             presets: load_available_presets(repos, task.project_id).await,
             agent_servers: vec![],
         },
+        capability_context: None,
     };
     let cap_output = CapabilityResolver::resolve(&cap_input, platform_config);
     let mcp_servers: Vec<agentdash_spi::SessionMcpServer> = cap_output.tool.mcp_servers.clone();
@@ -185,16 +185,27 @@ async fn find_active_workflow_via_task_sessions(
     repos: &RepositorySet,
     task_id: Uuid,
 ) -> Option<ActiveWorkflowProjection> {
-    let bindings = repos
-        .session_binding_repo
-        .list_by_owner(SessionOwnerType::Task, task_id)
+    let links = repos
+        .lifecycle_run_link_repo
+        .list_by_subject(
+            agentdash_domain::workflow::RunLinkSubjectKind::Task,
+            task_id,
+        )
         .await
         .ok()?;
 
-    for binding in &bindings {
+    for link in &links {
+        let run = repos
+            .lifecycle_run_repo
+            .get_by_id(link.run_id)
+            .await
+            .ok()
+            .flatten();
+        let Some(session_id) = run.as_ref().and_then(|r| r.session_id.as_deref()) else {
+            continue;
+        };
         if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
-            &binding.session_id,
-            repos.session_binding_repo.as_ref(),
+            session_id,
             repos.workflow_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),

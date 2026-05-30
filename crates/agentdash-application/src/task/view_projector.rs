@@ -1,6 +1,6 @@
 //! 启动期 Task view 投影器 — 从 LifecycleRun/step state 反投影到 `Story.tasks[i].status`。
 //!
-//! **方向**：session/lifecycle 真相源 → Task view（只读投影），属于 projection 方向。
+//! **方向**：LifecycleRun 真相源 → Task view（只读投影），属于 projection 方向。
 //! 对应运行期反向（业务终态 → session cancel）的 command 通道见
 //! [`crate::reconcile::terminal_cancel`]。
 //!
@@ -8,7 +8,7 @@
 //! 启动流程在此处按 Activity attempt 状态实现：
 //!
 //! 1. 遍历所有 project 的 active LifecycleRun（`Ready | Running | Blocked`）
-//! 2. 通过 Story session binding 找到 Story，对每个能匹配
+//! 2. 通过 `LifecycleRunLink(subject_kind=Story)` 找到 Story，对每个能匹配
 //!    `Task.lifecycle_step_key` 的 activity，调
 //!    `Story::apply_task_projection` 将 activity attempt 状态反投影到 task view
 //! 3. 同步 append 一条 `state_changes` 全局投影索引（`kind = TaskStatusChanged`）
@@ -24,11 +24,11 @@ use std::sync::Arc;
 use serde_json::json;
 
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::{SessionBindingRepository, SessionOwnerType};
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
-    ActivityAttemptState, LifecycleRun, LifecycleRunRepository, LifecycleRunStatus,
+    ActivityAttemptState, LifecycleRun, LifecycleRunLinkRepository, LifecycleRunRepository,
+    LifecycleRunStatus, RunLinkSubjectKind,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -43,13 +43,13 @@ pub enum TaskViewProjectionError {
 ///
 /// 参数：
 /// - `project_repo` / `story_repo` / `state_change_repo`：基础领域仓储
-/// - `session_binding_repo`：从 run.session_id 反查 Story owner binding
+/// - `lifecycle_run_link_repo`：通过 RunLink 查找 run 所属 Story
 /// - `lifecycle_run_repo`：lifecycle run 仓储（本次投影的事实源）
 pub async fn project_task_views_on_boot(
     project_repo: &Arc<dyn ProjectRepository>,
     state_change_repo: &Arc<dyn StateChangeRepository>,
     story_repo: &Arc<dyn StoryRepository>,
-    session_binding_repo: &Arc<dyn SessionBindingRepository>,
+    lifecycle_run_link_repo: &Arc<dyn LifecycleRunLinkRepository>,
     lifecycle_run_repo: &Arc<dyn LifecycleRunRepository>,
 ) -> Result<(), TaskViewProjectionError> {
     let projects = project_repo.list_all().await?;
@@ -67,27 +67,22 @@ pub async fn project_task_views_on_boot(
                 continue;
             }
 
-            let story_binding = match session_binding_repo
-                .list_by_session(&run.session_id)
-                .await?
-                .into_iter()
-                .find(|binding| binding.owner_type == SessionOwnerType::Story)
-            {
-                Some(binding) => binding,
-                None => {
-                    tracing::debug!(
-                        run_id = %run.id,
-                        session_id = %run.session_id,
-                        "Task view 投影：非 Story run 不参与 task 投影"
-                    );
-                    continue;
-                }
+            let run_links = lifecycle_run_link_repo.list_by_run(run.id).await?;
+            let story_link = run_links
+                .iter()
+                .find(|link| link.subject_kind == RunLinkSubjectKind::Story);
+            let Some(story_link) = story_link else {
+                tracing::debug!(
+                    run_id = %run.id,
+                    "Task view 投影：run 无 Story RunLink，跳过"
+                );
+                continue;
             };
-            let Some(mut story) = story_repo.get_by_id(story_binding.owner_id).await? else {
+            let Some(mut story) = story_repo.get_by_id(story_link.subject_id).await? else {
                 tracing::warn!(
                     run_id = %run.id,
-                    story_id = %story_binding.owner_id,
-                    "Task view 投影：run 绑定的 Story 不存在，跳过 run"
+                    story_id = %story_link.subject_id,
+                    "Task view 投影：RunLink 指向的 Story 不存在，跳过 run"
                 );
                 continue;
             };
@@ -262,14 +257,11 @@ mod tests {
     use agentdash_domain::project::{
         Project, ProjectRepository, ProjectSubjectGrant, ProjectSubjectType,
     };
-    use agentdash_domain::session_binding::{
-        ProjectSessionBinding, SessionBinding, SessionBindingRepository,
-    };
     use agentdash_domain::story::{StateChange, Story};
     use agentdash_domain::task::Task;
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityLifecycleRunState, ActivityRunStatus,
-        LifecycleRun,
+        LifecycleRun, LifecycleRunLink, RunLinkRole,
     };
 
     // ── In-memory test doubles ──────────────────────────────────
@@ -442,6 +434,16 @@ mod tests {
                 .find(|r| r.id == id)
                 .cloned())
         }
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| ids.contains(&r.id))
+                .cloned()
+                .collect())
+        }
         async fn list_by_project(
             &self,
             project_id: Uuid,
@@ -477,7 +479,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|r| r.session_id == session_id)
+                .filter(|r| r.session_id.as_deref() == Some(session_id))
                 .cloned()
                 .collect())
         }
@@ -494,125 +496,79 @@ mod tests {
         }
     }
 
-    struct InMemorySessionBindingRepo {
-        bindings: Mutex<Vec<SessionBinding>>,
+    struct InMemoryLifecycleRunLinkRepo {
+        links: Mutex<Vec<LifecycleRunLink>>,
     }
 
     #[async_trait]
-    impl SessionBindingRepository for InMemorySessionBindingRepo {
-        async fn create(&self, binding: &SessionBinding) -> Result<(), DomainError> {
-            self.bindings.lock().unwrap().push(binding.clone());
+    impl LifecycleRunLinkRepository for InMemoryLifecycleRunLinkRepo {
+        async fn create(&self, link: &LifecycleRunLink) -> Result<(), DomainError> {
+            self.links.lock().unwrap().push(link.clone());
             Ok(())
         }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.bindings.lock().unwrap().retain(|b| b.id != id);
-            Ok(())
-        }
-
-        async fn delete_by_session_and_owner(
-            &self,
-            session_id: &str,
-            owner_type: SessionOwnerType,
-            owner_id: Uuid,
-        ) -> Result<(), DomainError> {
-            self.bindings.lock().unwrap().retain(|b| {
-                !(b.session_id == session_id
-                    && b.owner_type == owner_type
-                    && b.owner_id == owner_id)
-            });
-            Ok(())
-        }
-
-        async fn list_by_owner(
-            &self,
-            owner_type: SessionOwnerType,
-            owner_id: Uuid,
-        ) -> Result<Vec<SessionBinding>, DomainError> {
+        async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleRunLink>, DomainError> {
             Ok(self
-                .bindings
+                .links
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|b| b.owner_type == owner_type && b.owner_id == owner_id)
+                .filter(|l| l.run_id == run_id)
                 .cloned()
                 .collect())
         }
-
-        async fn list_by_session(
+        async fn list_by_subject(
             &self,
-            session_id: &str,
-        ) -> Result<Vec<SessionBinding>, DomainError> {
+            subject_kind: RunLinkSubjectKind,
+            subject_id: Uuid,
+        ) -> Result<Vec<LifecycleRunLink>, DomainError> {
             Ok(self
-                .bindings
+                .links
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|b| b.session_id == session_id)
+                .filter(|l| l.subject_kind == subject_kind && l.subject_id == subject_id)
                 .cloned()
                 .collect())
         }
-
-        async fn find_by_owner_and_label(
+        async fn list_by_subject_and_role(
             &self,
-            owner_type: SessionOwnerType,
-            owner_id: Uuid,
-            label: &str,
-        ) -> Result<Option<SessionBinding>, DomainError> {
+            subject_kind: RunLinkSubjectKind,
+            subject_id: Uuid,
+            role: RunLinkRole,
+        ) -> Result<Vec<LifecycleRunLink>, DomainError> {
             Ok(self
-                .bindings
+                .links
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|b| b.owner_type == owner_type && b.owner_id == owner_id && b.label == label)
-                .cloned())
-        }
-
-        async fn list_bound_session_ids(&self) -> Result<Vec<String>, DomainError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|b| b.session_id.clone())
-                .collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<ProjectSessionBinding>, DomainError> {
-            Ok(self
-                .bindings
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|b| b.project_id == project_id)
-                .cloned()
-                .map(|binding| ProjectSessionBinding {
-                    binding,
-                    story_title: None,
-                    story_id: None,
-                    owner_title: None,
+                .filter(|l| {
+                    l.subject_kind == subject_kind && l.subject_id == subject_id && l.role == role
                 })
+                .cloned()
                 .collect())
+        }
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.links.lock().unwrap().retain(|l| l.id != id);
+            Ok(())
+        }
+        async fn delete_by_run(&self, run_id: Uuid) -> Result<(), DomainError> {
+            self.links.lock().unwrap().retain(|l| l.run_id != run_id);
+            Ok(())
         }
     }
 
     // ── Fixtures ─────────────────────────────────────────────────
 
-    fn session_bindings_for_story(
-        project_id: Uuid,
+    fn run_link_repo_for_story(
+        run_id: Uuid,
         story_id: Uuid,
-        session_id: &str,
-    ) -> Arc<dyn SessionBindingRepository> {
-        Arc::new(InMemorySessionBindingRepo {
-            bindings: Mutex::new(vec![SessionBinding::new(
-                project_id,
-                session_id.to_string(),
-                SessionOwnerType::Story,
+    ) -> Arc<dyn LifecycleRunLinkRepository> {
+        Arc::new(InMemoryLifecycleRunLinkRepo {
+            links: Mutex::new(vec![LifecycleRunLink::new(
+                run_id,
+                RunLinkSubjectKind::Story,
                 story_id,
-                "companion",
+                RunLinkRole::Subject,
             )]),
         })
     }
@@ -638,8 +594,13 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let mut run =
-            LifecycleRun::new_activity(project_id, lifecycle_id, session_id, state).expect("run");
+        let mut run = LifecycleRun::new_activity(
+            project_id,
+            lifecycle_id,
+            Some(session_id.to_string()),
+            state,
+        )
+        .expect("run");
         run.status = LifecycleRunStatus::Running;
         run
     }
@@ -676,8 +637,7 @@ mod tests {
         let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
             changes: Mutex::new(Vec::new()),
         });
-        let session_binding_repo =
-            session_bindings_for_story(project_id, story_id, "sess-boot-running");
+        let lifecycle_run_link_repo = run_link_repo_for_story(run.id, story_id);
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -687,7 +647,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &session_binding_repo,
+            &lifecycle_run_link_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -733,8 +693,7 @@ mod tests {
         let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
             changes: Mutex::new(Vec::new()),
         });
-        let session_binding_repo =
-            session_bindings_for_story(project_id, story_id, "sess-boot-completed");
+        let lifecycle_run_link_repo = run_link_repo_for_story(run.id, story_id);
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -744,7 +703,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &session_binding_repo,
+            &lifecycle_run_link_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -780,7 +739,10 @@ mod tests {
         let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
             changes: Mutex::new(Vec::new()),
         });
-        let session_binding_repo = session_bindings_for_story(project_id, story_id, "unused");
+        let lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository> =
+            Arc::new(InMemoryLifecycleRunLinkRepo {
+                links: Mutex::new(vec![]),
+            });
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![]),
@@ -790,7 +752,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &session_binding_repo,
+            &lifecycle_run_link_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -836,8 +798,7 @@ mod tests {
         let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
             changes: Mutex::new(Vec::new()),
         });
-        let session_binding_repo =
-            session_bindings_for_story(project_id, story_id, "sess-boot-inactive");
+        let lifecycle_run_link_repo = run_link_repo_for_story(run.id, story_id);
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -847,7 +808,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &session_binding_repo,
+            &lifecycle_run_link_repo,
             &lifecycle_run_repo,
         )
         .await
@@ -891,8 +852,7 @@ mod tests {
         let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
             changes: Mutex::new(Vec::new()),
         });
-        let session_binding_repo =
-            session_bindings_for_story(project_id, story_id, "sess-boot-nobinding");
+        let lifecycle_run_link_repo = run_link_repo_for_story(run.id, story_id);
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![run]),
@@ -902,7 +862,7 @@ mod tests {
             &project_repo,
             &state_change_repo,
             &story_repo,
-            &session_binding_repo,
+            &lifecycle_run_link_repo,
             &lifecycle_run_repo,
         )
         .await

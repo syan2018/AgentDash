@@ -47,7 +47,6 @@ use super::validation::{validate_activity_lifecycle_definition, validate_workflo
 mod tests {
     use super::*;
     use crate::common::Mount;
-    use crate::session_binding::SessionOwnerType;
 
     fn sample_contract() -> WorkflowContract {
         WorkflowContract {
@@ -398,10 +397,6 @@ mod tests {
     #[test]
     fn workflow_binding_scope_conversions_stay_consistent() {
         assert_eq!(
-            WorkflowBindingKind::from(SessionOwnerType::Project),
-            WorkflowBindingKind::Project
-        );
-        assert_eq!(
             normalize_workflow_binding_kinds(vec![
                 WorkflowBindingKind::Story,
                 WorkflowBindingKind::Project,
@@ -418,20 +413,6 @@ mod tests {
             &[WorkflowBindingKind::Project, WorkflowBindingKind::Story],
             &[WorkflowBindingKind::Story]
         ));
-    }
-
-    #[test]
-    fn workflow_binding_kind_from_session_owner_task_maps_to_story() {
-        // Model C: SessionOwnerType::Task 映射到 WorkflowBindingKind::Story
-        // 因为 task 级 lifecycle 统一由 Story-bound lifecycle 承载
-        assert_eq!(
-            WorkflowBindingKind::from(SessionOwnerType::Task),
-            WorkflowBindingKind::Story
-        );
-        assert_eq!(
-            WorkflowBindingKind::from(SessionOwnerType::Story),
-            WorkflowBindingKind::Story
-        );
     }
 
     #[test]

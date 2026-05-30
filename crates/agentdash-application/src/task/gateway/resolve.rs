@@ -6,10 +6,10 @@
 use uuid::Uuid;
 
 use agentdash_domain::project::Project;
-use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::CapabilityScope;
 
 use crate::repository_set::RepositorySet;
 use crate::task::execution::TaskExecutionError;
@@ -157,19 +157,19 @@ pub async fn resolve_task_backend_id(
 
 pub async fn resolve_project_scope_for_owner(
     repos: &RepositorySet,
-    owner_type: SessionOwnerType,
+    owner_type: CapabilityScope,
     owner_id: Uuid,
 ) -> Result<Uuid, TaskExecutionError> {
     match owner_type {
-        SessionOwnerType::Project => Ok(owner_id),
-        SessionOwnerType::Story => repos
+        CapabilityScope::Project => Ok(owner_id),
+        CapabilityScope::Story => repos
             .story_repo
             .get_by_id(owner_id)
             .await
             .map_err(map_domain_error)?
             .map(|story| story.project_id)
             .ok_or_else(|| TaskExecutionError::NotFound(format!("Story {owner_id} 不存在"))),
-        SessionOwnerType::Task => crate::task::load_task(repos.story_repo.as_ref(), owner_id)
+        CapabilityScope::Task => crate::task::load_task(repos.story_repo.as_ref(), owner_id)
             .await
             .map_err(map_domain_error)?
             .map(|task| task.project_id)

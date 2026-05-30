@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::AgentConnector;
 
@@ -380,27 +379,15 @@ impl RoutineExecutor {
 
     async fn create_project_owned_session(
         &self,
-        project_id: Uuid,
+        _project_id: Uuid,
         title: &str,
-        label: &str,
+        _label: &str,
     ) -> Result<String, ApplicationError> {
         let meta = self
             .session_core
             .create_session(title)
             .await
             .map_err(|error| ApplicationError::Internal(format!("创建 session 失败: {error}")))?;
-        let binding = SessionBinding::new(
-            project_id,
-            meta.id.clone(),
-            SessionOwnerType::Project,
-            project_id,
-            label.to_string(),
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(ApplicationError::from)?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
@@ -412,34 +399,10 @@ impl RoutineExecutor {
 
     async fn find_or_create_project_agent_session(
         &self,
-        project_id: Uuid,
-        project_agent_id: Uuid,
-        label: &str,
+        _project_id: Uuid,
+        _project_agent_id: Uuid,
+        _label: &str,
     ) -> Result<String, ApplicationError> {
-        if let Some(binding) = self
-            .repos
-            .session_binding_repo
-            .find_by_owner_and_label(SessionOwnerType::Project, project_id, label)
-            .await
-            .map_err(ApplicationError::from)?
-        {
-            let meta = self
-                .session_core
-                .get_session_meta(&binding.session_id)
-                .await
-                .map_err(|error| {
-                    ApplicationError::Internal(format!("读取 session meta 失败: {error}"))
-                })?;
-            if meta.is_some() {
-                return Ok(binding.session_id);
-            }
-            self.repos
-                .session_binding_repo
-                .delete(binding.id)
-                .await
-                .map_err(ApplicationError::from)?;
-        }
-
         let meta = self
             .session_core
             .create_session("")
@@ -447,18 +410,6 @@ impl RoutineExecutor {
             .map_err(|error| {
                 ApplicationError::Internal(format!("创建 Project Agent session 失败: {error}"))
             })?;
-        let binding = SessionBinding::new(
-            project_id,
-            meta.id.clone(),
-            SessionOwnerType::Project,
-            project_id,
-            project_agent_session_label(project_agent_id),
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(ApplicationError::from)?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await

@@ -15,8 +15,8 @@ use agentdash_infrastructure::{
     PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
-    PostgresSessionBindingRepository, PostgresSessionRepository, PostgresSettingsRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRunLinkRepository,
+    PostgresRuntimeHealthRepository, PostgresSessionRepository, PostgresSettingsRepository,
     PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
     PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
     PostgresWorkspaceRepository,
@@ -47,7 +47,6 @@ pub(crate) async fn build_repositories(
     let story_repo = Arc::new(PostgresStoryRepository::new(pool.clone()));
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
-    let session_binding_repo = Arc::new(PostgresSessionBindingRepository::new(pool.clone()));
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
@@ -101,7 +100,10 @@ pub(crate) async fn build_repositories(
 
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
 
-    let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool));
+    let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
+    let run_link_repo = Arc::new(PostgresRunLinkRepository::new(pool.clone()));
+    let permission_grant_repo =
+        Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
 
     let repos = RepositorySet {
         project_repo: project_repo.clone(),
@@ -109,7 +111,6 @@ pub(crate) async fn build_repositories(
         workspace_repo: workspace_repo.clone(),
         story_repo: story_repo.clone(),
         state_change_repo: state_change_repo.clone(),
-        session_binding_repo: session_binding_repo.clone(),
         backend_repo: backend_repo.clone(),
         runtime_health_repo: runtime_health_repo.clone(),
         backend_execution_lease_repo: backend_execution_lease_repo.clone(),
@@ -132,9 +133,11 @@ pub(crate) async fn build_repositories(
         activity_lifecycle_definition_repo: workflow_repo.clone(),
         activity_execution_claim_repo: workflow_repo.clone(),
         lifecycle_run_repo: workflow_repo.clone(),
+        lifecycle_run_link_repo: run_link_repo.clone(),
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),
+        permission_grant_repo: permission_grant_repo.clone(),
     };
 
     let plugin_asset_count = plugin_library_asset_seeds.len();

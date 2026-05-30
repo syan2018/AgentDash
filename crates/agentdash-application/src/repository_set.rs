@@ -12,10 +12,10 @@ use agentdash_domain::identity::UserDirectoryRepository;
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::llm_provider::{LlmProviderCredentialRepository, LlmProviderRepository};
 use agentdash_domain::mcp_preset::McpPresetRepository;
+use agentdash_domain::permission::PermissionGrantRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::project_vfs_mount::ProjectVfsMountRepository;
 use agentdash_domain::routine::{RoutineExecutionRepository, RoutineRepository};
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::settings::SettingsRepository;
 use agentdash_domain::shared_library::{
     LibraryAssetRepository, ProjectExtensionInstallationRepository,
@@ -24,7 +24,8 @@ use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
-    LifecycleRunRepository, WorkflowDefinitionRepository, WorkflowTemplateInstallRepository,
+    LifecycleRunLinkRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -42,7 +43,6 @@ pub struct RepositorySet {
     pub workspace_repo: Arc<dyn WorkspaceRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
-    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
     pub backend_repo: Arc<dyn BackendRepository>,
     pub runtime_health_repo: Arc<dyn RuntimeHealthRepository>,
     pub backend_execution_lease_repo: Arc<dyn BackendExecutionLeaseRepository>,
@@ -65,7 +65,9 @@ pub struct RepositorySet {
     pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     pub activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,
     pub inline_file_repo: Arc<dyn InlineFileRepository>,
+    pub permission_grant_repo: Arc<dyn PermissionGrantRepository>,
 }

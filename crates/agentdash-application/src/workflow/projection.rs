@@ -1,4 +1,3 @@
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
     ActivityLifecycleDefinitionRepository, AgentSessionPolicy, LifecycleNodeType, LifecycleRun,
@@ -65,21 +64,16 @@ fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, Lifecycl
 
 /// 解析任意 session 的 Activity workflow projection。
 ///
-/// Activity executor session 通过 `lifecycle_activity:*` binding 反查 run / activity。
-/// 普通 owner session 若没有活跃 Activity attempt，则不再回落到旧 step run。
+/// 通过 LifecycleRun.session_id 反查 run / activity。
 pub async fn resolve_active_workflow_projection_for_session(
     session_id: &str,
-    session_binding_repo: &dyn SessionBindingRepository,
     definition_repo: &dyn WorkflowDefinitionRepository,
     activity_lifecycle_repo: &dyn ActivityLifecycleDefinitionRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    if let Some(activity_assoc) = super::session_association::resolve_activity_session_association(
-        session_id,
-        session_binding_repo,
-        run_repo,
-    )
-    .await?
+    if let Some(activity_assoc) =
+        super::session_association::resolve_activity_session_association(session_id, run_repo)
+            .await?
     {
         if let Some(projection) = build_activity_projection_from_run(
             activity_assoc.run,
@@ -210,8 +204,13 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         outputs: Vec::new(),
         inputs: Vec::new(),
     };
-    let run = LifecycleRun::new_activity(project_id, lifecycle.id, "sess-test", activity_state)
-        .expect("activity run should build");
+    let run = LifecycleRun::new_activity(
+        project_id,
+        lifecycle.id,
+        Some("sess-test".to_string()),
+        activity_state,
+    )
+    .expect("activity run should build");
     let (active_workflow_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,

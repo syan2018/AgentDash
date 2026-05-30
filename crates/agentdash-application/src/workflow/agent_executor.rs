@@ -1,9 +1,9 @@
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     ActivityLifecycleDefinition, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
     FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
 };
+use agentdash_spi::CapabilityScope;
 use std::sync::Arc;
 
 use agentdash_spi::{AgentConfig, FunctionRunner};
@@ -54,8 +54,6 @@ impl<P> AgentActivityExecutorLauncher<P> {
 #[async_trait::async_trait]
 pub trait AgentActivitySessionPort: Send + Sync {
     async fn create_session(&self, title: &str) -> Result<String, String>;
-    async fn list_session_bindings(&self, session_id: &str) -> Result<Vec<SessionBinding>, String>;
-    async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String>;
     async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String>;
     async fn set_executor_config(
         &self,
@@ -148,22 +146,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| format!("创建 activity child session 失败: {error}"))
     }
 
-    async fn list_session_bindings(&self, session_id: &str) -> Result<Vec<SessionBinding>, String> {
-        self.repos
-            .session_binding_repo
-            .list_by_session(session_id)
-            .await
-            .map_err(|error| format!("查询 root session binding 失败: {error}"))
-    }
-
-    async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String> {
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(|error| format!("创建 activity session binding 失败: {error}"))
-    }
-
     async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String> {
         self.session_core
             .get_session_meta(session_id)
@@ -251,8 +233,10 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
             let snapshot = hook_session.snapshot();
-            let owner_ctx =
-                owner_ctx_from_bindings_or_project(&snapshot.owners, definition.project_id);
+            let owner_ctx = scope_from_run_context_or_project(
+                snapshot.run_context.as_ref(),
+                definition.project_id,
+            );
             let runtime_mcp_servers = session_capability
                 .get_runtime_mcp_servers(root_session_id)
                 .await;
@@ -292,7 +276,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .await
             .map(|_| ())
         } else {
-            let owner_ctx = SessionOwnerCtx::Project {
+            let owner_ctx = agentdash_spi::CapabilityScopeCtx::Project {
                 project_id: definition.project_id,
             };
             let base_surface = session_capability
@@ -474,37 +458,6 @@ where
         let session_id = self
             .port
             .create_session(&title)
-            .await
-            .map_err(ActivityExecutorStartError::retryable)?;
-
-        let bindings = self
-            .port
-            .list_session_bindings(&self.context.root_session_id)
-            .await
-            .map_err(ActivityExecutorStartError::retryable)?;
-        let owner_binding = bindings
-            .iter()
-            .find(|binding| !binding.label.starts_with(LIFECYCLE_ACTIVITY_LABEL_PREFIX))
-            .or_else(|| bindings.first());
-        let binding = if let Some(owner_binding) = owner_binding {
-            SessionBinding::new(
-                self.context.project_id,
-                session_id.clone(),
-                owner_binding.owner_type,
-                owner_binding.owner_id,
-                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
-            )
-        } else {
-            SessionBinding::new(
-                self.context.project_id,
-                session_id.clone(),
-                SessionOwnerType::Project,
-                self.context.project_id,
-                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
-            )
-        };
-        self.port
-            .create_session_binding(binding)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
 
@@ -772,46 +725,28 @@ fn human_decision_id(claim: &ActivityExecutionClaim) -> String {
     format!("{}:{}#{}", claim.run_id, claim.activity_key, claim.attempt)
 }
 
-fn owner_ctx_from_bindings_or_project(
-    owners: &[agentdash_spi::hooks::HookOwnerSummary],
+fn scope_from_run_context_or_project(
+    run_context: Option<&agentdash_spi::hooks::SessionRunContext>,
     fallback_project_id: uuid::Uuid,
-) -> SessionOwnerCtx {
-    let Some(owner) = owners.first() else {
-        return SessionOwnerCtx::Project {
+) -> agentdash_spi::CapabilityScopeCtx {
+    match run_context {
+        Some(ctx) => match ctx.scope {
+            CapabilityScope::Task => agentdash_spi::CapabilityScopeCtx::Task {
+                project_id: ctx.project_id,
+                story_id: ctx.story_id.unwrap_or(ctx.project_id),
+                task_id: ctx.task_id.unwrap_or(ctx.project_id),
+            },
+            CapabilityScope::Story => agentdash_spi::CapabilityScopeCtx::Story {
+                project_id: ctx.project_id,
+                story_id: ctx.story_id.unwrap_or(ctx.project_id),
+            },
+            CapabilityScope::Project => agentdash_spi::CapabilityScopeCtx::Project {
+                project_id: ctx.project_id,
+            },
+        },
+        None => agentdash_spi::CapabilityScopeCtx::Project {
             project_id: fallback_project_id,
-        };
-    };
-    let project_id = owner
-        .project_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-        .unwrap_or(fallback_project_id);
-    let story_id = owner
-        .story_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
-    let task_id = owner
-        .task_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
-
-    match owner.owner_type {
-        SessionOwnerType::Task => match (story_id, task_id) {
-            (Some(story_id), Some(task_id)) => SessionOwnerCtx::Task {
-                project_id,
-                story_id,
-                task_id,
-            },
-            _ => SessionOwnerCtx::Project { project_id },
         },
-        SessionOwnerType::Story => match story_id {
-            Some(story_id) => SessionOwnerCtx::Story {
-                project_id,
-                story_id,
-            },
-            None => SessionOwnerCtx::Project { project_id },
-        },
-        SessionOwnerType::Project => SessionOwnerCtx::Project { project_id },
     }
 }
 
@@ -819,7 +754,6 @@ fn owner_ctx_from_bindings_or_project(
 mod tests {
     use std::sync::Mutex;
 
-    use agentdash_domain::session_binding::SessionOwnerType;
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
@@ -835,7 +769,6 @@ mod tests {
     #[derive(Default)]
     struct FakePort {
         sessions: Mutex<Vec<String>>,
-        bindings: Mutex<Vec<SessionBinding>>,
         launch_error: Mutex<Option<String>>,
         launches: Mutex<Vec<String>>,
         continue_root_applies: Mutex<Vec<String>>,
@@ -847,18 +780,6 @@ mod tests {
             let session_id = format!("child-{}", self.sessions.lock().unwrap().len() + 1);
             self.sessions.lock().unwrap().push(title.to_string());
             Ok(session_id)
-        }
-
-        async fn list_session_bindings(
-            &self,
-            _session_id: &str,
-        ) -> Result<Vec<SessionBinding>, String> {
-            Ok(self.bindings.lock().unwrap().clone())
-        }
-
-        async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String> {
-            self.bindings.lock().unwrap().push(binding);
-            Ok(())
         }
 
         async fn get_executor_config(
@@ -1129,20 +1050,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_child_creates_binding_and_launches_prompt() {
+    async fn spawn_child_creates_session_and_launches_prompt() {
         let project_id = uuid::Uuid::new_v4();
-        let root_owner_id = uuid::Uuid::new_v4();
-        let root_binding = SessionBinding::new(
-            project_id,
-            "root-session".to_string(),
-            SessionOwnerType::Story,
-            root_owner_id,
-            "execution",
-        );
-        let port = FakePort {
-            bindings: Mutex::new(vec![root_binding]),
-            ..Default::default()
-        };
+        let port = FakePort::default();
         let launcher = AgentActivityExecutorLauncher::new(
             AgentActivityLaunchContext {
                 project_id,
@@ -1152,9 +1062,8 @@ mod tests {
             port,
         );
         let definition = definition(project_id);
-        let run_id = uuid::Uuid::new_v4();
         let claim = ActivityExecutionClaim {
-            run_id,
+            run_id: uuid::Uuid::new_v4(),
             activity_key: "plan".to_string(),
             attempt: 1,
             claim_id: uuid::Uuid::new_v4(),
@@ -1178,13 +1087,6 @@ mod tests {
             }
         );
         assert!(start_result.immediate_events.is_empty());
-        let bindings = launcher.port.bindings.lock().unwrap();
-        let activity_binding = bindings
-            .iter()
-            .find(|binding| binding.label == format!("lifecycle_activity:{run_id}:plan#1"))
-            .expect("activity binding");
-        assert_eq!(activity_binding.owner_type, SessionOwnerType::Story);
-        assert_eq!(activity_binding.owner_id, root_owner_id);
         assert_eq!(
             launcher.port.launches.lock().unwrap().as_slice(),
             &["child-1".to_string()]

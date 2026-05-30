@@ -1,14 +1,13 @@
 use uuid::Uuid;
 
 use crate::error::ApplicationError;
-use crate::session::construction::SessionConstructionPlan;
+use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
 use crate::session::construction_planner::SessionConstructionPlanner;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::construction_use_case::{
     SessionConstructionProjectionMode, SessionConstructionUseCaseDeps,
     finalize_session_construction_projection,
 };
-use crate::session::ownership::ResolvedSessionOwner;
 use crate::session::{LaunchCommand, RuntimeCommandRecord, SessionMeta, UserPromptInput};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;

@@ -26,7 +26,7 @@ export function HookRuntimeSurfaceCard({
     <SurfaceCard eyebrow="运行中 Hook Runtime" title={`revision ${hookRuntime.revision}`}>
       <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1">
-          owners: {snapshot.owners.length}
+          scope: {snapshot.run_context?.scope ?? "none"}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1">
           sources: {snapshot.sources.length}

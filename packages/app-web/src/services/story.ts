@@ -14,12 +14,13 @@ import type {
   ContextSourceRef,
   ExecutionVfs,
   ResolvedVfsSurface,
-  SessionBinding,
   SessionComposition,
   SessionContextSnapshot,
   Story,
   StoryContext,
   StorySessionInfo,
+  StoryRunsResponse,
+  StoryRunOverviewDto,
   Task,
 } from "../types";
 import { isThinkingLevel } from "../types";
@@ -295,14 +296,19 @@ const mapTask = (raw: Record<string, unknown>): Task => {
   };
 };
 
-const mapSessionBinding = (raw: Record<string, unknown>): SessionBinding => ({
+/** Story 级会话绑定条目（替代已移除的 SessionBinding） */
+export interface StorySessionEntry {
+  id: string;
+  session_id: string;
+  label: string;
+  session_title?: string;
+  session_updated_at?: number;
+}
+
+const mapStorySessionEntry = (raw: Record<string, unknown>): StorySessionEntry => ({
   id: requireStringField(raw, "id"),
-  project_id: requireStringField(raw, "project_id"),
   session_id: requireStringField(raw, "session_id"),
-  owner_type: requireStringField(raw, "owner_type") as SessionBinding["owner_type"],
-  owner_id: requireStringField(raw, "owner_id"),
   label: requireStringField(raw, "label"),
-  created_at: requireStringField(raw, "created_at"),
   session_title: raw.session_title != null ? String(raw.session_title) : undefined,
   session_updated_at: raw.session_updated_at != null ? Number(raw.session_updated_at) : undefined,
 });
@@ -521,6 +527,18 @@ export async function fetchTaskSession(taskId: string): Promise<TaskSessionPaylo
   };
 }
 
+// ─── Story Runs API (run-oriented) ───────────────────────
+
+export async function fetchStoryRuns(storyId: string): Promise<StoryRunOverviewDto[]> {
+  const response = await api.get<StoryRunsResponse>(`/stories/${storyId}/runs`);
+  return response.runs;
+}
+
+export async function fetchActiveStoryRun(storyId: string): Promise<StoryRunOverviewDto | null> {
+  const response = await api.get<StoryRunOverviewDto | null>(`/stories/${storyId}/runs/active`);
+  return response;
+}
+
 // ─── Story Session 绑定 API ──────────────────────────────
 
 export async function fetchStorySessionInfo(
@@ -539,9 +557,9 @@ export async function fetchStorySessionInfo(
   };
 }
 
-export async function fetchStorySessions(storyId: string): Promise<SessionBinding[]> {
+export async function fetchStorySessions(storyId: string): Promise<StorySessionEntry[]> {
   const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/sessions`);
-  return response.map(mapSessionBinding);
+  return response.map(mapStorySessionEntry);
 }
 
 export interface CreateStorySessionInput {
@@ -553,9 +571,9 @@ export interface CreateStorySessionInput {
 export async function createStorySession(
   storyId: string,
   input: CreateStorySessionInput,
-): Promise<SessionBinding> {
+): Promise<StorySessionEntry> {
   const raw = await api.post<Record<string, unknown>>(`/stories/${storyId}/sessions`, input);
-  return mapSessionBinding(raw);
+  return mapStorySessionEntry(raw);
 }
 
 export async function unbindStorySession(storyId: string, bindingId: string): Promise<void> {

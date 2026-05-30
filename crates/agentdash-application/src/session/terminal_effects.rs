@@ -477,6 +477,7 @@ mod tests {
                 id: "sess-hook-replay".to_string(),
                 title: "hook replay".to_string(),
                 title_source: TitleSource::Auto,
+                project_id: None,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,

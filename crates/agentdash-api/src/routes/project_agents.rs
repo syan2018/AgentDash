@@ -3,12 +3,7 @@ use std::sync::Arc;
 use agentdash_application::session::construction_planner::{
     ResolvedProjectAgentContext, SessionConstructionPlanner,
 };
-use agentdash_domain::{
-    agent::ProjectAgent,
-    inline_file::InlineFileOwnerKind,
-    project::Project,
-    session_binding::{SessionBinding, SessionOwnerType},
-};
+use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -167,85 +162,20 @@ pub async fn open_project_agent_session(
             .await
             .map_err(ApiError::Internal)?;
 
-    let label = SessionConstructionPlanner::project_agent_session_label(&agent.key);
-
-    if !query.force_new {
-        let existing_binding = state
-            .repos
-            .session_binding_repo
-            .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
-            .await
-            .map_err(ApiError::from)?;
-
-        if let Some(binding) = existing_binding
-            && let Some(meta) = state
-                .services
-                .session_core
-                .get_session_meta(&binding.session_id)
-                .await
-                .map_err(ApiError::from)?
-        {
-            let session_id = binding.session_id.clone();
-            let binding_id = binding.id.to_string();
-            let session = Some(ProjectAgentSession {
-                binding_id: binding_id.clone(),
-                session_id: session_id.clone(),
-                session_title: Some(meta.title),
-                last_activity: Some(meta.updated_at),
-            });
-            let summary = build_project_agent_summary(&project, &agent, session);
-            return Ok(Json(OpenProjectAgentSessionResult {
-                created: false,
-                session_id,
-                binding_id,
-                agent: summary,
-            }));
-        }
-    }
-
-    // Clean up stale binding (session gone from executor hub) -- but only the latest one
-    if let Some(binding) = state
-        .repos
-        .session_binding_repo
-        .find_by_owner_and_label(SessionOwnerType::Project, project.id, &label)
-        .await
-        .map_err(ApiError::from)?
-    {
-        let session_alive = state
-            .services
-            .session_core
-            .get_session_meta(&binding.session_id)
-            .await
-            .map_err(ApiError::from)?
-            .is_some();
-
-        if !session_alive {
-            state
-                .repos
-                .session_binding_repo
-                .delete(binding.id)
-                .await
-                .map_err(ApiError::from)?;
-        }
-    }
+    let _ = query.force_new;
 
     let meta = state
         .services
         .session_core
         .create_session("")
         .await
-        .map_err(ApiError::from)?;
-    let binding = SessionBinding::new(
-        project.id,
-        meta.id.clone(),
-        SessionOwnerType::Project,
-        project.id,
-        label,
-    );
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
     state
-        .repos
-        .session_binding_repo
-        .create(&binding)
+        .services
+        .session_core
+        .update_session_meta(&meta.id, |meta| {
+            meta.project_id = Some(project.id.to_string());
+        })
         .await
         .map_err(ApiError::from)?;
     state
@@ -281,7 +211,7 @@ pub async fn open_project_agent_session(
     }
 
     let session = Some(ProjectAgentSession {
-        binding_id: binding.id.to_string(),
+        binding_id: meta.id.clone(),
         session_id: meta.id.clone(),
         session_title: Some(meta.title),
         last_activity: Some(meta.updated_at),
@@ -290,8 +220,8 @@ pub async fn open_project_agent_session(
 
     Ok(Json(OpenProjectAgentSessionResult {
         created: true,
-        session_id: meta.id,
-        binding_id: binding.id.to_string(),
+        session_id: meta.id.clone(),
+        binding_id: meta.id,
         agent: summary,
     }))
 }
@@ -336,47 +266,20 @@ fn thinking_level_response(level: agentdash_spi::ThinkingLevel) -> ThinkingLevel
 }
 
 async fn find_project_agent_session(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    agent_key: &str,
+    _state: &Arc<AppState>,
+    _project_id: Uuid,
+    _agent_key: &str,
 ) -> Result<Option<ProjectAgentSession>, ApiError> {
-    let binding = state
-        .repos
-        .session_binding_repo
-        .find_by_owner_and_label(
-            SessionOwnerType::Project,
-            project_id,
-            &SessionConstructionPlanner::project_agent_session_label(agent_key),
-        )
-        .await
-        .map_err(ApiError::from)?;
-
-    let Some(binding) = binding else {
-        return Ok(None);
-    };
-
-    let meta = state
-        .services
-        .session_core
-        .get_session_meta(&binding.session_id)
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Some(ProjectAgentSession {
-        binding_id: binding.id.to_string(),
-        session_id: binding.session_id,
-        session_title: meta.as_ref().map(|item| item.title.clone()),
-        last_activity: meta.as_ref().map(|item| item.updated_at),
-    }))
+    Ok(None)
 }
 
 pub async fn list_project_agent_sessions(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((project_id, agent_key)): Path<(String, String)>,
+    Path((project_id, _agent_key)): Path<(String, String)>,
 ) -> Result<Json<Vec<ProjectAgentSession>>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
-    let project = load_project_with_permission(
+    let _project = load_project_with_permission(
         state.as_ref(),
         &current_user,
         project_id,
@@ -384,40 +287,7 @@ pub async fn list_project_agent_sessions(
     )
     .await?;
 
-    let label = SessionConstructionPlanner::project_agent_session_label(&agent_key);
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_owner(SessionOwnerType::Project, project.id)
-        .await
-        .map_err(ApiError::from)?;
-
-    let matching: Vec<_> = bindings.into_iter().filter(|b| b.label == label).collect();
-
-    let mut sessions = Vec::with_capacity(matching.len());
-    for binding in matching {
-        let meta = state
-            .services
-            .session_core
-            .get_session_meta(&binding.session_id)
-            .await
-            .map_err(ApiError::from)?;
-
-        sessions.push(ProjectAgentSession {
-            binding_id: binding.id.to_string(),
-            session_id: binding.session_id,
-            session_title: meta.as_ref().map(|m| m.title.clone()),
-            last_activity: meta.as_ref().map(|m| m.updated_at),
-        });
-    }
-
-    sessions.sort_by(|a, b| {
-        let at = b.last_activity.unwrap_or(0);
-        let bt = a.last_activity.unwrap_or(0);
-        at.cmp(&bt)
-    });
-
-    Ok(Json(sessions))
+    Ok(Json(vec![]))
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
@@ -790,7 +660,7 @@ async fn auto_start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: lifecycle_key.to_string(),
-            root_session_id: run.session_id.clone(),
+            root_session_id: run.session_id.clone().unwrap_or_default(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),

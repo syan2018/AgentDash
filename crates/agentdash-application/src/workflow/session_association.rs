@@ -1,4 +1,3 @@
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
 use uuid::Uuid;
 
@@ -44,38 +43,37 @@ pub fn lifecycle_activity_parts_from_label(label: &str) -> Option<LifecycleActiv
     })
 }
 
-/// 解析 session 是否为某个 lifecycle activity attempt 子 session。
+/// 解析 session 是否为某个 lifecycle activity attempt 的执行 session。
 ///
-/// Activity 子 session label 内含 run_id，因此反查不需要按项目扫描 runs；
-/// 该 label 是 runtime 事件回写 ActivityEvent 的定位锚点。
+/// 直接通过 `LifecycleRunRepository.list_by_session` 查找关联的 run，
+/// 再从 run 的 activity_state 推导当前 running activity。
 pub async fn resolve_activity_session_association(
     session_id: &str,
-    session_binding_repo: &dyn SessionBindingRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<LifecycleActivitySessionAssociation>, String> {
-    let bindings = session_binding_repo
+    let runs = run_repo
         .list_by_session(session_id)
         .await
-        .map_err(|e| format!("查询 session bindings 失败: {e}"))?;
-    for binding in bindings {
-        let Some(parts) = lifecycle_activity_parts_from_label(&binding.label) else {
-            continue;
-        };
-        let Some(run) = run_repo
-            .get_by_id(parts.run_id)
-            .await
-            .map_err(|e| format!("查询 lifecycle run 失败: {e}"))?
-        else {
-            continue;
-        };
-        if run.project_id != binding.project_id {
-            continue;
+        .map_err(|e| format!("查询 lifecycle runs 失败: {e}"))?;
+
+    for run in runs {
+        let active_info = run.activity_state.as_ref().and_then(|state| {
+            state
+                .attempts
+                .iter()
+                .find(|a| {
+                    a.status == agentdash_domain::workflow::ActivityAttemptStatus::Running
+                        || a.status == agentdash_domain::workflow::ActivityAttemptStatus::Claiming
+                })
+                .map(|a| (a.activity_key.clone(), a.attempt))
+        });
+        if let Some((activity_key, attempt)) = active_info {
+            return Ok(Some(LifecycleActivitySessionAssociation {
+                run,
+                activity_key,
+                attempt,
+            }));
         }
-        return Ok(Some(LifecycleActivitySessionAssociation {
-            run,
-            activity_key: parts.activity_key,
-            attempt: parts.attempt,
-        }));
     }
 
     Ok(None)

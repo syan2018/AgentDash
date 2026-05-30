@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::task::TaskStatus;
+use agentdash_domain::workflow::{LifecycleRunLinkRepository, LifecycleRunRepository};
 
 use crate::session::SessionRuntimeService;
 
@@ -25,19 +25,22 @@ use crate::session::SessionRuntimeService;
 pub struct TerminalCancelCoordinator {
     session_runtime: SessionRuntimeService,
     story_repo: Arc<dyn StoryRepository>,
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
+    lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
 impl TerminalCancelCoordinator {
     pub fn new(
         session_runtime: SessionRuntimeService,
         story_repo: Arc<dyn StoryRepository>,
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
+        lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
             session_runtime,
             story_repo,
-            session_binding_repo,
+            lifecycle_run_link_repo,
+            lifecycle_run_repo,
         }
     }
 
@@ -48,7 +51,8 @@ impl TerminalCancelCoordinator {
         }
 
         let session_id = match crate::task::find_task_execution_session_id(
-            self.session_binding_repo.as_ref(),
+            self.lifecycle_run_link_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
             task_id,
         )
         .await
@@ -105,7 +109,8 @@ impl TerminalCancelCoordinator {
                 continue;
             }
             let session_id = match crate::task::find_task_execution_session_id(
-                self.session_binding_repo.as_ref(),
+                self.lifecycle_run_link_repo.as_ref(),
+                self.lifecycle_run_repo.as_ref(),
                 task.id,
             )
             .await

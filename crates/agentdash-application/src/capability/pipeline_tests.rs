@@ -12,8 +12,8 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_domain::session_binding::SessionOwnerCtx;
 use agentdash_domain::workflow::ToolCapabilityDirective;
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::SetDelta;
 use agentdash_spi::ToolCluster;
 use uuid::Uuid;
@@ -63,7 +63,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
@@ -78,6 +78,7 @@ fn agent_node_step_directives_produce_expected_session_tools() {
             presets: Default::default(),
             agent_servers: vec![mcp_entry("code_analyzer", "http://external:8080/mcp")],
         },
+        capability_context: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -113,7 +114,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
@@ -128,6 +129,7 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
             presets: Default::default(),
             agent_servers: vec![mcp_entry("external_analyzer", "http://external:9000/mcp")],
         },
+        capability_context: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -177,11 +179,12 @@ fn phase_node_transition_produces_delta_markdown_and_updated_mcp() {
 #[test]
 fn phase_node_without_directives_inherits_baseline_and_emits_no_delta() {
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: Vec::new(),
         mcp_candidates: McpCandidates::default(),
+        capability_context: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
 
@@ -209,7 +212,7 @@ fn phase_node_invalid_directives_are_tolerated() {
     ];
 
     let input = CapabilityResolverInput {
-        owner_ctx: SessionOwnerCtx::Project {
+        owner_ctx: CapabilityScopeCtx::Project {
             project_id: Uuid::new_v4(),
         },
         contributions: vec![ContextContributions {
@@ -221,6 +224,7 @@ fn phase_node_invalid_directives_are_tolerated() {
             companion: None,
         }],
         mcp_candidates: McpCandidates::default(),
+        capability_context: None,
     };
     let output = CapabilityResolver::resolve(&input, &platform());
     assert!(

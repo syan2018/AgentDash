@@ -2,11 +2,11 @@ use agentdash_domain::{
     agent::ProjectAgent,
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
-    session_binding::SessionOwnerCtx,
     story::Story,
     task::AgentBinding,
     workspace::Workspace,
 };
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -38,8 +38,9 @@ use crate::{
     },
 };
 
-use super::construction::{SessionConstructionContextProjection, SessionConstructionPlan};
-use super::ownership::ResolvedSessionOwner;
+use super::construction::{
+    ResolvedSessionOwner, SessionConstructionContextProjection, SessionConstructionPlan,
+};
 
 pub struct SessionConstructionPlanner;
 
@@ -189,7 +190,6 @@ impl SessionConstructionPlanner {
             || (resolved_config.is_none() && default_agent_type.is_some());
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.session_binding_repo.as_ref(),
             repos.workflow_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
@@ -246,7 +246,7 @@ impl SessionConstructionPlanner {
         }
         let cap_output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_ctx: SessionOwnerCtx::Story {
+                owner_ctx: CapabilityScopeCtx::Story {
                     project_id: story.project_id,
                     story_id: story.id,
                 },
@@ -255,6 +255,7 @@ impl SessionConstructionPlanner {
                     presets: load_project_presets(repos, story.project_id).await,
                     agent_servers: vec![],
                 },
+                capability_context: None,
             },
             platform_config,
         );
@@ -330,7 +331,6 @@ impl SessionConstructionPlanner {
             .is_some_and(|c| c.is_cloud_native());
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.session_binding_repo.as_ref(),
             repos.workflow_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
@@ -412,7 +412,7 @@ impl SessionConstructionPlanner {
             crate::session::extract_agent_mcp_entries(&project_agent.preset_mcp_servers);
         let cap_output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_ctx: SessionOwnerCtx::Project {
+                owner_ctx: CapabilityScopeCtx::Project {
                     project_id: project.id,
                 },
                 contributions,
@@ -420,6 +420,7 @@ impl SessionConstructionPlanner {
                     presets: load_project_presets(repos, project.id).await,
                     agent_servers: agent_mcp_entries,
                 },
+                capability_context: None,
             },
             platform_config,
         );

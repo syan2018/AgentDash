@@ -754,6 +754,7 @@ mod tests {
             id: session_id.to_string(),
             title: "New session".to_string(),
             title_source,
+            project_id: None,
             created_at: 1,
             updated_at: 1,
             last_event_seq: 0,

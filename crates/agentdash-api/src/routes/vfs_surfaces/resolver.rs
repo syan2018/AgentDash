@@ -201,10 +201,8 @@ pub(crate) async fn resolve_surface_bundle(
             }
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
-            let bindings =
-                ensure_session_permission(state.as_ref(), current_user, session_id, permission)
-                    .await?;
-            build_session_context_plan(state, current_user, session_id, &bindings)
+            ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
+            build_session_context_plan(state, current_user, session_id)
                 .await?
                 .and_then(|plan| plan.context_projection.vfs)
                 .unwrap_or_default()

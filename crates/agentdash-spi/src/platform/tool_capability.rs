@@ -10,6 +10,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::connector::ToolCluster;
 
@@ -591,22 +592,107 @@ pub fn capability_to_platform_mcp_scope(cap: &ToolCapability) -> Option<Platform
     }
 }
 
-// ── Visibility Rule（仅适用于平台 well-known 能力） ──
+// ── Capability Scope ──
 
-use agentdash_domain::session_binding::SessionOwnerType;
+/// Session 的能力作用域。
+///
+/// 替代原 `SessionOwnerType` 在 capability visibility 中的角色。
+/// 仅用于判断 "当前 session 处于什么级别的执行上下文"，不表达 ownership 关系。
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityScope {
+    #[default]
+    Project,
+    Story,
+    Task,
+}
+
+impl fmt::Display for CapabilityScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Project => write!(f, "project"),
+            Self::Story => write!(f, "story"),
+            Self::Task => write!(f, "task"),
+        }
+    }
+}
+
+/// 携带 ID 的 session 作用域上下文。
+///
+/// 用于 capability resolver 和 MCP injection 等需要具体 entity ID 的场景。
+/// `owner_type()` 返回简单 `CapabilityScope` 以供 visibility 规则匹配。
+#[derive(Debug, Clone)]
+pub enum CapabilityScopeCtx {
+    Project {
+        project_id: Uuid,
+    },
+    Story {
+        project_id: Uuid,
+        story_id: Uuid,
+    },
+    Task {
+        project_id: Uuid,
+        story_id: Uuid,
+        task_id: Uuid,
+    },
+}
+
+impl CapabilityScopeCtx {
+    pub fn owner_type(&self) -> CapabilityScope {
+        match self {
+            Self::Project { .. } => CapabilityScope::Project,
+            Self::Story { .. } => CapabilityScope::Story,
+            Self::Task { .. } => CapabilityScope::Task,
+        }
+    }
+
+    pub fn project_id(&self) -> Uuid {
+        match self {
+            Self::Project { project_id }
+            | Self::Story { project_id, .. }
+            | Self::Task { project_id, .. } => *project_id,
+        }
+    }
+
+    pub fn story_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Story { story_id, .. } | Self::Task { story_id, .. } => Some(*story_id),
+            _ => None,
+        }
+    }
+
+    pub fn task_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Task { task_id, .. } => Some(*task_id),
+            _ => None,
+        }
+    }
+}
+
+impl Default for CapabilityScopeCtx {
+    fn default() -> Self {
+        Self::Project {
+            project_id: Uuid::nil(),
+        }
+    }
+}
+
+// ── Visibility Rule（仅适用于平台 well-known 能力） ──
 
 /// 平台 well-known 能力的可见性规则。
 ///
 /// 语义分两层：
-/// - **屏蔽（AND）**：`allowed_owner_types` 是硬边界，不在列表的 owner 一定不可见。
+/// - **屏蔽（AND）**：`allowed_scopes` 是硬边界，不在列表的 scope 一定不可见。
 /// - **授予（OR）**：`auto_granted` / `agent_can_grant` / `workflow_can_grant`
 ///   至少一个来源命中即可见；三者同时为 false 代表该能力当前无任何授予源。
 #[derive(Debug, Clone)]
 pub struct CapabilityVisibilityRule {
     pub key: &'static str,
-    /// 允许该能力生效的 session owner 类型（硬边界，AND 语义）
-    pub allowed_owner_types: &'static [SessionOwnerType],
-    /// 只要 owner 匹配就默认授予（用于基础能力，如 file_system）
+    /// 允许该能力生效的 session 作用域（硬边界，AND 语义）
+    pub allowed_scopes: &'static [CapabilityScope],
+    /// 只要 scope 匹配就默认授予（用于基础能力，如 file_system）
     pub auto_granted: bool,
     /// agent config 显式声明即授予
     pub agent_can_grant: bool,
@@ -616,75 +702,75 @@ pub struct CapabilityVisibilityRule {
 
 /// 返回所有平台 well-known 能力的默认可见性规则。
 pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
-    use SessionOwnerType::*;
+    use CapabilityScope::*;
 
     static RULES: &[CapabilityVisibilityRule] = &[
         CapabilityVisibilityRule {
             key: CAP_FILE_READ,
-            allowed_owner_types: &[Project, Story, Task],
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_FILE_WRITE,
-            allowed_owner_types: &[Project, Story, Task],
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_SHELL_EXECUTE,
-            allowed_owner_types: &[Project, Story, Task],
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_CANVAS,
-            allowed_owner_types: &[Project],
+            allowed_scopes: &[Project],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_WORKFLOW,
-            allowed_owner_types: &[Project, Story, Task],
+            allowed_scopes: &[Project, Story, Task],
             auto_granted: false,
             agent_can_grant: false,
             workflow_can_grant: true,
         },
         CapabilityVisibilityRule {
             key: CAP_COLLABORATION,
-            allowed_owner_types: &[Project],
+            allowed_scopes: &[Project],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_STORY_MANAGEMENT,
-            allowed_owner_types: &[Story],
+            allowed_scopes: &[Story],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_TASK_MANAGEMENT,
-            allowed_owner_types: &[Task],
+            allowed_scopes: &[Task],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_RELAY_MANAGEMENT,
-            allowed_owner_types: &[Project],
+            allowed_scopes: &[Project],
             auto_granted: true,
             agent_can_grant: false,
             workflow_can_grant: false,
         },
         CapabilityVisibilityRule {
             key: CAP_WORKFLOW_MANAGEMENT,
-            allowed_owner_types: &[Project],
+            allowed_scopes: &[Project],
             auto_granted: false,
             agent_can_grant: true,
             workflow_can_grant: true,
@@ -698,12 +784,12 @@ pub fn default_visibility_rules() -> &'static [CapabilityVisibilityRule] {
 /// 判定逻辑：
 /// 1. 自定义 `mcp:*` 能力不受规则约束，始终可见。
 /// 2. 未登记的 well-known key 不可见。
-/// 3. 屏蔽（AND）：`owner_type` 不在 `allowed_owner_types` 列表内 → 不可见。
+/// 3. 屏蔽（AND）：`scope` 不在 `allowed_scopes` 列表内 → 不可见。
 /// 4. 授予（OR）：`auto_granted` 或（`agent_can_grant && agent_declares`）或
 ///    （`workflow_can_grant && workflow_declares`）任一为真即可见。
 pub fn is_capability_visible(
     cap: &ToolCapability,
-    owner_type: SessionOwnerType,
+    scope: CapabilityScope,
     agent_declares: bool,
     workflow_declares: bool,
 ) -> bool {
@@ -717,7 +803,7 @@ pub fn is_capability_visible(
         None => return false,
     };
 
-    if !rule.allowed_owner_types.contains(&owner_type) {
+    if !rule.allowed_scopes.contains(&scope) {
         return false;
     }
 
@@ -819,7 +905,7 @@ mod tests {
         let cap = ToolCapability::new(CAP_FILE_READ);
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             false
         ));
@@ -830,7 +916,7 @@ mod tests {
         let cap = ToolCapability::new(CAP_FILE_WRITE);
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             false
         ));
@@ -841,7 +927,7 @@ mod tests {
         let cap = ToolCapability::new(CAP_STORY_MANAGEMENT);
         assert!(!is_capability_visible(
             &cap,
-            SessionOwnerType::Task,
+            CapabilityScope::Task,
             false,
             false
         ));
@@ -852,13 +938,13 @@ mod tests {
         let cap = ToolCapability::new(CAP_WORKFLOW);
         assert!(!is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             false,
         ));
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             true,
         ));
@@ -869,13 +955,13 @@ mod tests {
         let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
         assert!(!is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             false,
         ));
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             true,
             false,
         ));
@@ -883,12 +969,10 @@ mod tests {
 
     #[test]
     fn visibility_workflow_management_workflow_grant_path() {
-        // OR 语义：workflow contract 显式声明即可授予 workflow_management，
-        // 无需 agent config 显式声明，匹配 builtin_workflow_admin 使用场景。
         let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Project,
+            CapabilityScope::Project,
             false,
             true,
         ));
@@ -896,18 +980,16 @@ mod tests {
 
     #[test]
     fn visibility_workflow_management_hard_boundary_still_blocks() {
-        // 屏蔽 AND：allowed_owner_types 是硬边界，Task/Story owner
-        // 即便同时命中所有授予源也不可见。
         let cap = ToolCapability::new(CAP_WORKFLOW_MANAGEMENT);
         assert!(!is_capability_visible(
             &cap,
-            SessionOwnerType::Task,
+            CapabilityScope::Task,
             true,
             true,
         ));
         assert!(!is_capability_visible(
             &cap,
-            SessionOwnerType::Story,
+            CapabilityScope::Story,
             true,
             true,
         ));
@@ -918,7 +1000,7 @@ mod tests {
         let cap = ToolCapability::custom_mcp("anything");
         assert!(is_capability_visible(
             &cap,
-            SessionOwnerType::Task,
+            CapabilityScope::Task,
             false,
             false,
         ));

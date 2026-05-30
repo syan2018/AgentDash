@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 use agentdash_domain::{
     common::AgentConfig,
-    session_binding::SessionOwnerType,
     story::ChangeKind,
     task::{Task, TaskStatus},
 };
@@ -22,9 +21,9 @@ use crate::workspace::BackendAvailability;
 use super::execution::*;
 use super::gateway::{
     append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
-    clear_task_session_binding, create_task_session as gw_create_task_session,
-    get_session_overview as gw_get_session_overview, get_task as gw_get_task, map_connector_error,
-    map_domain_error, resolve_project_scope_for_owner, resolve_task_backend_id,
+    create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
+    get_task as gw_get_task, map_connector_error, map_domain_error,
+    resolve_project_scope_for_owner, resolve_task_backend_id,
 };
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
@@ -155,10 +154,6 @@ impl StoryStepActivationService {
         {
             Ok(outcome) => outcome,
             Err(err) => {
-                if phase == ExecutionPhase::Start {
-                    clear_task_session_binding(&self.repos, task.id, &backend_id, "start_failed")
-                        .await;
-                }
                 return Err(map_connector_error(err));
             }
         };
@@ -362,34 +357,23 @@ impl StoryStepActivationService {
         &self,
         task_id: Uuid,
     ) -> Result<Option<String>, TaskExecutionError> {
-        super::find_task_execution_session_id(self.repos.session_binding_repo.as_ref(), task_id)
-            .await
-            .map_err(map_domain_error)
+        super::find_task_execution_session_id(
+            self.repos.lifecycle_run_link_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            task_id,
+        )
+        .await
+        .map_err(map_domain_error)
     }
 
     async fn bind_session_to_owner(
         &self,
         session_id: &str,
-        owner_type: &str,
-        owner_id: Uuid,
-        label: &str,
+        _owner_type: &str,
+        _owner_id: Uuid,
+        _label: &str,
     ) -> Result<(), TaskExecutionError> {
-        let owner_type = owner_type.parse::<SessionOwnerType>().map_err(|_| {
-            TaskExecutionError::BadRequest(format!("无效的 owner_type: {owner_type}"))
-        })?;
-        let project_id = resolve_project_scope_for_owner(&self.repos, owner_type, owner_id).await?;
-        let binding = agentdash_domain::session_binding::SessionBinding::new(
-            project_id,
-            session_id.to_string(),
-            owner_type,
-            owner_id,
-            label,
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(map_domain_error)?;
+        // TODO: migrate to LifecycleRunLink-based session association
         self.session_core
             .mark_owner_bootstrap_pending(session_id)
             .await

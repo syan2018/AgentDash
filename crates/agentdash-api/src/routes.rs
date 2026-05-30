@@ -13,6 +13,7 @@ pub mod identity_directory;
 pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
+pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_sessions;
@@ -23,6 +24,7 @@ pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
+pub mod story_runs;
 pub mod story_sessions;
 pub mod task_execution;
 pub mod terminals;
@@ -64,6 +66,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(identity_directory::router())
         .merge(projects::router())
         .merge(project_vfs_mounts::router())
+        .merge(permission_grants::router())
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
@@ -74,6 +77,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(workspaces::router())
         .merge(backend_access::router())
         .merge(stories::router())
+        .merge(story_runs::router())
         .merge(story_sessions::router())
         .merge(task_execution::router())
         .merge(workflows::router())

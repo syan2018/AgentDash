@@ -89,10 +89,11 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition,
+    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, AttachRunLinkRequest,
     DeleteActivityLifecycleDefinitionResponse, DeleteHookPresetResponse,
     DeleteWorkflowDefinitionResponse, EffectiveSessionContract, HookPresetResponse,
-    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunStatus, RegisterHookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
+    RegisterHookPresetResponse, RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse,
     ValidateHookScriptResponse, ValidationIssue, WorkflowBindingKind, WorkflowContract,
     WorkflowDefinitionSource,
 };
@@ -245,6 +246,11 @@ fn main() {
             export_all::<LifecycleRunStatus>(dir);
             export_all::<EffectiveSessionContract>(dir);
             export_all::<ValidationIssue>(dir);
+            export_all::<LifecycleRunLinkDto>(dir);
+            export_all::<StoryRunOverviewDto>(dir);
+            export_all::<StoryRunsResponse>(dir);
+            export_all::<RunLinksResponse>(dir);
+            export_all::<AttachRunLinkRequest>(dir);
             export_all::<WorkflowBindingKind>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
             export_all::<DeleteActivityLifecycleDefinitionResponse>(dir);

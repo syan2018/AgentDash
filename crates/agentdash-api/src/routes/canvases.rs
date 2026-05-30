@@ -22,7 +22,6 @@ use agentdash_application::runtime_gateway::{
 };
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
@@ -230,13 +229,8 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let vfs = resolve_canvas_runtime_vfs(
-        &state,
-        &current_user,
-        query.session_id.as_deref(),
-        canvas.project_id,
-    )
-    .await?;
+    let vfs =
+        resolve_canvas_runtime_vfs(&state, &current_user, query.session_id.as_deref()).await?;
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id.clone(),
@@ -267,8 +261,6 @@ pub async fn invoke_canvas_runtime_action(
             "Canvas runtime invoke 缺少 session_id".to_string(),
         ));
     }
-
-    ensure_canvas_session_scope(state.as_ref(), session_id, canvas.project_id).await?;
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -345,73 +337,12 @@ async fn resolve_canvas_runtime_vfs(
     state: &Arc<AppState>,
     current_user: &agentdash_plugin_api::AuthIdentity,
     session_id: Option<&str>,
-    expected_project_id: Uuid,
 ) -> Result<Option<agentdash_spi::Vfs>, ApiError> {
     let Some(session_id) = session_id else {
         return Ok(None);
     };
 
-    let bindings =
-        ensure_canvas_session_scope(state.as_ref(), session_id, expected_project_id).await?;
-
-    if pick_primary_binding_for_project(&bindings, expected_project_id).is_none() {
-        return Ok(None);
-    }
-    Ok(
-        build_session_context_plan(state, current_user, session_id, &bindings)
-            .await?
-            .and_then(|plan| plan.context_projection.vfs),
-    )
-}
-
-async fn ensure_canvas_session_scope(
-    state: &AppState,
-    session_id: &str,
-    expected_project_id: Uuid,
-) -> Result<Vec<SessionBinding>, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await?;
-    if bindings.is_empty() {
-        return Err(ApiError::NotFound(format!("Session {session_id} 不存在")));
-    }
-    if !bindings
-        .iter()
-        .any(|binding| binding.project_id == expected_project_id)
-    {
-        return Err(ApiError::Forbidden(
-            "当前 session 与目标 Canvas 不属于同一 Project".to_string(),
-        ));
-    }
-
-    Ok(bindings)
-}
-
-fn pick_primary_binding_for_project(
-    bindings: &[SessionBinding],
-    project_id: Uuid,
-) -> Option<&SessionBinding> {
-    bindings
-        .iter()
-        .filter(|binding| binding.project_id == project_id)
-        .find(|binding| binding.owner_type == SessionOwnerType::Project)
-        .or_else(|| {
-            bindings
-                .iter()
-                .filter(|binding| binding.project_id == project_id)
-                .find(|binding| binding.owner_type == SessionOwnerType::Story)
-        })
-        .or_else(|| {
-            bindings
-                .iter()
-                .filter(|binding| binding.project_id == project_id)
-                .find(|binding| binding.owner_type == SessionOwnerType::Task)
-        })
-        .or_else(|| {
-            bindings
-                .iter()
-                .find(|binding| binding.project_id == project_id)
-        })
+    Ok(build_session_context_plan(state, current_user, session_id)
+        .await?
+        .and_then(|plan| plan.context_projection.vfs))
 }

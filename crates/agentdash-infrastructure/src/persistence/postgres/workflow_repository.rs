@@ -570,6 +570,32 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .transpose()
     }
 
+    async fn list_by_ids(&self, ids: &[uuid::Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: Vec<String> = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("${}", i + 1))
+            .collect();
+        let sql = format!(
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE id IN ({}) ORDER BY created_at DESC",
+            placeholders.join(",")
+        );
+        let mut query = sqlx::query_as::<_, LifecycleRunRow>(&sql);
+        for id in ids {
+            query = query.bind(id.to_string());
+        }
+        query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect()
+    }
+
     async fn list_by_project(
         &self,
         project_id: uuid::Uuid,
@@ -767,7 +793,7 @@ struct LifecycleRunRow {
     id: String,
     project_id: String,
     lifecycle_id: String,
-    session_id: String,
+    session_id: Option<String>,
     status: String,
     execution_log: String,
     activity_state: Option<String>,
@@ -805,7 +831,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
             lifecycle_id: parse_uuid(&row.lifecycle_id, "lifecycle_definition")?,
-            session_id: row.session_id,
+            session_id: row.session_id.filter(|s| !s.is_empty()),
             status: serde_json::from_str(&row.status)?,
             active_node_keys,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,

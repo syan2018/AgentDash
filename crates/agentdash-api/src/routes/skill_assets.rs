@@ -15,13 +15,14 @@ use agentdash_application::skill_asset::{
     CreateSkillAssetInput, ImportRemoteSkillAssetInput, SkillAssetApplicationError,
     SkillAssetFileInput, SkillAssetService, UpdateSkillAssetInput, content_from_bytes,
 };
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery, SkillAssetFileDto,
-    SkillAssetResponse, UpdateSkillAssetRequest,
+    CreateSkillAssetRequest, ImportRemoteSkillAssetRequest, ListSkillAssetQuery,
+    SkillAssetFileBlobQuery, SkillAssetFileDto, SkillAssetResponse, UpdateSkillAssetRequest,
 };
 use crate::rpc::ApiError;
 
@@ -30,15 +31,40 @@ pub struct ProjectSkillAssetsPath {
     pub project_id: String,
 }
 
+const SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/skill-assets",
+            axum::routing::get(list_skill_assets).post(create_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/upload",
+            axum::routing::post(upload_skill_assets).layer(axum::extract::DefaultBodyLimit::max(
+                SKILL_ASSET_UPLOAD_BODY_LIMIT_BYTES,
+            )),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/import",
+            axum::routing::post(import_remote_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}",
+            axum::routing::get(get_skill_asset)
+                .patch(update_skill_asset)
+                .delete(delete_skill_asset),
+        )
+        .route(
+            "/projects/{project_id}/skill-assets/{id}/files/blob",
+            axum::routing::get(read_skill_asset_file_blob),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SkillAssetItemPath {
     pub project_id: String,
     pub id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SkillAssetFileBlobQuery {
-    pub path: String,
 }
 
 pub async fn list_skill_assets(
@@ -156,7 +182,7 @@ pub async fn delete_skill_asset(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<SkillAssetItemPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let (_project_id, asset) = load_asset_with_project(
         state.as_ref(),
         &current_user,
@@ -166,7 +192,9 @@ pub async fn delete_skill_asset(
     .await?;
     let service = SkillAssetService::new(state.repos.skill_asset_repo.as_ref());
     service.delete(asset.id).await?;
-    Ok(Json(serde_json::json!({ "deleted": asset.id })))
+    Ok(Json(DeletedIdResponse {
+        deleted: asset.id.to_string(),
+    }))
 }
 
 pub async fn read_skill_asset_file_blob(

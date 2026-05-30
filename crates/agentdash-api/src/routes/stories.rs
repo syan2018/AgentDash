@@ -1,21 +1,16 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    AgentBindingInput, StoryMutationInput, TaskMutationInput, apply_story_mutation,
-    apply_task_mutation, build_agent_binding, build_story, build_task, delete_story_aggregate,
+    AgentBindingInput, CreateStoryInput, StoryMutationInput, TaskMutationInput,
+    apply_task_mutation, build_agent_binding, build_task, create_story_record, delete_story_record,
+    list_project_stories, update_story_record,
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::context_container::{
-    ContextContainerDefinition, validate_context_containers, validate_disabled_container_ids,
-};
-use agentdash_domain::context_source::ContextSourceRef;
-use agentdash_domain::project::Project;
-use agentdash_domain::session_composition::{SessionComposition, validate_session_composition};
-use agentdash_domain::story::{ChangeKind, Story, StoryPriority, StoryStatus, StoryType};
+use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_domain::story::ChangeKind;
 use agentdash_domain::task::TaskStatus;
 
 use crate::app_state::AppState;
@@ -23,75 +18,12 @@ use crate::auth::{
     CurrentUser, ProjectPermission, load_project_with_permission,
     load_story_and_project_with_permission, load_task_story_project_with_permission,
 };
-use crate::dto::{StoryResponse, TaskResponse};
+use crate::dto::{
+    CreateStoryRequest, CreateTaskRequest, ListStoriesQuery, StoryResponse, TaskResponse,
+    UpdateStoryRequest, UpdateTaskRequest,
+};
 use crate::rpc::ApiError;
 use agentdash_domain::story::StateChangeRepository;
-
-#[derive(Deserialize)]
-pub struct ListStoriesQuery {
-    pub project_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub struct CreateStoryRequest {
-    pub project_id: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub status: Option<StoryStatus>,
-    pub priority: Option<StoryPriority>,
-    pub story_type: Option<StoryType>,
-    pub tags: Option<Vec<String>>,
-    pub default_workspace_id: Option<String>,
-    pub context_source_refs: Option<Vec<ContextSourceRef>>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    pub disabled_container_ids: Option<Vec<String>>,
-    pub session_composition: Option<SessionComposition>,
-}
-
-#[derive(Deserialize, Default)]
-pub struct UpdateStoryRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub default_workspace_id: Option<String>,
-    pub status: Option<StoryStatus>,
-    pub priority: Option<StoryPriority>,
-    pub story_type: Option<StoryType>,
-    pub tags: Option<Vec<String>>,
-    pub context_source_refs: Option<Vec<ContextSourceRef>>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-    pub disabled_container_ids: Option<Vec<String>>,
-    pub session_composition: Option<SessionComposition>,
-    pub clear_session_composition: Option<bool>,
-}
-
-#[derive(Deserialize, Default)]
-pub struct CreateTaskAgentBindingRequest {
-    pub agent_type: Option<String>,
-    pub agent_pid: Option<String>,
-    pub preset_name: Option<String>,
-    pub prompt_template: Option<String>,
-    pub initial_context: Option<String>,
-    pub context_sources: Option<Vec<ContextSourceRef>>,
-}
-
-#[derive(Deserialize)]
-pub struct CreateTaskRequest {
-    pub title: String,
-    pub description: Option<String>,
-    pub workspace_id: Option<String>,
-    pub lifecycle_step_key: Option<String>,
-    pub agent_binding: Option<CreateTaskAgentBindingRequest>,
-}
-
-#[derive(Deserialize, Default)]
-pub struct UpdateTaskRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub status: Option<TaskStatus>,
-    pub workspace_id: Option<String>,
-    pub lifecycle_step_key: Option<String>,
-    pub agent_binding: Option<CreateTaskAgentBindingRequest>,
-}
 
 pub async fn list_stories(
     State(state): State<Arc<AppState>>,
@@ -103,12 +35,36 @@ pub async fn list_stories(
             .map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
         load_project_with_permission(state.as_ref(), &current_user, pid, ProjectPermission::View)
             .await?;
-        state.repos.story_repo.list_by_project(pid).await?
+        list_project_stories(&state.repos, pid).await?
     } else {
         return Err(ApiError::BadRequest("需要 project_id 参数".into()));
     };
 
     Ok(Json(stories.into_iter().map(StoryResponse::from).collect()))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/stories",
+            axum::routing::get(list_stories).post(create_story),
+        )
+        .route(
+            "/stories/{id}",
+            axum::routing::get(get_story)
+                .put(update_story)
+                .delete(delete_story),
+        )
+        .route(
+            "/stories/{id}/tasks",
+            axum::routing::get(list_tasks).post(create_task),
+        )
+        .route(
+            "/tasks/{id}",
+            axum::routing::get(get_task)
+                .put(update_task)
+                .delete(delete_task),
+        )
 }
 
 pub async fn create_story(
@@ -125,46 +81,33 @@ pub async fn create_story(
         ProjectPermission::Edit,
     )
     .await?;
-    let title = req.title.trim();
-    if title.is_empty() {
-        return Err(ApiError::BadRequest("Story 标题不能为空".into()));
-    }
-
     let default_workspace_id = req
         .default_workspace_id
         .as_deref()
         .and_then(|s| s.trim().parse::<Uuid>().ok());
 
-    let next_story = build_story(
-        project_id,
-        title.to_string(),
-        req.description.unwrap_or_default(),
-        StoryMutationInput {
-            default_workspace_id: Some(default_workspace_id),
-            status: req.status,
-            priority: req.priority,
-            story_type: req.story_type,
-            tags: req.tags,
-            context_source_refs: req.context_source_refs,
-            context_containers: req.context_containers,
-            disabled_container_ids: req.disabled_container_ids,
-            session_composition: req.session_composition.map(Some),
-            ..StoryMutationInput::default()
+    let next_story = create_story_record(
+        &state.repos,
+        &project,
+        CreateStoryInput {
+            project_id,
+            title: req.title,
+            description: req.description,
+            mutation: StoryMutationInput {
+                default_workspace_id: Some(default_workspace_id),
+                status: req.status,
+                priority: req.priority,
+                story_type: req.story_type,
+                tags: req.tags,
+                context_source_refs: req.context_source_refs,
+                context_containers: req.context_containers,
+                disabled_container_ids: req.disabled_container_ids,
+                session_composition: req.session_composition.map(Some),
+                ..StoryMutationInput::default()
+            },
         },
-    );
-    validate_story_context(&next_story, &project)?;
-
-    state.repos.story_repo.create(&next_story).await?;
-
-    // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::Story,
-        next_story.id,
-        &next_story.context.context_containers,
     )
-    .await
-    .map_err(ApiError::Internal)?;
+    .await?;
 
     Ok(Json(StoryResponse::from(next_story)))
 }
@@ -196,7 +139,7 @@ pub async fn update_story(
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
-    let (mut story, project) = load_story_and_project_with_permission(
+    let (story, project) = load_story_and_project_with_permission(
         state.as_ref(),
         &current_user,
         story_id,
@@ -233,8 +176,10 @@ pub async fn update_story(
         req.session_composition.map(Some)
     };
     let status_changed = req.status.is_some();
-    apply_story_mutation(
-        &mut story,
+    let story = update_story_record(
+        &state.repos,
+        story,
+        &project,
         StoryMutationInput {
             title,
             description: req.description,
@@ -248,21 +193,9 @@ pub async fn update_story(
             disabled_container_ids: req.disabled_container_ids,
             session_composition,
         },
-    );
-
-    validate_story_context(&story, &project)?;
-    let new_status = story.status.clone();
-    state.repos.story_repo.update(&story).await?;
-
-    // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::Story,
-        story.id,
-        &story.context.context_containers,
     )
-    .await
-    .map_err(ApiError::Internal)?;
+    .await?;
+    let new_status = story.status.clone();
 
     if status_changed {
         let coordinator = state.services.terminal_cancel_coordinator.clone();
@@ -281,7 +214,7 @@ pub async fn delete_story(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let story_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
 
@@ -293,14 +226,9 @@ pub async fn delete_story(
     )
     .await?;
 
-    delete_story_aggregate(
-        state.repos.story_repo.as_ref(),
-        state.repos.state_change_repo.as_ref(),
-        &story,
-    )
-    .await?;
+    delete_story_record(&state.repos, &story).await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn list_tasks(
@@ -583,7 +511,7 @@ pub async fn delete_task(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let task_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Task ID".into()))?;
     load_task_story_project_with_permission(
@@ -602,20 +530,7 @@ pub async fn delete_task(
         .remove_task_from_story(task_id)
         .await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
-}
-
-fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApiError> {
-    validate_context_containers(&story.context.context_containers).map_err(ApiError::BadRequest)?;
-    validate_disabled_container_ids(
-        &story.context.disabled_container_ids,
-        &project.config.context_containers,
-    )
-    .map_err(ApiError::BadRequest)?;
-    if let Some(session_composition) = &story.context.session_composition {
-        validate_session_composition(session_composition).map_err(ApiError::BadRequest)?;
-    }
-    Ok(())
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -> ChangeKind {
@@ -647,7 +562,10 @@ async fn append_required_story_change(
 ) -> Result<(), ApiError> {
     repo.append_change(project_id, entity_id, kind, payload, backend_id)
         .await
-        .map_err(|err| ApiError::Internal(format!("写入 StateChange 失败: {err}")))
+        .map_err(|err| {
+            tracing::error!(error = %err, "failed to append required story state change");
+            ApiError::Internal(String::from("写入 StateChange 失败"))
+        })
 }
 
 #[cfg(test)]
@@ -659,7 +577,7 @@ mod tests {
     use std::sync::Mutex;
 
     struct RecordingStoryRepo {
-        append_error: Option<DomainError>,
+        append_error: Mutex<Option<DomainError>>,
         recorded: Mutex<Vec<(Uuid, Uuid, ChangeKind)>>,
     }
 
@@ -698,21 +616,8 @@ mod tests {
             _payload: serde_json::Value,
             _backend_id: Option<&str>,
         ) -> Result<(), DomainError> {
-            if let Some(err) = &self.append_error {
-                return Err(match err {
-                    DomainError::NotFound { entity, id } => DomainError::NotFound {
-                        entity,
-                        id: id.clone(),
-                    },
-                    DomainError::InvalidTransition { from, to } => DomainError::InvalidTransition {
-                        from: from.clone(),
-                        to: to.clone(),
-                    },
-                    DomainError::Serialization(err) => DomainError::InvalidConfig(err.to_string()),
-                    DomainError::InvalidConfig(message) => {
-                        DomainError::InvalidConfig(message.clone())
-                    }
-                });
+            if let Some(err) = self.append_error.lock().expect("lock append_error").take() {
+                return Err(err);
             }
             self.recorded
                 .lock()
@@ -737,7 +642,10 @@ mod tests {
     #[tokio::test]
     async fn append_required_story_change_maps_repo_failure_to_internal_error() {
         let repo = RecordingStoryRepo {
-            append_error: Some(DomainError::InvalidConfig("db down".to_string())),
+            append_error: Mutex::new(Some(DomainError::Database {
+                operation: "append_state_change",
+                message: "db down".to_string(),
+            })),
             recorded: Mutex::new(Vec::new()),
         };
 
@@ -755,7 +663,7 @@ mod tests {
         match err {
             ApiError::Internal(message) => {
                 assert!(message.contains("写入 StateChange 失败"));
-                assert!(message.contains("db down"));
+                assert!(!message.contains("db down"));
             }
             other => panic!("unexpected error: {other:?}"),
         }

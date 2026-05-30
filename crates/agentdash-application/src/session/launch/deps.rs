@@ -5,7 +5,6 @@ use agentdash_domain::backend::BackendExecutionLeaseRepository;
 use agentdash_spi::connector::RuntimeToolProvider;
 use agentdash_spi::{AgentConnector, McpRelayProvider};
 
-use crate::backend_transport::RelayPromptTransport;
 use crate::context::SharedContextAuditBus;
 use crate::session::capability_service::SessionCapabilityService;
 use crate::session::construction_provider::SharedSessionConstructionProvider;
@@ -20,6 +19,7 @@ use crate::session::runtime_registry::SessionRuntimeRegistry;
 use crate::session::title_generator::derive_session_title;
 use crate::session::turn_supervisor::TurnSupervisor;
 use crate::session::types::TitleSource;
+use agentdash_application_ports::backend_transport::RelayPromptTransport;
 
 #[derive(Clone)]
 pub(in crate::session) struct SessionLaunchDeps {

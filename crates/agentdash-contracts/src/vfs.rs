@@ -336,7 +336,7 @@ pub struct SurfaceUploadBinaryFileResponse {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum MountCapability {
+pub enum VfsCapabilityDto {
     Read,
     Write,
     List,
@@ -348,7 +348,7 @@ pub enum MountCapability {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ProjectVfsMountContent {
+pub enum ProjectVfsMountContentDto {
     Inline,
     ExternalService {
         service_id: String,
@@ -364,8 +364,8 @@ pub struct CreateProjectVfsMountRequest {
     #[ts(optional)]
     pub description: Option<String>,
     #[serde(default)]
-    pub capabilities: Vec<MountCapability>,
-    pub content: ProjectVfsMountContent,
+    pub capabilities: Vec<VfsCapabilityDto>,
+    pub content: ProjectVfsMountContentDto,
 }
 
 pub type UpdateProjectVfsMountRequest = CreateProjectVfsMountRequest;
@@ -378,14 +378,19 @@ pub struct ProjectVfsMountResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub description: Option<String>,
-    pub capabilities: Vec<MountCapability>,
+    pub capabilities: Vec<VfsCapabilityDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub installed_source: Option<InstalledAssetSourceResponse>,
-    pub content: ProjectVfsMountContent,
+    pub content: ProjectVfsMountContentDto,
     pub surface_ref: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DeleteProjectVfsMountResponse {
+    pub ok: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

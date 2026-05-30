@@ -1,6 +1,8 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_spi::{CapabilityScope, ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
+use agentdash_spi::{
+    CapabilityScope, ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy,
+};
 use serde::Serialize;
 
 use crate::runtime::{Mount, MountCapability, RuntimeMcpServer, Vfs};
@@ -101,11 +103,8 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
         });
     }
 
-    let tool_visibility = summarize_tool_visibility_with_context(
-        input.vfs,
-        input.mcp_servers,
-        Some(input.scope),
-    );
+    let tool_visibility =
+        summarize_tool_visibility_with_context(input.vfs, input.mcp_servers, Some(input.scope));
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
         slot: "tools".to_string(),

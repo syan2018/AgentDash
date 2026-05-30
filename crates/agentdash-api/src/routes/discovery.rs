@@ -2,34 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
-use serde::Serialize;
 
+use crate::dto::{AgentInfoResponse, ConnectorInfoResponse, DiscoveryResponse};
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_spi::connector::{ConnectorCapabilities, ConnectorType};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AgentInfoResponse {
-    pub id: String,
-    pub name: String,
-    pub variants: Vec<String>,
-    pub available: bool,
-    /// 该执行器可用的后端 ID 列表（空 = 仅本机）
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub backend_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectorInfoResponse {
-    pub id: String,
-    pub connector_type: ConnectorType,
-    pub capabilities: ConnectorCapabilities,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DiscoveryResponse {
-    pub connector: ConnectorInfoResponse,
-    pub executors: Vec<AgentInfoResponse>,
-}
 
 pub async fn get_discovery(
     State(state): State<Arc<AppState>>,
@@ -72,4 +47,8 @@ pub async fn get_discovery(
         connector: connector_info,
         executors,
     }))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route("/agents/discovery", axum::routing::get(get_discovery))
 }

@@ -1,13 +1,11 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use super::{
     CapabilityConfig, InputPortDefinition, OutputPortDefinition, WorkflowHookRuleSpec,
     WorkflowInjectionSpec,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct WorkflowContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
@@ -34,14 +32,14 @@ pub struct WorkflowContract {
     pub input_ports: Vec<InputPortDefinition>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowSessionTerminalState {
     Completed,
     Failed,
     Interrupted,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct EffectiveSessionContract {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,

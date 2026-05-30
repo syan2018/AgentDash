@@ -177,9 +177,7 @@ impl PermissionGrantService {
             .map_err(|e| format!("find grant failed: {e}"))?
             .ok_or_else(|| format!("grant not found: {grant_id}"))?;
 
-        grant
-            .revoke()
-            .map_err(|e| format!("revoke failed: {e}"))?;
+        grant.revoke().map_err(|e| format!("revoke failed: {e}"))?;
 
         self.repo
             .update(&grant)

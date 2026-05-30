@@ -4,10 +4,11 @@ use agentdash_domain::permission::{
     ScopeEscalationIntent,
 };
 use agentdash_domain::workflow::ToolCapabilityPath;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{db_err, parse_pg_timestamp_checked};
+use super::db_err;
 
 const TABLE: &str = "permission_grants";
 
@@ -37,16 +38,30 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         .bind(&grant.session_id)
         .bind(&grant.source_turn_id)
         .bind(&grant.source_tool_call_id)
-        .bind(serde_json::to_string(&grant.requested_paths).unwrap_or_default())
+        .bind(serde_json::to_value(&grant.requested_paths).map_err(DomainError::Serialization)?)
         .bind(&grant.reason)
         .bind(grant.grant_scope.as_str())
-        .bind(grant.expires_at.map(|t| t.to_rfc3339()))
-        .bind(grant.scope_escalation_intent.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
+        .bind(grant.expires_at)
+        .bind(
+            grant
+                .scope_escalation_intent
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(DomainError::Serialization)?,
+        )
         .bind(grant.status.as_str())
-        .bind(grant.policy_decision.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
+        .bind(
+            grant
+                .policy_decision
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(DomainError::Serialization)?,
+        )
         .bind(&grant.approved_by)
-        .bind(grant.created_at.to_rfc3339())
-        .bind(grant.updated_at.to_rfc3339())
+        .bind(grant.created_at)
+        .bind(grant.updated_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -62,10 +77,24 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
         )
         .bind(grant.id.to_string())
         .bind(grant.status.as_str())
-        .bind(grant.policy_decision.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
+        .bind(
+            grant
+                .policy_decision
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(DomainError::Serialization)?,
+        )
         .bind(&grant.approved_by)
-        .bind(grant.scope_escalation_intent.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()))
-        .bind(grant.updated_at.to_rfc3339())
+        .bind(
+            grant
+                .scope_escalation_intent
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(DomainError::Serialization)?,
+        )
+        .bind(grant.updated_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -73,13 +102,11 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<PermissionGrant>, DomainError> {
-        let row = sqlx::query_as::<_, GrantRow>(
-            "SELECT * FROM permission_grants WHERE id = $1",
-        )
-        .bind(id.to_string())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?;
+        let row = sqlx::query_as::<_, GrantRow>("SELECT * FROM permission_grants WHERE id = $1")
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -131,7 +158,9 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
              ORDER BY created_at DESC LIMIT 1",
         )
         .bind(session_id)
-        .bind(format!("%\"target_subject_kind\":\"{target_subject_kind}\"%"))
+        .bind(format!(
+            "%\"target_subject_kind\":\"{target_subject_kind}\"%"
+        ))
         .fetch_optional(&self.pool)
         .await
         .map_err(db_err)?;
@@ -144,7 +173,7 @@ impl PermissionGrantRepository for PostgresPermissionGrantRepository {
             "UPDATE permission_grants SET status = 'expired', updated_at = $1 \
              WHERE status = 'applied' AND expires_at IS NOT NULL AND expires_at < $1",
         )
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(chrono::Utc::now())
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -160,16 +189,16 @@ struct GrantRow {
     session_id: String,
     source_turn_id: Option<String>,
     source_tool_call_id: Option<String>,
-    requested_paths: String,
+    requested_paths: serde_json::Value,
     reason: String,
     grant_scope: String,
-    expires_at: Option<String>,
-    scope_escalation_intent: Option<String>,
+    expires_at: Option<DateTime<Utc>>,
+    scope_escalation_intent: Option<serde_json::Value>,
     status: String,
-    policy_decision: Option<String>,
+    policy_decision: Option<serde_json::Value>,
     approved_by: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
 }
 
 impl TryFrom<GrantRow> for PermissionGrant {
@@ -178,10 +207,8 @@ impl TryFrom<GrantRow> for PermissionGrant {
     fn try_from(row: GrantRow) -> Result<Self, Self::Error> {
         let id = parse_uuid(&row.id, "id")?;
         let run_id = parse_uuid(&row.run_id, "run_id")?;
-        let requested_paths: Vec<ToolCapabilityPath> =
-            serde_json::from_str(&row.requested_paths).map_err(|e| {
-                DomainError::InvalidConfig(format!("{TABLE}.requested_paths: {e}"))
-            })?;
+        let requested_paths: Vec<ToolCapabilityPath> = serde_json::from_value(row.requested_paths)
+            .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.requested_paths: {e}")))?;
         let grant_scope = GrantScope::from_str(&row.grant_scope).ok_or_else(|| {
             DomainError::InvalidConfig(format!(
                 "{TABLE}.grant_scope: unknown value `{}`",
@@ -189,33 +216,20 @@ impl TryFrom<GrantRow> for PermissionGrant {
             ))
         })?;
         let status = GrantStatus::from_str(&row.status).ok_or_else(|| {
-            DomainError::InvalidConfig(format!(
-                "{TABLE}.status: unknown value `{}`",
-                row.status
-            ))
+            DomainError::InvalidConfig(format!("{TABLE}.status: unknown value `{}`", row.status))
         })?;
-        let expires_at = row
-            .expires_at
-            .as_deref()
-            .map(|s| parse_pg_timestamp_checked(s, &format!("{TABLE}.expires_at")))
-            .transpose()?;
         let scope_escalation_intent: Option<ScopeEscalationIntent> = row
             .scope_escalation_intent
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| serde_json::from_str(s))
+            .map(serde_json::from_value)
             .transpose()
-            .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.scope_escalation_intent: {e}")))?;
+            .map_err(|e| {
+                DomainError::InvalidConfig(format!("{TABLE}.scope_escalation_intent: {e}"))
+            })?;
         let policy_decision: Option<PolicyDecision> = row
             .policy_decision
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| serde_json::from_str(s))
+            .map(serde_json::from_value)
             .transpose()
             .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.policy_decision: {e}")))?;
-
-        let created_at = parse_pg_timestamp_checked(&row.created_at, &format!("{TABLE}.created_at"))?;
-        let updated_at = parse_pg_timestamp_checked(&row.updated_at, &format!("{TABLE}.updated_at"))?;
 
         Ok(PermissionGrant {
             id,
@@ -226,13 +240,13 @@ impl TryFrom<GrantRow> for PermissionGrant {
             requested_paths,
             reason: row.reason,
             grant_scope,
-            expires_at,
+            expires_at: row.expires_at,
             scope_escalation_intent,
             status,
             policy_decision,
             approved_by: row.approved_by,
-            created_at,
-            updated_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

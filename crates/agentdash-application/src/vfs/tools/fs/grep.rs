@@ -197,7 +197,7 @@ impl AgentTool for FsGrepTool {
                 },
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         // 分页：tool 层 skip(offset).take(head_limit)；head_limit=0 ⇒ 不限制。
         let take = if head_limit == 0 {

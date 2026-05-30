@@ -22,8 +22,8 @@ use agentdash_domain::workflow::{
     ActivityDefinition, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
 };
 use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::hooks::{CapabilityDelta, SharedHookSessionRuntime};
-use agentdash_spi::{CapabilityState, Vfs};
+use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::{CapabilityState, SetDelta, Vfs};
 use uuid::Uuid;
 
 use crate::capability::{
@@ -293,7 +293,7 @@ pub(crate) async fn apply_to_running_session(
         .get_current_capability_state(hook_session.session_id())
         .await;
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
-    let key_delta = CapabilityDelta::compute(
+    let key_delta = SetDelta::compute(
         &hook_session.current_capabilities(),
         &activation.capability_keys,
     );

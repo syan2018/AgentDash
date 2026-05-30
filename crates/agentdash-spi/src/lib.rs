@@ -73,22 +73,18 @@ pub use hooks::{
     ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
     ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
     HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
-    HookInjection, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
-    SessionRunContext,
-    HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-    NoopExecutionHookProvider, RuntimeContextFragmentEntry, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionHookRefreshQuery,
-    SessionHookSnapshot, SessionHookSnapshotQuery, SessionSnapshotMetadata,
-    SharedHookSessionRuntime, action_type,
+    HookInjection, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
+    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
+    HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+    RuntimeContextFragmentEntry, RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry,
+    RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    SessionRunContext, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
-pub use platform::function_runner::{
-    ApiRequestOutcome, BashExecOutcome, FunctionRunner,
-};
+pub use platform::function_runner::{ApiRequestOutcome, BashExecOutcome, FunctionRunner};
 pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
@@ -102,10 +98,9 @@ pub use platform::skill_source::{
 };
 pub use platform::tool_capability::{
     CapabilityScope, CapabilityScopeCtx, CapabilityVisibilityRule, PlatformMcpScope,
-    ToolCapability, ToolDescriptor,
-    ToolSource, capability_to_platform_mcp_scope, capability_to_tool_clusters,
-    default_visibility_rules, format_tool_for_prompt, is_capability_visible,
-    platform_tool_descriptors, platform_tools_for_capability,
+    ToolCapability, ToolDescriptor, ToolSource, capability_to_platform_mcp_scope,
+    capability_to_tool_clusters, default_visibility_rules, format_tool_for_prompt,
+    is_capability_visible, platform_tool_descriptors, platform_tools_for_capability,
 };
 
 pub use session_persistence::{

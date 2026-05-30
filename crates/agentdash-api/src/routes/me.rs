@@ -11,3 +11,12 @@ pub async fn get_current_user(
 ) -> Result<Json<AuthIdentity>, ApiError> {
     Ok(Json(user))
 }
+use std::sync::Arc;
+
+use axum::{Router, routing::get};
+
+use crate::app_state::AppState;
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new().route("/me", get(get_current_user))
+}

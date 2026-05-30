@@ -27,8 +27,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
 use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
-    ActivityAttemptState, LifecycleRun, LifecycleRunLinkRepository,
-    LifecycleRunRepository, LifecycleRunStatus, RunLinkSubjectKind,
+    ActivityAttemptState, LifecycleRun, LifecycleRunLinkRepository, LifecycleRunRepository,
+    LifecycleRunStatus, RunLinkSubjectKind,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -435,7 +435,14 @@ mod tests {
                 .cloned())
         }
         async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| ids.contains(&r.id))
+                .cloned()
+                .collect())
         }
         async fn list_by_project(
             &self,
@@ -535,9 +542,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|l| {
-                    l.subject_kind == subject_kind
-                        && l.subject_id == subject_id
-                        && l.role == role
+                    l.subject_kind == subject_kind && l.subject_id == subject_id && l.role == role
                 })
                 .cloned()
                 .collect())
@@ -589,8 +594,13 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let mut run =
-            LifecycleRun::new_activity(project_id, lifecycle_id, Some(session_id.to_string()), state).expect("run");
+        let mut run = LifecycleRun::new_activity(
+            project_id,
+            lifecycle_id,
+            Some(session_id.to_string()),
+            state,
+        )
+        .expect("run");
         run.status = LifecycleRunStatus::Running;
         run
     }
@@ -730,7 +740,9 @@ mod tests {
             changes: Mutex::new(Vec::new()),
         });
         let lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository> =
-            Arc::new(InMemoryLifecycleRunLinkRepo { links: Mutex::new(vec![]) });
+            Arc::new(InMemoryLifecycleRunLinkRepo {
+                links: Mutex::new(vec![]),
+            });
         let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
             Arc::new(InMemoryLifecycleRunRepo {
                 runs: Mutex::new(vec![]),

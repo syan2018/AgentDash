@@ -1,5 +1,13 @@
 import type { ThinkingLevel } from "./index";
 import type {
+  ContextContainerDefinition,
+  ContextContainerFile,
+  ContextContainerProvider,
+  SessionComposition,
+  SessionRequiredContextBlock,
+  VfsCapabilityDto,
+} from "../generated/core-contracts";
+import type {
   ResolvedMountEditCapabilities,
   ResolvedMountPurpose,
   ResolvedMountSummary,
@@ -8,45 +16,21 @@ import type {
 } from "../generated/vfs-contracts";
 
 export type {
+  ContextContainerDefinition,
+  ContextContainerFile,
+  ContextContainerProvider,
   ResolvedMountEditCapabilities,
   ResolvedMountPurpose,
   ResolvedMountSummary,
   ResolvedVfsSurface,
   ResolvedVfsSurfaceSource,
+  SessionComposition,
+  SessionRequiredContextBlock,
 };
 
 // ─── VFS Mount 配置 / 会话编排 ──────────────────
 
-export type ContextContainerCapability = "read" | "write" | "list" | "search" | "exec";
-
-export interface ContextContainerFile {
-  path: string;
-  content: string;
-}
-
-export type ContextContainerProvider =
-  | { kind: "inline_files"; files: ContextContainerFile[] }
-  | { kind: "external_service"; service_id: string; root_ref: string };
-
-export interface ContextContainerDefinition {
-  mount_id: string;
-  display_name: string;
-  provider: ContextContainerProvider;
-  capabilities: ContextContainerCapability[];
-  default_write: boolean;
-}
-
-export interface SessionRequiredContextBlock {
-  title: string;
-  content: string;
-}
-
-export interface SessionComposition {
-  persona_label?: string | null;
-  persona_prompt?: string | null;
-  workflow_steps: string[];
-  required_context_blocks: SessionRequiredContextBlock[];
-}
+export type ContextContainerCapability = VfsCapabilityDto;
 
 // ─── 执行时 Mount / VFS ─────────────────────────────
 

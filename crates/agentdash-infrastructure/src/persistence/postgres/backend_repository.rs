@@ -73,7 +73,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(config.last_claimed_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -89,7 +89,7 @@ impl BackendRepository for PostgresBackendRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -106,7 +106,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+        .map_err(super::db_err)?
         .ok_or_else(|| DomainError::NotFound {
             entity: "backend",
             id: id.to_string(),
@@ -127,7 +127,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(token)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         match rows.len() {
             0 => Err(DomainError::NotFound {
@@ -200,7 +200,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(&claim.machine_label)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let mut candidate_ids: Vec<String> = candidate_rows.into_iter().map(|(id,)| id).collect();
         candidate_ids.dedup();
@@ -281,7 +281,7 @@ impl BackendRepository for PostgresBackendRepository {
             .bind(&claim.device)
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+            .map_err(super::db_err)?
         } else {
             sqlx::query_as::<_, BackendRow>(
                 r#"
@@ -314,7 +314,7 @@ impl BackendRepository for PostgresBackendRepository {
             .bind(&claim.device)
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+            .map_err(super::db_err)?
         };
 
         row.try_into()
@@ -325,7 +325,7 @@ impl BackendRepository for PostgresBackendRepository {
             .bind(id)
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -335,7 +335,7 @@ impl BackendRepository for PostgresBackendRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -357,7 +357,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(&view.sort_by)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -368,7 +368,7 @@ impl BackendRepository for PostgresBackendRepository {
         )
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         match row {
             Some((json,)) => Ok(serde_json::from_str(&json)?),
@@ -384,7 +384,7 @@ impl BackendRepository for PostgresBackendRepository {
         .bind(serde_json::to_string(prefs)?)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -531,15 +531,12 @@ async fn merge_duplicate_local_backend_rows(
     canonical_id: &str,
     duplicate_ids: &[String],
 ) -> Result<(), DomainError> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    let mut tx = pool.begin().await.map_err(super::db_err)?;
     let workspace_bindings_table: Option<String> =
         sqlx::query_scalar("SELECT to_regclass('workspace_bindings')::text")
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
     if workspace_bindings_table.is_some() {
         sqlx::query("UPDATE workspace_bindings SET backend_id = $1 WHERE backend_id = ANY($2)")
@@ -547,7 +544,7 @@ async fn merge_duplicate_local_backend_rows(
             .bind(duplicate_ids)
             .execute(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
     }
 
     sqlx::query(
@@ -581,17 +578,15 @@ async fn merge_duplicate_local_backend_rows(
     .bind(duplicate_ids)
     .execute(&mut *tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     sqlx::query("DELETE FROM backends WHERE id = ANY($1)")
         .bind(duplicate_ids)
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
-    tx.commit()
-        .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    tx.commit().await.map_err(super::db_err)?;
 
     Ok(())
 }

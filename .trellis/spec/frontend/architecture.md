@@ -12,6 +12,7 @@
 - Project 是顶层导航和隔离单元；Workspace、Story、Assets、runtime preview 都按 Project scope 组织。
 - Session workspace panel、context overview 和 VFS tab 以 `runtime_surface` 作为 runtime mount 展示与浏览能力的唯一 UI 输入。
 - Feature module 遵循 model / ui 分离，跨 feature 共享能力进入明确的 shared package 或 primitive。
+- Workspace tab、runtime data context 和 tab descriptor contract 放在 `features/workspace-runtime`，原因是 extension-runtime、workspace-panel 与 canvas-panel 都需要消费同一 workspace runtime surface，但不应形成 feature 间双向依赖。
 
 ## Current Baseline
 
@@ -44,6 +45,7 @@
 - Canvas runtime 如需消费 extension protocol channel，通过父页面注入的 `extensionChannelBridge` 进入同一 Project extension channel invocation service，原因是 Canvas 与 webview panel 都应依赖 Project runtime projection 和 Gateway admission，而不是在 iframe 里硬编码 provider extension key。
 - Assets Extension 类目消费 Project extension management API，原因是安装、来源状态、package mode 与卸载/下载动作的事实源是 `ProjectExtensionInstallation`，runtime projection 只服务 WorkspacePanel 与 Gateway admission。
 - Marketplace Extension 卡片和详情抽屉使用 `LibraryAssetDto.extension_package_artifact` 判断 packaged template 可安装性，原因是浏览、安装与发布后的 package 可用状态需要共享同一 Shared Library 合同。
+- WorkspacePanel 是 extension/canvas tab 的 composition root；extension-runtime 与 canvas-panel 不反向依赖 workspace-panel，原因是插件 tab 注册、Canvas 预览和 workspace runtime context 需要保持单向装配关系。
 
 ## Contract Appendices
 

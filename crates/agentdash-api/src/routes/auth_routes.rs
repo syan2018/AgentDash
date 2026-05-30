@@ -4,7 +4,6 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Response;
-use serde::Deserialize;
 
 use agentdash_plugin_api::{
     AuthCallbackRequest, AuthStartRequest, AuthStartResponse, LoginCredentials, LoginMetadata,
@@ -13,23 +12,8 @@ use agentdash_plugin_api::{
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, map_auth_error, persist_identity_snapshot_or_service_unavailable};
+use crate::dto::{OidcCallbackQuery, RevokeTokenRequest, TokenQuery};
 use crate::rpc::ApiError;
-
-#[derive(Debug, Deserialize, Default)]
-pub struct TokenQuery {
-    pub token: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RevokeTokenRequest {
-    pub access_token: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OidcCallbackQuery {
-    pub code: String,
-    pub state: String,
-}
 
 /// POST /api/auth/login — 用户提交凭证换取 token + 身份
 pub async fn login(
@@ -53,6 +37,20 @@ pub async fn login(
         .map_err(|e| ApiError::ServiceUnavailable(format!("认证会话落库失败: {e}")))?;
 
     Ok(Json(response))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/auth/logout", axum::routing::post(logout))
+        .route("/auth/revoke", axum::routing::post(revoke_token))
+}
+
+pub fn public_router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/auth/login", axum::routing::post(login))
+        .route("/auth/oidc/start", axum::routing::post(start_oidc_login))
+        .route("/auth/oidc/callback", axum::routing::get(oidc_callback))
+        .route("/auth/metadata", axum::routing::get(metadata))
 }
 
 /// POST /api/auth/oidc/start — 启动重定向式 OIDC 登录。

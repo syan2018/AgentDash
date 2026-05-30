@@ -1,4 +1,3 @@
-import type { Artifact } from "./acp";
 import type { CapabilityDirective } from "./workflow";
 import type {
   ContextContainerCapability,
@@ -6,7 +5,22 @@ import type {
   SessionComposition,
 } from "./context";
 import type {
-  ProjectVfsMountContent,
+  AgentBinding as CoreAgentBinding,
+  AgentPreset as CoreAgentPreset,
+  Artifact as CoreArtifact,
+  ContextSourceRef as CoreContextSourceRef,
+  ProjectAccessSummaryResponse,
+  ProjectConfig as CoreProjectConfig,
+  ProjectResponse,
+  ProjectSubjectGrantResponse,
+  StoryContext as CoreStoryContext,
+  StoryResponse,
+  TaskResponse,
+  WorkspaceBindingResponse,
+  WorkspaceResponse,
+} from "../generated/core-contracts";
+import type {
+  ProjectVfsMountContentDto,
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
 import type {
@@ -17,30 +31,38 @@ import type {
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
 
+// ─── Generated Core Contracts ─────────────────────────
+
+export type AgentBinding = CoreAgentBinding;
+export type AgentPreset = CoreAgentPreset;
+export type Artifact = CoreArtifact;
+export type ContextSourceRef = CoreContextSourceRef;
+export type Project = ProjectResponse;
+export type ProjectAccessSummary = ProjectAccessSummaryResponse;
+export type ProjectConfig = CoreProjectConfig;
+export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
+export type Story = StoryResponse;
+export type StoryContext = CoreStoryContext;
+export type Task = TaskResponse;
+export type Workspace = WorkspaceResponse;
+export type WorkspaceBinding = WorkspaceBindingResponse;
+export type {
+  ProjectRole,
+  ProjectSubjectType,
+  ProjectVisibility,
+  StoryPriority,
+  StoryStatus,
+  StoryType,
+  TaskStatus,
+  WorkspaceBindingStatus,
+  WorkspaceIdentityKind,
+  WorkspaceResolutionPolicy,
+  WorkspaceStatus,
+} from "../generated/core-contracts";
+
 // ─── 基础枚举 ─────────────────────────────────────────
 
-export type StoryStatus =
-  | "draft"
-  | "ready"
-  | "running"
-  | "review"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-export type TaskStatus =
-  | "pending"
-  | "assigned"
-  | "running"
-  | "awaiting_verification"
-  | "completed"
-  | "failed";
-
 export type BackendType = "local" | "remote";
-export type WorkspaceStatus = "pending" | "preparing" | "ready" | "active" | "archived" | "error";
-export type WorkspaceIdentityKind = "git_repo" | "p4_workspace" | "local_dir";
-export type WorkspaceBindingStatus = "pending" | "ready" | "offline" | "error";
-export type WorkspaceResolutionPolicy = "prefer_default_binding" | "prefer_online";
 export type ProjectBackendAccessStatus = "active" | "paused" | "revoked";
 export type ProjectBackendAccessMode = "use_inventory";
 export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";
@@ -51,9 +73,6 @@ export type BackendWorkspaceInventorySource =
   | "capability_expansion_ack";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type AuthMode = "personal" | "enterprise";
-export type ProjectVisibility = "private" | "template_visible";
-export type ProjectRole = "owner" | "editor" | "viewer";
-export type ProjectSubjectType = "user" | "group";
 
 export const THINKING_LEVEL_OPTIONS: Array<{ value: ThinkingLevel; label: string }> = [
   { value: "off", label: "关闭" },
@@ -114,10 +133,6 @@ export const CAPABILITY_OPTIONS: CapabilityOption[] = [
 export type ToolCluster = "read" | "write" | "execute" | "workflow" | "collaboration" | "canvas";
 
 export type SystemPromptMode = "append" | "override";
-
-export interface ProjectSchedulingConfig {
-  stall_timeout_ms?: number | null;
-}
 
 // ─── 登录 / 认证 ──────────────────────────────────────
 
@@ -202,12 +217,6 @@ export interface DirectoryGroup {
 
 // ─── Project ──────────────────────────────────────────
 
-export interface AgentPreset {
-  name: string;
-  agent_type: string;
-  config: Record<string, unknown>;
-}
-
 export interface AgentPresetConfig extends Record<string, unknown> {
   executor?: string;
   provider_id?: string;
@@ -231,7 +240,7 @@ export interface AgentVfsAccessGrant {
   capabilities: Array<"read" | "write" | "list" | "search">;
 }
 
-export type { ProjectVfsMountContent };
+export type ProjectVfsMountContent = ProjectVfsMountContentDto;
 export type ProjectVfsMount = ProjectVfsMountResponse;
 
 // ─── Project Agent 项目实例 ───
@@ -240,48 +249,6 @@ export type ProjectAgent = Omit<GeneratedProjectAgent, "config" | "default_lifec
   config: AgentPresetConfig;
   default_lifecycle_key: string | null;
 };
-
-export interface ProjectConfig {
-  default_agent_type?: string | null;
-  default_workspace_id?: string | null;
-  agent_presets?: AgentPreset[];
-  context_containers: ContextContainerDefinition[];
-  scheduling?: ProjectSchedulingConfig;
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  description: string;
-  config: ProjectConfig;
-  created_by_user_id: string;
-  updated_by_user_id: string;
-  visibility: ProjectVisibility;
-  is_template: boolean;
-  cloned_from_project_id?: string | null;
-  access: ProjectAccessSummary;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProjectAccessSummary {
-  role?: ProjectRole | null;
-  can_view: boolean;
-  can_edit: boolean;
-  can_manage_sharing: boolean;
-  via_admin_bypass: boolean;
-  via_template_visibility: boolean;
-}
-
-export interface ProjectSubjectGrant {
-  project_id: string;
-  subject_type: ProjectSubjectType;
-  subject_id: string;
-  role: ProjectRole;
-  granted_by_user_id: string;
-  created_at: string;
-  updated_at: string;
-}
 
 export type ProjectAgentExecutor = Omit<
   GeneratedProjectAgentExecutor,
@@ -320,44 +287,16 @@ export type OpenProjectAgentSessionResult = Omit<
 
 // ─── Workspace ────────────────────────────────────────
 
-export interface WorkspaceBinding {
-  id: string;
-  workspace_id: string;
-  backend_id: string;
-  root_ref: string;
-  status: WorkspaceBindingStatus;
-  detected_facts: Record<string, unknown>;
-  last_verified_at?: string | null;
-  priority: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Workspace {
-  id: string;
-  project_id: string;
-  name: string;
-  identity_kind: WorkspaceIdentityKind;
-  identity_payload: Record<string, unknown>;
-  resolution_policy: WorkspaceResolutionPolicy;
-  default_binding_id?: string | null;
-  status: WorkspaceStatus;
-  bindings: WorkspaceBinding[];
-  mount_capabilities: ContextContainerCapability[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkspaceDetectionResult {
+export type WorkspaceDetectionResult = {
   identity_kind: WorkspaceIdentityKind;
   identity_payload: Record<string, unknown>;
   binding: WorkspaceBinding;
   confidence: string;
   warnings: string[];
   matched_workspace_ids: string[];
-}
+};
 
-export interface ProjectBackendAccess {
+export type ProjectBackendAccess = {
   id: string;
   project_id: string;
   backend_id: string;
@@ -370,7 +309,7 @@ export interface ProjectBackendAccess {
   created_by?: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
 export interface BackendWorkspaceInventory {
   id: string;
@@ -387,7 +326,7 @@ export interface BackendWorkspaceInventory {
   updated_at: string;
 }
 
-export interface WorkspaceInventoryCandidate {
+export type WorkspaceInventoryCandidate = {
   backend_id: string;
   root_ref: string;
   identity_kind: WorkspaceIdentityKind;
@@ -396,15 +335,15 @@ export interface WorkspaceInventoryCandidate {
   status: BackendWorkspaceInventoryStatus;
   matched_workspace_ids: string[];
   reason: string;
-}
+};
 
-export interface WorkspaceBindingSyncResult {
+export type WorkspaceBindingSyncResult = {
   updated_workspace_ids: string[];
   created_bindings: number;
   updated_bindings: number;
   candidates: WorkspaceInventoryCandidate[];
   conflicts: WorkspaceInventoryCandidate[];
-}
+};
 
 export interface InventoryRefreshResult {
   access_id: string;
@@ -415,82 +354,7 @@ export interface InventoryRefreshResult {
   warnings: string[];
 }
 
-// ─── Story ────────────────────────────────────────────
-
-export type StoryPriority = "p0" | "p1" | "p2" | "p3";
-
-export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";
-
-export type ContextSourceKind =
-  | "manual_text"
-  | "file"
-  | "project_snapshot"
-  | "http_fetch"
-  | "mcp_resource"
-  | "entity_ref";
-export type ContextSlot = "requirements" | "constraints" | "codebase" | "references" | "instruction_append";
-export type ContextDelivery = "inline" | "resource" | "lazy";
-
-export interface ContextSourceRef {
-  kind: ContextSourceKind;
-  locator: string;
-  label?: string | null;
-  slot: ContextSlot;
-  priority: number;
-  required: boolean;
-  max_chars?: number | null;
-  delivery: ContextDelivery;
-}
-
-export interface StoryContext {
-  source_refs: ContextSourceRef[];
-  context_containers: ContextContainerDefinition[];
-  disabled_container_ids: string[];
-  session_composition?: SessionComposition | null;
-}
-
-export interface Story {
-  id: string;
-  project_id: string;
-  default_workspace_id?: string | null;
-  title: string;
-  description?: string;
-  status: StoryStatus;
-  priority: StoryPriority;
-  story_type: StoryType;
-  tags: string[];
-  task_count: number;
-  context: StoryContext;
-  created_at: string;
-  updated_at: string;
-}
-
-// ─── Task ─────────────────────────────────────────────
-
-export interface AgentBinding {
-  agent_type?: string | null;
-  agent_pid?: string | null;
-  preset_name?: string | null;
-  prompt_template?: string | null;
-  initial_context?: string | null;
-  thinking_level?: ThinkingLevel | null;
-  context_sources: ContextSourceRef[];
-}
-
-export interface Task {
-  id: string;
-  project_id: string;
-  story_id: string;
-  workspace_id?: string | null;
-  lifecycle_step_key?: string | null;
-  title: string;
-  description?: string;
-  status: TaskStatus;
-  agent_binding: AgentBinding;
-  artifacts: Artifact[];
-  created_at: string;
-  updated_at: string;
-}
+// ─── Story / Task ─────────────────────────────────────
 
 // ─── Routine ─────────────────────────────────────────────
 

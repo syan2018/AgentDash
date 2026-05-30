@@ -5,8 +5,6 @@ import {
   type ProjectEventStreamConnection,
 } from '../api/eventStream';
 import { registerStreamConnection } from '../api/streamRegistry';
-import { useCoordinatorStore } from './coordinatorStore';
-import { useStoryStore } from './storyStore';
 
 export type EventConnectionState =
   | 'disconnected'
@@ -15,7 +13,7 @@ export type EventConnectionState =
   | 'reconnecting';
 
 interface EventState {
-  activeProjectId: string | null;
+  streamProjectId: string | null;
   lastEventId: number;
   connected: boolean;
   connectionState: EventConnectionState;
@@ -26,18 +24,25 @@ interface EventState {
   disconnect: () => void;
 }
 
-let backendRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+export type ProjectEventListener = (event: StreamEvent) => void;
 
-function scheduleBackendRefresh() {
-  if (backendRefreshTimer) return;
-  backendRefreshTimer = setTimeout(() => {
-    backendRefreshTimer = null;
-    void useCoordinatorStore.getState().fetchBackends();
-  }, 100);
+const projectEventListeners = new Set<ProjectEventListener>();
+
+export function subscribeProjectEvents(listener: ProjectEventListener): () => void {
+  projectEventListeners.add(listener);
+  return () => {
+    projectEventListeners.delete(listener);
+  };
+}
+
+function publishProjectEvent(event: StreamEvent) {
+  for (const listener of projectEventListeners) {
+    listener(event);
+  }
 }
 
 export const useEventStore = create<EventState>((set, get) => ({
-  activeProjectId: null,
+  streamProjectId: null,
   lastEventId: 0,
   connected: false,
   connectionState: 'disconnected',
@@ -46,13 +51,13 @@ export const useEventStore = create<EventState>((set, get) => ({
 
   connect: (projectId) => {
     const current = get();
-    if (current.streamConnection && current.activeProjectId === projectId) return;
+    if (current.streamConnection && current.streamProjectId === projectId) return;
     if (current.streamConnection) {
       current.streamConnection.close();
       current.unregisterStream?.();
     }
     set({
-      activeProjectId: projectId,
+      streamProjectId: projectId,
       lastEventId: 0,
       connectionState: 'connecting',
       connected: false,
@@ -72,15 +77,15 @@ export const useEventStore = create<EventState>((set, get) => ({
               connected: true,
               connectionState: 'connected',
             });
-            scheduleBackendRefresh();
+            publishProjectEvent(event);
             break;
           case 'StateChanged':
             set({ lastEventId: event.data.id, connected: true, connectionState: 'connected' });
-            useStoryStore.getState().handleStateChange(event.data);
+            publishProjectEvent(event);
             break;
           case 'BackendRuntimeChanged':
             set({ connected: true, connectionState: 'connected' });
-            scheduleBackendRefresh();
+            publishProjectEvent(event);
             break;
           case 'Heartbeat':
             break;
@@ -117,12 +122,8 @@ export const useEventStore = create<EventState>((set, get) => ({
       streamConnection.close();
     }
     unregisterStream?.();
-    if (backendRefreshTimer) {
-      clearTimeout(backendRefreshTimer);
-      backendRefreshTimer = null;
-    }
     set({
-      activeProjectId: null,
+      streamProjectId: null,
       lastEventId: 0,
       streamConnection: null,
       unregisterStream: null,

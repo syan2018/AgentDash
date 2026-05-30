@@ -598,7 +598,9 @@ pub fn capability_to_platform_mcp_scope(cap: &ToolCapability) -> Option<Platform
 ///
 /// 替代原 `SessionOwnerType` 在 capability visibility 中的角色。
 /// 仅用于判断 "当前 session 处于什么级别的执行上下文"，不表达 ownership 关系。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityScope {
     #[default]

@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::io;
 
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_domain::workflow::MountDirective;
@@ -12,6 +11,36 @@ use crate::context::capability::CompanionAgentEntry;
 use crate::{
     AgentConfig, SessionMcpServer, ToolCapability, ToolCapabilityFilter, ToolCluster, Vfs,
 };
+
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum SessionStoreError {
+    #[error("session persistence not found: {0}")]
+    NotFound(String),
+    #[error("session persistence invalid input: {0}")]
+    InvalidInput(String),
+    #[error("session persistence invalid data: {0}")]
+    InvalidData(String),
+    #[error("session persistence database error: {0}")]
+    Database(String),
+    #[error("session persistence internal error: {0}")]
+    Internal(String),
+}
+
+pub type SessionStoreResult<T> = Result<T, SessionStoreError>;
+
+impl From<SessionStoreError> for std::io::Error {
+    fn from(error: SessionStoreError) -> Self {
+        let kind = match &error {
+            SessionStoreError::NotFound(_) => std::io::ErrorKind::NotFound,
+            SessionStoreError::InvalidInput(_) => std::io::ErrorKind::InvalidInput,
+            SessionStoreError::InvalidData(_) => std::io::ErrorKind::InvalidData,
+            SessionStoreError::Database(_) | SessionStoreError::Internal(_) => {
+                std::io::ErrorKind::Other
+            }
+        };
+        std::io::Error::new(kind, error.to_string())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -690,11 +719,11 @@ pub struct CompactionProjectionCommitResult {
 
 #[async_trait]
 pub trait SessionMetaStore: Send + Sync {
-    async fn create_session(&self, meta: &SessionMeta) -> io::Result<()>;
-    async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>>;
-    async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>>;
-    async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()>;
-    async fn delete_session(&self, session_id: &str) -> io::Result<()>;
+    async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()>;
+    async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>>;
+    async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>>;
+    async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()>;
+    async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()>;
 }
 
 #[async_trait]
@@ -703,19 +732,22 @@ pub trait SessionEventStore: Send + Sync {
         &self,
         session_id: &str,
         envelope: &BackboneEnvelope,
-    ) -> io::Result<PersistedSessionEvent>;
+    ) -> SessionStoreResult<PersistedSessionEvent>;
     async fn read_backlog(
         &self,
         session_id: &str,
         after_seq: u64,
-    ) -> io::Result<SessionEventBacklog>;
+    ) -> SessionStoreResult<SessionEventBacklog>;
     async fn list_event_page(
         &self,
         session_id: &str,
         after_seq: u64,
         limit: u32,
-    ) -> io::Result<SessionEventPage>;
-    async fn list_all_events(&self, session_id: &str) -> io::Result<Vec<PersistedSessionEvent>>;
+    ) -> SessionStoreResult<SessionEventPage>;
+    async fn list_all_events(
+        &self,
+        session_id: &str,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>>;
 }
 
 #[async_trait]
@@ -723,20 +755,24 @@ pub trait SessionTerminalEffectStore: Send + Sync {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
-    ) -> io::Result<TerminalEffectRecord>;
-    async fn mark_terminal_effect_running(&self, effect_id: Uuid) -> io::Result<()>;
-    async fn mark_terminal_effect_succeeded(&self, effect_id: Uuid) -> io::Result<()>;
-    async fn mark_terminal_effect_failed(&self, effect_id: Uuid, error: String) -> io::Result<()>;
+    ) -> SessionStoreResult<TerminalEffectRecord>;
+    async fn mark_terminal_effect_running(&self, effect_id: Uuid) -> SessionStoreResult<()>;
+    async fn mark_terminal_effect_succeeded(&self, effect_id: Uuid) -> SessionStoreResult<()>;
+    async fn mark_terminal_effect_failed(
+        &self,
+        effect_id: Uuid,
+        error: String,
+    ) -> SessionStoreResult<()>;
     async fn mark_terminal_effect_dead_letter(
         &self,
         effect_id: Uuid,
         error: String,
-    ) -> io::Result<()>;
+    ) -> SessionStoreResult<()>;
     async fn list_terminal_effects_by_status(
         &self,
         statuses: &[TerminalEffectStatus],
         limit: u32,
-    ) -> io::Result<Vec<TerminalEffectRecord>>;
+    ) -> SessionStoreResult<Vec<TerminalEffectRecord>>;
 }
 
 #[async_trait]
@@ -745,22 +781,22 @@ pub trait SessionRuntimeCommandStore: Send + Sync {
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<RuntimeCommandRecord>;
+    ) -> SessionStoreResult<RuntimeCommandRecord>;
     async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<RuntimeCommandRecord>>;
-    async fn mark_runtime_commands_applied(&self, command_ids: &[Uuid]) -> io::Result<()>;
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>>;
+    async fn mark_runtime_commands_applied(&self, command_ids: &[Uuid]) -> SessionStoreResult<()>;
     async fn mark_runtime_commands_failed(
         &self,
         command_ids: &[Uuid],
         error: String,
-    ) -> io::Result<()>;
+    ) -> SessionStoreResult<()>;
     async fn list_runtime_commands_by_status(
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<RuntimeCommandRecord>>;
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>>;
 }
 
 #[async_trait]
@@ -769,12 +805,12 @@ pub trait SessionCompactionStore: Send + Sync {
         &self,
         session_id: &str,
         compaction_id: &str,
-    ) -> io::Result<Option<SessionCompactionRecord>>;
+    ) -> SessionStoreResult<Option<SessionCompactionRecord>>;
     async fn list_compactions(
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Vec<SessionCompactionRecord>>;
+    ) -> SessionStoreResult<Vec<SessionCompactionRecord>>;
 }
 
 #[async_trait]
@@ -784,49 +820,52 @@ pub trait SessionProjectionStore: Send + Sync {
         session_id: &str,
         projection_kind: &str,
         projection_version: u64,
-    ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
+    ) -> SessionStoreResult<Vec<SessionProjectionSegmentRecord>>;
     async fn read_projection_head(
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Option<SessionProjectionHeadRecord>>;
-    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;
+    ) -> SessionStoreResult<Option<SessionProjectionHeadRecord>>;
+    async fn upsert_projection_head(
+        &self,
+        head: SessionProjectionHeadRecord,
+    ) -> SessionStoreResult<()>;
     async fn commit_compaction_projection(
         &self,
         session_id: &str,
         commit: NewCompactionProjectionCommit,
-    ) -> io::Result<CompactionProjectionCommitResult>;
+    ) -> SessionStoreResult<CompactionProjectionCommitResult>;
 }
 
 #[async_trait]
 pub trait SessionLineageStore: Send + Sync {
-    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()>;
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> SessionStoreResult<()>;
     async fn get_session_lineage(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Option<SessionLineageRecord>>;
+    ) -> SessionStoreResult<Option<SessionLineageRecord>>;
     async fn list_session_children(
         &self,
         parent_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>>;
     async fn list_session_ancestors(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>>;
     async fn list_session_descendants(
         &self,
         root_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>>;
     async fn set_session_lineage_status(
         &self,
         child_session_id: &str,
         status: SessionLineageStatus,
         updated_at_ms: i64,
-    ) -> io::Result<()>;
+    ) -> SessionStoreResult<()>;
 }
 
 /// Session 持久化全量端口——聚合 7 个领域子 store，方法签名全部由子 trait 继承。

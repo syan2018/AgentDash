@@ -2,12 +2,12 @@
 
 use agentdash_domain::permission::PermissionGrant;
 use agentdash_domain::workflow::ToolCapabilityDirective;
+use agentdash_spi::session_persistence::{
+    CAPABILITY_DIMENSION_TOOL, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
+};
 use agentdash_spi::{
     CapabilityArtifactSource, CapabilityDeclarationRecord, CapabilityDimensionKey,
     RuntimeCapabilityTransition,
-};
-use agentdash_spi::session_persistence::{
-    CAPABILITY_DIMENSION_TOOL, DECLARATION_TYPE_CAPABILITY_DIRECTIVE,
 };
 
 /// 将 approved PermissionGrant 编译为可应用的 RuntimeCapabilityTransition。

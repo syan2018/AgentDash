@@ -1,10 +1,12 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::hooks::hook_rule_preset_registry;
@@ -13,109 +15,28 @@ use agentdash_application::workflow::{
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
     StartActivityLifecycleRunCommand,
 };
+use agentdash_contracts::workflow::{
+    DeleteActivityLifecycleDefinitionResponse, DeleteHookPresetResponse,
+    DeleteWorkflowDefinitionResponse, HookPresetResponse, HookPresetsResponse,
+    RegisterHookPresetResponse, ValidateHookScriptResponse,
+};
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityTransition,
-    LifecycleRun, ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowContract,
-    WorkflowDefinition, WorkflowDefinitionSource, normalize_workflow_binding_kinds,
-    workflow_binding_kinds_cover,
+    ActivityExecutorSpec, ActivityLifecycleDefinition, LifecycleRun, ValidationIssue,
+    ValidationSeverity, WorkflowDefinition, WorkflowDefinitionSource,
+    normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::WorkflowValidationResponse;
+use crate::dto::{
+    CreateActivityLifecycleDefinitionRequest, CreateWorkflowDefinitionRequest, ListWorkflowsQuery,
+    RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
+    UpdateActivityLifecycleDefinitionRequest, UpdateWorkflowDefinitionRequest,
+    ValidateActivityLifecycleDefinitionRequest, ValidateScriptRequest,
+    ValidateWorkflowDefinitionRequest, WorkflowValidationResponse,
+};
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
-
-#[derive(Debug, Deserialize, Default)]
-pub struct ListWorkflowsQuery {
-    pub project_id: Option<String>,
-    pub binding_kind: Option<WorkflowBindingKind>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct StartWorkflowRunRequest {
-    pub lifecycle_id: Option<String>,
-    pub lifecycle_key: Option<String>,
-    /// 父 session ID — lifecycle run 直接关联 session。
-    pub session_id: String,
-    /// project_id 显式传入，因为 session 本身不直接携带 project 信息。
-    pub project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SubmitHumanDecisionRequest {
-    pub decision_port: String,
-    pub decision: serde_json::Value,
-    pub summary: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateWorkflowDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateWorkflowDefinitionRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
-    pub contract: Option<WorkflowContract>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ValidateWorkflowDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub contract: WorkflowContract,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateActivityLifecycleDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub entry_activity_key: String,
-    pub activities: Vec<ActivityDefinition>,
-    #[serde(default)]
-    pub transitions: Vec<ActivityTransition>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateActivityLifecycleDefinitionRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
-    pub entry_activity_key: Option<String>,
-    pub activities: Option<Vec<ActivityDefinition>>,
-    pub transitions: Option<Vec<ActivityTransition>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ValidateActivityLifecycleDefinitionRequest {
-    pub project_id: String,
-    pub key: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
-    pub entry_activity_key: String,
-    pub activities: Vec<ActivityDefinition>,
-    #[serde(default)]
-    pub transitions: Vec<ActivityTransition>,
-}
 
 pub async fn list_workflows(
     State(state): State<Arc<AppState>>,
@@ -139,6 +60,65 @@ pub async fn list_workflows(
         definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
     }
     Ok(Json(definitions))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/workflow-definitions",
+            axum::routing::get(list_workflows).post(create_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions",
+            axum::routing::get(list_activity_lifecycles).post(create_activity_lifecycle_definition),
+        )
+        .route(
+            "/workflow-definitions/validate",
+            axum::routing::post(validate_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/validate",
+            axum::routing::post(validate_activity_lifecycle_definition),
+        )
+        .route(
+            "/workflow-definitions/{id}",
+            axum::routing::get(get_workflow_definition)
+                .put(update_workflow_definition)
+                .delete(delete_workflow_definition),
+        )
+        .route(
+            "/activity-lifecycle-definitions/{id}",
+            axum::routing::get(get_activity_lifecycle_definition)
+                .put(update_activity_lifecycle_definition)
+                .delete(delete_activity_lifecycle_definition),
+        )
+        .route("/tool-catalog", axum::routing::get(query_tool_catalog))
+        .route("/hook-presets", axum::routing::get(list_hook_presets))
+        .route(
+            "/hook-scripts/validate",
+            axum::routing::post(validate_hook_script),
+        )
+        .route(
+            "/hook-presets/custom",
+            axum::routing::post(register_hook_preset),
+        )
+        .route(
+            "/hook-presets/custom/{key}",
+            axum::routing::delete(delete_hook_preset),
+        )
+        .route("/lifecycle-runs", axum::routing::post(start_lifecycle_run))
+        .route(
+            "/lifecycle-runs/{id}",
+            axum::routing::get(get_lifecycle_run),
+        )
+        .route(
+            "/lifecycle-runs/by-session/{session_id}",
+            axum::routing::get(list_lifecycle_runs_by_session),
+        )
+        .route(
+            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            axum::routing::post(submit_human_decision),
+        )
 }
 
 pub async fn list_activity_lifecycles(
@@ -325,7 +305,7 @@ pub async fn delete_activity_lifecycle_definition(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteActivityLifecycleDefinitionResponse>, ApiError> {
     let id = parse_uuid(&id, "activity_lifecycle_id")?;
     let definition = state
         .repos
@@ -345,7 +325,9 @@ pub async fn delete_activity_lifecycle_definition(
         .activity_lifecycle_definition_repo
         .delete(id)
         .await?;
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    Ok(Json(DeleteActivityLifecycleDefinitionResponse {
+        deleted: true,
+    }))
 }
 
 pub async fn start_lifecycle_run(
@@ -657,7 +639,7 @@ pub async fn delete_workflow_definition(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteWorkflowDefinitionResponse>, ApiError> {
     let id = parse_uuid(&id, "workflow_id")?;
     let definition = state
         .repos
@@ -701,7 +683,7 @@ pub async fn delete_workflow_definition(
         )));
     }
     state.repos.workflow_definition_repo.delete(id).await?;
-    Ok(Json(serde_json::json!({ "deleted": true })))
+    Ok(Json(DeleteWorkflowDefinitionResponse { deleted: true }))
 }
 
 async fn load_lifecycle_run(state: &Arc<AppState>, run_id: Uuid) -> Result<LifecycleRun, ApiError> {
@@ -837,100 +819,97 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
     }
 }
 
-pub async fn list_hook_presets() -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn list_hook_presets() -> Result<Json<HookPresetsResponse>, ApiError> {
     let presets = hook_rule_preset_registry();
     let grouped = group_presets_by_trigger(presets)?;
-    Ok(Json(serde_json::json!({ "presets": grouped })))
+    Ok(Json(HookPresetsResponse { presets: grouped }))
 }
 
 fn group_presets_by_trigger(
     presets: &[agentdash_application::hooks::HookRulePreset],
-) -> Result<serde_json::Value, ApiError> {
-    use std::collections::BTreeMap;
-    let mut groups: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+) -> Result<BTreeMap<String, Vec<HookPresetResponse>>, ApiError> {
+    let mut groups: BTreeMap<String, Vec<HookPresetResponse>> = BTreeMap::new();
     for preset in presets {
-        let trigger_key = serde_json::to_value(preset.trigger)
-            .map_err(|error| {
-                ApiError::Internal(format!(
-                    "序列化 hook preset trigger 失败: key={}, error={error}",
-                    preset.key
-                ))
-            })?
-            .as_str()
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                ApiError::Internal(format!(
-                    "hook preset trigger 不是字符串: key={}",
-                    preset.key
-                ))
-            })?;
+        let trigger = serde_json::to_value(preset.trigger).map_err(|error| {
+            ApiError::Internal(format!(
+                "序列化 hook preset trigger 失败: key={}, error={error}",
+                preset.key
+            ))
+        })?;
+        let trigger_key = trigger.as_str().map(ToString::to_string).ok_or_else(|| {
+            ApiError::Internal(format!(
+                "hook preset trigger 不是字符串: key={}",
+                preset.key
+            ))
+        })?;
+        let source = serde_json::to_value(preset.source).map_err(|error| {
+            ApiError::Internal(format!(
+                "序列化 hook preset source 失败: key={}, error={error}",
+                preset.key
+            ))
+        })?;
+        let source = source.as_str().map(ToString::to_string).ok_or_else(|| {
+            ApiError::Internal(format!("hook preset source 不是字符串: key={}", preset.key))
+        })?;
         groups
             .entry(trigger_key)
             .or_default()
-            .push(serde_json::json!({
-                "key": preset.key,
-                "trigger": preset.trigger,
-                "label": preset.label,
-                "description": preset.description,
-                "param_schema": preset.param_schema,
-                "script": preset.script,
-                "source": preset.source,
-            }));
+            .push(HookPresetResponse {
+                key: preset.key.to_string(),
+                trigger,
+                label: preset.label.to_string(),
+                description: preset.description.to_string(),
+                param_schema: preset
+                    .param_schema
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null),
+                script: preset.script.to_string(),
+                source,
+            });
     }
-    serde_json::to_value(groups)
-        .map_err(|error| ApiError::Internal(format!("序列化 hook preset 分组失败: {error}")))
-}
-
-#[derive(Deserialize)]
-pub struct ValidateScriptRequest {
-    pub script: String,
+    Ok(groups)
 }
 
 pub async fn validate_hook_script(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ValidateScriptRequest>,
-) -> Json<serde_json::Value> {
+) -> Json<ValidateHookScriptResponse> {
     match state.services.hook_provider.validate_script(&req.script) {
-        Ok(()) => Json(serde_json::json!({ "valid": true })),
-        Err(errors) => Json(serde_json::json!({ "valid": false, "errors": errors })),
+        Ok(()) => Json(ValidateHookScriptResponse {
+            valid: true,
+            errors: None,
+        }),
+        Err(errors) => Json(ValidateHookScriptResponse {
+            valid: false,
+            errors: Some(errors),
+        }),
     }
-}
-
-#[derive(Deserialize)]
-pub struct RegisterPresetRequest {
-    pub key: String,
-    pub script: String,
 }
 
 pub async fn register_hook_preset(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RegisterPresetRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RegisterHookPresetResponse>, ApiError> {
     state
         .services
         .hook_provider
         .register_preset(&req.key, &req.script)
         .map_err(|e| ApiError::BadRequest(format!("脚本编译失败: {e}")))?;
-    Ok(Json(
-        serde_json::json!({ "registered": true, "key": req.key }),
-    ))
+    Ok(Json(RegisterHookPresetResponse {
+        registered: true,
+        key: req.key,
+    }))
 }
 
 pub async fn delete_hook_preset(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
-) -> Json<serde_json::Value> {
+) -> Json<DeleteHookPresetResponse> {
     let removed = state.services.hook_provider.remove_preset(&key);
-    Json(serde_json::json!({ "removed": removed, "key": key }))
+    Json(DeleteHookPresetResponse { removed, key })
 }
 
 // ── Tool Catalog ──
-
-#[derive(Debug, Deserialize)]
-pub struct ToolCatalogQuery {
-    /// 逗号分隔的 capability keys，如 `file_read,canvas,mcp:code_analyzer`
-    pub capabilities: String,
-}
 
 pub async fn query_tool_catalog(
     Query(query): Query<ToolCatalogQuery>,

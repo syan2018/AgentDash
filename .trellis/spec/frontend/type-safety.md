@@ -8,7 +8,7 @@
 
 - **严格模式**：TypeScript strict 已启用，禁止 `any`、类型断言（`as`）、非空断言（`!`）
 - **snake_case 直接映射**：前端类型字段名与后端 Rust DTO 直接对齐，不做 camelCase 转换
-- **运行时验证**：API 响应通过 mapper 函数做 `unknown → typed object` 转换，包含基础校验
+- **Generated wire 单源**：内部 API 响应通过 `src/generated/*` 的 contract type 消费，service 层信任 generated wire，不做逐字段 identity rebuild
 
 ---
 
@@ -26,20 +26,21 @@
 ## Mapper 边界
 
 mapper 只负责：
-- `unknown → typed object` 转换
-- 状态值归一化到 generated union / enum
-- null / array / number 基础运行时校验
+- UI view model 转换
+- 外部/用户输入、第三方 payload、iframe/plugin bridge 等非内部 API 边界的 `unknown → typed object` 转换
+- 尚未进入 contract crate 的 route-local 过渡 DTO
 
 mapper 不负责：
 - 同时兼容 `camelCase` + `snake_case`（出现 `fooBar ?? foo_bar` 时应修后端 DTO）
 - 猜测后端字段别名
 - 重新声明后端 enum/string union；跨层 DTO 的联合类型来自 `src/generated/*`
+- 对 generated DTO 做逐字段 identity rebuild
 
 ## Generated Contract Boundary
 
 前端把 `src/generated/*` 当作 wire DTO 事实源。Feature 可以定义 view model，但 view model 必须由 generated DTO 显式转换而来，原因是 UI 形态与 transport 形态有不同变化节奏。
 
-Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，由 `services/extensionRuntime.ts` 做 `unknown -> ExtensionRuntimeProjectionResponse` / invoke response 的运行时校验与空值归一化。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
+Project extension runtime surface 消费 `generated/extension-runtime-contracts.ts`，`services/extensionRuntime.ts` 只保留 endpoint 调用与 webview asset URL 拼装。`features/extension-runtime` 以 Project ID 为 key 缓存 runtime projection，并向 WorkspacePanel 输出 tab descriptor 与 webview bridge；installation 的 `installed_source` 与 `package_artifact` 是显式可空字段，用来区分 Shared Library 安装来源与 packaged artifact 安装来源；前端不从 Shared Library payload 或 Session Context 推断 extension runtime 声明。
 
 新增或修改跨层 DTO 时同步运行：
 
@@ -68,4 +69,4 @@ Session 右侧 WorkspacePanel 消费 current runtime projection state。该 stat
 - `any` 类型
 - `as SomeType` 类型断言（除非编译器无法推断的极少数场景）
 - `value!` 非空断言
-- API 响应直接信任为具体类型（必须经过 mapper）
+- 为 generated DTO 编写逐字段 identity mapper

@@ -6,7 +6,7 @@ use agentdash_domain::canvas::{Canvas, CanvasImportMap};
 use agentdash_spi::Vfs;
 
 use crate::runtime_gateway::RuntimeSurface;
-use crate::vfs::{VfsService, ResolvedVfsSurfaceSource, parse_mount_uri};
+use crate::vfs::{ResolvedVfsSurfaceSource, VfsService, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {

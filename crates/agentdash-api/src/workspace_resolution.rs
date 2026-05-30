@@ -3,13 +3,13 @@ use std::sync::Arc;
 use crate::app_state::AppState;
 use crate::relay::registry::{BackendCommandError, BackendRegistry};
 use crate::rpc::ApiError;
-use agentdash_application::backend_transport::{
+pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
+use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
+use agentdash_application_ports::backend_transport::{
     BackendTransport, DirectoryBrowseInfo, DirectoryEntryInfo, GitRepoInfo, P4WorkspaceInfo,
     RelayPromptRequest, RelayPromptTransport, RelaySessionRoute, RelaySessionRouteInfo,
     RemoteExecutorInfo, TransportError, WorkspaceProbeInfo,
 };
-pub use agentdash_application::workspace::ResolvedWorkspaceBinding;
-use agentdash_application::workspace::{WorkspaceDetectionError, WorkspaceResolutionError};
 use agentdash_domain::workspace::Workspace;
 use agentdash_relay::{
     AgentConfigRelay, CommandBrowseDirectoryPayload, CommandCancelPayload, CommandPromptPayload,

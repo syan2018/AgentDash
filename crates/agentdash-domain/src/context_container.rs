@@ -1,17 +1,16 @@
 use std::collections::BTreeSet;
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::common::MountCapability;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextContainerFile {
     pub path: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContextContainerProvider {
     InlineFiles {
@@ -23,7 +22,7 @@ pub enum ContextContainerProvider {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextContainerDefinition {
     pub mount_id: String,
     pub display_name: String,

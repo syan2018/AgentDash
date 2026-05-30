@@ -10,7 +10,7 @@ use agentdash_domain::workspace::{
     WorkspaceBindingStatus, WorkspaceIdentityKind, normalize_git_remote, normalize_path_key,
 };
 
-use crate::backend_transport::{
+use agentdash_application_ports::backend_transport::{
     BackendTransport, P4WorkspaceInfo, TransportError, WorkspaceProbeInfo,
 };
 
@@ -133,7 +133,7 @@ fn select_identity(
 
 fn build_git_identity_payload(
     root_ref: &str,
-    git: &crate::backend_transport::GitRepoInfo,
+    git: &agentdash_application_ports::backend_transport::GitRepoInfo,
 ) -> Value {
     let repo_root = git.repo_root.as_deref().unwrap_or(root_ref);
     let repo_key = git
@@ -219,7 +219,9 @@ mod tests {
         build_git_identity_payload, build_p4_identity_payload, normalize_git_remote,
         select_identity,
     };
-    use crate::backend_transport::{GitRepoInfo, P4WorkspaceInfo, WorkspaceProbeInfo};
+    use agentdash_application_ports::backend_transport::{
+        GitRepoInfo, P4WorkspaceInfo, WorkspaceProbeInfo,
+    };
     use agentdash_domain::workspace::WorkspaceIdentityKind;
 
     #[test]

@@ -18,8 +18,8 @@ use agentdash_application::runtime_gateway::{
     RuntimeInvocationRequest,
 };
 use agentdash_contracts::mcp_preset::{
-    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
-    McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
+    McpPresetResponse, McpPresetSourceTag, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_domain::mcp_preset::{McpPreset, McpTransportConfig};
 
@@ -30,6 +30,28 @@ use crate::rpc::ApiError;
 #[derive(Debug, Deserialize)]
 pub struct ProjectMcpPresetsPath {
     pub project_id: String,
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/mcp-presets",
+            axum::routing::get(list_mcp_presets).post(create_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/probe",
+            axum::routing::post(probe_mcp_transport_handler),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}",
+            axum::routing::get(get_mcp_preset)
+                .patch(update_mcp_preset)
+                .delete(delete_mcp_preset),
+        )
+        .route(
+            "/projects/{project_id}/mcp-presets/{id}/clone",
+            axum::routing::post(clone_mcp_preset),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,7 +180,7 @@ pub async fn delete_mcp_preset(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<McpPresetItemPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteMcpPresetResponse>, ApiError> {
     let (_project_id, preset) = load_preset_with_project(
         state.as_ref(),
         &current_user,
@@ -169,7 +191,9 @@ pub async fn delete_mcp_preset(
 
     let service = McpPresetService::new(state.repos.mcp_preset_repo.as_ref());
     service.delete(preset.id).await?;
-    Ok(Json(serde_json::json!({ "deleted": preset.id })))
+    Ok(Json(DeleteMcpPresetResponse {
+        deleted: preset.id.to_string(),
+    }))
 }
 
 /// POST `/api/projects/:project_id/mcp-presets/:id/clone`
@@ -351,12 +375,12 @@ mod tests {
         let err: ApiError = McpPresetApplicationError::Internal("io error".to_string()).into();
         assert!(matches!(err, ApiError::Internal(_)));
 
-        // Internal(unique 关键字) → 409（兜底 race 场景）
+        // Internal 保持 500；唯一冲突应由仓储/应用层结构化抛出 Conflict。
         let err: ApiError = McpPresetApplicationError::Internal(
             "duplicate key value violates unique constraint \"idx_mcp_presets_project_key\""
                 .to_string(),
         )
         .into();
-        assert!(matches!(err, ApiError::Conflict(_)));
+        assert!(matches!(err, ApiError::Internal(_)));
     }
 }

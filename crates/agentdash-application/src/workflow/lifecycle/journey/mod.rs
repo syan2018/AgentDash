@@ -9,7 +9,7 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    ActivityAttemptState, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -541,10 +541,7 @@ pub fn step_session_id(run: &LifecycleRun, key: &str) -> JourneyResult<String> {
 pub fn current_step_session_id(run: &LifecycleRun) -> JourneyResult<(String, String)> {
     let attempt = current_step(run)?;
     let session_id = attempt_session_id(&attempt).ok_or_else(|| {
-        LifecycleJourneyError::NotFound(format!(
-            "node `{}` 没有关联 session",
-            attempt.activity_key
-        ))
+        LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", attempt.activity_key))
     })?;
     Ok((attempt.activity_key, session_id))
 }

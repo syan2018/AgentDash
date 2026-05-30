@@ -48,11 +48,11 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(&user.avatar_url)
         .bind(user.is_admin)
         .bind(&user.provider)
-        .bind(user.created_at.to_rfc3339())
-        .bind(Utc::now().to_rfc3339())
+        .bind(user.created_at)
+        .bind(Utc::now())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -68,7 +68,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(user_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -84,7 +84,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(group_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -99,7 +99,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -114,7 +114,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -132,7 +132,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         .bind(user_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -142,13 +142,9 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
         user_id: &str,
         groups: &[Group],
     ) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now();
         if !groups.is_empty() {
             let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
                 "INSERT INTO groups (group_id, display_name, created_at, updated_at) ",
@@ -156,7 +152,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
             builder.push_values(groups, |mut row, group| {
                 row.push_bind(&group.group_id)
                     .push_bind(&group.display_name)
-                    .push_bind(group.created_at.to_rfc3339())
+                    .push_bind(group.created_at)
                     .push_bind(&now);
             });
             builder.push(
@@ -166,14 +162,14 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
                 .build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
 
         sqlx::query("DELETE FROM group_memberships WHERE user_id = $1")
             .bind(user_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if !groups.is_empty() {
             let mut builder: QueryBuilder<Postgres> = QueryBuilder::new(
@@ -189,12 +185,10 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
                 .build()
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -210,16 +204,16 @@ struct UserRow {
     avatar_url: Option<String>,
     is_admin: bool,
     provider: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(sqlx::FromRow)]
 struct GroupRow {
     group_id: String,
     display_name: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<UserRow> for User {
@@ -235,8 +229,8 @@ impl TryFrom<UserRow> for User {
             avatar_url: row.avatar_url,
             is_admin: row.is_admin,
             provider: row.provider,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "users.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "users.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -248,8 +242,8 @@ impl TryFrom<GroupRow> for Group {
         Ok(Group {
             group_id: row.group_id,
             display_name: row.display_name,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "groups.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "groups.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

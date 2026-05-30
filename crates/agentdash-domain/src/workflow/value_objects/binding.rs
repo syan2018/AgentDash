@@ -1,8 +1,6 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 /// Workflow 可挂载到哪一类 scope。
 ///

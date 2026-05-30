@@ -1,4 +1,5 @@
 pub mod assembler;
+mod assembly_builder;
 mod assignment_context_frame;
 mod auto_resume_context_frame;
 pub mod baseline_capabilities;
@@ -13,9 +14,11 @@ pub mod companion_wait;
 pub mod construction;
 pub mod construction_planner;
 pub mod construction_provider;
+pub mod construction_use_case;
 pub mod context;
 mod context_frame;
 mod context_projector;
+pub mod context_query_use_case;
 pub mod continuation;
 pub mod control;
 pub mod core;
@@ -32,6 +35,7 @@ mod hub_support;
 mod identity_context_frame;
 pub mod launch;
 #[cfg(test)]
+#[path = "../../test-support/session_memory_persistence.rs"]
 mod memory_persistence;
 pub(crate) mod path_policy;
 mod pending_action_context_frame;

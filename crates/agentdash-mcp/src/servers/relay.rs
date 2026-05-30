@@ -9,14 +9,14 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::*;
 use rmcp::{ServerHandler, schemars, tool, tool_handler, tool_router};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::authz::{McpProjectPermission, list_accessible_projects, require_project_permission};
 use crate::error::McpError;
 use crate::services::McpServices;
-use agentdash_domain::context_container::{
-    ContextContainerDefinition, validate_context_containers,
-};
+use agentdash_domain::context_container::validate_context_containers;
 use agentdash_spi::platform::auth::AuthIdentity;
 
 // ─── 工具参数定义 ─────────────────────────────────────────────
@@ -74,7 +74,7 @@ pub struct UpdateProjectContextConfigParams {
     #[schemars(description = "项目 UUID")]
     pub project_id: String,
     #[schemars(description = "完整替换项目级 context_containers")]
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
+    pub context_containers: Option<Value>,
 }
 
 // ─── Server 定义 ──────────────────────────────────────────────
@@ -107,6 +107,14 @@ impl RelayMcpServer {
     ) -> Result<agentdash_domain::project::Project, McpError> {
         require_project_permission(&self.services, &self.identity, project_id, permission).await
     }
+}
+
+fn parse_domain_input<T: DeserializeOwned>(
+    field: &'static str,
+    value: Value,
+) -> Result<T, McpError> {
+    serde_json::from_value(value)
+        .map_err(|error| McpError::invalid_param(field, format!("参数结构无效: {error}")))
 }
 
 // ─── 工具实现 ──────────────────────────────────────────────────
@@ -351,7 +359,8 @@ impl RelayMcpServer {
             .await?;
 
         if let Some(context_containers) = params.context_containers {
-            project.config.context_containers = context_containers;
+            project.config.context_containers =
+                parse_domain_input("context_containers", context_containers)?;
         }
         validate_context_containers(&project.config.context_containers)
             .map_err(|error| McpError::invalid_param("context_containers", error))?;

@@ -8,7 +8,7 @@ use agentdash_application::vfs::tools::provider::{
     RelayRuntimeToolProvider, SharedSessionToolServicesHandle,
 };
 use agentdash_application::vfs::{MountProviderRegistry, MountProviderRegistryBuilder};
-use agentdash_application::vfs::{VfsService, VfsMutationDispatcher};
+use agentdash_application::vfs::{VfsMutationDispatcher, VfsService};
 use agentdash_spi::VfsDiscoveryProvider;
 use agentdash_spi::platform::mount::MountProvider;
 

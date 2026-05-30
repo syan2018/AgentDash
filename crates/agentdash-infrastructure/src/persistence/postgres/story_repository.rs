@@ -28,11 +28,7 @@ impl PostgresStoryRepository {
 #[async_trait::async_trait]
 impl StoryRepository for PostgresStoryRepository {
     async fn create(&self, story: &Story) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let tasks_json = tasks_to_json(&story.tasks)?;
         let task_count = story.tasks.len() as i32;
@@ -53,11 +49,11 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(task_count)
         .bind(serde_json::to_string(&story.context)?)
         .bind(tasks_json)
-        .bind(story.created_at.to_rfc3339())
-        .bind(story.updated_at.to_rfc3339())
+        .bind(story.created_at)
+        .bind(story.updated_at)
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         append_state_change_in_tx(
             &mut tx,
@@ -69,9 +65,7 @@ impl StoryRepository for PostgresStoryRepository {
         )
         .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 
@@ -83,7 +77,7 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(|r| r.try_into()).transpose()
     }
@@ -96,17 +90,13 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(|r| r.try_into()).collect()
     }
 
     async fn update(&self, story: &Story) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let current = load_story_for_update(&mut tx, story.id).await?;
         let mut story_to_write = story.clone();
@@ -126,9 +116,7 @@ impl StoryRepository for PostgresStoryRepository {
         )
         .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 
@@ -137,7 +125,7 @@ impl StoryRepository for PostgresStoryRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -158,7 +146,7 @@ impl StoryRepository for PostgresStoryRepository {
         .bind(task_id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some((story_id,)) = story_id else {
             return Ok(None);
@@ -190,11 +178,7 @@ impl StoryRepository for PostgresStoryRepository {
             return Ok(());
         }
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let mut story = load_story_for_update(&mut tx, story_id).await?;
         for task in tasks {
@@ -243,18 +227,12 @@ impl StoryRepository for PostgresStoryRepository {
         )
         .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 
     async fn remove_task_from_story(&self, task_id: uuid::Uuid) -> Result<Task, DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let mut story = load_story_by_task_for_update(&mut tx, task_id).await?;
         let removed = story
@@ -291,9 +269,7 @@ impl StoryRepository for PostgresStoryRepository {
         )
         .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(removed)
     }
 }
@@ -315,8 +291,8 @@ struct StoryRow {
     context: String,
     /// JSONB 列 → 直接由 sqlx 反序列化为 serde_json::Value
     tasks: sqlx::types::Json<serde_json::Value>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<StoryRow> for Story {
@@ -365,8 +341,8 @@ impl TryFrom<StoryRow> for Story {
             task_count: effective_task_count,
             context,
             tasks,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "stories.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "stories.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -387,7 +363,7 @@ async fn load_story_for_update(
     .bind(story_id.to_string())
     .fetch_optional(&mut **tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+    .map_err(super::db_err)?
     .ok_or_else(|| DomainError::NotFound {
         entity: "story",
         id: story_id.to_string(),
@@ -410,7 +386,7 @@ async fn load_story_by_task_for_update(
     .bind(task_id.to_string())
     .fetch_optional(&mut **tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?
+    .map_err(super::db_err)?
     .ok_or_else(|| DomainError::NotFound {
         entity: "task",
         id: task_id.to_string(),
@@ -441,11 +417,11 @@ async fn update_story_row_in_tx(
     .bind(task_count)
     .bind(serde_json::to_string(&story.context)?)
     .bind(tasks_json)
-    .bind(story.updated_at.to_rfc3339())
+    .bind(story.updated_at)
     .bind(story.id.to_string())
     .execute(&mut **tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     if result.rows_affected() == 0 {
         return Err(DomainError::NotFound {

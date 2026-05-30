@@ -127,7 +127,11 @@ mod tests {
 
     #[test]
     fn grant_scope_roundtrip() {
-        for scope in [GrantScope::Turn, GrantScope::Session, GrantScope::WorkflowStep] {
+        for scope in [
+            GrantScope::Turn,
+            GrantScope::Session,
+            GrantScope::WorkflowStep,
+        ] {
             assert_eq!(GrantScope::from_str(scope.as_str()), Some(scope));
         }
     }

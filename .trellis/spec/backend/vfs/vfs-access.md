@@ -32,6 +32,8 @@ runtime mount 是 provider 分发单位，至少表达：
 
 Provider 负责读、列、搜索、stat、binary read 等数据访问。
 
+Provider SPI 按职责暴露三组窄接口：`ProviderDescriptor` 描述元信息与可用性，`MountIo` 承载 read/write/list/stat/exec/patch，`MountSearch` 承载 search/suggest/grep。运行时 registry 仍以 composite `MountProvider` 存放 provider 对象，原因是分发路径需要同一个对象同时服务 discovery、IO 与搜索；业务调用点可按职责依赖窄 trait 面。
+
 | Provider | 职责 |
 | --- | --- |
 | `relay_fs` | 通过 relay 访问本机 workspace 文件 |

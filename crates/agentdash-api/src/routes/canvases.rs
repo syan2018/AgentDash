@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use serde::Deserialize;
-use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::canvas::{
     CanvasExtensionPackageInput, CanvasMutationInput, CanvasRuntimeBridgeSnapshot,
-    apply_canvas_mutation, build_canvas, build_canvas_extension_package,
-    build_runtime_snapshot_with_bindings,
+    CreateCanvasInput, build_canvas_extension_package, build_runtime_snapshot_with_bindings,
+    create_project_canvas, delete_canvas_record,
+    list_project_canvases as list_project_canvases_use_case, load_canvas_by_ref,
+    update_canvas_record,
 };
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, InstallExtensionPackageArtifactInput,
@@ -20,63 +20,17 @@ use agentdash_application::runtime_gateway::{
     RuntimeActionKey, RuntimeActor, RuntimeContext, RuntimeInvocationRequest,
     RuntimeInvocationResult,
 };
+use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_contracts::extension_package::ExtensionPackageInstallationResponse;
-use agentdash_domain::canvas::{CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::dto::CanvasResponse;
+use crate::dto::{
+    CanvasResponse, CanvasRuntimeInvokeRequest, CanvasRuntimeSnapshotQuery, CreateCanvasRequest,
+    ListProjectCanvasesPath, PromoteCanvasToExtensionRequest, UpdateCanvasRequest,
+};
 use crate::rpc::ApiError;
-use crate::session_use_cases::context_query::build_session_context_plan;
-
-#[derive(Debug, Deserialize)]
-pub struct ListProjectCanvasesPath {
-    pub project_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateCanvasRequest {
-    pub mount_id: Option<String>,
-    pub title: String,
-    pub description: Option<String>,
-    pub entry_file: Option<String>,
-    pub sandbox_config: Option<CanvasSandboxConfig>,
-    pub files: Option<Vec<CanvasFile>>,
-    pub bindings: Option<Vec<CanvasDataBinding>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct UpdateCanvasRequest {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub entry_file: Option<String>,
-    pub sandbox_config: Option<CanvasSandboxConfig>,
-    pub files: Option<Vec<CanvasFile>>,
-    pub bindings: Option<Vec<CanvasDataBinding>>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-pub struct CanvasRuntimeSnapshotQuery {
-    pub session_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CanvasRuntimeInvokeRequest {
-    pub session_id: String,
-    pub action_key: String,
-    #[serde(default)]
-    pub input: Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PromoteCanvasToExtensionRequest {
-    pub extension_key: Option<String>,
-    pub display_name: Option<String>,
-    pub package_version: Option<String>,
-    pub asset_version: Option<String>,
-    #[serde(default = "default_promote_overwrite")]
-    pub overwrite: bool,
-}
+use crate::session_construction::build_session_context_plan;
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -92,10 +46,36 @@ pub async fn list_project_canvases(
     )
     .await?;
 
-    let canvases = state.repos.canvas_repo.list_by_project(project_id).await?;
+    let canvases = list_project_canvases_use_case(&state.repos, project_id).await?;
     Ok(Json(
         canvases.into_iter().map(CanvasResponse::from).collect(),
     ))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/canvases",
+            axum::routing::get(list_project_canvases).post(create_canvas),
+        )
+        .route(
+            "/canvases/{id}",
+            axum::routing::get(get_canvas)
+                .put(update_canvas)
+                .delete(delete_canvas),
+        )
+        .route(
+            "/canvases/{id}/runtime-snapshot",
+            axum::routing::get(get_canvas_runtime_snapshot),
+        )
+        .route(
+            "/canvases/{id}/runtime-invoke",
+            axum::routing::post(invoke_canvas_runtime_action),
+        )
+        .route(
+            "/canvases/{id}/promote-extension",
+            axum::routing::post(promote_canvas_to_extension),
+        )
 }
 
 pub async fn create_canvas(
@@ -113,25 +93,23 @@ pub async fn create_canvas(
     )
     .await?;
 
-    let title = req.title.trim();
-    if title.is_empty() {
-        return Err(ApiError::BadRequest("Canvas 标题不能为空".into()));
-    }
-
-    let canvas = build_canvas(
-        project_id,
-        req.mount_id,
-        title.to_string(),
-        req.description.unwrap_or_default(),
-        CanvasMutationInput {
-            entry_file: req.entry_file,
-            sandbox_config: req.sandbox_config,
-            files: req.files,
-            bindings: req.bindings,
-            ..CanvasMutationInput::default()
+    let canvas = create_project_canvas(
+        &state.repos,
+        CreateCanvasInput {
+            project_id,
+            mount_id: req.mount_id,
+            title: req.title,
+            description: req.description,
+            mutation: CanvasMutationInput {
+                entry_file: req.entry_file,
+                sandbox_config: req.sandbox_config,
+                files: req.files,
+                bindings: req.bindings,
+                ..CanvasMutationInput::default()
+            },
         },
-    )?;
-    state.repos.canvas_repo.create(&canvas).await?;
+    )
+    .await?;
 
     Ok(Json(CanvasResponse::from(canvas)))
 }
@@ -154,12 +132,13 @@ pub async fn update_canvas(
     Path(id): Path<String>,
     Json(req): Json<UpdateCanvasRequest>,
 ) -> Result<Json<CanvasResponse>, ApiError> {
-    let mut canvas =
+    let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
 
-    apply_canvas_mutation(
-        &mut canvas,
+    let canvas = update_canvas_record(
+        &state.repos,
+        canvas,
         CanvasMutationInput {
             title: req.title,
             description: req.description,
@@ -168,8 +147,8 @@ pub async fn update_canvas(
             files: req.files,
             bindings: req.bindings,
         },
-    )?;
-    state.repos.canvas_repo.update(&canvas).await?;
+    )
+    .await?;
 
     Ok(Json(CanvasResponse::from(canvas)))
 }
@@ -178,13 +157,13 @@ pub async fn delete_canvas(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let canvas =
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
-    state.repos.canvas_repo.delete(canvas.id).await?;
+    delete_canvas_record(&state.repos, &canvas).await?;
 
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn promote_canvas_to_extension(
@@ -250,12 +229,8 @@ pub async fn get_canvas_runtime_snapshot(
         load_canvas_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::View)
             .await?;
 
-    let vfs = resolve_canvas_runtime_vfs(
-        &state,
-        &current_user,
-        query.session_id.as_deref(),
-    )
-    .await?;
+    let vfs =
+        resolve_canvas_runtime_vfs(&state, &current_user, query.session_id.as_deref()).await?;
     let mut snapshot = build_runtime_snapshot_with_bindings(
         &canvas,
         query.session_id.clone(),
@@ -333,17 +308,7 @@ async fn load_canvas_with_permission(
     raw_canvas_id: &str,
     permission: ProjectPermission,
 ) -> Result<agentdash_domain::canvas::Canvas, ApiError> {
-    let canvas = if let Ok(uuid) = Uuid::parse_str(raw_canvas_id) {
-        state.repos.canvas_repo.get_by_id(uuid).await?
-    } else {
-        state
-            .repos
-            .canvas_repo
-            .find_by_mount_id(raw_canvas_id)
-            .await?
-    };
-    let canvas =
-        canvas.ok_or_else(|| ApiError::NotFound(format!("Canvas {raw_canvas_id} 不存在")))?;
+    let canvas = load_canvas_by_ref(&state.repos, raw_canvas_id).await?;
 
     load_project_with_permission(state, current_user, canvas.project_id, permission).await?;
     Ok(canvas)
@@ -353,15 +318,12 @@ fn parse_project_id(raw_project_id: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw_project_id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
-fn default_promote_overwrite() -> bool {
-    true
-}
-
 fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -> ApiError {
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            ApiError::Internal(error.to_string())
+            tracing::error!(error = %error, "extension package artifact storage error");
+            ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
         ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),
@@ -380,9 +342,7 @@ async fn resolve_canvas_runtime_vfs(
         return Ok(None);
     };
 
-    Ok(
-        build_session_context_plan(state, current_user, session_id)
-            .await?
-            .and_then(|plan| plan.context_projection.vfs),
-    )
+    Ok(build_session_context_plan(state, current_user, session_id)
+        .await?
+        .and_then(|plan| plan.context_projection.vfs))
 }

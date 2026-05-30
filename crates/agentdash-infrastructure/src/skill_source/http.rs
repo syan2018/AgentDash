@@ -212,7 +212,9 @@ fn parse_github_skill_source(raw: &str) -> Result<GithubSkillSource, Error> {
                 .to_string();
         }
         Some(other) => {
-            return Err(bad_request(format!("不支持的 GitHub Skill URL 路径: {other}")));
+            return Err(bad_request(format!(
+                "不支持的 GitHub Skill URL 路径: {other}"
+            )));
         }
     }
 
@@ -723,8 +725,9 @@ mod tests {
 
     #[test]
     fn parse_github_source_extracts_tree_ref_and_dir() {
-        let tree = parse_github_skill_source("https://github.com/acme/skills/tree/main/research/writer")
-            .expect("should parse tree url");
+        let tree =
+            parse_github_skill_source("https://github.com/acme/skills/tree/main/research/writer")
+                .expect("should parse tree url");
         assert_eq!(tree.ref_name.as_deref(), Some("main"));
         assert_eq!(tree.skill_dir, "research/writer");
     }
@@ -741,8 +744,9 @@ mod tests {
 
     #[test]
     fn parse_github_source_rejects_blob_not_pointing_to_skill_md() {
-        let err = parse_github_skill_source("https://github.com/acme/skills/blob/main/research/notes.md")
-            .expect_err("blob must point to SKILL.md");
+        let err =
+            parse_github_skill_source("https://github.com/acme/skills/blob/main/research/notes.md")
+                .expect_err("blob must point to SKILL.md");
         assert!(matches!(err, RemoteSkillSourceError::BadRequest(_)));
     }
 }

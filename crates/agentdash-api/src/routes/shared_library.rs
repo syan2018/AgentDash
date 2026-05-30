@@ -33,6 +33,34 @@ pub struct LibraryAssetPath {
     pub id: String,
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/shared-library/assets",
+            axum::routing::get(list_library_assets),
+        )
+        .route(
+            "/shared-library/assets/seed-builtin",
+            axum::routing::post(seed_builtin_library_assets),
+        )
+        .route(
+            "/shared-library/assets/{id}",
+            axum::routing::get(get_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/install",
+            axum::routing::post(install_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/publish",
+            axum::routing::post(publish_library_asset),
+        )
+        .route(
+            "/projects/{project_id}/shared-library/source-status",
+            axum::routing::get(get_project_asset_source_status),
+        )
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProjectSharedLibraryPath {
     pub project_id: String,
@@ -248,7 +276,7 @@ async fn resolve_project_asset_id(
             .project_vfs_mount_repo
             .get_by_project_and_mount_id(project_id, trimmed)
             .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .map_err(ApiError::from)?
             .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
         return Ok(mount.id);
     }

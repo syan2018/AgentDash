@@ -273,7 +273,7 @@ async fn handle_backend_connection(
         .handle_backend_disconnect(&bid);
     for terminal_id in &lost_terminal_ids {
         if let Some(term_state) = state.services.terminal_cache.get_terminal(terminal_id) {
-            use agentdash_application::backend_transport::RelaySessionEvent;
+            use agentdash_application_ports::backend_transport::RelaySessionEvent;
             let source = agentdash_agent_protocol::SourceInfo {
                 connector_id: "platform".to_string(),
                 connector_type: "terminal".to_string(),
@@ -330,7 +330,7 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventSessionNotification { payload, .. } => {
-            use agentdash_application::backend_transport::RelaySessionEvent;
+            use agentdash_application_ports::backend_transport::RelaySessionEvent;
 
             match serde_json::from_value::<agentdash_agent_protocol::BackboneEnvelope>(
                 payload.notification.clone(),
@@ -358,7 +358,9 @@ async fn handle_backend_message(state: &Arc<AppState>, backend_id: &str, msg: Re
             }
         }
         RelayMessage::EventSessionStateChanged { payload, .. } => {
-            use agentdash_application::backend_transport::{RelaySessionEvent, RelayTerminalKind};
+            use agentdash_application_ports::backend_transport::{
+                RelaySessionEvent, RelayTerminalKind,
+            };
 
             tracing::info!(
                 backend_id = %backend_id,

@@ -33,9 +33,9 @@ struct RoutineRow {
     trigger_config: String,
     session_strategy: String,
     enabled: bool,
-    created_at: String,
-    updated_at: String,
-    last_fired_at: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    last_fired_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl TryFrom<RoutineRow> for Routine {
@@ -54,13 +54,9 @@ impl TryFrom<RoutineRow> for Routine {
                 "routines.session_strategy",
             )?,
             enabled: row.enabled,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "routines.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "routines.updated_at")?,
-            last_fired_at: row
-                .last_fired_at
-                .as_deref()
-                .map(|ts| super::parse_pg_timestamp_checked(ts, "routines.last_fired_at"))
-                .transpose()?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            last_fired_at: row.last_fired_at,
         })
     }
 }
@@ -85,12 +81,12 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(trigger_config_json)
         .bind(session_strategy_json)
         .bind(routine.enabled)
-        .bind(routine.created_at.to_rfc3339())
-        .bind(routine.updated_at.to_rfc3339())
-        .bind(routine.last_fired_at.map(|t| t.to_rfc3339()))
+        .bind(routine.created_at)
+        .bind(routine.updated_at)
+        .bind(routine.last_fired_at.map(|t| t))
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -102,7 +98,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(Routine::try_from).transpose()
     }
 
@@ -114,7 +110,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(Routine::try_from).collect()
     }
 
@@ -131,7 +127,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(containment)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(Routine::try_from).collect()
     }
 
@@ -152,11 +148,11 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(trigger_config_json)
         .bind(session_strategy_json)
         .bind(routine.enabled)
-        .bind(routine.updated_at.to_rfc3339())
-        .bind(routine.last_fired_at.map(|t| t.to_rfc3339()))
+        .bind(routine.updated_at)
+        .bind(routine.last_fired_at.map(|t| t))
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -165,7 +161,7 @@ impl RoutineRepository for PostgresRoutineRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -179,7 +175,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(containment)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(Routine::try_from).transpose()
     }
 }
@@ -209,8 +205,8 @@ struct ExecutionRow {
     resolved_prompt: Option<String>,
     session_id: Option<String>,
     status: String,
-    started_at: String,
-    completed_at: Option<String>,
+    started_at: chrono::DateTime<chrono::Utc>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
     error: Option<String>,
     entity_key: Option<String>,
 }
@@ -231,15 +227,8 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
             resolved_prompt: row.resolved_prompt,
             session_id: row.session_id,
             status: parse_execution_status(&row.status)?,
-            started_at: super::parse_pg_timestamp_checked(
-                &row.started_at,
-                "routine_executions.started_at",
-            )?,
-            completed_at: row
-                .completed_at
-                .as_deref()
-                .map(|ts| super::parse_pg_timestamp_checked(ts, "routine_executions.completed_at"))
-                .transpose()?,
+            started_at: row.started_at,
+            completed_at: row.completed_at,
             error: row.error,
             entity_key: row.entity_key,
         })
@@ -266,13 +255,13 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.resolved_prompt)
         .bind(&execution.session_id)
         .bind(status_to_str(execution.status))
-        .bind(execution.started_at.to_rfc3339())
-        .bind(execution.completed_at.map(|t| t.to_rfc3339()))
+        .bind(execution.started_at)
+        .bind(execution.completed_at.map(|t| t))
         .bind(&execution.error)
         .bind(&execution.entity_key)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -284,7 +273,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(RoutineExecution::try_from).transpose()
     }
 
@@ -304,12 +293,12 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.resolved_prompt)
         .bind(&execution.session_id)
         .bind(status_to_str(execution.status))
-        .bind(execution.completed_at.map(|t| t.to_rfc3339()))
+        .bind(execution.completed_at.map(|t| t))
         .bind(&execution.error)
         .bind(&execution.entity_key)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -328,7 +317,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(offset as i64)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(RoutineExecution::try_from).collect()
     }
 
@@ -345,7 +334,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(entity_key)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(RoutineExecution::try_from).transpose()
     }
 }

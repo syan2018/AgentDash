@@ -144,11 +144,10 @@ impl McpClientManager {
                     .map_err(|e| anyhow::anyhow!("stdio MCP 握手失败: {e}"))?
             }
             agentdash_domain::mcp_preset::McpTransportConfig::Http { url, .. }
-            | agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, .. } => {
-                ().serve(crate::mcp_connect::mcp_http_worker(url))
-                    .await
-                    .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?
-            }
+            | agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, .. } => ()
+                .serve(crate::mcp_connect::mcp_http_worker(url))
+                .await
+                .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?,
         };
 
         let mut clients = self.clients.write().await;

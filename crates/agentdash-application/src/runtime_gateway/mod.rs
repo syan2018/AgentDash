@@ -7,13 +7,16 @@ mod setup_actions;
 mod tool_adapter;
 mod types;
 
+pub use agentdash_application_ports::extension_runtime::{
+    ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
+    ExtensionRuntimeChannelTransport,
+};
 pub use error::{RuntimeInvocationError, RuntimeInvocationErrorKind};
 pub use extension_actions::{
     ExtensionInvocationWorkspaceContext, ExtensionRuntimeActionProvider,
-    ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
     ExtensionRuntimeChannelConsumer, ExtensionRuntimeChannelInvokeRequest,
     ExtensionRuntimeChannelInvokeResult, ExtensionRuntimeChannelInvoker,
-    ExtensionRuntimeChannelTransport, attach_extension_invocation_workspace,
+    attach_extension_invocation_workspace,
 };
 pub use gateway::RuntimeGateway;
 pub use provider::RuntimeProvider;

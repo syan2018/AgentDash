@@ -197,12 +197,9 @@ export interface LifecycleEditorState {
   workflowDraftsByActivityKey: Record<string, WorkflowEditorDraft>;
   /**
    * Inspector 路由的统一选中模型（activity 节点 / transition 边互斥）。
-   * 旧的 `selectedActivityKey` 同步派生自 `selection.kind === "activity"`，
-   * 仅供尚未迁移到 selection 的 UI 临时读取，后续 shell/canvas 重塑时移除。
+   * activity key 由 `selection.kind === "activity"` 派生。
    */
   selection: LifecycleSelection | null;
-  /** @deprecated 由 selection 派生，保持向后兼容；UI 重塑后删除 */
-  selectedActivityKey: string | null;
   /** 原 lifecycle definition id；null 表示新建态 */
   originalId: string | null;
   validation: WorkflowValidationResult | null;
@@ -215,12 +212,10 @@ export interface LifecycleEditorState {
 
 function activitySelection(activityKey: string | null): {
   selection: LifecycleSelection | null;
-  selectedActivityKey: string | null;
 } {
-  if (!activityKey) return { selection: null, selectedActivityKey: null };
+  if (!activityKey) return { selection: null };
   return {
     selection: { kind: "activity", activityKey },
-    selectedActivityKey: activityKey,
   };
 }
 
@@ -229,7 +224,6 @@ function emptyLifecycleEditor(): LifecycleEditorState {
     draft: null,
     workflowDraftsByActivityKey: {},
     selection: null,
-    selectedActivityKey: null,
     originalId: null,
     validation: null,
     isSaving: false,
@@ -615,7 +609,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       lifecycleEditor: {
         ...s.lifecycleEditor,
         selection: id ? { kind: "transition", transitionId: id } : null,
-        selectedActivityKey: null,
       },
     }));
   },
@@ -648,14 +641,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const draft = s.lifecycleEditor.draft;
       if (!draft) return s;
 
-      // 重命名 activity：连带 transitions 引用、entry_activity_key、selectedActivityKey、workflowDraftsByActivityKey 索引
+      // 重命名 activity：连带 transitions 引用、entry_activity_key、selection、workflowDraftsByActivityKey 索引
       const nextActivities = draft.activities.map((activity) =>
         activity.key === activityKey ? { ...activity, ...patch } : activity,
       );
       let nextTransitions = draft.transitions;
       let nextEntry = draft.entry_activity_key;
       let nextSelection = s.lifecycleEditor.selection;
-      let nextSelectedActivity = s.lifecycleEditor.selectedActivityKey;
       let nextDrafts = s.lifecycleEditor.workflowDraftsByActivityKey;
 
       if (patch.key && patch.key !== activityKey) {
@@ -671,7 +663,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           })),
         }));
         if (nextEntry === activityKey) nextEntry = newKey;
-        if (nextSelectedActivity === activityKey) nextSelectedActivity = newKey;
         if (nextSelection?.kind === "activity" && nextSelection.activityKey === activityKey) {
           nextSelection = { kind: "activity", activityKey: newKey };
         }
@@ -694,7 +685,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           },
           workflowDraftsByActivityKey: nextDrafts,
           selection: nextSelection,
-          selectedActivityKey: nextSelectedActivity,
           dirty: true,
         },
       };
@@ -812,7 +802,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const fallbackKey = nextActivities[0]?.key ?? null;
       const prevSelection = s.lifecycleEditor.selection;
       // 删除当前选中 activity 时落到首个 activity；删除其他 activity 时若选中是 transition 且引用被删 activity 则清空。
-      let nextSelectionPair: { selection: LifecycleSelection | null; selectedActivityKey: string | null };
+      let nextSelectionPair: { selection: LifecycleSelection | null };
       if (prevSelection?.kind === "activity") {
         nextSelectionPair = activitySelection(
           prevSelection.activityKey === activityKey ? fallbackKey : prevSelection.activityKey,
@@ -821,12 +811,12 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         const idx = findTransitionIndex(draft.transitions, prevSelection.transitionId);
         const t = idx >= 0 ? draft.transitions[idx] : null;
         if (t && (t.from === activityKey || t.to === activityKey)) {
-          nextSelectionPair = { selection: null, selectedActivityKey: null };
+          nextSelectionPair = { selection: null };
         } else {
-          nextSelectionPair = { selection: prevSelection, selectedActivityKey: null };
+          nextSelectionPair = { selection: prevSelection };
         }
       } else {
-        nextSelectionPair = { selection: null, selectedActivityKey: null };
+        nextSelectionPair = { selection: null };
       }
       return {
         lifecycleEditor: {

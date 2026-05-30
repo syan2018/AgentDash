@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use agentdash_application::runtime_gateway::{
-    ExtensionRuntimeActionProvider, ExtensionRuntimeActionTransport, McpCallToolProvider,
-    McpListToolsProvider, McpProbeTransportProvider, RuntimeGateway, RuntimeSessionMcpAccess,
+    ExtensionRuntimeActionProvider, McpCallToolProvider, McpListToolsProvider,
+    McpProbeTransportProvider, RuntimeGateway, RuntimeSessionMcpAccess,
     WorkspaceBrowseDirectoryProvider, WorkspaceDetectGitProvider, WorkspaceDetectProvider,
 };
+use agentdash_application_ports::extension_runtime::ExtensionRuntimeActionTransport;
 use agentdash_domain::shared_library::ProjectExtensionInstallationRepository;
 
 pub(crate) fn build_runtime_gateway(
     mcp_probe_relay: Arc<dyn agentdash_spi::McpRelayProvider>,
-    setup_action_transport: Arc<dyn agentdash_application::backend_transport::BackendTransport>,
+    setup_action_transport: Arc<
+        dyn agentdash_application_ports::backend_transport::BackendTransport,
+    >,
     session_mcp_access: Arc<dyn RuntimeSessionMcpAccess>,
     extension_installations: Arc<dyn ProjectExtensionInstallationRepository>,
     extension_action_transport: Arc<dyn ExtensionRuntimeActionTransport>,

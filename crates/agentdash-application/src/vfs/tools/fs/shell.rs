@@ -8,8 +8,8 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::vfs::inline_persistence::InlineContentOverlay;
-use crate::vfs::service::VfsService;
 use crate::vfs::rewrite::find_mount_uri_candidates;
+use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::{SharedRuntimeVfs, resolve_uri_path};
 use crate::vfs::{
     ExecRequest, MaterializationRewrite, RewriteShellCommandOutput, VfsMaterializationService,
@@ -200,7 +200,7 @@ impl AgentTool for ShellExecTool {
                 },
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         // 清理通道
         if let Some(ref call_id) = streaming_call_id {

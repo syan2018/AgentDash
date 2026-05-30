@@ -1,8 +1,58 @@
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_domain::canvas::{Canvas, CanvasDataBinding, CanvasFile, CanvasSandboxConfig};
+
+#[derive(Debug, Deserialize)]
+pub struct ListProjectCanvasesPath {
+    pub project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCanvasRequest {
+    pub mount_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub entry_file: Option<String>,
+    pub sandbox_config: Option<CanvasSandboxConfig>,
+    pub files: Option<Vec<CanvasFile>>,
+    pub bindings: Option<Vec<CanvasDataBinding>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateCanvasRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub entry_file: Option<String>,
+    pub sandbox_config: Option<CanvasSandboxConfig>,
+    pub files: Option<Vec<CanvasFile>>,
+    pub bindings: Option<Vec<CanvasDataBinding>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct CanvasRuntimeSnapshotQuery {
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CanvasRuntimeInvokeRequest {
+    pub session_id: String,
+    pub action_key: String,
+    #[serde(default)]
+    pub input: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PromoteCanvasToExtensionRequest {
+    pub extension_key: Option<String>,
+    pub display_name: Option<String>,
+    pub package_version: Option<String>,
+    pub asset_version: Option<String>,
+    #[serde(default = "default_promote_overwrite")]
+    pub overwrite: bool,
+}
 
 #[derive(Debug, Serialize)]
 pub struct CanvasResponse {
@@ -35,4 +85,8 @@ impl From<Canvas> for CanvasResponse {
             updated_at: canvas.updated_at,
         }
     }
+}
+
+fn default_promote_overwrite() -> bool {
+    true
 }

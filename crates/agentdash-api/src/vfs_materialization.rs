@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use agentdash_application::vfs::{
-    RewriteJsonArgumentsInput, VfsMaterializationService, VfsMaterializationTransport,
-};
+use agentdash_application::vfs::{RewriteJsonArgumentsInput, VfsMaterializationService};
+use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 use agentdash_relay::{RelayMessage, VfsMaterializePayload, VfsMaterializeResponse};
 use agentdash_spi::ConnectorError;
 use agentdash_spi::platform::mcp_relay::{

@@ -24,4 +24,5 @@ pub async fn resolve_workspace_declared_sources(
         base_order,
     )
     .await
+    .map_err(|error| error.to_string())
 }

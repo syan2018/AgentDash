@@ -7,12 +7,12 @@ CREATE TABLE IF NOT EXISTS runtime_health (
     capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
     accessible_roots JSONB NOT NULL DEFAULT '[]'::jsonb,
     device JSONB NOT NULL DEFAULT '{}'::jsonb,
-    connected_at TEXT,
-    last_seen_at TEXT,
-    disconnected_at TEXT,
+    connected_at TIMESTAMPTZ,
+    last_seen_at TIMESTAMPTZ,
+    disconnected_at TIMESTAMPTZ,
     disconnect_reason TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT runtime_health_status_check CHECK (
         status IN ('online', 'offline', 'starting', 'degraded', 'stopping', 'error')
     )

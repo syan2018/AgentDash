@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS activity_execution_claims (
     status TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     executor_run_ref TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_execution_claims_run_id

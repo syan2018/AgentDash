@@ -71,11 +71,9 @@ pub async fn resolve_active_workflow_projection_for_session(
     activity_lifecycle_repo: &dyn ActivityLifecycleDefinitionRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    if let Some(activity_assoc) = super::session_association::resolve_activity_session_association(
-        session_id,
-        run_repo,
-    )
-    .await?
+    if let Some(activity_assoc) =
+        super::session_association::resolve_activity_session_association(session_id, run_repo)
+            .await?
     {
         if let Some(projection) = build_activity_projection_from_run(
             activity_assoc.run,
@@ -135,9 +133,7 @@ async fn build_activity_projection_from_run(
 /// 测试夹具:构造 Activity 形态的 [`ActiveWorkflowProjection`]，供 hooks / vfs
 /// 等模块的单元测试复用，避免每处手搓 Activity lifecycle/run。
 #[cfg(test)]
-pub(crate) fn activity_projection(
-    guidance: Option<String>,
-) -> ActiveWorkflowProjection {
+pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowProjection {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,
@@ -208,8 +204,13 @@ pub(crate) fn activity_projection(
         outputs: Vec::new(),
         inputs: Vec::new(),
     };
-    let run = LifecycleRun::new_activity(project_id, lifecycle.id, Some("sess-test".to_string()), activity_state)
-        .expect("activity run should build");
+    let run = LifecycleRun::new_activity(
+        project_id,
+        lifecycle.id,
+        Some("sess-test".to_string()),
+        activity_state,
+    )
+    .expect("activity run should build");
     let (active_workflow_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,

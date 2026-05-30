@@ -1,13 +1,21 @@
 use uuid::Uuid;
 
-use agentdash_domain::context_container::ContextContainerDefinition;
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, validate_context_containers, validate_disabled_container_ids,
+};
 use agentdash_domain::context_source::ContextSourceRef;
+use agentdash_domain::inline_file::InlineFileOwnerKind;
+use agentdash_domain::project::Project;
 use agentdash_domain::session_composition::SessionComposition;
+use agentdash_domain::session_composition::validate_session_composition;
 use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
 use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
+
+use crate::ApplicationError;
+use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Clone, Default)]
 pub struct StoryMutationInput {
@@ -44,6 +52,83 @@ pub struct AgentBindingInput {
     pub context_sources: Option<Vec<ContextSourceRef>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateStoryInput {
+    pub project_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub mutation: StoryMutationInput,
+}
+
+pub async fn list_project_stories(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<Vec<Story>, ApplicationError> {
+    repos
+        .story_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(ApplicationError::from)
+}
+
+pub async fn create_story_record(
+    repos: &RepositorySet,
+    project: &Project,
+    input: CreateStoryInput,
+) -> Result<Story, ApplicationError> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err(ApplicationError::BadRequest(
+            "Story 标题不能为空".to_string(),
+        ));
+    }
+
+    let story = build_story(
+        input.project_id,
+        title.to_string(),
+        input.description.unwrap_or_default(),
+        input.mutation,
+    );
+    validate_story_context(&story, project)?;
+    repos
+        .story_repo
+        .create(&story)
+        .await
+        .map_err(ApplicationError::from)?;
+    sync_story_inline_files(repos, &story).await?;
+    Ok(story)
+}
+
+pub async fn update_story_record(
+    repos: &RepositorySet,
+    mut story: Story,
+    project: &Project,
+    input: StoryMutationInput,
+) -> Result<Story, ApplicationError> {
+    apply_story_mutation(&mut story, input);
+    validate_story_context(&story, project)?;
+    repos
+        .story_repo
+        .update(&story)
+        .await
+        .map_err(ApplicationError::from)?;
+    sync_story_inline_files(repos, &story).await?;
+    Ok(story)
+}
+
+pub async fn delete_story_record(
+    repos: &RepositorySet,
+    story: &Story,
+) -> Result<(), ApplicationError> {
+    delete_story_aggregate(
+        repos.story_repo.as_ref(),
+        repos.state_change_repo.as_ref(),
+        story,
+    )
+    .await
+    .map_err(ApplicationError::from)
+}
+
 pub fn build_story(
     project_id: Uuid,
     title: String,
@@ -53,6 +138,20 @@ pub fn build_story(
     let mut story = Story::new(project_id, title, description);
     apply_story_mutation(&mut story, input);
     story
+}
+
+pub fn validate_story_context(story: &Story, project: &Project) -> Result<(), ApplicationError> {
+    validate_context_containers(&story.context.context_containers)
+        .map_err(ApplicationError::BadRequest)?;
+    validate_disabled_container_ids(
+        &story.context.disabled_container_ids,
+        &project.config.context_containers,
+    )
+    .map_err(ApplicationError::BadRequest)?;
+    if let Some(session_composition) = &story.context.session_composition {
+        validate_session_composition(session_composition).map_err(ApplicationError::BadRequest)?;
+    }
+    Ok(())
 }
 
 pub fn apply_story_mutation(story: &mut Story, input: StoryMutationInput) {
@@ -187,6 +286,20 @@ pub async fn delete_story_aggregate(
         )
         .await?;
     Ok(())
+}
+
+async fn sync_story_inline_files(
+    repos: &RepositorySet,
+    story: &Story,
+) -> Result<(), ApplicationError> {
+    crate::vfs::inline_persistence::sync_container_inline_files(
+        repos.inline_file_repo.as_ref(),
+        InlineFileOwnerKind::Story,
+        story.id,
+        &story.context.context_containers,
+    )
+    .await
+    .map_err(ApplicationError::Internal)
 }
 
 #[cfg(test)]

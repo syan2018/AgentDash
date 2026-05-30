@@ -53,11 +53,11 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(capability_policy)
         .bind(access.note.as_deref())
         .bind(access.created_by.as_deref())
-        .bind(access.created_at.to_rfc3339())
-        .bind(access.updated_at.to_rfc3339())
+        .bind(access.created_at)
+        .bind(access.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -79,11 +79,11 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(root_policy)
         .bind(capability_policy)
         .bind(access.note.as_deref())
-        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now())
         .bind(access.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
                 entity: "project_backend_access",
@@ -101,7 +101,7 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(|row| access_from_row(&row)).transpose()
     }
 
@@ -117,7 +117,7 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(|row| access_from_row(&row)).collect()
     }
 
@@ -133,7 +133,7 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter().map(|row| access_from_row(&row)).collect()
     }
 
@@ -150,7 +150,7 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
         .bind(backend_id.trim())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         row.map(|row| access_from_row(&row)).transpose()
     }
 
@@ -163,11 +163,11 @@ impl ProjectBackendAccessRepository for PostgresProjectBackendAccessRepository {
             "UPDATE project_backend_access SET status = $1, updated_at = $2 WHERE id = $3",
         )
         .bind(access_status_to_str(status))
-        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now())
         .bind(id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
                 entity: "project_backend_access",
@@ -219,10 +219,10 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
                     .push_bind(detected_facts)
                     .push_bind(inventory_status_to_str(item.status))
                     .push_bind(inventory_source_to_str(item.source))
-                    .push_bind(item.last_seen_at.to_rfc3339())
+                    .push_bind(item.last_seen_at)
                     .push_bind(item.last_error.clone())
-                    .push_bind(item.created_at.to_rfc3339())
-                    .push_bind(item.updated_at.to_rfc3339());
+                    .push_bind(item.created_at)
+                    .push_bind(item.updated_at);
             },
         );
         builder.push(
@@ -240,7 +240,7 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
             .build()
             .execute(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -256,7 +256,7 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
         .bind(backend_id.trim())
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter()
             .map(|row| inventory_from_row(&row))
             .collect()
@@ -277,7 +277,7 @@ impl BackendWorkspaceInventoryRepository for PostgresProjectBackendAccessReposit
         .bind(backend_ids)
         .fetch_all(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         rows.into_iter()
             .map(|row| inventory_from_row(&row))
             .collect()
@@ -403,8 +403,8 @@ fn parse_datetime_col(
     column: &str,
     field: &str,
 ) -> Result<DateTime<Utc>, DomainError> {
-    let raw = string_col(row, column, field)?;
-    super::parse_pg_timestamp_checked(&raw, field)
+    row.try_get::<DateTime<Utc>, _>(column)
+        .map_err(|error| DomainError::InvalidConfig(format!("{field}: {error}")))
 }
 
 fn string_col(

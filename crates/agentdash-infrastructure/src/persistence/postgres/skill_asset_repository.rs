@@ -126,7 +126,7 @@ impl SkillAssetRepository for PostgresSkillAssetRepository {
         .bind(installed_source_digest(&asset.installed_source))
         .bind(installed_at(&asset.installed_source))
         .bind(asset.disable_model_invocation)
-        .bind(asset.updated_at.to_rfc3339())
+        .bind(asset.updated_at)
         .bind(asset.id.to_string())
         .execute(&mut *tx)
         .await
@@ -181,8 +181,8 @@ async fn insert_asset(
     .bind(installed_source_digest(&asset.installed_source))
     .bind(installed_at(&asset.installed_source))
     .bind(asset.disable_model_invocation)
-    .bind(asset.created_at.to_rfc3339())
-    .bind(asset.updated_at.to_rfc3339())
+    .bind(asset.created_at)
+    .bind(asset.updated_at)
     .execute(&mut **tx)
     .await
     .map_err(db_err)?;
@@ -226,7 +226,7 @@ async fn replace_files(
                 .push_bind(file.text_content())
                 .push_bind(file.binary_content().map(|bytes| bytes.to_vec()))
                 .push_bind(*size_bytes)
-                .push_bind(file.updated_at.to_rfc3339());
+                .push_bind(file.updated_at);
         },
     );
     builder.build().execute(&mut **tx).await.map_err(db_err)?;
@@ -299,16 +299,16 @@ struct SkillAssetRow {
     source: String,
     builtin_key: Option<String>,
     remote_source_url: Option<String>,
-    remote_imported_at: Option<String>,
+    remote_imported_at: Option<chrono::DateTime<chrono::Utc>>,
     remote_digest: Option<String>,
     library_asset_id: Option<String>,
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
     disable_model_invocation: bool,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl SkillAssetRow {
@@ -327,14 +327,11 @@ impl SkillAssetRow {
                         "skill_assets.source=github 但 remote_source_url 为空".to_string(),
                     )
                 })?,
-                imported_at: super::parse_pg_timestamp_checked(
-                    self.remote_imported_at.as_deref().ok_or_else(|| {
-                        DomainError::InvalidConfig(
-                            "skill_assets.source=github 但 remote_imported_at 为空".to_string(),
-                        )
-                    })?,
-                    "skill_assets.remote_imported_at",
-                )?,
+                imported_at: self.remote_imported_at.ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=github 但 remote_imported_at 为空".to_string(),
+                    )
+                })?,
                 digest: self.remote_digest.clone().ok_or_else(|| {
                     DomainError::InvalidConfig(
                         "skill_assets.source=github 但 remote_digest 为空".to_string(),
@@ -347,14 +344,11 @@ impl SkillAssetRow {
                         "skill_assets.source=clawhub 但 remote_source_url 为空".to_string(),
                     )
                 })?,
-                imported_at: super::parse_pg_timestamp_checked(
-                    self.remote_imported_at.as_deref().ok_or_else(|| {
-                        DomainError::InvalidConfig(
-                            "skill_assets.source=clawhub 但 remote_imported_at 为空".to_string(),
-                        )
-                    })?,
-                    "skill_assets.remote_imported_at",
-                )?,
+                imported_at: self.remote_imported_at.ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=clawhub 但 remote_imported_at 为空".to_string(),
+                    )
+                })?,
                 digest: self.remote_digest.clone().ok_or_else(|| {
                     DomainError::InvalidConfig(
                         "skill_assets.source=clawhub 但 remote_digest 为空".to_string(),
@@ -367,14 +361,11 @@ impl SkillAssetRow {
                         "skill_assets.source=skills_sh 但 remote_source_url 为空".to_string(),
                     )
                 })?,
-                imported_at: super::parse_pg_timestamp_checked(
-                    self.remote_imported_at.as_deref().ok_or_else(|| {
-                        DomainError::InvalidConfig(
-                            "skill_assets.source=skills_sh 但 remote_imported_at 为空".to_string(),
-                        )
-                    })?,
-                    "skill_assets.remote_imported_at",
-                )?,
+                imported_at: self.remote_imported_at.ok_or_else(|| {
+                    DomainError::InvalidConfig(
+                        "skill_assets.source=skills_sh 但 remote_imported_at 为空".to_string(),
+                    )
+                })?,
                 digest: self.remote_digest.clone().ok_or_else(|| {
                     DomainError::InvalidConfig(
                         "skill_assets.source=skills_sh 但 remote_digest 为空".to_string(),
@@ -404,14 +395,8 @@ impl SkillAssetRow {
             )?,
             disable_model_invocation: self.disable_model_invocation,
             files: Vec::new(),
-            created_at: super::parse_pg_timestamp_checked(
-                &self.created_at,
-                "skill_assets.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &self.updated_at,
-                "skill_assets.updated_at",
-            )?,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         })
     }
 }
@@ -426,7 +411,7 @@ struct SkillAssetFileRow {
     text_content: Option<String>,
     binary_content: Option<Vec<u8>>,
     size_bytes: i64,
-    updated_at: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<SkillAssetFileRow> for SkillAssetFile {
@@ -445,7 +430,9 @@ impl TryFrom<SkillAssetFileRow> for SkillAssetFile {
         let content = match content_kind {
             StoredFileContentKind::Text => StoredFileContent::Text {
                 content: row.text_content.ok_or_else(|| {
-                    DomainError::InvalidConfig("inline_fs_files.text_content 不能为空".to_string())
+                    DomainError::InvalidConfig(String::from(
+                        "inline_fs_files.text_content 不能为空",
+                    ))
                 })?,
             },
             StoredFileContentKind::Binary => StoredFileContent::Binary {
@@ -455,12 +442,11 @@ impl TryFrom<SkillAssetFileRow> for SkillAssetFile {
                     )
                 })?,
                 mime_type: row.mime_type.ok_or_else(|| {
-                    DomainError::InvalidConfig("inline_fs_files.mime_type 不能为空".to_string())
+                    DomainError::InvalidConfig(String::from("inline_fs_files.mime_type 不能为空"))
                 })?,
             },
         };
-        let updated_at =
-            super::parse_pg_timestamp_checked(&row.updated_at, "inline_fs_files.updated_at")?;
+        let updated_at = row.updated_at;
         let size_bytes = u64::try_from(row.size_bytes).map_err(|_| {
             DomainError::InvalidConfig(format!(
                 "inline_fs_files.size_bytes 值无效: {}",
@@ -496,11 +482,11 @@ fn remote_source_url(source: &SkillAssetSource) -> Option<&str> {
     }
 }
 
-fn remote_imported_at(source: &SkillAssetSource) -> Option<String> {
+fn remote_imported_at(source: &SkillAssetSource) -> Option<chrono::DateTime<chrono::Utc>> {
     match source {
         SkillAssetSource::Github { imported_at, .. }
         | SkillAssetSource::Clawhub { imported_at, .. }
-        | SkillAssetSource::SkillsSh { imported_at, .. } => Some(imported_at.to_rfc3339()),
+        | SkillAssetSource::SkillsSh { imported_at, .. } => Some(*imported_at),
         SkillAssetSource::BuiltinSeed { .. } | SkillAssetSource::User => None,
     }
 }
@@ -534,10 +520,8 @@ fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str
     source.as_ref().map(|source| source.source_digest.as_str())
 }
 
-fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
-    source
-        .as_ref()
-        .map(|source| source.installed_at.to_rfc3339())
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTime<chrono::Utc>> {
+    source.as_ref().map(|source| source.installed_at)
 }
 
 fn parse_installed_source(
@@ -545,29 +529,26 @@ fn parse_installed_source(
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Option<InstalledAssetSource>, DomainError> {
     let Some(library_asset_id) = library_asset_id else {
         return Ok(None);
     };
     Ok(Some(InstalledAssetSource {
         library_asset_id: library_asset_id.parse().map_err(|_| {
-            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.library_asset_id 无效"))
         })?,
         source_ref: source_ref.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_ref 为空"))
         })?,
         source_version: source_version.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_version 为空"))
         })?,
         source_digest: source_digest.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_digest 为空"))
         })?,
-        installed_at: super::parse_pg_timestamp_checked(
-            installed_at.as_deref().ok_or_else(|| {
-                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
-            })?,
-            "installed_source.installed_at",
-        )?,
+        installed_at: installed_at.ok_or_else(|| {
+            DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
+        })?,
     }))
 }

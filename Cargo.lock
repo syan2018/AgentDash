@@ -145,6 +145,7 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-application",
+ "agentdash-application-ports",
  "agentdash-contracts",
  "agentdash-domain",
  "agentdash-executor",
@@ -191,6 +192,7 @@ dependencies = [
  "agentdash-agent",
  "agentdash-agent-protocol",
  "agentdash-agent-types",
+ "agentdash-application-ports",
  "agentdash-domain",
  "agentdash-executor",
  "agentdash-infrastructure",
@@ -226,6 +228,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentdash-application-ports"
+version = "0.1.0"
+dependencies = [
+ "agentdash-agent-protocol",
+ "agentdash-domain",
+ "agentdash-relay",
+ "async-trait",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "agentdash-contracts"
 version = "0.1.0"
 dependencies = [
@@ -246,13 +262,11 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
- "schemars 1.2.1",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.18",
  "tokio",
- "ts-rs",
  "uuid",
 ]
 

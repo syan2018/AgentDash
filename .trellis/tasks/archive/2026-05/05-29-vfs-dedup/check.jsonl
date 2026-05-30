@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/architecture.md","reason":"检查 provider SPI、application VFS、local executor 的依赖方向。"}
+{"file":".trellis/spec/backend/vfs/architecture.md","reason":"检查 VFS mount/provider/tool 职责是否仍符合架构基线。"}
+{"file":".trellis/spec/backend/vfs/vfs-access.md","reason":"检查路径 normalization、capability 和 provider dispatch 语义。"}
+{"file":".trellis/spec/backend/vfs/vfs-materialization.md","reason":"检查 materialization 与 patch/local executor 边界。"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"检查 Rust 异步共享状态、错误处理与验证命令。"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复核重复 helper 和 patch executor 是否已真正收敛。"}

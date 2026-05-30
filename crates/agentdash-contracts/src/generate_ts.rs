@@ -1,5 +1,18 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::core::{
+    AgentBinding, AgentPreset, Artifact, ArtifactType, ContextContainerDefinition,
+    ContextContainerFile, ContextContainerProvider, ContextDelivery, ContextSlot,
+    ContextSourceKind, ContextSourceRef, DeletedFlagResponse, DeletedIdResponse,
+    DeletedProjectSubjectGrantResponse, PendingExecutionResponse, ProjectAccessSummaryResponse,
+    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
+    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
+    RevokedIdResponse, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
+    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus,
+    UnboundBindingResponse, UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
+    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
+    WorkspaceStatus,
+};
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
     ProjectExtensionManagementItemResponse, ProjectExtensionManagementListResponse,
@@ -29,22 +42,25 @@ use agentdash_contracts::extension_runtime::{
 };
 use agentdash_contracts::llm_provider::{
     CodexOAuthFlowStatusDto, CodexOAuthStatusResponse, CreateLlmProviderRequest,
-    DeleteLlmProviderUserCredentialResponse, EffectiveLlmModelProfileDto, EffectiveLlmProviderDto,
-    LlmCredentialModeDto, LlmCredentialSourceDto, LlmCredentialVerificationStatusDto,
-    LlmProviderAdminDto, LlmProviderProtocol, ProbeLlmProviderModelDto,
-    ProbeLlmProviderModelsRequest, ReorderLlmProvidersRequest, StartCodexOAuthResponse,
+    DeleteLlmProviderResponse, DeleteLlmProviderUserCredentialResponse,
+    EffectiveLlmModelProfileDto, EffectiveLlmProviderDto, LlmCredentialModeDto,
+    LlmCredentialSourceDto, LlmCredentialVerificationStatusDto, LlmProviderAdminDto,
+    LlmProviderProtocol, ProbeLlmProviderModelDto, ProbeLlmProviderModelsRequest,
+    ReorderLlmProvidersRequest, ReorderLlmProvidersResponse, StartCodexOAuthResponse,
     UpdateLlmProviderRequest, UpsertLlmProviderUserCredentialRequest,
 };
 use agentdash_contracts::mcp_preset::{
-    CloneMcpPresetRequest, CreateMcpPresetRequest, ListMcpPresetQuery, McpPresetResponse,
-    ProbeMcpPresetResponse, UpdateMcpPresetRequest,
+    CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
+    McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent, ProjectAgentExecutor,
     ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
+    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
     SessionLineageViewResponse, SessionMessageRefDto, SessionNdjsonEnvelope,
@@ -52,26 +68,34 @@ use agentdash_contracts::session::{
     SessionProjectionSegmentProvenanceResponse, SessionProjectionSegmentViewResponse,
     SessionProjectionSourceRangeResponse, SessionProjectionViewResponse,
 };
+use agentdash_contracts::settings::{
+    SettingResponse, SettingUpdate, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
+    UpdateSettingsResponse,
+};
 use agentdash_contracts::shared_library::{
     InstallLibraryAssetRequest, InstallLibraryAssetResponse, InstalledAssetSourceDto,
     LibraryAssetDto, LibraryExtensionPackageArtifactDto, ListLibraryAssetsQuery,
     ProjectAssetSourceStatusDto, PublishLibraryAssetRequest, SeedBuiltinLibraryAssetsRequest,
 };
 use agentdash_contracts::vfs::{
-    ConfigurableProviderInfo, CreateProjectVfsMountRequest, ListEntriesResponse, ListVfssResponse,
-    ProjectVfsMountResponse, ResolveSurfaceRequest, ResolvedVfsSurface, SurfaceApplyPatchRequest,
-    SurfaceApplyPatchResponse, SurfaceCreateFileRequest, SurfaceCreateFileResponse,
-    SurfaceDeleteFileRequest, SurfaceDeleteFileResponse, SurfaceEntriesResponse,
-    SurfaceReadBinaryFileRequest, SurfaceReadFileRequest, SurfaceReadFileResponse,
-    SurfaceRenameFileRequest, SurfaceRenameFileResponse, SurfaceStatFileRequest,
-    SurfaceStatFileResponse, SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest,
-    SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
+    ConfigurableProviderInfo, CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse,
+    ListEntriesResponse, ListVfssResponse, ProjectVfsMountResponse, ResolveSurfaceRequest,
+    ResolvedVfsSurface, SurfaceApplyPatchRequest, SurfaceApplyPatchResponse,
+    SurfaceCreateFileRequest, SurfaceCreateFileResponse, SurfaceDeleteFileRequest,
+    SurfaceDeleteFileResponse, SurfaceEntriesResponse, SurfaceReadBinaryFileRequest,
+    SurfaceReadFileRequest, SurfaceReadFileResponse, SurfaceRenameFileRequest,
+    SurfaceRenameFileResponse, SurfaceStatFileRequest, SurfaceStatFileResponse,
+    SurfaceUploadBinaryFileResponse, SurfaceWriteFileRequest, SurfaceWriteFileResponse,
+    UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
     ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, AttachRunLinkRequest,
-    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
-    RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse, ValidationIssue,
-    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
+    DeleteActivityLifecycleDefinitionResponse, DeleteHookPresetResponse,
+    DeleteWorkflowDefinitionResponse, EffectiveSessionContract, HookPresetResponse,
+    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
+    RegisterHookPresetResponse, RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowBindingKind, WorkflowContract,
+    WorkflowDefinitionSource,
 };
 use ts_rs::TS;
 
@@ -79,6 +103,60 @@ fn main() {
     let check = env::args().any(|arg| arg == "--check");
     let generated_dir: PathBuf =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/app-web/src/generated");
+
+    write_common_json_value(&generated_dir.join("common-contracts.ts"), check);
+
+    write_domain(
+        &generated_dir.join("core-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<VfsCapabilityDto>(dir);
+            export_all::<ContextContainerFile>(dir);
+            export_all::<ContextContainerProvider>(dir);
+            export_all::<ContextContainerDefinition>(dir);
+            export_all::<SchedulingConfig>(dir);
+            export_all::<AgentPreset>(dir);
+            export_all::<ProjectConfig>(dir);
+            export_all::<ProjectVisibility>(dir);
+            export_all::<ProjectRole>(dir);
+            export_all::<ProjectSubjectType>(dir);
+            export_all::<ProjectAccessSummaryResponse>(dir);
+            export_all::<ProjectResponse>(dir);
+            export_all::<ProjectSubjectGrantResponse>(dir);
+            export_all::<DeletedProjectSubjectGrantResponse>(dir);
+            export_all::<RevokeProjectGrantResponse>(dir);
+            export_all::<ProjectDetailResponse>(dir);
+            export_all::<WorkspaceIdentityKind>(dir);
+            export_all::<WorkspaceBindingStatus>(dir);
+            export_all::<WorkspaceResolutionPolicy>(dir);
+            export_all::<WorkspaceStatus>(dir);
+            export_all::<WorkspaceBindingResponse>(dir);
+            export_all::<WorkspaceResponse>(dir);
+            export_all::<ContextSourceKind>(dir);
+            export_all::<ContextSlot>(dir);
+            export_all::<ContextDelivery>(dir);
+            export_all::<ContextSourceRef>(dir);
+            export_all::<DeletedIdResponse>(dir);
+            export_all::<DeletedFlagResponse>(dir);
+            export_all::<UpdatedIdResponse>(dir);
+            export_all::<RevokedIdResponse>(dir);
+            export_all::<UnboundBindingResponse>(dir);
+            export_all::<PendingExecutionResponse>(dir);
+            export_all::<SessionRequiredContextBlock>(dir);
+            export_all::<SessionComposition>(dir);
+            export_all::<StoryContext>(dir);
+            export_all::<StoryStatus>(dir);
+            export_all::<StoryPriority>(dir);
+            export_all::<StoryType>(dir);
+            export_all::<StoryResponse>(dir);
+            export_all::<TaskStatus>(dir);
+            export_all::<ArtifactType>(dir);
+            export_all::<Artifact>(dir);
+            export_all::<AgentBinding>(dir);
+            export_all::<TaskResponse>(dir);
+        },
+    );
 
     write_domain(
         &generated_dir.join("mcp-preset-contracts.ts"),
@@ -91,6 +169,7 @@ fn main() {
             export_all::<CloneMcpPresetRequest>(dir);
             export_all::<ListMcpPresetQuery>(dir);
             export_all::<ProbeMcpPresetResponse>(dir);
+            export_all::<DeleteMcpPresetResponse>(dir);
         },
     );
 
@@ -102,6 +181,13 @@ fn main() {
             export_all::<SessionEventResponse>(dir);
             export_all::<SessionEventsPageResponse>(dir);
             export_all::<SessionNdjsonEnvelope>(dir);
+            export_all::<SessionCommandStateResponse>(dir);
+            export_all::<DeleteSessionResponse>(dir);
+            export_all::<PromptSessionResponse>(dir);
+            export_all::<CancelSessionResponse>(dir);
+            export_all::<ApproveToolCallResponse>(dir);
+            export_all::<RejectToolCallResponse>(dir);
+            export_all::<CompanionRespondResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);
@@ -135,6 +221,8 @@ fn main() {
             export_all::<CreateLlmProviderRequest>(dir);
             export_all::<UpdateLlmProviderRequest>(dir);
             export_all::<ReorderLlmProvidersRequest>(dir);
+            export_all::<ReorderLlmProvidersResponse>(dir);
+            export_all::<DeleteLlmProviderResponse>(dir);
             export_all::<ProbeLlmProviderModelsRequest>(dir);
             export_all::<ProbeLlmProviderModelDto>(dir);
             export_all::<UpsertLlmProviderUserCredentialRequest>(dir);
@@ -165,6 +253,13 @@ fn main() {
             export_all::<AttachRunLinkRequest>(dir);
             export_all::<WorkflowBindingKind>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
+            export_all::<DeleteActivityLifecycleDefinitionResponse>(dir);
+            export_all::<DeleteWorkflowDefinitionResponse>(dir);
+            export_all::<HookPresetResponse>(dir);
+            export_all::<HookPresetsResponse>(dir);
+            export_all::<ValidateHookScriptResponse>(dir);
+            export_all::<RegisterHookPresetResponse>(dir);
+            export_all::<DeleteHookPresetResponse>(dir);
         },
     );
 
@@ -194,6 +289,7 @@ fn main() {
         export_all::<CreateProjectVfsMountRequest>(dir);
         export_all::<UpdateProjectVfsMountRequest>(dir);
         export_all::<ProjectVfsMountResponse>(dir);
+        export_all::<DeleteProjectVfsMountResponse>(dir);
     });
 
     write_domain(
@@ -292,6 +388,20 @@ fn main() {
             export_all::<UpdateProjectAgentRequest>(dir);
         },
     );
+
+    write_domain(
+        &generated_dir.join("settings-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<SettingsScopeKind>(dir);
+            export_all::<SettingsScopeQuery>(dir);
+            export_all::<SettingResponse>(dir);
+            export_all::<SettingUpdate>(dir);
+            export_all::<UpdateSettingsRequest>(dir);
+            export_all::<UpdateSettingsResponse>(dir);
+        },
+    );
 }
 
 fn write_domain(
@@ -307,6 +417,7 @@ fn write_domain(
 
     let mut declarations = BTreeMap::new();
     collect_ts_files(tmp_dir.path(), &mut declarations);
+    let uses_json_value = declarations.remove("JsonValue").is_some();
 
     let mut lines = Vec::new();
     lines.push(
@@ -316,10 +427,13 @@ fn write_domain(
     lines.push("// Do not edit manually.".to_string());
     lines.push(String::new());
 
+    if uses_json_value {
+        lines.push("import type { JsonValue } from \"./common-contracts\";".to_string());
+    }
     for import in imports {
         lines.push((*import).to_string());
     }
-    if !imports.is_empty() {
+    if uses_json_value || !imports.is_empty() {
         lines.push(String::new());
     }
 
@@ -353,6 +467,43 @@ fn write_domain(
     fs::write(out, output).expect("write generated TS");
 
     eprintln!("Wrote {} ({} types)", out.display(), declarations.len());
+}
+
+fn write_common_json_value(out: &std::path::Path, check: bool) {
+    fs::create_dir_all(out.parent().expect("generated dir")).expect("create generated dir");
+
+    let output = [
+        "// This file is generated by `cargo run -p agentdash-contracts --bin generate_contracts_ts`.",
+        "// Do not edit manually.",
+        "",
+        "export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;",
+        "",
+    ]
+    .join("\n");
+
+    if check {
+        match fs::read_to_string(out) {
+            Ok(existing) if existing == output => {
+                eprintln!("{} is up to date", out.display());
+                return;
+            }
+            Ok(_) => {
+                eprintln!(
+                    "{} is out of date; run `cargo run -p agentdash-contracts --bin generate_contracts_ts`",
+                    out.display()
+                );
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("failed to read {}: {error}", out.display());
+                std::process::exit(1);
+            }
+        }
+    }
+
+    fs::write(out, output).expect("write generated common TS");
+
+    eprintln!("Wrote {}", out.display());
 }
 
 fn export_all<T: TS + 'static>(dir: &std::path::Path) {

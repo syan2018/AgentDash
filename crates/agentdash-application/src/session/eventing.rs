@@ -83,6 +83,7 @@ impl SessionEventingService {
             .events
             .list_event_page(session_id, after_seq, limit)
             .await
+            .map_err(Into::into)
     }
 
     pub(crate) fn supports_source_session_title(&self) -> bool {
@@ -504,11 +505,12 @@ impl SessionEventingService {
             },
         };
 
-        self.stores
+        Ok(self
+            .stores
             .projections
             .commit_compaction_projection(session_id, commit)
             .await
-            .map(Some)
+            .map(Some)?)
     }
 
     async fn persist_context_frame_direct(
@@ -582,7 +584,11 @@ impl SessionEventingService {
         head.head_event_seq = persisted.event_seq;
         head.updated_by_event_seq = Some(persisted.event_seq);
         head.updated_at_ms = persisted.committed_at_ms;
-        self.stores.projections.upsert_projection_head(head).await
+        self.stores
+            .projections
+            .upsert_projection_head(head)
+            .await
+            .map_err(Into::into)
     }
 
     fn connector_source(&self, executor_id: Option<String>) -> SourceInfo {

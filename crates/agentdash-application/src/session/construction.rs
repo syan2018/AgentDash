@@ -248,6 +248,41 @@ impl SessionConstructionPlan {
         plan
     }
 
+    pub fn active_vfs(&self) -> Option<&Vfs> {
+        self.projections
+            .capability_state
+            .as_ref()
+            .and_then(|state| state.vfs.active.as_ref())
+            .or(self.surface.vfs.as_ref())
+            .or(self.context_projection.vfs.as_ref())
+    }
+
+    pub fn active_vfs_cloned(&self) -> Option<Vfs> {
+        self.active_vfs().cloned()
+    }
+
+    pub fn set_active_vfs(&mut self, vfs: Vfs) {
+        if let Some(capability_state) = self.projections.capability_state.as_mut() {
+            capability_state.vfs.active = Some(vfs.clone());
+        }
+        self.surface.vfs = Some(vfs.clone());
+        self.context_projection.vfs = Some(vfs);
+    }
+
+    pub fn sync_vfs_projection_from_capability(&mut self) {
+        if let Some(vfs) = self
+            .projections
+            .capability_state
+            .as_ref()
+            .and_then(|state| state.vfs.active.clone())
+        {
+            self.surface.vfs = Some(vfs.clone());
+            self.context_projection.vfs = Some(vfs);
+        } else if let Some(vfs) = self.surface.vfs.clone() {
+            self.context_projection.vfs = Some(vfs);
+        }
+    }
+
     pub fn validate_for_launch(&self) -> Result<(), String> {
         if self.workspace.working_directory.is_none() {
             return Err(

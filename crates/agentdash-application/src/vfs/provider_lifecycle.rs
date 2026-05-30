@@ -261,14 +261,15 @@ impl MountProvider for LifecycleMountProvider {
                             .map_err(map_journey_err)?
                     }
                     ["runs"] => {
-                        let runs = if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
-                            self.lifecycle_run_repo
-                                .list_by_session(&session_id)
-                                .await
-                                .map_err(map_domain_err)?
-                        } else {
-                            Vec::new()
-                        };
+                        let runs =
+                            if let Some(session_id) = resolve_session_id_for_runs(mount, &active) {
+                                self.lifecycle_run_repo
+                                    .list_by_session(&session_id)
+                                    .await
+                                    .map_err(map_domain_err)?
+                            } else {
+                                Vec::new()
+                            };
                         let summaries = runs.iter().map(run_overview).collect::<Vec<_>>();
                         to_json_pretty(&summaries).map_err(map_journey_err)?
                     }
@@ -449,7 +450,8 @@ impl MountProvider for LifecycleMountProvider {
             ["active", "steps"] => step_states_from_run(&active)
                 .iter()
                 .map(|step| {
-                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key)).as_virtual()
+                    RuntimeFileEntry::file(format!("active/steps/{}", step.activity_key))
+                        .as_virtual()
                 })
                 .collect(),
             ["artifacts"] | ["active", "artifacts"] => {
@@ -589,7 +591,9 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["nodes"] => step_states_from_run(&active)
                 .iter()
-                .map(|step| RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual())
+                .map(|step| {
+                    RuntimeFileEntry::dir(format!("nodes/{}", step.activity_key)).as_virtual()
+                })
                 .collect(),
             ["nodes", key] => {
                 if let Some(step) = step_states_from_run(&active)
@@ -802,7 +806,6 @@ impl MountProvider for LifecycleMountProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use crate::session::{
         ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
         SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
@@ -824,6 +827,7 @@ mod tests {
         SessionCompactionRecord, SessionCompactionStatus, SessionProjectionHeadRecord,
         SessionProjectionSegmentRecord,
     };
+    use chrono::Utc;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -849,7 +853,14 @@ mod tests {
         }
 
         async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self.runs.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| ids.contains(&r.id))
+                .cloned()
+                .collect())
         }
 
         async fn list_by_project(

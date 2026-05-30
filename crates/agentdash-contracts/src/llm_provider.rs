@@ -265,6 +265,16 @@ pub struct ReorderLlmProvidersRequest {
     pub ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct ReorderLlmProvidersResponse {
+    pub reordered: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DeleteLlmProviderResponse {
+    pub deleted: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct ProbeLlmProviderModelsRequest {
     pub protocol: LlmProviderProtocol,

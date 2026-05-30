@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS skill_assets (
     source TEXT NOT NULL,
     builtin_key TEXT,
     disable_model_invocation BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT skill_assets_source_check CHECK (source IN ('builtin_seed', 'user')),
     CONSTRAINT skill_assets_builtin_key_consistency CHECK (
         (source = 'builtin_seed' AND builtin_key IS NOT NULL)
@@ -22,8 +22,8 @@ CREATE TABLE IF NOT EXISTS skill_asset_files (
     path TEXT NOT NULL,
     content TEXT NOT NULL,
     kind TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT skill_asset_files_kind_check CHECK (kind IN ('skill', 'reference', 'script', 'asset'))
 );
 

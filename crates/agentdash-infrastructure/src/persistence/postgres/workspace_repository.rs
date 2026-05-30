@@ -35,7 +35,7 @@ impl PostgresWorkspaceRepository {
             .bind(workspace_id.to_string())
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if bindings.is_empty() {
             return Ok(());
@@ -64,16 +64,16 @@ impl PostgresWorkspaceRepository {
                 .push_bind(binding.root_ref.trim().to_string())
                 .push_bind(binding_status_to_str(&binding.status))
                 .push_bind(detected_facts)
-                .push_bind(binding.last_verified_at.map(|value| value.to_rfc3339()))
+                .push_bind(binding.last_verified_at.map(|value| value))
                 .push_bind(binding.priority)
-                .push_bind(binding.created_at.to_rfc3339())
-                .push_bind(binding.updated_at.to_rfc3339());
+                .push_bind(binding.created_at)
+                .push_bind(binding.updated_at);
         });
         builder
             .build()
             .execute(&mut **tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -89,7 +89,7 @@ impl PostgresWorkspaceRepository {
         .bind(workspace_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter()
             .map(|row| workspace_binding_from_row(&row))
@@ -101,15 +101,11 @@ impl PostgresWorkspaceRepository {
 impl WorkspaceRepository for PostgresWorkspaceRepository {
     async fn create(&self, workspace: &Workspace) -> Result<(), DomainError> {
         let payload = serde_json::to_string(&workspace.identity_payload)
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(DomainError::Serialization)?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(DomainError::Serialization)?;
         sqlx::query(
             "INSERT INTO workspaces (id, project_id, name, identity_kind, identity_payload, resolution_policy, default_binding_id, status, mount_capabilities, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
@@ -123,16 +119,14 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
         .bind(mount_caps)
-        .bind(workspace.created_at.to_rfc3339())
-        .bind(workspace.updated_at.to_rfc3339())
+        .bind(workspace.created_at)
+        .bind(workspace.updated_at)
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Self::save_bindings_in_tx(&mut tx, workspace.id, &workspace.bindings).await?;
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 
@@ -144,7 +138,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -164,7 +158,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let mut workspaces = rows
             .iter()
@@ -182,7 +176,7 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(&workspace_ids)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let mut bindings_by_workspace: std::collections::HashMap<Uuid, Vec<WorkspaceBinding>> =
             std::collections::HashMap::with_capacity(workspaces.len());
@@ -205,15 +199,11 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
 
     async fn update(&self, workspace: &Workspace) -> Result<(), DomainError> {
         let payload = serde_json::to_string(&workspace.identity_payload)
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(DomainError::Serialization)?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         let mount_caps = serde_json::to_string(&workspace.mount_capabilities)
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(DomainError::Serialization)?;
         let result = sqlx::query(
             "UPDATE workspaces
              SET name = $1, identity_kind = $2, identity_payload = $3, resolution_policy = $4, default_binding_id = $5, status = $6, mount_capabilities = $7, updated_at = $8
@@ -226,11 +216,11 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         .bind(workspace.default_binding_id.map(|id| id.to_string()))
         .bind(workspace_status_to_str(&workspace.status))
         .bind(mount_caps)
-        .bind(Utc::now().to_rfc3339())
+        .bind(Utc::now())
         .bind(workspace.id.to_string())
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -240,29 +230,23 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
         }
 
         Self::save_bindings_in_tx(&mut tx, workspace.id, &workspace.bindings).await?;
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
         sqlx::query("DELETE FROM workspace_bindings WHERE workspace_id = $1")
             .bind(id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         let result = sqlx::query("DELETE FROM workspaces WHERE id = $1")
             .bind(id.to_string())
             .execute(&mut *tx)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -270,22 +254,19 @@ impl WorkspaceRepository for PostgresWorkspaceRepository {
                 id: id.to_string(),
             });
         }
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
         Ok(())
     }
 }
 
 fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainError> {
     let id = parse_uuid(
-        row.try_get::<String, _>("id")
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+        row.try_get::<String, _>("id").map_err(super::db_err)?,
         "workspace",
     )?;
     let project_id = parse_uuid(
         row.try_get::<String, _>("project_id")
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+            .map_err(super::db_err)?,
         "project",
     )?;
     let name = row
@@ -304,10 +285,10 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         .try_get::<String, _>("status")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.status: {e}")))?;
     let created_at = row
-        .try_get::<String, _>("created_at")
+        .try_get::<DateTime<Utc>, _>("created_at")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.created_at: {e}")))?;
     let updated_at = row
-        .try_get::<String, _>("updated_at")
+        .try_get::<DateTime<Utc>, _>("updated_at")
         .map_err(|e| DomainError::InvalidConfig(format!("workspaces.updated_at: {e}")))?;
     let default_binding_id = row
         .try_get::<Option<String>, _>("default_binding_id")
@@ -338,8 +319,8 @@ fn workspace_from_row(row: &sqlx::postgres::PgRow) -> Result<Workspace, DomainEr
         status: str_to_workspace_status(&status)?,
         bindings: Vec::new(),
         mount_capabilities,
-        created_at: parse_datetime(&created_at, "workspaces.created_at")?,
-        updated_at: parse_datetime(&updated_at, "workspaces.updated_at")?,
+        created_at,
+        updated_at,
     })
 }
 
@@ -348,13 +329,12 @@ fn workspace_binding_from_row(
 ) -> Result<WorkspaceBinding, DomainError> {
     Ok(WorkspaceBinding {
         id: parse_uuid(
-            row.try_get::<String, _>("id")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+            row.try_get::<String, _>("id").map_err(super::db_err)?,
             "workspace_binding",
         )?,
         workspace_id: parse_uuid(
             row.try_get::<String, _>("workspace_id")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+                .map_err(super::db_err)?,
             "workspace",
         )?,
         backend_id: row.try_get::<String, _>("backend_id").map_err(|e| {
@@ -375,36 +355,24 @@ fn workspace_binding_from_row(
             "workspace_bindings.detected_facts",
         )?,
         last_verified_at: row
-            .try_get::<Option<String>, _>("last_verified_at")
+            .try_get::<Option<DateTime<Utc>>, _>("last_verified_at")
             .map_err(|e| {
                 DomainError::InvalidConfig(format!("workspace_bindings.last_verified_at: {e}"))
-            })?
-            .map(|value| parse_datetime(&value, "workspace_bindings.last_verified_at"))
-            .transpose()?,
+            })?,
         priority: row
             .try_get::<i32, _>("priority")
             .map_err(|e| DomainError::InvalidConfig(format!("workspace_bindings.priority: {e}")))?,
-        created_at: parse_datetime(
-            &row.try_get::<String, _>("created_at").map_err(|e| {
-                DomainError::InvalidConfig(format!("workspace_bindings.created_at: {e}"))
-            })?,
-            "workspace_bindings.created_at",
-        )?,
-        updated_at: parse_datetime(
-            &row.try_get::<String, _>("updated_at").map_err(|e| {
-                DomainError::InvalidConfig(format!("workspace_bindings.updated_at: {e}"))
-            })?,
-            "workspace_bindings.updated_at",
-        )?,
+        created_at: row.try_get::<DateTime<Utc>, _>("created_at").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.created_at: {e}"))
+        })?,
+        updated_at: row.try_get::<DateTime<Utc>, _>("updated_at").map_err(|e| {
+            DomainError::InvalidConfig(format!("workspace_bindings.updated_at: {e}"))
+        })?,
     })
 }
 
 fn parse_uuid(value: String, entity: &'static str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(&value).map_err(move |_| DomainError::NotFound { entity, id: value })
-}
-
-fn parse_datetime(value: &str, field: &str) -> Result<DateTime<Utc>, DomainError> {
-    super::parse_pg_timestamp_checked(value, field)
 }
 
 fn parse_json_value(raw: &str, field: &str) -> Result<Value, DomainError> {

@@ -2,10 +2,11 @@ use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
     LifecycleRunLink, LifecycleRunLinkRepository, RunLinkRole, RunLinkSubjectKind,
 };
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::{db_err, parse_pg_timestamp_checked};
+use super::db_err;
 
 const LINK_COLS: &str = "id,run_id,subject_kind,subject_id,role,metadata,created_at";
 
@@ -30,8 +31,8 @@ impl LifecycleRunLinkRepository for PostgresRunLinkRepository {
         .bind(link.subject_kind.as_str())
         .bind(link.subject_id.to_string())
         .bind(link.role.as_str())
-        .bind(link.metadata.as_ref().map(|v| v.to_string()))
-        .bind(link.created_at.to_rfc3339())
+        .bind(link.metadata.clone())
+        .bind(link.created_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -115,13 +116,15 @@ struct RunLinkRow {
     subject_kind: String,
     subject_id: String,
     role: String,
-    metadata: Option<String>,
-    created_at: String,
+    metadata: Option<serde_json::Value>,
+    created_at: DateTime<Utc>,
 }
 
 fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
     Uuid::parse_str(s).map_err(|e| {
-        DomainError::InvalidConfig(format!("lifecycle_run_links.{ctx}: invalid uuid `{s}`: {e}"))
+        DomainError::InvalidConfig(format!(
+            "lifecycle_run_links.{ctx}: invalid uuid `{s}`: {e}"
+        ))
     })
 }
 
@@ -140,24 +143,14 @@ impl TryFrom<RunLinkRow> for LifecycleRunLink {
                 row.role
             ))
         })?;
-        let metadata = row
-            .metadata
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .map(|s| serde_json::from_str(s))
-            .transpose()
-            .map_err(|e| {
-                DomainError::InvalidConfig(format!("lifecycle_run_links.metadata: {e}"))
-            })?;
-
         Ok(LifecycleRunLink {
             id: parse_uuid(&row.id, "id")?,
             run_id: parse_uuid(&row.run_id, "run_id")?,
             subject_kind,
             subject_id: parse_uuid(&row.subject_id, "subject_id")?,
             role,
-            metadata,
-            created_at: parse_pg_timestamp_checked(&row.created_at, "lifecycle_run_links.created_at")?,
+            metadata: row.metadata,
+            created_at: row.created_at,
         })
     }
 }

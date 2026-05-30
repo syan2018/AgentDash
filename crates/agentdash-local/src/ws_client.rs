@@ -17,6 +17,7 @@ use crate::local_backend_config::WorkspaceContractRuntimeConfig;
 use crate::mcp_client_manager::McpClientManager;
 use crate::tool_executor::ToolExecutor;
 use agentdash_application::session::SessionRuntimeServices;
+use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 use agentdash_spi::AgentConnector;
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ pub struct Config {
     pub workspace_roots: Vec<PathBuf>,
     pub tool_executor: ToolExecutor,
     pub session_runtime: Option<SessionRuntimeServices>,
+    pub _session_db_runtime: Option<Arc<PostgresRuntime>>,
     pub connector: Option<Arc<dyn AgentConnector>>,
     pub mcp_manager: Option<Arc<McpClientManager>>,
     pub workspace_contract_config: WorkspaceContractRuntimeConfig,

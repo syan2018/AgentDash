@@ -7,15 +7,28 @@ use axum::{
 use uuid::Uuid;
 
 use agentdash_contracts::workflow::{
-    LifecycleRunLinkDto, StoryRunOverviewDto, StoryRunsResponse,
+    LifecycleRunLinkDto, LifecycleRunStatus as ContractLifecycleRunStatus, StoryRunOverviewDto,
+    StoryRunsResponse,
 };
-use agentdash_domain::workflow::{LifecycleRunLink, RunLinkRole, RunLinkSubjectKind};
+use agentdash_domain::workflow::{
+    LifecycleRunLink, LifecycleRunStatus as DomainLifecycleRunStatus, RunLinkRole,
+    RunLinkSubjectKind,
+};
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_story_and_project_with_permission},
     rpc::ApiError,
 };
+
+pub fn router() -> axum::Router<Arc<AppState>> {
+    axum::Router::new()
+        .route("/stories/{id}/runs", axum::routing::get(list_story_runs))
+        .route(
+            "/stories/{id}/runs/active",
+            axum::routing::get(get_active_story_run),
+        )
+}
 
 fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
     LifecycleRunLinkDto {
@@ -26,6 +39,18 @@ fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
         role: link.role.as_str().to_string(),
         metadata: link.metadata.clone(),
         created_at: link.created_at.to_rfc3339(),
+    }
+}
+
+fn status_to_dto(status: DomainLifecycleRunStatus) -> ContractLifecycleRunStatus {
+    match status {
+        DomainLifecycleRunStatus::Draft => ContractLifecycleRunStatus::Draft,
+        DomainLifecycleRunStatus::Ready => ContractLifecycleRunStatus::Ready,
+        DomainLifecycleRunStatus::Running => ContractLifecycleRunStatus::Running,
+        DomainLifecycleRunStatus::Blocked => ContractLifecycleRunStatus::Blocked,
+        DomainLifecycleRunStatus::Completed => ContractLifecycleRunStatus::Completed,
+        DomainLifecycleRunStatus::Failed => ContractLifecycleRunStatus::Failed,
+        DomainLifecycleRunStatus::Cancelled => ContractLifecycleRunStatus::Cancelled,
     }
 }
 
@@ -77,7 +102,7 @@ pub async fn list_story_runs(
             StoryRunOverviewDto {
                 id: run.id.to_string(),
                 lifecycle_id: run.lifecycle_id.to_string(),
-                status: run.status,
+                status: status_to_dto(run.status),
                 session_id: run.session_id.clone(),
                 created_at: run.created_at.to_rfc3339(),
                 updated_at: run.updated_at.to_rfc3339(),
@@ -129,8 +154,7 @@ pub async fn get_active_story_run(
     let runs = state.repos.lifecycle_run_repo.list_by_ids(&run_ids).await?;
 
     let active_run = runs.iter().find(|r| {
-        r.status == agentdash_domain::workflow::LifecycleRunStatus::Running
-            || r.status == agentdash_domain::workflow::LifecycleRunStatus::Ready
+        r.status == DomainLifecycleRunStatus::Running || r.status == DomainLifecycleRunStatus::Ready
     });
 
     let result = active_run.map(|run| {
@@ -143,7 +167,7 @@ pub async fn get_active_story_run(
         StoryRunOverviewDto {
             id: run.id.to_string(),
             lifecycle_id: run.lifecycle_id.to_string(),
-            status: run.status,
+            status: status_to_dto(run.status),
             session_id: run.session_id.clone(),
             created_at: run.created_at.to_rfc3339(),
             updated_at: run.updated_at.to_rfc3339(),

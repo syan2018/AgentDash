@@ -1,8 +1,6 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowDefinitionSource {
     BuiltinSeed,
@@ -10,14 +8,14 @@ pub enum WorkflowDefinitionSource {
     Cloned,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationSeverity {
     Error,
     Warning,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ValidationIssue {
     pub code: String,
     pub message: String,

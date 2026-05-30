@@ -5,7 +5,6 @@ import {
   fetchProjectCanvases,
   promoteCanvasToExtension,
 } from "../../services/canvas";
-import { useExtensionRuntimeStore } from "../extension-runtime/model/extensionRuntimeStore";
 import type { Canvas } from "../../types";
 import { formatDateTime } from "../../lib/format";
 import { CanvasSessionPanel } from "./CanvasSessionPanel";
@@ -13,6 +12,7 @@ import { CanvasSessionPanel } from "./CanvasSessionPanel";
 export interface ProjectCanvasManagerProps {
   projectId: string;
   projectName: string;
+  onExtensionRuntimeRefresh?: (projectId: string) => Promise<void>;
 }
 
 const SELECTED_CANVAS_STORAGE_KEY_PREFIX = "agentdash:selected-canvas:";
@@ -20,6 +20,7 @@ const SELECTED_CANVAS_STORAGE_KEY_PREFIX = "agentdash:selected-canvas:";
 export function ProjectCanvasManager({
   projectId,
   projectName,
+  onExtensionRuntimeRefresh,
 }: ProjectCanvasManagerProps) {
   const [canvases, setCanvases] = useState<Canvas[]>([]);
   const [selectedCanvasId, setSelectedCanvasId] = useState<string | null>(null);
@@ -142,14 +143,14 @@ export function ProjectCanvasManager({
         display_name: canvas.title,
         overwrite: true,
       });
-      await useExtensionRuntimeStore.getState().fetchProject(projectId);
+      await onExtensionRuntimeRefresh?.(projectId);
       setMessage(`已发布为 WorkspacePanel 插件：${result.extension_key}`);
     } catch (promoteError) {
       setError(promoteError instanceof Error ? promoteError.message : "发布 Canvas 插件失败");
     } finally {
       setPromotingCanvasId(null);
     }
-  }, [projectId]);
+  }, [onExtensionRuntimeRefresh, projectId]);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">

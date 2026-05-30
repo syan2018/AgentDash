@@ -141,7 +141,7 @@ impl VfsMutationDispatcher {
                 identity,
             )
             .await
-            .map_err(VfsMutationError::Provider)?;
+            .map_err(|e| VfsMutationError::Provider(e.to_string()))?;
         Ok(text_result(path, content.len() as u64, false))
     }
 
@@ -176,7 +176,7 @@ impl VfsMutationDispatcher {
                 identity,
             )
             .await
-            .map_err(VfsMutationError::Provider)?;
+            .map_err(|e| VfsMutationError::Provider(e.to_string()))?;
         Ok(text_result(path, content.len() as u64, false))
     }
 
@@ -217,7 +217,7 @@ impl VfsMutationDispatcher {
                 identity,
             )
             .await
-            .map_err(VfsMutationError::Provider)
+            .map_err(|e| VfsMutationError::Provider(e.to_string()))
     }
 
     pub async fn rename_text(
@@ -275,7 +275,7 @@ impl VfsMutationDispatcher {
         self.vfs_service
             .rename_text(vfs, mount_id, &from_path, &to_path, None, identity)
             .await
-            .map_err(VfsMutationError::Provider)?;
+            .map_err(|e| VfsMutationError::Provider(e.to_string()))?;
         Ok((from_path, to_path))
     }
 
@@ -294,13 +294,13 @@ impl VfsMutationDispatcher {
                 .vfs_service
                 .apply_patch(vfs, mount_id, patch, Some(&overlay), identity)
                 .await
-                .map_err(VfsMutationError::Provider);
+                .map_err(|e| VfsMutationError::Provider(e.to_string()));
         }
 
         self.vfs_service
             .apply_patch(vfs, mount_id, patch, None, identity)
             .await
-            .map_err(VfsMutationError::Provider)
+            .map_err(|e| VfsMutationError::Provider(e.to_string()))
     }
 
     pub async fn upload_inline_binary(
@@ -587,11 +587,7 @@ mod tests {
 
     fn dispatcher(repo: Arc<MemoryInlineFileRepo>) -> VfsMutationDispatcher {
         let registry = Arc::new(MountProviderRegistry::new());
-        VfsMutationDispatcher::new(
-            Arc::new(VfsService::new(registry.clone())),
-            repo,
-            registry,
-        )
+        VfsMutationDispatcher::new(Arc::new(VfsService::new(registry.clone())), repo, registry)
     }
 
     fn vfs_with_mount(mount: Mount) -> Vfs {

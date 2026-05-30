@@ -55,7 +55,7 @@ impl From<McpEnvVar> for domain::McpEnvVar {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum McpTransportConfig {
+pub enum McpTransportConfigDto {
     Http {
         url: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,7 +75,7 @@ pub enum McpTransportConfig {
     },
 }
 
-impl From<domain::McpTransportConfig> for McpTransportConfig {
+impl From<domain::McpTransportConfig> for McpTransportConfigDto {
     fn from(config: domain::McpTransportConfig) -> Self {
         match config {
             domain::McpTransportConfig::Http { url, headers } => Self::Http {
@@ -95,18 +95,18 @@ impl From<domain::McpTransportConfig> for McpTransportConfig {
     }
 }
 
-impl From<McpTransportConfig> for domain::McpTransportConfig {
-    fn from(config: McpTransportConfig) -> Self {
+impl From<McpTransportConfigDto> for domain::McpTransportConfig {
+    fn from(config: McpTransportConfigDto) -> Self {
         match config {
-            McpTransportConfig::Http { url, headers } => Self::Http {
+            McpTransportConfigDto::Http { url, headers } => Self::Http {
                 url,
                 headers: headers.into_iter().map(Into::into).collect(),
             },
-            McpTransportConfig::Sse { url, headers } => Self::Sse {
+            McpTransportConfigDto::Sse { url, headers } => Self::Sse {
                 url,
                 headers: headers.into_iter().map(Into::into).collect(),
             },
-            McpTransportConfig::Stdio { command, args, env } => Self::Stdio {
+            McpTransportConfigDto::Stdio { command, args, env } => Self::Stdio {
                 command,
                 args,
                 env: env.into_iter().map(Into::into).collect(),
@@ -190,7 +190,7 @@ pub struct McpPresetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub description: Option<String>,
-    pub transport: McpTransportConfig,
+    pub transport: McpTransportConfigDto,
     pub route_policy: McpRoutePolicy,
     pub source: McpPresetSourceTag,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -227,6 +227,11 @@ impl From<domain::McpPreset> for McpPresetResponse {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct DeleteMcpPresetResponse {
+    pub deleted: String,
+}
+
 #[derive(Debug, Clone, Deserialize, TS)]
 pub struct CreateMcpPresetRequest {
     pub key: String,
@@ -234,7 +239,7 @@ pub struct CreateMcpPresetRequest {
     #[serde(default)]
     #[ts(optional)]
     pub description: Option<String>,
-    pub transport: McpTransportConfig,
+    pub transport: McpTransportConfigDto,
     #[serde(default)]
     pub route_policy: McpRoutePolicy,
 }
@@ -252,7 +257,7 @@ pub struct UpdateMcpPresetRequest {
     pub description: Option<Option<String>>,
     #[serde(default)]
     #[ts(optional)]
-    pub transport: Option<McpTransportConfig>,
+    pub transport: Option<McpTransportConfigDto>,
     #[serde(default)]
     #[ts(optional)]
     pub route_policy: Option<McpRoutePolicy>,

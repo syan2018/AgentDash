@@ -4,7 +4,6 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
 
 use agentdash_application::session::terminal_cache::TerminalState;
 use agentdash_application::vfs::PROVIDER_RELAY_FS;
@@ -12,8 +11,9 @@ use agentdash_relay::*;
 use agentdash_spi::Vfs;
 
 use crate::auth::{CurrentUser, ProjectPermission};
+use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
 use crate::routes::acp_sessions::ensure_session_permission;
-use crate::session_use_cases::context_query::build_session_context_plan;
+use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 
 /// GET /api/sessions/:session_id/terminals
@@ -22,19 +22,29 @@ pub async fn list_terminals(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    ensure_session_permission(state.as_ref(), &current_user, &session_id, ProjectPermission::View)
-        .await?;
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let terminals = state.services.terminal_cache.list_terminals(&session_id);
     Ok(Json(terminals))
 }
 
-/// POST /api/sessions/:session_id/terminals
-#[derive(Deserialize)]
-pub struct SpawnTerminalBody {
-    pub cwd: Option<String>,
-    pub shell: Option<String>,
-    pub cols: Option<u16>,
-    pub rows: Option<u16>,
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/sessions/{id}/terminals",
+            axum::routing::get(list_terminals).post(spawn_terminal),
+        )
+        .route("/terminals/{id}/input", axum::routing::post(terminal_input))
+        .route(
+            "/terminals/{id}/resize",
+            axum::routing::post(terminal_resize),
+        )
+        .route("/terminals/{id}", axum::routing::delete(terminal_kill))
 }
 
 pub async fn spawn_terminal(
@@ -113,12 +123,6 @@ pub async fn spawn_terminal(
     }
 }
 
-/// POST /api/terminals/:terminal_id/input
-#[derive(Deserialize)]
-pub struct TerminalInputBody {
-    pub data: String,
-}
-
 pub async fn terminal_input(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
@@ -145,15 +149,13 @@ pub async fn terminal_input(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal input relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端输入命令发送失败",
+            )))
+        }
     }
-}
-
-/// POST /api/terminals/:terminal_id/resize
-#[derive(Deserialize)]
-pub struct TerminalResizeBody {
-    pub cols: u16,
-    pub rows: u16,
 }
 
 pub async fn terminal_resize(
@@ -183,7 +185,12 @@ pub async fn terminal_resize(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal resize relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端尺寸调整命令发送失败",
+            )))
+        }
     }
 }
 
@@ -213,7 +220,12 @@ pub async fn terminal_kill(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT.into_response()),
-        Err(e) => Err(ApiError::Internal(e.to_string())),
+        Err(e) => {
+            tracing::error!(error = %e, terminal_id, "terminal kill relay command failed");
+            Err(ApiError::ServiceUnavailable(String::from(
+                "终端结束命令发送失败",
+            )))
+        }
     }
 }
 
@@ -233,8 +245,13 @@ async fn load_terminal_for_user(
         .terminal_cache
         .get_terminal(terminal_id)
         .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
-    ensure_session_permission(state.as_ref(), current_user, &term_state.session_id, ProjectPermission::View)
-        .await?;
+    ensure_session_permission(
+        state.as_ref(),
+        current_user,
+        &term_state.session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     Ok(term_state)
 }
 
@@ -243,8 +260,13 @@ async fn resolve_terminal_launch_target(
     current_user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
 ) -> Result<TerminalLaunchTarget, ApiError> {
-    ensure_session_permission(state.as_ref(), current_user, session_id, ProjectPermission::View)
-        .await?;
+    ensure_session_permission(
+        state.as_ref(),
+        current_user,
+        session_id,
+        ProjectPermission::View,
+    )
+    .await?;
     let plan = build_session_context_plan(state, current_user, session_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("Session 未绑定可用 owner，无法创建终端".into()))?;

@@ -2,7 +2,7 @@ import type { RoutineTriggerType, RoutineSessionMode, ProjectAgent, Routine } fr
 import type { RoutineFormState } from "./form-state";
 import { CronScheduleSelector } from "./cron-schedule-selector";
 import { useState } from "react";
-import { useRoutineStore } from "../../stores/routineStore";
+import { useRegenerateRoutineTokenMutation } from "./model/routineQueries";
 
 interface SidebarProps {
   form: RoutineFormState;
@@ -21,12 +21,12 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, editingRoutine }: SidebarProps) {
-  const { regenerateToken } = useRoutineStore();
+  const regenerateToken = useRegenerateRoutineTokenMutation();
   const [regeneratedToken, setRegeneratedToken] = useState<{ endpoint_id: string; token: string } | null>(null);
 
   const handleRegenerate = async () => {
     if (!editingRoutine) return;
-    const result = await regenerateToken(editingRoutine.id);
+    const result = await regenerateToken.mutateAsync(editingRoutine.id);
     if (result) {
       setRegeneratedToken({ endpoint_id: result.endpoint_id, token: result.webhook_token });
     }
@@ -116,9 +116,10 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
             <button
               type="button"
               onClick={() => void handleRegenerate()}
+              disabled={regenerateToken.isPending}
               className="agentdash-button-secondary text-xs"
             >
-              重新生成 Token
+              {regenerateToken.isPending ? "生成中..." : "重新生成 Token"}
             </button>
             {regeneratedToken && (
               <div className="rounded-[8px] border border-warning/20 bg-warning/5 p-3 space-y-1">

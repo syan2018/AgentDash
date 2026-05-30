@@ -2,8 +2,6 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_application::backend::{BackendAuthorizationService, BackendPermission};
@@ -16,9 +14,10 @@ use agentdash_application::workspace::{
     WorkspaceBindingSyncResult, WorkspaceDetectionResult, WorkspaceInventoryCandidate,
     list_project_workspace_candidates, sync_project_backend_workspace_bindings,
 };
+use agentdash_contracts::core::RevokedIdResponse;
 use agentdash_domain::backend::{
     BackendWorkspaceInventory, BackendWorkspaceInventorySource, BackendWorkspaceInventoryStatus,
-    ProjectBackendAccess, ProjectBackendAccessMode, ProjectBackendAccessStatus,
+    ProjectBackendAccess, ProjectBackendAccessStatus,
 };
 use agentdash_domain::workspace::{
     WorkspaceIdentityKind, identity_payload_from_detected_facts, normalize_path_key,
@@ -26,79 +25,13 @@ use agentdash_domain::workspace::{
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
-use crate::routes::backends::{BrowseDirectoryEntryResponse, BrowseDirectoryResponse};
+use crate::dto::{
+    BackendWorkspaceInventoryResponse, BrowseAccessDirectoryRequest, BrowseDirectoryEntryResponse,
+    BrowseDirectoryResponse, CreateProjectBackendAccessRequest, InventoryRefreshResponse,
+    ProjectBackendAccessResponse, RegisterBackendWorkspaceInventoryRequest,
+    UpdateProjectBackendAccessRequest,
+};
 use crate::rpc::ApiError;
-
-#[derive(Debug, Deserialize)]
-pub struct CreateProjectBackendAccessRequest {
-    pub backend_id: String,
-    pub priority: Option<i32>,
-    pub root_policy: Option<Value>,
-    pub capability_policy: Option<Value>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateProjectBackendAccessRequest {
-    pub status: Option<ProjectBackendAccessStatus>,
-    pub access_mode: Option<ProjectBackendAccessMode>,
-    pub priority: Option<i32>,
-    pub root_policy: Option<Value>,
-    pub capability_policy: Option<Value>,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectBackendAccessResponse {
-    pub id: Uuid,
-    pub project_id: Uuid,
-    pub backend_id: String,
-    pub status: ProjectBackendAccessStatus,
-    pub access_mode: ProjectBackendAccessMode,
-    pub priority: i32,
-    pub root_policy: Value,
-    pub capability_policy: Value,
-    pub note: Option<String>,
-    pub created_by: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct BackendWorkspaceInventoryResponse {
-    pub id: Uuid,
-    pub backend_id: String,
-    pub root_ref: String,
-    pub identity_kind: WorkspaceIdentityKind,
-    pub identity_payload: Value,
-    pub detected_facts: Value,
-    pub status: BackendWorkspaceInventoryStatus,
-    pub source: BackendWorkspaceInventorySource,
-    pub last_seen_at: chrono::DateTime<chrono::Utc>,
-    pub last_error: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct InventoryRefreshResponse {
-    pub access_id: Uuid,
-    pub backend_id: String,
-    pub refreshed: usize,
-    pub failed: usize,
-    pub items: Vec<BackendWorkspaceInventoryResponse>,
-    pub warnings: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BrowseAccessDirectoryRequest {
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RegisterBackendWorkspaceInventoryRequest {
-    pub root_ref: String,
-}
 
 pub async fn list_project_backend_access(
     State(state): State<Arc<AppState>>,
@@ -125,6 +58,43 @@ pub async fn list_project_backend_access(
             .map(ProjectBackendAccessResponse::from)
             .collect(),
     ))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/workspaces/candidates",
+            axum::routing::get(list_workspace_candidates),
+        )
+        .route(
+            "/projects/{project_id}/workspaces/sync-backend-bindings",
+            axum::routing::post(sync_workspace_bindings),
+        )
+        .route(
+            "/projects/{project_id}/backend-access",
+            axum::routing::get(list_project_backend_access).post(create_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}",
+            axum::routing::patch(update_project_backend_access)
+                .delete(revoke_project_backend_access),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory",
+            axum::routing::get(list_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/refresh",
+            axum::routing::post(refresh_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/inventory/register",
+            axum::routing::post(register_project_backend_inventory),
+        )
+        .route(
+            "/projects/{project_id}/backend-access/{access_id}/browse",
+            axum::routing::post(browse_project_backend_access),
+        )
 }
 
 pub async fn create_project_backend_access(
@@ -253,7 +223,7 @@ pub async fn revoke_project_backend_access(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, access_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokedIdResponse>, ApiError> {
     let project_id = parse_project_id(&project_id)?;
     let access_id = parse_uuid(&access_id, "ProjectBackendAccess ID")?;
     load_project_with_permission(
@@ -269,7 +239,9 @@ pub async fn revoke_project_backend_access(
         .project_backend_access_repo
         .set_status(access.id, ProjectBackendAccessStatus::Revoked)
         .await?;
-    Ok(Json(serde_json::json!({ "revoked": access.id })))
+    Ok(Json(RevokedIdResponse {
+        revoked: access.id.to_string(),
+    }))
 }
 
 pub async fn list_project_backend_inventory(
@@ -655,42 +627,4 @@ fn normalize_required(field: &str, raw: &str) -> Result<String, ApiError> {
 fn normalize_optional(raw: String) -> Option<String> {
     let value = raw.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-impl From<ProjectBackendAccess> for ProjectBackendAccessResponse {
-    fn from(value: ProjectBackendAccess) -> Self {
-        Self {
-            id: value.id,
-            project_id: value.project_id,
-            backend_id: value.backend_id,
-            status: value.status,
-            access_mode: value.access_mode,
-            priority: value.priority,
-            root_policy: value.root_policy,
-            capability_policy: value.capability_policy,
-            note: value.note,
-            created_by: value.created_by,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
-        }
-    }
-}
-
-impl From<BackendWorkspaceInventory> for BackendWorkspaceInventoryResponse {
-    fn from(value: BackendWorkspaceInventory) -> Self {
-        Self {
-            id: value.id,
-            backend_id: value.backend_id,
-            root_ref: value.root_ref,
-            identity_kind: value.identity_kind,
-            identity_payload: value.identity_payload,
-            detected_facts: value.detected_facts,
-            status: value.status,
-            source: value.source,
-            last_seen_at: value.last_seen_at,
-            last_error: value.last_error,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
-        }
-    }
 }

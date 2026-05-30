@@ -43,7 +43,7 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
         .bind(session.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -58,7 +58,7 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
         .bind(token_hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let Some(row) = row_opt else {
             return Ok(None);
@@ -66,25 +66,15 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
 
         let revoked_at = row
             .try_get::<Option<i64>, _>("revoked_at")
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         Ok(Some(AuthSession {
-            token_hash: row
-                .try_get("token_hash")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
-            identity_json: row
-                .try_get("identity_json")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
-            expires_at: row
-                .try_get("expires_at")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+            token_hash: row.try_get("token_hash").map_err(super::db_err)?,
+            identity_json: row.try_get("identity_json").map_err(super::db_err)?,
+            expires_at: row.try_get("expires_at").map_err(super::db_err)?,
             revoked_at,
-            created_at: row
-                .try_get("created_at")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
-            updated_at: row
-                .try_get("updated_at")
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?,
+            created_at: row.try_get("created_at").map_err(super::db_err)?,
+            updated_at: row.try_get("updated_at").map_err(super::db_err)?,
         }))
     }
 
@@ -103,7 +93,7 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
         .bind(token_hash)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -116,7 +106,7 @@ impl AuthSessionRepository for PostgresAuthSessionRepository {
         .bind(epoch_secs)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(result.rows_affected())
     }
 }

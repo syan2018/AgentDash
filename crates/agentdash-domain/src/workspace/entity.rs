@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -14,7 +13,7 @@ use super::value_objects::{
 ///
 /// 表达 Project 依赖的“工作空间身份”，而不是某个 backend 上的单一目录。
 /// 物理目录、backend 与探测事实都通过 bindings 挂在该聚合下。
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: Uuid,
     pub project_id: Uuid,

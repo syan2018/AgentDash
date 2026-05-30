@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 use agentdash_domain::{
     common::AgentConfig,
-    
     story::ChangeKind,
     task::{Task, TaskStatus},
 };
@@ -22,9 +21,9 @@ use crate::workspace::BackendAvailability;
 use super::execution::*;
 use super::gateway::{
     append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
-    create_task_session as gw_create_task_session,
-    get_session_overview as gw_get_session_overview, get_task as gw_get_task, map_connector_error,
-    map_domain_error, resolve_project_scope_for_owner, resolve_task_backend_id,
+    create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
+    get_task as gw_get_task, map_connector_error, map_domain_error,
+    resolve_project_scope_for_owner, resolve_task_backend_id,
 };
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作

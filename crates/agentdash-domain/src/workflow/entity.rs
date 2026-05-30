@@ -4,9 +4,7 @@ use uuid::Uuid;
 
 use crate::shared_library::InstalledAssetSource;
 
-use super::validation::{
-    validate_activity_lifecycle_definition, validate_workflow_definition,
-};
+use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
@@ -200,8 +198,6 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    /// Runtime session ID（可选）。
-    ///
     /// 仅表示当前 run 关联的 runtime session（用于 event log、debug replay 等）。
     /// 业务归属（如 Story、RoutineExecution）通过 `LifecycleRunLink` 显式关联层表达，
     /// 不再由此字段推断。
@@ -326,7 +322,6 @@ pub fn build_effective_contract(
         },
     }
 }
-
 
 #[cfg(test)]
 mod tests {

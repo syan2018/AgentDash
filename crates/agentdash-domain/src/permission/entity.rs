@@ -164,9 +164,7 @@ impl PermissionGrant {
 
     /// 检查 grant 是否已过期（基于当前时间）。
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| Utc::now() > exp)
-            .unwrap_or(false)
+        self.expires_at.map(|exp| Utc::now() > exp).unwrap_or(false)
     }
 
     // ── 内部辅助 ──
@@ -259,11 +257,10 @@ mod tests {
 
     #[test]
     fn scope_escalation_path() {
-        let mut grant = sample_grant()
-            .with_escalation_intent(ScopeEscalationIntent {
-                target_subject_kind: RunLinkSubjectKind::Story,
-                unlocked_paths: vec![ToolCapabilityPath::parse("task_management").unwrap()],
-            });
+        let mut grant = sample_grant().with_escalation_intent(ScopeEscalationIntent {
+            target_subject_kind: RunLinkSubjectKind::Story,
+            unlocked_paths: vec![ToolCapabilityPath::parse("task_management").unwrap()],
+        });
 
         grant.submit_for_policy().unwrap();
         grant

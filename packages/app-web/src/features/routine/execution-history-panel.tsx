@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { RoutineExecutionStatus } from "../../types";
-import { useRoutineStore } from "../../stores/routineStore";
+import { useRoutineExecutionsQuery } from "./model/routineQueries";
 
 const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
   pending: "border-border bg-secondary/50 text-muted-foreground",
@@ -13,21 +12,14 @@ const EXEC_STATUS_STYLE: Record<RoutineExecutionStatus, string> = {
 
 export function ExecutionHistoryContent({ routineId }: { routineId: string }) {
   const navigate = useNavigate();
-  const { executionsByRoutineId, fetchExecutions } = useRoutineStore();
-  const executions = executionsByRoutineId[routineId] ?? [];
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    void fetchExecutions(routineId, 20, 0).finally(() => setLoading(false));
-  }, [routineId, fetchExecutions]);
+  const executionsQuery = useRoutineExecutionsQuery(routineId);
+  const executions = executionsQuery.data?.pages.flat() ?? [];
 
   const loadMore = () => {
-    void fetchExecutions(routineId, 20, executions.length);
+    void executionsQuery.fetchNextPage();
   };
 
-  if (loading && executions.length === 0) {
+  if (executionsQuery.isPending && executions.length === 0) {
     return <p className="py-8 text-center text-sm text-muted-foreground">加载中...</p>;
   }
 
@@ -67,9 +59,14 @@ export function ExecutionHistoryContent({ routineId }: { routineId: string }) {
       <button
         type="button"
         onClick={loadMore}
+        disabled={!executionsQuery.hasNextPage || executionsQuery.isFetchingNextPage}
         className="w-full rounded-[8px] border border-border py-2 text-xs text-muted-foreground transition-colors hover:bg-secondary"
       >
-        加载更多
+        {executionsQuery.isFetchingNextPage
+          ? "加载中..."
+          : executionsQuery.hasNextPage
+            ? "加载更多"
+            : "没有更多记录"}
       </button>
     </div>
   );

@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use crate::canvas::{build_canvas, upsert_canvas_binding};
 use crate::vfs::build_canvas_mount_id;
+use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
-use crate::vfs::tools::provider::SharedSessionToolServicesHandle;
 
 #[derive(Clone)]
 pub struct ListCanvasesTool {
@@ -577,7 +577,7 @@ async fn expose_canvas_to_session(
 
 async fn sync_canvas_mount_capability_state(
     vfs: &SharedRuntimeVfs,
-    session_services: &crate::vfs::tools::provider::SessionToolServices,
+    session_services: &crate::vfs::tools::SessionToolServices,
     session_id: &str,
     canvas: &Canvas,
 ) -> Result<(), AgentToolError> {
@@ -674,8 +674,8 @@ mod tests {
     };
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
+    use crate::vfs::tools::SessionToolServices;
     use crate::vfs::tools::fs::FsApplyPatchTool;
-    use crate::vfs::tools::provider::SessionToolServices;
     use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
 
     use super::*;

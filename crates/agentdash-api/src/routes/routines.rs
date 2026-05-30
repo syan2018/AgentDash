@@ -1,156 +1,24 @@
 use std::sync::Arc;
 
-use agentdash_domain::routine::{Routine, RoutineExecution, RoutineTriggerConfig, SessionStrategy};
+use agentdash_contracts::core::{DeletedFlagResponse, PendingExecutionResponse};
+use agentdash_domain::routine::{Routine, RoutineTriggerConfig, SessionStrategy};
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
+    dto::{
+        CreateRoutineRequest, EnableRoutineRequest, FireWebhookRequest, ListExecutionsQuery,
+        RegenerateTokenResponse, RoutineCreationResponse, RoutineExecutionResponse,
+        RoutineResponse, UpdateRoutineRequest,
+    },
     rpc::ApiError,
 };
-
-// ────────────────────────── Response DTOs ──────────────────────────
-
-/// 创建 Routine 的响应 — 包含一次性可见的 webhook_token
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RoutineCreationResponse {
-    #[serde(flatten)]
-    pub routine: RoutineResponse,
-    /// 仅在创建 Webhook 类型时返回，且只此一次可见
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub webhook_token: Option<String>,
-}
-
-/// Webhook token 重新生成响应
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RegenerateTokenResponse {
-    pub endpoint_id: String,
-    /// 新生成的明文 token（仅此一次可见）
-    pub webhook_token: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RoutineResponse {
-    pub id: String,
-    pub project_id: String,
-    pub name: String,
-    pub prompt_template: String,
-    pub project_agent_id: String,
-    pub trigger_config: serde_json::Value,
-    pub session_strategy: serde_json::Value,
-    pub enabled: bool,
-    pub created_at: String,
-    pub updated_at: String,
-    pub last_fired_at: Option<String>,
-}
-
-impl From<Routine> for RoutineResponse {
-    fn from(r: Routine) -> Self {
-        Self {
-            id: r.id.to_string(),
-            project_id: r.project_id.to_string(),
-            name: r.name,
-            prompt_template: r.prompt_template,
-            project_agent_id: r.project_agent_id.to_string(),
-            trigger_config: serde_json::to_value(&r.trigger_config).unwrap_or_default(),
-            session_strategy: serde_json::to_value(&r.session_strategy).unwrap_or_default(),
-            enabled: r.enabled,
-            created_at: r.created_at.to_rfc3339(),
-            updated_at: r.updated_at.to_rfc3339(),
-            last_fired_at: r.last_fired_at.map(|t| t.to_rfc3339()),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct RoutineExecutionResponse {
-    pub id: String,
-    pub routine_id: String,
-    pub trigger_source: String,
-    pub trigger_payload: Option<serde_json::Value>,
-    pub resolved_prompt: Option<String>,
-    pub session_id: Option<String>,
-    pub status: String,
-    pub started_at: String,
-    pub completed_at: Option<String>,
-    pub error: Option<String>,
-    pub entity_key: Option<String>,
-}
-
-impl From<RoutineExecution> for RoutineExecutionResponse {
-    fn from(e: RoutineExecution) -> Self {
-        Self {
-            id: e.id.to_string(),
-            routine_id: e.routine_id.to_string(),
-            trigger_source: e.trigger_source,
-            trigger_payload: e.trigger_payload,
-            resolved_prompt: e.resolved_prompt,
-            session_id: e.session_id,
-            status: format!("{:?}", e.status).to_lowercase(),
-            started_at: e.started_at.to_rfc3339(),
-            completed_at: e.completed_at.map(|t| t.to_rfc3339()),
-            error: e.error,
-            entity_key: e.entity_key,
-        }
-    }
-}
-
-// ────────────────────────── Request DTOs ──────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct CreateRoutineRequest {
-    pub name: String,
-    pub prompt_template: String,
-    pub project_agent_id: String,
-    pub trigger_config: serde_json::Value,
-    #[serde(default)]
-    pub session_strategy: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateRoutineRequest {
-    pub name: Option<String>,
-    pub prompt_template: Option<String>,
-    pub project_agent_id: Option<String>,
-    pub trigger_config: Option<serde_json::Value>,
-    pub session_strategy: Option<serde_json::Value>,
-    pub enabled: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct EnableRoutineRequest {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct FireWebhookRequest {
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub payload: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListExecutionsQuery {
-    #[serde(default = "default_limit")]
-    pub limit: u32,
-    #[serde(default)]
-    pub offset: u32,
-}
-
-fn default_limit() -> u32 {
-    50
-}
 
 // ────────────────────────── Handlers ──────────────────────────
 
@@ -167,15 +35,43 @@ pub async fn list_routines(
         ProjectPermission::View,
     )
     .await?;
-    let routines = state
-        .repos
-        .routine_repo
-        .list_by_project(project_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let routines = state.repos.routine_repo.list_by_project(project_id).await?;
     Ok(Json(
         routines.into_iter().map(RoutineResponse::from).collect(),
     ))
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{id}/routines",
+            axum::routing::get(list_routines).post(create_routine),
+        )
+        .route(
+            "/routines/{id}",
+            axum::routing::get(get_routine)
+                .put(update_routine)
+                .delete(delete_routine),
+        )
+        .route(
+            "/routines/{id}/enable",
+            axum::routing::patch(enable_routine),
+        )
+        .route(
+            "/routines/{id}/regenerate-token",
+            axum::routing::post(regenerate_webhook_token),
+        )
+        .route(
+            "/routines/{id}/executions",
+            axum::routing::get(list_executions),
+        )
+}
+
+pub fn public_router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new().route(
+        "/routine-triggers/{endpoint_id}/fire",
+        axum::routing::post(fire_webhook),
+    )
 }
 
 pub async fn create_routine(
@@ -235,12 +131,7 @@ pub async fn create_routine(
         session_strategy,
     );
 
-    state
-        .repos
-        .routine_repo
-        .create(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.create(&routine).await?;
 
     // 通知 cron 调度器配置变更
     state.services.cron_scheduler.notify_config_changed();
@@ -301,12 +192,7 @@ pub async fn update_routine(
 
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
@@ -317,20 +203,15 @@ pub async fn delete_routine(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedFlagResponse>, ApiError> {
     let routine =
         load_routine_with_permission(state.as_ref(), &current_user, &id, ProjectPermission::Edit)
             .await?;
-    state
-        .repos
-        .routine_repo
-        .delete(routine.id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.delete(routine.id).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
-    Ok(Json(serde_json::json!({"deleted": true})))
+    Ok(Json(DeletedFlagResponse { deleted: true }))
 }
 
 pub async fn enable_routine(
@@ -346,12 +227,7 @@ pub async fn enable_routine(
     routine.enabled = req.enabled;
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     state.services.cron_scheduler.notify_config_changed();
 
@@ -375,8 +251,7 @@ pub async fn list_executions(
         .repos
         .routine_execution_repo
         .list_by_routine(routine.id, query.limit, query.offset)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     Ok(Json(
         executions
             .into_iter()
@@ -411,12 +286,7 @@ pub async fn regenerate_webhook_token(
     };
     routine.updated_at = chrono::Utc::now();
 
-    state
-        .repos
-        .routine_repo
-        .update(&routine)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    state.repos.routine_repo.update(&routine).await?;
 
     Ok(Json(RegenerateTokenResponse {
         endpoint_id,
@@ -429,14 +299,13 @@ pub async fn fire_webhook(
     headers: HeaderMap,
     Path(endpoint_id): Path<String>,
     Json(req): Json<FireWebhookRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PendingExecutionResponse>, ApiError> {
     // 通过 endpoint_id 查找 Routine
     let routine = state
         .repos
         .routine_repo
         .find_by_endpoint_id(&endpoint_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Endpoint {endpoint_id} 不存在")))?;
 
     if !routine.enabled {
@@ -454,12 +323,12 @@ pub async fn fire_webhook(
     let exec_id = executor
         .fire_webhook(routine.id, req.text.as_deref(), req.payload)
         .await
-        .map_err(|e| ApiError::Internal(e))?;
+        .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "execution_id": exec_id.to_string(),
-        "status": "pending"
-    })))
+    Ok(Json(PendingExecutionResponse {
+        execution_id: exec_id.to_string(),
+        status: "pending".to_string(),
+    }))
 }
 
 // ────────────────────────── Helpers ──────────────────────────
@@ -479,8 +348,7 @@ async fn load_routine_with_permission(
         .repos
         .routine_repo
         .get_by_id(routine_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("Routine {routine_id} 不存在")))?;
     load_project_with_permission(state, current_user, routine.project_id, permission).await?;
     Ok(routine)
@@ -495,8 +363,7 @@ async fn ensure_project_agent_exists(
         .repos
         .project_agent_repo
         .get_by_project_and_id(project_id, project_agent_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .await?;
     if agent.is_none() {
         return Err(ApiError::BadRequest(format!(
             "Project {project_id} 不存在 Project Agent {project_agent_id}"

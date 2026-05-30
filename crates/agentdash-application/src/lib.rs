@@ -1,15 +1,16 @@
 pub mod auth;
 pub mod backend;
 pub mod backend_execution_placement;
-pub mod backend_transport;
 pub mod canvas;
 pub mod capability;
 pub mod companion;
 pub mod context;
+pub mod error;
 pub mod extension_management;
 pub mod extension_package;
 pub mod extension_runtime;
 pub mod hooks;
+pub mod llm_provider;
 pub mod mcp_preset;
 pub mod permission;
 pub mod platform_config;
@@ -32,6 +33,7 @@ pub mod vfs;
 pub mod workflow;
 pub mod workspace;
 
+pub use error::ApplicationError;
 pub use task::lock as task_lock;
 pub use task::service as task_service;
 pub use task::view_projector as task_view_projector;

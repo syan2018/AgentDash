@@ -13,23 +13,23 @@ pub mod provider_inline;
 pub mod provider_lifecycle;
 pub mod provider_routine;
 pub mod provider_skill_asset;
-pub mod service;
 pub mod rewrite;
+pub mod service;
 pub mod surface;
 pub mod surface_query;
 pub mod tools;
 pub mod types;
 
+pub use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 pub use apply_patch::{
-    AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget,
-    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_fs,
-    apply_patch_to_inline_files, apply_patch_to_target, parse_patch as parse_patch_text,
+    AffectedPaths as ApplyPatchAffectedPaths, ApplyPatchError, ApplyPatchTarget, FsPatchTarget,
+    ParseError as ApplyPatchParseError, PatchEntry, apply_entries_to_target, apply_patch_to_target,
+    parse_patch as parse_patch_text,
 };
 pub use binding_resolver::{ResolveBindingsOutput, ResolvedBinding, resolve_context_bindings};
 pub use materialization::{
     MaterializationRewrite, RewriteJsonArgumentsInput, RewriteJsonArgumentsOutput,
     RewriteShellCommandInput, RewriteShellCommandOutput, VfsMaterializationService,
-    VfsMaterializationTransport,
 };
 pub use mount::{
     PROJECT_VFS_MOUNT_CONTAINER_ID, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS,
@@ -62,7 +62,7 @@ pub use provider_inline::InlineFsMountProvider;
 pub use provider_lifecycle::LifecycleMountProvider;
 pub use provider_routine::RoutineMountProvider;
 pub use provider_skill_asset::SkillAssetFsMountProvider;
-pub use service::{VfsService, TextSearchParams};
+pub use service::{TextSearchParams, VfsService};
 pub use surface::{
     ResolvedMountEditCapabilities, ResolvedMountPurpose, ResolvedMountSummary, ResolvedVfsSurface,
     ResolvedVfsSurfaceSource,

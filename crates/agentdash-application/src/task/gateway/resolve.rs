@@ -6,10 +6,10 @@
 use uuid::Uuid;
 
 use agentdash_domain::project::Project;
-use agentdash_spi::CapabilityScope;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
+use agentdash_spi::CapabilityScope;
 
 use crate::repository_set::RepositorySet;
 use crate::task::execution::TaskExecutionError;

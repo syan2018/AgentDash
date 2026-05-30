@@ -23,13 +23,10 @@ impl PendingActionFrame {
         if action.summary.trim().is_empty() && action.injections.is_empty() {
             return None;
         }
-        let owners_md = snapshot.run_context.as_ref().map(|ctx| {
-            format!(
-                "- scope: {} project: {}",
-                ctx.scope,
-                ctx.project_id,
-            )
-        });
+        let owners_md = snapshot
+            .run_context
+            .as_ref()
+            .map(|ctx| format!("- scope: {} project: {}", ctx.scope, ctx.project_id,));
         Some(Self {
             action: action.clone(),
             owners_md,

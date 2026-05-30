@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agentdash_agent::{
     AgentTool, AgentToolError, AgentToolResult, ContentPart, DynAgentTool, ToolUpdateCallback,
@@ -10,24 +10,121 @@ use agentdash_spi::platform::tool_capability::{
 use agentdash_spi::{CapabilityState, McpTransportConfig, SessionMcpServer};
 use async_trait::async_trait;
 use rmcp::{
-    ServiceExt,
+    RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult, Tool},
-    service::ServiceError,
+    service::{RunningService, ServiceError},
     transport::streamable_http_client::{
         StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
     },
 };
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
-use agentdash_spi::ConnectorError;
 use agentdash_mcp::render_content;
+use agentdash_spi::ConnectorError;
 
 use super::DiscoveredMcpTool;
+
+type McpHttpClient = RunningService<RoleClient, ()>;
 
 #[derive(Debug, Clone)]
 struct McpHttpServerSpec {
     name: String,
     url: String,
+}
+
+#[derive(Default)]
+struct DirectMcpClientPool {
+    clients: RwLock<HashMap<String, Arc<Mutex<McpHttpClient>>>>,
+}
+
+impl DirectMcpClientPool {
+    async fn list_tools(&self, server: &McpHttpServerSpec) -> Result<Vec<Tool>, ConnectorError> {
+        let client = self.ensure_client(server).await?;
+        let result = {
+            let client = client.lock().await;
+            client.list_all_tools().await
+        };
+        match result {
+            Ok(tools) => Ok(tools),
+            Err(error) => {
+                self.invalidate(server).await;
+                Err(ConnectorError::ConnectionFailed(format_service_error(
+                    &error,
+                )))
+            }
+        }
+    }
+
+    async fn call_tool(
+        &self,
+        server: &McpHttpServerSpec,
+        request: CallToolRequestParams,
+    ) -> Result<CallToolResult, String> {
+        let client = self
+            .ensure_client(server)
+            .await
+            .map_err(|e| e.to_string())?;
+        let result = {
+            let client = client.lock().await;
+            client.call_tool(request).await
+        };
+        match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                self.invalidate(server).await;
+                Err(format_service_error(&error))
+            }
+        }
+    }
+
+    async fn ensure_client(
+        &self,
+        server: &McpHttpServerSpec,
+    ) -> Result<Arc<Mutex<McpHttpClient>>, ConnectorError> {
+        let key = self.key(server);
+        if let Some(client) = self.open_client(&key).await {
+            return Ok(client);
+        }
+
+        let new_client = Arc::new(Mutex::new(connect_http_server(&server.url).await?));
+        let mut clients = self.clients.write().await;
+        if let Some(existing) = clients.get(&key).cloned() {
+            drop(clients);
+            let is_closed = existing.lock().await.is_closed();
+            if !is_closed {
+                return Ok(existing);
+            }
+            self.invalidate_key(&key).await;
+            clients = self.clients.write().await;
+        }
+        clients.insert(key, new_client.clone());
+        Ok(new_client)
+    }
+
+    async fn open_client(&self, key: &str) -> Option<Arc<Mutex<McpHttpClient>>> {
+        let client = self.clients.read().await.get(key).cloned()?;
+        let is_closed = client.lock().await.is_closed();
+        if is_closed {
+            self.invalidate_key(key).await;
+            None
+        } else {
+            Some(client)
+        }
+    }
+
+    async fn invalidate(&self, server: &McpHttpServerSpec) {
+        let key = self.key(server);
+        self.invalidate_key(&key).await;
+    }
+
+    async fn invalidate_key(&self, key: &str) {
+        self.clients.write().await.remove(key);
+    }
+
+    fn key(&self, server: &McpHttpServerSpec) -> String {
+        server.url.clone()
+    }
 }
 
 #[derive(Clone)]
@@ -37,10 +134,11 @@ pub struct McpToolAdapter {
     description: String,
     parameters_schema: serde_json::Value,
     server: McpHttpServerSpec,
+    pool: Arc<DirectMcpClientPool>,
 }
 
 impl McpToolAdapter {
-    fn from_tool(server: McpHttpServerSpec, tool: Tool) -> Self {
+    fn from_tool(server: McpHttpServerSpec, pool: Arc<DirectMcpClientPool>, tool: Tool) -> Self {
         let original_name = tool.name.to_string();
         let runtime_name = namespaced_tool_name(&server.name, &original_name);
         let description = tool
@@ -59,6 +157,7 @@ impl McpToolAdapter {
             description,
             parameters_schema,
             server,
+            pool,
         }
     }
 }
@@ -95,18 +194,13 @@ impl AgentTool for McpToolAdapter {
             }
         };
 
-        let client = connect_http_server(&self.server.url)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
-
         let request = if let Some(arguments) = arguments {
             CallToolRequestParams::new(self.original_name.clone()).with_arguments(arguments)
         } else {
             CallToolRequestParams::new(self.original_name.clone())
         };
 
-        let call_result = client.call_tool(request).await;
-        let _ = client.cancel().await;
+        let call_result = self.pool.call_tool(&self.server, request).await;
 
         match call_result {
             Ok(result) => Ok(convert_call_result(
@@ -116,8 +210,7 @@ impl AgentTool for McpToolAdapter {
             )),
             Err(error) => Err(AgentToolError::ExecutionFailed(format!(
                 "调用 MCP 工具失败（tool={}）: {}",
-                self.original_name,
-                format_service_error(&error)
+                self.original_name, error
             ))),
         }
     }
@@ -139,6 +232,7 @@ pub async fn discover_mcp_tool_entries(
     capability_state: &CapabilityState,
 ) -> Result<Vec<DiscoveredMcpTool>, ConnectorError> {
     let mut entries = Vec::new();
+    let pool = Arc::new(DirectMcpClientPool::default());
 
     for server in servers {
         let Some(server_spec) = parse_http_session_server(server) else {
@@ -146,14 +240,7 @@ pub async fn discover_mcp_tool_entries(
             continue;
         };
 
-        let client = connect_http_server(&server_spec.url)
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
-        let listed = client
-            .list_all_tools()
-            .await
-            .map_err(|e| ConnectorError::ConnectionFailed(format_service_error(&e)))?;
-        let _ = client.cancel().await;
+        let listed = pool.list_tools(&server_spec).await?;
 
         let capability_key = capability_key_for_mcp_server_name(&server_spec.name);
         for tool in listed {
@@ -164,7 +251,11 @@ pub async fn discover_mcp_tool_entries(
             ) {
                 continue;
             }
-            let adapter = Arc::new(McpToolAdapter::from_tool(server_spec.clone(), tool));
+            let adapter = Arc::new(McpToolAdapter::from_tool(
+                server_spec.clone(),
+                pool.clone(),
+                tool,
+            ));
             let tool = adapter.clone() as DynAgentTool;
             entries.push(DiscoveredMcpTool {
                 runtime_name: adapter.runtime_name.clone(),

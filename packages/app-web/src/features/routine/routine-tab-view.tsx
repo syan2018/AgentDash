@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Routine, ProjectAgent } from "../../types";
 import { useProjectStore } from "../../stores/projectStore";
-import { useRoutineStore } from "../../stores/routineStore";
+import {
+  useCreateRoutineMutation,
+  useDeleteRoutineMutation,
+  useProjectRoutinesQuery,
+  useSetRoutineEnabledMutation,
+  useUpdateRoutineMutation,
+} from "./model/routineQueries";
 import { CreateButton, DetailPanel, DangerConfirmDialog } from "@agentdash/ui";
 import { INITIAL_FORM, routineToForm, formToPayload } from "./form-state";
 import { RoutineCard } from "./routine-card";
@@ -77,8 +83,11 @@ function EmptyState({
 
 export function RoutineTabView() {
   const { currentProjectId, projectAgentConfigsByProjectId, fetchProjectAgentConfigs } = useProjectStore();
-  const { routinesByProjectId, fetchRoutines, createRoutine, updateRoutine, deleteRoutine, enableRoutine } =
-    useRoutineStore();
+  const routinesQuery = useProjectRoutinesQuery(currentProjectId);
+  const createRoutine = useCreateRoutineMutation(currentProjectId);
+  const updateRoutine = useUpdateRoutineMutation(currentProjectId);
+  const deleteRoutine = useDeleteRoutineMutation(currentProjectId);
+  const setRoutineEnabled = useSetRoutineEnabledMutation(currentProjectId);
 
   const [showCreate, setShowCreate] = useState(false);
   const [createInitial, setCreateInitial] = useState(INITIAL_FORM);
@@ -87,7 +96,7 @@ export function RoutineTabView() {
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [tokenAlert, setTokenAlert] = useState<{ token: string; endpointId: string; name: string } | null>(null);
 
-  const routines = currentProjectId ? routinesByProjectId[currentProjectId] ?? [] : [];
+  const routines = routinesQuery.data ?? [];
   const projectAgents: ProjectAgent[] = currentProjectId
     ? projectAgentConfigsByProjectId[currentProjectId] ?? []
     : [];
@@ -97,10 +106,9 @@ export function RoutineTabView() {
 
   useEffect(() => {
     if (currentProjectId) {
-      void fetchRoutines(currentProjectId);
       void fetchProjectAgentConfigs(currentProjectId);
     }
-  }, [currentProjectId, fetchRoutines, fetchProjectAgentConfigs]);
+  }, [currentProjectId, fetchProjectAgentConfigs]);
 
   const openCreateBlank = () => {
     setCreateInitial({ ...INITIAL_FORM, project_agent_id: projectAgents[0]?.id ?? "" });
@@ -115,7 +123,7 @@ export function RoutineTabView() {
   const handleCreate = useCallback(
     async (payload: ReturnType<typeof formToPayload>) => {
       if (!currentProjectId) return;
-      const result = await createRoutine(currentProjectId, payload as Parameters<typeof createRoutine>[1]);
+      const result = await createRoutine.mutateAsync(payload);
       if (result) {
         setShowCreate(false);
         if (result.webhook_token && result.trigger_config?.endpoint_id) {
@@ -133,7 +141,7 @@ export function RoutineTabView() {
   const handleUpdate = useCallback(
     async (payload: ReturnType<typeof formToPayload>) => {
       if (!editingId) return;
-      const result = await updateRoutine(editingId, payload);
+      const result = await updateRoutine.mutateAsync({ id: editingId, payload });
       if (result) setEditingId(null);
     },
     [editingId, updateRoutine],
@@ -141,16 +149,16 @@ export function RoutineTabView() {
 
   const handleDelete = useCallback(async () => {
     if (!deletingId || !currentProjectId) return;
-    const ok = await deleteRoutine(deletingId, currentProjectId);
-    if (ok) setDeletingId(null);
+    await deleteRoutine.mutateAsync(deletingId);
+    setDeletingId(null);
   }, [deletingId, currentProjectId, deleteRoutine]);
 
   const handleToggleEnable = useCallback(
     async (routine: Routine) => {
       if (!currentProjectId) return;
-      await enableRoutine(routine.id, !routine.enabled, currentProjectId);
+      await setRoutineEnabled.mutateAsync({ id: routine.id, enabled: !routine.enabled });
     },
-    [currentProjectId, enableRoutine],
+    [currentProjectId, setRoutineEnabled],
   );
 
   if (!currentProjectId) {

@@ -17,7 +17,7 @@ use agentdash_spi::connector::{
     ExecutionStream, PromptPayload,
 };
 
-use crate::backend_transport::{
+use agentdash_application_ports::backend_transport::{
     RelayExecutorConfig, RelayPromptRequest, RelayPromptTransport, RelaySessionEvent,
     RelaySessionRoute, RelayTerminalKind,
 };
@@ -303,7 +303,9 @@ impl Drop for RelaySessionSinkGuard {
 }
 
 /// 对远程执行器列表去重（同一 executor_id 可能被多个后端上报）。
-fn dedup_executors(executors: Vec<crate::backend_transport::RemoteExecutorInfo>) -> Vec<AgentInfo> {
+fn dedup_executors(
+    executors: Vec<agentdash_application_ports::backend_transport::RemoteExecutorInfo>,
+) -> Vec<AgentInfo> {
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for ex in executors {
@@ -371,8 +373,10 @@ mod tests {
     struct CaptureTransport {
         payload: Mutex<Option<RelayPromptRequest>>,
         sinks: StdMutex<HashMap<String, RelaySessionRoute>>,
-        executors: StdMutex<Vec<crate::backend_transport::RemoteExecutorInfo>>,
-        prompt_error: StdMutex<Option<crate::backend_transport::TransportError>>,
+        executors:
+            StdMutex<Vec<agentdash_application_ports::backend_transport::RemoteExecutorInfo>>,
+        prompt_error:
+            StdMutex<Option<agentdash_application_ports::backend_transport::TransportError>>,
         cancelled: StdMutex<Vec<(String, String)>>,
     }
 
@@ -399,7 +403,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::backend_transport::BackendTransport for CaptureTransport {
+    impl agentdash_application_ports::backend_transport::BackendTransport for CaptureTransport {
         async fn is_online(&self, _backend_id: &str) -> bool {
             true
         }
@@ -413,8 +417,8 @@ mod tests {
             _backend_id: &str,
             _root: &str,
         ) -> Result<
-            crate::backend_transport::WorkspaceProbeInfo,
-            crate::backend_transport::TransportError,
+            agentdash_application_ports::backend_transport::WorkspaceProbeInfo,
+            agentdash_application_ports::backend_transport::TransportError,
         > {
             Ok(Default::default())
         }
@@ -423,8 +427,10 @@ mod tests {
             &self,
             _backend_id: &str,
             _root: &str,
-        ) -> Result<crate::backend_transport::GitRepoInfo, crate::backend_transport::TransportError>
-        {
+        ) -> Result<
+            agentdash_application_ports::backend_transport::GitRepoInfo,
+            agentdash_application_ports::backend_transport::TransportError,
+        > {
             Ok(Default::default())
         }
     }
@@ -435,7 +441,8 @@ mod tests {
             &self,
             _backend_id: &str,
             payload: RelayPromptRequest,
-        ) -> Result<String, crate::backend_transport::TransportError> {
+        ) -> Result<String, agentdash_application_ports::backend_transport::TransportError>
+        {
             let session_id = payload.session_id.clone();
             *self.payload.lock().await = Some(payload);
             if let Some(error) = self.prompt_error.lock().unwrap().take() {
@@ -465,7 +472,7 @@ mod tests {
             &self,
             backend_id: &str,
             session_id: &str,
-        ) -> Result<(), crate::backend_transport::TransportError> {
+        ) -> Result<(), agentdash_application_ports::backend_transport::TransportError> {
             self.cancelled
                 .lock()
                 .unwrap()
@@ -473,7 +480,9 @@ mod tests {
             Ok(())
         }
 
-        fn list_online_executors(&self) -> Vec<crate::backend_transport::RemoteExecutorInfo> {
+        fn list_online_executors(
+            &self,
+        ) -> Vec<agentdash_application_ports::backend_transport::RemoteExecutorInfo> {
             self.executors.lock().unwrap().clone()
         }
 
@@ -481,7 +490,8 @@ mod tests {
             &self,
             _executor_id: &str,
             _preferred_backend_id: Option<&str>,
-        ) -> Result<String, crate::backend_transport::TransportError> {
+        ) -> Result<String, agentdash_application_ports::backend_transport::TransportError>
+        {
             Ok("backend-1".to_string())
         }
 
@@ -503,9 +513,9 @@ mod tests {
         fn session_route(
             &self,
             session_id: &str,
-        ) -> Option<crate::backend_transport::RelaySessionRouteInfo> {
+        ) -> Option<agentdash_application_ports::backend_transport::RelaySessionRouteInfo> {
             self.sinks.lock().unwrap().get(session_id).map(|route| {
-                crate::backend_transport::RelaySessionRouteInfo {
+                agentdash_application_ports::backend_transport::RelaySessionRouteInfo {
                     session_id: route.session_id.clone(),
                     backend_id: route.backend_id.clone(),
                     lease_id: route.lease_id,
@@ -595,17 +605,15 @@ mod tests {
     }
 
     fn register_executor(transport: &CaptureTransport, backend_id: &str, executor_id: &str) {
-        transport
-            .executors
-            .lock()
-            .unwrap()
-            .push(crate::backend_transport::RemoteExecutorInfo {
+        transport.executors.lock().unwrap().push(
+            agentdash_application_ports::backend_transport::RemoteExecutorInfo {
                 backend_id: backend_id.to_string(),
                 executor_id: executor_id.to_string(),
                 executor_name: executor_id.to_string(),
                 variants: Vec::new(),
                 available: true,
-            });
+            },
+        );
     }
 
     fn relay_context(root: &Path, turn_id: &str) -> ExecutionContext {
@@ -746,14 +754,14 @@ mod tests {
     async fn auto_idle_backend_selection_prefers_fewer_active_leases() {
         let transport = CaptureTransport::default();
         *transport.executors.lock().unwrap() = vec![
-            crate::backend_transport::RemoteExecutorInfo {
+            agentdash_application_ports::backend_transport::RemoteExecutorInfo {
                 backend_id: "backend-busy".to_string(),
                 executor_id: "CODEX".to_string(),
                 executor_name: "Codex".to_string(),
                 variants: Vec::new(),
                 available: true,
             },
-            crate::backend_transport::RemoteExecutorInfo {
+            agentdash_application_ports::backend_transport::RemoteExecutorInfo {
                 backend_id: "backend-idle".to_string(),
                 executor_id: "CODEX".to_string(),
                 executor_name: "Codex".to_string(),
@@ -785,7 +793,9 @@ mod tests {
         let transport = Arc::new(CaptureTransport::default());
         register_executor(&transport, "local", "REMOTE_EXECUTOR");
         *transport.prompt_error.lock().unwrap() = Some(
-            crate::backend_transport::TransportError::OperationFailed("boom".to_string()),
+            agentdash_application_ports::backend_transport::TransportError::OperationFailed(
+                "boom".to_string(),
+            ),
         );
         let lease_repo = Arc::new(MemoryLeaseRepository::default());
         let connector = RelayAgentConnector::new(transport.clone(), lease_repo.clone());

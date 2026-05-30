@@ -9,14 +9,13 @@
 
 use std::collections::BTreeSet;
 
-use agentdash_spi::hooks::CapabilityDelta;
 use agentdash_spi::platform::tool_capability::{
     self, CAP_CANVAS, CAP_COLLABORATION, CAP_FILE_READ, CAP_FILE_WRITE, CAP_RELAY_MANAGEMENT,
     CAP_SHELL_EXECUTE, CAP_STORY_MANAGEMENT, CAP_TASK_MANAGEMENT, CAP_WORKFLOW,
     CAP_WORKFLOW_MANAGEMENT, ToolCapability,
 };
 
-use crate::session::CapabilityStateDelta;
+use crate::session::{CapabilityStateDelta, SetDelta};
 
 /// 能力 key 的人类可读短描述 —— 与 `McpInjectionConfig::to_context_content` 保持口径一致。
 pub fn capability_description(key: &str) -> &'static str {
@@ -47,7 +46,7 @@ pub fn capability_description(key: &str) -> &'static str {
 /// 并在末尾附加当前 effective 能力清单，便于 agent 对齐状态。
 pub fn build_capability_delta_markdown(
     phase_node_key: &str,
-    delta: &CapabilityDelta,
+    delta: &SetDelta,
     effective_caps: &BTreeSet<String>,
     state_delta: Option<&CapabilityStateDelta>,
 ) -> String {
@@ -182,7 +181,7 @@ mod tests {
 
     #[test]
     fn delta_markdown_covers_added_removed_and_effective() {
-        let delta = CapabilityDelta {
+        let delta = SetDelta {
             added: vec!["file_read".to_string(), "mcp:code_analyzer".to_string()],
             removed: vec!["canvas".to_string()],
         };
@@ -205,7 +204,7 @@ mod tests {
 
     #[test]
     fn delta_markdown_handles_empty_effective() {
-        let delta = CapabilityDelta {
+        let delta = SetDelta {
             added: vec![],
             removed: vec!["workflow".to_string()],
         };
@@ -220,7 +219,7 @@ mod tests {
 
     #[test]
     fn delta_markdown_reports_tool_state_changes_without_key_delta() {
-        let delta = CapabilityDelta::default();
+        let delta = SetDelta::default();
         let effective: BTreeSet<String> = ["workflow_management".to_string()].into_iter().collect();
         let state_delta = CapabilityStateDelta {
             excluded_tool_paths: crate::session::SetDelta {

@@ -5,9 +5,10 @@ import { queryClient } from "./api/queryClient";
 import { WorkspaceLayout } from "./components/layout/workspace-layout";
 import { useProjectStore } from "./stores/projectStore";
 import { useCoordinatorStore } from "./stores/coordinatorStore";
-import { useEventStore } from "./stores/eventStore";
+import { subscribeProjectEvents, useEventStore } from "./stores/eventStore";
 import { useCurrentUserStore } from "./stores/currentUserStore";
 import { useAuthStore } from "./stores/authStore";
+import { useStoryStore } from "./stores/storyStore";
 import { getStoredToken, clearStoredToken, type ApiHttpError } from "./api/client";
 import { LoginPage } from "./pages/LoginPage";
 import { ensureDesktopLocalRuntimeStarted, getDesktopLocalRuntimeClient } from "./desktop/localRuntimeBridge";
@@ -250,10 +251,41 @@ function AppContent() {
   const { fetchProjects, currentProjectId } = useProjectStore();
   const { fetchBackends } = useCoordinatorStore();
   const { connect, disconnect } = useEventStore();
+  const handleStateChange = useStoryStore((state) => state.handleStateChange);
 
   useEffect(() => {
     void Promise.allSettled([fetchBackends(), fetchProjects()]);
   }, [fetchBackends, fetchProjects]);
+
+  useEffect(() => {
+    let backendRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleBackendRefresh = () => {
+      if (backendRefreshTimer) return;
+      backendRefreshTimer = setTimeout(() => {
+        backendRefreshTimer = null;
+        void fetchBackends();
+      }, 100);
+    };
+    const unsubscribe = subscribeProjectEvents((event) => {
+      switch (event.type) {
+        case "Connected":
+        case "BackendRuntimeChanged":
+          scheduleBackendRefresh();
+          break;
+        case "StateChanged":
+          handleStateChange(event.data);
+          break;
+        case "Heartbeat":
+          break;
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (backendRefreshTimer) {
+        clearTimeout(backendRefreshTimer);
+      }
+    };
+  }, [fetchBackends, handleStateChange]);
 
   useEffect(() => {
     if (!currentProjectId) {

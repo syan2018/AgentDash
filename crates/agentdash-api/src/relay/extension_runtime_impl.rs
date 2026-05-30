@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use agentdash_application::runtime_gateway::{
+use agentdash_application_ports::extension_runtime::{
     ExtensionRuntimeActionTransport, ExtensionRuntimeActionTransportError,
     ExtensionRuntimeChannelTransport,
 };

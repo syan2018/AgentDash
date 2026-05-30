@@ -155,7 +155,6 @@ impl TaskHookEffectExecutor {
 
         Ok(())
     }
-
 }
 
 pub struct TaskHookEffectHandlerRegistry {

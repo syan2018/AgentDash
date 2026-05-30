@@ -7,7 +7,7 @@ import {
 import { readSurfaceFile, writeSurfaceFile } from "../../../services/vfs";
 import { useWorkspaceTabStore } from "../../../stores/workspaceTabStore";
 import type { ExtensionWorkspaceTabProjectionResponse } from "../../../types";
-import { useWorkspaceData } from "../../workspace-panel/workspace-data-context";
+import { useWorkspaceData } from "../../workspace-runtime";
 import {
   parseExtensionBridgeMessage,
   EXTENSION_BRIDGE_CHANNEL,

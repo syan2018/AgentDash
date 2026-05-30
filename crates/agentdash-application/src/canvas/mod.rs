@@ -5,8 +5,9 @@ mod tools;
 mod visibility;
 
 pub use management::{
-    CanvasMutationInput, apply_canvas_mutation, build_canvas, upsert_canvas_binding,
-    validate_canvas_contract,
+    CanvasMutationInput, CreateCanvasInput, apply_canvas_mutation, build_canvas,
+    create_project_canvas, delete_canvas_record, list_project_canvases, load_canvas_by_ref,
+    update_canvas_record, upsert_canvas_binding, validate_canvas_contract,
 };
 pub use promotion::{
     CANVAS_EXTENSION_SNAPSHOT_ENTRY, CanvasExtensionPackage, CanvasExtensionPackageInput,

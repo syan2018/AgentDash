@@ -1,6 +1,6 @@
 [package]
 name = "agentdash-infrastructure"
-description = "AgentDash 基础设施层 — SQLite Repository 实现、事件总线"
+description = "AgentDash 基础设施层 — PostgreSQL Repository 实现、事件总线"
 version.workspace = true
 edition.workspace = true
 

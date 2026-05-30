@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口，定位 error/database/repository 相关约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误分层与 HTTP 映射的当前基线，实施时需要同步修正"}
+{"file": ".trellis/spec/backend/repository-pattern.md", "reason": "repository 边界与 infra 错误上抛规则"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "数据库错误与 migration 事实源约束"}
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "API 响应错误不得泄漏内部实现细节的跨层契约背景"}

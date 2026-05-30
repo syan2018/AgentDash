@@ -193,7 +193,6 @@ impl SessionTurnProcessor {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::io;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -223,6 +222,7 @@ mod tests {
     };
     use super::super::turn_supervisor::TurnSupervisor;
     use super::*;
+    use crate::session::persistence::{SessionStoreError, SessionStoreResult};
 
     #[tokio::test]
     async fn terminal_persist_failure_still_clears_active_turn() {
@@ -313,15 +313,17 @@ mod tests {
             &self,
             _session_id: &str,
             _envelope: &agentdash_agent_protocol::BackboneEnvelope,
-        ) -> io::Result<PersistedSessionEvent> {
-            Err(io::Error::other("forced terminal persist failure"))
+        ) -> SessionStoreResult<PersistedSessionEvent> {
+            Err(SessionStoreError::Internal(
+                "forced terminal persist failure".to_string(),
+            ))
         }
 
         async fn read_backlog(
             &self,
             _session_id: &str,
             _after_seq: u64,
-        ) -> io::Result<SessionEventBacklog> {
+        ) -> SessionStoreResult<SessionEventBacklog> {
             Ok(SessionEventBacklog {
                 snapshot_seq: 0,
                 events: Vec::new(),
@@ -333,7 +335,7 @@ mod tests {
             _session_id: &str,
             _after_seq: u64,
             _limit: u32,
-        ) -> io::Result<SessionEventPage> {
+        ) -> SessionStoreResult<SessionEventPage> {
             Ok(SessionEventPage {
                 snapshot_seq: 0,
                 events: Vec::new(),
@@ -345,7 +347,7 @@ mod tests {
         async fn list_all_events(
             &self,
             _session_id: &str,
-        ) -> io::Result<Vec<PersistedSessionEvent>> {
+        ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
             Ok(Vec::new())
         }
     }

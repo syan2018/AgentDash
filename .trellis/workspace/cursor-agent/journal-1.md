@@ -55,6 +55,35 @@
 - None - task complete
 
 
+## Session 25: Wave2 error-model-unify 收口
+
+**Date**: 2026-05-29
+**Task**: `05-29-error-model-unify`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成错误模型统一的代码验收：`DomainError` / `ApplicationError` 骨架落地，PostgreSQL repository 错误统一经 `db_err` 保留 NotFound / Conflict / Database 语义，API 删除 `Internal(e.to_string())` 与 unique violation 字符串嗅探，8 个指定 application 模块的 `Result<_, String>` 已清零。
+
+### Testing
+
+- `rg "InvalidConfig\(.*to_string" crates/agentdash-infrastructure` 无输出
+- `rg "ApiError::Internal\(.*to_string" crates/agentdash-api` 无输出
+- `rg "looks_like_unique_violation|looks_like_skill_asset_unique_violation" crates/agentdash-api` 无输出
+- `rg "Result<[^>]*, *String>" <8 application modules>` 无输出
+- `cargo test -p agentdash-api append_required_story_change_maps_repo_failure_to_internal_error`
+- `cargo check --workspace`
+
+### Status
+
+[OK] Code and validation complete; commit/archive pending because the current worktree contains broad pre-existing and formatting-touched changes that need staging review.
+
+### Next Steps
+
+- Confirm a safe staging boundary for `05-29-error-model-unify`, then commit/archive or proceed with explicit no-commit handoff.
+- Continue Wave2 with `05-29-contract-pipeline-unify`.
+
+
 ## Session 2: 收口虚拟容器与统一会话编排
 
 **Date**: 2026-03-19
@@ -1001,3 +1030,165 @@ Completed the full 5-task backend refactoring series (T1-T5) identified from arc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: wave2 capability-state-unify 小闭环
+
+**Date**: 2026-05-30
+**Task**: `05-29-capability-state-unify`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+收窄 wave2 capability-state-unify 到唯一高确定性重复：`hooks::CapabilityDelta` 并入 `connector::SetDelta`，保留 `CapabilityDimensionModule` 与 `DimensionDelta` 的正交职责结论。DDD 方向同步确认：domain 不依赖 contracts/protocol DTO，协议层依赖 domain/application 并向外映射。
+
+### Main Changes
+
+- `SetDelta::compute(old, new)` 承接 capability key diff；hook runtime、step activation、capability notification、session transition 统一消费 `SetDelta`。
+- `agentdash_spi::hooks` 删除本地 `CapabilityDelta` 并 re-export `SetDelta`，JSON 字段 shape 仍为 `added` / `removed`。
+- 建议人工复核：trait merge 仍不执行，因 replay/effect 与 render/projection 输入输出不同；`surface.vfs` / `context_projection.vfs` 单存储派生归 `session-assembly-converge`。
+
+### Testing
+
+- [OK] `rg "struct CapabilityDelta|enum CapabilityDelta" crates/agentdash-spi/src/hooks` 无命中。
+- [OK] `rg "CapabilityDelta" crates/agentdash-application/src/session crates/agentdash-spi/src/hooks` 无命中。
+- [OK] `rg "CapabilityDelta" crates` 无命中。
+- [OK] `cargo check --workspace` 通过。
+- [WARN] `cargo test -p agentdash-application --lib capability` 与 `cargo test -p agentdash-application --lib session::capability` 仍因既存 test-only persistence mock 返回 `std::io::Error`、未同步 `SessionStoreError` 而无法编译。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**
+
+
+## Session 29: wave2 domain-purification
+
+**Date**: 2026-05-30
+**Task**: `05-29-domain-purification`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 domain 净化批次：`agentdash-domain` 不再依赖 `ts-rs` / `schemars`，`agentdash-contracts::workflow` 不再 re-export domain workflow value object，MCP 工具 schema 不再要求 domain 类型派生 `JsonSchema`。DDD 方向保持为 domain 不依赖 protocol/contract DTO，外层协议入口解析 wire payload 后进入 domain/application。
+
+### Main Changes
+
+- `agentdash-contracts::workflow` 改为独立 workflow wire DTO，`workflow-contracts.ts` 由 contracts 侧生成。
+- domain 全量移除 `TS` / `JsonSchema` derive/import，并从 `Cargo.toml` 删除 `ts-rs` / `schemars`。
+- 删除 `session_binding/session_id.rs` 中 `SessionId` / `StorySessionId` / `ChildSessionId` 假 alias；相关字段改回 `String` 并由字段名表达语义。
+- MCP workflow/story/relay 输入边界对复杂 domain 片段使用 JSON payload + 解析进入 domain，tool schema 仍保持 OpenAI 兼容。
+- 选择删除 alias 而不是升真 newtype，原因是这些 id 当前没有额外不变量；强行 newtype 会扩大到 repository、Postgres bind/read、API mapper 与 fixture 全链路，却不能带来匹配收益。
+
+### Testing
+
+- [OK] `rg "ts-rs|schemars|derive\\(.*TS|JsonSchema|ts_rs::TS|schemars::JsonSchema|#\\[ts|#\\[schemars" crates/agentdash-domain/Cargo.toml crates/agentdash-domain/src` 无命中。
+- [OK] `rg "pub type (SessionId|StorySessionId|ChildSessionId) = String|StorySessionId|ChildSessionId|SessionId" crates/agentdash-domain crates/agentdash-application crates/agentdash-api crates/agentdash-infrastructure crates/agentdash-spi` 仅剩 `SessionIdentityPlan` 与测试字段文本。
+- [OK] `pnpm run contracts:check`
+- [OK] `cargo check --workspace`（仅剩既有 `LiveRuntimeContextTransitionInput` metadata 未读 warning）
+- [OK] `cargo test -p agentdash-domain --lib`（94 passed）
+- [OK] `cargo test -p agentdash-mcp --lib`（11 passed）
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+
+### Status
+
+[OK] **Implementation complete; ready to archive**
+
+
+## Session 28: wave2 structural-splits
+
+**Date**: 2026-05-30
+**Task**: `05-29-structural-splits`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 structural-splits 的收敛实现。后端只抽第一道真实编译边界 `agentdash-application-ports`，不把 provider/use case/service 迁入 ports；前端通过中性 `workspace-runtime` 打断 extension-runtime、workspace-panel、canvas-panel 的双向循环；两个剩余前端 god component 完成入口拆分。
+
+### Main Changes
+
+- 新增 `crates/agentdash-application-ports`，迁入 `backend_transport`、extension action/channel transport trait 与 `VfsMaterializationTransport`。
+- `agentdash-api` 与 `agentdash-application` 改依赖 ports crate；application 不再定义已迁 port，provider/service/use case 留在 application。
+- `companion/tools.rs`、`canvas/tools.rs`、`workflow/tools/advance_node.rs` 改走 `crate::vfs::tools` facade，`vfs::tools::provider` 内部引用清零。
+- `session/memory_persistence.rs` 移到 `crates/agentdash-application/test-support/session_memory_persistence.rs`，由 session test-only module 引入。
+- 新增 `features/workspace-runtime` 承载 workspace runtime data/context 与 tab descriptor contract；`canvas-panel` 不再反向依赖 `extension-runtime`。
+- `SessionChatView.tsx` 拆出 parts/model/types 后 584 行；`workspace-list.tsx` 拆为 4 行目录入口，列表编排与 editor drawer 分离。
+- DDD 结论写入任务设计：domain 不依赖 contracts/protocol DTO；协议/API/contracts 向外映射 domain/application 输出。
+
+### Testing
+
+- [OK] `cargo check --workspace`
+- [OK] `cargo test -p agentdash-application --lib`（595 passed）
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+- [OK] `rg -n "vfs::tools::provider" crates/agentdash-application/src` 无命中。
+- [OK] `rg -n "pub trait BackendTransport|pub trait ExtensionRuntimeActionTransport|pub trait ExtensionRuntimeChannelTransport|pub trait VfsMaterializationTransport" crates/agentdash-application/src crates/agentdash-application-ports/src` 仅命中 ports crate。
+- [OK] `Get-ChildItem crates/agentdash-application/src -Recurse -Filter memory_persistence.rs` 无结果。
+
+### Status
+
+[OK] **Implementation complete; ready to commit/archive**
+
+
+## Session 26: wave2 frontend-server-state-refactor
+
+**Date**: 2026-05-30
+**Task**: `05-29-frontend-server-state-refactor`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成前端 wave2 server-state 与 store 事实源收敛。React Query 不再只是 wired：LLM Provider 与 Routine 已迁入 feature model query hooks；active project、项目事件 fan-out 和 workflow selection 的重复事实已清理；Settings 与 Activity Inspector 入口组件拆分到 600 行以下。
+
+### Main Changes
+
+- `features/stores` 中 `useQuery|useMutation` 命中从 0 增至 28；store `isLoading|loading|saving|error` 命中从 233 降到 178。
+- 删除 `llmProviderStore.ts`、`routineStore.ts`；新增 `features/settings/model/llmProviderQueries.ts`、`features/routine/model/routineQueries.ts` 与 `services/routine.ts`。
+- `eventStore` 删除 `activeProjectId`，改为 `subscribeProjectEvents`；App 层负责 `storyStore.handleStateChange` 与 backend refresh。
+- `sessionHistoryStore.createNew` 显式接收 `projectId`；`workflowStore.selectedActivityKey` 字段删除，改由 `selection` 派生。
+- `SettingsPageContent.tsx` 255 行，`activity-inspector.tsx` 336 行，`workspace-layout.tsx` 442 行。
+
+### Testing
+
+- [OK] `pnpm -C packages/app-web exec tsc --noEmit`
+- [OK] `pnpm -C packages/app-web exec vitest run src/stores/workflowStore.test.ts src/features/workflow/ui/activity-inspector.test.tsx`（27 passed）
+- [OK] `rg "activeProjectId" packages/app-web/src/stores/eventStore.ts` 无命中。
+- [OK] `rg "getState\\(\\)\\.(handleStateChange|fetchBackends)" packages/app-web/src/stores` 无命中。
+- [OK] `rg "selectedActivityKey" packages/app-web/src/stores/workflowStore.ts` 无命中。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**
+
+### Follow-up
+
+建议人工复核后续批次：`projectStore`、`storyStore`、`workspaceStore` 未全量迁移，原因分别是 active project / project-agent config、事件流 patch、workspace binding UI 消费面更宽，适合后续独立切片。
+
+
+## Session 27: wave2 session-assembly-converge
+
+**Date**: 2026-05-30
+**Task**: `05-29-session-assembly-converge`
+**Branch**: `refactor/architecture-slop-cleanup`
+
+### Summary
+
+完成 session 装配流水线 wave2 reopen。重新复核 resolver 争议后确认不抽跨路径 `SessionSurfaceResolver`，因为 launch 产 bundle/prompt/audit/terminal binding，query 产只读 snapshot/projection，二者已通过 bootstrap/finalize 共享真正收敛点。建议人工复核：本批采用 VFS 投影集中同步 helper，而不是删除 `surface.vfs` / `context_projection.vfs` 双投影字段。
+
+### Main Changes
+
+- `SessionAssemblyBuilder` 拆到 `session/assembly_builder.rs`，`assembler.rs` 从 2690 行降到 2381 行。
+- `compose_owner_bootstrap` 拆为 owner VFS、capability、context bundle helper，入口约 66 行。
+- `compose_story_step` 拆为 executor、VFS、context binding、capability、context bundle helper，入口约 51 行。
+- `SessionConstructionPlan` 增加 `active_vfs` / `set_active_vfs` / `sync_vfs_projection_from_capability`，apply/finalize/runtime replay test helper 通过集中 helper 同步 VFS 投影。
+- test-only session persistence mock 从 `std::io::Error` 对齐到 `SessionStoreError`，解除 application lib tests 编译阻塞。
+
+### Testing
+
+- [OK] `cargo check -p agentdash-application`
+- [OK] `cargo check --workspace`
+- [OK] `cargo test -p agentdash-application --lib session::assembler`（22 passed）
+- [OK] `cargo test -p agentdash-application --lib`（595 passed）
+- [OK] `rg "plan\\.surface\\.vfs = Some\\(effective_vfs|plan\\.context_projection\\.vfs = Some\\(effective_vfs|context_projection\\.vfs = plan\\.surface\\.vfs" crates/agentdash-application/src/session` 无命中。
+
+### Status
+
+[OK] **Implementation complete; ready to archive**

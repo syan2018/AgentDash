@@ -29,6 +29,61 @@ use helpers::{
 use resolver::{resolve_surface_bundle, resolve_surface_from_source};
 
 const MAX_ENTRIES: usize = 200;
+const VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES: usize = 80 * 1024 * 1024;
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/vfs-surfaces/resolve",
+            axum::routing::post(resolve_surface),
+        )
+        .route(
+            "/vfs-surfaces/{surface_ref}",
+            axum::routing::get(get_surface),
+        )
+        .route(
+            "/vfs-surfaces/{surface_ref}/mounts/{mount_id}/entries",
+            axum::routing::get(list_surface_mount_entries),
+        )
+        .route(
+            "/vfs-surfaces/read-file",
+            axum::routing::post(read_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/read-file-blob",
+            axum::routing::post(read_surface_file_blob),
+        )
+        .route(
+            "/vfs-surfaces/upload-file-blob",
+            axum::routing::post(upload_surface_file_blob).layer(
+                axum::extract::DefaultBodyLimit::max(VFS_BINARY_UPLOAD_BODY_LIMIT_BYTES),
+            ),
+        )
+        .route(
+            "/vfs-surfaces/write-file",
+            axum::routing::post(write_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/create-file",
+            axum::routing::post(create_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/delete-file",
+            axum::routing::post(delete_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/rename-file",
+            axum::routing::post(rename_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/stat-file",
+            axum::routing::post(stat_surface_file),
+        )
+        .route(
+            "/vfs-surfaces/apply-patch",
+            axum::routing::post(apply_surface_patch),
+        )
+}
 
 pub async fn resolve_surface(
     State(state): State<Arc<AppState>>,
@@ -81,7 +136,7 @@ pub async fn list_surface_mount_entries(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface 条目检索失败: {e}")))?;
 
     Ok(Json(SurfaceEntriesResponse {
         surface_ref,
@@ -132,7 +187,7 @@ pub async fn read_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface 文件读取失败: {e}")))?;
 
     Ok(Json(SurfaceReadFileResponse {
         surface_ref: req.surface_ref,
@@ -170,7 +225,7 @@ pub async fn read_surface_file_blob(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::BadRequest)?;
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let content_type = HeaderValue::from_str(&result.mime_type)
         .map_err(|error| ApiError::Internal(format!("MIME 类型无效: {error}")))?;
 
@@ -456,7 +511,7 @@ pub async fn stat_surface_file(
             Some(&current_user),
         )
         .await
-        .map_err(ApiError::Internal)?;
+        .map_err(|e| ApiError::Internal(format!("VFS surface stat 失败: {e}")))?;
 
     Ok(Json(surface_stat_response(
         req.surface_ref,

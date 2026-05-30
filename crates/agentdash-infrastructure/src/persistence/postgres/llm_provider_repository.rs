@@ -61,8 +61,8 @@ struct LlmProviderRow {
     discovery_url: String,
     sort_order: i32,
     enabled: bool,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<LlmProviderRow> for LlmProvider {
@@ -101,14 +101,8 @@ impl TryFrom<LlmProviderRow> for LlmProvider {
             discovery_url: row.discovery_url,
             sort_order: row.sort_order,
             enabled: row.enabled,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "llm_providers.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "llm_providers.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -138,11 +132,11 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(&provider.discovery_url)
         .bind(provider.sort_order)
         .bind(provider.enabled)
-        .bind(provider.created_at.to_rfc3339())
-        .bind(provider.updated_at.to_rfc3339())
+        .bind(provider.created_at)
+        .bind(provider.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -152,7 +146,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(LlmProvider::try_from).transpose()
     }
 
@@ -161,7 +155,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         let rows: Vec<LlmProviderRow> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(LlmProvider::try_from).collect()
     }
 
@@ -172,7 +166,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         let rows: Vec<LlmProviderRow> = sqlx::query_as(&sql)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter().map(LlmProvider::try_from).collect()
     }
 
@@ -202,11 +196,11 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         .bind(&provider.discovery_url)
         .bind(provider.sort_order)
         .bind(provider.enabled)
-        .bind(provider.updated_at.to_rfc3339())
+        .bind(provider.updated_at)
         .bind(provider.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -215,7 +209,7 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -223,11 +217,11 @@ impl LlmProviderRepository for PostgresLlmProviderRepository {
         for (i, id) in ids.iter().enumerate() {
             sqlx::query("UPDATE llm_providers SET sort_order = $1, updated_at = $2 WHERE id = $3")
                 .bind(i as i32)
-                .bind(chrono::Utc::now().to_rfc3339())
+                .bind(chrono::Utc::now())
                 .bind(id.to_string())
                 .execute(&self.pool)
                 .await
-                .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+                .map_err(super::db_err)?;
         }
         Ok(())
     }
@@ -243,9 +237,9 @@ struct LlmProviderUserCredentialRow {
     api_key_ciphertext: String,
     verification_status: String,
     verification_message: String,
-    verified_at: Option<String>,
-    created_at: String,
-    updated_at: String,
+    verified_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<LlmProviderUserCredentialRow> for LlmProviderUserCredential {
@@ -268,25 +262,9 @@ impl TryFrom<LlmProviderUserCredentialRow> for LlmProviderUserCredential {
                 .parse::<LlmCredentialVerificationStatus>()
                 .unwrap_or_default(),
             verification_message: row.verification_message,
-            verified_at: row
-                .verified_at
-                .as_deref()
-                .filter(|value| !value.trim().is_empty())
-                .map(|value| {
-                    super::parse_pg_timestamp_checked(
-                        value,
-                        "llm_provider_user_credentials.verified_at",
-                    )
-                })
-                .transpose()?,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "llm_provider_user_credentials.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "llm_provider_user_credentials.updated_at",
-            )?,
+            verified_at: row.verified_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -308,7 +286,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
             .bind(provider_id.to_string())
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         row.map(LlmProviderUserCredential::try_from).transpose()
     }
 
@@ -326,7 +304,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
             .bind(user_id)
             .fetch_all(&self.pool)
             .await
-            .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+            .map_err(super::db_err)?;
         rows.into_iter()
             .map(LlmProviderUserCredential::try_from)
             .collect()
@@ -353,12 +331,12 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .bind(&credential.api_key_ciphertext)
         .bind(credential.verification_status.as_str())
         .bind(&credential.verification_message)
-        .bind(credential.verified_at.map(|value| value.to_rfc3339()))
-        .bind(credential.created_at.to_rfc3339())
-        .bind(credential.updated_at.to_rfc3339())
+        .bind(credential.verified_at.map(|value| value))
+        .bind(credential.created_at)
+        .bind(credential.updated_at)
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -375,7 +353,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .bind(provider_id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(result.rows_affected() > 0)
     }
 }

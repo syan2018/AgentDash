@@ -15,7 +15,7 @@ use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{ExtensionRuntimeProjectionResponse, extension_runtime_projection_response};
 use crate::routes::backend_access::ensure_project_backend_access;
 use crate::rpc::ApiError;
-use crate::session_use_cases::context_query::build_session_context_plan;
+use crate::session_construction::build_session_context_plan;
 use agentdash_application::extension_package::{
     ExtensionPackageArtifactUseCaseError, ReadExtensionPackageWebviewAssetInput,
     read_extension_package_webview_asset,
@@ -45,6 +45,30 @@ use agentdash_spi::Vfs;
 #[derive(Debug, Deserialize)]
 pub struct ProjectExtensionRuntimePath {
     pub project_id: String,
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/extension-runtime",
+            axum::routing::get(get_project_extension_runtime),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-action",
+            axum::routing::post(invoke_project_extension_runtime_action),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/invoke-channel",
+            axum::routing::post(invoke_project_extension_runtime_channel),
+        )
+        .route(
+            "/projects/{project_id}/extension-runtime/webviews/{extension_key}/{*asset_path}",
+            axum::routing::get(get_project_extension_webview_asset),
+        )
+        .route(
+            "/projects/{project_id}/extensions/{installation_id}",
+            axum::routing::delete(uninstall_extension_installation_route),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,7 +103,7 @@ pub async fn get_project_extension_runtime(
         .project_extension_installation_repo
         .list_enabled_by_project(project_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let projection = extension_runtime_projection_from_installations(installations)?;
     Ok(Json(extension_runtime_projection_response(projection)))
 }
@@ -113,13 +137,9 @@ pub async fn invoke_project_extension_runtime_action(
         ));
     }
     ensure_project_backend_access(&state, project_id, backend_id).await?;
-    let workspace = resolve_extension_invocation_workspace(
-        &state,
-        &current_user,
-        session_id,
-        backend_id,
-    )
-    .await?;
+    let workspace =
+        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
+            .await?;
 
     let action_key = RuntimeActionKey::parse(req.action_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
@@ -184,13 +204,9 @@ pub async fn invoke_project_extension_runtime_channel(
         ));
     }
     ensure_project_backend_access(&state, project_id, backend_id).await?;
-    let workspace = resolve_extension_invocation_workspace(
-        &state,
-        &current_user,
-        session_id,
-        backend_id,
-    )
-    .await?;
+    let workspace =
+        resolve_extension_invocation_workspace(&state, &current_user, session_id, backend_id)
+            .await?;
 
     let consumer = req
         .consumer_extension_key
@@ -302,8 +318,7 @@ async fn resolve_extension_invocation_workspace(
     session_id: &str,
     backend_id: &str,
 ) -> Result<Option<ExtensionInvocationWorkspaceContext>, ApiError> {
-    let Some(plan) = build_session_context_plan(state, current_user, session_id).await?
-    else {
+    let Some(plan) = build_session_context_plan(state, current_user, session_id).await? else {
         return Ok(None);
     };
     let Some(vfs) = plan.surface.vfs.as_ref() else {
@@ -477,7 +492,8 @@ fn extension_package_error_to_api(error: ExtensionPackageArtifactUseCaseError) -
     match error {
         ExtensionPackageArtifactUseCaseError::Domain(error) => ApiError::from(error),
         ExtensionPackageArtifactUseCaseError::Storage(error) => {
-            ApiError::Internal(error.to_string())
+            tracing::error!(error = %error, "extension package artifact storage error");
+            ApiError::Internal(String::from("扩展包存储错误"))
         }
         ExtensionPackageArtifactUseCaseError::BadRequest(error) => ApiError::BadRequest(error),
         ExtensionPackageArtifactUseCaseError::NotFound(error) => ApiError::NotFound(error),

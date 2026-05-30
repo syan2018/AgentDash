@@ -58,6 +58,24 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantDto {
     }
 }
 
+pub fn router() -> axum::Router<Arc<AppState>> {
+    axum::Router::new()
+        .route("/permission-grants", axum::routing::get(list_grants))
+        .route("/permission-grants/{id}", axum::routing::get(get_grant))
+        .route(
+            "/permission-grants/{id}/approve",
+            axum::routing::post(approve_grant),
+        )
+        .route(
+            "/permission-grants/{id}/reject",
+            axum::routing::post(reject_grant),
+        )
+        .route(
+            "/permission-grants/{id}/revoke",
+            axum::routing::post(revoke_grant),
+        )
+}
+
 // ── Query params ──
 
 #[derive(Deserialize)]

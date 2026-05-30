@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use agentdash_domain::common::{MountLink, Vfs};
 use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
 use agentdash_spi::SessionMcpServer;
-use agentdash_spi::hooks::CapabilityDelta;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use uuid::Uuid;
@@ -40,7 +39,7 @@ pub struct RuntimeContextTransition<'a> {
     pub capability_keys: &'a BTreeSet<String>,
     pub steering_delivery: Value,
     pub state_changed_override: Option<bool>,
-    pub steering_capability_delta: Option<&'a CapabilityDelta>,
+    pub steering_capability_delta: Option<&'a SetDelta>,
 }
 
 impl<'a> RuntimeContextTransition<'a> {

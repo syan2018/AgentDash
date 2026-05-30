@@ -7,11 +7,11 @@ use std::sync::Arc;
 use agentdash_application::session::{SessionExecutionState, SessionRuntimeServices};
 use agentdash_executor::connectors::codex_bridge::CodexBridgeConnector;
 use agentdash_executor::connectors::composite::CompositeConnector;
-use agentdash_infrastructure::SqliteSessionRepository;
+use agentdash_infrastructure::PostgresSessionRepository;
+use agentdash_infrastructure::postgres_runtime::PostgresRuntime;
 use agentdash_spi::AgentConnector;
 use anyhow::Context;
 use serde::Serialize;
-use sqlx::sqlite::SqliteConnectOptions;
 use tokio::sync::{Mutex, watch};
 
 use crate::LocalExtensionHostManager;
@@ -449,21 +449,23 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         )))
     };
 
-    let (session_runtime, connector) = if config.executor_enabled {
+    let (session_runtime, connector, session_db_runtime) = if config.executor_enabled {
         let sub_connectors: Vec<Arc<dyn AgentConnector>> =
             vec![Arc::new(CodexBridgeConnector::new())];
         let connector: Arc<dyn AgentConnector> = Arc::new(CompositeConnector::new(sub_connectors));
-        let db_path = local_runtime_session_db_path(&config.backend_id)?;
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let pool = sqlx::SqlitePool::connect_with(
-            SqliteConnectOptions::new()
-                .filename(&db_path)
-                .create_if_missing(true),
-        )
-        .await?;
-        let session_repo = Arc::new(SqliteSessionRepository::new(pool));
+        let db_runtime = Arc::new(
+            PostgresRuntime::resolve_embedded_at_data_root(
+                &format!(
+                    "agentdash-local-{}",
+                    local_runtime_backend_key(&config.backend_id)
+                ),
+                10,
+                local_runtime_data_dir()?,
+            )
+            .await?,
+        );
+        agentdash_infrastructure::migration::run_postgres_migrations(&db_runtime.pool).await?;
+        let session_repo = Arc::new(PostgresSessionRepository::new(db_runtime.pool.clone()));
         session_repo.initialize().await?;
         let session_runtime = SessionRuntimeServices::new_with_hooks_and_persistence(
             connector.clone(),
@@ -476,10 +478,10 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         }
 
         tracing::info!("Session runtime 已初始化");
-        (Some(session_runtime), Some(connector))
+        (Some(session_runtime), Some(connector), Some(db_runtime))
     } else {
         tracing::info!("Session runtime 已禁用");
-        (None, None)
+        (None, None, None)
     };
 
     Ok(ws_client::Config {
@@ -492,6 +494,7 @@ async fn build_ws_config(config: &LocalRuntimeConfig) -> anyhow::Result<ws_clien
         tool_executor,
         session_runtime,
         connector,
+        _session_db_runtime: session_db_runtime,
         mcp_manager,
         workspace_contract_config: local_backend_config.workspace_contract,
         extension_host: LocalExtensionHostManager::with_default_config(),
@@ -508,12 +511,6 @@ fn canonicalize_existing_root(root: PathBuf) -> anyhow::Result<PathBuf> {
         anyhow::bail!("workspace root 不是目录: {}", root.display());
     }
     Ok(root)
-}
-
-fn local_runtime_session_db_path(backend_id: &str) -> anyhow::Result<PathBuf> {
-    Ok(local_runtime_data_dir()?
-        .join(local_runtime_backend_key(backend_id))
-        .join("agentdash-local.db"))
 }
 
 fn local_runtime_backend_key(backend_id: &str) -> String {

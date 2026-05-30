@@ -221,8 +221,9 @@ impl SessionLaunchOrchestrator {
                 .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
                 .filter(|path| !path.as_os_str().is_empty())
                 .or(construction.workspace.working_directory);
-            construction.surface.vfs = Some(effective_vfs.clone());
             final_capability_state.vfs.active = Some(effective_vfs);
+            construction.projections.capability_state = Some(final_capability_state.clone());
+            construction.sync_vfs_projection_from_capability();
         }
         let effective_mcp_servers = replay
             .as_ref()

@@ -1,10 +1,16 @@
 use agentdash_domain::project::ProjectRepository;
 use uuid::Uuid;
 
-use agentdash_domain::context_container::ContextContainerDefinition;
+use agentdash_domain::context_container::{
+    ContextContainerDefinition, validate_context_containers,
+};
+use agentdash_domain::inline_file::InlineFileOwnerKind;
 use agentdash_domain::project::{Project, ProjectConfig, ProjectVisibility};
-use agentdash_domain::story::StoryRepository;
-use agentdash_domain::workspace::WorkspaceRepository;
+use agentdash_domain::story::{Story, StoryRepository};
+use agentdash_domain::workspace::{Workspace, WorkspaceRepository};
+
+use crate::ApplicationError;
+use crate::repository_set::RepositorySet;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProjectMutationInput {
@@ -17,6 +23,146 @@ pub struct ProjectMutationInput {
     pub context_containers: Option<Vec<ContextContainerDefinition>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateProjectInput {
+    pub creator_user_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub mutation: ProjectMutationInput,
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateProjectInput {
+    pub updated_by_user_id: String,
+    pub mutation: ProjectMutationInput,
+}
+
+#[derive(Debug, Clone)]
+pub struct CloneProjectInput {
+    pub creator_user_id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectDetailFacts {
+    pub workspaces: Vec<Workspace>,
+    pub stories: Vec<Story>,
+}
+
+pub async fn create_project_record(
+    repos: &RepositorySet,
+    input: CreateProjectInput,
+) -> Result<Project, ApplicationError> {
+    let project = build_project(
+        input.creator_user_id,
+        input.name,
+        input.description.unwrap_or_default(),
+        input.mutation,
+    );
+    validate_project_config(&project.config)?;
+    validate_project_contract(&project)?;
+    repos
+        .project_repo
+        .create(&project)
+        .await
+        .map_err(ApplicationError::from)?;
+    sync_project_inline_files(repos, &project).await?;
+    Ok(project)
+}
+
+pub async fn load_project_by_id(
+    repos: &RepositorySet,
+    project_id: Uuid,
+    raw_id: &str,
+) -> Result<Project, ApplicationError> {
+    repos
+        .project_repo
+        .get_by_id(project_id)
+        .await
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| ApplicationError::NotFound(format!("Project {raw_id} 不存在")))
+}
+
+pub async fn load_project_detail_facts(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<ProjectDetailFacts, ApplicationError> {
+    let workspaces = repos
+        .workspace_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(ApplicationError::from)?;
+    let stories = repos
+        .story_repo
+        .list_by_project(project_id)
+        .await
+        .map_err(ApplicationError::from)?;
+    Ok(ProjectDetailFacts {
+        workspaces,
+        stories,
+    })
+}
+
+pub async fn update_project_record(
+    repos: &RepositorySet,
+    mut project: Project,
+    input: UpdateProjectInput,
+) -> Result<Project, ApplicationError> {
+    apply_project_mutation(&mut project, input.mutation, Some(input.updated_by_user_id));
+    validate_project_config(&project.config)?;
+    validate_project_contract(&project)?;
+    repos
+        .project_repo
+        .update(&project)
+        .await
+        .map_err(ApplicationError::from)?;
+    sync_project_inline_files(repos, &project).await?;
+    Ok(project)
+}
+
+pub async fn delete_project_record(
+    repos: &RepositorySet,
+    project_id: Uuid,
+) -> Result<(), ApplicationError> {
+    delete_project_aggregate(
+        repos.project_repo.as_ref(),
+        repos.story_repo.as_ref(),
+        repos.workspace_repo.as_ref(),
+        project_id,
+    )
+    .await
+    .map_err(ApplicationError::from)
+}
+
+pub async fn clone_project_record(
+    repos: &RepositorySet,
+    source_project: &Project,
+    input: CloneProjectInput,
+) -> Result<Project, ApplicationError> {
+    if !source_project.is_template {
+        return Err(ApplicationError::BadRequest(
+            "仅模板 Project 支持 clone；请先将源 Project 标记为模板".to_string(),
+        ));
+    }
+
+    let clone_name = normalize_clone_name(input.name, &source_project.name)?;
+    let cloned_project = build_cloned_project(
+        source_project,
+        input.creator_user_id,
+        clone_name,
+        input.description,
+    );
+    validate_project_config(&cloned_project.config)?;
+    validate_project_contract(&cloned_project)?;
+    repos
+        .project_repo
+        .create(&cloned_project)
+        .await
+        .map_err(ApplicationError::from)?;
+    Ok(cloned_project)
+}
+
 pub fn build_project(
     creator_user_id: String,
     name: String,
@@ -26,6 +172,22 @@ pub fn build_project(
     let mut project = Project::new_with_creator(name, description, creator_user_id);
     apply_project_mutation(&mut project, input, None);
     project
+}
+
+pub fn validate_project_config(config: &ProjectConfig) -> Result<(), ApplicationError> {
+    validate_context_containers(&config.context_containers)
+        .map_err(ApplicationError::BadRequest)?;
+    Ok(())
+}
+
+pub fn validate_project_contract(project: &Project) -> Result<(), ApplicationError> {
+    if matches!(project.visibility, ProjectVisibility::TemplateVisible) && !project.is_template {
+        return Err(ApplicationError::BadRequest(
+            "template_visible 仅适用于模板 Project；请同时设置 is_template=true".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 pub fn apply_project_mutation(
@@ -59,12 +221,17 @@ pub fn apply_project_mutation(
     }
 }
 
-pub fn normalize_clone_name(raw_name: Option<String>, source_name: &str) -> Result<String, String> {
+pub fn normalize_clone_name(
+    raw_name: Option<String>,
+    source_name: &str,
+) -> Result<String, ApplicationError> {
     match raw_name {
         Some(name) => {
             let trimmed = name.trim();
             if trimmed.is_empty() {
-                Err("clone 后的 Project 名称不能为空".to_string())
+                Err(ApplicationError::BadRequest(
+                    "clone 后的 Project 名称不能为空".to_string(),
+                ))
             } else {
                 Ok(trimmed.to_string())
             }
@@ -113,6 +280,20 @@ pub async fn delete_project_aggregate(
     Ok(())
 }
 
+async fn sync_project_inline_files(
+    repos: &RepositorySet,
+    project: &Project,
+) -> Result<(), ApplicationError> {
+    crate::vfs::inline_persistence::sync_container_inline_files(
+        repos.inline_file_repo.as_ref(),
+        InlineFileOwnerKind::Project,
+        project.id,
+        &project.config.context_containers,
+    )
+    .await
+    .map_err(ApplicationError::Internal)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,7 +302,7 @@ mod tests {
     fn normalize_clone_name_rejects_blank_name() {
         let err = normalize_clone_name(Some("   ".to_string()), "Source")
             .expect_err("blank name should be rejected");
-        assert!(err.contains("不能为空"));
+        assert!(err.to_string().contains("不能为空"));
     }
 
     #[test]

@@ -49,9 +49,9 @@ pub use orchestrator::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeResult, AdvanceCurrentNodeStatus,
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
-pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 #[cfg(test)]
 pub(crate) use projection::activity_projection;
+pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
 pub use run::select_active_run;
 pub use run_link_service::LifecycleRunLinkService;
 pub use scheduler::{

@@ -8,7 +8,7 @@ use agentdash_domain::workspace::{
     identity_payload_matches_detected_facts, identity_payload_supports_local_prepare,
 };
 
-use crate::backend_transport::BackendTransport;
+use agentdash_application_ports::backend_transport::BackendTransport;
 
 /// 后端在线探测能力 — workspace resolution 的最小依赖。
 ///

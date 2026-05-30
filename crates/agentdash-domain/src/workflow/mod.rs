@@ -13,9 +13,7 @@ pub use repository::{
     LifecycleRunRepository, WorkflowDefinitionRepository, WorkflowTemplateInstallBundle,
     WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
 };
-pub use run_link::{
-    LifecycleRunLink, LifecycleRunLinkRepository, RunLinkRole, RunLinkSubjectKind,
-};
+pub use run_link::{LifecycleRunLink, LifecycleRunLinkRepository, RunLinkRole, RunLinkSubjectKind};
 pub use validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

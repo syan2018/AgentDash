@@ -6,80 +6,14 @@
  */
 
 import { useSyncExternalStore } from "react";
-import type { ComponentType, ReactNode } from "react";
-
-// ─── Tab URI ────────────────────────────────────────────
-
-/** Tab 实例的 URI 标识，使用自定义 scheme 如 `canvas://{id}`, `vfs://{ref}/{mount}` */
-export type TabURI = string;
-
-// ─── TabTypeDescriptor ──────────────────────────────────
-
-/** Tab 内容区渲染时接收的 props */
-export interface TabContentRenderProps {
-  uri: string;
-  tabId: string;
-  sessionId: string | null;
-  isActive: boolean;
-}
-
-/** Tab 类型描述符 — 插件注册的核心接口 */
-export interface TabTypeDescriptor {
-  /** 类型唯一标识，如 "canvas", "vfs", "terminal" */
-  typeId: string;
-  /** 显示名称 */
-  label: string;
-  /** Tab 栏和菜单中的图标 */
-  icon: ComponentType<{ className?: string }>;
-  /** 是否允许多实例同时打开 */
-  allowMultiple: boolean;
-  /** 钉选 Tab：始终存在，不可关闭 */
-  pinned: boolean;
-
-  /** 渲染 Tab 内容区域 */
-  renderContent: (props: TabContentRenderProps) => ReactNode;
-
-  /** 从 URI 解析出可读标题 */
-  resolveTitle: (uri: string) => string;
-  /** 从 URI 解析出结构化参数 */
-  parseUri: (uri: string) => Record<string, string> | null;
-  /** 从参数构建 URI */
-  buildUri: (params: Record<string, string>) => string;
-
-  /** "+" 菜单直接创建时使用的默认 URI */
-  defaultUri?: string;
-  /** "+" 菜单中的排序权重（越小越靠前） */
-  menuOrder?: number;
-}
-
-// ─── TabInstance ─────────────────────────────────────────
-
-/** Tab 实例 — 运行时打开的每个 Tab */
-export interface TabInstance {
-  /** 唯一实例 ID */
-  id: string;
-  /** 引用 TabTypeDescriptor.typeId */
-  typeId: string;
-  /** 标识此 Tab 目标的 URI */
-  uri: string;
-  /** 显示标题 */
-  title: string;
-  /** 是否为钉选 Tab */
-  pinned: boolean;
-}
-
-// ─── 持久化格式 ─────────────────────────────────────────
-
-/** 存入后端 session meta 的 Tab 布局 */
-export interface SessionTabLayout {
-  tabs: Array<{
-    type_id: string;
-    uri: string;
-    title: string;
-    pinned: boolean;
-  }>;
-  active_tab_uri: string | null;
-}
+import type { TabTypeDescriptor } from "../workspace-runtime";
+export type {
+  SessionTabLayout,
+  TabContentRenderProps,
+  TabInstance,
+  TabTypeDescriptor,
+  TabURI,
+} from "../workspace-runtime";
 
 // ─── Registry ───────────────────────────────────────────
 

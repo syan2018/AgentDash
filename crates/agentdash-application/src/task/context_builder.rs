@@ -19,13 +19,12 @@ use crate::session::context::{
 };
 use crate::session::{ExecutorResolution, load_available_presets};
 use crate::task::config::{resolve_task_executor_config, resolve_task_executor_source};
-use crate::vfs::{VfsService, SessionMountTarget};
+use crate::vfs::{SessionMountTarget, VfsService};
 use crate::workflow::{
     ActiveWorkflowProjection, ensure_active_workflow_lifecycle_mount,
     resolve_active_workflow_projection_for_session,
 };
 use agentdash_domain::common::Vfs;
-
 
 #[derive(Debug)]
 pub struct BuiltTaskSessionContext {
@@ -188,12 +187,20 @@ async fn find_active_workflow_via_task_sessions(
 ) -> Option<ActiveWorkflowProjection> {
     let links = repos
         .lifecycle_run_link_repo
-        .list_by_subject(agentdash_domain::workflow::RunLinkSubjectKind::Task, task_id)
+        .list_by_subject(
+            agentdash_domain::workflow::RunLinkSubjectKind::Task,
+            task_id,
+        )
         .await
         .ok()?;
 
     for link in &links {
-        let run = repos.lifecycle_run_repo.get_by_id(link.run_id).await.ok().flatten();
+        let run = repos
+            .lifecycle_run_repo
+            .get_by_id(link.run_id)
+            .await
+            .ok()
+            .flatten();
         let Some(session_id) = run.as_ref().and_then(|r| r.session_id.as_deref()) else {
             continue;
         };

@@ -93,6 +93,7 @@ Contract:
 - `CapabilityState.vfs.active` 必须等于 final `plan.surface.vfs`。
 - `CapabilityState.tool.mcp_servers` 必须等于 final `plan.projections.mcp_servers`。
 - `runtime_surface` 是 query DTO，只从 final `plan.surface.vfs` 生成。
+- `SessionConstructionPlan` 的 VFS 投影写入通过 plan helper 集中同步，原因是 `surface.vfs` 服务 launch 装配面，`context_projection.vfs` 服务 query DTO 面，而二者必须跟随 effective capability VFS 保持一致。
 
 ## LaunchPlan And Stage Contracts
 

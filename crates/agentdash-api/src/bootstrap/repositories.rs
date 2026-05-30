@@ -16,10 +16,10 @@ use agentdash_infrastructure::{
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
     PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRunLinkRepository,
-    PostgresRuntimeHealthRepository, PostgresSessionRepository,
-    PostgresSettingsRepository, PostgresSharedLibraryRepository, PostgresSkillAssetRepository,
-    PostgresStateChangeRepository, PostgresStoryRepository, PostgresUserDirectoryRepository,
-    PostgresWorkflowRepository, PostgresWorkspaceRepository,
+    PostgresRuntimeHealthRepository, PostgresSessionRepository, PostgresSettingsRepository,
+    PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
+    PostgresStoryRepository, PostgresUserDirectoryRepository, PostgresWorkflowRepository,
+    PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
@@ -102,7 +102,8 @@ pub(crate) async fn build_repositories(
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
     let run_link_repo = Arc::new(PostgresRunLinkRepository::new(pool.clone()));
-    let permission_grant_repo = Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
+    let permission_grant_repo =
+        Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
 
     let repos = RepositorySet {
         project_repo: project_repo.clone(),

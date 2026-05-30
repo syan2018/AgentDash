@@ -331,7 +331,7 @@ impl FsReadTool {
                 self.identity.as_ref(),
             )
             .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&result.data);
         Ok(AgentToolResult {
             content: vec![

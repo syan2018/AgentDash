@@ -1,11 +1,8 @@
-﻿use chrono::{DateTime, Utc};
-use schemars::JsonSchema;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::TS;
 
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityAttemptStatus {
     Pending,
@@ -23,7 +20,7 @@ impl ActivityAttemptStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityAttemptState {
     pub activity_key: String,
     pub attempt: u32,
@@ -38,13 +35,13 @@ pub struct ActivityAttemptState {
     pub summary: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityPortValue {
     pub port_key: String,
     pub value: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityOutputArtifact {
     pub activity_key: String,
     pub attempt: u32,
@@ -53,7 +50,7 @@ pub struct ActivityOutputArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityInputArtifact {
     pub activity_key: String,
     pub attempt: u32,
@@ -65,7 +62,7 @@ pub struct ActivityInputArtifact {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityLifecycleRunState {
     pub status: ActivityRunStatus,
     pub attempts: Vec<ActivityAttemptState>,
@@ -73,7 +70,7 @@ pub struct ActivityLifecycleRunState {
     pub inputs: Vec<ActivityInputArtifact>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityRunStatus {
     Ready,
@@ -84,7 +81,7 @@ pub enum ActivityRunStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
     AgentSession { session_id: String },
@@ -92,7 +89,7 @@ pub enum ExecutorRunRef {
     HumanDecision { decision_id: String },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityExecutionClaimStatus {
     Claiming,
@@ -132,7 +129,7 @@ impl std::str::FromStr for ActivityExecutionClaimStatus {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleRunStatus {
     Draft,
@@ -144,7 +141,7 @@ pub enum LifecycleRunStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleExecutionEventKind {
     StepActivated,
@@ -155,7 +152,7 @@ pub enum LifecycleExecutionEventKind {
     ContextInjected,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleExecutionEntry {
     pub timestamp: DateTime<Utc>,
     pub step_key: String,

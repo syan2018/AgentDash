@@ -1,60 +1,29 @@
 use std::sync::Arc;
 
 use agentdash_application::project::{
-    ProjectAuthorizationContext, ProjectAuthorizationService, ProjectMutationInput,
-    apply_project_mutation, build_cloned_project, build_project, delete_project_aggregate,
-    normalize_clone_name,
+    CloneProjectInput, CreateProjectInput, ProjectAuthorizationContext,
+    ProjectAuthorizationService, ProjectMutationInput, UpdateProjectInput, clone_project_record,
+    create_project_record, delete_project_record, load_project_by_id, load_project_detail_facts,
+    update_project_record,
 };
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
 use uuid::Uuid;
 
-use agentdash_domain::context_container::{
-    ContextContainerDefinition, validate_context_containers,
+use agentdash_contracts::core::{
+    DeletedIdResponse, DeletedProjectSubjectGrantResponse,
+    ProjectSubjectType as ContractProjectSubjectType, RevokeProjectGrantResponse,
 };
-use agentdash_domain::project::{
-    Project, ProjectConfig, ProjectRole, ProjectSubjectGrant, ProjectSubjectType, ProjectVisibility,
-};
+use agentdash_domain::project::{Project, ProjectRole, ProjectSubjectGrant, ProjectSubjectType};
 use agentdash_plugin_api::AuthIdentity;
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, require_project_permission};
-use crate::dto::{ProjectDetailResponse, ProjectResponse, ProjectSubjectGrantResponse};
+use crate::dto::{
+    CloneProjectRequest, CreateProjectRequest, ProjectAccessSummaryResponse, ProjectDetailResponse,
+    ProjectResponse, ProjectSubjectGrantResponse, UpdateProjectRequest, UpsertProjectGrantRequest,
+};
 use crate::rpc::ApiError;
-
-#[derive(Deserialize)]
-pub struct CreateProjectRequest {
-    pub name: String,
-    pub description: Option<String>,
-    pub config: Option<ProjectConfig>,
-    pub visibility: Option<ProjectVisibility>,
-    pub is_template: Option<bool>,
-    pub cloned_from_project_id: Option<Uuid>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateProjectRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub config: Option<ProjectConfig>,
-    pub visibility: Option<ProjectVisibility>,
-    pub is_template: Option<bool>,
-    pub cloned_from_project_id: Option<Uuid>,
-    pub context_containers: Option<Vec<ContextContainerDefinition>>,
-}
-
-#[derive(Deserialize)]
-pub struct UpsertProjectGrantRequest {
-    pub role: ProjectRole,
-}
-
-#[derive(Deserialize, Default)]
-pub struct CloneProjectRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-}
 
 pub async fn list_projects(
     State(state): State<Arc<AppState>>,
@@ -71,37 +40,55 @@ pub async fn list_projects(
     Ok(Json(responses))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects",
+            axum::routing::get(list_projects).post(create_project),
+        )
+        .route(
+            "/projects/{id}",
+            axum::routing::get(get_project)
+                .put(update_project)
+                .delete(delete_project),
+        )
+        .route("/projects/{id}/clone", axum::routing::post(clone_project))
+        .route(
+            "/projects/{id}/grants",
+            axum::routing::get(list_project_grants),
+        )
+        .route(
+            "/projects/{id}/grants/users/{user_id}",
+            axum::routing::put(grant_project_user).delete(revoke_project_user),
+        )
+        .route(
+            "/projects/{id}/grants/groups/{group_id}",
+            axum::routing::put(grant_project_group).delete(revoke_project_group),
+        )
+}
+
 pub async fn create_project(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateProjectRequest>,
 ) -> Result<Json<ProjectResponse>, ApiError> {
-    let project = build_project(
-        current_user.user_id.clone(),
-        req.name,
-        req.description.unwrap_or_default(),
-        ProjectMutationInput {
-            config: req.config,
-            visibility: req.visibility,
-            is_template: req.is_template,
-            cloned_from_project_id: req.cloned_from_project_id,
-            context_containers: req.context_containers,
-            ..ProjectMutationInput::default()
+    let project = create_project_record(
+        &state.repos,
+        CreateProjectInput {
+            creator_user_id: current_user.user_id.clone(),
+            name: req.name,
+            description: req.description,
+            mutation: ProjectMutationInput {
+                config: req.config,
+                visibility: req.visibility,
+                is_template: req.is_template,
+                cloned_from_project_id: req.cloned_from_project_id,
+                context_containers: req.context_containers,
+                ..ProjectMutationInput::default()
+            },
         },
-    );
-    validate_project_config(&project.config)?;
-    validate_project_contract(&project)?;
-    state.repos.project_repo.create(&project).await?;
-
-    // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::Project,
-        project.id,
-        &project.config.context_containers,
     )
-    .await
-    .map_err(ApiError::Internal)?;
+    .await?;
 
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, project).await?,
@@ -125,18 +112,14 @@ pub async fn get_project(
     )
     .await?;
 
-    let workspaces = state
-        .repos
-        .workspace_repo
-        .list_by_project(project_id)
-        .await?;
-    let stories = state.repos.story_repo.list_by_project(project_id).await?;
+    let detail = load_project_detail_facts(&state.repos, project_id).await?;
 
-    Ok(Json(ProjectDetailResponse::new(
-        project.clone(),
-        resolve_project_access(state.as_ref(), &current_user, &project).await?,
-        workspaces,
-        stories,
+    let project_response =
+        project_response_for_user(state.as_ref(), &current_user, project).await?;
+    Ok(Json(ProjectDetailResponse::from_parts(
+        project_response,
+        detail.workspaces,
+        detail.stories,
     )))
 }
 
@@ -149,12 +132,7 @@ pub async fn update_project(
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
 
-    let mut project = state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {id} 不存在")))?;
+    let project = load_project_or_not_found(state.as_ref(), project_id, &id).await?;
 
     let requires_owner = req.visibility.is_some()
         || req.is_template.is_some()
@@ -171,33 +149,23 @@ pub async fn update_project(
     )
     .await?;
 
-    apply_project_mutation(
-        &mut project,
-        ProjectMutationInput {
-            name: req.name,
-            description: req.description,
-            config: req.config,
-            visibility: req.visibility,
-            is_template: req.is_template,
-            cloned_from_project_id: req.cloned_from_project_id,
-            context_containers: req.context_containers,
+    let project = update_project_record(
+        &state.repos,
+        project,
+        UpdateProjectInput {
+            updated_by_user_id: current_user.user_id.clone(),
+            mutation: ProjectMutationInput {
+                name: req.name,
+                description: req.description,
+                config: req.config,
+                visibility: req.visibility,
+                is_template: req.is_template,
+                cloned_from_project_id: req.cloned_from_project_id,
+                context_containers: req.context_containers,
+            },
         },
-        Some(current_user.user_id.clone()),
-    );
-    validate_project_config(&project.config)?;
-    validate_project_contract(&project)?;
-
-    state.repos.project_repo.update(&project).await?;
-
-    // 同步 inline files 初始文件到 inline_fs_files 表
-    agentdash_application::vfs::inline_persistence::sync_container_inline_files(
-        state.repos.inline_file_repo.as_ref(),
-        agentdash_domain::inline_file::InlineFileOwnerKind::Project,
-        project.id,
-        &project.config.context_containers,
     )
-    .await
-    .map_err(ApiError::Internal)?;
+    .await?;
 
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, project).await?,
@@ -208,7 +176,7 @@ pub async fn delete_project(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeletedIdResponse>, ApiError> {
     let project_id =
         Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))?;
     let project = load_project_or_not_found(state.as_ref(), project_id, &id).await?;
@@ -220,14 +188,8 @@ pub async fn delete_project(
     )
     .await?;
 
-    delete_project_aggregate(
-        state.repos.project_repo.as_ref(),
-        state.repos.story_repo.as_ref(),
-        state.repos.workspace_repo.as_ref(),
-        project_id,
-    )
-    .await?;
-    Ok(Json(serde_json::json!({ "deleted": id })))
+    delete_project_record(&state.repos, project_id).await?;
+    Ok(Json(DeletedIdResponse { deleted: id }))
 }
 
 pub async fn clone_project(
@@ -247,24 +209,16 @@ pub async fn clone_project(
     )
     .await?;
 
-    if !source_project.is_template {
-        return Err(ApiError::BadRequest(
-            "仅模板 Project 支持 clone；请先将源 Project 标记为模板".into(),
-        ));
-    }
-
-    let clone_name =
-        normalize_clone_name(req.name, &source_project.name).map_err(ApiError::BadRequest)?;
-    let cloned_project = build_cloned_project(
+    let cloned_project = clone_project_record(
+        &state.repos,
         &source_project,
-        current_user.user_id.clone(),
-        clone_name,
-        req.description,
-    );
-    validate_project_config(&cloned_project.config)?;
-    validate_project_contract(&cloned_project)?;
-
-    state.repos.project_repo.create(&cloned_project).await?;
+        CloneProjectInput {
+            creator_user_id: current_user.user_id.clone(),
+            name: req.name,
+            description: req.description,
+        },
+    )
+    .await?;
 
     Ok(Json(
         project_response_for_user(state.as_ref(), &current_user, cloned_project).await?,
@@ -322,7 +276,7 @@ pub async fn revoke_project_user(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((id, user_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokeProjectGrantResponse>, ApiError> {
     revoke_project_grant(
         state.as_ref(),
         &current_user,
@@ -356,7 +310,7 @@ pub async fn revoke_project_group(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((id, group_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RevokeProjectGrantResponse>, ApiError> {
     revoke_project_grant(
         state.as_ref(),
         &current_user,
@@ -366,21 +320,6 @@ pub async fn revoke_project_group(
     )
     .await
     .map(Json)
-}
-
-fn validate_project_config(config: &ProjectConfig) -> Result<(), ApiError> {
-    validate_context_containers(&config.context_containers).map_err(ApiError::BadRequest)?;
-    Ok(())
-}
-
-fn validate_project_contract(project: &Project) -> Result<(), ApiError> {
-    if matches!(project.visibility, ProjectVisibility::TemplateVisible) && !project.is_template {
-        return Err(ApiError::BadRequest(
-            "template_visible 仅适用于模板 Project；请同时设置 is_template=true".into(),
-        ));
-    }
-
-    Ok(())
 }
 
 fn project_authorization_context(current_user: &AuthIdentity) -> ProjectAuthorizationContext {
@@ -406,12 +345,9 @@ async fn load_project_or_not_found(
     project_id: Uuid,
     raw_id: &str,
 ) -> Result<Project, ApiError> {
-    state
-        .repos
-        .project_repo
-        .get_by_id(project_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Project {raw_id} 不存在")))
+    load_project_by_id(&state.repos, project_id, raw_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 async fn resolve_project_access(
@@ -482,7 +418,7 @@ async fn revoke_project_grant(
     raw_project_id: &str,
     subject_type: ProjectSubjectType,
     subject_id: &str,
-) -> Result<serde_json::Value, ApiError> {
+) -> Result<RevokeProjectGrantResponse, ApiError> {
     let project_id = parse_project_id(raw_project_id)?;
     let project = load_project_or_not_found(state, project_id, raw_project_id).await?;
     require_project_permission(
@@ -521,13 +457,13 @@ async fn revoke_project_grant(
         .delete_subject_grant(project_id, subject_type, &subject_id)
         .await?;
 
-    Ok(serde_json::json!({
-        "deleted": {
-            "project_id": project_id,
-            "subject_type": existing.subject_type,
-            "subject_id": existing.subject_id,
-        }
-    }))
+    Ok(RevokeProjectGrantResponse {
+        deleted: DeletedProjectSubjectGrantResponse {
+            project_id: project_id.to_string(),
+            subject_type: ContractProjectSubjectType::from(existing.subject_type),
+            subject_id: existing.subject_id,
+        },
+    })
 }
 
 async fn find_project_grant(
@@ -609,5 +545,23 @@ async fn project_response_for_user(
     project: Project,
 ) -> Result<ProjectResponse, ApiError> {
     let access = resolve_project_access(state, current_user, &project).await?;
-    Ok(ProjectResponse::new(project, access))
+    Ok(ProjectResponse::from_project(
+        project,
+        project_access_response(access),
+    ))
+}
+
+fn project_access_response(
+    access: agentdash_application::project::ProjectAuthorization,
+) -> ProjectAccessSummaryResponse {
+    ProjectAccessSummaryResponse {
+        role: access
+            .role
+            .map(agentdash_contracts::core::ProjectRole::from),
+        can_view: access.can_view_project(),
+        can_edit: access.can_edit_project(),
+        can_manage_sharing: access.can_manage_project_sharing(),
+        via_admin_bypass: access.via_admin_bypass,
+        via_template_visibility: access.via_template_visibility,
+    }
 }

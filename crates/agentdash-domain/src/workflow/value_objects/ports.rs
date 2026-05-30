@@ -1,13 +1,11 @@
-﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ts_rs::TS;
 
 /// Standalone 场景下 input port 的满足策略。
 ///
 /// Lifecycle 内运行时由 edge wire 自动满足；standalone（如主 agent 给子 agent
 /// 分配 workflow）时由此字段指示调用方如何提供输入。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StandaloneFulfillment {
     /// 调用方必须在启动前通过 `lifecycle://artifacts/{key}` 写入
@@ -21,7 +19,7 @@ pub enum StandaloneFulfillment {
 }
 /// 门禁策略：定义 output port 交付检查的严格程度。
 /// 实际检查逻辑由对应的 Rhai Hook Preset 实现。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GateStrategy {
     #[default]
@@ -31,7 +29,7 @@ pub enum GateStrategy {
 }
 
 /// Input port 上下文构建策略：控制前驱 output artifact 如何注入后继 session。
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextStrategy {
     #[default]
@@ -41,7 +39,7 @@ pub enum ContextStrategy {
     Custom,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutputPortDefinition {
     pub key: String,
     pub description: String,
@@ -51,7 +49,7 @@ pub struct OutputPortDefinition {
     pub gate_params: Option<Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InputPortDefinition {
     pub key: String,
     pub description: String,

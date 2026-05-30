@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
+use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -266,8 +266,7 @@ impl CompanionRequestTool {
                 "adoption_mode": adoption_mode,
             })),
         )
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
+        .await?;
 
         let session_services = self.session_services_handle.get().await.ok_or_else(|| {
             AgentToolError::ExecutionFailed(
@@ -449,8 +448,7 @@ impl CompanionRequestTool {
                 "constraint_count": dispatch_plan.slice.injections.iter().filter(|i| i.slot == "constraint").count(),
             })),
         )
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
+        .await?;
         record_subagent_trace(
             hook_session.as_ref(),
             Some(&session_services),
@@ -632,8 +630,7 @@ impl CompanionRequestTool {
                 &companion_context.companion_label,
                 Some(review_payload.clone()),
             )
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .await?;
             if let Some(action) = build_subagent_pending_action(
                 &companion_context.parent_turn_id,
                 &companion_context.companion_label,
@@ -914,7 +911,9 @@ impl CompanionRequestTool {
             .lifecycle_run_repo
             .create(&run)
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}")))?;
+            .map_err(|e| {
+                AgentToolError::ExecutionFailed(format!("持久化 lifecycle run 失败: {e}"))
+            })?;
 
         // SessionBinding creation removed; lifecycle run 已关联 session_id
 
@@ -1417,8 +1416,7 @@ impl CompanionRespondTool {
                 &companion_context.companion_label,
                 Some(hook_payload.clone()),
             )
-            .await
-            .map_err(AgentToolError::ExecutionFailed)?;
+            .await?;
             if let Some(action) = build_subagent_pending_action(
                 &companion_context.parent_turn_id,
                 &companion_context.companion_label,
@@ -1693,7 +1691,7 @@ async fn evaluate_subagent_hook(
     turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
-) -> Result<agentdash_spi::HookResolution, String> {
+) -> Result<agentdash_spi::HookResolution, AgentToolError> {
     let resolution = hook_session
         .evaluate(HookEvaluationQuery {
             session_id: hook_session.session_id().to_string(),
@@ -1707,7 +1705,7 @@ async fn evaluate_subagent_hook(
             token_stats: None,
         })
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
     if resolution.refresh_snapshot {
         hook_session
@@ -1717,7 +1715,7 @@ async fn evaluate_subagent_hook(
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
     }
 
     Ok(resolution)
@@ -1927,7 +1925,7 @@ pub fn build_companion_dispatch_prompt(plan: &CompanionDispatchPlan, user_prompt
 }
 
 struct CompanionDispatchConfig<'a> {
-    /// 主（父）Story session ID（borrow；类型语义等价于 `&String`）。
+    /// 主（父）Story session ID。
     parent_session_id: &'a str,
     parent_turn_id: &'a str,
     companion_label: &'a str,
@@ -2244,7 +2242,6 @@ pub fn companion_owner_candidates(
     Ok(owners)
 }
 
-
 fn companion_project_id_for_owner(
     snapshot: &agentdash_spi::SessionHookSnapshot,
     _owner_type: CapabilityScope,
@@ -2269,8 +2266,8 @@ mod companion_tests {
         build_companion_execution_slice, build_platform_capability_grant_payload,
         companion_owner_candidates,
     };
-    use agentdash_spi::CapabilityScope;
     use agentdash_spi::AgentTool;
+    use agentdash_spi::CapabilityScope;
     use agentdash_spi::{
         AgentConfig, AgentConnector, AgentInfo, ConnectorCapabilities, ConnectorError,
         ConnectorType, ExecutionContext, ExecutionStream, MountCapability, PromptPayload, Vfs,
@@ -2289,7 +2286,7 @@ mod companion_tests {
     use crate::session::{
         CompanionSessionContext, MemorySessionPersistence, SessionConstructionProvider,
     };
-    use crate::vfs::tools::provider::{SessionToolServices, SharedSessionToolServicesHandle};
+    use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 
     #[test]
     fn companion_owner_candidates_fallback_from_task_to_story() {

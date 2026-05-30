@@ -9,28 +9,17 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BackboneEvent } from "../../../generated/backbone-protocol";
 import { useSessionFeed } from "../model";
-import { SessionEntry } from "./SessionEntry";
-import { isAggregatedGroup, isAggregatedThinkingGroup } from "../model/types";
-import type { SessionDisplayItem, SessionEventEnvelope, TokenUsageInfo } from "../model/types";
 import { extractPlatformEventType } from "../model/platformEvent";
 import { promptSession, type ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
   useExecutorDiscoveredOptions,
-  ExecutorSelector,
 } from "../../executor-selector";
-import type { ExecutorConfigSource } from "../../executor-selector/model/types";
-import type { TaskSessionExecutorSummary } from "../../../types/context";
-import type { ProjectAgentExecutor } from "../../../types";
 import {
   useFileReference,
-  FilePickerPopup,
-  FileReferenceTags,
   buildPromptBlocks,
-  RichInput,
   type RichInputRef,
 } from "../../file-reference";
 import { batchReadFiles, type FileEntry } from "../../../services/filePicker";
@@ -40,292 +29,31 @@ import {
 import type { SessionExecutionState } from "../../../types";
 import { SessionProjectionView } from "./SessionProjectionView";
 import { SessionLineageView } from "./SessionLineageView";
+import {
+  SessionChatComposer,
+  SessionChatStatusBar,
+  SessionChatStream,
+} from "./SessionChatViewParts";
+import {
+  collectNewSystemEvents,
+  computeProjectionRefreshKey,
+  resolveExecutorFromHint,
+  toExecutorConfigSource,
+} from "./SessionChatViewModel";
+import type { SessionChatViewProps } from "./SessionChatViewTypes";
+
+export {
+  collectNewSystemEvents,
+  computeProjectionRefreshKey,
+} from "./SessionChatViewModel";
+export type {
+  PromptTemplate,
+  SessionChatViewProps,
+} from "./SessionChatViewTypes";
 
 // ─── 工具函数 ──────────────────────────────────────────
 
-/**
- * 把 ProjectAgentExecutor / TaskSessionExecutorSummary（snake_case）转成
- * useExecutorConfig 要求的 camelCase ExecutorConfigSource。空字段会被过滤掉。
- */
-function toExecutorConfigSource(
-  defaults: ProjectAgentExecutor | TaskSessionExecutorSummary | null | undefined,
-): ExecutorConfigSource | null {
-  if (!defaults) return null;
-  const source: ExecutorConfigSource = {};
-  if (defaults.executor) source.executor = defaults.executor;
-  if (defaults.provider_id) source.providerId = defaults.provider_id;
-  if (defaults.model_id) source.modelId = defaults.model_id;
-  if (defaults.thinking_level) source.thinkingLevel = defaults.thinking_level;
-  if (defaults.permission_policy) source.permissionPolicy = defaults.permission_policy;
-  return Object.keys(source).length === 0 ? null : source;
-}
-
-function getItemKey(item: SessionDisplayItem): string {
-  if (isAggregatedGroup(item)) return item.groupKey;
-  if (isAggregatedThinkingGroup(item)) return item.groupKey;
-  return item.id;
-}
-
-function formatTokens(n: number | undefined): string {
-  if (n == null) return "-";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function removeReferenceMarkers(prompt: string, relPath: string): string {
-  const escapedPath = escapeRegExp(relPath);
-  const fileMarker = new RegExp(`<file:${escapedPath}>`, "g");
-  const atMarker = new RegExp(`@${escapedPath}(?=\\s|$)`, "g");
-
-  let next = prompt.replace(fileMarker, "").replace(atMarker, "");
-  next = next.replace(/[ \t]{2,}/g, " ");
-  next = next.replace(/[ \t]+\n/g, "\n");
-  next = next.replace(/\n{3,}/g, "\n\n");
-  return next;
-}
-
-function normalizeExecutorToken(raw: string): string {
-  return raw.trim().replace(/[-\s]+/g, "_").toUpperCase();
-}
-
-function resolveExecutorFromHint(
-  hint: string | null | undefined,
-  executors: Array<{ id: string }>,
-): string | null {
-  const trimmed = (hint ?? "").trim();
-  if (!trimmed) return null;
-  const exact = executors.find((item) => item.id === trimmed);
-  if (exact) return exact.id;
-  const normalized = normalizeExecutorToken(trimmed);
-  const matched = executors.find((item) => normalizeExecutorToken(item.id) === normalized);
-  return matched?.id ?? trimmed;
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function collectNewSystemEvents(
-  rawEvents: SessionEventEnvelope[],
-  afterSeq: number,
-): {
-  items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }>;
-  lastSeenSeq: number;
-} {
-  const items: Array<{ eventSeq: number; eventType: string; event: BackboneEvent }> = [];
-  let lastSeenSeq = afterSeq;
-
-  for (const event of rawEvents) {
-    if (event.event_seq <= afterSeq) {
-      continue;
-    }
-    lastSeenSeq = Math.max(lastSeenSeq, event.event_seq);
-    const bbEvent = event.notification.event;
-    if (bbEvent.type !== "platform") {
-      continue;
-    }
-    const eventType = extractPlatformEventType(bbEvent);
-    if (!eventType) {
-      continue;
-    }
-    items.push({
-      eventSeq: event.event_seq,
-      eventType,
-      event: bbEvent,
-    });
-  }
-
-  return { items, lastSeenSeq };
-}
-
-function isCompactionSummaryFrame(event: BackboneEvent): boolean {
-  if (
-    event.type !== "platform" ||
-    event.payload.kind !== "session_meta_update" ||
-    event.payload.data.key !== "context_frame"
-  ) {
-    return false;
-  }
-  const value = event.payload.data.value;
-  return value !== null && typeof value === "object" && !Array.isArray(value) &&
-    value.kind === "compaction_summary";
-}
-
-function isProjectionRefreshEvent(event: BackboneEvent): boolean {
-  if (event.type === "turn_completed") {
-    return true;
-  }
-  if (event.type !== "platform") {
-    return false;
-  }
-  return extractPlatformEventType(event) === "context_compacted" ||
-    isCompactionSummaryFrame(event);
-}
-
-// eslint-disable-next-line react-refresh/only-export-components
-export function computeProjectionRefreshKey(rawEvents: SessionEventEnvelope[]): number {
-  let refreshKey = 0;
-  for (const event of rawEvents) {
-    if (isProjectionRefreshEvent(event.notification.event)) {
-      refreshKey = Math.max(refreshKey, event.event_seq);
-    }
-  }
-  return refreshKey;
-}
-
-// ─── 子组件 ────────────────────────────────────────────
-
-function ContextUsageRing({ usage }: { usage: TokenUsageInfo | null }) {
-  const [showDetail, setShowDetail] = useState(false);
-  if (!usage) return null;
-
-  const {
-    currentContextTokens,
-    effectiveContextWindow,
-    modelContextWindow,
-    pendingEstimateTokens,
-    total,
-    last,
-  } = usage;
-  const maxTokens = effectiveContextWindow ?? modelContextWindow;
-  const hasAny = currentContextTokens > 0 || total.totalTokens > 0 || last.totalTokens > 0;
-  if (!hasAny) return null;
-
-  const percent = maxTokens
-    ? Math.min(Math.round((currentContextTokens / maxTokens) * 100), 100)
-    : undefined;
-  const radius = 7;
-  const circumference = 2 * Math.PI * radius;
-  const strokeDash = percent != null ? (percent / 100) * circumference : 0;
-  const isHigh = percent != null && percent > 80;
-
-  return (
-    <span
-      className="relative flex items-center"
-      onMouseEnter={() => setShowDetail(true)}
-      onMouseLeave={() => setShowDetail(false)}
-    >
-      <svg width="20" height="20" className="shrink-0 -rotate-90">
-        <circle cx="10" cy="10" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/40" />
-        {percent != null && (
-          <circle
-            cx="10" cy="10" r={radius}
-            fill="none" strokeWidth="2.5" strokeLinecap="round"
-            strokeDasharray={`${strokeDash} ${circumference}`}
-            className={isHigh ? "text-warning" : "text-primary/70"}
-            stroke="currentColor"
-          />
-        )}
-      </svg>
-      {showDetail && (
-        <span className="absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md">
-          {percent != null && <span className="font-medium">{percent}% 上下文</span>}
-          {maxTokens != null && (
-            <span className="text-muted-foreground"> ({formatTokens(currentContextTokens)}/{formatTokens(maxTokens)})</span>
-          )}
-          {(last.inputTokens > 0 || last.outputTokens > 0 || pendingEstimateTokens > 0) && (
-            <span className="text-muted-foreground">
-              {percent != null ? " · " : ""}
-              {last.inputTokens > 0 && `↑${formatTokens(last.inputTokens)}`}
-              {last.inputTokens > 0 && last.outputTokens > 0 && " "}
-              {last.outputTokens > 0 && `↓${formatTokens(last.outputTokens)}`}
-              {pendingEstimateTokens > 0 && ` +${formatTokens(pendingEstimateTokens)}估算`}
-            </span>
-          )}
-        </span>
-      )}
-    </span>
-  );
-}
-
 // ─── 主组件 ────────────────────────────────────────────
-
-export interface PromptTemplate {
-  id: string;
-  label: string;
-  content: string;
-}
-
-export interface SessionChatViewProps {
-  /** 当前会话 ID，null 表示尚未创建 */
-  sessionId: string | null;
-  /** 文件引用依赖的工作空间上下文 */
-  workspaceId?: string | null;
-
-  // ─── 会话生命周期 ────────────────────────────────────
-
-  /** 无 session 时用户发送第一条消息，由父组件创建会话并返回新 ID */
-  onCreateSession?: (title: string) => Promise<string>;
-
-  /** session ID 变更后回调（创建新 session 时触发） */
-  onSessionIdChange?: (id: string) => void;
-
-  /** 消息发送成功后回调（父组件可刷新列表等） */
-  onMessageSent?: () => void;
-
-  /** Agent turn 结束时回调（turn_completed / turn_failed） */
-  onTurnEnd?: () => void;
-
-  /** 收到系统事件时回调，用于父层按事件驱动刷新额外状态面板 */
-  onSystemEvent?: (eventType: string, event: BackboneEvent) => void;
-
-  // ─── 执行器 ──────────────────────────────────────────
-
-  /** 执行器提示（如 task 的 agent_type），自动映射为执行器选择 */
-  executorHint?: string | null;
-
-  /**
-   * 当前 session 绑定的执行器默认值（来自 agent 配置或 session context 真值）。
-   * 进入会话 / 切换会话时会被用来 hydrate 本地 executor 状态，避免默认显示"选择模型…"。
-   * 用户手动改过之后不会被再次覆盖（按 sessionId 计一次）。
-   */
-  agentDefaults?: ProjectAgentExecutor | TaskSessionExecutorSummary | null;
-
-  /** 隐藏执行器选择器（当外部已确定执行器时，如 Task 场景） */
-  showExecutorSelector?: boolean;
-
-  // ─── 自定义发送流程 ──────────────────────────────────
-
-  /**
-   * 全接管发送流程 — 替换默认 onCreateSession + promptSession 链路。
-   * sessionId 为 null 时代表首次发送（可在此创建会话）。
-   * prompt 可为空（如 Task 无额外指令直接执行）。
-   * 返回后 SessionChatView 自动清空输入。
-   */
-  customSend?: (
-    sessionId: string | null,
-    prompt: string,
-    executorConfig?: ExecutorConfig,
-  ) => Promise<void>;
-
-  // ─── 布局插槽 ────────────────────────────────────────
-
-  /** 渲染在状态栏下方、流区域上方 */
-  headerSlot?: React.ReactNode;
-
-  /** 渲染在执行器选择器上方（如 owner binding 信息） */
-  inputPrefix?: React.ReactNode;
-
-  /** 注入到流区域顶部的固定内容（如 Task 上下文卡片），始终显示 */
-  streamPrefixContent?: React.ReactNode;
-
-  /** 隐藏内置连接状态栏 */
-  showStatusBar?: boolean;
-
-  /** 无 session 时显示的 prompt 模板按钮 */
-  promptTemplates?: PromptTemplate[];
-
-  /** 输入框占位符 */
-  inputPlaceholder?: string;
-
-  /** 自定义主按钮文本（非运行状态时），默认 "发送" */
-  idleSendLabel?: string;
-
-  /** 初始输入值（仅首次挂载时填充） */
-  initialInputValue?: string;
-}
 
 const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 
@@ -770,46 +498,19 @@ export function SessionChatView({
     <div className="flex h-full flex-col overflow-hidden">
       {/* 内置状态栏 — 可通过 showStatusBar=false 隐藏 */}
       {showStatusBar && (
-        <div className="flex shrink-0 items-center gap-2.5 border-b border-border bg-background px-5 py-2">
-          <span className="flex items-center gap-1.5 rounded-[8px] border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground">
-            <span className={`inline-block h-1.5 w-1.5 rounded-full ${connectionColor}`} />
-            {connectionLabel}
-          </span>
-          {isActionRunning && (
-            <span className="flex items-center gap-1 rounded-[8px] border border-primary/20 bg-primary/8 px-2.5 py-1 text-xs text-primary">
-              {/* eslint-disable-next-line no-restricted-syntax */}
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-              {isConnected ? "接收中" : "执行中"}
-            </span>
-          )}
-          <ContextUsageRing usage={tokenUsage} />
-          {hasSession && sessionId && (
-            <>
-              <button
-                type="button"
-                onClick={() => setShowLineageView((value) => !value)}
-                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-                  showLineageView
-                    ? "border-primary/30 bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}
-              >
-                分支
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowProjectionView((value) => !value)}
-                className={`rounded-[8px] border px-2.5 py-1 text-xs transition-colors ${
-                  showProjectionView
-                    ? "border-primary/30 bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:bg-secondary hover:text-foreground"
-                }`}
-              >
-                上下文
-              </button>
-            </>
-          )}
-        </div>
+        <SessionChatStatusBar
+          connectionColor={connectionColor}
+          connectionLabel={connectionLabel}
+          hasSession={hasSession}
+          isActionRunning={isActionRunning}
+          isConnected={isConnected}
+          sessionId={sessionId}
+          showLineageView={showLineageView}
+          showProjectionView={showProjectionView}
+          tokenUsage={tokenUsage}
+          onToggleLineage={() => setShowLineageView((value) => !value)}
+          onToggleProjection={() => setShowProjectionView((value) => !value)}
+        />
       )}
 
       {showLineageView && sessionId && (
@@ -842,167 +543,42 @@ export function SessionChatView({
         </div>
       )}
 
-      {/* 流显示区 */}
-      <div
-        ref={containerRef}
+      <SessionChatStream
+        containerRef={containerRef}
+        displayItems={displayItems}
+        hasSession={hasSession}
+        isLoading={isLoading}
+        sessionId={sessionId}
+        streamingEntryId={streamingEntryId}
+        streamPrefixContent={streamPrefixContent}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto"
-      >
-        {hasSession && isLoading && displayItems.length === 0 && !streamPrefixContent ? (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              {/* eslint-disable-next-line no-restricted-syntax */}
-              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <p className="mt-2 text-sm text-muted-foreground">正在连接…</p>
-            </div>
-          </div>
-        ) : (hasSession && displayItems.length > 0) || streamPrefixContent ? (
-          <div className="mx-auto w-full max-w-4xl space-y-3 px-5 py-6">
-            {streamPrefixContent}
-            {displayItems.map((item) => {
-              const key = getItemKey(item);
-              return (
-                <div key={key}>
-                  <SessionEntry
-                    item={item}
-                    isStreaming={key === streamingEntryId}
-                    sessionId={sessionId}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto mb-4 w-fit rounded-[8px] border border-dashed border-border bg-secondary px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                Session
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {hasSession ? "会话已就绪，继续发送消息" : "输入 prompt 并发送开始会话"}
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
+      />
 
       {/* 输入区 */}
-      <div className="shrink-0 border-t border-border bg-background">
-        <div className="mx-auto w-full max-w-4xl px-5 py-4">
-          {/* prompt 模板（仅默认模式） */}
-          {!hasSession && !customSend && promptTemplates && promptTemplates.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {promptTemplates.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  onClick={() => richInputRef.current?.setValue(tpl.content)}
-                  className="rounded-[8px] border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                >
-                  {tpl.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {inputPrefix}
-
-          {/* 执行器选择（可隐藏） */}
-          {showExecutorSelector && (
-            <ExecutorSelector
-              executors={discovery.executors}
-              isLoading={discovery.isLoading}
-              error={discovery.error}
-              discoveredOptions={discovered.options}
-              discoveredError={discovered.error}
-              isDiscoveredLoading={
-                Boolean(execConfig.executor.trim()) &&
-                (!discovered.isInitialized || (discovered.options?.loading_models ?? false))
-              }
-              onDiscoveredReconnect={discovered.reconnect}
-              executor={execConfig.executor}
-              providerId={execConfig.providerId}
-              modelId={execConfig.modelId}
-              thinkingLevel={execConfig.thinkingLevel}
-              permissionPolicy={execConfig.permissionPolicy}
-              onExecutorChange={execConfig.setExecutor}
-              onProviderIdChange={execConfig.setProviderId}
-              onModelIdChange={execConfig.setModelId}
-              onThinkingLevelChange={execConfig.setThinkingLevel}
-              onPermissionPolicyChange={execConfig.setPermissionPolicy}
-              onReset={execConfig.reset}
-              onRefetch={discovery.refetch}
-            />
-          )}
-
-          {/* 富文本输入 */}
-          <div className={`relative rounded-[14px] border border-border bg-secondary/60 p-3${showExecutorSelector ? " mt-3" : ""}`}>
-            <FileReferenceTags
-              references={fileRef.references}
-              onRemove={(relPath) => {
-                fileRef.removeReference(relPath);
-                const cur = richInputRef.current?.getValue() ?? "";
-                const next = removeReferenceMarkers(cur, relPath);
-                richInputRef.current?.setValue(next);
-              }}
-            />
-
-            <div className="relative flex gap-3">
-              <div className="relative flex-1">
-                <FilePickerPopup
-                  open={fileRef.pickerOpen}
-                  query={fileRef.pickerQuery}
-                  files={fileRef.pickerFiles}
-                  loading={fileRef.pickerLoading}
-                  error={fileRef.pickerError}
-                  selectedIndex={fileRef.selectedIndex}
-                  onQueryChange={fileRef.updateQuery}
-                  onSelect={handleFileSelected}
-                  onClose={fileRef.closePicker}
-                  onMoveSelection={fileRef.moveSelection}
-                  onConfirmSelection={() => {
-                    const selectedFile = fileRef.pickerFiles[fileRef.selectedIndex];
-                    if (!selectedFile) return;
-                    handleFileSelected(selectedFile);
-                  }}
-                />
-                <RichInput
-                  ref={richInputRef}
-                  placeholder={inputPlaceholder ?? (hasSession ? "继续对话，@ 引用文件，Ctrl+Enter 发送…" : "输入 prompt，@ 引用文件，Ctrl+Enter 发送…")}
-                  onChange={setInputValue}
-                  onKeyDown={handleKeyDown}
-                  onAtTrigger={handleAtTrigger}
-                  onFileReferenceRemoved={(relPath) => { fileRef.removeReference(relPath); }}
-                  disabled={isSending}
-                />
-              </div>
-              <div className="flex flex-col gap-2 self-end">
-                <button
-                  type="button"
-                  disabled={
-                    isSending ||
-                    isCancelling ||
-                    (hasSession && isActionRunning
-                      ? false
-                      : customSend ? false : !inputValue.trim())
-                  }
-                  onClick={() => { void handlePrimaryAction(); }}
-                  className={`h-10 w-20 rounded-[12px] border text-sm font-medium transition-colors disabled:opacity-50 ${
-                    hasSession && isActionRunning
-                      ? "border-border bg-background text-foreground hover:bg-secondary"
-                      : "border-primary bg-primary text-primary-foreground hover:opacity-95"
-                  }`}
-                >
-                  {isSending ? "…" : isCancelling ? "取消中…" : hasSession && isActionRunning ? "取消" : idleSendLabel}
-                </button>
-              </div>
-            </div>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground/60">
-            Ctrl+Enter 快捷发送 · {workspaceId ? "@ 引用工作空间文件" : "当前会话未绑定工作空间，@ 文件引用不可用"}
-          </p>
-        </div>
-      </div>
+      <SessionChatComposer
+        customSend={customSend}
+        discovery={discovery}
+        discovered={discovered}
+        execConfig={execConfig}
+        fileRef={fileRef}
+        hasSession={hasSession}
+        idleSendLabel={idleSendLabel}
+        inputPlaceholder={inputPlaceholder}
+        inputPrefix={inputPrefix}
+        inputValue={inputValue}
+        isActionRunning={isActionRunning}
+        isCancelling={isCancelling}
+        isSending={isSending}
+        promptTemplates={promptTemplates}
+        richInputRef={richInputRef}
+        showExecutorSelector={showExecutorSelector}
+        workspaceId={workspaceId}
+        onAtTrigger={handleAtTrigger}
+        onFileSelected={handleFileSelected}
+        onInputChange={setInputValue}
+        onKeyDown={handleKeyDown}
+        onPrimaryAction={() => { void handlePrimaryAction(); }}
+      />
     </div>
   );
 }

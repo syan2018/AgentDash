@@ -328,55 +328,6 @@ pub struct ExecResult {
 }
 
 // ============================================================================
-// Watch / events
-// ============================================================================
-
-/// 文件变更事件 kind。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MountEventKind {
-    Created,
-    Modified,
-    Deleted,
-    /// 重命名/移动。并非所有 provider 都能精确区分此类别，
-    /// 不支持时应降级为 Deleted + Created。
-    Renamed,
-}
-
-/// 单次 mount 内容变更事件。
-///
-/// 由 `MountProvider::watch` 返回的通道推送。供编排引擎、UI、hook
-/// 等消费者响应存储变更，替代轮询。
-#[derive(Debug, Clone)]
-pub struct MountEvent {
-    pub mount_id: String,
-    pub path: String,
-    pub kind: MountEventKind,
-    /// Unix 毫秒时间戳。
-    pub timestamp_ms: i64,
-}
-
-impl MountEvent {
-    pub fn new(mount_id: impl Into<String>, path: impl Into<String>, kind: MountEventKind) -> Self {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        Self {
-            mount_id: mount_id.into(),
-            path: path.into(),
-            kind,
-            timestamp_ms: now_ms,
-        }
-    }
-}
-
-/// 事件订阅句柄。
-///
-/// 基于 tokio broadcast channel：多订阅者共享同一事件流，掉队的订阅者
-/// 会收到 `RecvError::Lagged`（由消费侧自行处理）。
-pub type MountEventReceiver = tokio::sync::broadcast::Receiver<MountEvent>;
-
-// ============================================================================
 // Context
 // ============================================================================
 
@@ -395,21 +346,13 @@ pub struct MountOperationContext {
 }
 
 // ============================================================================
-// MountProvider trait
+// Mount provider traits
 // ============================================================================
 
-/// Unified mount I/O provider trait.
-///
-/// Each provider handles a specific `provider` string (e.g. `"relay_fs"`,
-/// `"inline_fs"`, `"km_bridge"`).  The mount dispatcher resolves the
-/// mount, looks up the matching provider, and delegates.
+/// Provider metadata and availability descriptor.
 #[async_trait]
-pub trait MountProvider: Send + Sync {
+pub trait ProviderDescriptor: Send + Sync {
     fn provider_id(&self) -> &str;
-
-    // ---- 服务协商元信息 ----
-    // 内置 provider (relay_fs, inline_fs, lifecycle_vfs) 不需要覆盖这些方法。
-    // 插件 provider 覆盖后，前端通过 /api/mount-providers 自动发现可配置的服务。
 
     /// 用户可见的显示名称。默认返回 provider_id。
     fn display_name(&self) -> &str {
@@ -430,6 +373,43 @@ pub trait MountProvider: Send + Sync {
     /// 内置 provider 返回 false，插件 provider 按需返回 true。
     fn is_user_configurable(&self) -> bool {
         false
+    }
+
+    /// Whether this mount can be used right now (e.g. relay backend connected).
+    async fn is_available(&self, _mount: &Mount) -> bool {
+        true
+    }
+}
+
+/// Unified mount provider object used by the dispatcher registry.
+#[async_trait]
+pub trait MountProvider: Send + Sync {
+    fn provider_id(&self) -> &str;
+
+    /// 用户可见的显示名称。默认返回 provider_id。
+    fn display_name(&self) -> &str {
+        self.provider_id()
+    }
+
+    /// root_ref 的格式提示，前端作为 placeholder 展示。
+    fn root_ref_hint(&self) -> &str {
+        ""
+    }
+
+    /// 该 provider 支持的 capability 列表（用于前端预填）。
+    fn supported_capabilities(&self) -> Vec<&str> {
+        vec!["read", "list"]
+    }
+
+    /// 是否允许用户在 Context Container 编辑器中直接配置。
+    /// 内置 provider 返回 false，插件 provider 按需返回 true。
+    fn is_user_configurable(&self) -> bool {
+        false
+    }
+
+    /// Whether this mount can be used right now (e.g. relay backend connected).
+    async fn is_available(&self, _mount: &Mount) -> bool {
+        true
     }
 
     async fn read_text(
@@ -468,47 +448,6 @@ pub trait MountProvider: Send + Sync {
             version_token: full.version_token,
             modified_at: full.modified_at,
         })
-    }
-
-    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
-    ///
-    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
-    ///
-    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
-    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
-    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
-    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
-    async fn suggest_paths(
-        &self,
-        mount: &Mount,
-        prefix: &str,
-        limit: usize,
-        ctx: &MountOperationContext,
-    ) -> Result<Vec<String>, MountError> {
-        const MAX_SCAN_FILES: usize = 1000;
-        let listing = self
-            .list(
-                mount,
-                &ListOptions {
-                    path: String::new(),
-                    pattern: None,
-                    recursive: true,
-                },
-                ctx,
-            )
-            .await?;
-        let mut scored: Vec<(usize, String)> = listing
-            .entries
-            .into_iter()
-            .filter(|e| !e.is_dir)
-            .take(MAX_SCAN_FILES)
-            .map(|e| {
-                let dist = strsim::levenshtein(prefix, &e.path);
-                (dist, e.path)
-            })
-            .collect();
-        scored.sort_by_key(|(d, _)| *d);
-        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
     }
 
     async fn read_binary(
@@ -584,12 +523,84 @@ pub trait MountProvider: Send + Sync {
         ctx: &MountOperationContext,
     ) -> Result<ListResult, MountError>;
 
+    async fn exec(
+        &self,
+        mount: &Mount,
+        request: &ExecRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError> {
+        let _ = (mount, request, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support exec",
+            self.provider_id()
+        )))
+    }
+
+    /// 查询文件元数据（不读取内容）。
+    ///
+    /// 类比 POSIX `stat()`：只返回 path/size/mtime/attributes 等属性，
+    /// 不读取 content。适合需要元数据但不需要正文的场景。
+    /// 默认实现回退为 `list` + 过滤。插件 provider 如果有更高效的元数据通道
+    /// （例如 KM 的 metadata API），应覆盖此方法。
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError> {
+        let _ = (mount, path, ctx);
+        Err(MountError::NotSupported(format!(
+            "provider `{}` does not support stat",
+            self.provider_id()
+        )))
+    }
     async fn search_text(
         &self,
         mount: &Mount,
         query: &SearchQuery,
         ctx: &MountOperationContext,
     ) -> Result<SearchResult, MountError>;
+
+    /// 在 mount 内为 `prefix` 查找最相似的文件路径，按 levenshtein 距离升序返回。
+    ///
+    /// 用于 fs_read 的 ENOENT 友好提示（"did you mean ...?"）。
+    ///
+    /// 默认实现 = `list(recursive=true)` + 内存中按 levenshtein 排序，扫描前
+    /// `MAX_SCAN_FILES = 1000` 个条目即停（避免在大型 mount 上的 O(N) 成本爆炸）。
+    /// 调用方应传 `limit ≤ 5`。大型 mount 上的 provider（如包含巨型 git repo
+    /// 的 lifecycle）应覆盖此方法，用更高效的 prefix 索引（trigram / fst）。
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        const MAX_SCAN_FILES: usize = 1000;
+        let listing = self
+            .list(
+                mount,
+                &ListOptions {
+                    path: String::new(),
+                    pattern: None,
+                    recursive: true,
+                },
+                ctx,
+            )
+            .await?;
+        let mut scored: Vec<(usize, String)> = listing
+            .entries
+            .into_iter()
+            .filter(|e| !e.is_dir)
+            .take(MAX_SCAN_FILES)
+            .map(|e| {
+                let dist = strsim::levenshtein(prefix, &e.path);
+                (dist, e.path)
+            })
+            .collect();
+        scored.sort_by_key(|(d, _)| *d);
+        Ok(scored.into_iter().take(limit).map(|(_, p)| p).collect())
+    }
 
     /// grep 风格搜索：`base.pattern` 始终正则，支持 include_glob / context /
     /// multiline / output_mode。
@@ -716,6 +727,202 @@ pub trait MountProvider: Send + Sync {
             truncated: false,
         })
     }
+}
+
+#[async_trait]
+impl<T> ProviderDescriptor for T
+where
+    T: MountProvider + ?Sized,
+{
+    fn provider_id(&self) -> &str {
+        MountProvider::provider_id(self)
+    }
+
+    fn display_name(&self) -> &str {
+        MountProvider::display_name(self)
+    }
+
+    fn root_ref_hint(&self) -> &str {
+        MountProvider::root_ref_hint(self)
+    }
+
+    fn supported_capabilities(&self) -> Vec<&str> {
+        MountProvider::supported_capabilities(self)
+    }
+
+    fn is_user_configurable(&self) -> bool {
+        MountProvider::is_user_configurable(self)
+    }
+
+    async fn is_available(&self, mount: &Mount) -> bool {
+        MountProvider::is_available(self, mount).await
+    }
+}
+
+/// Provider I/O responsibilities.
+#[async_trait]
+pub trait MountIo: ProviderDescriptor {
+    async fn read_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError>;
+
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError>;
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError>;
+
+    async fn write_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        content: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities;
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError>;
+
+    async fn list(
+        &self,
+        mount: &Mount,
+        options: &ListOptions,
+        ctx: &MountOperationContext,
+    ) -> Result<ListResult, MountError>;
+
+    async fn exec(
+        &self,
+        mount: &Mount,
+        request: &ExecRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError>;
+
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError>;
+}
+
+#[async_trait]
+impl<T> MountIo for T
+where
+    T: MountProvider + ?Sized,
+{
+    async fn read_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        MountProvider::read_text(self, mount, path, ctx).await
+    }
+
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        MountProvider::read_text_range(self, mount, path, offset, limit, ctx).await
+    }
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        MountProvider::read_binary(self, mount, path, ctx).await
+    }
+
+    async fn write_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        content: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::write_text(self, mount, path, content, ctx).await
+    }
+
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities {
+        MountProvider::edit_capabilities(self, mount)
+    }
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::delete_text(self, mount, path, ctx).await
+    }
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::rename_text(self, mount, from_path, to_path, ctx).await
+    }
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError> {
+        MountProvider::apply_patch(self, mount, request, ctx).await
+    }
+
+    async fn list(
+        &self,
+        mount: &Mount,
+        options: &ListOptions,
+        ctx: &MountOperationContext,
+    ) -> Result<ListResult, MountError> {
+        MountProvider::list(self, mount, options, ctx).await
+    }
 
     async fn exec(
         &self,
@@ -723,54 +930,76 @@ pub trait MountProvider: Send + Sync {
         request: &ExecRequest,
         ctx: &MountOperationContext,
     ) -> Result<ExecResult, MountError> {
-        let _ = (mount, request, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support exec",
-            self.provider_id()
-        )))
+        MountProvider::exec(self, mount, request, ctx).await
     }
 
-    /// 查询文件元数据（不读取内容）。
-    ///
-    /// 类比 POSIX `stat()`：只返回 path/size/mtime/attributes 等属性，
-    /// 不读取 content。适合需要元数据但不需要正文的场景。
-    /// 默认实现回退为 `list` + 过滤。插件 provider 如果有更高效的元数据通道
-    /// （例如 KM 的 metadata API），应覆盖此方法。
     async fn stat(
         &self,
         mount: &Mount,
         path: &str,
         ctx: &MountOperationContext,
     ) -> Result<RuntimeFileEntry, MountError> {
-        let _ = (mount, path, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support stat",
-            self.provider_id()
-        )))
+        MountProvider::stat(self, mount, path, ctx).await
     }
+}
 
-    /// 订阅 mount 内容变更事件。
-    ///
-    /// 返回一个 broadcast receiver；调用方可通过 `.recv().await` 消费事件。
-    /// `path` 为空串表示订阅整个 mount；非空则表示订阅该子树。
-    ///
-    /// 该能力与 `MountCapability::Watch` 对应。默认返回 `NotSupported`。
-    async fn watch(
+/// Provider search responsibilities.
+#[async_trait]
+pub trait MountSearch: ProviderDescriptor {
+    async fn search_text(
         &self,
         mount: &Mount,
-        path: &str,
+        query: &SearchQuery,
         ctx: &MountOperationContext,
-    ) -> Result<MountEventReceiver, MountError> {
-        let _ = (mount, path, ctx);
-        Err(MountError::NotSupported(format!(
-            "provider `{}` does not support watch",
-            self.provider_id()
-        )))
+    ) -> Result<SearchResult, MountError>;
+
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError>;
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError>;
+}
+
+#[async_trait]
+impl<T> MountSearch for T
+where
+    T: MountProvider + ?Sized,
+{
+    async fn search_text(
+        &self,
+        mount: &Mount,
+        query: &SearchQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        MountProvider::search_text(self, mount, query, ctx).await
     }
 
-    /// Whether this mount can be used right now (e.g. relay backend connected).
-    async fn is_available(&self, _mount: &Mount) -> bool {
-        true
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        MountProvider::suggest_paths(self, mount, prefix, limit, ctx).await
+    }
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        MountProvider::grep_text(self, mount, query, ctx).await
     }
 }
 
@@ -910,20 +1139,20 @@ mod tests {
             ("b.rs", "fn baz() {}"),
             ("README.md", "no functions here"),
         ]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: r"fn \w+".to_string(),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: r"fn \w+".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         // 命中 a.rs 两行 + b.rs 一行 = 3 个 match
         assert_eq!(result.matches.len(), 3);
         assert!(result.matches.iter().any(|m| m.path == "a.rs"));
@@ -935,21 +1164,21 @@ mod tests {
     async fn grep_text_default_respects_include_glob() {
         let provider =
             MockProvider::new(&[("src/main.rs", "fn x() {}"), ("docs/notes.md", "fn x() {}")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: r"fn \w+".to_string(),
-                        ..Default::default()
-                    },
-                    include_glob: Some("**/*.rs".to_string()),
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: r"fn \w+".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                include_glob: Some("**/*.rs".to_string()),
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].path, "src/main.rs");
     }
@@ -957,22 +1186,22 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_provides_before_after_context() {
         let provider = MockProvider::new(&[("log.txt", "L1\nL2\nNEEDLE\nL4\nL5")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "NEEDLE".to_string(),
-                        ..Default::default()
-                    },
-                    before_lines: 1,
-                    after_lines: 1,
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "NEEDLE".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                before_lines: 1,
+                after_lines: 1,
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         let contents: Vec<&str> = result.matches.iter().map(|m| m.content.as_str()).collect();
         assert!(contents.contains(&"L2"));
         assert!(contents.contains(&"NEEDLE"));
@@ -985,20 +1214,20 @@ mod tests {
     async fn grep_text_default_skips_binary_entries() {
         let provider = MockProvider::new(&[("text.md", "needle in text")]);
         provider.add_binary("image.png");
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "needle".to_string(),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "needle".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         // binary 条目跳过，只命中 text.md
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].path, "text.md");
@@ -1007,21 +1236,21 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_case_insensitive() {
         let provider = MockProvider::new(&[("a.rs", "Hello WORLD")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "world".to_string(),
-                        case_sensitive: false,
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "world".to_string(),
+                    case_sensitive: false,
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].content.contains("WORLD"));
     }
@@ -1029,21 +1258,21 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_truncates_at_max_results() {
         let provider = MockProvider::new(&[("a.rs", "x\nx\nx\nx\nx")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "x".to_string(),
-                        max_results: Some(2),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "x".to_string(),
+                    max_results: Some(2),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 2);
         assert!(result.truncated);
     }

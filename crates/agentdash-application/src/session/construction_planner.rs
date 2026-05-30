@@ -30,7 +30,7 @@ use crate::{
         derive_session_skill_baseline,
     },
     vfs::{
-        VfsService, SessionMountTarget, append_agent_knowledge_mounts,
+        SessionMountTarget, VfsService, append_agent_knowledge_mounts,
         apply_agent_vfs_access_grants,
     },
     workflow::{

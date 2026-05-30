@@ -6,8 +6,6 @@ use agentdash_domain::backend::{
 };
 use agentdash_domain::common::error::DomainError;
 
-use super::parse_pg_timestamp_checked;
-
 pub struct PostgresRuntimeHealthRepository {
     pool: PgPool,
 }
@@ -67,11 +65,11 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(sqlx::types::Json(&update.capabilities))
         .bind(sqlx::types::Json(&update.workspace_roots))
         .bind(sqlx::types::Json(&update.device))
-        .bind(update.connected_at.to_rfc3339())
-        .bind(now.to_rfc3339())
+        .bind(update.connected_at)
+        .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -93,10 +91,10 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         )
         .bind(backend_id)
         .bind(sqlx::types::Json(capabilities))
-        .bind(now.to_rfc3339())
+        .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -110,10 +108,10 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
             "#,
         )
         .bind(backend_id)
-        .bind(seen_at.to_rfc3339())
+        .bind(seen_at)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -134,11 +132,11 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
             "#,
         )
         .bind(backend_id)
-        .bind(disconnected_at.to_rfc3339())
+        .bind(disconnected_at)
         .bind(reason)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
         Ok(())
     }
 
@@ -170,7 +168,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         .bind(backend_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(TryInto::try_into).transpose()
     }
@@ -199,7 +197,7 @@ impl RuntimeHealthRepository for PostgresRuntimeHealthRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
@@ -215,12 +213,12 @@ struct RuntimeHealthRow {
     capabilities: sqlx::types::Json<serde_json::Value>,
     workspace_roots: sqlx::types::Json<serde_json::Value>,
     device: sqlx::types::Json<serde_json::Value>,
-    connected_at: Option<String>,
-    last_seen_at: Option<String>,
-    disconnected_at: Option<String>,
+    connected_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
+    disconnected_at: Option<chrono::DateTime<chrono::Utc>>,
     disconnect_reason: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<RuntimeHealthRow> for RuntimeHealth {
@@ -239,32 +237,14 @@ impl TryFrom<RuntimeHealthRow> for RuntimeHealth {
             capabilities: row.capabilities.0,
             workspace_roots,
             device: row.device.0,
-            connected_at: parse_optional_timestamp(
-                row.connected_at,
-                "runtime_health.connected_at",
-            )?,
-            last_seen_at: parse_optional_timestamp(
-                row.last_seen_at,
-                "runtime_health.last_seen_at",
-            )?,
-            disconnected_at: parse_optional_timestamp(
-                row.disconnected_at,
-                "runtime_health.disconnected_at",
-            )?,
+            connected_at: row.connected_at,
+            last_seen_at: row.last_seen_at,
+            disconnected_at: row.disconnected_at,
             disconnect_reason: row.disconnect_reason,
-            created_at: parse_pg_timestamp_checked(&row.created_at, "runtime_health.created_at")?,
-            updated_at: parse_pg_timestamp_checked(&row.updated_at, "runtime_health.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
-}
-
-fn parse_optional_timestamp(
-    raw: Option<String>,
-    field: &str,
-) -> Result<Option<DateTime<Utc>>, DomainError> {
-    raw.as_deref()
-        .map(|value| parse_pg_timestamp_checked(value, field))
-        .transpose()
 }
 
 fn parse_runtime_health_status(raw: &str) -> Result<RuntimeHealthStatus, DomainError> {

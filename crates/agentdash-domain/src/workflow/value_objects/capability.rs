@@ -1,8 +1,6 @@
-﻿use std::fmt;
+use std::fmt;
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ts_rs::TS;
 
 use super::MountDirective;
 
@@ -11,14 +9,13 @@ use super::MountDirective;
 /// 工具能力、资源挂载、上下文和策略都属于顶层 Capability Model 的不同维度。
 /// 当前已经落地 tool 与 mount 两个维度，后续 context overlay、permission policy、
 /// resource budget 等能力维度继续扩展在这里。
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct CapabilityConfig {
     /// 工具能力维度的声明式变更。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_directives: Vec<ToolCapabilityDirective>,
     /// VFS/mount 维度的声明式变更。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[ts(type = "Array<unknown>")]
     pub mount_directives: Vec<MountDirective>,
 }
 // ── ToolCapability 路径 ──
@@ -33,8 +30,7 @@ pub struct CapabilityConfig {
 ///
 /// JSON 形式序列化为 qualified string：`"file_read"` / `"file_read::fs_grep"`
 /// / `"workflow_management::upsert_workflow_tool"` / `"mcp:code_analyzer::scan"`。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema, TS)]
-#[ts(type = "string")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ToolCapabilityPath {
     pub capability: String,
     pub tool: Option<String>,
@@ -136,7 +132,7 @@ impl<'de> Deserialize<'de> for ToolCapabilityPath {
 ///
 /// `Add(path)` 追加能力或启用工具，`Remove(path)` 屏蔽能力或屏蔽工具。
 /// `path` 为短 path 表示能力级操作；长 path 表示工具级操作。
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolCapabilityDirective {
     Add(ToolCapabilityPath),

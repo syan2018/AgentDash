@@ -7,10 +7,9 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_contracts::vfs::{
-    CreateProjectVfsMountRequest, InstalledAssetSourceResponse,
-    MountCapability as ContractMountCapability,
-    ProjectVfsMountContent as ContractProjectVfsMountContent, ProjectVfsMountResponse,
-    UpdateProjectVfsMountRequest,
+    CreateProjectVfsMountRequest, DeleteProjectVfsMountResponse, InstalledAssetSourceResponse,
+    ProjectVfsMountContentDto as ContractProjectVfsMountContent, ProjectVfsMountResponse,
+    UpdateProjectVfsMountRequest, VfsCapabilityDto as ContractMountCapability,
 };
 use agentdash_domain::common::MountCapability as DomainMountCapability;
 use agentdash_domain::inline_file::InlineFileOwnerKind;
@@ -26,6 +25,20 @@ use crate::rpc::ApiError;
 #[derive(Debug, Deserialize)]
 pub struct ProjectPath {
     pub project_id: String,
+}
+
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/projects/{project_id}/vfs-mounts",
+            axum::routing::get(list_vfs_mounts).post(create_vfs_mount),
+        )
+        .route(
+            "/projects/{project_id}/vfs-mounts/{mount_id}",
+            axum::routing::get(get_vfs_mount)
+                .put(update_vfs_mount)
+                .delete(delete_vfs_mount),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,8 +65,7 @@ pub async fn list_vfs_mounts(
         .repos
         .project_vfs_mount_repo
         .list_by_project(project_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .await?;
     Ok(Json(
         mounts.into_iter().map(project_vfs_mount_response).collect(),
     ))
@@ -84,8 +96,7 @@ pub async fn create_vfs_mount(
         .repos
         .project_vfs_mount_repo
         .get_by_project_and_mount_id(project_id, &mount_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .await?
         .is_some()
     {
         return Err(ApiError::Conflict(format!(
@@ -106,12 +117,7 @@ pub async fn create_vfs_mount(
         created_at: now,
         updated_at: now,
     };
-    state
-        .repos
-        .project_vfs_mount_repo
-        .create(&mount)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    state.repos.project_vfs_mount_repo.create(&mount).await?;
     Ok(Json(project_vfs_mount_response(mount)))
 }
 
@@ -133,8 +139,7 @@ pub async fn get_vfs_mount(
         .repos
         .project_vfs_mount_repo
         .get_by_project_and_mount_id(project_id, mount_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
     Ok(Json(project_vfs_mount_response(mount)))
 }
@@ -158,8 +163,7 @@ pub async fn update_vfs_mount(
         .repos
         .project_vfs_mount_repo
         .get_by_project_and_mount_id(project_id, &old_mount_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
 
     let new_mount_id = normalize_identifier(&req.mount_id, "mount_id")?;
@@ -168,8 +172,7 @@ pub async fn update_vfs_mount(
             .repos
             .project_vfs_mount_repo
             .get_by_project_and_mount_id(project_id, &new_mount_id)
-            .await
-            .map_err(|error| ApiError::Internal(error.to_string()))?
+            .await?
             .is_some()
     {
         return Err(ApiError::Conflict(format!(
@@ -190,12 +193,7 @@ pub async fn update_vfs_mount(
     mount.content = new_content;
     mount.capabilities = normalize_capabilities(req.capabilities);
     mount.updated_at = Utc::now();
-    state
-        .repos
-        .project_vfs_mount_repo
-        .update(&mount)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    state.repos.project_vfs_mount_repo.update(&mount).await?;
     Ok(Json(project_vfs_mount_response(mount)))
 }
 
@@ -203,7 +201,7 @@ pub async fn delete_vfs_mount(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(path): Path<VfsMountPath>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteProjectVfsMountResponse>, ApiError> {
     let project_id = parse_uuid(&path.project_id, "project_id")?;
     load_project_with_permission(
         state.as_ref(),
@@ -217,22 +215,19 @@ pub async fn delete_vfs_mount(
         .repos
         .project_vfs_mount_repo
         .get_by_project_and_mount_id(project_id, mount_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .await?
         .ok_or_else(|| ApiError::NotFound("Project VFS Mount 不存在".into()))?;
     state
         .repos
         .inline_file_repo
         .delete_by_owner(InlineFileOwnerKind::ProjectVfsMount, mount.id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .await?;
     state
         .repos
         .project_vfs_mount_repo
         .delete(project_id, mount_id)
-        .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
+        .await?;
+    Ok(Json(DeleteProjectVfsMountResponse { ok: true }))
 }
 
 fn project_vfs_mount_response(mount: ProjectVfsMount) -> ProjectVfsMountResponse {

@@ -125,11 +125,14 @@ session_id → lifecycle_run_repo.find_by_session(session_id)
   - 有 Task link → Task scope
   - 有 Story link（无 Task） → Story scope
   - 仅 Project link → Project scope
-- Active permission grants 可覆盖静态规则（详见 [Permission System](./permission/architecture.md)）
+- 后续 Agent Permission System 将全面接管，替换当前的静态规则
 
 ---
 
 ## Open Architecture Questions
 
+以下问题不作为当前实现任务承诺，只作为后续 architecture review 的讨论入口：
+
+- Agent Permission System（Request/Grant/Policy/Compiler）独立任务完成后，`CapabilityScope` 可全面替换为 Permission Grant 查询。
 - WorkflowBindingKind 是否应全面替换为 launch scope / subject requirements / capability contract。
 - `LifecycleRun.session_id` 最终目标是重命名为 `runtime_session_id` 以明确语义。

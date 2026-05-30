@@ -18,6 +18,15 @@ pub async fn list_directory_users(
     ))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route("/directory/users", axum::routing::get(list_directory_users))
+        .route(
+            "/directory/groups",
+            axum::routing::get(list_directory_groups),
+        )
+}
+
 pub async fn list_directory_groups(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,

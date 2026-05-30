@@ -46,11 +46,6 @@ use super::super::types::{
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
-use crate::backend_transport::{
-    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
-    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
-    WorkspaceProbeInfo,
-};
 use crate::session::SetToolAccessEffect;
 use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
@@ -58,8 +53,13 @@ use crate::session::capability_state::{
 };
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, ReadResult, VfsService, RuntimeFileEntry,
-    SearchQuery, SearchResult,
+    MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
+    VfsService,
+};
+use agentdash_application_ports::backend_transport::{
+    BackendTransport, DirectoryBrowseInfo, GitRepoInfo, RelayPromptRequest, RelayPromptTransport,
+    RelaySessionRoute, RelaySessionRouteInfo, RemoteExecutorInfo, TransportError,
+    WorkspaceProbeInfo,
 };
 
 fn test_hub(
@@ -982,7 +982,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
                 before_state: Some(before_state),
                 after_state,
                 capability_keys,
-                key_delta: agentdash_spi::hooks::CapabilityDelta::default(),
+                key_delta: agentdash_spi::SetDelta::default(),
                 apply_mode: "canvas_visible",
             },
         )

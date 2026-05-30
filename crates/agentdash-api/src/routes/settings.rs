@@ -3,9 +3,12 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
 
-use agentdash_domain::settings::{SettingScope, SettingScopeKind};
+use agentdash_contracts::settings::{
+    SettingResponse, SettingsScopeKind, SettingsScopeQuery, UpdateSettingsRequest,
+    UpdateSettingsResponse,
+};
+use agentdash_domain::settings::{SettingScope, SettingScopeKind as DomainSettingScopeKind};
 use agentdash_plugin_api::{AuthIdentity, AuthMode};
 
 use crate::app_state::AppState;
@@ -19,6 +22,15 @@ fn is_sensitive_key(key: &str) -> bool {
     SENSITIVE_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/settings",
+            axum::routing::get(list_settings).put(update_settings),
+        )
+        .route("/settings/{key}", axum::routing::delete(delete_setting))
+}
+
 /// 对敏感值做脱敏处理：保留首尾各 4 字符，中间以 `...` 替代
 fn mask_value(value: &serde_json::Value) -> serde_json::Value {
     if let Some(s) = value.as_str() {
@@ -30,41 +42,6 @@ fn mask_value(value: &serde_json::Value) -> serde_json::Value {
     } else {
         serde_json::Value::String("****".to_string())
     }
-}
-
-#[derive(Deserialize)]
-pub struct SettingsScopeQuery {
-    pub category: Option<String>,
-    pub scope: Option<SettingScopeKind>,
-    pub project_id: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct SettingResponse {
-    pub scope_kind: SettingScopeKind,
-    pub scope_id: Option<String>,
-    pub key: String,
-    pub value: serde_json::Value,
-    pub updated_at: String,
-    pub masked: bool,
-}
-
-#[derive(Deserialize)]
-pub struct UpdateSettingsRequest {
-    pub settings: Vec<SettingUpdate>,
-}
-
-#[derive(Deserialize)]
-pub struct SettingUpdate {
-    pub key: String,
-    pub value: serde_json::Value,
-}
-
-#[derive(Serialize)]
-pub struct UpdateSettingsResponse {
-    pub scope_kind: SettingScopeKind,
-    pub scope_id: Option<String>,
-    pub updated: Vec<String>,
 }
 
 pub async fn list_settings(
@@ -89,7 +66,7 @@ pub async fn list_settings(
                 s.value
             };
             SettingResponse {
-                scope_kind: s.scope_kind,
+                scope_kind: SettingsScopeKind::from(s.scope_kind),
                 scope_id: s.scope_id,
                 key: s.key,
                 value,
@@ -135,7 +112,7 @@ pub async fn update_settings(
         .await?;
 
     Ok(Json(UpdateSettingsResponse {
-        scope_kind: scope.kind,
+        scope_kind: SettingsScopeKind::from(scope.kind),
         scope_id: scope.scope_id,
         updated: updated_keys,
     }))
@@ -183,13 +160,17 @@ async fn resolve_scope(
     query: &SettingsScopeQuery,
     require_write: bool,
 ) -> Result<SettingScope, ApiError> {
-    match query.scope.unwrap_or(SettingScopeKind::System) {
-        SettingScopeKind::System => {
+    match query
+        .scope
+        .map(DomainSettingScopeKind::from)
+        .unwrap_or(DomainSettingScopeKind::System)
+    {
+        DomainSettingScopeKind::System => {
             require_system_settings_access(current_user)?;
             Ok(SettingScope::system())
         }
-        SettingScopeKind::User => Ok(SettingScope::user(current_user.user_id.clone())),
-        SettingScopeKind::Project => {
+        DomainSettingScopeKind::User => Ok(SettingScope::user(current_user.user_id.clone())),
+        DomainSettingScopeKind::Project => {
             let raw_project_id = query
                 .project_id
                 .as_deref()

@@ -329,7 +329,14 @@ mod tests {
         }
 
         async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self.items.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| ids.contains(&r.id))
+                .cloned()
+                .collect())
         }
 
         async fn list_by_project(

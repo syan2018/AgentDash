@@ -9,7 +9,7 @@ pub mod relay;
 pub mod routes;
 pub mod rpc;
 pub mod runtime_bridge;
-pub mod session_use_cases;
+pub mod session_construction;
 pub mod stream;
 pub mod task_agent_context;
 #[cfg(test)]

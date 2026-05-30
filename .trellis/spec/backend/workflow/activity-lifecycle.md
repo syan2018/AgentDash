@@ -83,6 +83,8 @@ lifecycle_activity:{run_id}:{activity_key}#{attempt}
 
 找到绑定后提交 `ActivityCompleted` 或 `ActivityFailed`。
 
+Agent executor 的 output port 内容是 lifecycle artifact 值，必须写入 JSON 内容。`complete_lifecycle_node` 推进完成态时只读取 activity 已声明的 output ports，并把每个 port 的文件内容解析为 `serde_json::Value`；解析失败表示 artifact contract 无效，activity 不进入 completed。这样后继 artifact binding、gate evaluation 与 workflow projection 消费的是结构化值，而不是由 orchestrator 猜测的自由文本。
+
 ## ProjectAgent Default Lifecycle
 
 ProjectAgent single-workflow defaults create a one-activity lifecycle:

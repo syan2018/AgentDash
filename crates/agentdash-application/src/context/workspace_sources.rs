@@ -5,8 +5,9 @@ use agentdash_domain::context_source::{ContextSourceKind, ContextSourceRef};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{ContextFragment, MergeStrategy, ResolveSourcesOutput};
 
+use crate::ApplicationError;
 use crate::runtime::RuntimeFileEntry;
-use crate::vfs::{ListOptions, VfsService, ResourceRef, selected_workspace_binding};
+use crate::vfs::{ListOptions, ResourceRef, VfsService, selected_workspace_binding};
 use crate::workspace::BackendAvailability;
 
 use super::builder::Contribution;
@@ -33,7 +34,7 @@ pub async fn resolve_workspace_declared_sources(
     sources: &[ContextSourceRef],
     workspace: Option<&Workspace>,
     base_order: i32,
-) -> Result<ResolveSourcesOutput, String> {
+) -> Result<ResolveSourcesOutput, ApplicationError> {
     let indexed_sources = sorted_sources(sources)
         .into_iter()
         .filter(|source| {
@@ -60,7 +61,9 @@ pub async fn resolve_workspace_declared_sources(
 
     let backend_id = match normalize_workspace_backend_id(workspace) {
         Ok(backend_id) => backend_id,
-        Err(err) => return resolve_workspace_source_unavailable(&indexed_sources, &err),
+        Err(err) => {
+            return resolve_workspace_source_unavailable(&indexed_sources, &err.to_string());
+        }
     };
     if !availability.is_online(backend_id).await {
         return resolve_workspace_source_unavailable(
@@ -103,9 +106,9 @@ pub async fn resolve_workspace_declared_sources(
 fn resolve_workspace_source_unavailable(
     sources: &[&ContextSourceRef],
     message: &str,
-) -> Result<ResolveSourcesOutput, String> {
+) -> Result<ResolveSourcesOutput, ApplicationError> {
     if sources.iter().any(|source| source.required) {
-        return Err(message.to_string());
+        return Err(ApplicationError::Unavailable(message.to_string()));
     }
     Ok(ResolveSourcesOutput {
         fragments: Vec::new(),
@@ -135,12 +138,14 @@ fn sorted_sources(sources: &[ContextSourceRef]) -> Vec<&ContextSourceRef> {
         .collect()
 }
 
-fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, String> {
+fn normalize_workspace_backend_id(workspace: &Workspace) -> Result<&str, ApplicationError> {
     let backend_id = selected_workspace_binding(workspace)
         .map(|binding| binding.backend_id.trim())
         .unwrap_or("");
     if backend_id.is_empty() {
-        Err("Workspace 当前没有可用 binding.backend_id".to_string())
+        Err(ApplicationError::InvalidConfig(
+            "Workspace 当前没有可用 binding.backend_id".to_string(),
+        ))
     } else {
         Ok(backend_id)
     }
@@ -151,9 +156,11 @@ async fn resolve_workspace_file_source(
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
-) -> Result<ContextFragment, String> {
+) -> Result<ContextFragment, ApplicationError> {
     let path = normalize_source_locator_path(&source.locator)?;
-    let vfs = vfs_service.session_for_workspace(workspace)?;
+    let vfs = vfs_service
+        .session_for_workspace(workspace)
+        .map_err(ApplicationError::InvalidConfig)?;
     let read = vfs_service
         .read_text(
             &vfs,
@@ -165,7 +172,7 @@ async fn resolve_workspace_file_source(
             None,
         )
         .await
-        .map_err(|e| format!("工作空间文件读取失败: {e}"))?;
+        .map_err(|error| ApplicationError::Unavailable(format!("工作空间文件读取失败: {error}")))?;
 
     Ok(ContextFragment {
         slot: fragment_slot(&source.slot).to_string(),
@@ -189,9 +196,11 @@ async fn resolve_workspace_snapshot_source(
     workspace: &Workspace,
     source: &ContextSourceRef,
     order: i32,
-) -> Result<ContextFragment, String> {
+) -> Result<ContextFragment, ApplicationError> {
     let sub_path = normalize_snapshot_locator(&source.locator)?;
-    let vfs = vfs_service.session_for_workspace(workspace)?;
+    let vfs = vfs_service
+        .session_for_workspace(workspace)
+        .map_err(ApplicationError::InvalidConfig)?;
     let listed = vfs_service
         .list(
             &vfs,
@@ -205,7 +214,7 @@ async fn resolve_workspace_snapshot_source(
             None,
         )
         .await
-        .map_err(|e| format!("项目快照读取失败: {e}"))?;
+        .map_err(|error| ApplicationError::Unavailable(format!("项目快照读取失败: {error}")))?;
 
     Ok(ContextFragment {
         slot: fragment_slot(&source.slot).to_string(),
@@ -228,27 +237,33 @@ async fn resolve_workspace_snapshot_source(
     })
 }
 
-fn normalize_source_locator_path(locator: &str) -> Result<String, String> {
+fn normalize_source_locator_path(locator: &str) -> Result<String, ApplicationError> {
     let trimmed = locator.trim();
     if trimmed.is_empty() {
-        return Err("文件来源 locator 不能为空".to_string());
+        return Err(ApplicationError::InvalidConfig(
+            "文件来源 locator 不能为空".to_string(),
+        ));
     }
 
     let path = Path::new(trimmed);
     if path.is_absolute() {
-        return Err("文件来源 locator 不能是绝对路径".to_string());
+        return Err(ApplicationError::InvalidConfig(
+            "文件来源 locator 不能是绝对路径".to_string(),
+        ));
     }
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err("文件来源 locator 不能包含 `..`".to_string());
+        return Err(ApplicationError::InvalidConfig(
+            "文件来源 locator 不能包含 `..`".to_string(),
+        ));
     }
 
     Ok(trimmed.replace('\\', "/"))
 }
 
-fn normalize_snapshot_locator(locator: &str) -> Result<Option<String>, String> {
+fn normalize_snapshot_locator(locator: &str) -> Result<Option<String>, ApplicationError> {
     let trimmed = locator.trim();
     if trimmed.is_empty() || trimmed == "." {
         return Ok(None);
@@ -403,6 +418,6 @@ mod tests {
     #[test]
     fn file_locator_rejects_parent_dir() {
         let err = normalize_source_locator_path("../secret.txt").expect_err("应拒绝父级目录");
-        assert!(err.contains(".."));
+        assert!(err.to_string().contains(".."));
     }
 }

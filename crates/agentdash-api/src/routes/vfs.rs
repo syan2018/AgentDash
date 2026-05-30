@@ -4,7 +4,6 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use agentdash_application::vfs::{ListOptions, selected_workspace_binding};
@@ -17,17 +16,26 @@ use agentdash_spi::VfsContext;
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_workspace_and_project_with_permission},
+    dto::{ListEntriesQuery, VfssQuery},
     rpc::ApiError,
 };
 
 const MAX_ENTRIES: usize = 200;
 
-// ─── 能力发现 ──────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct VfssQuery {
-    pub workspace_id: Option<String>,
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/mount-providers",
+            axum::routing::get(list_configurable_mount_providers),
+        )
+        .route("/vfs", axum::routing::get(list_vfs))
+        .route(
+            "/vfs/{space_id}/entries",
+            axum::routing::get(list_address_entries),
+        )
 }
+
+// ─── 能力发现 ──────────────────────────────────────────────
 
 /// `GET /api/vfs` — 能力发现端点
 pub async fn list_vfs(
@@ -68,17 +76,6 @@ pub async fn list_vfs(
 }
 
 // ─── 条目检索 ──────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-pub struct ListEntriesQuery {
-    #[serde(default)]
-    pub query: Option<String>,
-    pub workspace_id: Option<String>,
-    #[serde(default)]
-    pub path: Option<String>,
-    #[serde(default)]
-    pub recursive: Option<bool>,
-}
 
 /// `GET /api/vfs/{space_id}/entries` — 条目搜索端点
 pub async fn list_address_entries(
@@ -122,7 +119,7 @@ pub async fn list_address_entries(
                     Some(&current_user),
                 )
                 .await
-                .map_err(ApiError::Internal)?;
+                .map_err(|e| ApiError::Internal(format!("VFS 条目检索失败: {e}")))?;
 
             let entries = listed
                 .entries

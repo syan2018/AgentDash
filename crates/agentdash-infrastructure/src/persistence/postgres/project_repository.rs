@@ -27,11 +27,7 @@ impl PostgresProjectRepository {
 #[async_trait::async_trait]
 impl ProjectRepository for PostgresProjectRepository {
     async fn create(&self, project: &Project) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         sqlx::query(
             "INSERT INTO projects (
@@ -48,11 +44,11 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.visibility.as_str())
         .bind(project.is_template)
         .bind(project.cloned_from_project_id.map(|id| id.to_string()))
-        .bind(project.created_at.to_rfc3339())
-        .bind(project.updated_at.to_rfc3339())
+        .bind(project.created_at)
+        .bind(project.updated_at)
         .execute(&mut *tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         let owner_grant = ProjectSubjectGrant::new(
             project.id,
@@ -64,9 +60,7 @@ impl ProjectRepository for PostgresProjectRepository {
         self.upsert_subject_grant_in_tx(&mut tx, &owner_grant)
             .await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -80,7 +74,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         row.map(|r| r.try_into()).transpose()
     }
@@ -93,7 +87,7 @@ impl ProjectRepository for PostgresProjectRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(|r| r.try_into()).collect()
     }
@@ -120,11 +114,11 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project.visibility.as_str())
         .bind(project.is_template)
         .bind(project.cloned_from_project_id.map(|id| id.to_string()))
-        .bind(project.updated_at.to_rfc3339())
+        .bind(project.updated_at)
         .bind(project.id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -140,7 +134,7 @@ impl ProjectRepository for PostgresProjectRepository {
             .bind(id.to_string())
             .execute(&self.pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
 
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound {
@@ -166,23 +160,17 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(project_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         rows.into_iter().map(TryInto::try_into).collect()
     }
 
     async fn upsert_subject_grant(&self, grant: &ProjectSubjectGrant) -> Result<(), DomainError> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(super::db_err)?;
 
         self.upsert_subject_grant_in_tx(&mut tx, grant).await?;
 
-        tx.commit()
-            .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        tx.commit().await.map_err(super::db_err)?;
 
         Ok(())
     }
@@ -204,7 +192,7 @@ impl ProjectRepository for PostgresProjectRepository {
         .bind(subject_id)
         .execute(&self.pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -232,11 +220,11 @@ impl PostgresProjectRepository {
         .bind(&grant.subject_id)
         .bind(grant.role.as_str())
         .bind(&grant.granted_by_user_id)
-        .bind(grant.created_at.to_rfc3339())
-        .bind(chrono::Utc::now().to_rfc3339())
+        .bind(grant.created_at)
+        .bind(chrono::Utc::now())
         .execute(&mut **tx)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
 
         Ok(())
     }
@@ -255,8 +243,8 @@ struct ProjectRow {
     visibility: String,
     is_template: bool,
     cloned_from_project_id: Option<String>,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -266,8 +254,8 @@ struct ProjectSubjectGrantRow {
     subject_id: String,
     role: String,
     granted_by_user_id: String,
-    created_at: String,
-    updated_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<ProjectRow> for Project {
@@ -296,8 +284,8 @@ impl TryFrom<ProjectRow> for Project {
                     })
                 })
                 .transpose()?,
-            created_at: super::parse_pg_timestamp_checked(&row.created_at, "projects.created_at")?,
-            updated_at: super::parse_pg_timestamp_checked(&row.updated_at, "projects.updated_at")?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }
@@ -308,20 +296,14 @@ impl TryFrom<ProjectSubjectGrantRow> for ProjectSubjectGrant {
     fn try_from(row: ProjectSubjectGrantRow) -> Result<Self, Self::Error> {
         Ok(ProjectSubjectGrant {
             project_id: row.project_id.parse().map_err(|_| {
-                DomainError::InvalidConfig("无效的 project grant project_id".to_string())
+                DomainError::InvalidConfig(String::from("无效的 project grant project_id"))
             })?,
             subject_type: parse_project_subject_type(&row.subject_type)?,
             subject_id: row.subject_id,
             role: parse_project_role(&row.role)?,
             granted_by_user_id: row.granted_by_user_id,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "project_subject_grants.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "project_subject_grants.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

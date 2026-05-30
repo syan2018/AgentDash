@@ -2,7 +2,7 @@ import type {
   ExtensionRuntimeProjectionResponse,
   ExtensionWorkspaceTabProjectionResponse,
 } from "../../../types";
-import type { TabTypeDescriptor } from "../../workspace-panel/tab-type-registry";
+import type { TabTypeDescriptor } from "../../workspace-runtime";
 import { ExtensionTabIcon } from "../ui/ExtensionTabIcon";
 import { ExtensionCanvasPanel } from "../ui/ExtensionCanvasPanel";
 import { ExtensionWebviewPanel } from "../ui/ExtensionWebviewPanel";

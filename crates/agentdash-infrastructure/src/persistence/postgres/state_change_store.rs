@@ -20,10 +20,10 @@ pub async fn append_state_change(
     .bind(kind_to_db_value(&kind)?)
     .bind(payload.to_string())
     .bind(backend_id)
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(chrono::Utc::now())
     .execute(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     Ok(())
 }
@@ -45,10 +45,10 @@ pub async fn append_state_change_in_tx(
     .bind(kind_to_db_value(&kind)?)
     .bind(payload.to_string())
     .bind(backend_id)
-    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(chrono::Utc::now())
     .execute(&mut **tx)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     Ok(())
 }
@@ -66,7 +66,7 @@ pub async fn get_state_changes_since(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
@@ -89,7 +89,7 @@ pub async fn get_state_changes_since_by_project(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+    .map_err(super::db_err)?;
 
     rows.into_iter().map(TryInto::try_into).collect()
 }
@@ -98,7 +98,7 @@ pub async fn latest_state_change_id(pool: &PgPool) -> Result<i64, DomainError> {
     let row: (i64,) = sqlx::query_as("SELECT COALESCE(MAX(id), 0) FROM state_changes")
         .fetch_one(pool)
         .await
-        .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+        .map_err(super::db_err)?;
     Ok(row.0)
 }
 
@@ -111,7 +111,7 @@ pub async fn latest_state_change_id_by_project(
             .bind(project_id.to_string())
             .fetch_one(pool)
             .await
-            .map_err(|e| DomainError::InvalidConfig(e.to_string()))?;
+            .map_err(super::db_err)?;
     Ok(row.0)
 }
 
@@ -127,7 +127,7 @@ struct StateChangeRow {
     kind: String,
     payload: String,
     backend_id: Option<String>,
-    created_at: String,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<StateChangeRow> for StateChange {
@@ -154,10 +154,7 @@ impl TryFrom<StateChangeRow> for StateChange {
                     Some(trimmed.to_string())
                 }
             }),
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "state_changes.created_at",
-            )?,
+            created_at: row.created_at,
         })
     }
 }

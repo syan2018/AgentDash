@@ -1,10 +1,9 @@
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::MountCapability;
 
 /// 统一挂载点定义，被 connector-contract 和 application 直接使用。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Mount {
     pub id: String,
     pub provider: String,
@@ -33,7 +32,7 @@ impl Mount {
 /// - Workflow step input 声明为 link → 上游 step output mount 的某路径
 /// - Agent knowledge 引用 project 级别的共享文档（不复制）
 /// - Canvas 引用 workspace 文件（只读视图）
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MountLink {
     /// 来源：用户看到的路径。
     pub from_mount_id: String,
@@ -44,7 +43,7 @@ pub struct MountLink {
 }
 
 /// 统一虚拟文件系统（VFS）定义，被 connector-contract 和 application 直接使用。
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Vfs {
     #[serde(default)]
     pub mounts: Vec<Mount>,

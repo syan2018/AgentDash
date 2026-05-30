@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/cross-layer/frontend-backend-contracts.md", "reason": "前后端 contract crate、generated TS、check mode 与 API DTO 边界规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "前端 generated contract 消费、mapper 边界和手写类型约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "store/service 消费 typed DTO 与 projection 刷新边界"}
+{"file": ".trellis/spec/backend/architecture.md", "reason": "backend crate 依赖方向，避免 contracts 反向依赖 application/api"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "迁移重复 DTO 与 mapper 时判断复用/抽象边界"}

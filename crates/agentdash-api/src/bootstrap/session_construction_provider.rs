@@ -19,7 +19,7 @@ use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
 use crate::rpc::ApiError;
-use crate::session_use_cases::construction::build_session_construction_for_launch;
+use crate::session_construction::build_session_construction_for_launch;
 
 /// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后注入
 /// session runtime builder。
@@ -49,7 +49,10 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
         "conflict" => Some(ApiError::Conflict(detail.to_string())),
         "unprocessable_entity" => Some(ApiError::UnprocessableEntity(detail.to_string())),
         "service_unavailable" => Some(ApiError::ServiceUnavailable(detail.to_string())),
-        "internal" => Some(ApiError::Internal(detail.to_string())),
+        "internal" => {
+            tracing::error!(detail, "session construction internal error");
+            Some(ApiError::Internal(String::from("内部 session 构建错误")))
+        }
         _ => None,
     }
 }

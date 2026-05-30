@@ -1,34 +1,24 @@
 use std::sync::Arc;
 
+use agentdash_application_ports::vfs_materialization::VfsMaterializationTransport;
 use agentdash_relay::{
     MaterializationAccessMode, MaterializationCacheScope, MaterializationPlanKind,
     MaterializationTargetKind, VfsMaterializeContent, VfsMaterializeEntry, VfsMaterializePayload,
-    VfsMaterializeResponse,
 };
 use agentdash_spi::{Mount, MountCapability, Vfs};
-use async_trait::async_trait;
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use super::inline_persistence::InlineContentOverlay;
-use super::service::VfsService;
 use super::rewrite::{
     RewriteReplacement, apply_replacements, find_mount_uri_candidates, quote_for_shell_path,
 };
+use super::service::VfsService;
 use super::{
     ListOptions, PROVIDER_CANVAS_FS, PROVIDER_INLINE_FS, PROVIDER_LIFECYCLE_VFS, PROVIDER_RELAY_FS,
     PROVIDER_SKILL_ASSET_FS, ResourceRef, format_mount_uri, join_root_ref,
     normalize_mount_relative_path, parse_mount_uri, resolve_mount,
 };
-
-#[async_trait]
-pub trait VfsMaterializationTransport: Send + Sync {
-    async fn materialize(
-        &self,
-        backend_id: &str,
-        payload: VfsMaterializePayload,
-    ) -> Result<VfsMaterializeResponse, String>;
-}
 
 #[derive(Clone)]
 pub struct VfsMaterializationService {
@@ -145,7 +135,8 @@ impl VfsMaterializationService {
                 input.overlay,
                 input.identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         let entries = self
             .read_plan_entries(input.vfs, target, &plan, input.overlay, input.identity)
             .await?;
@@ -181,7 +172,8 @@ impl VfsMaterializationService {
                 input.overlay,
                 input.identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         let entries = self
             .read_plan_entries(
                 input.vfs,
@@ -327,7 +319,8 @@ impl VfsMaterializationService {
                 overlay,
                 identity,
             )
-            .await?;
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(result
             .entries
             .into_iter()
@@ -357,7 +350,8 @@ impl VfsMaterializationService {
                     overlay,
                     identity,
                 )
-                .await?;
+                .await
+                .map_err(|e| e.to_string())?;
             let digest = format!("sha256:{}", sha256_hex(read.content.as_bytes()));
             let size_bytes = read.content.len() as u64;
             entries.push(VfsMaterializeEntry {

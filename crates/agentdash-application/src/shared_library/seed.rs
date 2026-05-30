@@ -117,7 +117,8 @@ fn agent_template_seed() -> Result<BuiltinSeed, DomainError> {
 }
 
 fn mcp_server_template_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {
-    let templates = list_builtin_mcp_preset_templates().map_err(DomainError::InvalidConfig)?;
+    let templates = list_builtin_mcp_preset_templates()
+        .map_err(|error| DomainError::InvalidConfig(error.to_string()))?;
     templates
         .into_iter()
         .map(|template| {

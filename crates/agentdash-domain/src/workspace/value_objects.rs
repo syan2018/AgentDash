@@ -1,11 +1,10 @@
 use chrono::{DateTime, Utc};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
 /// 逻辑工作空间身份类型。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceIdentityKind {
     GitRepo,
@@ -14,7 +13,7 @@ pub enum WorkspaceIdentityKind {
 }
 
 /// 工作空间绑定状态。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceBindingStatus {
     Pending,
@@ -24,7 +23,7 @@ pub enum WorkspaceBindingStatus {
 }
 
 /// 运行时绑定解析策略。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceResolutionPolicy {
     PreferDefaultBinding,
@@ -32,7 +31,7 @@ pub enum WorkspaceResolutionPolicy {
 }
 
 /// 逻辑工作空间整体状态。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceStatus {
     Pending,
@@ -42,7 +41,7 @@ pub enum WorkspaceStatus {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceBinding {
     pub id: Uuid,
     pub workspace_id: Uuid,

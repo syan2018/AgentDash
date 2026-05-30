@@ -8,6 +8,7 @@ use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::AgentConnector;
 
+use crate::ApplicationError;
 use crate::context::SharedContextAuditBus;
 use crate::repository_set::RepositorySet;
 use crate::session::types::UserPromptInput;
@@ -83,7 +84,7 @@ impl RoutineExecutor {
     }
 
     /// 定时触发入口 — 由 CronScheduler 调用
-    pub async fn fire_scheduled(&self, routine_id: Uuid) -> Result<Uuid, String> {
+    pub async fn fire_scheduled(&self, routine_id: Uuid) -> Result<Uuid, ApplicationError> {
         self.fire(routine_id, "scheduled", None, None).await
     }
 
@@ -93,7 +94,7 @@ impl RoutineExecutor {
         routine_id: Uuid,
         text: Option<&str>,
         payload: Option<serde_json::Value>,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid, ApplicationError> {
         self.fire(routine_id, "webhook", text, payload.as_ref())
             .await
     }
@@ -104,7 +105,7 @@ impl RoutineExecutor {
         routine_id: Uuid,
         trigger_source: &str,
         payload: serde_json::Value,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid, ApplicationError> {
         self.fire(routine_id, trigger_source, None, Some(&payload))
             .await
     }
@@ -116,17 +117,20 @@ impl RoutineExecutor {
         trigger_source: &str,
         append_text: Option<&str>,
         payload: Option<&serde_json::Value>,
-    ) -> Result<Uuid, String> {
+    ) -> Result<Uuid, ApplicationError> {
         let routine = self
             .repos
             .routine_repo
             .get_by_id(routine_id)
             .await
-            .map_err(|e| format!("查询 Routine 失败: {e}"))?
-            .ok_or_else(|| format!("Routine {routine_id} 不存在"))?;
+            .map_err(ApplicationError::from)?
+            .ok_or_else(|| ApplicationError::NotFound(format!("Routine {routine_id} 不存在")))?;
 
         if !routine.enabled {
-            return Err(format!("Routine {} 已禁用", routine.name));
+            return Err(ApplicationError::BadRequest(format!(
+                "Routine {} 已禁用",
+                routine.name
+            )));
         }
 
         let mut execution = RoutineExecution::new(routine_id, trigger_source);
@@ -136,7 +140,7 @@ impl RoutineExecutor {
             .routine_execution_repo
             .create(&execution)
             .await
-            .map_err(|e| format!("创建执行记录失败: {e}"))?;
+            .map_err(ApplicationError::from)?;
 
         let rendered = match render_prompt_template(
             &routine.prompt_template,
@@ -154,10 +158,11 @@ impl RoutineExecutor {
             }
             Err(err) => {
                 execution.mark_failed(format!("模板渲染失败: {err}"));
-                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
+                {
                     tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
                 }
-                return Err(err);
+                return Err(ApplicationError::InvalidConfig(err));
             }
         };
 
@@ -166,10 +171,11 @@ impl RoutineExecutor {
             Err(err) => {
                 let reason = format!("加载 Routine Agent 配置失败: {err}");
                 execution.mark_failed(&reason);
-                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
+                {
                     tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
                 }
-                return Err(reason);
+                return Err(err);
             }
         };
 
@@ -187,7 +193,7 @@ impl RoutineExecutor {
                     {
                         tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
                     }
-                    return Err(reason);
+                    return Err(ApplicationError::InvalidConfig(reason));
                 }
                 RoutineAdmissionError::Skipped(reason) => {
                     execution.mark_skipped(reason);
@@ -215,14 +221,16 @@ impl RoutineExecutor {
                 }
 
                 let exec_id = execution.id;
-                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
+                {
                     tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行完成）落库失败");
                 }
                 Ok(exec_id)
             }
             Err(err) => {
-                execution.mark_failed(&err);
-                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                execution.mark_failed(err.to_string());
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await
+                {
                     tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行失败）落库失败");
                 }
                 Err(err)
@@ -235,11 +243,13 @@ impl RoutineExecutor {
         routine: &Routine,
         prompt: &str,
         execution: &mut RoutineExecution,
-    ) -> Result<(), String> {
+    ) -> Result<(), ApplicationError> {
         let session_id = self
             .resolve_session_id(routine, execution)
             .await
-            .map_err(|err| format!("解析 Routine session 失败: {err}"))?;
+            .map_err(|err| {
+                ApplicationError::Internal(format!("解析 Routine session 失败: {err}"))
+            })?;
         let command = LaunchCommand::routine_executor_input(
             UserPromptInput::from_text(prompt),
             Some(agentdash_spi::platform::auth::AuthIdentity::system_routine(
@@ -262,7 +272,7 @@ impl RoutineExecutor {
             .session_launch
             .launch_command(&session_id, command)
             .await
-            .map_err(|e| format!("发送 prompt 失败: {e}"))?;
+            .map_err(|error| ApplicationError::Internal(format!("发送 prompt 失败: {error}")))?;
 
         // NOTE: mark_completed 追踪的是「prompt 已成功派发到 session」，
         // 而非「Agent 已执行完毕」。完整的 Agent 完成追踪需要 session turn 完成回调，
@@ -272,24 +282,36 @@ impl RoutineExecutor {
         Ok(())
     }
 
-    async fn load_agent_context(&self, routine: &Routine) -> Result<RoutineAgentContext, String> {
+    async fn load_agent_context(
+        &self,
+        routine: &Routine,
+    ) -> Result<RoutineAgentContext, ApplicationError> {
         let project = self
             .repos
             .project_repo
             .get_by_id(routine.project_id)
             .await
-            .map_err(|e| format!("查询 Project 失败: {e}"))?
-            .ok_or_else(|| format!("Project {} 不存在", routine.project_id))?;
+            .map_err(ApplicationError::from)?
+            .ok_or_else(|| {
+                ApplicationError::NotFound(format!("Project {} 不存在", routine.project_id))
+            })?;
         let workspace = resolve_project_workspace(&self.repos, &project).await?;
         let agent = self
             .repos
             .project_agent_repo
             .get_by_project_and_id(project.id, routine.project_agent_id)
             .await
-            .map_err(|e| format!("查询 ProjectAgent 失败: {e}"))?
-            .ok_or_else(|| format!("ProjectAgent {} 不存在", routine.project_agent_id))?;
+            .map_err(ApplicationError::from)?
+            .ok_or_else(|| {
+                ApplicationError::NotFound(format!(
+                    "ProjectAgent {} 不存在",
+                    routine.project_agent_id
+                ))
+            })?;
 
-        agent.preset_config().map_err(|error| error.to_string())?;
+        agent
+            .preset_config()
+            .map_err(|error| ApplicationError::InvalidConfig(error.to_string()))?;
 
         Ok(RoutineAgentContext { workspace })
     }
@@ -298,7 +320,7 @@ impl RoutineExecutor {
         &self,
         routine: &Routine,
         execution: &mut RoutineExecution,
-    ) -> Result<String, String> {
+    ) -> Result<String, ApplicationError> {
         match &routine.session_strategy {
             SessionStrategy::Fresh => {
                 let title = format!("Routine: {}", routine.name);
@@ -332,13 +354,15 @@ impl RoutineExecutor {
                         .routine_execution_repo
                         .find_latest_by_entity_key(routine.id, key)
                         .await
-                        .map_err(|e| format!("查询 entity session 失败: {e}"))?
+                        .map_err(ApplicationError::from)?
                     && let Some(session_id) = existing.session_id
                     && self
                         .session_core
                         .get_session_meta(&session_id)
                         .await
-                        .map_err(|e| format!("读取 session meta 失败: {e}"))?
+                        .map_err(|error| {
+                            ApplicationError::Internal(format!("读取 session meta 失败: {error}"))
+                        })?
                         .is_some()
                 {
                     return Ok(session_id);
@@ -358,16 +382,18 @@ impl RoutineExecutor {
         _project_id: Uuid,
         title: &str,
         _label: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String, ApplicationError> {
         let meta = self
             .session_core
             .create_session(title)
             .await
-            .map_err(|e| format!("创建 session 失败: {e}"))?;
+            .map_err(|error| ApplicationError::Internal(format!("创建 session 失败: {error}")))?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
-            .map_err(|e| format!("标记 owner bootstrap 失败: {e}"))?;
+            .map_err(|error| {
+                ApplicationError::Internal(format!("标记 owner bootstrap 失败: {error}"))
+            })?;
         Ok(meta.id)
     }
 
@@ -376,17 +402,20 @@ impl RoutineExecutor {
         _project_id: Uuid,
         _project_agent_id: Uuid,
         _label: &str,
-    ) -> Result<String, String> {
-        // TODO: migrate to LifecycleRunLink query for session reuse
+    ) -> Result<String, ApplicationError> {
         let meta = self
             .session_core
             .create_session("")
             .await
-            .map_err(|e| format!("创建 Project Agent session 失败: {e}"))?;
+            .map_err(|error| {
+                ApplicationError::Internal(format!("创建 Project Agent session 失败: {error}"))
+            })?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
-            .map_err(|e| format!("标记 Project Agent bootstrap 失败: {e}"))?;
+            .map_err(|error| {
+                ApplicationError::Internal(format!("标记 Project Agent bootstrap 失败: {error}"))
+            })?;
         Ok(meta.id)
     }
 }
@@ -394,15 +423,17 @@ impl RoutineExecutor {
 async fn resolve_project_workspace(
     repos: &RepositorySet,
     project: &Project,
-) -> Result<Option<Workspace>, String> {
+) -> Result<Option<Workspace>, ApplicationError> {
     match project.config.default_workspace_id {
         Some(workspace_id) => {
             let workspace = repos
                 .workspace_repo
                 .get_by_id(workspace_id)
                 .await
-                .map_err(|e| format!("查询默认 Workspace 失败: {e}"))?
-                .ok_or_else(|| format!("默认 Workspace {workspace_id} 不存在"))?;
+                .map_err(ApplicationError::from)?
+                .ok_or_else(|| {
+                    ApplicationError::NotFound(format!("默认 Workspace {workspace_id} 不存在"))
+                })?;
             Ok(Some(workspace))
         }
         None => Ok(None),

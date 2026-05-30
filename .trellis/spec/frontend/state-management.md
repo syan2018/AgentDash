@@ -50,7 +50,7 @@
 ## Store 规范
 
 - 使用 `isLoading` / `error` 追踪加载和错误状态
-- API 响应通过 mapper 函数做状态值归一化（不做字段名转换）
+- 内部 API response 由 service 层按 generated contract type 返回；store 不为 generated DTO 再做字段级归一化
 - Store state 消费 service 层产出的 typed DTO 或 view model；跨层 DTO 类型来自 `src/generated/*`，原因是 store 不应成为协议字段事实源
 - 按 Feature 拆分 Store，避免单个 Store 过大
 - 始终通过 `set` 更新状态，不直接修改

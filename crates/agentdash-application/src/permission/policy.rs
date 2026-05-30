@@ -35,7 +35,8 @@ impl PermissionPolicyService {
 
         // 计算 policy 允许自动批准的范围：agent 声明 ∩ lifecycle 声明
         // 如果任一为空，则全部需要用户审批
-        let auto_approve_pool = compute_auto_approve_pool(agent_auto_grantable, lifecycle_requestable);
+        let auto_approve_pool =
+            compute_auto_approve_pool(agent_auto_grantable, lifecycle_requestable);
 
         let mut matched = Vec::new();
         let mut unmatched = Vec::new();
@@ -58,20 +59,14 @@ impl PermissionPolicyService {
             PolicyDecision {
                 outcome: PolicyOutcome::NeedsUserApproval,
                 matched_rules: vec![],
-                reason: format!(
-                    "no auto-approve coverage for: {}",
-                    unmatched.join(", ")
-                ),
+                reason: format!("no auto-approve coverage for: {}", unmatched.join(", ")),
             }
         } else {
             // 部分命中：保守策略，全部走用户审批
             PolicyDecision {
                 outcome: PolicyOutcome::NeedsUserApproval,
                 matched_rules: matched,
-                reason: format!(
-                    "partial coverage; unmatched: {}",
-                    unmatched.join(", ")
-                ),
+                reason: format!("partial coverage; unmatched: {}", unmatched.join(", ")),
             }
         }
     }
@@ -207,7 +202,10 @@ mod tests {
 
     #[test]
     fn wildcard_tool_covers_all() {
-        assert!(path_covers(&path("story_management"), &path("story_management::create_story")));
+        assert!(path_covers(
+            &path("story_management"),
+            &path("story_management::create_story")
+        ));
     }
 
     #[test]

@@ -1,5 +1,3 @@
-use std::io;
-
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::session_persistence::{
     CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
@@ -7,18 +5,21 @@ use agentdash_spi::session_persistence::{
     SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
     SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
     SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionTerminalEffectStore,
-    TerminalEffectRecord, TerminalEffectStatus,
+    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
+    SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
 };
-use agentdash_spi::session_persistence::{NewTerminalEffectRecord, PendingCapabilityStateTransition};
+use agentdash_spi::session_persistence::{
+    NewTerminalEffectRecord, PendingCapabilityStateTransition,
+};
 use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
-    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row, encode_optional_u64_as_i64,
-    encode_u64_as_i64, json_string, lineage_from_row, map_meta_row, optional_json_string,
-    parse_non_negative_u64, persisted_event_from_row, projection_from_envelope,
-    projection_head_from_row, projection_segment_from_row, runtime_command_from_row, sqlx_to_io,
-    terminal_effect_from_row, title_source_to_str, validate_commit_session,
+    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row,
+    encode_optional_u64_as_i64, encode_u64_as_i64, json_string, lineage_from_row, map_meta_row,
+    optional_json_string, parse_non_negative_u64, persisted_event_from_row,
+    projection_from_envelope, projection_head_from_row, projection_segment_from_row,
+    runtime_command_from_row, sqlx_to_session_store_error, terminal_effect_from_row,
+    title_source_to_str, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -30,7 +31,7 @@ impl PostgresSessionRepository {
         Self { pool }
     }
 
-    pub async fn initialize(&self) -> io::Result<()> {
+    pub async fn initialize(&self) -> SessionStoreResult<()> {
         crate::migration::assert_postgres_tables_ready(
             &self.pool,
             &[
@@ -45,7 +46,7 @@ impl PostgresSessionRepository {
             ],
         )
         .await
-        .map_err(|err| io::Error::other(err.to_string()))
+        .map_err(|err| SessionStoreError::Database(err.to_string()))
     }
 
     async fn update_terminal_effect_status(
@@ -55,7 +56,7 @@ impl PostgresSessionRepository {
         updated_at_ms: i64,
         increment_attempt: bool,
         last_error: Option<String>,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
             UPDATE session_terminal_effects
@@ -73,12 +74,11 @@ impl PostgresSessionRepository {
         .bind(effect_id.to_string())
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         if result.rows_affected() == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("terminal effect {effect_id} 不存在"),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "terminal effect {effect_id} 不存在"
+            )));
         }
         Ok(())
     }
@@ -88,7 +88,7 @@ impl PostgresSessionRepository {
         command_ids: &[uuid::Uuid],
         status: RuntimeCommandStatus,
         error: Option<String>,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         if command_ids.is_empty() {
             return Ok(());
         }
@@ -118,36 +118,28 @@ impl PostgresSessionRepository {
         .bind(&id_strings)
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         if (result.rows_affected() as usize) != command_ids.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "部分 runtime command 不存在: 命中 {} / 期望 {}",
-                    result.rows_affected(),
-                    command_ids.len()
-                ),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "部分 runtime command 不存在: 命中 {} / 期望 {}",
+                result.rows_affected(),
+                command_ids.len()
+            )));
         }
         Ok(())
     }
 
-    async fn require_snapshot_seq(&self, session_id: &str) -> io::Result<u64> {
+    async fn require_snapshot_seq(&self, session_id: &str) -> SessionStoreResult<u64> {
         self.get_session_meta(session_id)
             .await?
             .map(|meta| meta.last_event_seq)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("session {session_id} 不存在"),
-                )
-            })
+            .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))
     }
 }
 
 #[async_trait::async_trait]
 impl SessionMetaStore for PostgresSessionRepository {
-    async fn create_session(&self, meta: &SessionMeta) -> io::Result<()> {
+    async fn create_session(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
@@ -185,11 +177,11 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         Ok(())
     }
 
-    async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>> {
+    async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
@@ -203,11 +195,11 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         row.as_ref().map(map_meta_row).transpose()
     }
 
-    async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>> {
+    async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
             SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
@@ -220,11 +212,11 @@ impl SessionMetaStore for PostgresSessionRepository {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(map_meta_row).collect()
     }
 
-    async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()> {
+    async fn save_session_meta(&self, meta: &SessionMeta) -> SessionStoreResult<()> {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
@@ -293,58 +285,61 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         Ok(())
     }
 
-    async fn delete_session(&self, session_id: &str) -> io::Result<()> {
-        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+    async fn delete_session(&self, session_id: &str) -> SessionStoreResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_events WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_terminal_effects WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_runtime_commands WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query(
             "DELETE FROM session_lineage WHERE child_session_id = $1 OR parent_session_id = $1",
         )
         .bind(session_id)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_projection_heads WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_projection_segments WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM session_compactions WHERE session_id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
         sqlx::query("DELETE FROM sessions WHERE id = $1")
             .bind(session_id)
             .execute(&mut *tx)
             .await
-            .map_err(sqlx_to_io)?;
-        tx.commit().await.map_err(sqlx_to_io)?;
+            .map_err(sqlx_to_session_store_error)?;
+        tx.commit().await.map_err(sqlx_to_session_store_error)?;
         Ok(())
     }
-
 }
 
 #[async_trait::async_trait]
@@ -353,8 +348,12 @@ impl SessionEventStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         envelope: &BackboneEnvelope,
-    ) -> io::Result<PersistedSessionEvent> {
-        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+    ) -> SessionStoreResult<PersistedSessionEvent> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(sqlx_to_session_store_error)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let seq_row = sqlx::query(
             r#"
@@ -367,14 +366,11 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(session_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            )
-        })?;
-        let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?
+        .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?;
+        let event_seq_i64: i64 = seq_row
+            .try_get("last_event_seq")
+            .map_err(sqlx_to_session_store_error)?;
         let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
         let projection = projection_from_envelope(envelope);
         let persisted = PersistedSessionEvent {
@@ -410,7 +406,7 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(notification_json)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         sqlx::query(
             r#"
@@ -438,9 +434,9 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(session_id)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
-        tx.commit().await.map_err(sqlx_to_io)?;
+        tx.commit().await.map_err(sqlx_to_session_store_error)?;
         Ok(persisted)
     }
 
@@ -448,7 +444,7 @@ impl SessionEventStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         after_seq: u64,
-    ) -> io::Result<SessionEventBacklog> {
+    ) -> SessionStoreResult<SessionEventBacklog> {
         let snapshot_seq = self.require_snapshot_seq(session_id).await?;
         let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
         let snapshot_seq_db = encode_u64_as_i64(snapshot_seq, "sessions.last_event_seq")?;
@@ -466,7 +462,7 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(snapshot_seq_db)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         let mut events = Vec::with_capacity(rows.len());
         for row in rows {
@@ -484,12 +480,12 @@ impl SessionEventStore for PostgresSessionRepository {
         session_id: &str,
         after_seq: u64,
         limit: u32,
-    ) -> io::Result<SessionEventPage> {
+    ) -> SessionStoreResult<SessionEventPage> {
         let snapshot_seq = self.require_snapshot_seq(session_id).await?;
         let take = limit.max(1);
         let after_seq_db = encode_u64_as_i64(after_seq, "session_events.after_seq")?;
         let take_usize = usize::try_from(take)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "分页大小超出 usize 范围"))?;
+            .map_err(|_| SessionStoreError::InvalidData("分页大小超出 usize 范围".to_string()))?;
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
@@ -505,7 +501,7 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(i64::from(take) + 1)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         let has_more = rows.len() > take_usize;
         let mut events = Vec::new();
@@ -524,7 +520,10 @@ impl SessionEventStore for PostgresSessionRepository {
         })
     }
 
-    async fn list_all_events(&self, session_id: &str) -> io::Result<Vec<PersistedSessionEvent>> {
+    async fn list_all_events(
+        &self,
+        session_id: &str,
+    ) -> SessionStoreResult<Vec<PersistedSessionEvent>> {
         let rows = sqlx::query(
             r#"
             SELECT session_id, event_seq, occurred_at_ms, committed_at_ms,
@@ -537,7 +536,7 @@ impl SessionEventStore for PostgresSessionRepository {
         .bind(session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         let mut events = Vec::with_capacity(rows.len());
         for row in rows {
@@ -545,7 +544,6 @@ impl SessionEventStore for PostgresSessionRepository {
         }
         Ok(events)
     }
-
 }
 
 #[async_trait::async_trait]
@@ -553,7 +551,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
     async fn insert_terminal_effect(
         &self,
         effect: NewTerminalEffectRecord,
-    ) -> io::Result<TerminalEffectRecord> {
+    ) -> SessionStoreResult<TerminalEffectRecord> {
         let now = chrono::Utc::now().timestamp_millis();
         let record = TerminalEffectRecord {
             id: uuid::Uuid::new_v4(),
@@ -594,11 +592,11 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .bind(&record.last_error)
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         Ok(record)
     }
 
-    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+    async fn mark_terminal_effect_running(&self, effect_id: uuid::Uuid) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_terminal_effect_status(
             effect_id,
@@ -610,7 +608,10 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .await
     }
 
-    async fn mark_terminal_effect_succeeded(&self, effect_id: uuid::Uuid) -> io::Result<()> {
+    async fn mark_terminal_effect_succeeded(
+        &self,
+        effect_id: uuid::Uuid,
+    ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_terminal_effect_status(
             effect_id,
@@ -626,7 +627,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         &self,
         effect_id: uuid::Uuid,
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_terminal_effect_status(
             effect_id,
@@ -642,7 +643,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         &self,
         effect_id: uuid::Uuid,
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let now = chrono::Utc::now().timestamp_millis();
         self.update_terminal_effect_status(
             effect_id,
@@ -658,7 +659,7 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         &self,
         statuses: &[TerminalEffectStatus],
         limit: u32,
-    ) -> io::Result<Vec<TerminalEffectRecord>> {
+    ) -> SessionStoreResult<Vec<TerminalEffectRecord>> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
@@ -678,10 +679,9 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(terminal_effect_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -690,8 +690,12 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         transition: PendingCapabilityStateTransition,
-    ) -> io::Result<RuntimeCommandRecord> {
-        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+    ) -> SessionStoreResult<RuntimeCommandRecord> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(sqlx_to_session_store_error)?;
         let now = chrono::Utc::now().timestamp_millis();
         sqlx::query(
             r#"
@@ -712,7 +716,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(RuntimeCommandStatus::Requested.as_str())
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
@@ -750,15 +754,15 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(&record.last_error)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
-        tx.commit().await.map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
+        tx.commit().await.map_err(sqlx_to_session_store_error)?;
         Ok(record)
     }
 
     async fn list_requested_runtime_commands(
         &self,
         session_id: &str,
-    ) -> io::Result<Vec<RuntimeCommandRecord>> {
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT id, session_id, transition_id, phase_node, status, payload_json,
@@ -772,11 +776,14 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(RuntimeCommandStatus::Requested.as_str())
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(runtime_command_from_row).collect()
     }
 
-    async fn mark_runtime_commands_applied(&self, command_ids: &[uuid::Uuid]) -> io::Result<()> {
+    async fn mark_runtime_commands_applied(
+        &self,
+        command_ids: &[uuid::Uuid],
+    ) -> SessionStoreResult<()> {
         self.update_runtime_commands_status(command_ids, RuntimeCommandStatus::Applied, None)
             .await
     }
@@ -785,7 +792,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         &self,
         command_ids: &[uuid::Uuid],
         error: String,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         self.update_runtime_commands_status(command_ids, RuntimeCommandStatus::Failed, Some(error))
             .await
     }
@@ -794,7 +801,7 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         &self,
         statuses: &[RuntimeCommandStatus],
         limit: u32,
-    ) -> io::Result<Vec<RuntimeCommandRecord>> {
+    ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         if statuses.is_empty() {
             return Ok(Vec::new());
         }
@@ -814,10 +821,9 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(runtime_command_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -826,7 +832,7 @@ impl SessionCompactionStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         compaction_id: &str,
-    ) -> io::Result<Option<SessionCompactionRecord>> {
+    ) -> SessionStoreResult<Option<SessionCompactionRecord>> {
         let row = sqlx::query(
             r#"
             SELECT id, session_id, projection_kind, projection_version,
@@ -843,7 +849,7 @@ impl SessionCompactionStore for PostgresSessionRepository {
         .bind(compaction_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         row.as_ref().map(compaction_from_row).transpose()
     }
 
@@ -851,7 +857,7 @@ impl SessionCompactionStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Vec<SessionCompactionRecord>> {
+    ) -> SessionStoreResult<Vec<SessionCompactionRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT id, session_id, projection_kind, projection_version,
@@ -869,10 +875,9 @@ impl SessionCompactionStore for PostgresSessionRepository {
         .bind(projection_kind)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(compaction_from_row).collect()
     }
-
 }
 
 #[async_trait::async_trait]
@@ -882,7 +887,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         session_id: &str,
         projection_kind: &str,
         projection_version: u64,
-    ) -> io::Result<Vec<SessionProjectionSegmentRecord>> {
+    ) -> SessionStoreResult<Vec<SessionProjectionSegmentRecord>> {
         let projection_version = encode_u64_as_i64(
             projection_version,
             "session_projection_segments.projection_version",
@@ -903,7 +908,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(projection_version)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(projection_segment_from_row).collect()
     }
 
@@ -911,7 +916,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         projection_kind: &str,
-    ) -> io::Result<Option<SessionProjectionHeadRecord>> {
+    ) -> SessionStoreResult<Option<SessionProjectionHeadRecord>> {
         let row = sqlx::query(
             r#"
             SELECT session_id, projection_kind, projection_version, head_event_seq,
@@ -924,11 +929,14 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(projection_kind)
         .fetch_optional(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         row.as_ref().map(projection_head_from_row).transpose()
     }
 
-    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()> {
+    async fn upsert_projection_head(
+        &self,
+        head: SessionProjectionHeadRecord,
+    ) -> SessionStoreResult<()> {
         let projection_version = encode_u64_as_i64(
             head.projection_version,
             "session_projection_heads.projection_version",
@@ -964,7 +972,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(head.updated_at_ms)
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         Ok(())
     }
 
@@ -972,9 +980,13 @@ impl SessionProjectionStore for PostgresSessionRepository {
         &self,
         session_id: &str,
         commit: NewCompactionProjectionCommit,
-    ) -> io::Result<CompactionProjectionCommitResult> {
+    ) -> SessionStoreResult<CompactionProjectionCommitResult> {
         validate_commit_session(session_id, &commit)?;
-        let mut tx = self.pool.begin().await.map_err(sqlx_to_io)?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(sqlx_to_session_store_error)?;
         let committed_at_ms = chrono::Utc::now().timestamp_millis();
         let seq_row = sqlx::query(
             r#"
@@ -987,14 +999,11 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(session_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session {session_id} 不存在"),
-            )
-        })?;
-        let event_seq_i64: i64 = seq_row.try_get("last_event_seq").map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?
+        .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))?;
+        let event_seq_i64: i64 = seq_row
+            .try_get("last_event_seq")
+            .map_err(sqlx_to_session_store_error)?;
         let event_seq = parse_non_negative_u64(event_seq_i64, "sessions.last_event_seq")?;
         let projection = projection_from_envelope(&commit.completed_event);
         let persisted = PersistedSessionEvent {
@@ -1030,7 +1039,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(notification_json)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         sqlx::query(
             r#"
@@ -1058,7 +1067,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         .bind(session_id)
         .execute(&mut *tx)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
 
         let mut compaction = commit.compaction;
         compaction.completed_event_seq = Some(event_seq);
@@ -1079,7 +1088,7 @@ impl SessionProjectionStore for PostgresSessionRepository {
         };
         upsert_projection_head_row(&mut tx, &head).await?;
 
-        tx.commit().await.map_err(sqlx_to_io)?;
+        tx.commit().await.map_err(sqlx_to_session_store_error)?;
         Ok(CompactionProjectionCommitResult {
             event: persisted,
             compaction,
@@ -1087,16 +1096,14 @@ impl SessionProjectionStore for PostgresSessionRepository {
             head,
         })
     }
-
 }
 
 #[async_trait::async_trait]
 impl SessionLineageStore for PostgresSessionRepository {
-    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()> {
+    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> SessionStoreResult<()> {
         if record.child_session_id == record.parent_session_id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "session lineage 不能指向自身",
+            return Err(SessionStoreError::InvalidInput(
+                "session lineage 不能指向自身".to_string(),
             ));
         }
         let cycle = sqlx::query_scalar::<_, i64>(
@@ -1119,11 +1126,10 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(&record.parent_session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         if cycle.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "session lineage 不能形成环",
+            return Err(SessionStoreError::InvalidInput(
+                "session lineage 不能形成环".to_string(),
             ));
         }
         let fork_point_event_seq = encode_optional_u64_as_i64(
@@ -1166,14 +1172,14 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(metadata_json)
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         Ok(())
     }
 
     async fn get_session_lineage(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Option<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Option<SessionLineageRecord>> {
         let row = sqlx::query(
             r#"
             SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
@@ -1186,7 +1192,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(child_session_id)
         .fetch_optional(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         row.as_ref().map(lineage_from_row).transpose()
     }
 
@@ -1195,7 +1201,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         parent_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let rows = sqlx::query(
             r#"
             SELECT child_session_id, parent_session_id, relation_kind, fork_point_event_seq,
@@ -1213,14 +1219,14 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(status.map(SessionLineageStatus::as_str))
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(lineage_from_row).collect()
     }
 
     async fn list_session_ancestors(
         &self,
         child_session_id: &str,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let rows = sqlx::query(
             r#"
             WITH RECURSIVE lineage_path AS (
@@ -1247,7 +1253,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(child_session_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(lineage_from_row).collect()
     }
 
@@ -1256,7 +1262,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         root_session_id: &str,
         relation_kind: Option<SessionLineageRelationKind>,
         status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>> {
+    ) -> SessionStoreResult<Vec<SessionLineageRecord>> {
         let rows = sqlx::query(
             r#"
             WITH RECURSIVE lineage_tree AS (
@@ -1289,7 +1295,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(status.map(SessionLineageStatus::as_str))
         .fetch_all(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         rows.iter().map(lineage_from_row).collect()
     }
 
@@ -1298,7 +1304,7 @@ impl SessionLineageStore for PostgresSessionRepository {
         child_session_id: &str,
         status: SessionLineageStatus,
         updated_at_ms: i64,
-    ) -> io::Result<()> {
+    ) -> SessionStoreResult<()> {
         let result = sqlx::query(
             r#"
             UPDATE session_lineage
@@ -1311,12 +1317,11 @@ impl SessionLineageStore for PostgresSessionRepository {
         .bind(child_session_id)
         .execute(&self.pool)
         .await
-        .map_err(sqlx_to_io)?;
+        .map_err(sqlx_to_session_store_error)?;
         if result.rows_affected() == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("session lineage child {child_session_id} 不存在"),
-            ));
+            return Err(SessionStoreError::NotFound(format!(
+                "session lineage child {child_session_id} 不存在"
+            )));
         }
         Ok(())
     }
@@ -1325,7 +1330,7 @@ impl SessionLineageStore for PostgresSessionRepository {
 async fn insert_compaction_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     record: &SessionCompactionRecord,
-) -> io::Result<()> {
+) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         record.projection_version,
         "session_compactions.projection_version",
@@ -1416,14 +1421,14 @@ async fn insert_compaction_row(
     .bind(record.completed_at_ms)
     .execute(&mut **tx)
     .await
-    .map_err(sqlx_to_io)?;
+    .map_err(sqlx_to_session_store_error)?;
     Ok(())
 }
 
 async fn insert_projection_segment_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     segment: &SessionProjectionSegmentRecord,
-) -> io::Result<()> {
+) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         segment.projection_version,
         "session_projection_segments.projection_version",
@@ -1482,14 +1487,14 @@ async fn insert_projection_segment_row(
     .bind(segment.created_at_ms)
     .execute(&mut **tx)
     .await
-    .map_err(sqlx_to_io)?;
+    .map_err(sqlx_to_session_store_error)?;
     Ok(())
 }
 
 async fn upsert_projection_head_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     head: &SessionProjectionHeadRecord,
-) -> io::Result<()> {
+) -> SessionStoreResult<()> {
     let projection_version = encode_u64_as_i64(
         head.projection_version,
         "session_projection_heads.projection_version",
@@ -1525,7 +1530,7 @@ async fn upsert_projection_head_row(
     .bind(head.updated_at_ms)
     .execute(&mut **tx)
     .await
-    .map_err(sqlx_to_io)?;
+    .map_err(sqlx_to_session_store_error)?;
     Ok(())
 }
 

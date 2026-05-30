@@ -42,8 +42,8 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(installed_source_version(&preset.installed_source))
         .bind(installed_source_digest(&preset.installed_source))
         .bind(installed_at(&preset.installed_source))
-        .bind(preset.created_at.to_rfc3339())
-        .bind(preset.updated_at.to_rfc3339())
+        .bind(preset.created_at)
+        .bind(preset.updated_at)
         .execute(&self.pool)
         .await
         .map_err(db_err)?;
@@ -106,7 +106,7 @@ impl McpPresetRepository for PostgresMcpPresetRepository {
         .bind(installed_source_version(&preset.installed_source))
         .bind(installed_source_digest(&preset.installed_source))
         .bind(installed_at(&preset.installed_source))
-        .bind(preset.updated_at.to_rfc3339())
+        .bind(preset.updated_at)
         .bind(preset.id.to_string())
         .execute(&self.pool)
         .await
@@ -192,10 +192,8 @@ fn installed_source_digest(source: &Option<InstalledAssetSource>) -> Option<&str
     source.as_ref().map(|source| source.source_digest.as_str())
 }
 
-fn installed_at(source: &Option<InstalledAssetSource>) -> Option<String> {
-    source
-        .as_ref()
-        .map(|source| source.installed_at.to_rfc3339())
+fn installed_at(source: &Option<InstalledAssetSource>) -> Option<chrono::DateTime<chrono::Utc>> {
+    source.as_ref().map(|source| source.installed_at)
 }
 
 fn parse_installed_source(
@@ -203,30 +201,27 @@ fn parse_installed_source(
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<Option<InstalledAssetSource>, DomainError> {
     let Some(library_asset_id) = library_asset_id else {
         return Ok(None);
     };
     Ok(Some(InstalledAssetSource {
         library_asset_id: library_asset_id.parse().map_err(|_| {
-            DomainError::InvalidConfig("installed_source.library_asset_id 无效".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.library_asset_id 无效"))
         })?,
         source_ref: source_ref.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_ref 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_ref 为空"))
         })?,
         source_version: source_version.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_version 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_version 为空"))
         })?,
         source_digest: source_digest.ok_or_else(|| {
-            DomainError::InvalidConfig("installed_source.source_digest 为空".to_string())
+            DomainError::InvalidConfig(String::from("installed_source.source_digest 为空"))
         })?,
-        installed_at: super::parse_pg_timestamp_checked(
-            installed_at.as_deref().ok_or_else(|| {
-                DomainError::InvalidConfig("installed_source.installed_at 为空".to_string())
-            })?,
-            "installed_source.installed_at",
-        )?,
+        installed_at: installed_at.ok_or_else(|| {
+            DomainError::InvalidConfig(String::from("installed_source.installed_at 为空"))
+        })?,
     }))
 }
 
@@ -245,9 +240,9 @@ struct McpPresetRow {
     source_ref: Option<String>,
     source_version: Option<String>,
     source_digest: Option<String>,
-    installed_at: Option<String>,
-    created_at: String,
-    updated_at: String,
+    installed_at: Option<chrono::DateTime<chrono::Utc>>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl TryFrom<McpPresetRow> for McpPreset {
@@ -304,14 +299,8 @@ impl TryFrom<McpPresetRow> for McpPreset {
                 row.source_digest,
                 row.installed_at,
             )?,
-            created_at: super::parse_pg_timestamp_checked(
-                &row.created_at,
-                "mcp_presets.created_at",
-            )?,
-            updated_at: super::parse_pg_timestamp_checked(
-                &row.updated_at,
-                "mcp_presets.updated_at",
-            )?,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
         })
     }
 }

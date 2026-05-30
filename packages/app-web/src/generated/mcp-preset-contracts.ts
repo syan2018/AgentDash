@@ -3,7 +3,9 @@
 
 export type CloneMcpPresetRequest = { key?: string, display_name?: string, };
 
-export type CreateMcpPresetRequest = { key: string, display_name: string, description?: string, transport: McpTransportConfig, route_policy: McpRoutePolicy, };
+export type CreateMcpPresetRequest = { key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, };
+
+export type DeleteMcpPresetResponse = { deleted: string, };
 
 export type InstalledAssetSourceResponse = { library_asset_id: string, source_ref: string, source_version: string, source_digest: string, installed_at: string, };
 
@@ -13,16 +15,16 @@ export type McpEnvVar = { name: string, value: string, };
 
 export type McpHttpHeader = { name: string, value: string, };
 
-export type McpPresetResponse = { id: string, project_id: string, key: string, display_name: string, description?: string, transport: McpTransportConfig, route_policy: McpRoutePolicy, source: McpPresetSourceTag, builtin_key?: string, installed_source?: InstalledAssetSourceResponse, created_at: string, updated_at: string, };
+export type McpPresetResponse = { id: string, project_id: string, key: string, display_name: string, description?: string, transport: McpTransportConfigDto, route_policy: McpRoutePolicy, source: McpPresetSourceTag, builtin_key?: string, installed_source?: InstalledAssetSourceResponse, created_at: string, updated_at: string, };
 
 export type McpPresetSourceTag = "builtin" | "user";
 
 export type McpRoutePolicy = "auto" | "relay" | "direct";
 
-export type McpTransportConfig = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, };
+export type McpTransportConfigDto = { "type": "http", url: string, headers?: Array<McpHttpHeader>, } | { "type": "sse", url: string, headers?: Array<McpHttpHeader>, } | { "type": "stdio", command: string, args?: Array<string>, env?: Array<McpEnvVar>, };
 
 export type ProbeMcpPresetResponse = { "status": "ok", latency_ms: number, tools: Array<ProbeMcpToolInfo>, } | { "status": "error", error: string, } | { "status": "unsupported", reason: string, };
 
 export type ProbeMcpToolInfo = { name: string, description: string, };
 
-export type UpdateMcpPresetRequest = { key?: string, display_name?: string, description?: string | null, transport?: McpTransportConfig, route_policy?: McpRoutePolicy, };
+export type UpdateMcpPresetRequest = { key?: string, display_name?: string, description?: string | null, transport?: McpTransportConfigDto, route_policy?: McpRoutePolicy, };

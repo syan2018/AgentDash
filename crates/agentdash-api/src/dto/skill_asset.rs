@@ -139,3 +139,8 @@ pub struct ListSkillAssetQuery {
     #[serde(default)]
     pub source: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SkillAssetFileBlobQuery {
+    pub path: String,
+}

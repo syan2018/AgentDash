@@ -10,31 +10,31 @@ use axum::{
     http::HeaderMap,
     response::IntoResponse,
 };
-use serde::Deserialize;
 use tokio::time::MissedTickBehavior;
 
 use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
-use crate::session_use_cases::context_query::build_session_context_plan;
+use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
-use agentdash_application::session::construction::SessionConstructionPlan;
-use agentdash_application::session::context::SessionContextSnapshot;
 use agentdash_application::session::{
     LaunchCommand, SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
     UserPromptInput,
 };
 use agentdash_contracts::session::{
-    CreateSessionForkRequest, RollbackSessionProjectionRequest, SessionEventResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
+    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
     SessionProjectionViewResponse,
 };
-use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::HookSessionRuntimeSnapshot;
-use serde::Serialize;
 
-use crate::auth::{
-    CurrentUser, ProjectPermission, load_project_with_permission,
+use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
+use crate::dto::{
+    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, CreateSessionRequest,
+    ListSessionsQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionContextResponse,
+    SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
 /// Session 级权限检查 — 通过 SessionMeta.project_id 确认 session 归属后检查项目权限。
@@ -61,45 +61,121 @@ pub async fn ensure_session_permission(
 
 const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Deserialize)]
-pub struct NdjsonStreamQuery {
-    pub since_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SessionEventsQuery {
-    pub after_seq: Option<u64>,
-    pub limit: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListSessionsQuery {
-    pub owner_type: Option<String>,
-    pub owner_id: Option<String>,
-    /// 为 true 时排除已绑定到 Story/Task 的会话，仅返回独立会话
-    pub exclude_bound: Option<bool>,
-}
-
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Query(_query): Query<ListSessionsQuery>,
+    CurrentUser(current_user): CurrentUser,
+    Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
-    // TODO(permission-system): owner 级过滤由 Permission System 接管
-    let sessions = state
-        .services
-        .session_core
-        .list_sessions()
-        .await?;
+    let sessions = state.services.session_core.list_sessions().await?;
+    let owner_project_id = match (&query.owner_type, &query.owner_id) {
+        (Some(owner_type), Some(owner_id)) if owner_type == "project" => Some(
+            uuid::Uuid::parse_str(owner_id)
+                .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id}")))?,
+        ),
+        (Some(owner_type), _) => {
+            return Err(ApiError::BadRequest(format!(
+                "Session 列表仅支持 owner_type=project，收到: {owner_type}"
+            )));
+        }
+        _ => None,
+    };
 
-    Ok(Json(sessions))
+    let mut visible = Vec::new();
+    for session in sessions {
+        let Some(project_id) = session
+            .project_id
+            .as_deref()
+            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
+        else {
+            continue;
+        };
+        if let Some(owner_project_id) = owner_project_id
+            && project_id != owner_project_id
+        {
+            continue;
+        }
+        load_project_with_permission(
+            state.as_ref(),
+            &current_user,
+            project_id,
+            ProjectPermission::View,
+        )
+        .await?;
+        visible.push(session);
+    }
+
+    Ok(Json(visible))
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateSessionRequest {
-    #[serde(default)]
-    pub title: Option<String>,
-    pub project_id: uuid::Uuid,
+pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
+    axum::Router::new()
+        .route(
+            "/sessions",
+            axum::routing::get(list_sessions).post(create_session),
+        )
+        .route(
+            "/sessions/{id}",
+            axum::routing::get(get_session).delete(delete_session),
+        )
+        .route(
+            "/sessions/{id}/meta",
+            axum::routing::get(get_session_meta).patch(update_session_meta),
+        )
+        .route(
+            "/sessions/{id}/hook-runtime",
+            axum::routing::get(get_session_hook_runtime),
+        )
+        .route(
+            "/sessions/{id}/state",
+            axum::routing::get(get_session_state),
+        )
+        .route(
+            "/sessions/{id}/events",
+            axum::routing::get(list_session_events),
+        )
+        .route(
+            "/sessions/{id}/bindings",
+            axum::routing::get(get_session_bindings),
+        )
+        .route(
+            "/sessions/{id}/context",
+            axum::routing::get(get_session_context),
+        )
+        .route(
+            "/sessions/{id}/context/projection",
+            axum::routing::get(get_session_context_projection),
+        )
+        .route(
+            "/sessions/{id}/lineage",
+            axum::routing::get(get_session_lineage),
+        )
+        .route("/sessions/{id}/fork", axum::routing::post(fork_session))
+        .route(
+            "/sessions/{id}/projection/rollback",
+            axum::routing::post(rollback_session_projection),
+        )
+        .route(
+            "/sessions/{id}/context/audit",
+            axum::routing::get(get_session_context_audit),
+        )
+        .route("/sessions/{id}/prompt", axum::routing::post(prompt_session))
+        .route("/sessions/{id}/cancel", axum::routing::post(cancel_session))
+        .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
+            axum::routing::post(approve_tool_call),
+        )
+        .route(
+            "/sessions/{id}/tool-approvals/{tool_call_id}/reject",
+            axum::routing::post(reject_tool_call),
+        )
+        .route(
+            "/sessions/{id}/companion-requests/{request_id}/respond",
+            axum::routing::post(respond_companion_request),
+        )
+        .route(
+            "/acp/sessions/{id}/stream/ndjson",
+            axum::routing::get(acp_session_stream_ndjson),
+        )
 }
 
 pub async fn create_session(
@@ -115,10 +191,13 @@ pub async fn create_session(
     )
     .await?;
     let title = req.title.unwrap_or_else(|| "新会话".to_string());
-    let meta = state
+    let meta = state.services.session_core.create_session(&title).await?;
+    state
         .services
         .session_core
-        .create_session(&title)
+        .update_session_meta(&meta.id, |meta| {
+            meta.project_id = Some(project.id.to_string());
+        })
         .await?;
     state
         .services
@@ -170,7 +249,7 @@ pub async fn get_session_hook_runtime(
         .session_hooks
         .ensure_hook_session_runtime(&session_id, None)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| {
             ApiError::NotFound(format!(
                 "session {} 当前没有可用的 hook runtime",
@@ -178,16 +257,6 @@ pub async fn get_session_hook_runtime(
             ))
         })?;
     Ok(Json(runtime.runtime_snapshot()))
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionExecutionStateResponse {
-    pub session_id: String,
-    pub status: String,
-    pub turn_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
 }
 
 fn map_session_event(
@@ -256,6 +325,38 @@ pub async fn get_session_state(
     Ok(Json(response))
 }
 
+fn session_command_state_response(
+    execution_state: SessionExecutionState,
+) -> SessionCommandStateResponse {
+    match execution_state {
+        SessionExecutionState::Idle => SessionCommandStateResponse {
+            status: "idle".to_string(),
+            turn_id: None,
+            message: None,
+        },
+        SessionExecutionState::Running { turn_id } => SessionCommandStateResponse {
+            status: "running".to_string(),
+            turn_id,
+            message: None,
+        },
+        SessionExecutionState::Completed { turn_id } => SessionCommandStateResponse {
+            status: "completed".to_string(),
+            turn_id: Some(turn_id),
+            message: None,
+        },
+        SessionExecutionState::Failed { turn_id, message } => SessionCommandStateResponse {
+            status: "failed".to_string(),
+            turn_id: Some(turn_id),
+            message,
+        },
+        SessionExecutionState::Interrupted { turn_id, message } => SessionCommandStateResponse {
+            status: "interrupted".to_string(),
+            turn_id,
+            message,
+        },
+    }
+}
+
 pub async fn list_session_events(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
@@ -269,7 +370,7 @@ pub async fn list_session_events(
         .session_eventing
         .list_event_page(&session_id, after_seq, limit)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(SessionEventsPageResponse {
         snapshot_seq: page.snapshot_seq,
@@ -404,32 +505,13 @@ mod tests {
     }
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionContextResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_binding: Option<agentdash_domain::task::AgentBinding>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vfs: Option<agentdash_spi::Vfs>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_surface: Option<agentdash_application::vfs::ResolvedVfsSurface>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_snapshot: Option<SessionContextSnapshot>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_capabilities: Option<agentdash_spi::SessionBaselineCapabilities>,
-}
-
 /// GET /sessions/{id}/context — 返回 workspace / agent_binding / vfs / snapshot
 pub async fn get_session_context(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionContextResponse>, ApiError> {
-    let Some(plan) =
-        build_session_context_plan(&state, &current_user, &session_id).await?
-    else {
+    let Some(plan) = build_session_context_plan(&state, &current_user, &session_id).await? else {
         return Ok(Json(SessionContextResponse::empty()));
     };
 
@@ -442,13 +524,12 @@ pub async fn get_session_context_projection(
     CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionProjectionViewResponse>, ApiError> {
-
     let envelope = state
         .services
         .session_eventing
         .build_agent_context_envelope(&session_id)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
 
     Ok(Json(SessionProjectionViewResponse::from(envelope)))
 }
@@ -495,7 +576,6 @@ pub async fn get_session_lineage(
     CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<SessionLineageViewResponse>, ApiError> {
-
     let view = state
         .services
         .session_branching
@@ -518,7 +598,6 @@ pub async fn rollback_session_projection(
     Path(session_id): Path<String>,
     Json(req): Json<RollbackSessionProjectionRequest>,
 ) -> Result<Json<SessionProjectionRollbackResponse>, ApiError> {
-
     let result = state
         .services
         .session_branching
@@ -541,38 +620,12 @@ pub async fn rollback_session_projection(
     }))
 }
 
-impl SessionContextResponse {
-    fn empty() -> Self {
-        Self {
-            workspace_id: None,
-            agent_binding: None,
-            vfs: None,
-            runtime_surface: None,
-            context_snapshot: None,
-            session_capabilities: None,
-        }
-    }
-
-    fn from_construction_plan(plan: SessionConstructionPlan) -> Self {
-        let projection = plan.context_projection;
-        Self {
-            workspace_id: projection.workspace_id.map(|id| id.to_string()),
-            agent_binding: projection.agent_binding,
-            vfs: projection.vfs,
-            runtime_surface: projection.runtime_surface,
-            context_snapshot: projection.context_snapshot,
-            session_capabilities: projection.session_capabilities,
-        }
-    }
-}
-
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateSessionMetaRequest {
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub tab_layout: Option<serde_json::Value>,
+pub async fn get_session_bindings(
+    State(_state): State<Arc<AppState>>,
+    CurrentUser(_current_user): CurrentUser,
+    Path(_session_id): Path<String>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    Ok(Json(vec![]))
 }
 
 /// GET /sessions/{id}/meta — 返回完整 session meta。
@@ -618,7 +671,7 @@ pub async fn update_session_meta(
             }
         })
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
 
     Ok(Json(meta))
@@ -626,17 +679,25 @@ pub async fn update_session_meta(
 
 pub async fn delete_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<DeleteSessionResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .session_core
         .delete_session(&session_id)
         .await?;
-    Ok(Json(
-        serde_json::json!({ "deleted": true, "sessionId": session_id }),
-    ))
+    Ok(Json(DeleteSessionResponse {
+        deleted: true,
+        session_id,
+    }))
 }
 
 pub async fn prompt_session(
@@ -644,7 +705,14 @@ pub async fn prompt_session(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
     Json(user_input): Json<UserPromptInput>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PromptSessionResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     let turn_id = state
         .services
         .session_launch
@@ -658,25 +726,34 @@ pub async fn prompt_session(
             agentdash_spi::ConnectorError::Runtime(msg) => {
                 decode_construction_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
             }
-            other => ApiError::Internal(other.to_string()),
+            other => ApiError::from(other),
         })?;
 
-    Ok(Json(
-        serde_json::json!({ "started": true, "sessionId": session_id, "turnId": turn_id }),
-    ))
+    Ok(Json(PromptSessionResponse {
+        started: true,
+        session_id,
+        turn_id,
+    }))
 }
 
 pub async fn cancel_session(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<CancelSessionResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .session_runtime
         .cancel(&session_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
     let execution_state = state
         .services
@@ -684,97 +761,91 @@ pub async fn cancel_session(
         .inspect_session_execution_state(&session_id)
         .await?;
 
-    let state_payload = match execution_state {
-        SessionExecutionState::Idle => serde_json::json!({ "status": "idle" }),
-        SessionExecutionState::Running { turn_id } => {
-            serde_json::json!({ "status": "running", "turn_id": turn_id })
-        }
-        SessionExecutionState::Completed { turn_id } => {
-            serde_json::json!({ "status": "completed", "turn_id": turn_id })
-        }
-        SessionExecutionState::Failed { turn_id, message } => {
-            serde_json::json!({ "status": "failed", "turn_id": turn_id, "message": message })
-        }
-        SessionExecutionState::Interrupted { turn_id, message } => {
-            serde_json::json!({ "status": "interrupted", "turn_id": turn_id, "message": message })
-        }
-    };
-
-    Ok(Json(serde_json::json!({
-        "cancelled": true,
-        "sessionId": session_id,
-        "state": state_payload,
-    })))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RejectToolApprovalRequest {
-    #[serde(default)]
-    pub reason: Option<String>,
+    Ok(Json(CancelSessionResponse {
+        cancelled: true,
+        session_id,
+        state: session_command_state_response(execution_state),
+    }))
 }
 
 pub async fn approve_tool_call(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ApproveToolCallResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .session_control
         .approve_tool_call(&session_id, &tool_call_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "approved": true,
-        "sessionId": session_id,
-        "toolCallId": tool_call_id,
-    })))
+    Ok(Json(ApproveToolCallResponse {
+        approved: true,
+        session_id,
+        tool_call_id,
+    }))
 }
 
 pub async fn reject_tool_call(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path((session_id, tool_call_id)): Path<(String, String)>,
     Json(req): Json<RejectToolApprovalRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<RejectToolCallResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .session_control
         .reject_tool_call(&session_id, &tool_call_id, req.reason.clone())
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "rejected": true,
-        "sessionId": session_id,
-        "toolCallId": tool_call_id,
-    })))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CompanionRespondRequest {
-    pub payload: serde_json::Value,
+    Ok(Json(RejectToolCallResponse {
+        rejected: true,
+        session_id,
+        tool_call_id,
+    }))
 }
 
 pub async fn respond_companion_request(
     State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
+    CurrentUser(current_user): CurrentUser,
     Path((session_id, request_id)): Path<(String, String)>,
     Json(req): Json<CompanionRespondRequest>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<CompanionRespondResponse>, ApiError> {
+    ensure_session_permission(
+        state.as_ref(),
+        &current_user,
+        &session_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
     state
         .services
         .session_control
         .respond_companion_request(&session_id, &request_id, req.payload)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::from)?;
 
-    Ok(Json(serde_json::json!({
-        "responded": true,
-        "session_id": session_id,
-        "request_id": request_id,
-    })))
+    Ok(Json(CompanionRespondResponse {
+        responded: true,
+        session_id,
+        request_id,
+    }))
 }
 
 /// ACP 会话流（Fetch Streaming / NDJSON）
@@ -799,7 +870,7 @@ pub async fn acp_session_stream_ndjson(
         .session_eventing
         .subscribe_after(&session_id, resume_from)
         .await
-        .map_err(|error| ApiError::Internal(error.to_string()))?;
+        .map_err(ApiError::from)?;
     let replayed = subscription.backlog.len();
     tracing::info!(
         session_id = %session_id,
@@ -911,7 +982,6 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
     }
 }
 
-
 fn api_error_from_io(error: io::Error) -> ApiError {
     match error.kind() {
         io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => {
@@ -919,7 +989,7 @@ fn api_error_from_io(error: io::Error) -> ApiError {
         }
         io::ErrorKind::NotFound => ApiError::NotFound(error.to_string()),
         io::ErrorKind::AlreadyExists => ApiError::Conflict(error.to_string()),
-        _ => ApiError::Internal(error.to_string()),
+        _ => ApiError::Internal(String::from("内部 IO 错误")),
     }
 }
 
@@ -929,39 +999,6 @@ fn api_error_from_io(error: io::Error) -> ApiError {
 
 /// Content preview 的最大字节数（超过时截断）。
 const CONTEXT_AUDIT_CONTENT_PREVIEW_MAX: usize = 2048;
-
-/// `GET /sessions/{id}/context/audit` 的查询参数。
-#[derive(Debug, Deserialize)]
-pub struct ContextAuditQuery {
-    pub since_ms: Option<u64>,
-    /// scope 标签：`runtime_agent` / `title_gen` / `summarizer` / `bridge_replay` / `audit`
-    pub scope: Option<String>,
-    pub slot: Option<String>,
-    pub source_prefix: Option<String>,
-}
-
-/// 审计事件的 HTTP DTO。
-#[derive(Debug, Serialize)]
-pub struct ContextAuditEventDto {
-    pub event_id: uuid::Uuid,
-    pub bundle_id: uuid::Uuid,
-    /// session 外部 ID（session runtime 分配的 `sess-<ms>-<short>`）。
-    pub session_id: String,
-    /// Bundle 内部追踪 UUID（可能是占位值，与 `session_id` 不同）。
-    pub bundle_session_uuid: uuid::Uuid,
-    pub at_ms: u64,
-    /// 触发标签（snake_case）：`session_bootstrap` / `composer_rebuild` /
-    /// `hook:UserPromptSubmit` / `session_plan` / `capability` / `filter:runtime_agent`
-    pub trigger: String,
-    pub slot: String,
-    pub label: String,
-    pub source: String,
-    pub order: i32,
-    pub scope: Vec<String>,
-    pub content_preview: String,
-    pub content_hash: u64,
-    pub full_content_available: bool,
-}
 
 fn parse_scope_tag(tag: &str) -> Option<agentdash_spi::FragmentScope> {
     match tag {

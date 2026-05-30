@@ -90,8 +90,9 @@ pub(crate) async fn build_session_runtime(
         sub_connectors.push(Arc::new(result.connector));
     }
 
-    let relay_transport: Arc<dyn agentdash_application::backend_transport::RelayPromptTransport> =
-        backend_registry.clone();
+    let relay_transport: Arc<
+        dyn agentdash_application_ports::backend_transport::RelayPromptTransport,
+    > = backend_registry.clone();
     sub_connectors.push(Arc::new(
         agentdash_application::relay_connector::RelayAgentConnector::new(
             relay_transport.clone(),

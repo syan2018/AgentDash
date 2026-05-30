@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { formatDateTime } from "../../../lib/format";
 import { useProjectStore } from "../../../stores/projectStore";
 import { useMcpProbeStore } from "../../../stores/mcpProbeStore";
 import { useCurrentUserStore } from "../../../stores/currentUserStore";
@@ -958,15 +959,3 @@ function RoutePolicyBadge({ policy }: { policy: McpRoutePolicy }) {
 }
 
 /* ─── Utils ─── */
-
-function formatDateTime(value: string): string {
-  const time = new Date(value);
-  if (Number.isNaN(time.getTime())) return value;
-  return time.toLocaleString("zh-CN", {
-    hour12: false,
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}

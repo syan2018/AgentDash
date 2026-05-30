@@ -9,7 +9,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::vfs::inline_persistence::InlineContentOverlay;
-use crate::vfs::relay_service::RelayVfsService;
+use crate::vfs::service::VfsService;
 use crate::vfs::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 
 // ---------------------------------------------------------------------------
@@ -37,13 +37,13 @@ const LANG_EXTENSIONS: &[(&str, &[&str])] = &[
 
 #[derive(Clone)]
 pub struct FsGrepTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
 }
 impl FsGrepTool {
     pub fn new(
-        service: Arc<RelayVfsService>,
+        service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         _identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
@@ -470,7 +470,7 @@ mod fs_grep_tests {
         let provider = Arc::new(InlineFsMountProvider::new(repo));
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let mount = Mount {
             id: "mem".to_string(),
             provider: PROVIDER_INLINE_FS.to_string(),

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::vfs::ListOptions;
 use crate::vfs::inline_persistence::InlineContentOverlay;
-use crate::vfs::relay_service::{RelayVfsService, is_vcs_path};
+use crate::vfs::service::{VfsService, is_vcs_path};
 use crate::vfs::tools::common::{SharedRuntimeVfs, ok_text, resolve_uri_path};
 
 // ---------------------------------------------------------------------------
@@ -21,14 +21,14 @@ const DEFAULT_MAX_RESULTS: usize = 100;
 
 #[derive(Clone)]
 pub struct FsGlobTool {
-    service: Arc<RelayVfsService>,
+    service: Arc<VfsService>,
     vfs: SharedRuntimeVfs,
     overlay: Option<Arc<InlineContentOverlay>>,
     identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 impl FsGlobTool {
     pub fn new(
-        service: Arc<RelayVfsService>,
+        service: Arc<VfsService>,
         vfs: SharedRuntimeVfs,
         overlay: Option<Arc<InlineContentOverlay>>,
         identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
@@ -290,7 +290,7 @@ mod fs_glob_tests {
         let provider = Arc::new(InlineFsMountProvider::new(repo));
         let mut registry = MountProviderRegistry::new();
         registry.register(provider);
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let mount = Mount {
             id: "mem".to_string(),
             provider: PROVIDER_INLINE_FS.to_string(),

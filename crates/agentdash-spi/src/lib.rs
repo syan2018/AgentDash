@@ -33,13 +33,14 @@ pub use agentdash_domain::common::{
 // ─── connector ──────────────────────────────────────────────
 
 pub use connector::{
-    AgentConnector, AgentInfo, CapabilityState, CompanionDimension, ConnectorCapabilities,
-    ConnectorError, ConnectorType, DiscoveredGuideline, DiscoveryContext,
-    ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame, ExecutionStream,
-    ExecutionTurnFrame, McpEnvVar, McpHeader, McpTransportConfig, PromptPayload,
-    RestoredSessionState, SessionMcpServer, SkillDimension, ToolCapabilityFilter, ToolCluster,
-    ToolDimension, VfsDimension, content_block_to_text, partition_session_mcp_servers,
-    workspace_path_from_context,
+    AgentConnector, AgentInfo, CapabilityState, CapabilityStateDelta, CompanionDimension,
+    ConnectorCapabilities, ConnectorError, ConnectorType, DefaultMountDelta, DiscoveredGuideline,
+    DiscoveryContext, ExecutionBackendPlacement, ExecutionContext, ExecutionSessionFrame,
+    ExecutionStream, ExecutionTurnFrame, McpEnvVar, McpHttpHeader, McpTransportConfig,
+    NamedEntityDelta, PromptPayload, RestoredSessionState, SessionMcpServer, SetDelta,
+    SkillDimension, ToolCapabilityFilter, ToolCluster, ToolDimension, VfsDimension,
+    VfsSurfaceDelta, compute_capability_state_delta, content_block_to_text,
+    partition_session_mcp_servers, workspace_path_from_context,
 };
 
 // ─── context injection ──────────────────────────────────────
@@ -66,13 +67,15 @@ pub use extension_package::{
 
 // ─── hooks ──────────────────────────────────────────────────
 
+pub use hooks::script::HookScriptEvaluator;
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
     ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
     ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
     HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
-    HookInjection, HookOwnerSummary, HookPendingAction, HookPendingActionResolutionKind,
+    HookInjection, HookPendingAction, HookPendingActionResolutionKind,
     HookPendingActionStatus, HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot,
+    SessionRunContext,
     HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
     NoopExecutionHookProvider, RuntimeContextFragmentEntry, RuntimeEventSource,
     RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionHookRefreshQuery,
@@ -83,17 +86,26 @@ pub use hooks::{
 // ─── platform ───────────────────────────────────────────────
 
 pub use platform::auth::{AuthGroup, AuthIdentity, AuthMode};
+pub use platform::function_runner::{
+    ApiRequestOutcome, BashExecOutcome, FunctionRunner,
+};
+pub use platform::mcp_probe::{McpProbeTransport, McpProbedTool};
 pub use platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo,
 };
 pub use platform::mount::MountEditCapabilities;
 pub use platform::routine::{RoutineFireCallback, RoutineTriggerProvider};
 pub use platform::skill::SkillRef;
+pub use platform::skill_source::{
+    RemoteSkillFetch, RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource,
+    RemoteSkillSourceError,
+};
 pub use platform::tool_capability::{
-    CapabilityVisibilityRule, PlatformMcpScope, ToolCapability, ToolDescriptor, ToolSource,
-    capability_to_platform_mcp_scope, capability_to_tool_clusters, default_visibility_rules,
-    format_tool_for_prompt, is_capability_visible, platform_tool_descriptors,
-    platform_tools_for_capability,
+    CapabilityScope, CapabilityScopeCtx, CapabilityVisibilityRule, PlatformMcpScope,
+    ToolCapability, ToolDescriptor,
+    ToolSource, capability_to_platform_mcp_scope, capability_to_tool_clusters,
+    default_visibility_rules, format_tool_for_prompt, is_capability_visible,
+    platform_tool_descriptors, platform_tools_for_capability,
 };
 
 pub use session_persistence::{

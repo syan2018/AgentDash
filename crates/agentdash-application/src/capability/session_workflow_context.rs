@@ -798,11 +798,12 @@ mod tests {
         }];
         let output = CapabilityResolver::resolve(
             &CapabilityResolverInput {
-                owner_ctx: agentdash_domain::session_binding::SessionOwnerCtx::Project {
+                owner_ctx: agentdash_spi::CapabilityScopeCtx::Project {
                     project_id,
                 },
                 contributions,
                 mcp_candidates: Default::default(),
+                capability_context: None,
             },
             &platform,
         );

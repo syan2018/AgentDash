@@ -94,7 +94,7 @@ export function TaskAgentSessionPanel({ task, onTaskUpdated }: TaskAgentSessionP
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
-  // 从 SessionBinding 解析 Task 的 execution session
+  // 从 task session API 解析 Task 的 execution session
   useEffect(() => {
     let cancelled = false;
     void (async () => {

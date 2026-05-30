@@ -1,30 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::common::StoredFileContent;
 use agentdash_domain::embedded_skill::EmbeddedSkillBundle;
 use agentdash_domain::skill_asset::{
     SkillAsset, SkillAssetFile, SkillAssetFileKind, SkillAssetRepository,
 };
-use reqwest::Url;
-use serde::Deserialize;
+use agentdash_spi::{RemoteSkillFile, RemoteSkillFileBody, RemoteSkillKind, RemoteSkillSource, RemoteSkillSourceError};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-
-fn url_encode(s: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(s.len());
-    for byte in s.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(byte as char);
-            }
-            _ => {
-                write!(out, "%{byte:02X}").unwrap();
-            }
-        }
-    }
-    out
-}
 
 use crate::skill::parse_skill_file;
 
@@ -35,9 +18,6 @@ use super::error::SkillAssetApplicationError;
 
 const MAX_SKILL_KEY_LENGTH: usize = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH: usize = 1024;
-const MAX_REMOTE_SKILL_FILE_COUNT: usize = 48;
-const MAX_REMOTE_SKILL_FILE_SIZE_BYTES: usize = 256 * 1024;
-const MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SkillAssetFileInput {
@@ -78,28 +58,6 @@ pub struct UpdateSkillAssetInput {
     pub description: Option<String>,
     pub disable_model_invocation: Option<bool>,
     pub files: Option<Vec<SkillAssetFileInput>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RawSkillUploadFile {
-    pub path: String,
-    pub content: StoredFileContent,
-}
-
-impl RawSkillUploadFile {
-    pub fn text(path: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-            content: StoredFileContent::text(content),
-        }
-    }
-
-    pub fn binary(path: impl Into<String>, bytes: Vec<u8>, mime_type: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-            content: StoredFileContent::binary(bytes, mime_type),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -276,7 +234,7 @@ where
     pub async fn import_uploaded_files(
         &self,
         project_id: Uuid,
-        files: Vec<RawSkillUploadFile>,
+        files: Vec<SkillAssetFileInput>,
     ) -> Result<Vec<SkillAsset>, SkillAssetApplicationError> {
         let grouped = group_uploaded_skill_files(files)?;
         let mut results = Vec::new();
@@ -324,45 +282,32 @@ where
     pub async fn import_remote(
         &self,
         input: ImportRemoteSkillAssetInput,
+        source: &dyn RemoteSkillSource,
     ) -> Result<SkillAsset, SkillAssetApplicationError> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|error| SkillAssetApplicationError::Internal(error.to_string()))?;
+        let fetched = source
+            .fetch(&input.url)
+            .await
+            .map_err(map_remote_skill_source_error)?;
 
-        let detected = detect_import_source(&input.url)?;
-        match detected {
-            DetectedImportSource::Github(source) => {
-                let files = fetch_github_skill_files(&client, &source).await?;
-                self.create_from_remote_files_typed(
-                    input.project_id,
-                    RemoteSourceType::Github,
-                    source.normalized_url,
-                    files,
-                )
-                .await
-            }
-            DetectedImportSource::Clawhub { normalized_url } => {
-                let files = fetch_clawhub_skill_files(&client, &normalized_url).await?;
-                self.create_from_remote_files_typed(
-                    input.project_id,
-                    RemoteSourceType::Clawhub,
-                    normalized_url,
-                    files,
-                )
-                .await
-            }
-            DetectedImportSource::SkillsSh { normalized_url } => {
-                let files = fetch_skills_sh_skill_files(&client, &normalized_url).await?;
-                self.create_from_remote_files_typed(
-                    input.project_id,
-                    RemoteSourceType::SkillsSh,
-                    normalized_url,
-                    files,
-                )
-                .await
-            }
-        }
+        let source_type = match fetched.kind {
+            RemoteSkillKind::Github => RemoteSourceType::Github,
+            RemoteSkillKind::Clawhub => RemoteSourceType::Clawhub,
+            RemoteSkillKind::SkillsSh => RemoteSourceType::SkillsSh,
+        };
+
+        let files = fetched
+            .files
+            .into_iter()
+            .map(remote_skill_file_to_input)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        self.create_from_remote_files_typed(
+            input.project_id,
+            source_type,
+            fetched.normalized_url,
+            files,
+        )
+        .await
     }
 
     async fn create_from_builtin_template(
@@ -475,7 +420,7 @@ where
     }
 }
 
-// ─── Source detection ────────────────────────────────────────────────────────
+// ─── Remote import ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RemoteSourceType {
@@ -484,677 +429,28 @@ enum RemoteSourceType {
     SkillsSh,
 }
 
-#[derive(Debug)]
-enum DetectedImportSource {
-    Github(GithubSkillSource),
-    Clawhub { normalized_url: String },
-    SkillsSh { normalized_url: String },
+/// 将 SPI 层的 [`RemoteSkillSourceError`] 映射到应用层错误。
+fn map_remote_skill_source_error(error: RemoteSkillSourceError) -> SkillAssetApplicationError {
+    match error {
+        RemoteSkillSourceError::BadRequest(message) => {
+            SkillAssetApplicationError::BadRequest(message)
+        }
+        RemoteSkillSourceError::Internal(message) => SkillAssetApplicationError::Internal(message),
+    }
 }
 
-fn detect_import_source(raw: &str) -> Result<DetectedImportSource, SkillAssetApplicationError> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Err(SkillAssetApplicationError::BadRequest(
-            "远端 Skill URL 不能为空".to_string(),
-        ));
-    }
-
-    let with_scheme = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        trimmed.to_string()
-    } else {
-        format!("https://{trimmed}")
+/// 将 SPI 层的远端文件原始体按应用层内容定型规则转换为 [`SkillAssetFileInput`]。
+fn remote_skill_file_to_input(
+    file: RemoteSkillFile,
+) -> Result<SkillAssetFileInput, SkillAssetApplicationError> {
+    let content = match file.body {
+        RemoteSkillFileBody::Text(text) => StoredFileContent::text(text),
+        RemoteSkillFileBody::Bytes(bytes) => content_from_bytes(&file.path, bytes, None)?,
     };
-
-    let url = Url::parse(&with_scheme).map_err(|_| {
-        SkillAssetApplicationError::BadRequest("远端 Skill URL 格式非法".to_string())
-    })?;
-
-    let host = url.host_str().unwrap_or("").to_lowercase();
-    match host.as_str() {
-        "github.com" | "www.github.com" => {
-            let source = parse_github_skill_source(trimmed)?;
-            Ok(DetectedImportSource::Github(source))
-        }
-        "clawhub.ai" | "www.clawhub.ai" | "clawhub.com" | "www.clawhub.com" => {
-            Ok(DetectedImportSource::Clawhub {
-                normalized_url: with_scheme,
-            })
-        }
-        "skills.sh" | "www.skills.sh" => Ok(DetectedImportSource::SkillsSh {
-            normalized_url: with_scheme,
-        }),
-        _ => Err(SkillAssetApplicationError::BadRequest(format!(
-            "不支持的来源: {host}（支持 github.com / clawhub.ai / skills.sh）"
-        ))),
-    }
-}
-
-// ─── GitHub types ────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct GithubSkillSource {
-    owner: String,
-    repo: String,
-    ref_name: Option<String>,
-    skill_dir: String,
-    normalized_url: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubRepoInfo {
-    default_branch: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GithubContentEntry {
-    path: String,
-    #[serde(rename = "type")]
-    entry_type: String,
-    size: Option<u64>,
-    download_url: Option<String>,
-}
-
-fn parse_github_skill_source(raw: &str) -> Result<GithubSkillSource, SkillAssetApplicationError> {
-    let url = Url::parse(raw.trim()).map_err(|_| {
-        SkillAssetApplicationError::BadRequest("远端 Skill URL 必须是合法 URL".to_string())
-    })?;
-    if url.scheme() != "https"
-        || !matches!(url.host_str(), Some("github.com") | Some("www.github.com"))
-    {
-        return Err(SkillAssetApplicationError::BadRequest(
-            "GitHub URL 必须以 https://github.com/ 开头".to_string(),
-        ));
-    }
-
-    let segments = url
-        .path_segments()
-        .map(|segments| segments.filter(|part| !part.is_empty()).collect::<Vec<_>>())
-        .unwrap_or_default();
-    if segments.len() < 2 {
-        return Err(SkillAssetApplicationError::BadRequest(
-            "GitHub URL 必须包含 owner/repo".to_string(),
-        ));
-    }
-    let owner = segments[0].to_string();
-    let repo = segments[1].trim_end_matches(".git").to_string();
-    let mut ref_name = None;
-    let mut skill_dir = String::new();
-
-    match segments.get(2).copied() {
-        None => {}
-        Some("tree") => {
-            let Some(ref_segment) = segments.get(3) else {
-                return Err(SkillAssetApplicationError::BadRequest(
-                    "GitHub tree URL 缺少 ref".to_string(),
-                ));
-            };
-            ref_name = Some((*ref_segment).to_string());
-            skill_dir = segments
-                .get(4..)
-                .unwrap_or_default()
-                .join("/")
-                .trim_matches('/')
-                .to_string();
-        }
-        Some("blob") => {
-            let Some(ref_segment) = segments.get(3) else {
-                return Err(SkillAssetApplicationError::BadRequest(
-                    "GitHub blob URL 缺少 ref".to_string(),
-                ));
-            };
-            ref_name = Some((*ref_segment).to_string());
-            let blob_path = segments
-                .get(4..)
-                .unwrap_or_default()
-                .join("/")
-                .trim_matches('/')
-                .to_string();
-            if !blob_path.ends_with("SKILL.md") {
-                return Err(SkillAssetApplicationError::BadRequest(
-                    "GitHub blob URL 必须指向 SKILL.md".to_string(),
-                ));
-            }
-            skill_dir = blob_path
-                .strip_suffix("SKILL.md")
-                .unwrap_or("")
-                .trim_matches('/')
-                .to_string();
-        }
-        Some(other) => {
-            return Err(SkillAssetApplicationError::BadRequest(format!(
-                "不支持的 GitHub Skill URL 路径: {other}"
-            )));
-        }
-    }
-
-    Ok(GithubSkillSource {
-        owner,
-        repo,
-        ref_name,
-        skill_dir,
-        normalized_url: raw.trim().to_string(),
+    Ok(SkillAssetFileInput {
+        path: file.path,
+        content,
     })
-}
-
-async fn fetch_github_skill_files(
-    client: &reqwest::Client,
-    source: &GithubSkillSource,
-) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
-    let ref_name = match &source.ref_name {
-        Some(ref_name) => ref_name.clone(),
-        None => fetch_default_branch(client, source).await?,
-    };
-    let mut entries = Vec::new();
-    collect_github_directory_entries(client, source, &ref_name, &source.skill_dir, &mut entries)
-        .await?;
-    if entries.len() > MAX_REMOTE_SKILL_FILE_COUNT {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "远端 Skill 文件数量不能超过 {MAX_REMOTE_SKILL_FILE_COUNT}"
-        )));
-    }
-    if !entries.iter().any(|entry| {
-        entry.entry_type == "file"
-            && relative_github_path(&source.skill_dir, &entry.path) == "SKILL.md"
-    }) {
-        return Err(SkillAssetApplicationError::BadRequest(
-            "GitHub 目录下未找到 SKILL.md".to_string(),
-        ));
-    }
-
-    let mut total_size = 0usize;
-    let mut files = Vec::new();
-    entries.sort_by(|left, right| left.path.cmp(&right.path));
-    for entry in entries
-        .into_iter()
-        .filter(|entry| entry.entry_type == "file")
-    {
-        let relative_path = relative_github_path(&source.skill_dir, &entry.path);
-        if relative_path.is_empty() {
-            continue;
-        }
-        let declared_size = entry.size.unwrap_or(0) as usize;
-        if declared_size > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
-            return Err(SkillAssetApplicationError::BadRequest(format!(
-                "远端 Skill 文件过大: {}",
-                relative_path
-            )));
-        }
-        let download_url = entry.download_url.ok_or_else(|| {
-            SkillAssetApplicationError::BadRequest(format!(
-                "GitHub 文件缺少 download_url: {}",
-                entry.path
-            ))
-        })?;
-        let content = fetch_github_file(client, &download_url, &relative_path).await?;
-        total_size = total_size.saturating_add(content.size_bytes() as usize);
-        if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
-            return Err(SkillAssetApplicationError::BadRequest(format!(
-                "远端 Skill 总大小不能超过 {} KB",
-                MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES / 1024
-            )));
-        }
-        files.push(SkillAssetFileInput {
-            path: relative_path,
-            content,
-        });
-    }
-    Ok(files)
-}
-
-async fn fetch_default_branch(
-    client: &reqwest::Client,
-    source: &GithubSkillSource,
-) -> Result<String, SkillAssetApplicationError> {
-    let url = format!(
-        "https://api.github.com/repos/{}/{}",
-        source.owner, source.repo
-    );
-    let repo = github_get(client, &url).await?;
-    let repo: GithubRepoInfo = serde_json::from_value(repo).map_err(|error| {
-        SkillAssetApplicationError::BadRequest(format!("GitHub repo 响应解析失败: {error}"))
-    })?;
-    Ok(repo.default_branch)
-}
-
-async fn collect_github_directory_entries(
-    client: &reqwest::Client,
-    source: &GithubSkillSource,
-    ref_name: &str,
-    dir_path: &str,
-    entries: &mut Vec<GithubContentEntry>,
-) -> Result<(), SkillAssetApplicationError> {
-    let mut pending = VecDeque::from([dir_path.trim_matches('/').to_string()]);
-    while let Some(current_dir) = pending.pop_front() {
-        let url = if current_dir.is_empty() {
-            format!(
-                "https://api.github.com/repos/{}/{}/contents?ref={}",
-                source.owner, source.repo, ref_name
-            )
-        } else {
-            format!(
-                "https://api.github.com/repos/{}/{}/contents/{}?ref={}",
-                source.owner, source.repo, current_dir, ref_name
-            )
-        };
-        let value = github_get(client, &url).await?;
-        let list = value.as_array().ok_or_else(|| {
-            SkillAssetApplicationError::BadRequest("GitHub Skill URL 必须指向目录".to_string())
-        })?;
-        for item in list {
-            let entry: GithubContentEntry =
-                serde_json::from_value(item.clone()).map_err(|error| {
-                    SkillAssetApplicationError::BadRequest(format!(
-                        "GitHub contents 响应解析失败: {error}"
-                    ))
-                })?;
-            if entry.entry_type == "dir" {
-                pending.push_back(entry.path);
-            } else {
-                entries.push(entry);
-            }
-            if entries.len() > MAX_REMOTE_SKILL_FILE_COUNT {
-                return Err(SkillAssetApplicationError::BadRequest(format!(
-                    "远端 Skill 文件数量不能超过 {MAX_REMOTE_SKILL_FILE_COUNT}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn github_get(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<serde_json::Value, SkillAssetApplicationError> {
-    let response = client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, "AgentDash")
-        .send()
-        .await
-        .map_err(|error| {
-            SkillAssetApplicationError::BadRequest(format!("GitHub 请求失败: {error}"))
-        })?;
-    if !response.status().is_success() {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "GitHub 请求失败: HTTP {}",
-            response.status()
-        )));
-    }
-    response.json().await.map_err(|error| {
-        SkillAssetApplicationError::BadRequest(format!("GitHub 响应解析失败: {error}"))
-    })
-}
-
-async fn fetch_github_file(
-    client: &reqwest::Client,
-    download_url: &str,
-    path: &str,
-) -> Result<StoredFileContent, SkillAssetApplicationError> {
-    let response = client
-        .get(download_url)
-        .header(reqwest::header::USER_AGENT, "AgentDash")
-        .send()
-        .await
-        .map_err(|error| {
-            SkillAssetApplicationError::BadRequest(format!("下载 GitHub 文件失败: {path}: {error}"))
-        })?;
-    if !response.status().is_success() {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "下载 GitHub 文件失败: {path}: HTTP {}",
-            response.status()
-        )));
-    }
-    let bytes = response.bytes().await.map_err(|error| {
-        SkillAssetApplicationError::BadRequest(format!("读取 GitHub 文件失败: {path}: {error}"))
-    })?;
-    if bytes.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "远端 Skill 文件过大: {path}"
-        )));
-    }
-    content_from_bytes(path, bytes.to_vec(), None)
-}
-
-fn relative_github_path(base_dir: &str, path: &str) -> String {
-    let base = base_dir.trim_matches('/');
-    let normalized = path.trim_matches('/');
-    if base.is_empty() {
-        normalized.to_string()
-    } else {
-        normalized
-            .strip_prefix(base)
-            .unwrap_or(normalized)
-            .trim_matches('/')
-            .to_string()
-    }
-}
-
-// ─── ClawHub import ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct ClawhubGetSkillResponse {
-    skill: ClawhubSkill,
-    #[serde(rename = "latestVersion")]
-    latest_version: Option<ClawhubLatestVersion>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ClawhubSkill {
-    slug: String,
-    #[serde(rename = "displayName")]
-    display_name: Option<String>,
-    summary: Option<String>,
-    tags: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClawhubLatestVersion {
-    version: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClawhubVersionDetailResponse {
-    version: ClawhubVersionDetail,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClawhubVersionDetail {
-    files: Vec<ClawhubFileEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ClawhubFileEntry {
-    path: String,
-}
-
-fn parse_clawhub_slug(raw: &str) -> Result<String, SkillAssetApplicationError> {
-    let url = Url::parse(raw)
-        .map_err(|_| SkillAssetApplicationError::BadRequest("ClawHub URL 格式非法".to_string()))?;
-    let parts: Vec<&str> = url
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .filter(|p| !p.is_empty())
-        .collect();
-    // clawhub.ai/{owner}/{slug} → slug is last segment
-    if parts.len() == 2 {
-        return Ok(parts[1].to_string());
-    }
-    if parts.len() == 1 && !parts[0].is_empty() {
-        return Ok(parts[0].to_string());
-    }
-    Err(SkillAssetApplicationError::BadRequest(
-        "ClawHub URL 缺少 skill slug".to_string(),
-    ))
-}
-
-async fn fetch_clawhub_skill_files(
-    client: &reqwest::Client,
-    raw_url: &str,
-) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
-    let slug = parse_clawhub_slug(raw_url)?;
-    let api_base = "https://clawhub.ai/api/v1";
-
-    // 1. Fetch skill metadata
-    let skill_resp: ClawhubGetSkillResponse = client
-        .get(format!("{api_base}/skills/{}", url_encode(&slug)))
-        .send()
-        .await
-        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("ClawHub 请求失败: {e}")))?
-        .error_for_status()
-        .map_err(|e| {
-            SkillAssetApplicationError::BadRequest(format!("ClawHub skill 未找到: {slug} ({e})"))
-        })?
-        .json()
-        .await
-        .map_err(|e| {
-            SkillAssetApplicationError::BadRequest(format!("ClawHub 响应解析失败: {e}"))
-        })?;
-
-    // 2. Determine latest version
-    let latest_version = skill_resp
-        .skill
-        .tags
-        .as_ref()
-        .and_then(|tags| tags.get("latest").cloned())
-        .or(skill_resp.latest_version.map(|v| v.version));
-
-    // 3. Fetch file list from version detail
-    let file_paths: Vec<String> = if let Some(ref version) = latest_version {
-        let version_url = format!(
-            "{api_base}/skills/{}/versions/{}",
-            url_encode(&slug),
-            url_encode(version)
-        );
-        match client.get(&version_url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                let detail: ClawhubVersionDetailResponse =
-                    resp.json().await.unwrap_or(ClawhubVersionDetailResponse {
-                        version: ClawhubVersionDetail { files: vec![] },
-                    });
-                detail.version.files.into_iter().map(|f| f.path).collect()
-            }
-            _ => vec!["SKILL.md".to_string()],
-        }
-    } else {
-        vec!["SKILL.md".to_string()]
-    };
-
-    // 4. Download each file
-    let mut files = Vec::new();
-    let mut total_size = 0usize;
-    for fp in &file_paths {
-        let mut file_url = format!(
-            "{api_base}/skills/{}/file?path={}",
-            url_encode(&slug),
-            url_encode(fp)
-        );
-        if let Some(ref version) = latest_version {
-            file_url.push_str(&format!("&version={}", url_encode(version)));
-        }
-
-        let resp = client.get(&file_url).send().await;
-        let body = match resp {
-            Ok(r) if r.status().is_success() => r.text().await.ok(),
-            _ => None,
-        };
-
-        let Some(content) = body else {
-            if fp == "SKILL.md" {
-                return Err(SkillAssetApplicationError::BadRequest(format!(
-                    "ClawHub 导入失败: 无法下载 SKILL.md ({slug})"
-                )));
-            }
-            continue;
-        };
-
-        if content.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
-            return Err(SkillAssetApplicationError::BadRequest(format!(
-                "ClawHub 文件过大: {fp}"
-            )));
-        }
-        total_size = total_size.saturating_add(content.len());
-        if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
-            return Err(SkillAssetApplicationError::BadRequest(format!(
-                "ClawHub 导入总大小超出限制 ({} KB)",
-                MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES / 1024
-            )));
-        }
-
-        files.push(SkillAssetFileInput::text(fp, content));
-    }
-
-    if !files.iter().any(|f| f.path == "SKILL.md") {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "ClawHub skill 缺少 SKILL.md: {slug}"
-        )));
-    }
-    Ok(files)
-}
-
-// ─── skills.sh import (GitHub-backed) ────────────────────────────────────────
-
-/// skills.sh URL format: https://skills.sh/{owner}/{repo}/{skill-name}
-fn parse_skills_sh_parts(
-    raw: &str,
-) -> Result<(String, String, String), SkillAssetApplicationError> {
-    let url = Url::parse(raw).map_err(|_| {
-        SkillAssetApplicationError::BadRequest("skills.sh URL 格式非法".to_string())
-    })?;
-    let parts: Vec<&str> = url
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .filter(|p| !p.is_empty())
-        .collect();
-    if parts.len() != 3 {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "skills.sh URL 需要 skills.sh/{{owner}}/{{repo}}/{{skill-name}} 格式，当前路径: {}",
-            url.path()
-        )));
-    }
-    Ok((
-        parts[0].to_string(),
-        parts[1].to_string(),
-        parts[2].to_string(),
-    ))
-}
-
-async fn fetch_skills_sh_skill_files(
-    client: &reqwest::Client,
-    raw_url: &str,
-) -> Result<Vec<SkillAssetFileInput>, SkillAssetApplicationError> {
-    let (owner, repo, skill_name) = parse_skills_sh_parts(raw_url)?;
-
-    // Get default branch
-    let default_branch = fetch_skills_sh_default_branch(client, &owner, &repo).await;
-    let raw_prefix = format!("https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}");
-
-    // Try candidate paths for SKILL.md
-    let candidate_dirs = [
-        format!("skills/{skill_name}"),
-        format!(".claude/skills/{skill_name}"),
-        format!("plugin/skills/{skill_name}"),
-        skill_name.clone(),
-    ];
-
-    let mut skill_md_content: Option<String> = None;
-    let mut skill_dir = String::new();
-    for dir in &candidate_dirs {
-        let url = format!("{raw_prefix}/{dir}/SKILL.md");
-        if let Ok(content) = fetch_raw_text_file(client, &url).await {
-            skill_md_content = Some(content);
-            skill_dir = dir.clone();
-            break;
-        }
-    }
-
-    // Try root-level SKILL.md as fallback
-    if skill_md_content.is_none() {
-        let url = format!("{raw_prefix}/SKILL.md");
-        if let Ok(content) = fetch_raw_text_file(client, &url).await {
-            skill_md_content = Some(content);
-            skill_dir = String::new();
-        }
-    }
-
-    let skill_md_content = skill_md_content.ok_or_else(|| {
-        SkillAssetApplicationError::BadRequest(format!(
-            "skills.sh 导入失败: 在 {owner}/{repo} 中未找到 skill `{skill_name}` 的 SKILL.md"
-        ))
-    })?;
-
-    let mut files = vec![SkillAssetFileInput::text("SKILL.md", skill_md_content)];
-
-    // List supporting files via GitHub API
-    let github_source = GithubSkillSource {
-        owner,
-        repo,
-        ref_name: Some(default_branch.clone()),
-        skill_dir: skill_dir.clone(),
-        normalized_url: raw_url.to_string(),
-    };
-    let mut entries = Vec::new();
-    if collect_github_directory_entries(
-        client,
-        &github_source,
-        &default_branch,
-        &skill_dir,
-        &mut entries,
-    )
-    .await
-    .is_ok()
-    {
-        let mut total_size = files[0].content.size_bytes() as usize;
-        for entry in entries.into_iter().filter(|e| e.entry_type == "file") {
-            let relative_path = relative_github_path(&skill_dir, &entry.path);
-            if relative_path.is_empty() || relative_path == "SKILL.md" {
-                continue;
-            }
-            if let Some(download_url) = entry.download_url {
-                if let Ok(content) = fetch_github_file(client, &download_url, &relative_path).await
-                {
-                    total_size = total_size.saturating_add(content.size_bytes() as usize);
-                    if total_size > MAX_REMOTE_SKILL_TOTAL_SIZE_BYTES {
-                        break;
-                    }
-                    files.push(SkillAssetFileInput {
-                        path: relative_path,
-                        content,
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(files)
-}
-
-async fn fetch_skills_sh_default_branch(
-    client: &reqwest::Client,
-    owner: &str,
-    repo: &str,
-) -> String {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}");
-    match github_get(client, &url).await {
-        Ok(value) => value
-            .get("default_branch")
-            .and_then(|v| v.as_str())
-            .unwrap_or("main")
-            .to_string(),
-        Err(_) => "main".to_string(),
-    }
-}
-
-/// Generic raw file fetch (unlike `fetch_github_text_file` which returns specific errors)
-async fn fetch_raw_text_file(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<String, SkillAssetApplicationError> {
-    let response = client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, "AgentDash")
-        .send()
-        .await
-        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("下载失败: {e}")))?;
-    if !response.status().is_success() {
-        return Err(SkillAssetApplicationError::BadRequest(format!(
-            "HTTP {}",
-            response.status()
-        )));
-    }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| SkillAssetApplicationError::BadRequest(format!("读取响应失败: {e}")))?;
-    if bytes.len() > MAX_REMOTE_SKILL_FILE_SIZE_BYTES {
-        return Err(SkillAssetApplicationError::BadRequest(
-            "文件过大".to_string(),
-        ));
-    }
-    String::from_utf8(bytes.to_vec())
-        .map_err(|_| SkillAssetApplicationError::BadRequest("文件非 UTF-8 文本".to_string()))
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
@@ -1495,7 +791,7 @@ fn normalize_skill_file_path(path: &str) -> Result<String, SkillAssetApplication
 }
 
 fn group_uploaded_skill_files(
-    files: Vec<RawSkillUploadFile>,
+    files: Vec<SkillAssetFileInput>,
 ) -> Result<BTreeMap<String, Vec<SkillAssetFileInput>>, SkillAssetApplicationError> {
     if files.is_empty() {
         return Err(SkillAssetApplicationError::BadRequest(
@@ -1732,7 +1028,7 @@ mod tests {
 
     #[test]
     fn upload_grouping_accepts_root_skill_and_multi_skill_directory() {
-        let root = group_uploaded_skill_files(vec![RawSkillUploadFile::text(
+        let root = group_uploaded_skill_files(vec![SkillAssetFileInput::text(
             "SKILL.md",
             "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
         )])
@@ -1740,11 +1036,11 @@ mod tests {
         assert!(root.contains_key("writer"));
 
         let grouped = group_uploaded_skill_files(vec![
-            RawSkillUploadFile::text(
+            SkillAssetFileInput::text(
                 "writer/SKILL.md",
                 "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
             ),
-            RawSkillUploadFile::text(
+            SkillAssetFileInput::text(
                 "research/SKILL.md",
                 "---\nname: research\ndescription: \"调研\"\n---\n",
             ),
@@ -1756,11 +1052,11 @@ mod tests {
     #[test]
     fn upload_grouping_accepts_binary_assets_and_rejects_binary_skill_md() {
         let grouped = group_uploaded_skill_files(vec![
-            RawSkillUploadFile::text(
+            SkillAssetFileInput::text(
                 "SKILL.md",
                 "---\nname: writer\ndescription: \"写作辅助\"\n---\n",
             ),
-            RawSkillUploadFile::binary("assets/logo.png", vec![0, 1, 2, 3], "image/png"),
+            SkillAssetFileInput::binary("assets/logo.png", vec![0, 1, 2, 3], "image/png"),
         ])
         .expect("root skill with binary asset");
         let files = grouped.get("writer").expect("writer group");
@@ -1771,7 +1067,7 @@ mod tests {
         assert_eq!(logo.content.mime_type(), Some("image/png"));
         assert!(logo.content.binary_content().is_some());
 
-        let binary_skill = group_uploaded_skill_files(vec![RawSkillUploadFile::binary(
+        let binary_skill = group_uploaded_skill_files(vec![SkillAssetFileInput::binary(
             "SKILL.md",
             vec![0, 159, 146, 150],
             "application/octet-stream",
@@ -1780,38 +1076,6 @@ mod tests {
             binary_skill,
             Err(SkillAssetApplicationError::BadRequest(_))
         ));
-    }
-
-    #[test]
-    fn github_source_parser_accepts_repo_tree_and_blob_urls() {
-        let repo = parse_github_skill_source("https://github.com/acme/skills")
-            .expect("repo url should parse");
-        assert_eq!(repo.owner, "acme");
-        assert_eq!(repo.repo, "skills");
-        assert_eq!(repo.ref_name, None);
-        assert_eq!(repo.skill_dir, "");
-
-        let tree =
-            parse_github_skill_source("https://github.com/acme/skills/tree/main/research/writer")
-                .expect("tree url should parse");
-        assert_eq!(tree.ref_name.as_deref(), Some("main"));
-        assert_eq!(tree.skill_dir, "research/writer");
-
-        let blob = parse_github_skill_source(
-            "https://github.com/acme/skills/blob/main/research/writer/SKILL.md",
-        )
-        .expect("blob url should parse");
-        assert_eq!(blob.ref_name.as_deref(), Some("main"));
-        assert_eq!(blob.skill_dir, "research/writer");
-    }
-
-    #[test]
-    fn github_source_parser_rejects_non_skill_blob() {
-        let err = parse_github_skill_source(
-            "https://github.com/acme/skills/blob/main/research/writer/README.md",
-        )
-        .expect_err("blob must target SKILL.md");
-        assert!(matches!(err, SkillAssetApplicationError::BadRequest(_)));
     }
 
     #[tokio::test]

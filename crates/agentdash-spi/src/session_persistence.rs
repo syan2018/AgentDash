@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::io;
 
 use agentdash_agent_protocol::BackboneEnvelope;
-use agentdash_domain::session_binding::StorySessionId;
 use agentdash_domain::workflow::MountDirective;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -52,6 +51,12 @@ impl CapabilityArtifactSource {
     pub fn workflow() -> Self {
         Self {
             kind: "workflow".to_string(),
+        }
+    }
+
+    pub fn permission_grant() -> Self {
+        Self {
+            kind: "permission_grant".to_string(),
         }
     }
 }
@@ -207,7 +212,7 @@ pub enum SessionBootstrapState {
 #[serde(rename_all = "camelCase")]
 pub struct CompanionSessionContext {
     pub dispatch_id: String,
-    pub parent_session_id: StorySessionId,
+    pub parent_session_id: String,
     pub parent_turn_id: String,
     pub companion_label: String,
     pub slice_mode: String,
@@ -229,6 +234,9 @@ pub struct SessionMeta {
     pub title: String,
     #[serde(default)]
     pub title_source: TitleSource,
+    /// 所属 project（session 创建时确定，不可变）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -821,119 +829,28 @@ pub trait SessionLineageStore: Send + Sync {
     ) -> io::Result<()>;
 }
 
-#[async_trait]
-pub trait SessionPersistence: Send + Sync {
-    async fn create_session(&self, meta: &SessionMeta) -> io::Result<()>;
-    async fn get_session_meta(&self, session_id: &str) -> io::Result<Option<SessionMeta>>;
-    async fn list_sessions(&self) -> io::Result<Vec<SessionMeta>>;
-    async fn save_session_meta(&self, meta: &SessionMeta) -> io::Result<()>;
-    async fn delete_session(&self, session_id: &str) -> io::Result<()>;
-    async fn append_event(
-        &self,
-        session_id: &str,
-        envelope: &BackboneEnvelope,
-    ) -> io::Result<PersistedSessionEvent>;
-    async fn read_backlog(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-    ) -> io::Result<SessionEventBacklog>;
-    async fn list_event_page(
-        &self,
-        session_id: &str,
-        after_seq: u64,
-        limit: u32,
-    ) -> io::Result<SessionEventPage>;
-    async fn list_all_events(&self, session_id: &str) -> io::Result<Vec<PersistedSessionEvent>>;
-    async fn insert_terminal_effect(
-        &self,
-        effect: NewTerminalEffectRecord,
-    ) -> io::Result<TerminalEffectRecord>;
-    async fn mark_terminal_effect_running(&self, effect_id: Uuid) -> io::Result<()>;
-    async fn mark_terminal_effect_succeeded(&self, effect_id: Uuid) -> io::Result<()>;
-    async fn mark_terminal_effect_failed(&self, effect_id: Uuid, error: String) -> io::Result<()>;
-    async fn mark_terminal_effect_dead_letter(
-        &self,
-        effect_id: Uuid,
-        error: String,
-    ) -> io::Result<()>;
-    async fn list_terminal_effects_by_status(
-        &self,
-        statuses: &[TerminalEffectStatus],
-        limit: u32,
-    ) -> io::Result<Vec<TerminalEffectRecord>>;
-    async fn upsert_runtime_command_request(
-        &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
-    ) -> io::Result<RuntimeCommandRecord>;
-    async fn list_requested_runtime_commands(
-        &self,
-        session_id: &str,
-    ) -> io::Result<Vec<RuntimeCommandRecord>>;
-    async fn mark_runtime_commands_applied(&self, command_ids: &[Uuid]) -> io::Result<()>;
-    async fn mark_runtime_commands_failed(
-        &self,
-        command_ids: &[Uuid],
-        error: String,
-    ) -> io::Result<()>;
-    async fn list_runtime_commands_by_status(
-        &self,
-        statuses: &[RuntimeCommandStatus],
-        limit: u32,
-    ) -> io::Result<Vec<RuntimeCommandRecord>>;
-    async fn get_compaction(
-        &self,
-        session_id: &str,
-        compaction_id: &str,
-    ) -> io::Result<Option<SessionCompactionRecord>>;
-    async fn list_compactions(
-        &self,
-        session_id: &str,
-        projection_kind: &str,
-    ) -> io::Result<Vec<SessionCompactionRecord>>;
-    async fn list_projection_segments(
-        &self,
-        session_id: &str,
-        projection_kind: &str,
-        projection_version: u64,
-    ) -> io::Result<Vec<SessionProjectionSegmentRecord>>;
-    async fn read_projection_head(
-        &self,
-        session_id: &str,
-        projection_kind: &str,
-    ) -> io::Result<Option<SessionProjectionHeadRecord>>;
-    async fn upsert_projection_head(&self, head: SessionProjectionHeadRecord) -> io::Result<()>;
-    async fn commit_compaction_projection(
-        &self,
-        session_id: &str,
-        commit: NewCompactionProjectionCommit,
-    ) -> io::Result<CompactionProjectionCommitResult>;
-    async fn upsert_session_lineage(&self, record: SessionLineageRecord) -> io::Result<()>;
-    async fn get_session_lineage(
-        &self,
-        child_session_id: &str,
-    ) -> io::Result<Option<SessionLineageRecord>>;
-    async fn list_session_children(
-        &self,
-        parent_session_id: &str,
-        relation_kind: Option<SessionLineageRelationKind>,
-        status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
-    async fn list_session_ancestors(
-        &self,
-        child_session_id: &str,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
-    async fn list_session_descendants(
-        &self,
-        root_session_id: &str,
-        relation_kind: Option<SessionLineageRelationKind>,
-        status: Option<SessionLineageStatus>,
-    ) -> io::Result<Vec<SessionLineageRecord>>;
-    async fn set_session_lineage_status(
-        &self,
-        child_session_id: &str,
-        status: SessionLineageStatus,
-        updated_at_ms: i64,
-    ) -> io::Result<()>;
+/// Session 持久化全量端口——聚合 7 个领域子 store，方法签名全部由子 trait 继承。
+///
+/// 任意同时实现全部子 trait 的类型自动实现本 trait（见下方 blanket impl），
+/// 消费方依赖 `dyn SessionPersistence` 即可访问全部子 store 方法。
+pub trait SessionPersistence:
+    SessionMetaStore
+    + SessionEventStore
+    + SessionTerminalEffectStore
+    + SessionRuntimeCommandStore
+    + SessionCompactionStore
+    + SessionProjectionStore
+    + SessionLineageStore
+{
+}
+
+impl<T> SessionPersistence for T where
+    T: SessionMetaStore
+        + SessionEventStore
+        + SessionTerminalEffectStore
+        + SessionRuntimeCommandStore
+        + SessionCompactionStore
+        + SessionProjectionStore
+        + SessionLineageStore
+{
 }

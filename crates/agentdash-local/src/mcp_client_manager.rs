@@ -2,13 +2,11 @@
 
 use std::collections::HashMap;
 
+use agentdash_mcp::render_content;
 use agentdash_relay::{McpServerInfoRelay, McpToolInfoRelay, ResponseMcpCallToolPayload};
-use rmcp::model::{CallToolRequestParams, Content};
+use rmcp::model::CallToolRequestParams;
 use rmcp::service::RunningService;
 use rmcp::transport::child_process::TokioChildProcess;
-use rmcp::transport::streamable_http_client::{
-    StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
-};
 use rmcp::{RoleClient, ServiceExt};
 use tokio::sync::RwLock;
 
@@ -92,17 +90,15 @@ impl McpClientManager {
             .await
             .map_err(|e| anyhow::anyhow!("call_tool 失败: {e}"))?;
 
-        let content = result
-            .content
-            .iter()
-            .map(render_content)
-            .collect::<Vec<_>>()
-            .join("\n");
-
         Ok(ResponseMcpCallToolPayload {
             server_name: server_name.to_string(),
             tool_name: tool_name.to_string(),
-            content,
+            content: result
+                .content
+                .iter()
+                .map(render_content)
+                .collect::<Vec<_>>()
+                .join("\n"),
             is_error: result.is_error.unwrap_or(false),
         })
     }
@@ -149,11 +145,7 @@ impl McpClientManager {
             }
             agentdash_domain::mcp_preset::McpTransportConfig::Http { url, .. }
             | agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, .. } => {
-                let worker = StreamableHttpClientWorker::new(
-                    reqwest::Client::new(),
-                    StreamableHttpClientTransportConfig::with_uri(url.clone()),
-                );
-                ().serve(worker)
+                ().serve(crate::mcp_connect::mcp_http_worker(url))
                     .await
                     .map_err(|e| anyhow::anyhow!("HTTP MCP 连接失败: {e}"))?
             }
@@ -164,11 +156,4 @@ impl McpClientManager {
         tracing::info!(server = %server_name, transport = %transport_kind, "MCP client 已连接");
         Ok(())
     }
-}
-
-fn render_content(content: &Content) -> String {
-    if let Some(text) = content.raw.as_text() {
-        return text.text.clone();
-    }
-    serde_json::to_string_pretty(content).unwrap_or_else(|_| "<无法解析 MCP 内容>".to_string())
 }

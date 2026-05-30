@@ -46,6 +46,14 @@ impl IntoResponse for ApiError {
     }
 }
 
+impl From<std::io::Error> for ApiError {
+    /// session 持久化层统一返回 `io::Error`，对外一律视为 500 Internal——
+    /// 与 routes 里手写的 `.map_err(|e| ApiError::Internal(e.to_string()))` 语义一致。
+    fn from(err: std::io::Error) -> Self {
+        ApiError::Internal(err.to_string())
+    }
+}
+
 impl From<agentdash_domain::DomainError> for ApiError {
     fn from(err: agentdash_domain::DomainError) -> Self {
         match &err {

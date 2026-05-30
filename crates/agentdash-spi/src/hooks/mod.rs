@@ -1,9 +1,11 @@
+pub mod script;
 pub mod trace;
 
 use std::sync::Arc;
 
-use agentdash_domain::session_binding::SessionOwnerType;
 use agentdash_domain::workflow::{EffectiveSessionContract, LifecycleRunStatus};
+
+use crate::CapabilityScope;
 
 /// Well-known `action_type` string values for [`HookPendingAction`].
 ///
@@ -26,20 +28,24 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Session 的 run-derived 业务上下文（由 LifecycleRunLink 投影得出）。
+///
+/// 替代旧的 `HookOwnerSummary`（基于 SessionBinding 反查）。
+/// 通过 `LifecycleRun.session_id -> run -> links -> subjects` 路径获取。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookOwnerSummary {
-    /// 归属实体类型(JSON 对外保持 snake_case 字符串:"project"/"story"/"task")。
-    pub owner_type: SessionOwnerType,
-    pub owner_id: String,
+pub struct SessionRunContext {
+    pub project_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
+    pub story_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
+    pub task_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub story_id: Option<String>,
+    pub story_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub task_id: Option<String>,
+    pub task_title: Option<String>,
+    /// Session 的能力作用域（从 run context 推导）
+    pub scope: CapabilityScope,
 }
 
 /// 统一的 Hook 注入单元。
@@ -74,8 +80,8 @@ pub struct HookDiagnosticEntry {
 #[serde(rename_all = "snake_case")]
 pub struct SessionHookSnapshot {
     pub session_id: String,
-    #[serde(default)]
-    pub owners: Vec<HookOwnerSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_context: Option<SessionRunContext>,
     /// 溯源标签集（如 `["builtin:runtime_trace", "workflow:trellis_dev_task:implement"]`）
     #[serde(default)]
     pub sources: Vec<String>,
@@ -936,65 +942,38 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
 }
 
 #[cfg(test)]
-mod owner_summary_tests {
+mod run_context_tests {
     use super::*;
 
-    /// PR3 / 04-20-session-owner-sum-type:HookOwnerSummary.owner_type 从 String
-    /// 升级到 SessionOwnerType 之后,JSON 对外契约必须保持不变(snake_case 字符串),
-    /// 否则前端 hook UI / hook_delegate 协议会 breaking。
     #[test]
-    fn owner_type_serializes_as_snake_case_string() {
-        let summary = HookOwnerSummary {
-            owner_type: SessionOwnerType::Task,
-            owner_id: "11111111-1111-1111-1111-111111111111".to_string(),
-            label: Some("case".to_string()),
-            project_id: Some("22222222-2222-2222-2222-222222222222".to_string()),
-            story_id: Some("33333333-3333-3333-3333-333333333333".to_string()),
-            task_id: Some("44444444-4444-4444-4444-444444444444".to_string()),
+    fn session_run_context_serde_roundtrip() {
+        let ctx = SessionRunContext {
+            project_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
+            story_id: Some(Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
+            task_id: Some(Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap()),
+            story_title: Some("Test Story".to_string()),
+            task_title: Some("Test Task".to_string()),
+            scope: CapabilityScope::Task,
         };
-        let value = serde_json::to_value(&summary).unwrap();
-        assert_eq!(
-            value["owner_type"],
-            serde_json::Value::String("task".into())
-        );
-        assert_eq!(value["owner_id"], "11111111-1111-1111-1111-111111111111");
+        let json = serde_json::to_string(&ctx).unwrap();
+        let decoded: SessionRunContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, ctx);
     }
 
     #[test]
-    fn owner_type_roundtrip_preserves_variant() {
-        for variant in [
-            SessionOwnerType::Project,
-            SessionOwnerType::Story,
-            SessionOwnerType::Task,
-        ] {
-            let summary = HookOwnerSummary {
-                owner_type: variant,
-                owner_id: "00000000-0000-0000-0000-000000000001".to_string(),
-                label: None,
-                project_id: None,
-                story_id: None,
-                task_id: None,
-            };
-            let json = serde_json::to_string(&summary).unwrap();
-            let decoded: HookOwnerSummary = serde_json::from_str(&json).unwrap();
-            assert_eq!(decoded.owner_type, variant);
-        }
+    fn session_run_context_scope_serializes_as_snake_case() {
+        let ctx = SessionRunContext {
+            project_id: Uuid::nil(),
+            scope: CapabilityScope::Story,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&ctx).unwrap();
+        assert_eq!(value["scope"], serde_json::Value::String("story".into()));
     }
 
     #[test]
-    fn owner_type_deserializes_legacy_snake_case_contract() {
-        // 模拟前端 / 旧版本持久化发出的 JSON,验证我们没把契约改坏
-        let json = r#"{
-            "owner_type": "story",
-            "owner_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-            "project_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-        }"#;
-        let summary: HookOwnerSummary = serde_json::from_str(json).unwrap();
-        assert_eq!(summary.owner_type, SessionOwnerType::Story);
-        assert_eq!(
-            summary.project_id.as_deref(),
-            Some("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-        );
-        assert!(summary.task_id.is_none());
+    fn session_hook_snapshot_default_has_no_run_context() {
+        let snapshot = SessionHookSnapshot::default();
+        assert!(snapshot.run_context.is_none());
     }
 }

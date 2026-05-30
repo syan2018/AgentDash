@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn session_for_workspace_creates_main_mount() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session should build");
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn build_task_vfs_merges_project_story_and_workspace_policy() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         let bindings = vec![inline_mount(project.id, "spec")];
 
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn story_containers_can_disable_and_override_project_defaults() {
-        let service = RelayVfsService::new(empty_mount_registry());
+        let service = VfsService::new(empty_mount_registry());
         let project = agentdash_domain::project::Project::new("proj".into(), "desc".into());
         let bindings = vec![
             inline_mount(project.id, "shared"),
@@ -401,7 +401,7 @@ mod tests {
                 "todo: verify inline search",
             ),
         ]);
-        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
+        let service = VfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -478,7 +478,7 @@ mod tests {
                 "remove me\n",
             ),
         ]);
-        let service = RelayVfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
+        let service = VfsService::new(mount_registry_with_inline_fs_repo(Arc::new(repo)));
         let runtime_vfs = Vfs {
             mounts: vec![make_inline_mount_with_owner(
                 "brief",
@@ -602,7 +602,7 @@ mod tests {
         mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
             registry.clone(),
         )));
-        let service = RelayVfsService::new(Arc::new(mount_registry));
+        let service = VfsService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -678,7 +678,7 @@ mod tests {
         mount_registry.register(Arc::new(crate::mount_providers::RelayFsMountProvider::new(
             registry.clone(),
         )));
-        let service = RelayVfsService::new(Arc::new(mount_registry));
+        let service = VfsService::new(Arc::new(mount_registry));
         let session = service
             .session_for_workspace(&sample_workspace())
             .expect("session");
@@ -733,7 +733,7 @@ mod tests {
 
     #[test]
     fn runtime_tool_schemas_are_openai_compatible() {
-        let service = Arc::new(RelayVfsService::new(empty_mount_registry()));
+        let service = Arc::new(VfsService::new(empty_mount_registry()));
         let vfs = Vfs {
             mounts: vec![agentdash_spi::Mount {
                 id: "brief".to_string(),
@@ -777,12 +777,16 @@ mod tests {
                 .iter()
                 .filter_map(serde_json::Value::as_str)
                 .collect::<std::collections::BTreeSet<_>>();
+            // 运行时工具走非 strict function calling：sanitizer 强制 object +
+            // additionalProperties:false 并清除装饰关键字，但保留 derive 的可选性
+            // （offset/limit 等对齐 Claude Code fs 工具，短文件读取无需传参）。
+            // 因此 required 是 properties 的子集，约束方向是「不得有悬空 required」。
             assert_eq!(schema["type"], "object");
             assert_eq!(schema["additionalProperties"], false);
-            for key in properties.keys() {
+            for key in &required {
                 assert!(
-                    required.contains(key.as_str()),
-                    "required should contain `{key}`"
+                    properties.contains_key(*key),
+                    "required key `{key}` must be a declared property"
                 );
             }
         }

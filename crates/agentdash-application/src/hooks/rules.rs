@@ -140,14 +140,17 @@ pub(crate) fn merge_script_decision(
 mod tests {
     use super::*;
 
-    use agentdash_spi::{HookInjection, HookOwnerSummary, HookTrigger, SessionHookSnapshot};
+    use std::sync::Arc;
+
+    use agentdash_infrastructure::RhaiHookScriptEvaluator;
+    use agentdash_spi::{HookInjection, HookTrigger, SessionHookSnapshot};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
 
     fn test_script_engine() -> HookScriptEngine {
         let scripts = builtin_preset_scripts();
-        HookScriptEngine::new(&scripts)
+        HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&scripts)))
     }
 
     #[test]
@@ -406,14 +409,14 @@ mod tests {
         let snapshot = SessionHookSnapshot {
             session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
-            owners: vec![HookOwnerSummary {
-                owner_type: agentdash_domain::session_binding::SessionOwnerType::Story,
-                owner_id: uuid::Uuid::new_v4().to_string(),
-                label: Some("Story A".to_string()),
-                project_id: None,
-                story_id: None,
+            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+                scope: agentdash_spi::CapabilityScope::Story,
+                project_id: uuid::Uuid::new_v4(),
+                story_id: Some(uuid::Uuid::new_v4()),
                 task_id: None,
-            }],
+                story_title: None,
+                task_title: None,
+            }),
             injections: vec![
                 HookInjection {
                     slot: "workflow".to_string(),

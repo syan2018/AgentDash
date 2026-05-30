@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
 use crate::task::{Task, TaskSpecMut};
-use crate::workflow::LifecycleStepState;
+use crate::workflow::ActivityAttemptStatus;
 
 /// Story — 用户价值单元
 ///
@@ -92,7 +92,7 @@ impl Story {
     /// 强制设置 task.status — 为保留 MCP / API 层"用户或 agent 主动标记 task 状态"
     /// 的命令路径而暴露。调用路径会写 `ChangeKind::TaskStatusChanged`。
     ///
-    /// M2 强约束：runtime 真相源是 LifecycleStepState + [`Story::apply_task_projection`]；
+    /// M2 强约束：runtime 真相源是 Activity attempt 状态 + [`Story::apply_task_projection`]；
     /// 此方法仅用于**用户意图**（例如人工标记"已验收"、MCP agent 工具主动推进）。
     /// 运行时投影路径**禁止**使用此方法。
     ///
@@ -137,20 +137,20 @@ impl Story {
         Some(result)
     }
 
-    /// M2 projector 入口：将 LifecycleStepState 的状态投射到指定 Task。
+    /// M2 projector 入口：将 Activity attempt 状态投射到指定 Task。
     ///
     /// 返回 `Some(true)` 表示投影后 task.status 发生变化；
     /// `Some(false)` 表示 task 存在但状态不变；`None` 表示 task 不存在。
     ///
     /// 只修改投影字段（status / artifacts 等），不触达 spec 字段；
-    /// 仅由 `LifecycleRunService` 在 step 状态推进时调用。
+    /// 由启动期 Task view 投影器在 activity attempt 状态推进时调用。
     pub fn apply_task_projection(
         &mut self,
         task_id: Uuid,
-        step: &LifecycleStepState,
+        attempt_status: ActivityAttemptStatus,
     ) -> Option<bool> {
         let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
-        let changed = task.apply_projection(step.status);
+        let changed = task.apply_projection(attempt_status);
         if changed {
             self.updated_at = Utc::now();
         }
@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn apply_task_projection_maps_step_status() {
         use crate::task::TaskStatus;
-        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
+        use crate::workflow::ActivityAttemptStatus;
 
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
@@ -285,20 +285,9 @@ mod tests {
         let task_id = task.id;
         story.add_task(task);
 
-        let make_step = |status: LifecycleStepExecutionStatus| LifecycleStepState {
-            step_key: "step".to_string(),
-            status,
-            session_id: None,
-            started_at: None,
-            completed_at: None,
-            summary: None,
-            context_snapshot: None,
-            gate_collision_count: 0,
-        };
-
         // Pending → Pending (no change initially)
         let changed = story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Pending))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Pending)
             .expect("task exists");
         assert!(!changed);
         assert_eq!(
@@ -308,7 +297,7 @@ mod tests {
 
         // Ready → Assigned
         let changed = story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Ready))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Ready)
             .expect("task exists");
         assert!(changed);
         assert_eq!(
@@ -316,9 +305,15 @@ mod tests {
             TaskStatus::Assigned
         );
 
+        // Claiming → Assigned (no change)
+        let changed = story
+            .apply_task_projection(task_id, ActivityAttemptStatus::Claiming)
+            .expect("task exists");
+        assert!(!changed);
+
         // Running → Running
         story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Running))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Running)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -327,7 +322,7 @@ mod tests {
 
         // Completed → AwaitingVerification
         story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Completed))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Completed)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
@@ -336,41 +331,30 @@ mod tests {
 
         // Failed → Failed
         story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Failed))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Failed)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
             TaskStatus::Failed
         );
 
-        // Skipped → Completed
+        // Cancelled → Failed
+        story.force_set_task_status(task_id, TaskStatus::Running);
         story
-            .apply_task_projection(task_id, &make_step(LifecycleStepExecutionStatus::Skipped))
+            .apply_task_projection(task_id, ActivityAttemptStatus::Cancelled)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
-            TaskStatus::Completed
+            TaskStatus::Failed
         );
     }
 
     #[test]
     fn apply_task_projection_returns_none_for_unknown_task() {
-        use crate::workflow::{LifecycleStepExecutionStatus, LifecycleStepState};
+        use crate::workflow::ActivityAttemptStatus;
         let project_id = Uuid::new_v4();
         let mut story = Story::new(project_id, "S".into(), "".into());
-        let res = story.apply_task_projection(
-            Uuid::new_v4(),
-            &LifecycleStepState {
-                step_key: "s".into(),
-                status: LifecycleStepExecutionStatus::Running,
-                session_id: None,
-                started_at: None,
-                completed_at: None,
-                summary: None,
-                context_snapshot: None,
-                gate_collision_count: 0,
-            },
-        );
+        let res = story.apply_task_projection(Uuid::new_v4(), ActivityAttemptStatus::Running);
         assert!(res.is_none());
     }
 

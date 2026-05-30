@@ -10,11 +10,57 @@ use agentdash_spi::{
 };
 use uuid::Uuid;
 
+use agentdash_spi::CapabilityScope;
+
 use super::context::SessionContextSnapshot;
-use super::ownership::ResolvedSessionOwner;
 use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
 use crate::extension_runtime::ExtensionRuntimeProjection;
+
+/// Session 的 owner 信息（替代已删除的 SessionBinding 表达）。
+#[derive(Debug, Clone)]
+pub struct ResolvedSessionOwner {
+    pub owner_type: CapabilityScope,
+    pub project_id: Option<Uuid>,
+    pub trace: OwnerResolutionTrace,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OwnerResolutionTrace {
+    pub selected_reason: String,
+}
+
+impl ResolvedSessionOwner {
+    pub fn project(project_id: Uuid) -> Self {
+        Self {
+            owner_type: CapabilityScope::Project,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "project".to_string(),
+            },
+        }
+    }
+
+    pub fn story(project_id: Uuid) -> Self {
+        Self {
+            owner_type: CapabilityScope::Story,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "story".to_string(),
+            },
+        }
+    }
+
+    pub fn task(project_id: Uuid) -> Self {
+        Self {
+            owner_type: CapabilityScope::Task,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "task".to_string(),
+            },
+        }
+    }
+}
 use crate::vfs::ResolvedVfsSurface;
 
 #[derive(Debug, Clone)]
@@ -91,7 +137,6 @@ pub struct ConstructionEffectPlan {
 
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionProjections {
-    pub context: SessionConstructionContextProjection,
     pub mcp_servers: Vec<SessionMcpServer>,
     pub capability_state: Option<CapabilityState>,
     pub session_capabilities: Option<SessionBaselineCapabilities>,
@@ -147,21 +192,14 @@ impl SessionConstructionPlan {
                 SessionConstructionTraceEntry {
                     stage: "context_projection",
                     source: match owner.owner_type {
-                        agentdash_domain::session_binding::SessionOwnerType::Task => {
-                            "task.context_builder".to_string()
-                        }
-                        agentdash_domain::session_binding::SessionOwnerType::Story => {
-                            "story.context_builder".to_string()
-                        }
-                        agentdash_domain::session_binding::SessionOwnerType::Project => {
-                            "project.context_builder".to_string()
-                        }
+                        CapabilityScope::Task => "task.context_builder".to_string(),
+                        CapabilityScope::Story => "story.context_builder".to_string(),
+                        CapabilityScope::Project => "project.context_builder".to_string(),
                     },
                 },
             ],
         };
         let projections = ConstructionProjections {
-            context: context_projection.clone(),
             session_capabilities: context_projection.session_capabilities.clone(),
             ..Default::default()
         };
@@ -283,22 +321,13 @@ impl SessionConstructionPlan {
 #[cfg(test)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
-    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_spi::Vfs;
 
     use super::*;
-    use crate::session::ownership::SessionOwnerResolver;
 
     #[test]
     fn construction_plan_carries_owner_and_projection_trace() {
-        let binding = SessionBinding::new(
-            Uuid::new_v4(),
-            "sess-construction".to_string(),
-            SessionOwnerType::Task,
-            Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner::task(Uuid::new_v4());
         let projection = SessionConstructionContextProjection {
             workspace_id: Some(Uuid::new_v4()),
             ..Default::default()
@@ -307,23 +336,15 @@ mod tests {
         let plan = SessionConstructionPlan::new("sess-construction", owner, projection);
 
         assert_eq!(plan.session_id, "sess-construction");
-        assert_eq!(plan.owner.owner_type, SessionOwnerType::Task);
+        assert_eq!(plan.owner.owner_type, CapabilityScope::Task);
         assert!(plan.context_projection.workspace_id.is_some());
         assert_eq!(plan.trace.entries[0].stage, "owner");
-        assert_eq!(plan.trace.entries[0].source, "priority[0]=task");
         assert_eq!(plan.trace.entries[1].source, "task.context_builder");
     }
 
     #[test]
     fn launch_construction_plan_keeps_full_context_bundle() {
-        let binding = SessionBinding::new(
-            Uuid::new_v4(),
-            "sess-launch-construction".to_string(),
-            SessionOwnerType::Project,
-            Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
         let bundle = SessionContextBundle::new(Uuid::new_v4(), "owner_bootstrap");
         let bundle_id = bundle.bundle_id;
 
@@ -344,14 +365,7 @@ mod tests {
 
     #[test]
     fn validate_for_launch_requires_final_execution_facts() {
-        let binding = SessionBinding::new(
-            Uuid::new_v4(),
-            "sess-invalid-construction".to_string(),
-            SessionOwnerType::Project,
-            Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
         let plan = SessionConstructionPlan::new(
             "sess-invalid-construction",
             owner,
@@ -367,14 +381,7 @@ mod tests {
 
     #[test]
     fn validate_for_launch_rejects_capability_surface_drift() {
-        let binding = SessionBinding::new(
-            Uuid::new_v4(),
-            "sess-drift-construction".to_string(),
-            SessionOwnerType::Project,
-            Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
         let vfs = Vfs {
             mounts: vec![Mount {
                 id: "workspace".to_string(),
@@ -410,14 +417,7 @@ mod tests {
 
     #[test]
     fn validate_for_launch_rejects_skill_projection_drift() {
-        let binding = SessionBinding::new(
-            Uuid::new_v4(),
-            "sess-skill-drift".to_string(),
-            SessionOwnerType::Project,
-            Uuid::new_v4(),
-            "execution",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner::project(Uuid::new_v4());
         let vfs = Vfs {
             mounts: vec![Mount {
                 id: "workspace".to_string(),

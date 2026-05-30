@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
+pub mod run_link_service;
 pub mod scheduler;
 mod session_association;
 pub mod step_activation;
@@ -49,12 +50,10 @@ pub use orchestrator::{
     LifecycleNodeAdvanceOutcome, LifecycleOrchestrator,
 };
 pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
-pub use run::{
-    ActivateLifecycleStepCommand, BindAndActivateLifecycleStepCommand,
-    BindLifecycleStepSessionCommand, CompleteLifecycleStepCommand, FailLifecycleStepCommand,
-    LifecycleRunService, LifecycleStepProjector, RecordGateCollisionCommand,
-    StartLifecycleRunCommand, build_step_projector_from_repos, select_active_run,
-};
+#[cfg(test)]
+pub(crate) use projection::activity_projection;
+pub use run::select_active_run;
+pub use run_link_service::LifecycleRunLinkService;
 pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,

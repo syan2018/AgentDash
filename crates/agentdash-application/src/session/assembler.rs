@@ -31,11 +31,11 @@ use std::collections::{BTreeSet, HashMap};
 use agentdash_domain::canvas::CanvasRepository;
 use agentdash_domain::common::{AgentConfig, AgentVfsAccessGrant};
 use agentdash_domain::project::Project;
-use agentdash_domain::session_binding::SessionOwnerCtx;
+use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{LifecycleDefinition, LifecycleRun, LifecycleStepDefinition};
+use agentdash_domain::workflow::{ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
 use async_trait::async_trait;
@@ -75,7 +75,7 @@ use crate::story::context_builder::{StoryContextBuildInput, contribute_story_con
 use crate::task::execution::TaskExecutionError;
 use crate::task::gateway::{effect_executor::TaskHookEffectExecutor, resolve_task_backend_id};
 use crate::vfs::{
-    RelayVfsService, SessionMountTarget, apply_agent_vfs_access_grants,
+    VfsService, SessionMountTarget, apply_agent_vfs_access_grants,
     build_lifecycle_mount_with_ports, resolve_context_bindings,
 };
 use crate::workflow::{
@@ -130,7 +130,6 @@ fn apply_session_assembly(
         plan.surface.vfs = prepared.vfs;
     }
     plan.context_projection.vfs = plan.surface.vfs.clone();
-    plan.projections.context.vfs = plan.surface.vfs.clone();
     plan.projections.mcp_servers = prepared.mcp_servers;
     plan.projections.capability_state = prepared.capability_state;
     if !prepared.env.is_empty() {
@@ -423,7 +422,7 @@ impl SessionAssemblyBuilder {
 /// 由 `AppState` / 各 handler 构造后传入各 compose 函数,避免每个 compose
 /// 签名都携带 6-7 个 service 参数。
 pub struct SessionRequestAssembler<'a> {
-    pub vfs_service: &'a RelayVfsService,
+    pub vfs_service: &'a VfsService,
     pub canvas_repo: &'a dyn CanvasRepository,
     pub availability: &'a dyn BackendAvailability,
     pub repos: &'a RepositorySet,
@@ -570,13 +569,13 @@ impl<'a> OwnerScope<'a> {
         }
     }
 
-    fn owner_ctx(&self) -> SessionOwnerCtx {
+    fn owner_ctx(&self) -> CapabilityScopeCtx {
         match self {
-            Self::Story { project, story, .. } => SessionOwnerCtx::Story {
+            Self::Story { project, story, .. } => CapabilityScopeCtx::Story {
                 project_id: project.id,
                 story_id: story.id,
             },
-            Self::Project { project, .. } => SessionOwnerCtx::Project {
+            Self::Project { project, .. } => CapabilityScopeCtx::Project {
                 project_id: project.id,
             },
         }
@@ -748,7 +747,7 @@ fn build_owner_session_plan_contribution(
             workspace,
         } => (
             SessionPlanPhase::StoryOwner,
-            agentdash_domain::session_binding::SessionOwnerCtx::Story {
+            CapabilityScopeCtx::Story {
                 project_id: project.id,
                 story_id: story.id,
             },
@@ -763,7 +762,7 @@ fn build_owner_session_plan_contribution(
             ..
         } => (
             SessionPlanPhase::ProjectAgent,
-            agentdash_domain::session_binding::SessionOwnerCtx::Project {
+            CapabilityScopeCtx::Project {
                 project_id: project.id,
             },
             None,
@@ -773,7 +772,7 @@ fn build_owner_session_plan_contribution(
     };
 
     let plan = build_session_plan_fragments(SessionPlanInput {
-        owner_ctx,
+        scope: owner_ctx.owner_type(),
         phase: plan_phase,
         vfs,
         mcp_servers,
@@ -797,7 +796,7 @@ fn owner_scope_phase(owner: &OwnerScope<'_>) -> ContextBuildPhase {
 
 impl<'a> SessionRequestAssembler<'a> {
     pub fn new(
-        vfs_service: &'a RelayVfsService,
+        vfs_service: &'a VfsService,
         canvas_repo: &'a dyn CanvasRepository,
         availability: &'a dyn BackendAvailability,
         repos: &'a RepositorySet,
@@ -974,6 +973,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, project_id).await,
                 agent_servers: extract_agent_mcp_entries(&spec.agent_mcp.preset_mcp_servers),
             },
+            capability_context: None,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1200,7 +1200,7 @@ impl<'a> SessionRequestAssembler<'a> {
             });
         }
         let cap_input = CapabilityResolverInput {
-            owner_ctx: SessionOwnerCtx::Task {
+            owner_ctx: CapabilityScopeCtx::Task {
                 project_id: spec.task.project_id,
                 story_id: spec.task.story_id,
                 task_id: spec.task.id,
@@ -1210,6 +1210,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 presets: load_available_presets(self.repos, spec.task.project_id).await,
                 agent_servers: vec![],
             },
+            capability_context: None,
         };
         let cap_output = CapabilityResolver::resolve(&cap_input, self.platform_config);
 
@@ -1280,11 +1281,7 @@ impl<'a> SessionRequestAssembler<'a> {
             crate::session::plan::resolve_story_session_composition(Some(story_ref));
         let session_plan = crate::session::plan::build_session_plan_fragments(
             crate::session::plan::SessionPlanInput {
-                owner_ctx: SessionOwnerCtx::Task {
-                    project_id: project_ref.id,
-                    story_id: story_ref.id,
-                    task_id: spec.task.id,
-                },
+                scope: CapabilityScope::Task,
                 phase: match task_phase {
                     TaskExecutionPhase::Start => crate::session::plan::SessionPlanPhase::TaskStart,
                     TaskExecutionPhase::Continue => {
@@ -1443,7 +1440,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 },
                 run: spec.run,
                 lifecycle: spec.lifecycle,
-                step: spec.step,
+                activity: spec.activity,
                 workflow: spec.workflow,
             },
         )
@@ -1502,7 +1499,7 @@ async fn compose_lifecycle_node_with_audit(
     audit_bus: Option<SharedContextAuditBus>,
     audit_session_key: Option<&str>,
 ) -> Result<SessionAssemblyBuilder, String> {
-    let owner_ctx = SessionOwnerCtx::Project {
+    let owner_ctx = CapabilityScopeCtx::Project {
         project_id: spec.run.project_id,
     };
 
@@ -1512,11 +1509,10 @@ async fn compose_lifecycle_node_with_audit(
     let mut activation = activate_step_with_platform(
         &StepActivationInput {
             owner_ctx,
-            active_step: spec.step,
+            active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &spec.lifecycle.edges,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
             companion_slice_mode: None,
@@ -1541,9 +1537,7 @@ async fn compose_lifecycle_node_with_audit(
         .collect();
     let lifecycle_plan = crate::session::plan::build_session_plan_fragments(
         crate::session::plan::SessionPlanInput {
-            owner_ctx: SessionOwnerCtx::Project {
-                project_id: spec.run.project_id,
-            },
+            scope: CapabilityScope::Project,
             phase: crate::session::plan::SessionPlanPhase::ProjectAgent,
             vfs: Some(&activation.lifecycle_vfs),
             mcp_servers: &lifecycle_mcp_runtime,
@@ -1581,6 +1575,22 @@ async fn compose_lifecycle_node_with_audit(
         .build())
 }
 
+/// 由 activity executor 推导展示用的 node 语义。
+fn activity_node_type(
+    activity: &ActivityDefinition,
+) -> agentdash_domain::workflow::LifecycleNodeType {
+    use agentdash_domain::workflow::{ActivityExecutorSpec, AgentSessionPolicy, LifecycleNodeType};
+    match &activity.executor {
+        ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
+            AgentSessionPolicy::ContinueRoot => LifecycleNodeType::PhaseNode,
+            AgentSessionPolicy::SpawnChild | AgentSessionPolicy::AttachExisting => {
+                LifecycleNodeType::AgentNode
+            }
+        },
+        _ => LifecycleNodeType::AgentNode,
+    }
+}
+
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
     activation: &crate::workflow::StepActivation,
@@ -1588,16 +1598,17 @@ fn contribute_lifecycle_context(
 ) -> Contribution {
     let mut fragments = Vec::new();
 
-    let step_desc = spec.step.description.trim();
+    let step_desc = spec.activity.description.trim();
     let workflow_label = spec
         .workflow
         .map(|workflow| format!("`{}` ({})", workflow.key, workflow.name))
         .unwrap_or_else(|| "未绑定 workflow".to_string());
+    let node_type = activity_node_type(spec.activity);
     let mut lifecycle_lines = vec![
         format!("- Lifecycle: `{}`", spec.lifecycle.key),
         format!("- Run: `{}`", spec.run.id),
-        format!("- Step: `{}`", spec.step.key),
-        format!("- Node type: `{:?}`", spec.step.node_type),
+        format!("- Step: `{}`", spec.activity.key),
+        format!("- Node type: `{node_type:?}`"),
         format!("- Workflow: {workflow_label}"),
     ];
     if !step_desc.is_empty() {
@@ -1764,20 +1775,18 @@ pub enum StoryStepPhase {
     Continue,
 }
 
-/// Story step 场景下 compose 所需的完整上下文。
+/// Task execution session 场景下 compose 所需的完整上下文。
 ///
-/// 用于 `StoryStepActivationService` facade 的 step activation 路径
-/// （`start_task` / `continue_task` 内部先定位 task 对应 step，再调 compose）。
+/// 用于 `StoryStepActivationService` 的 task 启动 / 续跑路径
+/// （`start_task` / `continue_task` 直接以 task 为入口调 compose）。
 ///
 /// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
 /// - `StoryStepSpec` 持有 task/story/project/workspace 完整 entity 引用
 /// - 承载 user prompt 注入（`override_prompt` / `additional_prompt`）
 /// - 承载 explicit executor config（HTTP 请求透传）
-/// - 承载 `ActiveWorkflowProjection`（由 facade 通过 SessionBinding 两跳定位后传入）
+/// - `active_workflow` 可选：task execution session 无 lifecycle binding 时为 `None`，
+///   走纯 task 装配（不带 lifecycle workflow injection）
 pub struct StoryStepSpec<'a> {
-    pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
     pub task: &'a Task,
     pub story: &'a Story,
     pub project: &'a Project,
@@ -1789,7 +1798,7 @@ pub struct StoryStepSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 SessionBinding 两跳定位后传入）。
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 LifecycleRunLink 定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// 审计总线用于索引的 session key。
     pub audit_session_key: Option<String>,
@@ -1798,8 +1807,8 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
@@ -1825,8 +1834,8 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
 }
 
@@ -1841,8 +1850,8 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a LifecycleDefinition,
-    pub step: &'a LifecycleStepDefinition,
+    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
 }
 
@@ -1865,18 +1874,17 @@ async fn compose_companion_with_workflow(
         build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
 
     // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
-    let owner_ctx = SessionOwnerCtx::Project { project_id };
+    let owner_ctx = CapabilityScopeCtx::Project { project_id };
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let activation = activate_step_with_platform(
         &StepActivationInput {
             owner_ctx,
-            active_step: spec.step,
+            active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
             lifecycle_key: &spec.lifecycle.key,
-            edges: &spec.lifecycle.edges,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
             companion_slice_mode: Some(comp.slice_mode),
@@ -1993,18 +2001,23 @@ async fn resolve_owner_workflow_tool_directives(
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
 
-    // 2. 查 lifecycle 定义 → entry step → workflow_key
+    // 2. 查 activity lifecycle 定义 → entry activity → workflow_key
     let lifecycle = repos
-        .lifecycle_definition_repo
+        .activity_lifecycle_definition_repo
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
         .ok()
         .flatten()?;
-    let entry_step = lifecycle
-        .steps
+    let entry_activity = lifecycle
+        .activities
         .iter()
-        .find(|s| s.key == lifecycle.entry_step_key)?;
-    let workflow_key = entry_step.effective_workflow_key()?;
+        .find(|a| a.key == lifecycle.entry_activity_key)?;
+    let workflow_key = match &entry_activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => {
+            spec.workflow_key.as_str()
+        }
+        _ => return None,
+    };
 
     // 3. 查 workflow 定义 → contract.capability_config.tool_directives
     let workflow = repos
@@ -2021,9 +2034,9 @@ async fn resolve_owner_workflow_tool_directives(
 mod tests {
     use super::*;
     use agentdash_domain::workflow::{
-        InputPortDefinition, LifecycleDefinition, LifecycleStepDefinition, OutputPortDefinition,
-        WorkflowBindingKind, WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource,
-        WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityLifecycleRunState,
+        AgentActivityExecutorSpec, InputPortDefinition, OutputPortDefinition, WorkflowBindingKind,
+        WorkflowContract, WorkflowDefinition, WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -2260,17 +2273,13 @@ mod tests {
     #[test]
     fn lifecycle_context_contribution_contains_workflow_and_runtime_fragments() {
         let project_id = Uuid::new_v4();
-        let step = LifecycleStepDefinition {
+        let activity = ActivityDefinition {
             key: "implement".to_string(),
             description: "实现功能".to_string(),
-            workflow_key: Some("wf_impl".to_string()),
-            node_type: Default::default(),
-            output_ports: vec![OutputPortDefinition {
-                key: "summary".to_string(),
-                description: "实现摘要".to_string(),
-                gate_strategy: Default::default(),
-                gate_params: None,
-            }],
+            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
+                workflow_key: "wf_impl".to_string(),
+                session_policy: Default::default(),
+            }),
             input_ports: vec![InputPortDefinition {
                 key: "design".to_string(),
                 description: "设计方案".to_string(),
@@ -2278,9 +2287,17 @@ mod tests {
                 context_template: None,
                 standalone_fulfillment: Default::default(),
             }],
-            capability_config: Default::default(),
+            output_ports: vec![OutputPortDefinition {
+                key: "summary".to_string(),
+                description: "实现摘要".to_string(),
+                gate_strategy: Default::default(),
+                gate_params: None,
+            }],
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
         };
-        let lifecycle = LifecycleDefinition::new(
+        let lifecycle = ActivityLifecycleDefinition::new(
             project_id,
             "dev",
             "Dev",
@@ -2288,17 +2305,29 @@ mod tests {
             vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
-            vec![step.clone()],
+            vec![activity.clone()],
             vec![],
         )
         .expect("lifecycle");
-        let run = agentdash_domain::workflow::LifecycleRun::new(
+        let activity_state = ActivityLifecycleRunState {
+            status: agentdash_domain::workflow::ActivityRunStatus::Running,
+            attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
+                activity_key: "implement".to_string(),
+                attempt: 1,
+                status: agentdash_domain::workflow::ActivityAttemptStatus::Running,
+                executor_run: None,
+                started_at: None,
+                completed_at: None,
+                summary: None,
+            }],
+            outputs: Vec::new(),
+            inputs: Vec::new(),
+        };
+        let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
-            "sess-story",
-            &lifecycle.steps,
-            &lifecycle.entry_step_key,
-            &lifecycle.edges,
+            Some("sess-story".to_string()),
+            activity_state,
         )
         .expect("run");
         let workflow = WorkflowDefinition::new(
@@ -2346,7 +2375,7 @@ mod tests {
         let spec = LifecycleNodeSpec {
             run: &run,
             lifecycle: &lifecycle,
-            step: &step,
+            activity: &activity,
             workflow: Some(&workflow),
             inherited_executor_config: None,
         };
@@ -2385,21 +2414,12 @@ mod tests {
     mod apply_session_assembly_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
-        use crate::session::construction::SessionConstructionPlan;
-        use crate::session::ownership::SessionOwnerResolver;
-        use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+        use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
         use agentdash_spi::Vfs;
 
         fn base_plan() -> SessionConstructionPlan {
             let user_input = UserPromptInput::from_text("ping");
-            let binding = SessionBinding::new(
-                uuid::Uuid::new_v4(),
-                "test-session".to_string(),
-                SessionOwnerType::Project,
-                uuid::Uuid::new_v4(),
-                "test-project",
-            );
-            let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+            let owner = ResolvedSessionOwner::project(uuid::Uuid::new_v4());
             SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
         }
 

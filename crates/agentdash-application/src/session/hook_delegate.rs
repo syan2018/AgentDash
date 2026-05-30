@@ -1241,8 +1241,8 @@ mod tests {
 
             Ok(HookResolution {
                 diagnostics: vec![HookDiagnosticEntry {
-                    code: "session_binding_found".to_string(),
-                    message: "命中会话绑定".to_string(),
+                    code: "active_workflow_resolved".to_string(),
+                    message: "命中活跃 workflow".to_string(),
                 }],
                 // PR 4 之后 companion_agents 统一走 Bundle 一条路径，delegate 不再
                 // 维护 HOOK_USER_MESSAGE_SKIP_SLOTS；这里仍用 workflow slot 以保持

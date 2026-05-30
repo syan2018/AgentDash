@@ -1,4 +1,5 @@
 import type { Artifact } from "./acp";
+import type { CapabilityDirective } from "./workflow";
 import type {
   ContextContainerCapability,
   ContextContainerDefinition,
@@ -85,8 +86,6 @@ export type CapabilityKey =
   | "workflow"
   | "collaboration"
   | "canvas";
-
-export type CapabilityDirective = { add: string } | { remove: string };
 
 export type CapabilityGroup = "basic" | "extended";
 
@@ -553,6 +552,10 @@ export interface RegenerateTokenResponse {
   endpoint_id: string;
   webhook_token: string;
 }
+
+// ─── Story Runs (LifecycleRunLink-based) ─────────────────
+
+export type { StoryRunsResponse, StoryRunOverviewDto, LifecycleRunLinkDto, RunLinksResponse, AttachRunLinkRequest } from "../generated/workflow-contracts";
 
 // ─── Re-exports from domain-split files ──────────────────
 

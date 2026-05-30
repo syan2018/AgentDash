@@ -9,7 +9,6 @@ use agentdash_application::project::{
 use agentdash_domain::DomainError;
 use agentdash_domain::identity::{Group, User};
 use agentdash_domain::project::Project;
-use agentdash_domain::session_binding::SessionBinding;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workspace::Workspace;
@@ -363,15 +362,6 @@ pub async fn load_workspace_and_project_with_permission(
     let project =
         load_project_with_permission(state, current_user, workspace.project_id, permission).await?;
     Ok((workspace, project))
-}
-
-pub async fn require_session_binding_permission(
-    state: &AppState,
-    current_user: &AuthIdentity,
-    binding: &SessionBinding,
-    permission: ProjectPermission,
-) -> Result<Project, ApiError> {
-    load_project_with_permission(state, current_user, binding.project_id, permission).await
 }
 
 fn log_auth_failure(request: &AuthRequest, err: &AuthError) {

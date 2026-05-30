@@ -514,9 +514,7 @@ fn remote_digest(source: &SkillAssetSource) -> Option<&str> {
     }
 }
 
-fn db_err(error: sqlx::Error) -> DomainError {
-    DomainError::InvalidConfig(error.to_string())
-}
+use super::db_err;
 
 fn installed_library_asset_id(source: &Option<InstalledAssetSource>) -> Option<String> {
     source

@@ -9,8 +9,8 @@ use super::value_objects::{AgentBinding, Artifact, TaskStatus};
 /// 面向用户展示的工作项容器，承载归属关系、状态投影、声明式执行偏好和结果摘要。
 /// 真实执行在 Session / LifecycleRun 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
 ///
-/// Session 归属关系通过 `SessionBinding` 管理（owner_type=task, label="execution"），
 /// Task entity 不持有 AgentDash 内部 session_id，也不持有执行器原生 resume id。
+/// Session 归属由 LifecycleRunLink 与 CapabilityScope 管理。
 ///
 /// **M2：投影字段可见性规则**（见 `.trellis/spec/backend/story-task-runtime.md` §2.4）
 ///
@@ -73,33 +73,31 @@ impl Task {
         &self.artifacts
     }
 
-    /// M2 projection：将 LifecycleStepState 的状态投射到 Task。
+    /// M2 projection：将 Activity attempt 状态投射到 Task。
     ///
     /// 状态映射规则：
     /// - `Pending` → `TaskStatus::Pending`
-    /// - `Ready`   → `TaskStatus::Assigned`
+    /// - `Ready` / `Claiming` → `TaskStatus::Assigned`
     /// - `Running` → `TaskStatus::Running`
     /// - `Completed` → `TaskStatus::AwaitingVerification`
     ///   （Task 完成态由业务（hook / verification）进一步推进为 Completed/Failed）
-    /// - `Failed`  → `TaskStatus::Failed`
-    /// - `Skipped` → `TaskStatus::Completed`（跳过视为终态完成）
+    /// - `Failed` / `Cancelled` → `TaskStatus::Failed`
     ///
     /// 返回 `true` 表示状态发生变化，`false` 表示投影后状态不变。
     ///
     /// 仅 domain crate 内部可调用；应用层通过 `Story::apply_task_projection` 间接触达。
     pub(crate) fn apply_projection(
         &mut self,
-        step_status: crate::workflow::LifecycleStepExecutionStatus,
+        attempt_status: crate::workflow::ActivityAttemptStatus,
     ) -> bool {
-        use crate::workflow::LifecycleStepExecutionStatus as S;
+        use crate::workflow::ActivityAttemptStatus as S;
 
-        let next = match step_status {
+        let next = match attempt_status {
             S::Pending => TaskStatus::Pending,
-            S::Ready => TaskStatus::Assigned,
+            S::Ready | S::Claiming => TaskStatus::Assigned,
             S::Running => TaskStatus::Running,
             S::Completed => TaskStatus::AwaitingVerification,
-            S::Failed => TaskStatus::Failed,
-            S::Skipped => TaskStatus::Completed,
+            S::Failed | S::Cancelled => TaskStatus::Failed,
         };
 
         if self.status == next {

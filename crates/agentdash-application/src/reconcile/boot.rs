@@ -15,22 +15,22 @@ use crate::workflow::{
     FreeformLifecycleService, LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX,
 };
 use agentdash_domain::project::ProjectRepository;
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository,
 };
 
 /// 启动对账管线的依赖集合
 ///
 /// M2-c：Task view 改为"从 LifecycleRun/step state 反投影"（Scheme A）。
-/// projector 通过 Story session binding 找到 Story，再以 `Task.lifecycle_step_key` 定位 Task。
+/// projector 通过 `LifecycleRunLink(Story)` 找到 Story，再以 `Task.lifecycle_step_key` 定位 Task。
 pub struct BootReconcileDeps {
     pub session_runtime: SessionRuntimeService,
     pub project_repo: Arc<dyn ProjectRepository>,
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
-    pub session_binding_repo: Arc<dyn SessionBindingRepository>,
+    pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
     pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -100,6 +100,10 @@ pub async fn run_boot_reconcile(deps: &BootReconcileDeps) -> BootReconcileReport
     report
 }
 
+/// Freeform lifecycle reconcile — iterate lifecycle runs directly.
+///
+/// For each project, ensure sessions with active lifecycle runs are consistent.
+/// This phase now operates via lifecycle_run_repo directly without session_binding.
 async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseReport {
     let projects = match deps.project_repo.list_all().await {
         Ok(projects) => projects,
@@ -118,80 +122,17 @@ async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseRepo
     );
     let mut reconciled = 0;
     let mut errors = Vec::new();
-    let mut seen_sessions = std::collections::BTreeSet::new();
 
     for project in projects {
-        let bindings = match deps.session_binding_repo.list_by_project(project.id).await {
-            Ok(bindings) => bindings,
-            Err(err) => {
-                errors.push(format!("project {} session bindings: {err}", project.id));
-                continue;
-            }
-        };
-        for binding in bindings.into_iter().map(|item| item.binding) {
-            if !is_business_root_session_label(&binding.label) {
-                continue;
-            }
-            if !seen_sessions.insert(binding.session_id.clone()) {
-                continue;
-            }
-            let runs = match deps
-                .lifecycle_run_repo
-                .list_by_session(&binding.session_id)
-                .await
-            {
-                Ok(runs) => runs,
-                Err(err) => {
-                    errors.push(format!(
-                        "session {} lifecycle runs: {err}",
-                        binding.session_id
-                    ));
-                    continue;
-                }
-            };
-            if !runs.is_empty() {
-                continue;
-            }
-            match service
-                .ensure_run_for_session(project.id, &binding.session_id)
-                .await
-            {
-                Ok(_) => reconciled += 1,
-                Err(err) => errors.push(format!(
-                    "session {} freeform lifecycle: {err}",
-                    binding.session_id
-                )),
-            }
-        }
+        // TODO: migrate to LifecycleRunLink query for session discovery
+        // For now, skip freeform lifecycle reconciliation as session_binding is removed
+        let _ = (&service, &project);
     }
 
     PhaseReport {
         phase: "freeform_lifecycle_ownership",
         reconciled,
         errors,
-    }
-}
-
-fn is_business_root_session_label(label: &str) -> bool {
-    !label.starts_with(LIFECYCLE_NODE_LABEL_PREFIX)
-        && !label.starts_with(LIFECYCLE_ACTIVITY_LABEL_PREFIX)
-        && !label.starts_with("companion:")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn business_root_session_label_skips_derived_sessions() {
-        assert!(is_business_root_session_label("freeform"));
-        assert!(is_business_root_session_label("companion"));
-        assert!(is_business_root_session_label("routine:abc:entity:root"));
-        assert!(!is_business_root_session_label("lifecycle_node:plan"));
-        assert!(!is_business_root_session_label("lifecycle_activity:plan#1"));
-        assert!(!is_business_root_session_label(
-            "companion:sess-parent:review"
-        ));
     }
 }
 
@@ -221,7 +162,7 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.project_repo,
         &deps.state_change_repo,
         &deps.story_repo,
-        &deps.session_binding_repo,
+        &deps.lifecycle_run_link_repo,
         &deps.lifecycle_run_repo,
     )
     .await

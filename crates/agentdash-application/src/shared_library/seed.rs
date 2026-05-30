@@ -54,6 +54,11 @@ const BUILTIN_ASSET_VERSIONS: &[BuiltinAssetVersion] = &[
         key: "companion-system",
         version: "1.0.0",
     },
+    BuiltinAssetVersion {
+        asset_type: LibraryAssetType::SkillTemplate,
+        key: "routine-memory",
+        version: "1.0.0",
+    },
 ];
 
 pub fn builtin_library_seeds() -> Result<Vec<BuiltinSeed>, DomainError> {

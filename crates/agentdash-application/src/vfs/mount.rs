@@ -45,12 +45,12 @@ pub enum SessionMountTarget {
     Task,
 }
 
-impl From<agentdash_domain::session_binding::SessionOwnerType> for SessionMountTarget {
-    fn from(owner: agentdash_domain::session_binding::SessionOwnerType) -> Self {
-        match owner {
-            agentdash_domain::session_binding::SessionOwnerType::Project => Self::Project,
-            agentdash_domain::session_binding::SessionOwnerType::Story => Self::Story,
-            agentdash_domain::session_binding::SessionOwnerType::Task => Self::Task,
+impl From<agentdash_spi::CapabilityScope> for SessionMountTarget {
+    fn from(scope: agentdash_spi::CapabilityScope) -> Self {
+        match scope {
+            agentdash_spi::CapabilityScope::Project => Self::Project,
+            agentdash_spi::CapabilityScope::Story => Self::Story,
+            agentdash_spi::CapabilityScope::Task => Self::Task,
         }
     }
 }

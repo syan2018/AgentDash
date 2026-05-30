@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::AgentConnector;
 
@@ -15,7 +14,7 @@ use crate::session::types::UserPromptInput;
 use crate::session::{
     LaunchCommand, RoutineLaunchSource, SessionCoreService, SessionLaunchService,
 };
-use crate::vfs::RelayVfsService;
+use crate::vfs::VfsService;
 use crate::workspace::BackendAvailability;
 
 use super::template::render_prompt_template;
@@ -63,7 +62,7 @@ impl RoutineExecutor {
         repos: RepositorySet,
         session_core: SessionCoreService,
         session_launch: SessionLaunchService,
-        _vfs_service: Arc<RelayVfsService>,
+        _vfs_service: Arc<VfsService>,
         _connector: Arc<dyn AgentConnector>,
         _platform_config: crate::platform_config::SharedPlatformConfig,
         availability: Arc<dyn BackendAvailability>,
@@ -155,7 +154,9 @@ impl RoutineExecutor {
             }
             Err(err) => {
                 execution.mark_failed(format!("模板渲染失败: {err}"));
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（模板渲染失败）落库失败");
+                }
                 return Err(err);
             }
         };
@@ -165,7 +166,9 @@ impl RoutineExecutor {
             Err(err) => {
                 let reason = format!("加载 Routine Agent 配置失败: {err}");
                 execution.mark_failed(&reason);
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（加载 Agent 配置失败）落库失败");
+                }
                 return Err(reason);
             }
         };
@@ -179,13 +182,21 @@ impl RoutineExecutor {
             match admission {
                 RoutineAdmissionError::Failed(reason) => {
                     execution.mark_failed(&reason);
-                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    if let Err(update_err) =
+                        self.repos.routine_execution_repo.update(&execution).await
+                    {
+                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入失败）落库失败");
+                    }
                     return Err(reason);
                 }
                 RoutineAdmissionError::Skipped(reason) => {
                     execution.mark_skipped(reason);
                     let exec_id = execution.id;
-                    let _ = self.repos.routine_execution_repo.update(&execution).await;
+                    if let Err(update_err) =
+                        self.repos.routine_execution_repo.update(&execution).await
+                    {
+                        tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（workspace 准入跳过）落库失败");
+                    }
                     return Ok(exec_id);
                 }
             }
@@ -199,15 +210,21 @@ impl RoutineExecutor {
                 let mut updated_routine = routine;
                 updated_routine.last_fired_at = Some(Utc::now());
                 updated_routine.updated_at = Utc::now();
-                let _ = self.repos.routine_repo.update(&updated_routine).await;
+                if let Err(update_err) = self.repos.routine_repo.update(&updated_routine).await {
+                    tracing::error!(target: "routine", routine_id = %updated_routine.id, error = %update_err, "更新 Routine（last_fired_at）落库失败");
+                }
 
                 let exec_id = execution.id;
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行完成）落库失败");
+                }
                 Ok(exec_id)
             }
             Err(err) => {
                 execution.mark_failed(&err);
-                let _ = self.repos.routine_execution_repo.update(&execution).await;
+                if let Err(update_err) = self.repos.routine_execution_repo.update(&execution).await {
+                    tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（执行失败）落库失败");
+                }
                 Err(err)
             }
         }
@@ -237,7 +254,9 @@ impl RoutineExecutor {
         );
 
         execution.mark_running(&session_id, prompt.to_string());
-        let _ = self.repos.routine_execution_repo.update(execution).await;
+        if let Err(update_err) = self.repos.routine_execution_repo.update(execution).await {
+            tracing::error!(target: "routine", execution_id = %execution.id, error = %update_err, "更新 RoutineExecution（标记 running）落库失败");
+        }
 
         let _turn_id = self
             .session_launch
@@ -336,27 +355,15 @@ impl RoutineExecutor {
 
     async fn create_project_owned_session(
         &self,
-        project_id: Uuid,
+        _project_id: Uuid,
         title: &str,
-        label: &str,
+        _label: &str,
     ) -> Result<String, String> {
         let meta = self
             .session_core
             .create_session(title)
             .await
             .map_err(|e| format!("创建 session 失败: {e}"))?;
-        let binding = SessionBinding::new(
-            project_id,
-            meta.id.clone(),
-            SessionOwnerType::Project,
-            project_id,
-            label.to_string(),
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(|e| format!("创建 session binding 失败: {e}"))?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await
@@ -366,49 +373,16 @@ impl RoutineExecutor {
 
     async fn find_or_create_project_agent_session(
         &self,
-        project_id: Uuid,
-        project_agent_id: Uuid,
-        label: &str,
+        _project_id: Uuid,
+        _project_agent_id: Uuid,
+        _label: &str,
     ) -> Result<String, String> {
-        if let Some(binding) = self
-            .repos
-            .session_binding_repo
-            .find_by_owner_and_label(SessionOwnerType::Project, project_id, label)
-            .await
-            .map_err(|e| format!("查询 session binding 失败: {e}"))?
-        {
-            let meta = self
-                .session_core
-                .get_session_meta(&binding.session_id)
-                .await
-                .map_err(|e| format!("读取 session meta 失败: {e}"))?;
-            if meta.is_some() {
-                return Ok(binding.session_id);
-            }
-            self.repos
-                .session_binding_repo
-                .delete(binding.id)
-                .await
-                .map_err(|e| format!("清理失效 session binding 失败: {e}"))?;
-        }
-
+        // TODO: migrate to LifecycleRunLink query for session reuse
         let meta = self
             .session_core
             .create_session("")
             .await
             .map_err(|e| format!("创建 Project Agent session 失败: {e}"))?;
-        let binding = SessionBinding::new(
-            project_id,
-            meta.id.clone(),
-            SessionOwnerType::Project,
-            project_id,
-            project_agent_session_label(project_agent_id),
-        );
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(|e| format!("创建 Project Agent session binding 失败: {e}"))?;
         self.session_core
             .mark_owner_bootstrap_pending(&meta.id)
             .await

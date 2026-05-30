@@ -1,8 +1,7 @@
 use uuid::Uuid;
 
 use super::entity::{
-    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleDefinition, LifecycleRun,
-    WorkflowDefinition,
+    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
 };
 use super::value_objects::WorkflowBindingKind;
 use crate::common::error::DomainError;
@@ -91,35 +90,14 @@ pub trait ActivityExecutionClaimRepository: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait LifecycleDefinitionRepository: Send + Sync {
-    async fn create(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn get_by_key(&self, key: &str) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn get_by_project_and_key(
-        &self,
-        project_id: Uuid,
-        key: &str,
-    ) -> Result<Option<LifecycleDefinition>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn list_by_binding_kind(
-        &self,
-        binding_kind: WorkflowBindingKind,
-    ) -> Result<Vec<LifecycleDefinition>, DomainError>;
-    async fn update(&self, lifecycle: &LifecycleDefinition) -> Result<(), DomainError>;
-    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
-}
-
-#[async_trait::async_trait]
 pub trait LifecycleRunRepository: Send + Sync {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError>;
+    async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
     -> Result<Vec<LifecycleRun>, DomainError>;
+    /// Runtime/debug 用途：按 session 反查 run。业务查询应通过 LifecycleRunLink。
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;

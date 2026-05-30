@@ -22,13 +22,8 @@ pub async fn list_terminals(
     CurrentUser(current_user): CurrentUser,
     Path(session_id): Path<String>,
 ) -> Result<Json<Vec<TerminalState>>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::View,
-    )
-    .await?;
+    ensure_session_permission(state.as_ref(), &current_user, &session_id, ProjectPermission::View)
+        .await?;
     let terminals = state.services.terminal_cache.list_terminals(&session_id);
     Ok(Json(terminals))
 }
@@ -238,13 +233,8 @@ async fn load_terminal_for_user(
         .terminal_cache
         .get_terminal(terminal_id)
         .ok_or_else(|| ApiError::NotFound("terminal not found".to_string()))?;
-    ensure_session_permission(
-        state.as_ref(),
-        current_user,
-        &term_state.session_id,
-        ProjectPermission::View,
-    )
-    .await?;
+    ensure_session_permission(state.as_ref(), current_user, &term_state.session_id, ProjectPermission::View)
+        .await?;
     Ok(term_state)
 }
 
@@ -253,14 +243,9 @@ async fn resolve_terminal_launch_target(
     current_user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
 ) -> Result<TerminalLaunchTarget, ApiError> {
-    let bindings = ensure_session_permission(
-        state.as_ref(),
-        current_user,
-        session_id,
-        ProjectPermission::View,
-    )
-    .await?;
-    let plan = build_session_context_plan(state, current_user, session_id, &bindings)
+    ensure_session_permission(state.as_ref(), current_user, session_id, ProjectPermission::View)
+        .await?;
+    let plan = build_session_context_plan(state, current_user, session_id)
         .await?
         .ok_or_else(|| ApiError::BadRequest("Session 未绑定可用 owner，无法创建终端".into()))?;
     let vfs =

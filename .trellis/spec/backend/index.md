@@ -25,7 +25,8 @@
 | 模块 | 主文档 | Appendices |
 | --- | --- | --- |
 | session | [Session Architecture](./session/architecture.md) | [startup](./session/session-startup-pipeline.md), [runtime state](./session/runtime-execution-state.md), [execution frames](./session/execution-context-frames.md), [bundle](./session/bundle-main-datasource.md), [streaming](./session/streaming-protocol.md), [pi-agent streaming](./session/pi-agent-streaming.md), [context compaction projection](./session/context-compaction-projection.md) |
-| workflow | [Workflow Architecture](./workflow/architecture.md) | [activity lifecycle](./workflow/activity-lifecycle.md), [lifecycle edge](./workflow/lifecycle-edge.md), [story task runtime](./story-task-runtime.md) |
+| workflow | [Workflow Architecture](./workflow/architecture.md) | [activity lifecycle](./workflow/activity-lifecycle.md), [lifecycle edge](./workflow/lifecycle-edge.md), [lifecycle run link](./workflow/lifecycle-run-link.md), [story task runtime](./story-task-runtime.md) |
 | vfs | [VFS Architecture](./vfs/architecture.md) | [vfs access](./vfs/vfs-access.md), [materialization](./vfs/vfs-materialization.md) |
 | hooks | [Hooks Architecture](./hooks/architecture.md) | [execution hook runtime](./hooks/execution-hook-runtime.md), [hook script engine](./hooks/hook-script-engine.md) |
 | capability | [Capability Architecture](./capability/architecture.md) | [tool pipeline](./capability/tool-capability-pipeline.md), [dimension pipeline](./capability/capability-dimension-pipeline.md), [LLM model config](./capability/llm-model-config.md), [plugin api](./capability/plugin-api.md) |
+| permission | [Permission Architecture](./permission/architecture.md) | [grant lifecycle](./permission/grant-lifecycle.md), [policy engine](./permission/policy-engine.md) |

@@ -80,8 +80,13 @@ where
         let definition = self.ensure_definition(project_id).await?;
         let state = LifecycleEngine::initialize(&definition)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let run = LifecycleRun::new_activity(project_id, definition.id, session_id, state)
-            .map_err(WorkflowApplicationError::BadRequest)?;
+        let run = LifecycleRun::new_activity(
+            project_id,
+            definition.id,
+            Some(session_id.to_string()),
+            state,
+        )
+        .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
         Ok(run)
     }
@@ -323,6 +328,10 @@ mod tests {
                 .cloned())
         }
 
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self.items.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect())
+        }
+
         async fn list_by_project(
             &self,
             project_id: Uuid,
@@ -360,7 +369,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|item| item.session_id == session_id)
+                .filter(|item| item.session_id.as_deref() == Some(session_id))
                 .cloned()
                 .collect())
         }
@@ -393,7 +402,7 @@ mod tests {
             .expect("freeform run");
 
         assert_eq!(run.project_id, project_id);
-        assert_eq!(run.session_id, "sess-freeform");
+        assert_eq!(run.session_id.as_deref(), Some("sess-freeform"));
         let state = run.activity_state.expect("activity state");
         assert_eq!(
             state.status,

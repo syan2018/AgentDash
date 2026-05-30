@@ -1,13 +1,13 @@
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerCtx, SessionOwnerType};
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     ActivityLifecycleDefinition, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
-    FunctionActivityExecutorSpec, HumanActivityExecutorSpec, LifecycleNodeType,
-    LifecycleStepDefinition,
+    FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
 };
-use agentdash_spi::AgentConfig;
+use agentdash_spi::CapabilityScope;
+use std::sync::Arc;
+
+use agentdash_spi::{AgentConfig, FunctionRunner};
 use serde_json::{Value, json};
-use tokio::process::Command;
 
 use super::ActivityLifecycleRunState;
 use super::scheduler::{
@@ -54,8 +54,6 @@ impl<P> AgentActivityExecutorLauncher<P> {
 #[async_trait::async_trait]
 pub trait AgentActivitySessionPort: Send + Sync {
     async fn create_session(&self, title: &str) -> Result<String, String>;
-    async fn list_session_bindings(&self, session_id: &str) -> Result<Vec<SessionBinding>, String>;
-    async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String>;
     async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String>;
     async fn set_executor_config(
         &self,
@@ -104,6 +102,7 @@ pub struct AgentActivityRuntimePort {
     session_capability: Option<SessionCapabilityService>,
     repos: RepositorySet,
     platform_config: Option<SharedPlatformConfig>,
+    function_runner: Arc<dyn FunctionRunner>,
 }
 
 impl AgentActivityRuntimePort {
@@ -111,6 +110,7 @@ impl AgentActivityRuntimePort {
         session_core: SessionCoreService,
         session_launch: SessionLaunchService,
         repos: RepositorySet,
+        function_runner: Arc<dyn FunctionRunner>,
     ) -> Self {
         Self {
             session_core,
@@ -119,6 +119,7 @@ impl AgentActivityRuntimePort {
             session_capability: None,
             repos,
             platform_config: None,
+            function_runner,
         }
     }
 
@@ -143,22 +144,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .await
             .map(|meta| meta.id)
             .map_err(|error| format!("创建 activity child session 失败: {error}"))
-    }
-
-    async fn list_session_bindings(&self, session_id: &str) -> Result<Vec<SessionBinding>, String> {
-        self.repos
-            .session_binding_repo
-            .list_by_session(session_id)
-            .await
-            .map_err(|error| format!("查询 root session binding 失败: {error}"))
-    }
-
-    async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String> {
-        self.repos
-            .session_binding_repo
-            .create(&binding)
-            .await
-            .map_err(|error| format!("创建 activity session binding 失败: {error}"))
     }
 
     async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String> {
@@ -233,7 +218,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| format!("加载 ContinueRoot workflow 失败: {error}"))?
             .ok_or_else(|| format!("ContinueRoot workflow 不存在: {workflow_key}"))?;
 
-        let active_step = activity_as_step(activity, workflow_key);
         let available_presets =
             crate::session::load_available_presets(&self.repos, definition.project_id).await;
         let ready_port_keys =
@@ -249,19 +233,20 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
             let snapshot = hook_session.snapshot();
-            let owner_ctx =
-                owner_ctx_from_bindings_or_project(&snapshot.owners, definition.project_id);
+            let owner_ctx = scope_from_run_context_or_project(
+                snapshot.run_context.as_ref(),
+                definition.project_id,
+            );
             let runtime_mcp_servers = session_capability
                 .get_runtime_mcp_servers(root_session_id)
                 .await;
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
-                    active_step: &active_step,
+                    active_activity: activity,
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     lifecycle_key: &definition.key,
-                    edges: &[],
                     agent_mcp_servers: agent_mcp_entries_from_servers(&runtime_mcp_servers),
                     available_presets,
                     companion_slice_mode: None,
@@ -290,7 +275,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .await
             .map(|_| ())
         } else {
-            let owner_ctx = SessionOwnerCtx::Project {
+            let owner_ctx = agentdash_spi::CapabilityScopeCtx::Project {
                 project_id: definition.project_id,
             };
             let base_surface = session_capability
@@ -303,11 +288,10 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
                     owner_ctx,
-                    active_step: &active_step,
+                    active_activity: activity,
                     workflow: Some(&workflow),
                     run_id: claim.run_id,
                     lifecycle_key: &definition.key,
-                    edges: &[],
                     agent_mcp_servers,
                     available_presets,
                     companion_slice_mode: None,
@@ -389,7 +373,15 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         spec: &FunctionActivityExecutorSpec,
         state: &ActivityLifecycleRunState,
     ) -> Result<FunctionExecutionResult, String> {
-        execute_function_activity(definition, activity, claim, spec, state).await
+        execute_function_activity(
+            self.function_runner.as_ref(),
+            definition,
+            activity,
+            claim,
+            spec,
+            state,
+        )
+        .await
     }
 }
 
@@ -464,37 +456,6 @@ where
         let session_id = self
             .port
             .create_session(&title)
-            .await
-            .map_err(ActivityExecutorStartError::retryable)?;
-
-        let bindings = self
-            .port
-            .list_session_bindings(&self.context.root_session_id)
-            .await
-            .map_err(ActivityExecutorStartError::retryable)?;
-        let owner_binding = bindings
-            .iter()
-            .find(|binding| !binding.label.starts_with(LIFECYCLE_ACTIVITY_LABEL_PREFIX))
-            .or_else(|| bindings.first());
-        let binding = if let Some(owner_binding) = owner_binding {
-            SessionBinding::new(
-                self.context.project_id,
-                session_id.clone(),
-                owner_binding.owner_type,
-                owner_binding.owner_id,
-                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
-            )
-        } else {
-            SessionBinding::new(
-                self.context.project_id,
-                session_id.clone(),
-                SessionOwnerType::Project,
-                self.context.project_id,
-                build_lifecycle_activity_label(claim.run_id, &claim.activity_key, claim.attempt),
-            )
-        };
-        self.port
-            .create_session_binding(binding)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
 
@@ -588,19 +549,8 @@ where
     }
 }
 
-fn activity_as_step(activity: &ActivityDefinition, workflow_key: &str) -> LifecycleStepDefinition {
-    LifecycleStepDefinition {
-        key: activity.key.clone(),
-        description: activity.description.clone(),
-        workflow_key: Some(workflow_key.to_string()),
-        node_type: LifecycleNodeType::PhaseNode,
-        output_ports: activity.output_ports.clone(),
-        input_ports: activity.input_ports.clone(),
-        capability_config: Default::default(),
-    }
-}
-
 async fn execute_function_activity(
+    function_runner: &dyn FunctionRunner,
     definition: &ActivityLifecycleDefinition,
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
@@ -614,10 +564,10 @@ async fn execute_function_activity(
     let context = function_template_context(definition, activity, claim, state);
     let completion_event = match spec {
         FunctionActivityExecutorSpec::ApiRequest(spec) => {
-            execute_api_request(activity, claim, spec, &context).await
+            execute_api_request(function_runner, activity, claim, spec, &context).await
         }
         FunctionActivityExecutorSpec::BashExec(spec) => {
-            execute_bash(activity, claim, spec, &context).await
+            execute_bash(function_runner, activity, claim, spec, &context).await
         }
     };
     Ok(FunctionExecutionResult {
@@ -627,107 +577,53 @@ async fn execute_function_activity(
 }
 
 async fn execute_api_request(
+    function_runner: &dyn FunctionRunner,
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
     spec: &agentdash_domain::workflow::ApiRequestExecutorSpec,
     context: &Value,
 ) -> super::ActivityEvent {
-    let method_text = match render_template(&spec.method, context) {
-        Ok(value) => value,
+    let outcome = match function_runner.run_api_request(spec, context).await {
+        Ok(outcome) => outcome,
         Err(error) => return function_failed(claim, error),
     };
-    let method = match reqwest::Method::from_bytes(method_text.as_bytes()) {
-        Ok(method) => method,
-        Err(error) => return function_failed(claim, format!("API method 非法: {error}")),
-    };
-    let url = match render_template(&spec.url_template, context) {
-        Ok(value) => value,
-        Err(error) => return function_failed(claim, error),
-    };
-    let client = reqwest::Client::new();
-    let mut request = client.request(method, url);
-    if let Some(body_template) = &spec.body_template {
-        let body = match render_json_templates(body_template, context) {
-            Ok(value) => value,
-            Err(error) => return function_failed(claim, error),
-        };
-        request = request
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body.to_string());
-    }
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(error) => return function_failed(claim, format!("API request 失败: {error}")),
-    };
-    let status = response.status();
-    let body_text = match response.text().await {
-        Ok(text) => text,
-        Err(error) => return function_failed(claim, format!("读取 API response 失败: {error}")),
-    };
-    let body_json = serde_json::from_str::<Value>(&body_text).ok();
     let result = json!({
-        "status": status.as_u16(),
-        "body_text": body_text,
-        "body_json": body_json,
+        "status": outcome.status,
+        "body_text": outcome.body_text,
+        "body_json": outcome.body_json,
     });
-    if status.is_success() {
+    if (200..300).contains(&outcome.status) {
         function_completed(
             activity,
             claim,
             result,
-            Some(format!("API request {}", status.as_u16())),
+            Some(format!("API request {}", outcome.status)),
         )
     } else {
         function_failed(
             claim,
-            format!("API request 返回非成功状态: {}", status.as_u16()),
+            format!("API request 返回非成功状态: {}", outcome.status),
         )
     }
 }
 
 async fn execute_bash(
+    function_runner: &dyn FunctionRunner,
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
     spec: &agentdash_domain::workflow::BashExecExecutorSpec,
     context: &Value,
 ) -> super::ActivityEvent {
-    let command = match render_template(&spec.command, context) {
-        Ok(value) => value,
+    let outcome = match function_runner.run_bash(spec, context).await {
+        Ok(outcome) => outcome,
         Err(error) => return function_failed(claim, error),
     };
-    let args = match spec
-        .args
-        .iter()
-        .map(|arg| render_template(arg, context))
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(value) => value,
-        Err(error) => return function_failed(claim, error),
-    };
-    let mut command_builder = Command::new(command);
-    command_builder.args(args);
-    if let Some(working_directory) = &spec.working_directory {
-        match render_template(working_directory, context) {
-            Ok(rendered) if !rendered.trim().is_empty() => {
-                command_builder.current_dir(rendered);
-            }
-            Ok(_) => {}
-            Err(error) => return function_failed(claim, error),
-        }
-    }
-    let output = match command_builder.output().await {
-        Ok(output) => output,
-        Err(error) => return function_failed(claim, format!("Bash exec 启动失败: {error}")),
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exit_code = output.status.code();
     let result = json!({
-        "exit_code": exit_code,
-        "stdout": stdout,
-        "stderr": stderr,
+        "exit_code": outcome.exit_code,
+        "stdout": outcome.stdout,
+        "stderr": outcome.stderr,
     });
-    if output.status.success() {
+    if outcome.success {
         function_completed(
             activity,
             claim,
@@ -739,7 +635,8 @@ async fn execute_bash(
             claim,
             format!(
                 "Bash exec failed with exit_code={}",
-                exit_code
+                outcome
+                    .exit_code
                     .map(|code| code.to_string())
                     .unwrap_or_else(|| "unknown".to_string())
             ),
@@ -786,30 +683,6 @@ fn function_template_context(
     })
 }
 
-fn render_template(template: &str, context: &Value) -> Result<String, String> {
-    let context = tera::Context::from_serialize(context)
-        .map_err(|error| format!("Function template context 非法: {error}"))?;
-    tera::Tera::one_off(template, &context, false)
-        .map_err(|error| format!("Function template 渲染失败: {error}"))
-}
-
-fn render_json_templates(value: &Value, context: &Value) -> Result<Value, String> {
-    match value {
-        Value::String(template) => render_template(template, context).map(Value::String),
-        Value::Array(values) => values
-            .iter()
-            .map(|value| render_json_templates(value, context))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::Array),
-        Value::Object(map) => map
-            .iter()
-            .map(|(key, value)| Ok((key.clone(), render_json_templates(value, context)?)))
-            .collect::<Result<serde_json::Map<_, _>, String>>()
-            .map(Value::Object),
-        other => Ok(other.clone()),
-    }
-}
-
 fn function_completed(
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
@@ -850,46 +723,28 @@ fn human_decision_id(claim: &ActivityExecutionClaim) -> String {
     format!("{}:{}#{}", claim.run_id, claim.activity_key, claim.attempt)
 }
 
-fn owner_ctx_from_bindings_or_project(
-    owners: &[agentdash_spi::hooks::HookOwnerSummary],
+fn scope_from_run_context_or_project(
+    run_context: Option<&agentdash_spi::hooks::SessionRunContext>,
     fallback_project_id: uuid::Uuid,
-) -> SessionOwnerCtx {
-    let Some(owner) = owners.first() else {
-        return SessionOwnerCtx::Project {
+) -> agentdash_spi::CapabilityScopeCtx {
+    match run_context {
+        Some(ctx) => match ctx.scope {
+            CapabilityScope::Task => agentdash_spi::CapabilityScopeCtx::Task {
+                project_id: ctx.project_id,
+                story_id: ctx.story_id.unwrap_or(ctx.project_id),
+                task_id: ctx.task_id.unwrap_or(ctx.project_id),
+            },
+            CapabilityScope::Story => agentdash_spi::CapabilityScopeCtx::Story {
+                project_id: ctx.project_id,
+                story_id: ctx.story_id.unwrap_or(ctx.project_id),
+            },
+            CapabilityScope::Project => agentdash_spi::CapabilityScopeCtx::Project {
+                project_id: ctx.project_id,
+            },
+        },
+        None => agentdash_spi::CapabilityScopeCtx::Project {
             project_id: fallback_project_id,
-        };
-    };
-    let project_id = owner
-        .project_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-        .unwrap_or(fallback_project_id);
-    let story_id = owner
-        .story_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
-    let task_id = owner
-        .task_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
-
-    match owner.owner_type {
-        SessionOwnerType::Task => match (story_id, task_id) {
-            (Some(story_id), Some(task_id)) => SessionOwnerCtx::Task {
-                project_id,
-                story_id,
-                task_id,
-            },
-            _ => SessionOwnerCtx::Project { project_id },
         },
-        SessionOwnerType::Story => match story_id {
-            Some(story_id) => SessionOwnerCtx::Story {
-                project_id,
-                story_id,
-            },
-            None => SessionOwnerCtx::Project { project_id },
-        },
-        SessionOwnerType::Project => SessionOwnerCtx::Project { project_id },
     }
 }
 
@@ -897,7 +752,6 @@ fn owner_ctx_from_bindings_or_project(
 mod tests {
     use std::sync::Mutex;
 
-    use agentdash_domain::session_binding::SessionOwnerType;
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
@@ -913,7 +767,6 @@ mod tests {
     #[derive(Default)]
     struct FakePort {
         sessions: Mutex<Vec<String>>,
-        bindings: Mutex<Vec<SessionBinding>>,
         launch_error: Mutex<Option<String>>,
         launches: Mutex<Vec<String>>,
         continue_root_applies: Mutex<Vec<String>>,
@@ -925,18 +778,6 @@ mod tests {
             let session_id = format!("child-{}", self.sessions.lock().unwrap().len() + 1);
             self.sessions.lock().unwrap().push(title.to_string());
             Ok(session_id)
-        }
-
-        async fn list_session_bindings(
-            &self,
-            _session_id: &str,
-        ) -> Result<Vec<SessionBinding>, String> {
-            Ok(self.bindings.lock().unwrap().clone())
-        }
-
-        async fn create_session_binding(&self, binding: SessionBinding) -> Result<(), String> {
-            self.bindings.lock().unwrap().push(binding);
-            Ok(())
         }
 
         async fn get_executor_config(
@@ -993,7 +834,8 @@ mod tests {
             spec: &FunctionActivityExecutorSpec,
             state: &ActivityLifecycleRunState,
         ) -> Result<FunctionExecutionResult, String> {
-            super::execute_function_activity(definition, activity, claim, spec, state).await
+            let runner = agentdash_infrastructure::DefaultFunctionRunner::new();
+            super::execute_function_activity(&runner, definition, activity, claim, spec, state).await
         }
     }
 
@@ -1205,20 +1047,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_child_creates_binding_and_launches_prompt() {
+    async fn spawn_child_creates_session_and_launches_prompt() {
         let project_id = uuid::Uuid::new_v4();
-        let root_owner_id = uuid::Uuid::new_v4();
-        let root_binding = SessionBinding::new(
-            project_id,
-            "root-session".to_string(),
-            SessionOwnerType::Story,
-            root_owner_id,
-            "execution",
-        );
-        let port = FakePort {
-            bindings: Mutex::new(vec![root_binding]),
-            ..Default::default()
-        };
+        let port = FakePort::default();
         let launcher = AgentActivityExecutorLauncher::new(
             AgentActivityLaunchContext {
                 project_id,
@@ -1228,9 +1059,8 @@ mod tests {
             port,
         );
         let definition = definition(project_id);
-        let run_id = uuid::Uuid::new_v4();
         let claim = ActivityExecutionClaim {
-            run_id,
+            run_id: uuid::Uuid::new_v4(),
             activity_key: "plan".to_string(),
             attempt: 1,
             claim_id: uuid::Uuid::new_v4(),
@@ -1254,13 +1084,6 @@ mod tests {
             }
         );
         assert!(start_result.immediate_events.is_empty());
-        let bindings = launcher.port.bindings.lock().unwrap();
-        let activity_binding = bindings
-            .iter()
-            .find(|binding| binding.label == format!("lifecycle_activity:{run_id}:plan#1"))
-            .expect("activity binding");
-        assert_eq!(activity_binding.owner_type, SessionOwnerType::Story);
-        assert_eq!(activity_binding.owner_id, root_owner_id);
         assert_eq!(
             launcher.port.launches.lock().unwrap().as_slice(),
             &["child-1".to_string()]

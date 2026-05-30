@@ -13,7 +13,7 @@ import { useNavigate } from "react-router-dom";
 import type { ProjectAgentSummary, SessionNavigationState } from "../../types";
 import type { BackboneEvent } from "../../generated/backbone-protocol";
 import { useProjectStore } from "../../stores/projectStore";
-import { useActiveSessionsStore } from "../../stores/activeSessionsStore";
+import { useProjectSessions } from "../../queries/projectSessions";
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { SessionChatView } from "../session";
 import { ActiveSessionList } from "./active-session-list";
@@ -43,8 +43,6 @@ export function AgentTabView() {
     error: projectError,
   } = useProjectStore();
 
-  const { sessions, isLoading: sessionsLoading, loadForProject, clearForProject } = useActiveSessionsStore();
-
   // 右栏当前选中的 session，按 project 作用域隔离，避免在 effect 内同步重置 state
   const [selectedSession, setSelectedSession] = useState<{
     projectId: string | null;
@@ -52,6 +50,17 @@ export function AgentTabView() {
   }>({
     projectId: null,
     sessionId: null,
+  });
+
+  // 选中会话时按 8s 轮询保持列表实时；未选中则停止轮询
+  const hasSelectedSession =
+    selectedSession.projectId === currentProjectId && Boolean(selectedSession.sessionId);
+  const {
+    sessions,
+    isLoading: sessionsLoading,
+    refresh: refreshSessions,
+  } = useProjectSessions(currentProjectId, {
+    refetchInterval: hasSelectedSession ? SESSION_LIST_POLL_INTERVAL : undefined,
   });
 
   const runsBySessionId = useWorkflowStore((s) => s.runsBySessionId);
@@ -97,12 +106,10 @@ export function AgentTabView() {
     if (prevProjectIdRef.current === currentProjectId) return;
     prevProjectIdRef.current = currentProjectId;
 
-    clearForProject(currentProjectId);
     void fetchProjectAgents(currentProjectId);
-    void loadForProject(currentProjectId);
     void fetchLifecycles({ projectId: currentProjectId });
     void fetchDefinitions({ projectId: currentProjectId });
-  }, [currentProjectId, fetchProjectAgents, loadForProject, clearForProject, fetchLifecycles, fetchDefinitions]);
+  }, [currentProjectId, fetchProjectAgents, fetchLifecycles, fetchDefinitions]);
 
   // session 关联的 lifecycle runs（session 就绪后加载）
   useEffect(() => {
@@ -112,9 +119,8 @@ export function AgentTabView() {
   // ─── companion 事件驱动 + 周期轮询：保持 session 列表实时 ──────
 
   const scheduleSessionRefresh = useCallback(() => {
-    if (!currentProjectId) return;
-    void loadForProject(currentProjectId);
-  }, [currentProjectId, loadForProject]);
+    void refreshSessions();
+  }, [refreshSessions]);
 
   const handleSystemEvent = useCallback(
     (eventType: string, _event: BackboneEvent) => {
@@ -129,12 +135,6 @@ export function AgentTabView() {
     scheduleSessionRefresh();
   }, [scheduleSessionRefresh]);
 
-  useEffect(() => {
-    if (!currentProjectId || !selectedSessionId) return;
-    const timer = window.setInterval(scheduleSessionRefresh, SESSION_LIST_POLL_INTERVAL);
-    return () => window.clearInterval(timer);
-  }, [currentProjectId, selectedSessionId, scheduleSessionRefresh]);
-
   // ─── 打开 Agent 会话 → 在右栏展开 ──────────────────
 
   const handleOpenAgent = useCallback(
@@ -142,13 +142,13 @@ export function AgentTabView() {
       if (!currentProjectId) return;
       const result = await openProjectAgentSession(currentProjectId, agent.key);
       if (!result) return;
-      await loadForProject(currentProjectId);
+      await refreshSessions();
       setSelectedSession({
         projectId: currentProjectId,
         sessionId: result.session_id,
       });
     },
-    [currentProjectId, openProjectAgentSession, loadForProject],
+    [currentProjectId, openProjectAgentSession, refreshSessions],
   );
 
   const handleForceNewSession = useCallback(
@@ -156,13 +156,13 @@ export function AgentTabView() {
       if (!currentProjectId) return;
       const result = await forceNewProjectAgentSession(currentProjectId, agent.key);
       if (!result) return;
-      await loadForProject(currentProjectId);
+      await refreshSessions();
       setSelectedSession({
         projectId: currentProjectId,
         sessionId: result.session_id,
       });
     },
-    [currentProjectId, forceNewProjectAgentSession, loadForProject],
+    [currentProjectId, forceNewProjectAgentSession, refreshSessions],
   );
 
   // ─── 无项目时的占位 ───────────────────────────────

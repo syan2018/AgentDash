@@ -21,6 +21,7 @@ agentdash-executor = { workspace = true }
 agentdash-application.workspace = true
 agentdash-domain.workspace = true
 agentdash-infrastructure.workspace = true
+agentdash-mcp.workspace = true
 
 tokio.workspace = true
 sqlx.workspace = true

@@ -18,13 +18,12 @@ const hookRuntime: HookSessionRuntimeInfo = {
       "builtin:global",
       "workflow:demo_lifecycle:check",
     ],
-    owners: [
-      {
-        owner_type: "task",
-        owner_id: "task-1",
-        label: "Task A",
-      },
-    ],
+    run_context: {
+      project_id: "proj-1",
+      task_id: "task-1",
+      task_title: "Task A",
+      scope: "task",
+    },
     tags: ["workflow:demo_lifecycle", "workflow_step:check"],
     injections: [
       {

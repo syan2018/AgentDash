@@ -11,7 +11,7 @@ export type ListEntriesResponse = { entries: Array<VfsEntry>, };
 
 export type ListVfssResponse = { spaces: Array<VfsDescriptor>, };
 
-export type MountCapability = "read" | "write" | "list" | "search";
+export type MountCapability = "read" | "write" | "list" | "search" | "exec" | "watch";
 
 export type ProjectVfsMountContent = { "kind": "inline" } | { "kind": "external_service", service_id: string, root_ref: string, };
 

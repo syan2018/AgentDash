@@ -659,7 +659,6 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
-    use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
     use agentdash_spi::hooks::{
         ExecutionHookProvider, HookEvaluationQuery, HookResolution, SessionHookRefreshQuery,
         SessionHookSnapshot, SessionHookSnapshotQuery,
@@ -669,13 +668,15 @@ mod tests {
     use futures::stream;
     use tokio::sync::RwLock;
 
-    use crate::session::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
+    use crate::session::construction::{
+        ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
+        SessionConstructionPlan,
+    };
     use crate::session::hub::SessionRuntimeInner;
-    use crate::session::ownership::SessionOwnerResolver;
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
     use crate::vfs::tools::fs::FsApplyPatchTool;
     use crate::vfs::tools::provider::SessionToolServices;
-    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, RelayVfsService};
+    use crate::vfs::{CanvasFsMountProvider, MountProviderRegistry, VfsService};
 
     use super::*;
 
@@ -866,14 +867,13 @@ mod tests {
             executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
             ..UserPromptInput::from_text("present canvas")
         };
-        let binding = SessionBinding::new(
-            uuid::Uuid::new_v4(),
-            session_id.to_string(),
-            SessionOwnerType::Project,
-            project_id,
-            "project_agent:test",
-        );
-        let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+        let owner = ResolvedSessionOwner {
+            owner_type: agentdash_spi::CapabilityScope::Project,
+            project_id: Some(project_id),
+            trace: OwnerResolutionTrace {
+                selected_reason: "test".to_string(),
+            },
+        };
         let mut construction =
             SessionConstructionPlan::from_source_input(session_id, owner, &user_input);
         let vfs = local_workspace_vfs(working_dir);
@@ -882,8 +882,7 @@ mod tests {
         capability_state.vfs.active = Some(vfs.clone());
         construction.workspace.working_directory = Some(working_dir.to_path_buf());
         construction.execution_profile.executor_config = user_input.executor_config;
-        construction.surface.vfs = Some(vfs.clone());
-        construction.projections.context.vfs = Some(vfs);
+        construction.surface.vfs = Some(vfs);
         construction.projections.capability_state = Some(capability_state);
         construction.resolution = ConstructionResolutionPlan {
             vfs_source: Some("test.local_workspace_vfs".to_string()),
@@ -904,7 +903,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let service = Arc::new(VfsService::new(Arc::new(registry)));
         let shared_vfs = SharedRuntimeVfs::new(Vfs::default());
 
         let start_tool = StartCanvasTool::new(
@@ -1068,7 +1067,7 @@ mod tests {
 
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
-        let vfs_service = Arc::new(RelayVfsService::new(Arc::new(registry)));
+        let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
         let base = tempfile::tempdir().expect("tempdir");
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),

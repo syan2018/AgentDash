@@ -1,11 +1,9 @@
 use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
 use agentdash_domain::story::Story;
-use agentdash_spi::{ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
+use agentdash_spi::{CapabilityScope, ContextFragment, FragmentScope, FragmentScopeSet, MergeStrategy};
 use serde::Serialize;
 
 use crate::runtime::{Mount, MountCapability, RuntimeMcpServer, Vfs};
-
-pub use agentdash_domain::session_binding::{SessionOwnerCtx, SessionOwnerType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPlanPhase {
@@ -15,17 +13,17 @@ pub enum SessionPlanPhase {
     StoryOwner,
 }
 
-pub trait SessionOwnerTypeExt {
+pub trait CapabilityScopeExt {
     fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase;
 }
 
-impl SessionOwnerTypeExt for SessionOwnerType {
+impl CapabilityScopeExt for CapabilityScope {
     fn default_plan_phase(self, is_continuation: bool) -> SessionPlanPhase {
         match self {
-            SessionOwnerType::Project => SessionPlanPhase::ProjectAgent,
-            SessionOwnerType::Story => SessionPlanPhase::StoryOwner,
-            SessionOwnerType::Task if is_continuation => SessionPlanPhase::TaskContinue,
-            SessionOwnerType::Task => SessionPlanPhase::TaskStart,
+            CapabilityScope::Project => SessionPlanPhase::ProjectAgent,
+            CapabilityScope::Story => SessionPlanPhase::StoryOwner,
+            CapabilityScope::Task if is_continuation => SessionPlanPhase::TaskContinue,
+            CapabilityScope::Task => SessionPlanPhase::TaskStart,
         }
     }
 }
@@ -66,11 +64,8 @@ pub struct SessionRuntimePolicySummary {
 }
 
 pub struct SessionPlanInput<'a> {
-    /// session 归属上下文(owner_type + 关联 ID 合一的 sum type)。
-    ///
-    /// 取代此前的 `owner_type: SessionOwnerType` 单字段,与 bootstrap 路径
-    /// 使用同一份 owner 表达,后续 fragment 可直接消费 story_id/task_id。
-    pub owner_ctx: SessionOwnerCtx,
+    /// Session 的能力作用域（Project / Story / Task）。
+    pub scope: CapabilityScope,
     pub phase: SessionPlanPhase,
     pub vfs: Option<&'a Vfs>,
     pub mcp_servers: &'a [RuntimeMcpServer],
@@ -109,7 +104,7 @@ pub fn build_session_plan_fragments(input: SessionPlanInput<'_>) -> SessionPlanF
     let tool_visibility = summarize_tool_visibility_with_context(
         input.vfs,
         input.mcp_servers,
-        Some(input.owner_ctx.owner_type()),
+        Some(input.scope),
     );
     let tool_names = tool_visibility.tool_names.clone();
     fragments.push(ContextFragment {
@@ -222,7 +217,7 @@ pub fn summarize_tool_visibility(
 pub fn summarize_tool_visibility_with_context(
     vfs: Option<&Vfs>,
     mcp_servers: &[RuntimeMcpServer],
-    owner_type: Option<SessionOwnerType>,
+    owner_type: Option<CapabilityScope>,
 ) -> SessionToolVisibilitySummary {
     let resolved = vfs.is_some();
     let mut tool_names = vfs.map(runtime_vfs_tools).unwrap_or_default();
@@ -281,13 +276,13 @@ pub fn summarize_tool_visibility_with_context(
     }
 }
 
-/// 根据 session owner 类型返回应注入的流程工具名。
-/// - `complete_lifecycle_node`：task/story session（以及 owner 未知时）可用的 lifecycle 节点终结工具
+/// 根据 session 能力作用域返回应注入的流程工具名。
+/// - `complete_lifecycle_node`：task/story session（以及 scope 未知时）可用的 lifecycle 节点终结工具
 /// - `companion_request` / `companion_respond`：统一 companion 信道工具
-fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
+fn conditional_flow_tools(scope: Option<CapabilityScope>) -> Vec<String> {
     let mut tools = Vec::new();
-    match owner_type {
-        Some(SessionOwnerType::Task) => {
+    match scope {
+        Some(CapabilityScope::Task) => {
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
@@ -295,7 +290,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
             tools.push("bind_canvas_data".to_string());
             tools.push("present_canvas".to_string());
         }
-        Some(SessionOwnerType::Story) => {
+        Some(CapabilityScope::Story) => {
             tools.push("complete_lifecycle_node".to_string());
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
@@ -304,7 +299,7 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
             tools.push("bind_canvas_data".to_string());
             tools.push("present_canvas".to_string());
         }
-        Some(SessionOwnerType::Project) => {
+        Some(CapabilityScope::Project) => {
             tools.push("companion_request".to_string());
             tools.push("companion_respond".to_string());
             tools.push("canvases_list".to_string());
@@ -326,17 +321,17 @@ fn conditional_flow_tools(owner_type: Option<SessionOwnerType>) -> Vec<String> {
 }
 
 fn build_persona_markdown(input: &SessionPlanInput<'_>) -> String {
-    let role_label = match input.owner_ctx.owner_type() {
-        SessionOwnerType::Project => "project_agent",
-        SessionOwnerType::Task => "task_execution",
-        SessionOwnerType::Story => "story_owner",
+    let role_label = match input.scope {
+        CapabilityScope::Project => "project_agent",
+        CapabilityScope::Task => "task_execution",
+        CapabilityScope::Story => "story_owner",
     };
-    let role_description = match input.owner_ctx.owner_type() {
-        SessionOwnerType::Project => {
+    let role_description = match input.scope {
+        CapabilityScope::Project => {
             "Project 级协作代理，负责维护项目共享上下文、整理资料、沉淀决策并辅助后续 Story 准备"
         }
-        SessionOwnerType::Task => "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报",
-        SessionOwnerType::Story => "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task",
+        CapabilityScope::Task => "执行单元代理，负责完成当前 Task 的实现、验证与结果汇报",
+        CapabilityScope::Story => "Story 主代理，负责整理上下文、推进 Story、拆解并创建 Task",
     };
     let identity = input
         .agent_type
@@ -606,7 +601,6 @@ mod tests {
     use super::*;
     use agentdash_domain::project::Project;
     use agentdash_domain::session_composition::{SessionComposition, SessionRequiredContextBlock};
-    use agentdash_domain::story::Story;
     use serde_json::json;
 
     #[test]
@@ -719,11 +713,7 @@ mod tests {
         };
 
         let built = build_session_plan_fragments(SessionPlanInput {
-            owner_ctx: SessionOwnerCtx::Task {
-                project_id: uuid::Uuid::new_v4(),
-                story_id: uuid::Uuid::new_v4(),
-                task_id: uuid::Uuid::new_v4(),
-            },
+            scope: CapabilityScope::Task,
             phase: SessionPlanPhase::TaskStart,
             vfs: Some(&vfs),
             mcp_servers: &[],
@@ -782,9 +772,7 @@ mod tests {
         };
 
         let built = build_session_plan_fragments(SessionPlanInput {
-            owner_ctx: SessionOwnerCtx::Project {
-                project_id: uuid::Uuid::new_v4(),
-            },
+            scope: CapabilityScope::Project,
             phase: SessionPlanPhase::ProjectAgent,
             vfs: Some(&vfs),
             mcp_servers: &[],

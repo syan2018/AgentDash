@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use agentdash_domain::session_binding::SessionBindingRepository;
 use agentdash_domain::workflow::{
     ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
 };
@@ -14,9 +13,8 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
 }
 
-/// 根据 owner 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
+/// 根据 session 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
 pub struct WorkflowSnapshotBuilder {
-    session_binding_repo: Arc<dyn SessionBindingRepository>,
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
@@ -24,13 +22,11 @@ pub struct WorkflowSnapshotBuilder {
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
-        session_binding_repo: Arc<dyn SessionBindingRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
-            session_binding_repo,
             workflow_definition_repo,
             activity_lifecycle_definition_repo,
             lifecycle_run_repo,
@@ -54,7 +50,6 @@ impl WorkflowSnapshotBuilder {
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
         resolve_active_workflow_projection_for_session(
             session_id,
-            self.session_binding_repo.as_ref(),
             self.workflow_definition_repo.as_ref(),
             self.activity_lifecycle_definition_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),

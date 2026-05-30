@@ -10,6 +10,7 @@
 | [2026-05-19-design-language-audit](./2026-05-19-design-language-audit/) | 前端设计语言审计 | 读 `frontend-design-language-audit.md` |
 | [2026-05-23-architecture-review-round](./2026-05-23-architecture-review-round/) | 两份外部架构 review 源文档及汇总路线图 | 先读 `architecture-review-synthesis.md`，需要原始依据时再读两份源 review |
 | [2026-05-26-compaction-session-branching-review](./2026-05-26-compaction-session-branching-review/) | compaction、model context projection、session branching / lineage 对照 review | 先读 `03-findings.md`，需要代码证据时读 `00-context-index.md` 与 `01-current-implementation.md` |
+| [2026-05-29-slop-cleanup-review](./2026-05-29-slop-cleanup-review/) | 七路并行全模块 review：分层泄漏、双轨 lifecycle、跨后端去重、god file。落地为 Trellis 任务树 `05-29-architecture-slop-cleanup` | 读 `00-synthesis.md` |
 
 ## 当前重点批次
 

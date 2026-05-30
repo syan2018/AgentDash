@@ -7,13 +7,14 @@ mod extension_package_artifact_repository;
 mod inline_file_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
+mod permission_grant_repository;
 mod project_backend_access_repository;
 mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
+mod run_link_repository;
 mod runtime_health_repository;
-mod session_binding_repository;
 mod session_repository;
 mod settings_repository;
 mod shared_library_repository;
@@ -107,6 +108,23 @@ pub(crate) fn parse_pg_timestamp_checked(
     )))
 }
 
+/// 统一的 sqlx 错误映射 helper。
+///
+/// 各 repo 原本各自实现近似的 `db_err`，部分带表名前缀、部分不带，
+/// 现合并为此单一来源（仅机械去重，语义仍映射到现有 `DomainError::InvalidConfig`，
+/// `Database`/`Conflict` 等语义变体由 error-model-unify 另行处理）。
+pub(crate) fn db_err(error: sqlx::Error) -> DomainError {
+    DomainError::InvalidConfig(error.to_string())
+}
+
+/// 带表名前缀的 sqlx 错误映射，便于定位出错的表。
+///
+/// 与 [`db_err`] 共用一处实现，仅多一个可选的表名前缀；命名刻意不以 `db_err`
+/// 开头，以保证 `db_err` helper 在工作区内唯一。
+pub(crate) fn sql_err_for(table: &'static str, error: sqlx::Error) -> DomainError {
+    DomainError::InvalidConfig(format!("{table}: {error}"))
+}
+
 pub use agent_repository::PostgresProjectAgentRepository;
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
@@ -118,13 +136,14 @@ pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
 pub use mcp_preset_repository::PostgresMcpPresetRepository;
+pub use permission_grant_repository::PostgresPermissionGrantRepository;
 pub use project_backend_access_repository::PostgresProjectBackendAccessRepository;
 pub use project_extension_installation_repository::PostgresProjectExtensionInstallationRepository;
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
+pub use run_link_repository::PostgresRunLinkRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
-pub use session_binding_repository::PostgresSessionBindingRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;
 pub use shared_library_repository::PostgresSharedLibraryRepository;

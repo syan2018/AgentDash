@@ -68,9 +68,10 @@ use agentdash_contracts::vfs::{
     SurfaceWriteFileResponse, UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, EffectiveSessionContract,
-    LifecycleEdge, LifecycleExecutionEntry, LifecycleRunStatus, LifecycleStepDefinition,
-    ValidationIssue, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
+    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, AttachRunLinkRequest,
+    EffectiveSessionContract, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
+    RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse, ValidationIssue,
+    WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
 };
 use ts_rs::TS;
 
@@ -153,12 +154,15 @@ fn main() {
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
             export_all::<ActivityLifecycleRunState>(dir);
-            export_all::<LifecycleEdge>(dir);
-            export_all::<LifecycleStepDefinition>(dir);
             export_all::<LifecycleExecutionEntry>(dir);
             export_all::<LifecycleRunStatus>(dir);
             export_all::<EffectiveSessionContract>(dir);
             export_all::<ValidationIssue>(dir);
+            export_all::<LifecycleRunLinkDto>(dir);
+            export_all::<StoryRunOverviewDto>(dir);
+            export_all::<StoryRunsResponse>(dir);
+            export_all::<RunLinksResponse>(dir);
+            export_all::<AttachRunLinkRequest>(dir);
             export_all::<WorkflowBindingKind>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
         },

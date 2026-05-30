@@ -625,7 +625,7 @@ impl MountProvider for SkillAssetFsMountProvider {
 mod tests {
     use super::*;
     use crate::skill::load_skills_from_vfs;
-    use crate::vfs::{MountProviderRegistry, RelayVfsService, build_skill_asset_mount};
+    use crate::vfs::{MountProviderRegistry, VfsService, build_skill_asset_mount};
     use agentdash_domain::DomainError;
     use agentdash_domain::common::MountCapability;
     use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
@@ -737,7 +737,7 @@ mod tests {
         let repo = repo_with_skill(project_id);
         let mut registry = MountProviderRegistry::new();
         registry.register(Arc::new(SkillAssetFsMountProvider::new(repo)));
-        let service = RelayVfsService::new(Arc::new(registry));
+        let service = VfsService::new(Arc::new(registry));
         let vfs = agentdash_spi::Vfs {
             mounts: vec![build_skill_asset_mount(project_id, &["writer".to_string()])],
             default_mount_id: None,

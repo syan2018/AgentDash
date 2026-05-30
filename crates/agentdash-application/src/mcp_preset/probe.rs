@@ -9,13 +9,8 @@
 use std::time::{Duration, Instant};
 
 use agentdash_domain::mcp_preset::McpTransportConfig;
+use agentdash_spi::platform::mcp_probe::McpProbeTransport;
 use agentdash_spi::platform::mcp_relay::McpRelayProvider;
-use rmcp::{
-    ServiceExt,
-    transport::streamable_http_client::{
-        StreamableHttpClientTransportConfig, StreamableHttpClientWorker,
-    },
-};
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
@@ -52,10 +47,11 @@ pub struct ProbeTool {
 pub async fn probe_transport(
     transport: &McpTransportConfig,
     relay: Option<&dyn McpRelayProvider>,
+    http_probe: &dyn McpProbeTransport,
 ) -> ProbeResult {
     match transport {
         McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
-            probe_http(url).await
+            probe_http(http_probe, url).await
         }
         McpTransportConfig::Stdio { .. } => match relay {
             Some(relay) => probe_via_relay(relay, transport).await,
@@ -95,30 +91,22 @@ async fn probe_via_relay(
     }
 }
 
-async fn probe_http(url: &str) -> ProbeResult {
+async fn probe_http(http_probe: &dyn McpProbeTransport, url: &str) -> ProbeResult {
     let start = Instant::now();
-    let fut = async {
-        let worker = StreamableHttpClientWorker::new(
-            reqwest::Client::new(),
-            StreamableHttpClientTransportConfig::with_uri(url.to_string()),
-        );
-        let client = ().serve(worker).await.map_err(|e| format!("连接 MCP Server 失败: {e}"))?;
-        let tools = client
-            .list_all_tools()
-            .await
-            .map_err(|e| format!("list_tools 失败: {e}"))?;
-        let _ = client.cancel().await;
-        Ok::<Vec<rmcp::model::Tool>, String>(tools)
-    };
 
-    match timeout(Duration::from_secs(PROBE_TIMEOUT_SECS), fut).await {
+    match timeout(
+        Duration::from_secs(PROBE_TIMEOUT_SECS),
+        http_probe.probe_http(url),
+    )
+    .await
+    {
         Ok(Ok(tools)) => {
             let latency_ms = start.elapsed().as_millis() as u64;
             let tools = tools
                 .into_iter()
                 .map(|t| ProbeTool {
-                    name: t.name.to_string(),
-                    description: t.description.as_deref().unwrap_or("").to_string(),
+                    name: t.name,
+                    description: t.description,
                 })
                 .collect();
             ProbeResult::Ok { latency_ms, tools }
@@ -134,6 +122,7 @@ async fn probe_http(url: &str) -> ProbeResult {
 mod tests {
     use super::*;
     use agentdash_domain::mcp_preset::McpEnvVar;
+    use agentdash_infrastructure::RmcpProbeTransport;
 
     #[tokio::test]
     async fn stdio_without_relay_returns_error() {
@@ -145,7 +134,7 @@ mod tests {
                 value: "bar".to_string(),
             }],
         };
-        match probe_transport(&transport, None).await {
+        match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
             ProbeResult::Error { error } => {
                 assert!(error.contains("relay"), "应提示 relay 不可用: {error}");
             }
@@ -159,7 +148,7 @@ mod tests {
             url: "http://127.0.0.1:1/mcp".to_string(),
             headers: vec![],
         };
-        match probe_transport(&transport, None).await {
+        match probe_transport(&transport, None, &RmcpProbeTransport::new()).await {
             ProbeResult::Error { error } => {
                 assert!(!error.is_empty(), "error 信息不应为空");
             }

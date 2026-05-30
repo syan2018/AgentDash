@@ -13,6 +13,7 @@ pub mod identity_directory;
 pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
+pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
 pub mod project_sessions;
@@ -23,6 +24,7 @@ pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
+pub mod story_runs;
 pub mod story_sessions;
 pub mod task_execution;
 pub mod terminals;
@@ -323,6 +325,14 @@ pub fn create_router(state: Arc<AppState>) -> Router {
                 .delete(stories::delete_story),
         )
         .route(
+            "/stories/{id}/runs",
+            get(story_runs::list_story_runs),
+        )
+        .route(
+            "/stories/{id}/runs/active",
+            get(story_runs::get_active_story_run),
+        )
+        .route(
             "/stories/{id}/sessions",
             get(story_sessions::list_story_sessions).post(story_sessions::create_story_session),
         )
@@ -413,8 +423,33 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(workflows::list_lifecycle_runs_by_session),
         )
         .route(
+            "/lifecycle-runs/{id}/links",
+            get(workflows::list_run_links).post(workflows::attach_run_link),
+        )
+        .route(
             "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             post(workflows::submit_human_decision),
+        )
+        // Permission Grants
+        .route(
+            "/permission-grants",
+            get(permission_grants::list_grants),
+        )
+        .route(
+            "/permission-grants/{id}",
+            get(permission_grants::get_grant),
+        )
+        .route(
+            "/permission-grants/{id}/approve",
+            post(permission_grants::approve_grant),
+        )
+        .route(
+            "/permission-grants/{id}/reject",
+            post(permission_grants::reject_grant),
+        )
+        .route(
+            "/permission-grants/{id}/revoke",
+            post(permission_grants::revoke_grant),
         )
         // Backend
         .route(
@@ -544,10 +579,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route(
             "/sessions/{id}/events",
             get(acp_sessions::list_session_events),
-        )
-        .route(
-            "/sessions/{id}/bindings",
-            get(acp_sessions::get_session_bindings),
         )
         .route(
             "/sessions/{id}/context",

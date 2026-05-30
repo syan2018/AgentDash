@@ -39,7 +39,6 @@ use agentdash_contracts::extension_runtime::{
     UninstallExtensionInstallationResponse,
 };
 use agentdash_domain::DomainError;
-use agentdash_domain::session_binding::SessionBinding;
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::Vfs;
 
@@ -113,14 +112,12 @@ pub async fn invoke_project_extension_runtime_action(
             "extension runtime invoke 缺少 backend_id".into(),
         ));
     }
-    let bindings = ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
     ensure_project_backend_access(&state, project_id, backend_id).await?;
     let workspace = resolve_extension_invocation_workspace(
         &state,
         &current_user,
         session_id,
         backend_id,
-        &bindings,
     )
     .await?;
 
@@ -186,14 +183,12 @@ pub async fn invoke_project_extension_runtime_channel(
             "extension channel invoke 缺少 method".into(),
         ));
     }
-    let bindings = ensure_project_session_scope(state.as_ref(), session_id, project_id).await?;
     ensure_project_backend_access(&state, project_id, backend_id).await?;
     let workspace = resolve_extension_invocation_workspace(
         &state,
         &current_user,
         session_id,
         backend_id,
-        &bindings,
     )
     .await?;
 
@@ -301,38 +296,13 @@ fn parse_project_id(raw: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(raw).map_err(|_| ApiError::BadRequest("无效的 Project ID".into()))
 }
 
-async fn ensure_project_session_scope(
-    state: &AppState,
-    session_id: &str,
-    project_id: Uuid,
-) -> Result<Vec<SessionBinding>, ApiError> {
-    let bindings = state
-        .repos
-        .session_binding_repo
-        .list_by_session(session_id)
-        .await?;
-    if bindings.is_empty() {
-        return Err(ApiError::NotFound(format!("Session {session_id} 不存在")));
-    }
-    if !bindings
-        .iter()
-        .any(|binding| binding.project_id == project_id)
-    {
-        return Err(ApiError::Forbidden(
-            "当前 session 与目标 Extension Runtime 不属于同一 Project".into(),
-        ));
-    }
-    Ok(bindings)
-}
-
 async fn resolve_extension_invocation_workspace(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,
     session_id: &str,
     backend_id: &str,
-    bindings: &[SessionBinding],
 ) -> Result<Option<ExtensionInvocationWorkspaceContext>, ApiError> {
-    let Some(plan) = build_session_context_plan(state, current_user, session_id, bindings).await?
+    let Some(plan) = build_session_context_plan(state, current_user, session_id).await?
     else {
         return Ok(None);
     };

@@ -6,7 +6,7 @@ use agentdash_domain::canvas::{Canvas, CanvasImportMap};
 use agentdash_spi::Vfs;
 
 use crate::runtime_gateway::RuntimeSurface;
-use crate::vfs::{RelayVfsService, ResolvedVfsSurfaceSource, parse_mount_uri};
+use crate::vfs::{VfsService, ResolvedVfsSurfaceSource, parse_mount_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanvasRuntimeSnapshot {
@@ -130,7 +130,7 @@ pub async fn build_runtime_snapshot_with_bindings(
     canvas: &Canvas,
     session_id: Option<String>,
     vfs: Option<&Vfs>,
-    vfs_service: &RelayVfsService,
+    vfs_service: &VfsService,
 ) -> CanvasRuntimeSnapshot {
     let mut snapshot = build_runtime_snapshot(canvas, session_id);
     let Some(vfs) = vfs else {
@@ -260,7 +260,7 @@ mod tests {
             String::new(),
         );
         let vfs = Vfs::default();
-        let service = RelayVfsService::new(Arc::new(MountProviderRegistry::default()));
+        let service = VfsService::new(Arc::new(MountProviderRegistry::default()));
 
         let snapshot = build_runtime_snapshot_with_bindings(
             &canvas,

@@ -37,6 +37,8 @@ export type ArtifactAliasPolicy = "latest" | "per_attempt" | "latest_and_history
 
 export type ArtifactBinding = { from_activity?: string | null, from_port: string, to_port: string, alias: ArtifactAliasPolicy, };
 
+export type AttachRunLinkRequest = { subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, };
+
 export type BashExecExecutorSpec = { command: string, args?: Array<string>, working_directory?: string | null, };
 
 /**
@@ -85,49 +87,17 @@ standalone_fulfillment: StandaloneFulfillment, };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
 
-/**
- * Lifecycle DAG 边——控制流 + 数据流的统一承载。
- *
- * `kind = Flow` 时 `from_port` / `to_port` 必须为 `None`；
- * `kind = Artifact` 时两者必须为 `Some`。
- * node 级别依赖通过 `node_deps_from_edges()` 从 flow/artifact 两类边统一计算。
- */
-export type LifecycleEdge = { kind: LifecycleEdgeKind, from_node: string, to_node: string, from_port?: string | null, to_port?: string | null, };
-
-/**
- * Lifecycle edge 类别：控制流 vs 数据流。
- *
- * - `Flow`：无数据语义的顺序约束（前驱完成即激活后继）。
- * - `Artifact`：端口级数据依赖；自动蕴含 Flow 约束（B 消费 A.port → B dep A）。
- */
-export type LifecycleEdgeKind = "flow" | "artifact";
-
 export type LifecycleExecutionEntry = { timestamp: string, step_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue | null, };
 
 export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
-/**
- * Lifecycle node 类型：Agent Node 创建独立 session，Phase Node 在前一个 session 内切换 contract
- */
-export type LifecycleNodeType = "agent_node" | "phase_node";
+export type LifecycleRunLinkDto = { id: string, run_id: string, subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, created_at: string, };
 
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
-export type LifecycleStepDefinition = { key: string, description: string, workflow_key?: string | null, node_type: LifecycleNodeType,
-/**
- * Step 级产出约束：该节点必须交付的 artifacts
- */
-output_ports?: Array<OutputPortDefinition>,
-/**
- * Step 级消费声明：该节点从前驱接收的 artifacts
- */
-input_ports?: Array<InputPortDefinition>,
-/**
- * Step 级顶层能力配置，应用顺序在 workflow contract 配置之后。
- */
-capability_config?: CapabilityConfig, };
-
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue | null, };
+
+export type RunLinksResponse = { run_id: string, links: Array<LifecycleRunLinkDto>, };
 
 /**
  * Standalone 场景下 input port 的满足策略。
@@ -136,6 +106,10 @@ export type OutputPortDefinition = { key: string, description: string, gate_stra
  * 分配 workflow）时由此字段指示调用方如何提供输入。
  */
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string | null, } };
+
+export type StoryRunOverviewDto = { id: string, lifecycle_id: string, status: LifecycleRunStatus, session_id?: string, created_at: string, updated_at: string, last_activity_at: string, links: Array<LifecycleRunLinkDto>, };
+
+export type StoryRunsResponse = { story_id: string, runs: Array<StoryRunOverviewDto>, };
 
 /**
  * 工具能力指令 —— 在 agent baseline 上执行 Add/Remove。
@@ -174,7 +148,7 @@ export type ValidationSeverity = "error" | "warning";
  * definition 统一归到 Story binding。详见
  * `.trellis/spec/backend/story-task-runtime.md`。
  *
- * 注意：`SessionOwnerType::Task` 仍然存在（session binding 的 owner 坐标系
+ * 注意：`CapabilityScope::Task` 仍然存在（run_context 的 scope 坐标系
  * 不受影响），但当需要把它映射到 `WorkflowBindingKind` 时，会落到 `Story`。
  */
 export type WorkflowBindingKind = "project" | "story";

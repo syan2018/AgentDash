@@ -13,7 +13,7 @@ use agentdash_domain::backend::{
     BackendExecutionLease, BackendExecutionLeaseRepository, BackendExecutionSelectionMode,
     BackendExecutionTerminalKind,
 };
-use agentdash_domain::session_binding::{SessionBinding, SessionOwnerType};
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, ExecutionHookProvider, HookEvaluationQuery, HookInjection,
     HookResolution, HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionHookRefreshQuery,
@@ -39,7 +39,6 @@ use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
 };
 use super::super::local_workspace_vfs;
-use super::super::ownership::SessionOwnerResolver;
 use super::super::types::{
     EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
     SessionBootstrapState, SessionExecutionState, UserPromptInput,
@@ -59,7 +58,7 @@ use crate::session::capability_state::{
 };
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
-    MountProvider, MountProviderRegistry, ReadResult, RelayVfsService, RuntimeFileEntry,
+    MountProvider, MountProviderRegistry, ReadResult, VfsService, RuntimeFileEntry,
     SearchQuery, SearchResult,
 };
 
@@ -105,14 +104,13 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
     };
-    let binding = SessionBinding::new(
-        uuid::Uuid::new_v4(),
-        "test-session".to_string(),
-        SessionOwnerType::Project,
-        uuid::Uuid::new_v4(),
-        "test-project",
-    );
-    let owner = SessionOwnerResolver::resolve_primary(&[binding]).expect("owner");
+    let owner = crate::session::construction::ResolvedSessionOwner {
+        owner_type: agentdash_spi::CapabilityScope::Project,
+        project_id: Some(uuid::Uuid::new_v4()),
+        trace: crate::session::construction::OwnerResolutionTrace {
+            selected_reason: "test".to_string(),
+        },
+    };
     let mut construction =
         SessionConstructionPlan::from_source_input("test-session", owner, &user_input);
     let root = std::env::current_dir().expect("current dir");
@@ -785,10 +783,10 @@ impl MountProvider for SkillFixtureMountProvider {
     }
 }
 
-fn skill_fixture_vfs_service() -> Arc<RelayVfsService> {
+fn skill_fixture_vfs_service() -> Arc<VfsService> {
     let mut registry = MountProviderRegistry::new();
     registry.register(Arc::new(SkillFixtureMountProvider));
-    Arc::new(RelayVfsService::new(Arc::new(registry)))
+    Arc::new(VfsService::new(Arc::new(registry)))
 }
 
 fn canvas_skill_vfs() -> agentdash_spi::Vfs {

@@ -11,6 +11,7 @@ pub mod extension_package;
 pub mod extension_runtime;
 pub mod hooks;
 pub mod mcp_preset;
+pub mod permission;
 pub mod platform_config;
 pub mod project;
 pub mod reconcile;

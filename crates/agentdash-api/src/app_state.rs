@@ -24,7 +24,7 @@ use agentdash_application::session::{
 use agentdash_application::task::service::StoryStepActivationService;
 use agentdash_application::task_lock::TaskLockMap;
 use agentdash_application::vfs::MountProviderRegistry;
-use agentdash_application::vfs::{RelayVfsService, VfsMutationDispatcher};
+use agentdash_application::vfs::{VfsService, VfsMutationDispatcher};
 use agentdash_domain::llm_provider::LlmSecretCodec;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
@@ -50,7 +50,7 @@ pub struct ServiceSet {
     /// 当前活跃的连接器实例（供 discovery 端点查询能力/类型）
     pub connector: Arc<dyn AgentConnector>,
     /// 统一 VFS 访问服务 — 供 declared sources、runtime tools、workspace browse 共享
-    pub vfs_service: Arc<RelayVfsService>,
+    pub vfs_service: Arc<VfsService>,
     /// VFS 写入分发器 — 统一 surface/tool mutation 与 inline_fs storage 坐标解析。
     pub vfs_mutation_dispatcher: Arc<VfsMutationDispatcher>,
     /// 插件额外 skill 目录 — construction 阶段统一 discovery 后进入 session capabilities。
@@ -230,7 +230,7 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                session_binding_repo: repos.session_binding_repo.clone(),
+                lifecycle_run_link_repo: repos.lifecycle_run_link_repo.clone(),
                 workflow_definition_repo: repos.workflow_definition_repo.clone(),
                 activity_lifecycle_definition_repo: repos
                     .activity_lifecycle_definition_repo
@@ -259,7 +259,8 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
-                repos.session_binding_repo.clone(),
+                repos.lifecycle_run_link_repo.clone(),
+                repos.lifecycle_run_repo.clone(),
             ),
         );
 

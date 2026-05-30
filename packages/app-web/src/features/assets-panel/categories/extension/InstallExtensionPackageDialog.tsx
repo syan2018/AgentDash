@@ -4,6 +4,7 @@ import { Button, CheckboxField, TextInput } from "@agentdash/ui";
 
 import { importExtensionPackage } from "../../../../services/extensionPackage";
 import { sha256OfBlob } from "../../../../utils/sha256";
+import { formatBytes } from "../../../../lib/format";
 
 const MAX_BYTES = 50 * 1024 * 1024;
 const ACCEPT = ".tgz,.gz,application/gzip,application/x-gzip";
@@ -174,12 +175,6 @@ export function InstallExtensionPackageDialog({
       </div>
     </>
   );
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default InstallExtensionPackageDialog;

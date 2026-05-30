@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Select, TextInput } from "@agentdash/ui";
-import type { SessionBinding, SessionNavigationState, Story } from "../../types";
+import type { SessionNavigationState, Story } from "../../types";
+import type { StorySessionEntry } from "../../services/story";
 import { useStoryStore, type CreateStorySessionInput } from "../../stores/storyStore";
 import { useProjectStore } from "../../stores/projectStore";
 import { SessionChatView } from "../session";
@@ -21,7 +22,7 @@ function labelText(label: string): string {
   return (LABEL_DISPLAY[label] ?? label) || "通用";
 }
 
-const EMPTY_SESSIONS: SessionBinding[] = [];
+const EMPTY_SESSIONS: StorySessionEntry[] = [];
 
 export function StorySessionPanel({ story }: StorySessionPanelProps) {
   const navigate = useNavigate();
@@ -83,7 +84,7 @@ export function StorySessionPanel({ story }: StorySessionPanelProps) {
   }, [fetchStorySessions, story.id]);
 
   const handleUnbind = useCallback(
-    async (binding: SessionBinding) => {
+    async (binding: StorySessionEntry) => {
       await unbindStorySession(story.id, binding.id);
       if (activeSessionId === binding.session_id) setActiveSessionId(null);
     },

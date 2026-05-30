@@ -40,11 +40,12 @@ pub fn upsert_tool_execution_artifact(
     {
         let artifact = &mut artifacts_mut[index];
         let before = artifact.content.clone();
-        let mut content = artifact
-            .content
-            .as_object()
-            .cloned()
-            .expect("tool_execution artifact 内容必须是对象");
+        let mut content = artifact.content.as_object().cloned().ok_or_else(|| {
+            DomainError::InvalidConfig(format!(
+                "tool_execution artifact 内容不是对象: {}",
+                artifact.id
+            ))
+        })?;
         for (key, value) in patch {
             if key == "started_at" && content.contains_key("started_at") {
                 continue;
@@ -113,7 +114,7 @@ fn build_codex_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Ma
             patch.insert("raw_input".to_string(), arguments.clone());
             patch.insert("input_preview".to_string(), json!(preview_value(arguments)));
             if let Some(items) = content_items {
-                let content_value = serialize_or_fail(items, "content_items");
+                let content_value = serialize_field(items, "content_items")?;
                 patch.insert("content".to_string(), content_value.clone());
                 patch.insert(
                     "output_preview".to_string(),
@@ -148,7 +149,7 @@ fn build_codex_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Ma
             patch.insert("raw_input".to_string(), arguments.clone());
             patch.insert("input_preview".to_string(), json!(preview_value(arguments)));
             if let Some(r) = result {
-                let output = serialize_or_fail(r, "mcp_result");
+                let output = serialize_field(r, "mcp_result")?;
                 patch.insert("raw_output".to_string(), output.clone());
                 patch.insert("output_preview".to_string(), json!(preview_value(&output)));
             }
@@ -198,7 +199,7 @@ fn build_codex_thread_item_patch(item: &codex::ThreadItem) -> Option<(String, Ma
             status,
             ..
         } => {
-            let changes_value = serialize_or_fail(changes, "file_changes");
+            let changes_value = serialize_field(changes, "file_changes")?;
             let mut patch = Map::new();
             patch.insert("title".to_string(), json!(file_change_title(changes)));
             patch.insert("kind".to_string(), json!("file_change"));
@@ -245,7 +246,7 @@ fn build_agentdash_thread_item_patch(
         json!(preview_value(item.arguments())),
     );
     if let Some(items) = item.content_items() {
-        let content_value = serialize_or_fail(items, "content_items");
+        let content_value = serialize_field(items, "content_items")?;
         patch.insert("content".to_string(), content_value.clone());
         patch.insert(
             "output_preview".to_string(),
@@ -327,14 +328,21 @@ pub fn preview_value(value: &Value) -> String {
 
 pub fn enum_to_string<T: Serialize>(value: &T) -> String {
     serde_json::to_value(value)
-        .expect("enum 序列化失败")
-        .as_str()
-        .expect("enum 序列化后不是字符串")
-        .to_owned()
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
-fn serialize_or_fail<T: Serialize>(value: &T, field: &str) -> Value {
-    serde_json::to_value(value).unwrap_or_else(|error| panic!("序列化 {field} 失败: {error}"))
+/// 序列化 thread item 字段；失败时记录并返回 `None`，调用方据此跳过该 item，
+/// 避免在请求路径 panic。
+fn serialize_field<T: Serialize>(value: &T, field: &str) -> Option<Value> {
+    match serde_json::to_value(value) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::error!(target: "task_artifact", field, error = %error, "序列化 thread item 字段失败，跳过该 item");
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -342,7 +350,6 @@ mod tests {
     use super::*;
     use agentdash_domain::task::{Artifact, ArtifactType, Task};
     use serde::ser::{Error, Serializer};
-    use std::panic;
     use uuid::Uuid;
 
     #[derive(serde::Serialize)]
@@ -363,10 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn serialize_or_fail_returns_value_and_panics_on_error() {
-        let value = serialize_or_fail(&vec![1, 2, 3], "vec");
-        assert_eq!(value, json!([1, 2, 3]));
-        assert!(panic::catch_unwind(|| serialize_or_fail(&FailSerialize, "fail")).is_err());
+    fn serialize_field_returns_value_and_none_on_error() {
+        let value = serialize_field(&vec![1, 2, 3], "vec");
+        assert_eq!(value, Some(json!([1, 2, 3])));
+        assert_eq!(serialize_field(&FailSerialize, "fail"), None);
     }
 
     #[test]

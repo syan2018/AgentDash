@@ -7,6 +7,7 @@ import {
 } from "../../services/canvas";
 import { useExtensionRuntimeStore } from "../extension-runtime/model/extensionRuntimeStore";
 import type { Canvas } from "../../types";
+import { formatDateTime } from "../../lib/format";
 import { CanvasSessionPanel } from "./CanvasSessionPanel";
 
 export interface ProjectCanvasManagerProps {
@@ -353,20 +354,6 @@ export function ProjectCanvasManager({
       </section>
     </div>
   );
-}
-
-function formatDateTime(value: string): string {
-  const time = new Date(value);
-  if (Number.isNaN(time.getTime())) {
-    return value;
-  }
-  return time.toLocaleString("zh-CN", {
-    hour12: false,
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 function readRememberedCanvasId(storageKey: string): string | null {

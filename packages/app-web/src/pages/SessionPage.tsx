@@ -12,7 +12,7 @@ import {
   type WorkspaceRuntimeData,
 } from "../features/workspace-panel";
 import { useSessionRuntimeState } from "../features/workspace-panel/model/useSessionRuntimeState";
-import { fetchSessionBindings, fetchSessionMeta } from "../services/session";
+import { fetchSessionMeta } from "../services/session";
 import { useProjectStore } from "../stores/projectStore";
 import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
@@ -20,13 +20,11 @@ import { useWorkflowStore } from "../stores/workflowStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import type {
   ProjectSessionAgentContext,
-  SessionBindingOwner,
   SessionNavigationState,
+  SessionRunContext,
   Story,
   StoryNavigationState,
 } from "../types";
-
-const EMPTY_SESSION_BINDINGS: SessionBindingOwner[] = [];
 
 // ─── SessionPage ────────────────────────────────────────
 
@@ -51,7 +49,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
 
-  const [loadedSessionBindings, setLoadedSessionBindings] = useState<SessionBindingOwner[]>([]);
   const [loadedOwnerStory, setLoadedOwnerStory] = useState<{
     story_id: string;
     story: Story | null;
@@ -124,22 +121,6 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     };
   }, [propSessionId]);
 
-  // ─── session bindings（用于 owner 展示） ──────────────
-
-  useEffect(() => {
-    if (!currentSessionId) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const bindings = await fetchSessionBindings(currentSessionId);
-        if (!cancelled) setLoadedSessionBindings(bindings);
-      } catch {
-        if (!cancelled) setLoadedSessionBindings([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentSessionId]);
-
   useEffect(() => {
     return () => {
       if (hookRuntimeRefreshTimerRef.current) {
@@ -149,40 +130,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     };
   }, []);
 
-  const sessionBindings = currentSessionId ? loadedSessionBindings : EMPTY_SESSION_BINDINGS;
-
-  const sessionOwnerBinding = useMemo(() => {
-    if (sessionBindings.length === 0) return null;
-    return (
-      sessionBindings.find((b) => b.owner_type === "project")
-      ?? sessionBindings.find((b) => b.owner_type === "story")
-      ?? sessionBindings.find((b) => b.owner_type === "task")
-      ?? sessionBindings[0]
-      ?? null
-    );
-  }, [sessionBindings]);
-
-  const sessionContextSourceKey = useMemo(() => {
-    if (!sessionOwnerBinding) return null;
-    if (sessionOwnerBinding.owner_type === "task" && sessionOwnerBinding.task_id) {
-      return `task:${sessionOwnerBinding.task_id}`;
-    }
-    if (
-      sessionOwnerBinding.owner_type === "story"
-      && sessionOwnerBinding.story_id
-      && sessionOwnerBinding.id
-    ) {
-      return `story:${sessionOwnerBinding.story_id}:${sessionOwnerBinding.id}`;
-    }
-    if (
-      sessionOwnerBinding.owner_type === "project"
-      && sessionOwnerBinding.project_id
-      && sessionOwnerBinding.id
-    ) {
-      return `project:${sessionOwnerBinding.project_id}:${sessionOwnerBinding.id}`;
-    }
-    return null;
-  }, [sessionOwnerBinding]);
+  const sessionContextSourceKey = currentSessionId ? `session:${currentSessionId}` : null;
 
   const {
     state: sessionRuntimeState,
@@ -222,12 +170,11 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
   const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
 
+  const runContext: SessionRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
+
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
-  const ownerStoryId = sessionOwnerBinding?.story_id ?? null;
-  const ownerProjectName = sessionOwnerBinding?.owner_type === "project"
-    ? sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id
-    : "";
+  const ownerStoryId = runContext?.story_id ?? null;
 
   useEffect(() => {
     const cached = ownerStoryId ? findStoryById(storiesByProjectId, ownerStoryId) : null;
@@ -254,10 +201,13 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     }
     return null;
   }, [loadedOwnerStory, ownerStoryId, storiesByProjectId]);
-  const ownerProjectId = sessionOwnerBinding?.project_id ?? ownerStory?.project_id ?? null;
+  const ownerProjectId = runContext?.project_id ?? ownerStory?.project_id ?? null;
   const ownerProject = ownerProjectId
     ? projects.find((project) => project.id === ownerProjectId) ?? null
     : null;
+  const ownerProjectName = runContext?.scope === "project"
+    ? (ownerProject?.name?.trim() || runContext.project_id)
+    : "";
   const extensionRuntime = useProjectExtensionRuntime(ownerProjectId);
   useEffect(() => {
     if (!ownerProjectId) return;
@@ -266,19 +216,18 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   const effectiveReturnTarget = useMemo(() => {
     if (returnTarget) return returnTarget;
-    if (sessionOwnerBinding?.owner_type === "project") {
-      return {
-        owner_type: "project" as const,
-        project_id: sessionOwnerBinding.project_id ?? sessionOwnerBinding.owner_id,
-      };
+    if (!runContext) return null;
+    if (runContext.scope === "project") {
+      return { owner_type: "project" as const, project_id: runContext.project_id };
     }
-    if (!sessionOwnerBinding?.story_id) return null;
-    if (sessionOwnerBinding.owner_type === "story") {
-      return { owner_type: "story" as const, story_id: sessionOwnerBinding.story_id };
+    if (runContext.scope === "story" && runContext.story_id) {
+      return { owner_type: "story" as const, story_id: runContext.story_id };
     }
-    if (!sessionOwnerBinding.task_id) return null;
-    return { owner_type: "task" as const, story_id: sessionOwnerBinding.story_id, task_id: sessionOwnerBinding.task_id };
-  }, [returnTarget, sessionOwnerBinding]);
+    if (runContext.scope === "task" && runContext.story_id && runContext.task_id) {
+      return { owner_type: "task" as const, story_id: runContext.story_id, task_id: runContext.task_id };
+    }
+    return null;
+  }, [returnTarget, runContext]);
 
   // ─── 页面级回调 ───────────────────────────────────────
 
@@ -476,31 +425,38 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const canShowLifecycleView = hasSession && hasLifecycleGraph;
   const showLifecycleView = canShowLifecycleView && sessionViewMode === "lifecycle";
 
-  // ─── owner binding 信息条（作为 inputPrefix 传入 ChatView）
+  // ─── owner 信息条（作为 inputPrefix 传入 ChatView）
 
-  const ownerBindingBar = sessionOwnerBinding ? (
+  const runContextDisplayName = useMemo(() => {
+    if (!runContext) return "";
+    if (runContext.scope === "task") return runContext.task_title?.trim() || runContext.task_id || "";
+    if (runContext.scope === "story") return runContext.story_title?.trim() || runContext.story_id || "";
+    return ownerProject?.name?.trim() || runContext.project_id;
+  }, [runContext, ownerProject]);
+
+  const ownerBindingBar = runContext ? (
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-[12px] border border-border bg-secondary/20 px-3 py-2 text-xs text-muted-foreground">
       <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 uppercase">
-        {sessionOwnerBinding.owner_type}
+        {runContext.scope}
       </span>
       <span>
-        已绑定：{sessionOwnerBinding.owner_title?.trim() || sessionOwnerBinding.owner_id}
+        已绑定：{runContextDisplayName}
       </span>
-      {sessionOwnerBinding.owner_type === "project" && sessionContextSnapshot?.owner_context.owner_level === "project" && sessionContextSnapshot.owner_context.agent_display_name && (
+      {runContext.scope === "project" && sessionContextSnapshot?.owner_context.owner_level === "project" && sessionContextSnapshot.owner_context.agent_display_name && (
         <span className="rounded-[8px] border border-border bg-background px-2 py-0.5 text-[11px] text-foreground/80">
           Agent · {sessionContextSnapshot.owner_context.agent_display_name}
         </span>
       )}
-      {(sessionOwnerBinding.project_id || sessionOwnerBinding.story_id) && (
+      {effectiveReturnTarget && (
         <button
           type="button"
           onClick={handleBackToOwner}
           className="rounded-[8px] border border-border bg-background px-2 py-1 text-[11px] transition-colors hover:bg-secondary hover:text-foreground"
         >
           打开关联
-          {sessionOwnerBinding.owner_type === "project"
+          {runContext.scope === "project"
             ? "项目"
-            : sessionOwnerBinding.owner_type === "task"
+            : runContext.scope === "task"
               ? "任务"
               : "Story"}
         </button>

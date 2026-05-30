@@ -20,7 +20,10 @@
 pub mod authz;
 pub mod error;
 pub mod injection;
+pub mod render;
 pub mod scope;
 pub mod servers;
 pub mod services;
 pub mod transport;
+
+pub use render::render_content;

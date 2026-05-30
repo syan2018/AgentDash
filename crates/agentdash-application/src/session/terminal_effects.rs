@@ -443,7 +443,7 @@ mod tests {
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
     use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
-    use crate::session::{MemorySessionPersistence, SessionPersistence};
+    use crate::session::{MemorySessionPersistence, SessionMetaStore};
 
     #[test]
     fn terminal_effect_status_round_trips_wire_values() {
@@ -477,6 +477,7 @@ mod tests {
                 id: "sess-hook-replay".to_string(),
                 title: "hook replay".to_string(),
                 title_source: TitleSource::Auto,
+                project_id: None,
                 created_at: 1,
                 updated_at: 1,
                 last_event_seq: 0,

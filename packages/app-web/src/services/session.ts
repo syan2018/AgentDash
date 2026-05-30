@@ -25,7 +25,6 @@ import type {
   ProjectSessionEntry,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
-  SessionBindingOwner,
   SessionContextSnapshot,
   SessionExecutionState,
   SessionExecutionStatus,
@@ -38,42 +37,6 @@ function asRecordOrThrow(value: unknown, label: string): Record<string, unknown>
     throw new Error(`${label} 不是对象`);
   }
   return value as Record<string, unknown>;
-}
-
-function normalizeSessionBindingOwnerType(value: unknown): SessionBindingOwner["owner_type"] {
-  switch (value) {
-    case "project":
-    case "story":
-    case "task":
-      return value;
-    default:
-      throw new Error(`未知的 session owner_type: ${String(value ?? "")}`);
-  }
-}
-
-function mapSessionBindingOwner(raw: Record<string, unknown>): SessionBindingOwner {
-  return {
-    id: requireStringField(raw, "id"),
-    session_id: requireStringField(raw, "session_id"),
-    owner_type: normalizeSessionBindingOwnerType(raw.owner_type),
-    owner_id: requireStringField(raw, "owner_id"),
-    label: requireStringField(raw, "label"),
-    created_at: requireStringField(raw, "created_at"),
-    owner_title:
-      raw.owner_title != null
-        ? String(raw.owner_title)
-        : null,
-    project_id:
-      String(raw.project_id ?? ""),
-    story_id:
-      raw.story_id != null
-        ? String(raw.story_id)
-        : null,
-    task_id:
-      raw.task_id != null
-        ? String(raw.task_id)
-        : null,
-  };
 }
 
 export type TitleSource = "auto" | "source" | "user";
@@ -488,11 +451,6 @@ export async function rollbackSessionProjection(
     request,
   );
   return mapProjectionRollbackResponse(raw);
-}
-
-export async function fetchSessionBindings(id: string): Promise<SessionBindingOwner[]> {
-  const raw = await api.get<Record<string, unknown>[]>(`/sessions/${encodeURIComponent(id)}/bindings`);
-  return raw.map(mapSessionBindingOwner);
 }
 
 export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {

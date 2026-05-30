@@ -12,6 +12,7 @@ export function createDefaultAgentBinding(_projectConfig?: ProjectConfig): Agent
     preset_name: null,
     prompt_template: null,
     initial_context: null,
+    thinking_level: null,
     context_sources: [],
   };
 }
@@ -34,6 +35,7 @@ export function normalizeAgentBinding(binding: AgentBinding): AgentBinding {
     preset_name: normalizeText(binding.preset_name),
     prompt_template: normalizeText(binding.prompt_template),
     initial_context: normalizeText(binding.initial_context),
+    thinking_level: binding.thinking_level ?? null,
     context_sources: Array.isArray(binding.context_sources) ? binding.context_sources : [],
   };
 }

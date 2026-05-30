@@ -1,4 +1,4 @@
-import type { JsonValue } from "../../../generated/extension-runtime-contracts";
+import type { JsonValue } from "../../../generated/common-contracts";
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,

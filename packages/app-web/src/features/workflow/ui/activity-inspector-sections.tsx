@@ -1,5 +1,3 @@
-import { useState } from "react";
-
 import { isWorkflowJsonValue } from "../../../types";
 import type {
   ActivityCompletionPolicy,
@@ -12,6 +10,10 @@ import type {
   HookRulePreset,
   InputPortDefinition,
   OutputPortDefinition,
+  WorkflowContextBinding,
+  WorkflowDefinition,
+  WorkflowHookRuleSpec,
+  WorkflowInjectionSpec,
   WorkflowTargetKind,
 } from "../../../types";
 import type { WorkflowEditorDraft } from "../../../stores/workflowStore";
@@ -186,7 +188,7 @@ export function IdentitySection({
                   <input
                     type="checkbox"
                     checked={isInfinite}
-                    onChange={(e) => onSetIterationPolicy({ max_attempts: e.target.checked ? null : 1 })}
+                    onChange={(e) => onSetIterationPolicy({ max_attempts: e.target.checked ? undefined : 1 })}
                   />
                   无限
                 </label>
@@ -269,7 +271,7 @@ export function ExecutorSection({
         kind: "human",
         type: "approval",
         form_schema_key: "approval",
-        title: null,
+        title: undefined,
       });
     } else {
       onExecutorChange({
@@ -277,7 +279,7 @@ export function ExecutorSection({
         type: "bash_exec",
         command: "",
         args: [],
-        working_directory: null,
+        working_directory: undefined,
       });
     }
   };
@@ -447,7 +449,7 @@ function FunctionExecutorForm({
         type: "api_request",
         method: "POST",
         url_template: "",
-        body_template: null,
+        body_template: undefined,
       });
     } else {
       onChange({
@@ -455,7 +457,7 @@ function FunctionExecutorForm({
         type: "bash_exec",
         command: "",
         args: [],
-        working_directory: null,
+        working_directory: undefined,
       });
     }
   };
@@ -568,7 +570,7 @@ function FunctionExecutorForm({
               <input
                 value={executor.working_directory ?? ""}
                 onChange={(e) =>
-                  onChange({ ...executor, working_directory: e.target.value || null })
+                  onChange({ ...executor, working_directory: e.target.value || undefined })
                 }
                 className="agentdash-form-input"
                 placeholder="(可空，默认 lifecycle 工作区)"
@@ -610,7 +612,7 @@ function HumanExecutorForm({
           <label className="agentdash-form-label">标题</label>
           <input
             value={executor.title ?? ""}
-            onChange={(e) => onChange({ ...executor, title: e.target.value || null })}
+            onChange={(e) => onChange({ ...executor, title: e.target.value || undefined })}
             className="agentdash-form-input"
             placeholder="等待人工审批"
           />
@@ -946,7 +948,7 @@ export function WorkflowContractTabContent({
       <InjectionPanel
         injection={workflowDraft.contract.injection}
         compact
-        onGuidanceChange={(guidance) => onUpdateInjection({ guidance })}
+        onGuidanceChange={(guidance) => onUpdateInjection({ guidance: guidance ?? undefined })}
         onBindingChange={onBindingChange}
         onBindingAdd={onBindingAdd}
         onBindingRemove={onBindingRemove}

@@ -37,7 +37,7 @@ export function ArtifactBindingsEditor({
 }: ArtifactBindingsEditorProps) {
   const handleAdd = () => {
     onAdd({
-      from_activity: defaultFromActivity || null,
+      from_activity: defaultFromActivity || undefined,
       from_port: "",
       to_port: "",
       alias: "latest",
@@ -104,7 +104,7 @@ function BindingRow({
           <label className="agentdash-form-label">From Activity</label>
           <select
             value={fromActivity}
-            onChange={(e) => onChange({ from_activity: e.target.value || null })}
+            onChange={(e) => onChange({ from_activity: e.target.value || undefined })}
             className="agentdash-form-select"
           >
             <option value="">(任意 / 上游)</option>

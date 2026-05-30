@@ -215,8 +215,8 @@ async fn update_state(
          WHERE id = $7",
     )
     .bind(state_to_str(state))
-    .bind(activated_at.map(|value| value))
-    .bind(released_at.map(|value| value))
+    .bind(activated_at)
+    .bind(released_at)
     .bind(terminal_kind.map(terminal_kind_to_str))
     .bind(release_reason)
     .bind(updated_at)

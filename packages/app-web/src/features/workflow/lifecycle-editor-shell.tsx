@@ -403,7 +403,7 @@ function SidebarRouter(props: SidebarRouterProps) {
           onTransitionChange(selection.transitionId, { condition })
         }
         onMaxTraversalsChange={(max_traversals) =>
-          onTransitionChange(selection.transitionId, { max_traversals })
+          onTransitionChange(selection.transitionId, { max_traversals: max_traversals ?? undefined })
         }
         onAddBinding={(binding) => onAddBinding(selection.transitionId, binding)}
         onUpdateBinding={(idx, patch) => onUpdateBinding(selection.transitionId, idx, patch)}

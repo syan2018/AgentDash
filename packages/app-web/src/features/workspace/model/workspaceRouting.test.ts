@@ -84,6 +84,7 @@ describe("workspaceRouting", () => {
         priority: 0,
         created_at: "2026-05-17T00:00:00Z",
         updated_at: "2026-05-17T00:00:00Z",
+        last_verified_at: null,
       }],
     });
     const summary = summarizeResolution(target, [backend("backend-1", true)], [access("backend-1")]);
@@ -104,6 +105,7 @@ describe("workspaceRouting", () => {
           priority: 0,
           created_at: "2026-05-17T00:00:00Z",
           updated_at: "2026-05-17T00:00:00Z",
+          last_verified_at: null,
         },
         {
           id: "binding-2",
@@ -115,6 +117,7 @@ describe("workspaceRouting", () => {
           priority: 0,
           created_at: "2026-05-17T00:00:00Z",
           updated_at: "2026-05-17T00:00:00Z",
+          last_verified_at: null,
         },
       ],
     });

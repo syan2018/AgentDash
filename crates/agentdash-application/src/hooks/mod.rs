@@ -47,9 +47,5 @@ fn dedupe_tags(tags: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-fn map_hook_error(error: agentdash_domain::DomainError) -> agentdash_spi::HookError {
-    agentdash_spi::HookError::Runtime(error.to_string())
-}
-
 #[cfg(test)]
 mod test_fixtures;

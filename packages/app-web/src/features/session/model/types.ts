@@ -50,7 +50,6 @@ export type {
   McpToolCallStatus,
   PatchApplyStatus,
   UserInput,
-  JsonValue,
 } from "../../../generated/backbone-protocol";
 
 import type {

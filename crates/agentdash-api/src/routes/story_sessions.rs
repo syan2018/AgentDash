@@ -74,7 +74,7 @@ pub async fn list_story_sessions(
         });
     }
 
-    responses.sort_by(|a, b| b.session_updated_at.cmp(&a.session_updated_at));
+    responses.sort_by_key(|r| std::cmp::Reverse(r.session_updated_at));
     Ok(Json(responses))
 }
 

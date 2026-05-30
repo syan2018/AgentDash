@@ -28,7 +28,9 @@ export interface PresetFormState {
 }
 
 export function presetToForm(preset?: AgentPreset): PresetFormState {
-  const cfg = preset?.config ?? {};
+  const cfg = (preset?.config && typeof preset.config === "object" && !Array.isArray(preset.config)
+    ? preset.config
+    : {}) as Record<string, unknown>;
   const rawMcpPresetKeys = Array.isArray(cfg.mcp_preset_keys)
     ? (cfg.mcp_preset_keys as string[])
     : [];
@@ -84,7 +86,7 @@ export function formToPreset(form: PresetFormState): AgentPreset {
   return {
     name: form.name.trim(),
     agent_type: form.agent_type.trim(),
-    config,
+    config: config as AgentPreset["config"],
   };
 }
 
@@ -101,7 +103,9 @@ export function validateForm(form: PresetFormState, existingNames: string[], edi
 }
 
 export function formatPresetSummary(preset: AgentPreset): string {
-  const cfg = preset.config ?? {};
+  const cfg = (preset.config && typeof preset.config === "object" && !Array.isArray(preset.config)
+    ? preset.config
+    : {}) as Record<string, unknown>;
   const displayName = String(cfg.display_name ?? "").trim();
   const parts: string[] = [preset.agent_type];
   if (displayName && displayName !== preset.name) parts.unshift(displayName);

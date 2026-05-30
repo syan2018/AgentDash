@@ -1,7 +1,7 @@
 import { api } from "../api/client";
 import { asRecord, requireNumberField, requireStringField } from "../api/mappers";
+import type { JsonValue } from "../generated/common-contracts";
 import type {
-  JsonValue,
   ProjectExtensionCapabilitySummaryResponse,
   ProjectExtensionInstalledSourceResponse,
   ProjectExtensionManagementItemResponse,

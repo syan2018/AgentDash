@@ -1,8 +1,8 @@
+import type { JsonValue } from "../../../generated/common-contracts";
 import type {
   ExtensionRuntimeInvokeChannelRequest,
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
-  JsonValue,
 } from "../../../generated/extension-runtime-contracts";
 import { buildExtensionWebviewAssetUrl } from "../../../services/extensionRuntime";
 import type { CanvasExtensionChannelRequest } from "../../canvas-panel/CanvasRuntimePreview";

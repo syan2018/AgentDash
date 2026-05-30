@@ -25,7 +25,7 @@ use super::snapshot_helpers::*;
 use super::workflow_contribution::build_workflow_step_fragments;
 use super::workflow_snapshot::WorkflowSnapshotBuilder;
 use super::{
-    dedupe_tags, global_builtin_source, map_hook_error, workflow_scope_key, workflow_source,
+    dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source,
 };
 use crate::ApplicationError;
 

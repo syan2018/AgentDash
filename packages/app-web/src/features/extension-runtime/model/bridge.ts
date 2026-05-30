@@ -1,4 +1,4 @@
-import type { JsonValue } from "../../../generated/extension-runtime-contracts";
+import type { JsonValue } from "../../../generated/common-contracts";
 
 export const EXTENSION_BRIDGE_CHANNEL = "agentdash.extension";
 

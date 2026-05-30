@@ -15,7 +15,7 @@ use agentdash_spi::context::capability::CompanionAgentEntry;
 use agentdash_spi::platform::tool_capability::{
     self, CAP_COLLABORATION, CAP_WORKFLOW, PlatformMcpScope, ToolCapability, WELL_KNOWN_KEYS,
 };
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
+use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::{CapabilityState, CompanionSliceMode, ToolCapabilityFilter, ToolCluster};
 
 use crate::platform_config::PlatformConfig;

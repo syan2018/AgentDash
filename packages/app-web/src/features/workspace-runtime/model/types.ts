@@ -7,7 +7,7 @@ import type {
   Story,
   TaskSessionExecutorSummary,
   WorkflowRun,
-} from "../../types";
+} from "../../../types";
 
 export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
 

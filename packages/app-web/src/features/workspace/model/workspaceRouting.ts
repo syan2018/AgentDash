@@ -94,34 +94,36 @@ export function authorizedBackends(
 
 export function identitySummary(
   kind: WorkspaceIdentityKind,
-  payload: Record<string, unknown>,
+  payload: Record<string, unknown> | unknown,
 ): string {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "(empty)";
+  const p = payload as Record<string, unknown>;
   if (kind === "git_repo") {
-    const repo = readString(payload, "repo_key")
-      ?? readString(payload, "remote_url")
-      ?? readString(payload, "repo_root")
-      ?? readString(payload, "root_hint")
-      ?? readNestedString(payload, "hints", "root_hint");
-    const branch = readString(payload, "branch")
-      ?? readString(payload, "current_branch")
-      ?? readNestedString(payload, "hints", "current_branch");
+    const repo = readString(p, "repo_key")
+      ?? readString(p, "remote_url")
+      ?? readString(p, "repo_root")
+      ?? readString(p, "root_hint")
+      ?? readNestedString(p, "hints", "root_hint");
+    const branch = readString(p, "branch")
+      ?? readString(p, "current_branch")
+      ?? readNestedString(p, "hints", "current_branch");
     return [repo ?? "未填写 repo identity", branch].filter(Boolean).join(" · ");
   }
 
   if (kind === "p4_workspace") {
-    const stream = readString(payload, "stream");
-    const client = readString(payload, "client_name");
-    const server = readString(payload, "server_address");
-    const pathKey = readString(payload, "path_key")
-      ?? readString(payload, "workspace_root")
-      ?? readString(payload, "root_hint")
-      ?? readNestedString(payload, "hints", "root_hint");
+    const stream = readString(p, "stream");
+    const client = readString(p, "client_name");
+    const server = readString(p, "server_address");
+    const pathKey = readString(p, "path_key")
+      ?? readString(p, "workspace_root")
+      ?? readString(p, "root_hint")
+      ?? readNestedString(p, "hints", "root_hint");
     return [server, stream ?? client ?? pathKey ?? "未填写 P4 identity"].filter(Boolean).join(" · ");
   }
 
-  return readString(payload, "path_key")
-    ?? readString(payload, "root_hint")
-    ?? readNestedString(payload, "hints", "root_hint")
+  return readString(p, "path_key")
+    ?? readString(p, "root_hint")
+    ?? readNestedString(p, "hints", "root_hint")
     ?? "未填写本地目录 identity";
 }
 
@@ -159,7 +161,7 @@ export function bindingToInput(binding: WorkspaceBinding): WorkspaceBindingInput
     backend_id: binding.backend_id,
     root_ref: binding.root_ref,
     status: binding.status,
-    detected_facts: binding.detected_facts,
+    detected_facts: binding.detected_facts as Record<string, unknown> | undefined,
     priority: binding.priority,
   };
 }

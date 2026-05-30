@@ -5,9 +5,9 @@
  * 统一转为 UI 内部 ToolOutputBlock[]，供 ToolOutputContentViewer 渲染。
  */
 
+import type { JsonValue } from "../../../../generated/common-contracts";
 import type {
   DynamicToolCallOutputContentItem,
-  JsonValue,
 } from "../../../../generated/backbone-protocol";
 
 // ─── view model ────────────────────────────────────────────

@@ -169,7 +169,7 @@ function CreateAgentDialog({
       const projectAgentPayload: Parameters<typeof createProjectAgent>[1] = {
         name: preset.name,
         agent_type: preset.agent_type,
-        config: preset.config,
+        config: preset.config as Record<string, unknown> | undefined,
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
         projectAgentPayload.default_lifecycle_key = selectedLifecycleKey;
@@ -324,7 +324,7 @@ export function ProjectAgentView({
       preset: {
         name: agent.preset_name ?? agent.display_name,
         agent_type: agent.executor.executor,
-        config,
+        config: config as AgentPreset["config"],
       },
     });
   };
@@ -336,7 +336,7 @@ export function ProjectAgentView({
       await updateProjectAgent(project.id, editingAgent.agentId, {
         name: preset.name,
         agent_type: preset.agent_type,
-        config: preset.config,
+        config: preset.config as Record<string, unknown> | undefined,
       });
       await fetchProjectAgents(project.id);
       setEditingAgent(null);

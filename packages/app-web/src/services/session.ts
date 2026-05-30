@@ -1,5 +1,5 @@
 import { api, type ApiHttpError } from "../api/client";
-import { requireStringField, requireNumberField } from "../api/mappers";
+import { requireStringField } from "../api/mappers";
 import type {
   CreateSessionForkRequest,
   RollbackSessionProjectionRequest,
@@ -24,13 +24,6 @@ import type {
 } from "../types";
 import { isThinkingLevel } from "../types";
 import type { SessionTabLayout } from "../features/workspace-panel/tab-type-registry";
-
-function asRecordOrThrow(value: unknown, label: string): Record<string, unknown> {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} 不是对象`);
-  }
-  return value as Record<string, unknown>;
-}
 
 export type TitleSource = "auto" | "source" | "user";
 
@@ -288,11 +281,10 @@ function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
 function normalizeParentRelationKind(value: unknown): ProjectSessionEntry["parent_relation_kind"] {
   if (value == null) return null;
   switch (value) {
-    case "fork":
-    case "companion":
-    case "spawned_agent":
-    case "rollback_branch":
-      return value;
+    case "fork": return "fork";
+    case "companion": return "companion";
+    case "spawned_agent": return "spawned_agent";
+    case "rollback_branch": return "rollback_branch";
     default:
       throw new Error(`未知的项目会话 parent_relation_kind: ${String(value ?? "")}`);
   }

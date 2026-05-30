@@ -2242,6 +2242,7 @@ pub fn companion_owner_candidates(
     Ok(owners)
 }
 
+#[allow(dead_code)]
 fn companion_project_id_for_owner(
     snapshot: &agentdash_spi::SessionHookSnapshot,
     _owner_type: CapabilityScope,

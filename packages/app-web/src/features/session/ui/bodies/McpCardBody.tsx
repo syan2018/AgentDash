@@ -3,7 +3,8 @@
  */
 
 import { useMemo } from "react";
-import type { ThreadItem, JsonValue } from "../../../../generated/backbone-protocol";
+import type { JsonValue } from "../../../../generated/common-contracts";
+import type { ThreadItem } from "../../../../generated/backbone-protocol";
 import { JsonTree, CopyJsonButton } from "./JsonTree";
 import { normalizeMcpOutput } from "./toolOutputContent";
 import { ToolOutputContentViewer } from "./ToolOutputContentViewer";

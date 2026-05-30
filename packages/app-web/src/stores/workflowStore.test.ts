@@ -244,7 +244,7 @@ describe("setActivityExecutor", () => {
       kind: "human",
       type: "approval",
       form_schema_key: "approve_form",
-      title: null,
+      title: undefined,
     });
     expect(result?.reset).toBe(true);
     expect(result?.previous.kind).toBe("executor_terminal");
@@ -262,7 +262,7 @@ describe("setActivityExecutor", () => {
       type: "bash_exec",
       command: "echo",
       args: ["hi"],
-      working_directory: null,
+      working_directory: undefined,
     });
     expect(result?.reset).toBe(false);
     const activity = useWorkflowStore.getState().lifecycleEditor.draft!.activities[0];

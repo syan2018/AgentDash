@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { parseExtensionBridgeMessage, toJsonValue } from "./bridge";
+import type { JsonValue } from "../../../generated/common-contracts";
 import type {
   ExtensionRuntimeInvokeActionRequest,
   ExtensionRuntimeInvokeActionResponse,
   ExtensionRuntimeInvokeChannelRequest,
   ExtensionRuntimeInvokeChannelResponse,
   ExtensionWorkspaceTabProjectionResponse,
-  JsonValue,
 } from "../../../generated/extension-runtime-contracts";
 import type { WorkspaceData } from "../../workspace-runtime";
 import type { ExtensionBridgeRequestMessage } from "./bridge";

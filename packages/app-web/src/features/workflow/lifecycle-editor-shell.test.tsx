@@ -63,7 +63,7 @@ describe("LifecycleEditorShell selection 路由", () => {
       kind: "human",
       type: "approval",
       form_schema_key: "approve",
-      title: null,
+      title: undefined,
     });
     expect(result?.reset).toBe(true);
     expect(result?.previous.kind).toBe("executor_terminal");

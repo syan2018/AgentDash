@@ -1,5 +1,5 @@
 import { api } from "../api/client";
-import { asRecord, asRecordArray, asStringArray, optString, optStringField, requireStringField } from "../api/mappers";
+import { asRecord, asRecordArray, asStringArray, optStringField, requireStringField } from "../api/mappers";
 import { isWorkflowJsonValue } from "../types";
 import { mapInstalledAssetSource } from "./sharedLibrary";
 import type {
@@ -40,6 +40,11 @@ import type {
   WorkflowTargetKind,
   WorkflowValidationResult,
 } from "../types";
+
+/** 将 unknown 转为 string | undefined，适配生成合约中的可选字段（`?:` 而非 `| null`） */
+function optUndef(raw: unknown): string | undefined {
+  return raw != null ? String(raw) : undefined;
+}
 
 // ─── 枚举 normalizer（将后端字符串收窄到前端联合类型）───
 
@@ -115,7 +120,7 @@ function mapWorkflowContextBinding(raw: Record<string, unknown>): WorkflowContex
     locator: requireStringField(raw, "locator"),
     reason: requireStringField(raw, "reason"),
     required: raw.required !== false,
-    title: optString(raw.title),
+    title: optUndef(raw.title),
   };
 }
 
@@ -125,7 +130,7 @@ function mapWorkflowInjectionSpec(raw: unknown): WorkflowInjectionSpec {
     throw new Error("workflow contract 缺少 injection");
   }
   return {
-    guidance: optString(value.guidance),
+    guidance: optUndef(value.guidance),
     context_bindings: asRecordArray(value.context_bindings).map(mapWorkflowContextBinding),
   };
 }
@@ -135,9 +140,9 @@ function mapWorkflowHookRuleSpec(raw: Record<string, unknown>): WorkflowHookRule
     key: requireStringField(raw, "key"),
     trigger: normalizeEnum<WorkflowHookTrigger>(raw.trigger, WORKFLOW_HOOK_TRIGGERS, "workflow hook trigger"),
     description: optStringField(raw, "description"),
-    preset: optString(raw.preset),
+    preset: optUndef(raw.preset),
     params: mapOptionalJsonValue(raw.params, "workflow hook params"),
-    script: optString(raw.script),
+    script: optUndef(raw.script),
     enabled: raw.enabled !== false,
   };
 }
@@ -164,7 +169,7 @@ function mapInputPortDefinition(raw: Record<string, unknown>): InputPortDefiniti
       CONTEXT_STRATEGIES,
       "input port context strategy",
     ),
-    context_template: optString(raw.context_template),
+    context_template: optUndef(raw.context_template),
     standalone_fulfillment: mapStandaloneFulfillment(raw.standalone_fulfillment),
   };
 }
@@ -176,7 +181,7 @@ function mapStandaloneFulfillment(raw: unknown): StandaloneFulfillment {
   if (optional) {
     return {
       optional: {
-        default_value: optString(optional.default_value),
+        default_value: optUndef(optional.default_value),
       },
     };
   }
@@ -268,7 +273,7 @@ function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
         type: "bash_exec",
         command: requireStringField(value, "command"),
         args: asStringArray(value.args),
-        working_directory: optString(value.working_directory),
+        working_directory: optUndef(value.working_directory),
       };
     }
   }
@@ -279,7 +284,7 @@ function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
         kind: "human",
         type: "approval",
         form_schema_key: requireStringField(value, "form_schema_key"),
-        title: optString(value.title),
+        title: optUndef(value.title),
       };
     }
   }
@@ -334,7 +339,7 @@ function mapActivityDefinition(raw: unknown): ActivityDefinition {
     output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
     completion_policy: mapActivityCompletionPolicy(value.completion_policy),
     iteration_policy: {
-      max_attempts: typeof iteration?.max_attempts === "number" ? iteration.max_attempts : optString(iteration?.max_attempts) == null ? null : Number(iteration?.max_attempts),
+      max_attempts: typeof iteration?.max_attempts === "number" ? iteration.max_attempts : undefined,
       artifact_alias: mapArtifactAliasPolicy(iteration?.artifact_alias),
     },
     join_policy: mapActivityJoinPolicy(value.join_policy),
@@ -378,7 +383,7 @@ function mapArtifactBinding(raw: unknown): ArtifactBinding {
   const value = asRecord(raw);
   if (!value) throw new Error("artifact binding 缺失或不是对象");
   return {
-    from_activity: optString(value.from_activity),
+    from_activity: optUndef(value.from_activity),
     from_port: requireStringField(value, "from_port"),
     to_port: requireStringField(value, "to_port"),
     alias: mapArtifactAliasPolicy(value.alias),
@@ -394,7 +399,7 @@ function mapActivityTransition(raw: unknown): ActivityTransition {
     kind: normalizeEnum(value.kind ?? "flow", ACTIVITY_TRANSITION_KINDS, "activity transition kind"),
     condition: mapTransitionCondition(value.condition),
     artifact_bindings: asRecordArray(value.artifact_bindings).map(mapArtifactBinding),
-    max_traversals: typeof value.max_traversals === "number" ? value.max_traversals : null,
+    max_traversals: typeof value.max_traversals === "number" ? value.max_traversals : undefined,
   };
 }
 
@@ -408,9 +413,9 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
   };
 }
 
-function mapExecutorRunRef(raw: unknown): ExecutorRunRef | null {
+function mapExecutorRunRef(raw: unknown): ExecutorRunRef | undefined {
   const value = asRecord(raw);
-  if (!value) return null;
+  if (!value) return undefined;
   const kind = requireStringField(value, "kind");
   if (kind === "agent_session") {
     return { kind: "agent_session", session_id: requireStringField(value, "session_id") };
@@ -434,9 +439,9 @@ function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState |
       attempt: Number(attempt.attempt),
       status: normalizeEnum<ActivityAttemptStatus>(attempt.status, ACTIVITY_ATTEMPT_STATUSES, "activity attempt status"),
       executor_run: mapExecutorRunRef(attempt.executor_run),
-      started_at: optString(attempt.started_at),
-      completed_at: optString(attempt.completed_at),
-      summary: optString(attempt.summary),
+      started_at: optUndef(attempt.started_at),
+      completed_at: optUndef(attempt.completed_at),
+      summary: optUndef(attempt.summary),
     })),
     outputs: asRecordArray(value.outputs).map((artifact) => ({
       activity_key: requireStringField(artifact, "activity_key"),

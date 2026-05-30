@@ -307,7 +307,7 @@ export function createActivityWorkflowDraft(
     description: "",
     target_kinds: [...targetKinds],
     contract: {
-      injection: { guidance: null, context_bindings: [] },
+      injection: { context_bindings: [] },
       hook_rules: [],
       capability_config: { tool_directives: [], mount_directives: [] },
       output_ports: [],

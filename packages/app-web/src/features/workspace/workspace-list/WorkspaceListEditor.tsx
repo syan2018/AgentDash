@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useMemo, useState } from "react";
 import type {
   BackendConfig,
   ContextContainerCapability,
@@ -25,8 +25,6 @@ import {
   DetailSection,
 } from "@agentdash/ui";
 import {
-  listProjectBackendAccess,
-  listWorkspaceInventoryCandidates,
   registerBackendWorkspaceInventory,
 } from "../../../services/backendAccess";
 import { DirectoryBrowserDialog } from "../directory-browser-dialog";
@@ -41,7 +39,6 @@ import {
   identityKindLabels,
   identitySummary,
   localAuthorizedBackends,
-  summarizeAvailability,
   summarizeResolution,
 } from "../model/workspaceRouting";
 
@@ -49,7 +46,6 @@ type CreateMode = "candidate" | "logical" | "local_detect";
 
 const statusConfig: Record<WorkspaceStatus, { label: string; cls: string }> = {
   pending: { label: "待完善", cls: "border-border bg-secondary text-muted-foreground" },
-  preparing: { label: "准备中", cls: "border-info/20 bg-info/10 text-info" },
   ready: { label: "可用", cls: "border-success/20 bg-success/10 text-success" },
   active: { label: "使用中", cls: "border-primary/20 bg-primary/10 text-primary" },
   archived: { label: "已归档", cls: "border-border bg-secondary text-muted-foreground" },
@@ -147,8 +143,10 @@ function updatePayloadField(
   return { ...payload, [key]: value };
 }
 
-function stringField(payload: Record<string, unknown>, key: string): string {
-  const value = payload[key];
+function stringField(payload: Record<string, unknown> | unknown, key: string): string {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+  const record = payload as Record<string, unknown>;
+  const value = record[key];
   return typeof value === "string" ? value.trim() : "";
 }
 
@@ -381,9 +379,9 @@ export function WorkspaceEditorDrawer({
     workspace?.identity_kind ?? "git_repo",
   );
   const [identityPayload, setIdentityPayload] = useState<Record<string, unknown>>(
-    workspace?.identity_payload ?? emptyPayload("git_repo"),
+    (workspace?.identity_payload as Record<string, unknown> | null) ?? emptyPayload("git_repo"),
   );
-  const [payloadText, setPayloadText] = useState(normalizePayloadText(workspace?.identity_payload ?? emptyPayload("git_repo")));
+  const [payloadText, setPayloadText] = useState(normalizePayloadText((workspace?.identity_payload as Record<string, unknown> | null) ?? emptyPayload("git_repo")));
   const resolutionPolicy: WorkspaceResolutionPolicy = "prefer_online";
   const [defaultBindingId, setDefaultBindingId] = useState<string | null>(
     workspace?.default_binding_id ?? workspace?.bindings[0]?.id ?? null,
@@ -619,7 +617,7 @@ export function WorkspaceEditorDrawer({
     project_id: projectId,
     name,
     identity_kind: identityKind,
-    identity_payload: identityPayload,
+    identity_payload: identityPayload as Workspace["identity_payload"],
     resolution_policy: resolutionPolicy,
     default_binding_id: defaultBindingId,
     status: workspace?.status ?? "pending",
@@ -629,7 +627,8 @@ export function WorkspaceEditorDrawer({
       backend_id: binding.backend_id,
       root_ref: binding.root_ref,
       status: binding.status ?? "pending",
-      detected_facts: binding.detected_facts ?? {},
+      detected_facts: (binding.detected_facts ?? {}) as Workspace["identity_payload"],
+      last_verified_at: null,
       priority: binding.priority ?? 0,
       created_at: "",
       updated_at: "",

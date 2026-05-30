@@ -600,7 +600,7 @@ impl VfsService {
             .entries
             .into_iter()
             .find(|entry| entry.path == path)
-            .ok_or_else(|| MountError::NotFound(path))
+            .ok_or(MountError::NotFound(path))
     }
 
     pub async fn apply_patch(
@@ -650,11 +650,11 @@ impl VfsService {
         };
         match crate::vfs::apply_patch_to_target(&target, patch).await {
             Ok(result) => {
-                return Ok(ApplyPatchResult {
+                Ok(ApplyPatchResult {
                     added: result.added,
                     modified: result.modified,
                     deleted: result.deleted,
-                });
+                })
             }
             Err(crate::vfs::ApplyPatchError::Capabilities(cap_error)) => {
                 let request = ApplyPatchRequest {

@@ -1,4 +1,5 @@
 // ─── Workflow ─────────────────────────────────────────
+import type { JsonValue } from "../generated/common-contracts";
 import type {
   ActivityAttemptState,
   ActivityAttemptStatus,
@@ -28,7 +29,6 @@ import type {
   HumanActivityExecutorSpec,
   HumanApprovalExecutorSpec,
   InputPortDefinition,
-  JsonValue,
   LifecycleExecutionEntry,
   LifecycleExecutionEventKind,
   LifecycleRunStatus,

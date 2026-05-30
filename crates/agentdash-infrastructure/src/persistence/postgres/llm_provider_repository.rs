@@ -331,7 +331,7 @@ impl LlmProviderCredentialRepository for PostgresLlmProviderCredentialRepository
         .bind(&credential.api_key_ciphertext)
         .bind(credential.verification_status.as_str())
         .bind(&credential.verification_message)
-        .bind(credential.verified_at.map(|value| value))
+        .bind(credential.verified_at)
         .bind(credential.created_at)
         .bind(credential.updated_at)
         .execute(&self.pool)

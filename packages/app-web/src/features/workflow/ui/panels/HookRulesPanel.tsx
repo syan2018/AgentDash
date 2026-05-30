@@ -157,7 +157,7 @@ function NewRuleEditor({
         description: activePreset.label,
         preset: activePreset.key,
         params: defaultParams,
-        script: null,
+        script: undefined,
         enabled: true,
       });
     } else if (mode === "script") {
@@ -165,7 +165,7 @@ function NewRuleEditor({
         key: `custom_${Date.now()}`,
         trigger,
         description: description.trim(),
-        preset: null,
+        preset: undefined,
         params: null,
         script: script.trim(),
         enabled: true,

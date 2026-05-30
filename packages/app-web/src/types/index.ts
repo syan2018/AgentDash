@@ -1,10 +1,5 @@
 import type { CapabilityDirective } from "./workflow";
 import type {
-  ContextContainerCapability,
-  ContextContainerDefinition,
-  SessionComposition,
-} from "./context";
-import type {
   AgentBinding as CoreAgentBinding,
   AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
@@ -17,6 +12,7 @@ import type {
   StoryResponse,
   TaskResponse,
   WorkspaceBindingResponse,
+  WorkspaceIdentityKind,
   WorkspaceResponse,
 } from "../generated/core-contracts";
 import type {
@@ -33,7 +29,9 @@ import type {
 
 // ─── Generated Core Contracts ─────────────────────────
 
-export type AgentBinding = CoreAgentBinding;
+export type AgentBinding = CoreAgentBinding & {
+  thinking_level: ThinkingLevel | null;
+};
 export type AgentPreset = CoreAgentPreset;
 export type Artifact = CoreArtifact;
 export type ContextSourceRef = CoreContextSourceRef;
@@ -41,17 +39,17 @@ export type Project = ProjectResponse;
 export type ProjectAccessSummary = ProjectAccessSummaryResponse;
 export type ProjectConfig = CoreProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
-export type Story = StoryResponse;
+export type Story = Omit<StoryResponse, "status"> & { status: StoryStatus };
 export type StoryContext = CoreStoryContext;
-export type Task = TaskResponse;
+export type Task = Omit<TaskResponse, "agent_binding"> & { agent_binding: AgentBinding };
 export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {
+  ContextSourceKind,
   ProjectRole,
   ProjectSubjectType,
   ProjectVisibility,
   StoryPriority,
-  StoryStatus,
   StoryType,
   TaskStatus,
   WorkspaceBindingStatus,
@@ -59,6 +57,8 @@ export type {
   WorkspaceResolutionPolicy,
   WorkspaceStatus,
 } from "../generated/core-contracts";
+
+export type StoryStatus = "draft" | "ready" | "running" | "review" | "completed" | "failed" | "cancelled";
 
 // ─── 基础枚举 ─────────────────────────────────────────
 

@@ -81,7 +81,7 @@ pub async fn build_session_construction_for_launch(
     state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
     user_input: &UserPromptInput,
-    task_input: Option<TaskLaunchSource>,
+    _task_input: Option<TaskLaunchSource>,
     companion_input: Option<CompanionLaunchSource>,
     source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
     local_relay_workspace_root: Option<PathBuf>,
@@ -222,7 +222,7 @@ async fn resolve_session_scope(
                 .list_by_run(run.id)
                 .await
             {
-                for link in &links {
+                if let Some(link) = links.first() {
                     return Ok(match link.subject_kind {
                         RunLinkSubjectKind::Task => CapabilityScope::Task,
                         RunLinkSubjectKind::Story => CapabilityScope::Story,
@@ -337,7 +337,7 @@ pub async fn finalize_session_construction_projection(
     let projection = derive_session_capability_projection(SessionCapabilityProjectionInput {
         vfs_service: Some(&state.services.vfs_service),
         active_vfs: Some(&effective_vfs),
-        extra_skill_dirs: &state.services.extra_skill_dirs,
+        extra_skill_dirs: state.services.extra_skill_dirs,
         diagnostics_label: "session_construction_finalize",
     })
     .await;
@@ -518,6 +518,7 @@ fn clear_plain_lifecycle_context(
     Ok(plan)
 }
 
+#[allow(dead_code)]
 async fn build_story_owner_prompt_request(
     state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
@@ -631,14 +632,14 @@ async fn build_project_owner_prompt_request(
             ApplicationError::BadRequest(format!("无效的项目 Agent session label: {binding_label}"))
         })?;
     let project_agent = SessionConstructionPlanner::resolve_project_agent_context(
-        &state.repos,
+        state.repos,
         project.id,
         agent_key,
     )
     .await
     .map_err(ApplicationError::Internal)?
     .ok_or_else(|| ApplicationError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let workspace = SessionConstructionPlanner::resolve_project_workspace(&state.repos, project)
+    let workspace = SessionConstructionPlanner::resolve_project_workspace(state.repos, project)
         .await
         .map_err(ApplicationError::Internal)?;
 
@@ -785,7 +786,7 @@ async fn build_lifecycle_node_prompt_request(
 
     let plan = compose_lifecycle_node_prompt_with_audit(
         plan,
-        &state.repos,
+        state.repos,
         &state.config.platform_config,
         LifecycleNodeSpec {
             run: &run,
@@ -854,7 +855,7 @@ fn build_session_assembler<'a>(
         state.services.vfs_service.as_ref(),
         state.repos.canvas_repo.as_ref(),
         state.services.backend_registry.as_ref(),
-        &state.repos,
+        state.repos,
         &state.config.platform_config,
     )
     .with_audit_bus(state.services.audit_bus.clone())
@@ -919,6 +920,7 @@ async fn resolve_continuation_system_context(
     Ok((lifecycle, None))
 }
 
+#[allow(dead_code)]
 async fn build_task_owner_prompt_request(
     state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
@@ -957,7 +959,7 @@ async fn build_task_owner_prompt_request(
         .ok_or_else(|| {
             ApplicationError::NotFound(format!("Project {} 不存在", story.project_id))
         })?;
-    let workspace = resolve_effective_task_workspace(&state.repos, &task, &story, &project)
+    let workspace = resolve_effective_task_workspace(state.repos, &task, &story, &project)
         .await
         .map_err(ApplicationError::from)?;
     // Task execution session 没有 `lifecycle_activity:*` binding，因此容忍无 active

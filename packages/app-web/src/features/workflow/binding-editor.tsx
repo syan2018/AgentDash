@@ -44,7 +44,7 @@ export function BindingEditor({
         <label className="agentdash-form-label">标题</label>
         <input
           value={binding.title ?? ""}
-          onChange={(e) => onChange({ title: e.target.value || null })}
+          onChange={(e) => onChange({ title: e.target.value || undefined })}
           className="agentdash-form-input text-xs"
           placeholder="可选显示名"
         />

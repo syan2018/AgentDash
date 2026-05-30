@@ -11,9 +11,7 @@ use std::sync::Arc;
 
 use crate::session::SessionRuntimeService;
 use crate::task::view_projector::project_task_views_on_boot;
-use crate::workflow::{
-    FreeformLifecycleService, LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX,
-};
+use crate::workflow::FreeformLifecycleService;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
@@ -120,8 +118,8 @@ async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseRepo
         deps.activity_lifecycle_definition_repo.as_ref(),
         deps.lifecycle_run_repo.as_ref(),
     );
-    let mut reconciled = 0;
-    let mut errors = Vec::new();
+    let reconciled = 0;
+    let errors = Vec::new();
 
     for project in projects {
         // TODO: migrate to LifecycleRunLink query for session discovery

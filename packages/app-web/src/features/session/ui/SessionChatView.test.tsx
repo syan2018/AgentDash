@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BackboneEvent, JsonValue, Turn } from "../../../generated/backbone-protocol";
+import type { JsonValue } from "../../../generated/common-contracts";
+import type { BackboneEvent, Turn } from "../../../generated/backbone-protocol";
 import type { SessionEventEnvelope } from "../model/types";
 import { computeProjectionRefreshKey } from "./SessionChatView";
 

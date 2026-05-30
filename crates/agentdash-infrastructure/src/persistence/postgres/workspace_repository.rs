@@ -64,7 +64,7 @@ impl PostgresWorkspaceRepository {
                 .push_bind(binding.root_ref.trim().to_string())
                 .push_bind(binding_status_to_str(&binding.status))
                 .push_bind(detected_facts)
-                .push_bind(binding.last_verified_at.map(|value| value))
+                .push_bind(binding.last_verified_at)
                 .push_bind(binding.priority)
                 .push_bind(binding.created_at)
                 .push_bind(binding.updated_at);

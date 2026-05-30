@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_spi::hooks::SessionRunContext;
-use agentdash_spi::{CapabilityScope, HookDiagnosticEntry};
+use agentdash_spi::CapabilityScope;
 use uuid::Uuid;
 
 /// 从 LifecycleRunLink 反查 project/story/task 实体，构建 SessionRunContext。

@@ -29,7 +29,9 @@ pub(crate) struct LiveRuntimeContextTransitionInput {
     pub session_id: String,
     pub turn_id: Option<String>,
     pub phase_node: String,
+    #[allow(dead_code)]
     pub run_id: Option<Uuid>,
+    #[allow(dead_code)]
     pub lifecycle_key: Option<String>,
     pub before_state: Option<CapabilityState>,
     pub after_state: CapabilityState,

@@ -6,7 +6,7 @@ use agentdash_domain::{
     task::AgentBinding,
     workspace::Workspace,
 };
-use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
+use agentdash_spi::CapabilityScopeCtx;
 use std::path::PathBuf;
 use uuid::Uuid;
 

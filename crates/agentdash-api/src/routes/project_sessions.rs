@@ -137,7 +137,7 @@ pub async fn list_project_sessions(
         })
         .collect();
 
-    entries.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.last_activity));
     entries.truncate(limit);
     Ok(Json(entries))
 }

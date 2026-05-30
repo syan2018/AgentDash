@@ -83,7 +83,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(routine.enabled)
         .bind(routine.created_at)
         .bind(routine.updated_at)
-        .bind(routine.last_fired_at.map(|t| t))
+        .bind(routine.last_fired_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -149,7 +149,7 @@ impl RoutineRepository for PostgresRoutineRepository {
         .bind(session_strategy_json)
         .bind(routine.enabled)
         .bind(routine.updated_at)
-        .bind(routine.last_fired_at.map(|t| t))
+        .bind(routine.last_fired_at)
         .execute(&self.pool)
         .await
         .map_err(super::db_err)?;
@@ -256,7 +256,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.session_id)
         .bind(status_to_str(execution.status))
         .bind(execution.started_at)
-        .bind(execution.completed_at.map(|t| t))
+        .bind(execution.completed_at)
         .bind(&execution.error)
         .bind(&execution.entity_key)
         .execute(&self.pool)
@@ -293,7 +293,7 @@ impl RoutineExecutionRepository for PostgresRoutineExecutionRepository {
         .bind(&execution.resolved_prompt)
         .bind(&execution.session_id)
         .bind(status_to_str(execution.status))
-        .bind(execution.completed_at.map(|t| t))
+        .bind(execution.completed_at)
         .bind(&execution.error)
         .bind(&execution.entity_key)
         .execute(&self.pool)

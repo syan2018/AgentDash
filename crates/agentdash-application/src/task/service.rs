@@ -23,7 +23,7 @@ use super::gateway::{
     append_task_change as gw_append_task_change, bridge_task_status_event_to_envelope,
     create_task_session as gw_create_task_session, get_session_overview as gw_get_session_overview,
     get_task as gw_get_task, map_connector_error, map_domain_error,
-    resolve_project_scope_for_owner, resolve_task_backend_id,
+    resolve_task_backend_id,
 };
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
@@ -99,7 +99,7 @@ impl StoryStepActivationService {
         executor_config: Option<&AgentConfig>,
         identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let backend_id =
+        let _backend_id =
             resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
 
         let session_id = match phase {

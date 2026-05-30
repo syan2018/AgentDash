@@ -340,7 +340,7 @@ fn row_to_installed_source(
         source_ref,
         source_version,
         source_digest,
-        installed_at: installed_at,
+        installed_at,
     }))
 }
 

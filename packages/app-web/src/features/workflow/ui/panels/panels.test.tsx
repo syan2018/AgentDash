@@ -75,7 +75,7 @@ describe("InjectionPanel", () => {
   it("空 binding 时显示占位文案", () => {
     const markup = renderToStaticMarkup(
       <InjectionPanel
-        injection={{ guidance: null, context_bindings: [] }}
+        injection={{ context_bindings: [] }}
         onGuidanceChange={() => undefined}
         onBindingChange={() => undefined}
         onBindingAdd={() => undefined}
@@ -103,15 +103,15 @@ describe("HookRulesPanel", () => {
       trigger: "after_tool",
       description: "记录工具调用",
       preset: "audit_tool",
-      params: null,
-      script: null,
+      params: undefined,
+      script: undefined,
       enabled: true,
     },
     {
       key: "stop_gate",
       trigger: "before_stop",
       description: "完成前检查",
-      preset: null,
+      preset: undefined,
       params: null,
       script: "#{}",
       enabled: false,

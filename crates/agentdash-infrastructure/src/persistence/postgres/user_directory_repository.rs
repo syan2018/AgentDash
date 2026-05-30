@@ -153,7 +153,7 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
                 row.push_bind(&group.group_id)
                     .push_bind(&group.display_name)
                     .push_bind(group.created_at)
-                    .push_bind(&now);
+                    .push_bind(now);
             });
             builder.push(
                 " ON CONFLICT(group_id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at",
@@ -178,8 +178,8 @@ impl UserDirectoryRepository for PostgresUserDirectoryRepository {
             builder.push_values(groups, |mut row, group| {
                 row.push_bind(user_id)
                     .push_bind(&group.group_id)
-                    .push_bind(&now)
-                    .push_bind(&now);
+                    .push_bind(now)
+                    .push_bind(now);
             });
             builder
                 .build()

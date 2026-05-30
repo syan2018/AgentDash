@@ -1,11 +1,11 @@
 import { authenticatedFetch, type ApiHttpError } from "../api/client";
 import { buildApiPath } from "../api/origin";
 import { asRecord, requireStringField } from "../api/mappers";
+import type { JsonValue } from "../generated/common-contracts";
 import type {
   ExtensionPackageArtifactResponse,
   ExtensionPackageInstallationResponse,
   ImportExtensionPackageResponse,
-  JsonValue,
 } from "../generated/extension-package-contracts";
 
 function recordOrThrow(raw: unknown, label: string): Record<string, unknown> {

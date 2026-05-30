@@ -198,7 +198,7 @@ impl InlineFileRepository for PostgresInlineFileRepository {
         .bind(file.text_content())
         .bind(file.binary_content().map(|bytes| bytes.to_vec()))
         .bind(size_bytes_i64(file)?)
-        .bind(&now)
+        .bind(now)
         .execute(&self.pool)
         .await
         .map_err(|e| DomainError::InvalidConfig(format!("写入 inline_fs_files 失败: {e}")))?;
@@ -232,7 +232,7 @@ impl InlineFileRepository for PostgresInlineFileRepository {
                     .push_bind(file.text_content())
                     .push_bind(file.binary_content().map(|bytes| bytes.to_vec()))
                     .push_bind(*size_bytes)
-                    .push_bind(&now);
+                    .push_bind(now);
             },
         );
         builder.push(

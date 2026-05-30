@@ -13,7 +13,6 @@ use super::ActivityLifecycleRunState;
 use super::scheduler::{
     ActivityExecutorLauncher, ActivityExecutorStartError, ActivityExecutorStartResult,
 };
-use super::session_association::{LIFECYCLE_ACTIVITY_LABEL_PREFIX, build_lifecycle_activity_label};
 use crate::companion::skill_projection::project_companion_system_skill_to_activation;
 use crate::platform_config::SharedPlatformConfig;
 use crate::repository_set::RepositorySet;

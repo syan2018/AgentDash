@@ -20,6 +20,7 @@ export function WorkspaceDataProvider({
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWorkspaceData(): WorkspaceData {
   const ctx = useContext(WorkspaceDataContext);
   if (!ctx) {

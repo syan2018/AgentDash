@@ -17,6 +17,7 @@ import {
   useExecutorConfig,
   useExecutorDiscoveredOptions,
 } from "../../executor-selector";
+import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import {
   useFileReference,
   buildPromptBlocks,
@@ -42,14 +43,9 @@ import {
 } from "./SessionChatViewModel";
 import type { SessionChatViewProps } from "./SessionChatViewTypes";
 
-export {
-  collectNewSystemEvents,
-  computeProjectionRefreshKey,
-} from "./SessionChatViewModel";
-export type {
-  PromptTemplate,
-  SessionChatViewProps,
-} from "./SessionChatViewTypes";
+// eslint-disable-next-line react-refresh/only-export-components
+export { collectNewSystemEvents, computeProjectionRefreshKey } from "./SessionChatViewModel";
+export type { PromptTemplate, SessionChatViewProps } from "./SessionChatViewTypes";
 
 // ─── 工具函数 ──────────────────────────────────────────
 

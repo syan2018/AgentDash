@@ -23,8 +23,6 @@ import type {
   ActivityDefinition,
   ActivityExecutorSpec,
   ActivityJoinPolicy,
-  AgentSessionPolicy,
-  ArtifactAliasPolicy,
   CapabilityDirective,
   HookRulePreset,
   InputPortDefinition,
@@ -126,7 +124,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const handleBindingAdd = useCallback(() => {
     const next: WorkflowContextBinding[] = [
       ...workflowDraft.contract.injection.context_bindings,
-      { locator: "", reason: "", required: true, title: null },
+      { locator: "", reason: "", required: true, title: undefined },
     ];
     updateInjection({ context_bindings: next });
   }, [workflowDraft, updateInjection]);

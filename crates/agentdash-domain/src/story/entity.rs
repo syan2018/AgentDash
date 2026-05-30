@@ -89,12 +89,10 @@ impl Story {
         Some(result)
     }
 
-    /// 强制设置 task.status — 为保留 MCP / API 层"用户或 agent 主动标记 task 状态"
-    /// 的命令路径而暴露。调用路径会写 `ChangeKind::TaskStatusChanged`。
+    /// 强制设置 task.status。
     ///
-    /// M2 强约束：runtime 真相源是 Activity attempt 状态 + [`Story::apply_task_projection`]；
-    /// 此方法仅用于**用户意图**（例如人工标记"已验收"、MCP agent 工具主动推进）。
-    /// 运行时投影路径**禁止**使用此方法。
+    /// 此入口仅用于 projector 已经从 LifecycleRun / Activity attempt 得出目标状态后的
+    /// 聚合写回；用户/API/MCP 命令不得绕过 lifecycle 投影直接调用。
     ///
     /// 返回 `Some(true)` 表示状态发生变化，`Some(false)` 表示无变化，`None` 表示 task 不存在。
     pub fn force_set_task_status(

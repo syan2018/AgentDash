@@ -151,7 +151,7 @@ impl TaskMcpServer {
         )]))
     }
 
-    #[tool(description = "更新当前 Task 的执行状态")]
+    #[tool(description = "记录当前 Task 的状态变更意图")]
     async fn update_task_status(
         &self,
         Parameters(params): Parameters<UpdateTaskStatusParams>,
@@ -166,52 +166,31 @@ impl TaskMcpServer {
             task_id = %self.task_id,
             new_status = %params.status,
             reason = ?params.reason,
-            "Task 状态更新"
+            "Task 状态变更意图"
         );
 
-        // M2-c：MCP "用户 / agent 主动标记状态" 属于业务命令路径，走
-        // `Story::force_set_task_status`（命令级写入）。命令路径与 runtime projector
-        // 并行共同产出 `TaskStatusChanged` 投影索引（D-M2-4 方案 2）；
-        // [UNRESOLVED] 命令路径完全走 workflow step transition 的方案留待后续任务。
-        let (mut story, task_before) = self.load_story_with_task().await?;
-        let previous_status = task_before.status().clone();
-        let applied = story.force_set_task_status(self.task_id, new_status.clone());
+        let (story, task_before) = self.load_story_with_task().await?;
         self.services
-            .story_repo
-            .update(&story)
+            .state_change_repo
+            .append_change(
+                story.project_id,
+                self.task_id,
+                agentdash_domain::story::ChangeKind::TaskUpdated,
+                serde_json::json!({
+                    "reason": params.reason.as_deref().unwrap_or("mcp_update_task_status"),
+                    "task_id": self.task_id,
+                    "story_id": story.id,
+                    "source": "mcp_command",
+                    "current_status": task_before.status(),
+                    "requested_status": new_status,
+                }),
+                None,
+            )
             .await
             .map_err(McpError::from)?;
 
-        if matches!(applied, Some(true)) {
-            if let Err(err) = self
-                .services
-                .state_change_repo
-                .append_change(
-                    story.project_id,
-                    self.task_id,
-                    agentdash_domain::story::ChangeKind::TaskStatusChanged,
-                    serde_json::json!({
-                        "reason": params.reason.as_deref().unwrap_or("mcp_update_task_status"),
-                        "task_id": self.task_id,
-                        "story_id": story.id,
-                        "source": "mcp_command",
-                        "from": previous_status,
-                        "to": new_status,
-                    }),
-                    None,
-                )
-                .await
-            {
-                tracing::warn!(
-                    task_id = %self.task_id,
-                    error = %err,
-                    "MCP update_task_status：state_change 追加失败（story 已更新）"
-                );
-            }
-        }
-
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Task {} 状态已更新为 {}",
+            "Task {} 状态变更意图已记录：{}",
             self.task_id, params.status,
         ))]))
     }

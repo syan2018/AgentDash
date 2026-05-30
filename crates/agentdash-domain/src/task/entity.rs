@@ -108,12 +108,7 @@ impl Task {
         true
     }
 
-    /// 直接设置 status —— **仅命令型路径使用**（MCP/API 主动标记）。
-    ///
-    /// 运行时投影路径必须调用 [`Task::apply_projection`] / [`crate::story::Story::apply_task_projection`]。
-    /// 本方法保留的原因是 Rust 可见性无法只向"项目内部 application/mcp/api"开放；
-    /// 它与 [`crate::story::Story::force_set_task_status`] 一起构成受控命令入口。
-    pub fn set_status(&mut self, status: TaskStatus) {
+    fn set_status(&mut self, status: TaskStatus) {
         self.status = status;
         self.updated_at = Utc::now();
     }

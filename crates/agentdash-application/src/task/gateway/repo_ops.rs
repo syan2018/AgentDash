@@ -1,7 +1,6 @@
 //! Task 聚合的核心 Repository 操作。
 //!
-//! 职责：面向 Story aggregate（Task child entity）的查询与命令型写入，
-//! 包括状态 force set 与 StateChange 追加。
+//! 职责：面向 Story aggregate（Task child entity）的查询与命令记录。
 //!
 //! 不在本文件范围：
 //! - 错误映射 helpers → [`super::errors`]
@@ -61,7 +60,7 @@ pub async fn update_task_status(
     reason: &str,
     context: Value,
 ) -> Result<bool, DomainError> {
-    let Some(mut story) = repos.story_repo.find_by_task_id(task_id).await? else {
+    let Some(story) = repos.story_repo.find_by_task_id(task_id).await? else {
         return Ok(false);
     };
 
@@ -69,27 +68,17 @@ pub async fn update_task_status(
         return Ok(false);
     };
 
-    if previous_task.status() == &next_status {
-        return Ok(false);
-    }
-
-    let previous_status = previous_task.status().clone();
-    // M2：命令型状态写入走 `force_set_task_status`（非 projector 路径）；
-    // runtime 真相由 LifecycleRunService → projector 产出。
-    story.force_set_task_status(task_id, next_status.clone());
-    repos.story_repo.update(&story).await?;
-
     append_task_change(
         repos,
         previous_task.id,
         backend_id,
-        ChangeKind::TaskStatusChanged,
+        ChangeKind::TaskUpdated,
         json!({
             "reason": reason,
             "task_id": previous_task.id,
             "story_id": previous_task.story_id,
-            "from": previous_status,
-            "to": next_status,
+            "current_status": previous_task.status(),
+            "requested_status": next_status,
             "context": context,
         }),
     )

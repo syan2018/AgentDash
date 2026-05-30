@@ -7,7 +7,7 @@ use uuid::Uuid;
 use agentdash_domain::{
     common::AgentConfig,
     story::ChangeKind,
-    task::{Task, TaskStatus},
+    task::Task,
 };
 
 use crate::repository_set::RepositorySet;
@@ -269,89 +269,36 @@ impl StoryStepActivationService {
     }
 
     async fn cancel_task_inner(&self, task_id: Uuid) -> Result<Task, TaskExecutionError> {
-        let mut task = gw_get_task(&self.repos, task_id).await?;
+        let task = gw_get_task(&self.repos, task_id).await?;
         let session_id = self
             .resolve_execution_session_id(task.id)
             .await?
             .ok_or_else(|| {
                 TaskExecutionError::UnprocessableEntity("Task 尚未启动，无法取消执行".into())
             })?;
-        let session_was_running = self.is_task_session_running(&session_id).await?;
-
         self.dispatcher.cancel_session(&session_id).await?;
 
-        if session_was_running {
-            let backend_id =
-                resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task)
-                    .await?;
-            let previous_status = task.status().clone();
-            task.set_status(TaskStatus::Failed);
-            self.persist_task(&task).await?;
-
-            gw_append_task_change(
-                &self.repos,
-                task.id,
-                &backend_id,
-                ChangeKind::TaskStatusChanged,
-                json!({
-                    "reason": "task_cancel_requested",
-                    "task_id": task.id, "story_id": task.story_id,
-                    "session_id": session_id,
-                    "from": previous_status, "to": task.status().clone(),
-                }),
-            )
-            .await
-            .map_err(map_domain_error)?;
-        }
+        let backend_id =
+            resolve_task_backend_id(&self.repos, self.backend_availability.as_ref(), &task).await?;
+        gw_append_task_change(
+            &self.repos,
+            task.id,
+            &backend_id,
+            ChangeKind::TaskUpdated,
+            json!({
+                "reason": "task_cancel_requested",
+                "task_id": task.id,
+                "story_id": task.story_id,
+                "session_id": session_id,
+            }),
+        )
+        .await
+        .map_err(map_domain_error)?;
 
         Ok(task)
     }
 
     // ─── private helpers ──────────────────────────────────────
-
-    /// 将 Task mutation 通过 Story aggregate 写回持久层。
-    ///
-    /// M1-b：Task 已合入 Story aggregate（`stories.tasks` JSONB 列），
-    /// 所有 task 写入必须经 `Story::update_task` 维护聚合不变量。
-    async fn persist_task(&self, task: &Task) -> Result<(), TaskExecutionError> {
-        let mut story = self
-            .repos
-            .story_repo
-            .get_by_id(task.story_id)
-            .await
-            .map_err(map_domain_error)?
-            .ok_or_else(|| {
-                TaskExecutionError::NotFound(format!("Task 所属 Story {} 不存在", task.story_id))
-            })?;
-
-        // M2：拆成"spec 字段 update_task（走 TaskSpecMut）" + "status 走 force_set_task_status"
-        // 两条路径，保证投影字段不会被 closure 直接覆盖。
-        let updated_spec = story.update_task(task.id, |view| {
-            *view.title = task.title.clone();
-            *view.description = task.description.clone();
-            *view.workspace_id = task.workspace_id;
-            *view.lifecycle_step_key = task.lifecycle_step_key.clone();
-            *view.agent_binding = task.agent_binding.clone();
-        });
-        if updated_spec.is_none() {
-            return Err(TaskExecutionError::NotFound(format!(
-                "Task {} 不属于 Story {}",
-                task.id, task.story_id
-            )));
-        }
-        // 同步命令型 status（本路径的状态写入仍保留）
-        story.force_set_task_status(task.id, task.status().clone());
-        // 同步 artifacts（命令型覆写：直接替换）
-        story.mutate_task_artifacts(task.id, |artifacts| {
-            *artifacts = task.artifacts().to_vec();
-        });
-
-        self.repos
-            .story_repo
-            .update(&story)
-            .await
-            .map_err(map_domain_error)
-    }
 
     async fn resolve_execution_session_id(
         &self,

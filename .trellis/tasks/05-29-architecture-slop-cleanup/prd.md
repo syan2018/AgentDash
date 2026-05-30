@@ -96,3 +96,9 @@
 ## Notes
 - parent 保持 planning，待全部 child archive 后再做集成 review 并归档（遵循"父任务不要早归档"）。
 - 高风险 commit（699b11cc/4ff640fb）建议人工 review 后再决定 child 归档。
+
+## 最终归档结论（2026-05-30）
+
+本 parent 的直接 children 均已归档；wave2 parent `05-29-slop-cleanup-wave2` 已完成父级集成审计并归档。第一波遗留的三项 reopen 已在 wave2 中完成对抗式复核并归档：session assembly 保留不抽跨路径 resolver 的新证据，capability trait merge 保留正交职责结论并统一重复 delta，frontend server-state/god component 拆分已完成本轮硬验收。
+
+`drop-step-lifecycle` 已按 2026-05-29 修订定性为冻结的 feature migration，而不是可自主删除的 cleanup；该项不作为本轮 cleanup 的未完成代码目标。当前分支的 cleanup 目标由 wave2 checklist 收口，归档证据位于 `.trellis/tasks/archive/2026-05/05-29-slop-cleanup-wave2/progress-checklist.md`。

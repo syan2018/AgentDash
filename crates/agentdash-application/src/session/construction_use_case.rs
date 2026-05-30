@@ -36,7 +36,7 @@ use crate::session::{
 use crate::skill_asset::SkillAssetService;
 use crate::task::gateway::resolve_effective_task_workspace;
 use crate::workflow::resolve_active_workflow_projection_for_session;
-use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, select_active_run};
+use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, SessionRunContextResolver, select_active_run};
 use agentdash_domain::routine::ROUTINE_MEMORY_SKILL_NAME;
 use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::CapabilityScope;
@@ -206,33 +206,16 @@ async fn resolve_session_scope(
     session_id: &str,
     _meta: &SessionMeta,
 ) -> Result<CapabilityScope, ApplicationError> {
-    use agentdash_domain::workflow::RunLinkSubjectKind;
-
-    let runs = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_session(session_id)
-        .await
-        .map_err(ApplicationError::from)?;
-    if !runs.is_empty() {
-        if let Some(run) = select_active_run(runs) {
-            if let Ok(links) = state
-                .repos
-                .lifecycle_run_link_repo
-                .list_by_run(run.id)
-                .await
-            {
-                if let Some(link) = links.first() {
-                    return Ok(match link.subject_kind {
-                        RunLinkSubjectKind::Task => CapabilityScope::Task,
-                        RunLinkSubjectKind::Story => CapabilityScope::Story,
-                        _ => CapabilityScope::Project,
-                    });
-                }
-            }
-        }
-    }
-    Ok(CapabilityScope::Project)
+    let resolver = SessionRunContextResolver::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.lifecycle_run_link_repo.as_ref(),
+        state.repos.story_repo.as_ref(),
+    );
+    Ok(resolver
+        .resolve_for_session(session_id)
+        .await?
+        .map(|context| context.scope)
+        .unwrap_or(CapabilityScope::Project))
 }
 
 pub async fn finalize_session_construction_projection(

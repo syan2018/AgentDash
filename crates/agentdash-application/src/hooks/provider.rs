@@ -4,8 +4,8 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, ActivityLifecycleDefinitionRepository, LifecycleRunRepository,
-    WorkflowDefinitionRepository, build_effective_contract,
+    ActivityAttemptStatus, ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository,
+    LifecycleRunRepository, WorkflowDefinitionRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -49,6 +49,7 @@ impl AppExecutionHookProvider {
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         script_evaluator_factory: F,
     ) -> Self
@@ -59,7 +60,11 @@ impl AppExecutionHookProvider {
         let evaluator = script_evaluator_factory(&preset_scripts);
         Self {
             inline_file_repo,
-            owner_resolver: SessionOwnerResolver::new(project_repo, story_repo),
+            owner_resolver: SessionOwnerResolver::new(
+                project_repo,
+                story_repo,
+                lifecycle_run_link_repo,
+            ),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 workflow_definition_repo,
                 activity_lifecycle_definition_repo,
@@ -113,9 +118,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             "hook_builtin:supervised_tool_approval".to_string(),
         ]);
 
-        // TODO: migrate to LifecycleRunLink query for full run_context resolution
-        // For now, run_context is populated by the session bootstrap path when available.
-
         if let Some(workflow) = self
             .workflow_builder
             .resolve_active_workflow(&query.session_id)
@@ -131,10 +133,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 ),
             });
 
-            // Derive run_context from workflow run project_id
             snapshot.run_context = Some(
                 self.owner_resolver
-                    .build_default_run_context(workflow.run.project_id),
+                    .resolve_run_context(&workflow.run)
+                    .await
+                    .map_err(|err| HookError::Runtime(err.to_string()))?,
             );
             snapshot
                 .tags

@@ -13,6 +13,7 @@ pub mod projection;
 pub(crate) mod run;
 pub mod run_link_service;
 pub mod scheduler;
+mod session_run_context_resolver;
 mod session_association;
 pub mod step_activation;
 pub mod tools;
@@ -58,6 +59,7 @@ pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,
 };
+pub use session_run_context_resolver::{SessionRunContextResolver, build_session_run_context};
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

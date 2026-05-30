@@ -66,7 +66,18 @@ impl CommandHandler {
         if follow_up.is_none() {
             let prepare_result = tokio::task::spawn_blocking({
                 let workspace_root = workspace_root.clone();
-                let workspace_identity_kind = payload.workspace_identity_kind.clone();
+                let workspace_identity_kind =
+                    payload.workspace_identity_kind.clone().map(|kind| match kind {
+                        WorkspaceIdentityKindRelay::GitRepo => {
+                            agentdash_domain::workspace::WorkspaceIdentityKind::GitRepo
+                        }
+                        WorkspaceIdentityKindRelay::P4Workspace => {
+                            agentdash_domain::workspace::WorkspaceIdentityKind::P4Workspace
+                        }
+                        WorkspaceIdentityKindRelay::LocalDir => {
+                            agentdash_domain::workspace::WorkspaceIdentityKind::LocalDir
+                        }
+                    });
                 let workspace_identity_payload = payload.workspace_identity_payload.clone();
                 let workspace_contract_config = self.workspace_contract_config.clone();
                 move || {

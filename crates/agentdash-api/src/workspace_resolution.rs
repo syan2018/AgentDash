@@ -174,7 +174,17 @@ impl RelayPromptTransport for BackendRegistry {
                 follow_up_session_id: payload.follow_up_session_id,
                 prompt_blocks: payload.prompt_blocks,
                 mount_root_ref: payload.mount_root_ref,
-                workspace_identity_kind: payload.workspace_identity_kind,
+                workspace_identity_kind: payload.workspace_identity_kind.map(|kind| match kind {
+                    agentdash_domain::workspace::WorkspaceIdentityKind::GitRepo => {
+                        agentdash_relay::WorkspaceIdentityKindRelay::GitRepo
+                    }
+                    agentdash_domain::workspace::WorkspaceIdentityKind::P4Workspace => {
+                        agentdash_relay::WorkspaceIdentityKindRelay::P4Workspace
+                    }
+                    agentdash_domain::workspace::WorkspaceIdentityKind::LocalDir => {
+                        agentdash_relay::WorkspaceIdentityKindRelay::LocalDir
+                    }
+                }),
                 workspace_identity_payload: payload.workspace_identity_payload,
                 working_dir: payload.working_dir,
                 env: payload.env,

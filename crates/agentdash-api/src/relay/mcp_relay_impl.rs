@@ -2,7 +2,9 @@
 
 use async_trait::async_trait;
 
-use agentdash_relay::RelayMessage;
+use agentdash_relay::{
+    McpEnvVarRelay, McpHttpHeaderRelay, McpTransportConfigRelay, RelayMessage,
+};
 use agentdash_spi::ConnectorError;
 use agentdash_spi::platform::mcp_relay::{
     McpRelayProvider, RelayMcpCallContext, RelayMcpCallResult, RelayMcpToolInfo, RelayProbeResult,
@@ -141,7 +143,7 @@ impl McpRelayProvider for BackendRegistry {
         let cmd = RelayMessage::CommandMcpProbeTransport {
             id: RelayMessage::new_id("mcp-probe"),
             payload: agentdash_relay::CommandMcpProbeTransportPayload {
-                transport: transport.clone(),
+                transport: mcp_transport_to_relay(transport),
             },
         };
 
@@ -179,6 +181,50 @@ impl McpRelayProvider for BackendRegistry {
             _ => Err(ConnectorError::Runtime(
                 "MCP probe relay 返回意外响应类型".to_string(),
             )),
+        }
+    }
+}
+
+fn mcp_transport_to_relay(
+    transport: &agentdash_domain::mcp_preset::McpTransportConfig,
+) -> McpTransportConfigRelay {
+    match transport {
+        agentdash_domain::mcp_preset::McpTransportConfig::Http { url, headers } => {
+            McpTransportConfigRelay::Http {
+                url: url.clone(),
+                headers: headers
+                    .iter()
+                    .map(|header| McpHttpHeaderRelay {
+                        name: header.name.clone(),
+                        value: header.value.clone(),
+                    })
+                    .collect(),
+            }
+        }
+        agentdash_domain::mcp_preset::McpTransportConfig::Sse { url, headers } => {
+            McpTransportConfigRelay::Sse {
+                url: url.clone(),
+                headers: headers
+                    .iter()
+                    .map(|header| McpHttpHeaderRelay {
+                        name: header.name.clone(),
+                        value: header.value.clone(),
+                    })
+                    .collect(),
+            }
+        }
+        agentdash_domain::mcp_preset::McpTransportConfig::Stdio { command, args, env } => {
+            McpTransportConfigRelay::Stdio {
+                command: command.clone(),
+                args: args.clone(),
+                env: env
+                    .iter()
+                    .map(|var| McpEnvVarRelay {
+                        name: var.name.clone(),
+                        value: var.value.clone(),
+                    })
+                    .collect(),
+            }
         }
     }
 }

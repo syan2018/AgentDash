@@ -2,10 +2,44 @@
 
 use super::McpToolInfoRelay;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpHttpHeaderRelay {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpEnvVarRelay {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransportConfigRelay {
+    Http {
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<McpHttpHeaderRelay>,
+    },
+    Sse {
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<McpHttpHeaderRelay>,
+    },
+    Stdio {
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        env: Vec<McpEnvVarRelay>,
+    },
+}
+
 /// 一次性 probe 命令——临时连接任意 transport 并探测工具列表（不入连接池）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandMcpProbeTransportPayload {
-    pub transport: agentdash_domain::mcp_preset::McpTransportConfig,
+    pub transport: McpTransportConfigRelay,
 }
 
 /// 一次性 probe 响应

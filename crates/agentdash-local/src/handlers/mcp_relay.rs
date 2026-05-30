@@ -15,7 +15,6 @@ impl CommandHandler {
         id: String,
         payload: CommandMcpProbeTransportPayload,
     ) -> RelayMessage {
-        use agentdash_domain::mcp_preset::McpTransportConfig;
         use std::time::{Duration, Instant};
 
         let start = Instant::now();
@@ -23,7 +22,7 @@ impl CommandHandler {
 
         let probe_fut = async {
             match &transport {
-                McpTransportConfig::Stdio { command, args, env } => {
+                McpTransportConfigRelay::Stdio { command, args, env } => {
                     let mut cmd = tokio::process::Command::new(command);
                     cmd.args(args);
                     for var in env {
@@ -41,7 +40,8 @@ impl CommandHandler {
                     let _ = client.cancel().await;
                     Ok::<Vec<rmcp::model::Tool>, String>(tools)
                 }
-                McpTransportConfig::Http { url, .. } | McpTransportConfig::Sse { url, .. } => {
+                McpTransportConfigRelay::Http { url, .. }
+                | McpTransportConfigRelay::Sse { url, .. } => {
                     let worker = crate::mcp_connect::mcp_http_worker(url);
                     let client = rmcp::ServiceExt::serve((), worker)
                         .await

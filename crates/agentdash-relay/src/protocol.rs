@@ -667,7 +667,7 @@ mod tests {
         let msg = RelayMessage::CommandMcpProbeTransport {
             id: "probe-1".to_string(),
             payload: CommandMcpProbeTransportPayload {
-                transport: agentdash_domain::mcp_preset::McpTransportConfig::Stdio {
+                transport: McpTransportConfigRelay::Stdio {
                     command: "npx".to_string(),
                     args: vec!["@mcp/server".to_string()],
                     env: vec![],

@@ -1,7 +1,14 @@
 ﻿use std::collections::HashMap;
 
-use agentdash_domain::workspace::WorkspaceIdentityKind;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIdentityKindRelay {
+    GitRepo,
+    P4Workspace,
+    LocalDir,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandPromptPayload {
@@ -12,7 +19,7 @@ pub struct CommandPromptPayload {
     pub prompt_blocks: Option<serde_json::Value>,
     pub mount_root_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_identity_kind: Option<WorkspaceIdentityKind>,
+    pub workspace_identity_kind: Option<WorkspaceIdentityKindRelay>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_identity_payload: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

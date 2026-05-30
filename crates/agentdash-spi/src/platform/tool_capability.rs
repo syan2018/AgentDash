@@ -569,7 +569,7 @@ fn capability_to_tool_clusters_by_key(key: &str) -> Vec<ToolCluster> {
 
 // ── well-known key → 平台 MCP scope 标识 ──
 
-/// 平台 MCP scope 标识（与 `agentdash-mcp::scope::ToolScope` 对应，
+/// 平台 MCP scope 标识（与 SPI `ToolScope` 对应，
 /// 但 SPI 层不直接依赖 MCP crate，用字符串表示）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

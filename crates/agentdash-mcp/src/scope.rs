@@ -1,21 +1,6 @@
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// MCP 工具层级
-///
-/// 决定连接方可见的工具集，每个层级暴露不同粒度的操作。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ToolScope {
-    /// 中继层：面向用户，支持跨 Project 的全局看板操作
-    Relay,
-    /// Story 层：面向编排 Agent（如 PlanAgent），支持 Story 上下文管理与 Task 拆解
-    Story,
-    /// Task 层：面向执行 Agent，支持 Task 状态更新与产物上报
-    Task,
-    /// Workflow 层：面向拥有 workflow_management 能力的 Agent，支持 Workflow/Lifecycle CRUD
-    Workflow,
-}
+pub use agentdash_spi::ToolScope;
 
 /// MCP 会话上下文
 ///

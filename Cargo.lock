@@ -196,7 +196,6 @@ dependencies = [
  "agentdash-domain",
  "agentdash-executor",
  "agentdash-infrastructure",
- "agentdash-mcp",
  "agentdash-relay",
  "agentdash-spi",
  "async-trait",

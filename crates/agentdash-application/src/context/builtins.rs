@@ -414,12 +414,12 @@ pub fn contribute_instruction(
 }
 
 /// MCP 能力注入片段 —— 同时把 `RuntimeMcpServer` 声明挂到 `Contribution.mcp_servers`。
-pub fn contribute_mcp(config: &agentdash_mcp::injection::McpInjectionConfig) -> Contribution {
+pub fn contribute_mcp(config: &agentdash_spi::McpInjectionConfig) -> Contribution {
     let label: &'static str = match config.scope {
-        agentdash_mcp::scope::ToolScope::Relay => "mcp_relay_tools",
-        agentdash_mcp::scope::ToolScope::Story => "mcp_story_tools",
-        agentdash_mcp::scope::ToolScope::Task => "mcp_task_tools",
-        agentdash_mcp::scope::ToolScope::Workflow => "mcp_workflow_tools",
+        agentdash_spi::ToolScope::Relay => "mcp_relay_tools",
+        agentdash_spi::ToolScope::Story => "mcp_story_tools",
+        agentdash_spi::ToolScope::Task => "mcp_task_tools",
+        agentdash_spi::ToolScope::Workflow => "mcp_workflow_tools",
     };
 
     let session_server = config.to_session_mcp_server();

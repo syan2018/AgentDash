@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod function_runner;
+pub mod mcp_injection;
 pub mod mcp_probe;
 pub mod mcp_relay;
 pub mod mount;

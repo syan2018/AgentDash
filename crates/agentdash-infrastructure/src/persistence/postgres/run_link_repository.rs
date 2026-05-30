@@ -131,13 +131,13 @@ fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
 impl TryFrom<RunLinkRow> for LifecycleRunLink {
     type Error = DomainError;
     fn try_from(row: RunLinkRow) -> Result<Self, Self::Error> {
-        let subject_kind = RunLinkSubjectKind::from_str(&row.subject_kind).ok_or_else(|| {
+        let subject_kind = RunLinkSubjectKind::parse(&row.subject_kind).ok_or_else(|| {
             DomainError::InvalidConfig(format!(
                 "lifecycle_run_links.subject_kind: unknown value `{}`",
                 row.subject_kind
             ))
         })?;
-        let role = RunLinkRole::from_str(&row.role).ok_or_else(|| {
+        let role = RunLinkRole::parse(&row.role).ok_or_else(|| {
             DomainError::InvalidConfig(format!(
                 "lifecycle_run_links.role: unknown value `{}`",
                 row.role

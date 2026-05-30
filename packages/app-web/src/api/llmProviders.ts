@@ -4,7 +4,6 @@ import type {
   CreateLlmProviderRequest,
   DeleteLlmProviderUserCredentialResponse,
   EffectiveLlmProviderDto,
-  JsonValue,
   LlmProviderAdminDto,
   ProbeLlmProviderModelDto,
   ProbeLlmProviderModelsRequest,
@@ -12,6 +11,7 @@ import type {
   UpdateLlmProviderRequest,
   UpsertLlmProviderUserCredentialRequest,
 } from '../generated/llm-provider-contracts';
+import type { JsonValue } from '../generated/common-contracts';
 
 export type LlmProvider = LlmProviderAdminDto;
 export type EffectiveLlmProvider = EffectiveLlmProviderDto;

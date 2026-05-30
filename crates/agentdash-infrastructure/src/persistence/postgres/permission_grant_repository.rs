@@ -209,13 +209,13 @@ impl TryFrom<GrantRow> for PermissionGrant {
         let run_id = parse_uuid(&row.run_id, "run_id")?;
         let requested_paths: Vec<ToolCapabilityPath> = serde_json::from_value(row.requested_paths)
             .map_err(|e| DomainError::InvalidConfig(format!("{TABLE}.requested_paths: {e}")))?;
-        let grant_scope = GrantScope::from_str(&row.grant_scope).ok_or_else(|| {
+        let grant_scope = GrantScope::parse(&row.grant_scope).ok_or_else(|| {
             DomainError::InvalidConfig(format!(
                 "{TABLE}.grant_scope: unknown value `{}`",
                 row.grant_scope
             ))
         })?;
-        let status = GrantStatus::from_str(&row.status).ok_or_else(|| {
+        let status = GrantStatus::parse(&row.status).ok_or_else(|| {
             DomainError::InvalidConfig(format!("{TABLE}.status: unknown value `{}`", row.status))
         })?;
         let scope_escalation_intent: Option<ScopeEscalationIntent> = row

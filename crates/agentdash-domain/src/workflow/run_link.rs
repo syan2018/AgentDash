@@ -68,7 +68,7 @@ impl RunLinkSubjectKind {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "story" => Some(Self::Story),
             "project" => Some(Self::Project),
@@ -107,7 +107,7 @@ impl RunLinkRole {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "source" => Some(Self::Source),
             "subject" => Some(Self::Subject),
@@ -177,7 +177,7 @@ mod tests {
             RunLinkSubjectKind::LifecycleRun,
             RunLinkSubjectKind::External,
         ] {
-            assert_eq!(RunLinkSubjectKind::from_str(kind.as_str()), Some(kind));
+            assert_eq!(RunLinkSubjectKind::parse(kind.as_str()), Some(kind));
         }
     }
 
@@ -190,7 +190,7 @@ mod tests {
             RunLinkRole::ControlScope,
             RunLinkRole::SpawnedBy,
         ] {
-            assert_eq!(RunLinkRole::from_str(role.as_str()), Some(role));
+            assert_eq!(RunLinkRole::parse(role.as_str()), Some(role));
         }
     }
 

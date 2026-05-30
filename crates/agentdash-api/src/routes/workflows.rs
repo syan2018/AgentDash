@@ -986,14 +986,14 @@ pub async fn attach_run_link(
     )
     .await?;
 
-    let subject_kind = RunLinkSubjectKind::from_str(&req.subject_kind).ok_or_else(|| {
+    let subject_kind = RunLinkSubjectKind::parse(&req.subject_kind).ok_or_else(|| {
         ApiError::BadRequest(format!("Invalid subject_kind: {}", req.subject_kind))
     })?;
     let subject_id: Uuid = req
         .subject_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("Invalid subject_id: {}", req.subject_id)))?;
-    let role = RunLinkRole::from_str(&req.role)
+    let role = RunLinkRole::parse(&req.role)
         .ok_or_else(|| ApiError::BadRequest(format!("Invalid role: {}", req.role)))?;
 
     let mut link = LifecycleRunLink::new(run_uuid, subject_kind, subject_id, role);

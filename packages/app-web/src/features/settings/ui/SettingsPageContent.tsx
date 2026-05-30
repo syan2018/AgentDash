@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useCoordinatorStore } from "../../../stores/coordinatorStore";
@@ -18,6 +18,52 @@ import { AgentSection, BackendSection, ExecutorSection } from "./SettingsSystemS
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+type SettingsScopeKind = SettingsScopeRequest["scope"];
+type SettingsPanel = SettingsScopeKind | "local-runtime";
+
+interface SettingsNavigationState {
+  return_to?: string;
+}
+
+const SETTINGS_SCOPE_LABELS: Record<SettingsScopeKind, string> = {
+  system: "系统",
+  user: "用户设置",
+  project: "当前项目",
+};
+
+const SETTINGS_PANEL_LABELS: Record<SettingsPanel, string> = {
+  "local-runtime": "本机运行时",
+  ...SETTINGS_SCOPE_LABELS,
+};
+
+function Toast({ message, onDone }: { message: string; onDone: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 2400);
+    return () => clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 animate-fade-in rounded-[8px] border border-border bg-background px-4 py-2.5 text-sm text-foreground shadow-lg">
+      {message}
+    </div>
+  );
+}
+
+function DesktopLocalRuntimePanel() {
+  const client = useMemo(() => getDesktopLocalRuntimeClient(), []);
+  const browseDirectory = useMemo(() => getDesktopBrowseDirectory(), []);
+  if (!client) return null;
+
+  return (
+    <LocalRuntimeView
+      client={client}
+      onBrowseDirectory={browseDirectory}
+      defaultAccessToken={getStoredToken() ?? ""}
+      defaultServerUrl={API_ORIGIN || "http://127.0.0.1:3001"}
+    />
+  );
+}
 
 /** 从 store 中读取某个 key 的显示值 */
 function ScopeTabs({

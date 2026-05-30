@@ -23,7 +23,7 @@ impl GrantScope {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "turn" => Some(Self::Turn),
             "session" => Some(Self::Session),
@@ -65,7 +65,7 @@ impl GrantStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "created" => Some(Self::Created),
             "pending_policy" => Some(Self::PendingPolicy),
@@ -132,7 +132,7 @@ mod tests {
             GrantScope::Session,
             GrantScope::WorkflowStep,
         ] {
-            assert_eq!(GrantScope::from_str(scope.as_str()), Some(scope));
+            assert_eq!(GrantScope::parse(scope.as_str()), Some(scope));
         }
     }
 
@@ -151,7 +151,7 @@ mod tests {
             GrantStatus::ScopeEscalated,
         ];
         for status in all {
-            assert_eq!(GrantStatus::from_str(status.as_str()), Some(status));
+            assert_eq!(GrantStatus::parse(status.as_str()), Some(status));
         }
     }
 

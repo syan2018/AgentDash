@@ -802,7 +802,9 @@ export function ProjectSettingsPage() {
       setError("当前权限不允许修改调度配置");
       return;
     }
-    const scheduling: Record<string, unknown> = {};
+    const scheduling = {
+      stall_timeout_ms: null as number | null,
+    };
     if (stallTimeoutMs.trim()) {
       const n = Number(stallTimeoutMs.trim());
       if (!Number.isFinite(n) || n < 0) { setError("超时值必须是非负整数"); return; }

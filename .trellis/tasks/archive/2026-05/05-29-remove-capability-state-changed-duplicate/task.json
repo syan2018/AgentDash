@@ -1,6 +1,6 @@
 {
-  "id": "05-29-remove-capability-state-changed-duplicate",
-  "name": "05-29-remove-capability-state-changed-duplicate",
+  "id": "remove-capability-state-changed-duplicate",
+  "name": "remove-capability-state-changed-duplicate",
   "title": "清理 capability_state_changed 冗余事件",
   "description": "",
   "status": "in_progress",

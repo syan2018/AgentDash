@@ -1,10 +1,10 @@
 import type { StoryStatus, TaskStatus, StoryPriority, StoryType } from "../../types";
 
 const storyStatusConfig: Record<StoryStatus, { label: string; className: string; progress: number }> = {
-  draft: { label: "draft", className: "text-muted-foreground", progress: 0 },
-  ready: { label: "ready", className: "text-info", progress: 0.2 },
-  running: { label: "running", className: "text-primary", progress: 0.55 },
-  review: { label: "review", className: "text-warning", progress: 0.75 },
+  created: { label: "created", className: "text-muted-foreground", progress: 0 },
+  context_ready: { label: "context_ready", className: "text-info", progress: 0.2 },
+  executing: { label: "executing", className: "text-primary", progress: 0.55 },
+  decomposed: { label: "decomposed", className: "text-warning", progress: 0.75 },
   completed: { label: "completed", className: "text-success", progress: 1 },
   failed: { label: "failed", className: "text-destructive", progress: 0 },
   cancelled: { label: "cancelled", className: "text-muted-foreground", progress: 0 },

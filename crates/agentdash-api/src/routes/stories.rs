@@ -11,7 +11,6 @@ use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedIdResponse;
 use agentdash_domain::story::ChangeKind;
-use agentdash_domain::task::TaskStatus;
 
 use crate::app_state::AppState;
 use crate::auth::{
@@ -391,8 +390,6 @@ pub async fn update_task(
     )
     .await?;
 
-    let old_status = task.status().clone();
-
     let title = match req.title {
         Some(title) => {
             let trimmed = title.trim();
@@ -449,14 +446,10 @@ pub async fn update_task(
             description: req.description,
             workspace_id,
             lifecycle_step_key,
-            status: req.status,
             agent_binding,
         },
     );
 
-    // M2：API 编辑 task 走 Story aggregate 的命令级入口：
-    //  - spec 字段经 `update_task`（TaskSpecMut 视图）
-    //  - 命令型 status 变更经 `force_set_task_status`
     let mut story_aggregate = state
         .repos
         .story_repo
@@ -476,33 +469,19 @@ pub async fn update_task(
             task.id, task.story_id
         )));
     }
-    story_aggregate.force_set_task_status(task.id, task.status().clone());
     state.repos.story_repo.update(&story_aggregate).await?;
 
-    let change_kind = classify_task_change_kind(&old_status, task.status());
     let payload = serde_json::to_value(&task)
-        .map_err(|err| ApiError::Internal(format!("序列化 Task 状态变更失败: {err}")))?;
+        .map_err(|err| ApiError::Internal(format!("序列化 Task 更新失败: {err}")))?;
     append_required_story_change(
         state.repos.state_change_repo.as_ref(),
         task.project_id,
         task.id,
-        change_kind,
+        ChangeKind::TaskUpdated,
         payload,
         None,
     )
     .await?;
-
-    // 业务终态 → session cancel：Task 进入终态时取消关联 session
-    if &old_status != task.status() {
-        let coordinator = state.services.terminal_cancel_coordinator.clone();
-        let task_id = task.id;
-        let new_status = task.status().clone();
-        tokio::spawn(async move {
-            coordinator
-                .on_task_status_changed(task_id, &new_status)
-                .await;
-        });
-    }
 
     Ok(Json(TaskResponse::from(task)))
 }
@@ -531,14 +510,6 @@ pub async fn delete_task(
         .await?;
 
     Ok(Json(DeletedIdResponse { deleted: id }))
-}
-
-fn classify_task_change_kind(old_status: &TaskStatus, new_status: &TaskStatus) -> ChangeKind {
-    if new_status != old_status {
-        ChangeKind::TaskStatusChanged
-    } else {
-        ChangeKind::TaskUpdated
-    }
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {
@@ -625,18 +596,6 @@ mod tests {
                 .push((project_id, entity_id, kind));
             Ok(())
         }
-    }
-
-    #[test]
-    fn classify_task_change_kind_returns_status_changed_when_status_differs() {
-        let kind = classify_task_change_kind(&TaskStatus::Pending, &TaskStatus::Running);
-        assert!(matches!(kind, ChangeKind::TaskStatusChanged));
-    }
-
-    #[test]
-    fn classify_task_change_kind_returns_updated_when_status_is_same() {
-        let kind = classify_task_change_kind(&TaskStatus::Running, &TaskStatus::Running);
-        assert!(matches!(kind, ChangeKind::TaskUpdated));
     }
 
     #[tokio::test]

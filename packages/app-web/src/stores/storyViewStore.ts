@@ -52,7 +52,7 @@ export const useStoryViewStore = create<StoryViewState>((set) => ({
   viewMode: 'board',
   selectedIds: new Set<string>(),
   isCreateOpen: false,
-  createInitialStatus: 'draft',
+  createInitialStatus: 'created',
   isQuickJumpOpen: false,
   quickAddColumn: null,
   focusedStoryId: null,
@@ -81,7 +81,7 @@ export const useStoryViewStore = create<StoryViewState>((set) => ({
     set((state) => ({
       isCreateOpen: true,
       createInitialStatus:
-        status ?? (state.statusFilter === 'all' ? 'draft' : (state.statusFilter as StoryStatus)),
+        status ?? (state.statusFilter === 'all' ? 'created' : (state.statusFilter as StoryStatus)),
     })),
   closeCreate: () => set({ isCreateOpen: false }),
   setQuickJumpOpen: (v) => set({ isQuickJumpOpen: v }),

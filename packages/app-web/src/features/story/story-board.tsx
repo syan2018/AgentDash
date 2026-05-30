@@ -24,10 +24,10 @@ import { useStoryViewStore } from "../../stores/storyViewStore";
 import { StoryQuickAdd } from "./story-quick-add";
 
 const storyStatusOrder: StoryStatus[] = [
-  "draft",
-  "ready",
-  "running",
-  "review",
+  "created",
+  "context_ready",
+  "executing",
+  "decomposed",
   "completed",
   "failed",
   "cancelled",

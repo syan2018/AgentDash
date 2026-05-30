@@ -175,17 +175,9 @@ pub struct WorkflowContract {
     pub hook_rules: Vec<WorkflowHookRuleSpec>,
     #[serde(default, skip_serializing_if = "CapabilityConfig::is_empty")]
     pub capability_config: CapabilityConfig,
-    #[serde(
-        default,
-        alias = "recommended_output_ports",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_ports: Vec<OutputPortDefinition>,
-    #[serde(
-        default,
-        alias = "recommended_input_ports",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
 }
 

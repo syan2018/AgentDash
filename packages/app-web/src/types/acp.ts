@@ -1,5 +1,3 @@
-import type { BackendType } from "./index";
-
 // ─── Artifact / ACP 展示类型 ──────────────────────────
 
 export type ContentBlock =
@@ -61,71 +59,8 @@ export type SessionUpdate =
   | { type: "plan"; entries: PlanEntry[] }
   | { type: "confirmation_request"; request: ConfirmationRequest };
 
-// ─── Backend ──────────────────────────────────────────
-
-export interface BackendConfig {
-  id: string;
-  name: string;
-  endpoint: string;
-  auth_token: string | null;
-  enabled: boolean;
-  backend_type: BackendType;
-  owner_user_id?: string | null;
-  profile_id?: string | null;
-  device_id?: string | null;
-  machine_id?: string | null;
-  machine_label?: string | null;
-  legacy_machine_ids?: string[];
-  visibility?: "private" | "shared" | "system";
-  share_scope_kind?: "user" | "project" | "system";
-  share_scope_id?: string | null;
-  capability_slot?: string;
-  device?: Record<string, unknown>;
-  last_claimed_at?: string | null;
-  /** WebSocket 中继在线状态（由 API 附加） */
-  online?: boolean;
-  /** 持久化 runtime health（cloud authority + registry online 合并） */
-  runtime_health?: RuntimeHealth | null;
-  /** 在线后端上报的已确认 workspace roots */
-  workspace_roots?: string[];
-  /** 在线后端的执行器能力 */
-  capabilities?: {
-    executors: Array<{
-      id: string;
-      name: string;
-      variants: string[];
-      available: boolean;
-    }>;
-    supports_cancel: boolean;
-    supports_discover_options: boolean;
-  };
-}
-
-export type RuntimeHealthStatus =
-  | "online"
-  | "offline"
-  | "starting"
-  | "degraded"
-  | "stopping"
-  | "error";
-
-export interface RuntimeHealth {
-  backend_id: string;
-  profile_id: string | null;
-  name: string;
-  status: RuntimeHealthStatus;
-  online: boolean;
-  version: string | null;
-  capabilities: Record<string, unknown>;
-  workspace_roots: string[];
-  device: Record<string, unknown>;
-  connected_at: string | null;
-  last_seen_at: string | null;
-  disconnected_at: string | null;
-  disconnect_reason: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type RuntimeHealthStatus = import("../generated/core-contracts").RuntimeHealthStatus;
+export type RuntimeHealth = import("../generated/core-contracts").BackendRuntimeHealthResponse;
 
 export type BackendExecutionSelectionMode = "explicit" | "auto_idle" | "workspace_binding";
 export type BackendExecutionLeaseState = "claimed" | "running" | "released" | "lost" | "failed";

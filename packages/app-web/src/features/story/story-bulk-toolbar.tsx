@@ -13,10 +13,10 @@ import {
 import type { StoryPriority, StoryStatus } from "../../types";
 
 const STATUS_OPTIONS: PropertyPickerOption<StoryStatus>[] = [
-  { value: "draft", label: "draft", preview: <StoryStatusBadge status="draft" /> },
-  { value: "ready", label: "ready", preview: <StoryStatusBadge status="ready" /> },
-  { value: "running", label: "running", preview: <StoryStatusBadge status="running" /> },
-  { value: "review", label: "review", preview: <StoryStatusBadge status="review" /> },
+  { value: "created", label: "created", preview: <StoryStatusBadge status="created" /> },
+  { value: "context_ready", label: "context_ready", preview: <StoryStatusBadge status="context_ready" /> },
+  { value: "executing", label: "executing", preview: <StoryStatusBadge status="executing" /> },
+  { value: "decomposed", label: "decomposed", preview: <StoryStatusBadge status="decomposed" /> },
   { value: "completed", label: "completed", preview: <StoryStatusBadge status="completed" /> },
   { value: "failed", label: "failed", preview: <StoryStatusBadge status="failed" /> },
   { value: "cancelled", label: "cancelled", preview: <StoryStatusBadge status="cancelled" /> },
@@ -81,7 +81,7 @@ export function StoryBulkToolbar() {
           </span>
           <PropertyPicker<StoryStatus>
             triggerLabel="批量改状态"
-            value="draft"
+            value="created"
             options={STATUS_OPTIONS}
             onChange={(next) => void handleStatus(next)}
             trigger={

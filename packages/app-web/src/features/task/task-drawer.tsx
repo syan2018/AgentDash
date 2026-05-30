@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { AgentBinding, Artifact, ProjectConfig, Task, TaskStatus, Workspace } from "../../types";
+import type { AgentBinding, Artifact, ProjectConfig, Task, Workspace } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useStoryStore } from "../../stores/storyStore";
 import {
@@ -70,7 +70,6 @@ export function TaskDrawer({
   const { updateTask, deleteTask, error } = useStoryStore();
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
-  const [editStatus, setEditStatus] = useState<TaskStatus>(task?.status ?? "pending");
   const [editWorkspaceId, setEditWorkspaceId] = useState(task?.workspace_id ?? "");
   const [editAgentBinding, setEditAgentBinding] = useState<AgentBinding>(
     task?.agent_binding ?? createDefaultAgentBinding(projectConfig),
@@ -97,7 +96,6 @@ export function TaskDrawer({
   const applyTaskSnapshot = (nextTask: Task) => {
     setEditTitle(nextTask.title);
     setEditDescription(nextTask.description ?? "");
-    setEditStatus(nextTask.status);
     setEditWorkspaceId(nextTask.workspace_id ?? "");
     setEditAgentBinding(nextTask.agent_binding ?? createDefaultAgentBinding(projectConfig));
     setFormMessage(null);
@@ -117,7 +115,6 @@ export function TaskDrawer({
     const updated = await updateTask(task.id, {
       title: trimmedTitle,
       description: editDescription,
-      status: editStatus,
       workspace_id: editWorkspaceId || null,
       agent_binding: normalizeAgentBinding(editAgentBinding),
     });
@@ -180,18 +177,10 @@ export function TaskDrawer({
                 placeholder="Task 描述"
                 className="agentdash-form-textarea"
               />
-              <select
-                value={editStatus}
-                onChange={(event) => setEditStatus(event.target.value as TaskStatus)}
-                className="agentdash-form-select"
-              >
-                <option value="pending">待执行</option>
-                <option value="assigned">已分配</option>
-                <option value="running">执行中</option>
-                <option value="awaiting_verification">待验收</option>
-                <option value="completed">已完成</option>
-                <option value="failed">失败</option>
-              </select>
+              <div className="flex items-center justify-between rounded-[8px] border border-border bg-secondary/30 px-3 py-2">
+                <span className="text-xs text-muted-foreground">运行状态</span>
+                <TaskStatusBadge status={task.status} />
+              </div>
 
               <select
                 value={editWorkspaceId}

@@ -2,8 +2,7 @@
  * Story / Task / StorySession service 层。
  *
  * 收口 story 相关的 api.client 调用与后端 JSON ↔ 前端类型的 mapper。
- * storyStore 只消费此层导出的函数，不直连 api。状态枚举的双向归一化
- * （后端 created/decomposed/... ↔ 前端 draft/review/...）也集中在此处。
+ * storyStore 只消费此层导出的函数，不直连 api。
  */
 
 import { api } from "../api/client";
@@ -40,33 +39,6 @@ const readNullableStringField = (raw: Record<string, unknown>, field: string): s
 
 // ─── 状态/枚举归一化 ─────────────────────────────────────
 
-const normalizeStoryStatus = (value: string): Story["status"] => {
-  switch (value) {
-    case "created":
-    case "draft":
-      return "draft";
-    case "context_ready":
-      return "ready";
-    case "decomposed":
-      return "review"; // decomposed 映射到 review（待验收）
-    case "ready":
-      return "ready";
-    case "executing":
-      return "running";
-    case "awaiting_verification":
-      return "review";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "cancelled":
-    case "canceled":
-      return "cancelled";
-    default:
-      throw new Error(`未知 Story 状态: ${value}`);
-  }
-};
-
 const normalizeTaskStatus = (value: string): Task["status"] => {
   switch (value) {
     case "pending":
@@ -83,46 +55,6 @@ const normalizeTaskStatus = (value: string): Task["status"] => {
       return "failed";
     default:
       throw new Error(`未知 Task 状态: ${value}`);
-  }
-};
-
-const toBackendStoryStatus = (status: Story["status"]): string => {
-  switch (status) {
-    case "draft":
-      return "created";
-    case "ready":
-      return "context_ready";
-    case "running":
-      return "executing";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    case "review":
-      return "decomposed";
-    case "cancelled":
-      return "cancelled";
-    default:
-      throw new Error(`未知 Story 状态: ${String(status)}`);
-  }
-};
-
-const toBackendTaskStatus = (status: Task["status"]): string => {
-  switch (status) {
-    case "pending":
-      return "pending";
-    case "assigned":
-      return "assigned";
-    case "running":
-      return "running";
-    case "awaiting_verification":
-      return "awaiting_verification";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    default:
-      throw new Error(`未知 Task 状态: ${String(status)}`);
   }
 };
 
@@ -206,7 +138,7 @@ const mapStory = (raw: Record<string, unknown>): Story => {
     default_workspace_id: raw.default_workspace_id != null ? String(raw.default_workspace_id) : null,
     title: requireStringField(raw, "title"),
     description: raw.description ? String(raw.description) : "",
-    status: normalizeStoryStatus(requireStringField(raw, "status")),
+    status: requireStringField(raw, "status") as Story["status"],
     priority: normalizeStoryPriority(requireStringField(raw, "priority")),
     story_type: normalizeStoryType(requireStringField(raw, "story_type")),
     tags: Array.isArray(raw.tags) ? raw.tags.filter((t): t is string => typeof t === "string") : [],
@@ -374,7 +306,7 @@ export async function createStory(
     project_id: projectId,
     title,
     description,
-    status: options?.status ? toBackendStoryStatus(options.status) : undefined,
+    status: options?.status,
     priority: options?.priority,
     story_type: options?.story_type,
     tags: options?.tags,
@@ -398,11 +330,7 @@ export interface UpdateStoryPayload {
 }
 
 export async function updateStory(storyId: string, payload: UpdateStoryPayload): Promise<Story> {
-  const requestPayload: Record<string, unknown> = { ...payload };
-  if (payload.status) {
-    requestPayload.status = toBackendStoryStatus(payload.status);
-  }
-  const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, requestPayload);
+  const raw = await api.put<Record<string, unknown>>(`/stories/${storyId}`, payload);
   return mapStory(raw);
 }
 
@@ -414,7 +342,7 @@ export interface BatchStoryPatch {
 
 export function buildBatchStoryRequest(patch: BatchStoryPatch): Record<string, unknown> {
   const requestPayload: Record<string, unknown> = {};
-  if (patch.status) requestPayload.status = toBackendStoryStatus(patch.status);
+  if (patch.status) requestPayload.status = patch.status;
   if (patch.priority) requestPayload.priority = patch.priority;
   if (patch.story_type) requestPayload.story_type = patch.story_type;
   return requestPayload;
@@ -449,7 +377,6 @@ export interface UpdateTaskPayload {
   description?: string;
   workspace_id?: string | null;
   lifecycle_step_key?: string | null;
-  status?: Task["status"];
   agent_binding?: AgentBinding;
 }
 
@@ -457,7 +384,6 @@ export async function updateTask(taskId: string, payload: UpdateTaskPayload): Pr
   const requestPayload = {
     ...payload,
     workspace_id: payload.workspace_id,
-    status: payload.status ? toBackendTaskStatus(payload.status) : undefined,
   };
   const raw = await api.put<Record<string, unknown>>(`/tasks/${taskId}`, requestPayload);
   return mapTask(raw);

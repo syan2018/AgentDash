@@ -4,7 +4,6 @@ use agentdash_domain::context_container::ContextContainerDefinition;
 use agentdash_domain::context_source::ContextSourceRef;
 use agentdash_domain::session_composition::SessionComposition;
 use agentdash_domain::story::{StoryPriority, StoryStatus, StoryType};
-use agentdash_domain::task::TaskStatus;
 
 #[derive(Deserialize)]
 pub struct ListStoriesQuery {
@@ -66,7 +65,6 @@ pub struct CreateTaskRequest {
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
-    pub status: Option<TaskStatus>,
     pub workspace_id: Option<String>,
     pub lifecycle_step_key: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,

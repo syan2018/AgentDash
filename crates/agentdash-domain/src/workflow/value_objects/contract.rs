@@ -17,18 +17,10 @@ pub struct WorkflowContract {
     /// Workflow 产出声明 — 同时作为完成条件：port gate 门禁根据 `gate_strategy` 检查交付。
     ///
     /// Lifecycle step 绑定 workflow 时自动继承这些 ports 作为默认值，step 编辑器可 override。
-    #[serde(
-        default,
-        alias = "recommended_output_ports",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_ports: Vec<OutputPortDefinition>,
     /// Workflow 输入声明 — 同时作为运行约束：lifecycle 内由 edge wire 满足，standalone 由调用方写入。
-    #[serde(
-        default,
-        alias = "recommended_input_ports",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_ports: Vec<InputPortDefinition>,
 }
 

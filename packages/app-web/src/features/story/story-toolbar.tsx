@@ -9,10 +9,10 @@ import {
 import { Tooltip } from "../../components/ui/tooltip";
 
 const statusOptions: { value: StoryStatus; label: string }[] = [
-  { value: "draft", label: "draft" },
-  { value: "ready", label: "ready" },
-  { value: "running", label: "running" },
-  { value: "review", label: "review" },
+  { value: "created", label: "created" },
+  { value: "context_ready", label: "context_ready" },
+  { value: "executing", label: "executing" },
+  { value: "decomposed", label: "decomposed" },
   { value: "completed", label: "completed" },
   { value: "failed", label: "failed" },
   { value: "cancelled", label: "cancelled" },

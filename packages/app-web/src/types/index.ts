@@ -3,12 +3,13 @@ import type {
   AgentBinding as CoreAgentBinding,
   AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
+  BackendResponse,
+  BackendWithStatusResponse,
   ContextSourceRef as CoreContextSourceRef,
   ProjectAccessSummaryResponse,
   ProjectConfig as CoreProjectConfig,
   ProjectResponse,
   ProjectSubjectGrantResponse,
-  StoryContext as CoreStoryContext,
   StoryResponse,
   TaskResponse,
   WorkspaceBindingResponse,
@@ -39,17 +40,19 @@ export type Project = ProjectResponse;
 export type ProjectAccessSummary = ProjectAccessSummaryResponse;
 export type ProjectConfig = CoreProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
-export type Story = Omit<StoryResponse, "status"> & { status: StoryStatus };
-export type StoryContext = CoreStoryContext;
+export type Story = StoryResponse;
+export type StoryContext = StoryResponse["context"];
 export type Task = Omit<TaskResponse, "agent_binding"> & { agent_binding: AgentBinding };
 export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {
   ContextSourceKind,
+  BackendType,
   ProjectRole,
   ProjectSubjectType,
   ProjectVisibility,
   StoryPriority,
+  StoryStatus,
   StoryType,
   TaskStatus,
   WorkspaceBindingStatus,
@@ -58,11 +61,10 @@ export type {
   WorkspaceStatus,
 } from "../generated/core-contracts";
 
-export type StoryStatus = "draft" | "ready" | "running" | "review" | "completed" | "failed" | "cancelled";
-
 // ─── 基础枚举 ─────────────────────────────────────────
 
-export type BackendType = "local" | "remote";
+export type BackendConfig = BackendWithStatusResponse;
+export type BackendSafeConfig = BackendResponse;
 export type ProjectBackendAccessStatus = "active" | "paused" | "revoked";
 export type ProjectBackendAccessMode = "use_inventory";
 export type BackendWorkspaceInventoryStatus = "available" | "stale" | "offline" | "error";

@@ -6,6 +6,7 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 
 use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::core::BackendResponse;
 use agentdash_domain::DomainError;
 use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLease, BackendRepository, BackendShareScopeKind, BackendType,
@@ -19,7 +20,8 @@ use crate::dto::{
     BackendActiveSessionResponse, BackendRuntimeExecutorResponse, BackendRuntimeSummaryResponse,
     BackendWithStatus, BrowseDirectoryEntryResponse, BrowseDirectoryRequest,
     BrowseDirectoryResponse, CreateBackendRequest, EnsureLocalRuntimeRequest,
-    EnsureLocalRuntimeResponse, RuntimeHealthResponse,
+    EnsureLocalRuntimeResponse, RuntimeHealthResponse, backend_capabilities_response,
+    backend_response,
 };
 use crate::relay::registry::OnlineBackendInfo;
 use crate::rpc::ApiError;
@@ -110,8 +112,9 @@ pub async fn list_backends(
             online: online_info.is_some(),
             runtime_health,
             workspace_roots: online_info.map(|o| o.workspace_roots.clone()),
-            capabilities: online_info.map(|o| o.capabilities.clone()),
-            config: b,
+            capabilities: online_info
+                .map(|o| backend_capabilities_response(o.capabilities.clone())),
+            backend: backend_response(b),
         });
     }
 
@@ -130,8 +133,8 @@ pub async fn list_backends(
             online: true,
             runtime_health,
             workspace_roots: Some(o.workspace_roots.clone()),
-            capabilities: Some(o.capabilities.clone()),
-            config: BackendConfig {
+            capabilities: Some(backend_capabilities_response(o.capabilities.clone())),
+            backend: backend_response(BackendConfig {
                 id: o.backend_id.clone(),
                 name: o.name.clone(),
                 endpoint: String::new(),
@@ -150,7 +153,7 @@ pub async fn list_backends(
                 capability_slot: "default".to_string(),
                 device: serde_json::json!({}),
                 last_claimed_at: None,
-            },
+            }),
         });
     }
 
@@ -313,7 +316,7 @@ fn runtime_health_response(health: RuntimeHealth, online: bool) -> RuntimeHealth
         backend_id: health.backend_id,
         profile_id: health.profile_id,
         name: health.name,
-        status: health.status,
+        status: health.status.into(),
         online,
         version: health.version,
         capabilities: health.capabilities,
@@ -399,19 +402,19 @@ pub async fn get_backend(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<BackendConfig>, ApiError> {
+) -> Result<Json<BackendResponse>, ApiError> {
     let backend_authz = backend_authz(state.as_ref());
     let backend = backend_authz
         .require_backend(&current_user, &id, BackendPermission::View)
         .await?;
-    Ok(Json(backend))
+    Ok(Json(backend_response(backend)))
 }
 
 pub async fn add_backend(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Json(req): Json<CreateBackendRequest>,
-) -> Result<Json<BackendConfig>, ApiError> {
+) -> Result<Json<BackendResponse>, ApiError> {
     let config = add_backend_record(
         &state.repos,
         &current_user,
@@ -424,7 +427,7 @@ pub async fn add_backend(
         },
     )
     .await?;
-    Ok(Json(config))
+    Ok(Json(backend_response(config)))
 }
 
 pub async fn ensure_local_runtime(

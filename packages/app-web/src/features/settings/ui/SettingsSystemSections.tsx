@@ -388,7 +388,8 @@ export function BackendSection({
 }
 
 function machineLabelFromDevice(device: BackendConfig["device"]) {
-  const hostname = device?.hostname;
+  if (device == null || typeof device !== "object" || Array.isArray(device)) return null;
+  const hostname = device.hostname;
   return typeof hostname === "string" && hostname.trim() ? hostname.trim() : null;
 }
 
@@ -423,5 +424,4 @@ function formatRuntimeTimestamp(value: string | null | undefined) {
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
 }
-
 

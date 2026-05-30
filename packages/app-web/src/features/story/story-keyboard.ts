@@ -70,7 +70,7 @@ export function useStoryHotkeys({ scope }: UseStoryHotkeysOptions) {
           const allStories = Object.values(useStoryStore.getState().storiesByProjectId).flat();
           const story = allStories.find((s) => s.id === focusedId);
           if (story) {
-            const target = story.status === "completed" ? "ready" : "completed";
+            const target = story.status === "completed" ? "context_ready" : "completed";
             void useStoryStore.getState().updateStory(focusedId, { status: target });
           }
           return;

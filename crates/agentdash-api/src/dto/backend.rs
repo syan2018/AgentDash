@@ -1,9 +1,14 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_contracts::core::{
+    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
+    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
+    BackendWithStatusResponse,
+};
 use agentdash_domain::backend::{
     BackendConfig, BackendExecutionLeaseState, BackendExecutionSelectionMode,
-    BackendShareScopeKind, BackendVisibility, RuntimeHealthStatus,
+    BackendShareScopeKind, BackendVisibility,
 };
 
 #[derive(Deserialize)]
@@ -59,37 +64,8 @@ pub struct EnsureLocalRuntimeResponse {
     pub capability_slot: String,
 }
 
-#[derive(Serialize)]
-pub struct BackendWithStatus {
-    #[serde(flatten)]
-    pub config: BackendConfig,
-    pub online: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_health: Option<RuntimeHealthResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_roots: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capabilities: Option<agentdash_relay::CapabilitiesPayload>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct RuntimeHealthResponse {
-    pub backend_id: String,
-    pub profile_id: Option<String>,
-    pub name: String,
-    pub status: RuntimeHealthStatus,
-    pub online: bool,
-    pub version: Option<String>,
-    pub capabilities: serde_json::Value,
-    pub workspace_roots: Vec<String>,
-    pub device: serde_json::Value,
-    pub connected_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub disconnected_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub disconnect_reason: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
+pub type BackendWithStatus = BackendWithStatusResponse;
+pub type RuntimeHealthResponse = BackendRuntimeHealthResponse;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BackendRuntimeSummaryResponse {
@@ -145,4 +121,35 @@ pub struct BrowseDirectoryEntryResponse {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+}
+
+pub fn backend_response(config: BackendConfig) -> BackendResponse {
+    BackendResponse::from(config)
+}
+
+pub fn backend_capabilities_response(
+    value: agentdash_relay::CapabilitiesPayload,
+) -> BackendCapabilitiesResponse {
+    BackendCapabilitiesResponse {
+        executors: value
+            .executors
+            .into_iter()
+            .map(|executor| BackendExecutorCapabilityResponse {
+                id: executor.id,
+                name: executor.name,
+                variants: executor.variants,
+                available: executor.available,
+            })
+            .collect(),
+        supports_cancel: value.supports_cancel,
+        supports_discover_options: value.supports_discover_options,
+        mcp_servers: value
+            .mcp_servers
+            .into_iter()
+            .map(|server| BackendMcpServerCapabilityResponse {
+                name: server.name,
+                transport: server.transport,
+            })
+            .collect(),
+    }
 }

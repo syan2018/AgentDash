@@ -234,8 +234,8 @@ function mapWorkflowContract(raw: unknown): WorkflowContract {
     injection: mapWorkflowInjectionSpec(value.injection),
     hook_rules: asRecordArray(value.hook_rules).map(mapWorkflowHookRuleSpec),
     capability_config: mapWorkflowCapabilityConfig(value.capability_config),
-    output_ports: asRecordArray(value.output_ports ?? value.recommended_output_ports).map(mapOutputPortDefinition),
-    input_ports: asRecordArray(value.input_ports ?? value.recommended_input_ports).map(mapInputPortDefinition),
+    output_ports: asRecordArray(value.output_ports).map(mapOutputPortDefinition),
+    input_ports: asRecordArray(value.input_ports).map(mapInputPortDefinition),
   };
 }
 

@@ -2,12 +2,15 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use agentdash_contracts::core::{
     AgentBinding, AgentPreset, Artifact, ArtifactType, ContextContainerDefinition,
+    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
+    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
+    BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
     ContextContainerFile, ContextContainerProvider, ContextDelivery, ContextSlot,
     ContextSourceKind, ContextSourceRef, DeletedFlagResponse, DeletedIdResponse,
     DeletedProjectSubjectGrantResponse, PendingExecutionResponse, ProjectAccessSummaryResponse,
     ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
     ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
-    RevokedIdResponse, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
+    RevokedIdResponse, RuntimeHealthStatus, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
     StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus,
     UnboundBindingResponse, UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
     WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
@@ -143,6 +146,16 @@ fn main() {
             export_all::<RevokedIdResponse>(dir);
             export_all::<UnboundBindingResponse>(dir);
             export_all::<PendingExecutionResponse>(dir);
+            export_all::<BackendType>(dir);
+            export_all::<BackendVisibility>(dir);
+            export_all::<BackendShareScopeKind>(dir);
+            export_all::<RuntimeHealthStatus>(dir);
+            export_all::<BackendRuntimeHealthResponse>(dir);
+            export_all::<BackendExecutorCapabilityResponse>(dir);
+            export_all::<BackendMcpServerCapabilityResponse>(dir);
+            export_all::<BackendCapabilitiesResponse>(dir);
+            export_all::<BackendResponse>(dir);
+            export_all::<BackendWithStatusResponse>(dir);
             export_all::<SessionRequiredContextBlock>(dir);
             export_all::<SessionComposition>(dir);
             export_all::<StoryContext>(dir);

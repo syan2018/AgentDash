@@ -12,7 +12,7 @@ use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
-use agentdash_domain::task::{AgentBinding, Task, TaskStatus};
+use agentdash_domain::task::{AgentBinding, Task};
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
@@ -38,7 +38,6 @@ pub struct TaskMutationInput {
     pub description: Option<String>,
     pub workspace_id: Option<Option<Uuid>>,
     pub lifecycle_step_key: Option<Option<String>>,
-    pub status: Option<TaskStatus>,
     pub agent_binding: Option<AgentBinding>,
 }
 
@@ -219,11 +218,6 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
     if let Some(lifecycle_step_key) = input.lifecycle_step_key {
         task.lifecycle_step_key = lifecycle_step_key.and_then(normalize_string);
     }
-    if let Some(status) = input.status {
-        // M2：apply_task_mutation 保留 status 字段以兼容命令型编辑（管理 API）。
-        // 运行时投影通过 `Story::apply_task_projection` 走，不经此路径。
-        task.set_status(status);
-    }
     if let Some(agent_binding) = input.agent_binding {
         task.agent_binding = agent_binding;
     }
@@ -356,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_task_mutation_overwrites_workspace_status_and_binding() {
+    fn apply_task_mutation_overwrites_workspace_and_binding() {
         let story_id = Uuid::new_v4();
         let mut task = Task::new(
             Uuid::new_v4(),
@@ -374,14 +368,12 @@ mod tests {
             &mut task,
             TaskMutationInput {
                 workspace_id: Some(Some(workspace_id)),
-                status: Some(TaskStatus::Running),
                 agent_binding: Some(binding.clone()),
                 ..TaskMutationInput::default()
             },
         );
 
         assert_eq!(task.workspace_id, Some(workspace_id));
-        assert_eq!(*task.status(), TaskStatus::Running);
         assert_eq!(task.agent_binding.agent_type, binding.agent_type);
     }
 }

@@ -16,7 +16,7 @@ function makeStory(overrides: Partial<Story>): Story {
     default_workspace_id: null,
     title: "Sample",
     description: "",
-    status: "draft",
+    status: "created",
     priority: "p2",
     story_type: "feature",
     tags: [],
@@ -40,7 +40,7 @@ const params = {
 describe("selectFilteredStories", () => {
   it("filters by scope:active excluding completed/cancelled", () => {
     const stories = [
-      makeStory({ title: "a", status: "running" }),
+      makeStory({ title: "a", status: "executing" }),
       makeStory({ title: "b", status: "completed" }),
       makeStory({ title: "c", status: "cancelled" }),
     ];
@@ -50,7 +50,7 @@ describe("selectFilteredStories", () => {
 
   it("filters by scope:done keeping only completed/cancelled", () => {
     const stories = [
-      makeStory({ title: "a", status: "running" }),
+      makeStory({ title: "a", status: "executing" }),
       makeStory({ title: "b", status: "completed" }),
       makeStory({ title: "c", status: "cancelled" }),
     ];
@@ -71,9 +71,9 @@ describe("selectFilteredStories", () => {
 
   it("filters by priority/type/status individually", () => {
     const stories = [
-      makeStory({ title: "a", priority: "p0", story_type: "feature", status: "running" }),
-      makeStory({ title: "b", priority: "p1", story_type: "bugfix", status: "running" }),
-      makeStory({ title: "c", priority: "p0", story_type: "bugfix", status: "draft" }),
+      makeStory({ title: "a", priority: "p0", story_type: "feature", status: "executing" }),
+      makeStory({ title: "b", priority: "p1", story_type: "bugfix", status: "executing" }),
+      makeStory({ title: "c", priority: "p0", story_type: "bugfix", status: "created" }),
     ];
     expect(
       selectFilteredStories(stories, { ...params, priorityFilter: "p0" }).map((s) => s.title).sort(),
@@ -82,7 +82,7 @@ describe("selectFilteredStories", () => {
       selectFilteredStories(stories, { ...params, typeFilter: "bugfix" }).map((s) => s.title).sort(),
     ).toEqual(["b", "c"]);
     expect(
-      selectFilteredStories(stories, { ...params, statusFilter: "draft" }).map((s) => s.title),
+      selectFilteredStories(stories, { ...params, statusFilter: "created" }).map((s) => s.title),
     ).toEqual(["c"]);
   });
 
@@ -126,7 +126,7 @@ describe("activeFilterCount", () => {
       activeFilterCount({
         ...params,
         search: "foo",
-        statusFilter: "running",
+        statusFilter: "executing",
         priorityFilter: "p0",
         typeFilter: "bugfix",
       }),

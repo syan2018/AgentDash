@@ -29,7 +29,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "routine_executions",
     "routines",
     "runtime_health",
-    "session_bindings",
     "session_compactions",
     "session_events",
     "session_lineage",

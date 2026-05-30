@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS inline_fs_files (
     container_id    TEXT NOT NULL,        -- container 标识
     path            TEXT NOT NULL,        -- 归一化文件路径
     content         TEXT NOT NULL,
-    updated_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TEXT NOT NULL,
 
     UNIQUE(owner_kind, owner_id, container_id, path)
 );

@@ -9,9 +9,9 @@ CREATE TABLE IF NOT EXISTS routines (
     trigger_config TEXT NOT NULL,       -- JSON: RoutineTriggerConfig tagged enum
     session_strategy TEXT NOT NULL,     -- JSON: SessionStrategy
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    last_fired_at TIMESTAMPTZ,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_fired_at TEXT,
 
     UNIQUE(project_id, name)
 );
@@ -27,8 +27,8 @@ CREATE TABLE IF NOT EXISTS routine_executions (
     resolved_prompt TEXT,
     session_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    started_at TIMESTAMPTZ NOT NULL,
-    completed_at TIMESTAMPTZ,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
     error TEXT,
     entity_key TEXT                     -- PerEntity session affinity
 );

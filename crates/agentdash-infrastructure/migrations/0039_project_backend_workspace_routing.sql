@@ -9,8 +9,8 @@ CREATE TABLE IF NOT EXISTS project_backend_access (
     capability_policy TEXT NOT NULL DEFAULT '{}',
     note TEXT,
     created_by TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(project_id, backend_id)
 );
 
@@ -30,10 +30,10 @@ CREATE TABLE IF NOT EXISTS backend_workspace_inventory (
     detected_facts TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'available',
     source TEXT NOT NULL DEFAULT 'manual_refresh',
-    last_seen_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TEXT NOT NULL,
     last_error TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(backend_id, root_ref)
 );
 

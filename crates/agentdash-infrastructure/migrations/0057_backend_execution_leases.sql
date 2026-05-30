@@ -11,12 +11,12 @@ CREATE TABLE IF NOT EXISTS backend_execution_leases (
     claim_reason TEXT,
     terminal_kind TEXT,
     release_reason TEXT,
-    claimed_at TIMESTAMPTZ NOT NULL,
-    activated_at TIMESTAMPTZ,
-    released_at TIMESTAMPTZ,
-    last_seen_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    claimed_at TEXT NOT NULL,
+    activated_at TEXT,
+    released_at TEXT,
+    last_seen_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(session_id, turn_id),
     CONSTRAINT backend_execution_leases_selection_mode_check CHECK (
         selection_mode IN ('explicit', 'auto_idle', 'workspace_binding')

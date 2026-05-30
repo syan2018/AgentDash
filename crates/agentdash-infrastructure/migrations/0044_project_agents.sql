@@ -26,14 +26,14 @@ CREATE TABLE IF NOT EXISTS project_agents (
     installed_source_ref TEXT,
     installed_source_version TEXT,
     installed_source_digest TEXT,
-    installed_at TIMESTAMPTZ,
+    installed_at TEXT,
     default_lifecycle_key TEXT,
     is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
     is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
     knowledge_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     project_container_ids TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(project_id, name)
 );
 
@@ -48,7 +48,7 @@ ALTER TABLE project_agent_links
 ALTER TABLE project_agent_links
     ADD COLUMN IF NOT EXISTS installed_source_digest TEXT;
 ALTER TABLE project_agent_links
-    ADD COLUMN IF NOT EXISTS installed_at TIMESTAMPTZ;
+    ADD COLUMN IF NOT EXISTS installed_at TEXT;
 
 INSERT INTO project_agents (
     id,

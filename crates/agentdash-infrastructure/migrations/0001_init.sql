@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS projects (
     visibility TEXT NOT NULL DEFAULT 'private',
     is_template BOOLEAN NOT NULL DEFAULT FALSE,
     cloned_from_project_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS project_subject_grants (
@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS project_subject_grants (
     subject_id TEXT NOT NULL,
     role TEXT NOT NULL,
     granted_by_user_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     PRIMARY KEY (project_id, subject_type, subject_id)
 );
 
@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     resolution_policy TEXT NOT NULL DEFAULT 'prefer_online',
     default_binding_id TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS workspace_bindings (
@@ -43,10 +43,10 @@ CREATE TABLE IF NOT EXISTS workspace_bindings (
     root_ref TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     detected_facts TEXT NOT NULL DEFAULT '{}',
-    last_verified_at TIMESTAMPTZ,
+    last_verified_at TEXT,
     priority INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS stories (
@@ -61,8 +61,8 @@ CREATE TABLE IF NOT EXISTS stories (
     tags TEXT NOT NULL DEFAULT '[]',
     task_count INTEGER NOT NULL DEFAULT 0,
     context TEXT NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS state_changes (
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS state_changes (
     kind TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
     backend_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     execution_mode TEXT NOT NULL DEFAULT 'standard',
     agent_binding TEXT NOT NULL DEFAULT '{}',
     artifacts TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS session_bindings (
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS session_bindings (
     owner_type TEXT NOT NULL,
     owner_id TEXT NOT NULL,
     label TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS backends (
     auth_token TEXT,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     backend_type TEXT NOT NULL DEFAULT 'local',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS views (
@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS views (
     backend_ids TEXT NOT NULL DEFAULT '[]',
     filters TEXT NOT NULL DEFAULT '{}',
     sort_by TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS user_preferences (
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS settings (
     scope_id TEXT NOT NULL DEFAULT '',
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (scope_kind, scope_id, key)
 );
 
@@ -171,22 +171,22 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT,
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     provider TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
     display_name TEXT,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS group_memberships (
     user_id TEXT NOT NULL,
     group_id TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     PRIMARY KEY (user_id, group_id)
 );
 
@@ -195,8 +195,8 @@ CREATE TABLE IF NOT EXISTS agents (
     name TEXT NOT NULL,
     agent_type TEXT NOT NULL,
     base_config TEXT NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS project_agent_links (
@@ -207,8 +207,8 @@ CREATE TABLE IF NOT EXISTS project_agent_links (
     default_lifecycle_key TEXT,
     is_default_for_story BOOLEAN NOT NULL DEFAULT FALSE,
     is_default_for_task BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     UNIQUE(project_id, agent_id)
 );
 
@@ -232,8 +232,8 @@ CREATE TABLE IF NOT EXISTS workflow_definitions (
     status TEXT NOT NULL,
     version INTEGER NOT NULL,
     contract TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS lifecycle_definitions (
@@ -248,8 +248,8 @@ CREATE TABLE IF NOT EXISTS lifecycle_definitions (
     version INTEGER NOT NULL,
     entry_step_key TEXT NOT NULL,
     steps TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS workflow_assignments (
@@ -259,8 +259,8 @@ CREATE TABLE IF NOT EXISTS workflow_assignments (
     role TEXT NOT NULL,
     enabled BOOLEAN NOT NULL,
     is_default BOOLEAN NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS lifecycle_runs (
@@ -274,9 +274,9 @@ CREATE TABLE IF NOT EXISTS lifecycle_runs (
     step_states TEXT NOT NULL,
     record_artifacts TEXT NOT NULL,
     execution_log TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    last_activity_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS canvases (
@@ -287,8 +287,8 @@ CREATE TABLE IF NOT EXISTS canvases (
     description TEXT NOT NULL DEFAULT '',
     entry_file TEXT NOT NULL,
     sandbox_config TEXT NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS canvas_files (

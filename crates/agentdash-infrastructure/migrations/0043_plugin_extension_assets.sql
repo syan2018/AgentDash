@@ -20,9 +20,9 @@ CREATE TABLE IF NOT EXISTS project_extension_installations (
     installed_source_ref TEXT NOT NULL,
     installed_source_version TEXT NOT NULL,
     installed_source_digest TEXT NOT NULL,
-    installed_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
+    installed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     CONSTRAINT project_extension_installations_unique_key UNIQUE (project_id, extension_key)
 );
 

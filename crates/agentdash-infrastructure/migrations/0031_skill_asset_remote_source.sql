@@ -2,7 +2,7 @@ ALTER TABLE skill_assets
 ADD COLUMN IF NOT EXISTS remote_source_url TEXT;
 
 ALTER TABLE skill_assets
-ADD COLUMN IF NOT EXISTS remote_imported_at TIMESTAMPTZ;
+ADD COLUMN IF NOT EXISTS remote_imported_at TEXT;
 
 ALTER TABLE skill_assets
 ADD COLUMN IF NOT EXISTS remote_digest TEXT;

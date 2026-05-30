@@ -729,15 +729,279 @@ pub trait MountProvider: Send + Sync {
     }
 }
 
-/// Marker trait for provider I/O responsibilities.
-pub trait MountIo: MountProvider {}
+#[async_trait]
+impl<T> ProviderDescriptor for T
+where
+    T: MountProvider + ?Sized,
+{
+    fn provider_id(&self) -> &str {
+        MountProvider::provider_id(self)
+    }
 
-impl<T> MountIo for T where T: MountProvider + ?Sized {}
+    fn display_name(&self) -> &str {
+        MountProvider::display_name(self)
+    }
 
-/// Marker trait for provider search responsibilities.
-pub trait MountSearch: MountProvider {}
+    fn root_ref_hint(&self) -> &str {
+        MountProvider::root_ref_hint(self)
+    }
 
-impl<T> MountSearch for T where T: MountProvider + ?Sized {}
+    fn supported_capabilities(&self) -> Vec<&str> {
+        MountProvider::supported_capabilities(self)
+    }
+
+    fn is_user_configurable(&self) -> bool {
+        MountProvider::is_user_configurable(self)
+    }
+
+    async fn is_available(&self, mount: &Mount) -> bool {
+        MountProvider::is_available(self, mount).await
+    }
+}
+
+/// Provider I/O responsibilities.
+#[async_trait]
+pub trait MountIo: ProviderDescriptor {
+    async fn read_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError>;
+
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError>;
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError>;
+
+    async fn write_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        content: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities;
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError>;
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError>;
+
+    async fn list(
+        &self,
+        mount: &Mount,
+        options: &ListOptions,
+        ctx: &MountOperationContext,
+    ) -> Result<ListResult, MountError>;
+
+    async fn exec(
+        &self,
+        mount: &Mount,
+        request: &ExecRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError>;
+
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError>;
+}
+
+#[async_trait]
+impl<T> MountIo for T
+where
+    T: MountProvider + ?Sized,
+{
+    async fn read_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        MountProvider::read_text(self, mount, path, ctx).await
+    }
+
+    async fn read_text_range(
+        &self,
+        mount: &Mount,
+        path: &str,
+        offset: usize,
+        limit: Option<usize>,
+        ctx: &MountOperationContext,
+    ) -> Result<ReadResult, MountError> {
+        MountProvider::read_text_range(self, mount, path, offset, limit, ctx).await
+    }
+
+    async fn read_binary(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<BinaryReadResult, MountError> {
+        MountProvider::read_binary(self, mount, path, ctx).await
+    }
+
+    async fn write_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        content: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::write_text(self, mount, path, content, ctx).await
+    }
+
+    fn edit_capabilities(&self, mount: &Mount) -> MountEditCapabilities {
+        MountProvider::edit_capabilities(self, mount)
+    }
+
+    async fn delete_text(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::delete_text(self, mount, path, ctx).await
+    }
+
+    async fn rename_text(
+        &self,
+        mount: &Mount,
+        from_path: &str,
+        to_path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<(), MountError> {
+        MountProvider::rename_text(self, mount, from_path, to_path, ctx).await
+    }
+
+    async fn apply_patch(
+        &self,
+        mount: &Mount,
+        request: &ApplyPatchRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ApplyPatchResult, MountError> {
+        MountProvider::apply_patch(self, mount, request, ctx).await
+    }
+
+    async fn list(
+        &self,
+        mount: &Mount,
+        options: &ListOptions,
+        ctx: &MountOperationContext,
+    ) -> Result<ListResult, MountError> {
+        MountProvider::list(self, mount, options, ctx).await
+    }
+
+    async fn exec(
+        &self,
+        mount: &Mount,
+        request: &ExecRequest,
+        ctx: &MountOperationContext,
+    ) -> Result<ExecResult, MountError> {
+        MountProvider::exec(self, mount, request, ctx).await
+    }
+
+    async fn stat(
+        &self,
+        mount: &Mount,
+        path: &str,
+        ctx: &MountOperationContext,
+    ) -> Result<RuntimeFileEntry, MountError> {
+        MountProvider::stat(self, mount, path, ctx).await
+    }
+}
+
+/// Provider search responsibilities.
+#[async_trait]
+pub trait MountSearch: ProviderDescriptor {
+    async fn search_text(
+        &self,
+        mount: &Mount,
+        query: &SearchQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError>;
+
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError>;
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError>;
+}
+
+#[async_trait]
+impl<T> MountSearch for T
+where
+    T: MountProvider + ?Sized,
+{
+    async fn search_text(
+        &self,
+        mount: &Mount,
+        query: &SearchQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        MountProvider::search_text(self, mount, query, ctx).await
+    }
+
+    async fn suggest_paths(
+        &self,
+        mount: &Mount,
+        prefix: &str,
+        limit: usize,
+        ctx: &MountOperationContext,
+    ) -> Result<Vec<String>, MountError> {
+        MountProvider::suggest_paths(self, mount, prefix, limit, ctx).await
+    }
+
+    async fn grep_text(
+        &self,
+        mount: &Mount,
+        query: &GrepQuery,
+        ctx: &MountOperationContext,
+    ) -> Result<SearchResult, MountError> {
+        MountProvider::grep_text(self, mount, query, ctx).await
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -875,20 +1139,20 @@ mod tests {
             ("b.rs", "fn baz() {}"),
             ("README.md", "no functions here"),
         ]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: r"fn \w+".to_string(),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: r"fn \w+".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         // 命中 a.rs 两行 + b.rs 一行 = 3 个 match
         assert_eq!(result.matches.len(), 3);
         assert!(result.matches.iter().any(|m| m.path == "a.rs"));
@@ -900,21 +1164,21 @@ mod tests {
     async fn grep_text_default_respects_include_glob() {
         let provider =
             MockProvider::new(&[("src/main.rs", "fn x() {}"), ("docs/notes.md", "fn x() {}")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: r"fn \w+".to_string(),
-                        ..Default::default()
-                    },
-                    include_glob: Some("**/*.rs".to_string()),
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: r"fn \w+".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                include_glob: Some("**/*.rs".to_string()),
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].path, "src/main.rs");
     }
@@ -922,22 +1186,22 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_provides_before_after_context() {
         let provider = MockProvider::new(&[("log.txt", "L1\nL2\nNEEDLE\nL4\nL5")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "NEEDLE".to_string(),
-                        ..Default::default()
-                    },
-                    before_lines: 1,
-                    after_lines: 1,
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "NEEDLE".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                before_lines: 1,
+                after_lines: 1,
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         let contents: Vec<&str> = result.matches.iter().map(|m| m.content.as_str()).collect();
         assert!(contents.contains(&"L2"));
         assert!(contents.contains(&"NEEDLE"));
@@ -950,20 +1214,20 @@ mod tests {
     async fn grep_text_default_skips_binary_entries() {
         let provider = MockProvider::new(&[("text.md", "needle in text")]);
         provider.add_binary("image.png");
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "needle".to_string(),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "needle".to_string(),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         // binary 条目跳过，只命中 text.md
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].path, "text.md");
@@ -972,21 +1236,21 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_case_insensitive() {
         let provider = MockProvider::new(&[("a.rs", "Hello WORLD")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "world".to_string(),
-                        case_sensitive: false,
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "world".to_string(),
+                    case_sensitive: false,
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 1);
         assert!(result.matches[0].content.contains("WORLD"));
     }
@@ -994,21 +1258,21 @@ mod tests {
     #[tokio::test]
     async fn grep_text_default_truncates_at_max_results() {
         let provider = MockProvider::new(&[("a.rs", "x\nx\nx\nx\nx")]);
-        let result = provider
-            .grep_text(
-                &fake_mount(),
-                &GrepQuery {
-                    base: SearchQuery {
-                        pattern: "x".to_string(),
-                        max_results: Some(2),
-                        ..Default::default()
-                    },
+        let result = MountSearch::grep_text(
+            &provider,
+            &fake_mount(),
+            &GrepQuery {
+                base: SearchQuery {
+                    pattern: "x".to_string(),
+                    max_results: Some(2),
                     ..Default::default()
                 },
-                &MountOperationContext::default(),
-            )
-            .await
-            .expect("grep");
+                ..Default::default()
+            },
+            &MountOperationContext::default(),
+        )
+        .await
+        .expect("grep");
         assert_eq!(result.matches.len(), 2);
         assert!(result.truncated);
     }

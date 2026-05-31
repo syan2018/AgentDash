@@ -612,3 +612,27 @@ Task view projects from SubjectRef + Actor assignment + ActivityAttemptState/art
 - 压缩 `terminology-notes.md`，让它只承担命名整理职责，不再重复完整语义模型。
 - 压缩 `agent-operation-predicate-comparison.md` 的目标谓词清单，改为引用 `agent-operation-predicates.md`，自身只保留当前/目标差异与图示。
 - 保留 journal 历史讨论，不重写既有讨论结论。
+
+## 2026-06-01 Subagent 模块 gap 调研收束
+
+用户要求派发 subagent 分模块评估当前实现与目标状态之间的 gap，并补全可执行的重构计划与问题清单。
+
+本轮拆成四个并行切片：
+
+- backend core / control-plane：确认 `LifecycleRun.session_id`、`SessionRuntime`、`SessionHookSnapshot`、`CapabilityState` 仍是运行事实散落的主要位置。
+- business modules：确认 direct Task session 启动与 Companion workflow overlay 是最需要先收束的业务路径；二者都需要进入 SubjectRef / Actor / ActorFrame / Gate 通道。
+- persistence / contracts：确认 schema 与 wire contract 已把 session-first 形状暴露到前端，包括 `lifecycle_runs.session_id`、`ExecutorRunRef.AgentSession`、`StoryRunOverview.session_id`、`TaskResponse.lifecycle_step_key`。
+- frontend：确认 UI 仍以 Session tree 为运行根，Task / Story / ProjectAgent 都有各自的 session owner/launcher 表达。
+
+整合后的判断：
+
+- 当前代码已经具备可靠的 Activity execution evidence，重构重点不是重命名 `ActivityAttemptState`。
+- 缺失的一等事实源是 Actor、ActorFrame、ActorAssignment、LifecycleSubjectAssociation、Gate 与 ActorRevision。
+- `StepActivation` 与 `SessionConstructionPlan` 是最接近 ActorFrame builder 的既有实现，应优先收束为 frame construction，而不是让 Task / Companion / Routine 各自再创建 runtime bridge。
+- Task、Story、Companion、Routine、ProjectAgent 的启动入口应统一进入 `LifecycleDispatchService`，再由它创建或选择 LifecycleRun / Actor / ActorFrame / RuntimeSession。
+
+新增整合文档：
+
+- `module-gap-analysis.md`
+- `refactor-plan.md`
+- `conceptual-issues.md`

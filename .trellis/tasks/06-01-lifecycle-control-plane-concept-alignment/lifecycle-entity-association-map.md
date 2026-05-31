@@ -11,7 +11,7 @@
 - 单个 Agent Activity 内部的行为/能力/上下文约束，应从当前 `WorkflowDefinition` 语义里拆成 `ActivityProcedure` / `ActorProcedure`。
 - `Session` / `RuntimeSession` 的目标职责是运行轨迹载体；业务归属、Agent 状态锚点与 Lifecycle ownership 需要落在更明确的关联实体上。
 - `Task` 本身只是业务数据载体、用户关联查看对象，或 Activity payload 指向的数据对象；它不拥有 runtime 语义。
-- Runtime 侧关联的是 `SubjectRef(kind=Task, id=...)`，不是 Task entity 本身。当前 `LifecycleRunLink` 是这个方向的雏形，目标上应演化为 subject association，并允许 subject 关联到 whole run、Actor、Activity 或执行记录。
+- Runtime 侧关联的是 `SubjectRef(kind=Task, id=...)`，不是 Task entity 本身。当前 `LifecycleRunLink` 是这个方向的雏形，目标上应演化为 subject association，并允许 subject 关联到 whole run 或 Actor。
 
 ## Evidence
 

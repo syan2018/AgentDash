@@ -17,7 +17,8 @@ use agentdash_domain::workflow::{
     AgentFrame, AgentFrameRepository, LifecycleGate, LifecycleGateRepository,
 };
 use agentdash_spi::hooks::{
-    ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ExecutionHookProvider,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+    AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection, ExecutionHookProvider,
     HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger, HookTrigger,
     RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
     SessionSnapshotMetadata,
@@ -1562,6 +1563,42 @@ struct RecordingHookProvider {
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for RecordingHookProvider {
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+        self.queries.lock().await.push(HookEvaluationQuery {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            trigger: query.trigger,
+            turn_id: query.provenance.turn_id,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: query.snapshot,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        });
+        Ok(HookResolution::default())
+    }
+
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
@@ -1590,6 +1627,42 @@ struct StaticResolutionHookProvider {
 
 #[async_trait::async_trait]
 impl ExecutionHookProvider for StaticResolutionHookProvider {
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        Ok(test_hook_snapshot(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+        ))
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+        self.queries.lock().await.push(HookEvaluationQuery {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            trigger: query.trigger,
+            turn_id: query.provenance.turn_id,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: query.snapshot,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        });
+        Ok(self.resolution.clone())
+    }
+
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,

@@ -466,6 +466,7 @@ impl HookPendingAction {
 #[async_trait]
 pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn session_id(&self) -> &str;
+    fn control_target(&self) -> HookControlTarget;
     fn snapshot(&self) -> SessionHookSnapshot;
     fn diagnostics(&self) -> Vec<HookDiagnosticEntry>;
     fn revision(&self) -> u64;
@@ -535,6 +536,76 @@ pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
 }
 
 pub type SharedHookRuntime = Arc<dyn HookRuntimeAccess>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookControlTarget {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignment_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeAdapterProvenance {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    pub source: String,
+}
+
+impl RuntimeAdapterProvenance {
+    pub fn runtime_session(
+        runtime_session_id: impl Into<String>,
+        turn_id: Option<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            runtime_session_id: Some(runtime_session_id.into()),
+            turn_id,
+            source: source.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookSnapshotQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookRefreshQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameHookEvaluationQuery {
+    pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+    pub trigger: HookTrigger,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub subagent_type: Option<String>,
+    #[serde(default)]
+    pub snapshot: Option<SessionHookSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_stats: Option<ContextTokenStats>,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -855,6 +926,21 @@ pub enum HookError {
 
 #[async_trait]
 pub trait ExecutionHookProvider: Send + Sync {
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, HookError>;
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError>;
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError>;
+
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
@@ -894,6 +980,34 @@ pub struct NoopExecutionHookProvider;
 
 #[async_trait]
 impl ExecutionHookProvider for NoopExecutionHookProvider {
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        Ok(SessionHookSnapshot {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            ..SessionHookSnapshot::default()
+        })
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+            target: query.target,
+            provenance: query.provenance,
+        })
+        .await
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        _query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
+        Ok(HookResolution::default())
+    }
+
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,

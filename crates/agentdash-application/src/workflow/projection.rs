@@ -4,8 +4,11 @@ use agentdash_domain::workflow::{
     LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
     WorkflowContract, WorkflowGraph, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
+use agentdash_spi::hooks::HookControlTarget;
 
-use super::session_association::ActivityRuntimeAssociationResolver;
+use super::session_association::{
+    ActivityRuntimeAssociationResolver, select_assignment_for_runtime_frame,
+};
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
 ///
@@ -89,6 +92,85 @@ pub async fn resolve_active_workflow_projection_for_session(
     let run = association.run;
     let assignment = association.assignment;
     let attempt = association.attempt;
+    let Some(graph_instance) = graph_instance_repo
+        .get_by_run_and_id(run.id, assignment.graph_instance_id)
+        .await
+        .map_err(|e| format!("加载 workflow graph instance 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(activity_state) = graph_instance.activity_state.as_ref() else {
+        return Ok(None);
+    };
+    if activity_state.graph_instance_id != assignment.graph_instance_id {
+        return Ok(None);
+    }
+    let Some(active_attempt) = activity_state
+        .attempts
+        .iter()
+        .find(|state| state.activity_key == assignment.activity_key && state.attempt == attempt)
+        .cloned()
+    else {
+        return Ok(None);
+    };
+
+    build_activity_projection_from_run(
+        run,
+        graph_instance.id,
+        graph_instance.graph_id,
+        &assignment.activity_key,
+        active_attempt,
+        definition_repo,
+        activity_lifecycle_repo,
+    )
+    .await
+}
+
+pub async fn resolve_active_workflow_projection_for_target(
+    target: &HookControlTarget,
+    definition_repo: &dyn AgentProcedureRepository,
+    activity_lifecycle_repo: &dyn WorkflowGraphRepository,
+    frame_repo: &dyn AgentFrameRepository,
+    assignment_repo: &dyn AgentAssignmentRepository,
+    run_repo: &dyn LifecycleRunRepository,
+    graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
+) -> Result<Option<ActiveWorkflowProjection>, String> {
+    let Some(run) = run_repo
+        .get_by_id(target.run_id)
+        .await
+        .map_err(|e| format!("查询 lifecycle run 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let assignments = assignment_repo
+        .list_by_run(run.id)
+        .await
+        .map_err(|e| format!("查询 agent assignments 失败: {e}"))?;
+    let assignment = if let Some(assignment_id) = target.assignment_id {
+        assignments
+            .iter()
+            .find(|assignment| {
+                assignment.id == assignment_id && assignment.agent_id == target.agent_id
+            })
+            .cloned()
+    } else {
+        let Some(frame) = frame_repo
+            .get(target.frame_id)
+            .await
+            .map_err(|e| format!("查询 AgentFrame 失败: {e}"))?
+        else {
+            return Ok(None);
+        };
+        if frame.agent_id != target.agent_id {
+            return Ok(None);
+        }
+        select_assignment_for_runtime_frame(&assignments, &frame)?
+    };
+    let Some(assignment) = assignment else {
+        return Ok(None);
+    };
+    let attempt = u32::try_from(assignment.attempt)
+        .map_err(|_| format!("agent assignment attempt 无效: {}", assignment.attempt))?;
     let Some(graph_instance) = graph_instance_repo
         .get_by_run_and_id(run.id, assignment.graph_instance_id)
         .await

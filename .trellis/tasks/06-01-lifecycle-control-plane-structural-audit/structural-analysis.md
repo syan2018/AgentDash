@@ -252,7 +252,27 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - frame-first hook service：load / refresh / evaluate 都以 hook target 为主，runtime-session entry 只作为 adapter 并立刻解析到 target。
 - frame-first capability service：live / pending transition 都要求调用方先提供 `AgentFrameRuntimeTarget`，`resolve_runtime_session_frame_id` 只留在 runtime adapter 模块。
 
-该记录不关闭 P1-08 gate，因为 hook SPI、application hook service、workflow/canvas/companion 调用方仍能用 session 作为 command owner；后续必须通过上述 target/provenance 封装把这些入口整体迁走。
+2026-06-01 的 implementation slice 已把 hook runtime/provider 边界推进到 frame-first：
+
+- SPI 新增 `HookControlTarget`、`RuntimeAdapterProvenance` 与 `AgentFrameHook*Query`，并要求所有 `ExecutionHookProvider` 实现显式实现 `load_frame_snapshot` / `refresh_frame_snapshot` / `evaluate_frame_hook`；trait 不再提供把 frame query 自动转回 session query 的默认 adapter。
+- `AgentFrameHookRuntime::refresh` / `evaluate` 以自身 `run_id + agent_id + frame_id` 构造 control target，`runtime_session_id` 只进入 provenance；测试 `refresh_uses_frame_target_provider_entry` 传入错误 session owner，验证 provider 收到的仍是 frame target 与 runtime provenance。
+- `AppExecutionHookProvider` 可按 `HookControlTarget` 解析 active workflow snapshot：`WorkflowSnapshotBuilder::resolve_active_workflow_for_target` 通过 run、assignment 或 frame scope 找到 `ActiveWorkflowProjection`，session snapshot load 只保留为旧 adapter entry。
+- canvas / hook delegate / hub 测试 provider 也被迫显式实现 frame entry，避免公共 SPI 默认把新 query 静默降级回 session query。
+
+本 slice 仍不关闭 P1-08 gate，因为：
+
+- `SessionHookService::ensure_hook_runtime` 初始 snapshot load 仍以 `SessionHookSnapshotQuery { session_id }` 为入口，hub hook dispatch lazy rebuild 也仍从 session id rebuild snapshot。
+- workflow orchestrator、workflow agent executor、VFS/canvas/companion 的若干 control path 仍可经 `SessionHookService` 或 `resolve_runtime_session_frame_id` 把 raw runtime session 当作命令入口。
+- SPI 仍保留 `SessionHookSnapshotQuery` / `SessionHookRefreshQuery` / `HookEvaluationQuery` 作为旧 adapter/rule-engine shape；下一步需要新增 frame-first hook service，把 session-shaped entry 限定在 runtime adapter 模块内，并继续迁移 capability / companion 调用方。
+
+验证记录：
+
+- `cargo check -p agentdash-application`
+- `cargo test -p agentdash-application workflow::frame_hook_runtime --lib -- --format terse`
+- `cargo test -p agentdash-application hooks::provider --lib -- --format terse`
+- `cargo test -p agentdash-application session::hook_delegate --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests --lib -- --format terse`
+- `rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \{|ensure_hook_runtime\(|get_hook_runtime\(|resolve_runtime_session_frame_id\(" crates/agentdash-application/src` 仍命中 session service / hub dispatch / canvas / companion / orchestrator 等入口，因此 static gate 保持未通过。
 
 ## P1-09 `StepActivation` 没收束进 AgentFrameBuilder
 

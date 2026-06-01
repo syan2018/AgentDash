@@ -57,6 +57,7 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；完整 gate 仍取决于 `SessionHookService`、capability live update 与 companion notification 入口迁到 target-first service。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
 - [x] 明确多 RuntimeSession selection policy。

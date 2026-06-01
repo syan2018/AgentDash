@@ -5,11 +5,14 @@ use agentdash_domain::workflow::{
     LifecycleAgentRepository, LifecycleRunRepository, WorkflowGraphInstanceRepository,
     WorkflowGraphRepository,
 };
-use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
+use agentdash_spi::{HookError, hooks::HookControlTarget, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
 
 use crate::workflow::execution_log as workflow_recording;
-use crate::workflow::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
+use crate::workflow::{
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
+    resolve_active_workflow_projection_for_target,
+};
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
     HookError::Runtime(error.to_string())
@@ -68,6 +71,23 @@ impl WorkflowSnapshotBuilder {
             self.workflow_graph_repo.as_ref(),
             self.agent_frame_repo.as_ref(),
             self.lifecycle_agent_repo.as_ref(),
+            self.agent_assignment_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
+            self.workflow_graph_instance_repo.as_ref(),
+        )
+        .await
+        .map_err(HookError::Runtime)
+    }
+
+    pub async fn resolve_active_workflow_for_target(
+        &self,
+        target: &HookControlTarget,
+    ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
+        resolve_active_workflow_projection_for_target(
+            target,
+            self.agent_procedure_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
             self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
             self.workflow_graph_instance_repo.as_ref(),

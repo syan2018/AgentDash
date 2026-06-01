@@ -65,7 +65,10 @@ pub use orchestrator::{
 };
 #[cfg(test)]
 pub(crate) use projection::activity_projection;
-pub use projection::{ActiveWorkflowProjection, resolve_active_workflow_projection_for_session};
+pub use projection::{
+    ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
+    resolve_active_workflow_projection_for_target,
+};
 pub use run::select_active_run;
 pub use runtime_launch::RuntimeLaunchRequest;
 pub use scheduler::{

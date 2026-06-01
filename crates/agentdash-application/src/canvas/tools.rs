@@ -668,7 +668,8 @@ mod tests {
         AgentFrame, AgentFrameRepository, LifecycleGate, LifecycleGateRepository,
     };
     use agentdash_spi::hooks::{
-        ActiveWorkflowMeta, ExecutionHookProvider, HookEvaluationQuery, HookResolution,
+        ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+        AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookEvaluationQuery, HookResolution,
         SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
         SessionSnapshotMetadata,
     };
@@ -984,6 +985,27 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+            Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            _query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
+            Ok(HookResolution::default())
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,

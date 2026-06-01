@@ -70,15 +70,17 @@ pub use extension_package::{
 pub use hooks::script::HookScriptEvaluator;
 pub use hooks::trace::build_hook_trace_envelope;
 pub use hooks::{
-    ActiveWorkflowMeta, ContextFrame, ContextFrameSection, ContextTokenStats,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+    AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection, ContextTokenStats,
     ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
-    HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
-    HookInjection, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookResolution, HookRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
-    HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-    RuntimeContextFragmentEntry, RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry,
-    RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SessionRunContext, SessionSnapshotMetadata, SharedHookRuntime, action_type,
+    HookControlTarget, HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery,
+    HookEvaluationTrigger, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookResolution, HookRuntimeAccess, HookSessionRuntimeSnapshot,
+    HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
+    NoopExecutionHookProvider, RuntimeAdapterProvenance, RuntimeContextFragmentEntry,
+    RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery, SessionRunContext,
+    SessionSnapshotMetadata, SharedHookRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

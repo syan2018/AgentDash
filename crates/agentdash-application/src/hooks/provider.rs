@@ -11,8 +11,9 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
-    ActiveWorkflowMeta, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookResolution,
-    HookScriptEvaluator, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
+    AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError, HookEvaluationQuery,
+    HookResolution, HookScriptEvaluator, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
@@ -96,23 +97,22 @@ impl AppExecutionHookProvider {
     pub fn remove_preset(&self, key: &str) -> bool {
         self.script_engine.remove_preset(key)
     }
-}
 
-#[async_trait]
-impl ExecutionHookProvider for AppExecutionHookProvider {
-    async fn load_session_snapshot(
+    async fn build_snapshot_from_workflow(
         &self,
-        query: SessionHookSnapshotQuery,
+        runtime_session_id: String,
+        turn_id: Option<String>,
+        workflow: Option<crate::workflow::ActiveWorkflowProjection>,
     ) -> Result<SessionHookSnapshot, HookError> {
         let mut snapshot = SessionHookSnapshot {
-            session_id: query.session_id.clone(),
+            session_id: runtime_session_id,
             run_context: None,
             sources: Vec::new(),
             tags: Vec::new(),
             injections: Vec::new(),
             diagnostics: Vec::new(),
             metadata: Some(SessionSnapshotMetadata {
-                turn_id: query.turn_id,
+                turn_id,
                 ..Default::default()
             }),
         };
@@ -126,11 +126,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             "hook_builtin:supervised_tool_approval".to_string(),
         ]);
 
-        if let Some(workflow) = self
-            .workflow_builder
-            .resolve_active_workflow(&query.session_id)
-            .await?
-        {
+        if let Some(workflow) = workflow {
             let wf_source = workflow_source(&workflow);
 
             snapshot.diagnostics.push(HookDiagnosticEntry {
@@ -250,6 +246,76 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 
         snapshot.tags = dedupe_tags(snapshot.tags);
         Ok(snapshot)
+    }
+}
+
+#[async_trait]
+impl ExecutionHookProvider for AppExecutionHookProvider {
+    async fn load_frame_snapshot(
+        &self,
+        query: AgentFrameHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        let workflow = self
+            .workflow_builder
+            .resolve_active_workflow_for_target(&query.target)
+            .await?;
+        self.build_snapshot_from_workflow(
+            query.provenance.runtime_session_id.unwrap_or_default(),
+            query.provenance.turn_id,
+            workflow,
+        )
+        .await
+    }
+
+    async fn refresh_frame_snapshot(
+        &self,
+        query: AgentFrameHookRefreshQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+            target: query.target,
+            provenance: query.provenance,
+        })
+        .await
+    }
+
+    async fn evaluate_frame_hook(
+        &self,
+        query: AgentFrameHookEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
+        let snapshot = match query.snapshot {
+            Some(snapshot) => snapshot,
+            None => {
+                self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                    target: query.target.clone(),
+                    provenance: query.provenance.clone(),
+                })
+                .await?
+            }
+        };
+        self.evaluate_hook(HookEvaluationQuery {
+            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            trigger: query.trigger,
+            turn_id: query.provenance.turn_id,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: Some(snapshot),
+            payload: query.payload,
+            token_stats: query.token_stats,
+        })
+        .await
+    }
+
+    async fn load_session_snapshot(
+        &self,
+        query: SessionHookSnapshotQuery,
+    ) -> Result<SessionHookSnapshot, HookError> {
+        let workflow = self
+            .workflow_builder
+            .resolve_active_workflow(&query.session_id)
+            .await?;
+        self.build_snapshot_from_workflow(query.session_id, query.turn_id, workflow)
+            .await
     }
 
     async fn refresh_session_snapshot(
@@ -401,7 +467,10 @@ mod tests {
     use crate::session::HookRuntimeDelegate;
     use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::HookRuntimeAccess;
-    use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
+    use agentdash_spi::hooks::{
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
+        HookEvaluationQuery, HookResolution, SessionHookSnapshot,
+    };
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
@@ -465,6 +534,38 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for RuleEngineTestProvider {
+        async fn load_frame_snapshot(
+            &self,
+            _query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            _query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(self.snapshot.clone())
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             _query: SessionHookSnapshotQuery,

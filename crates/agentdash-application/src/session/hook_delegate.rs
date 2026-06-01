@@ -1013,6 +1013,7 @@ mod tests {
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::{
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
         HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
         HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess, HookTraceTrigger,
@@ -1061,6 +1062,47 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+            })
+            .await
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_session_snapshot(SessionHookRefreshQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+                reason: query.reason,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
@@ -1101,6 +1143,47 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for CompletionBlockedProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+            })
+            .await
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_session_snapshot(SessionHookRefreshQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+                reason: query.reason,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
@@ -1141,6 +1224,47 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for RecordingCompactionProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+            })
+            .await
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_session_snapshot(SessionHookRefreshQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+                reason: query.reason,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
@@ -1210,6 +1334,47 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for StaticCompanionContextProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+            })
+            .await
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_session_snapshot(SessionHookRefreshQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+                reason: query.reason,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
@@ -1259,6 +1424,47 @@ mod tests {
 
     #[async_trait]
     impl ExecutionHookProvider for AfterTurnInjectionProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.load_session_snapshot(SessionHookSnapshotQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+            })
+            .await
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_session_snapshot(SessionHookRefreshQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                turn_id: query.provenance.turn_id,
+                reason: query.reason,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            self.evaluate_hook(HookEvaluationQuery {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                trigger: query.trigger,
+                turn_id: query.provenance.turn_id,
+                tool_name: query.tool_name,
+                tool_call_id: query.tool_call_id,
+                subagent_type: query.subagent_type,
+                snapshot: query.snapshot,
+                payload: query.payload,
+                token_stats: query.token_stats,
+            })
+            .await
+        }
+
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,

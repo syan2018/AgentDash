@@ -16,10 +16,12 @@ use std::sync::{
 };
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, ExecutionHookProvider, HookDiagnosticEntry, HookError, HookEvaluationQuery,
+    AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, ContextTokenStats,
+    ExecutionHookProvider, HookControlTarget, HookDiagnosticEntry, HookError, HookEvaluationQuery,
     HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
     HookRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, HookTurnStartNotice,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionSnapshotMetadata, SetDelta,
+    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionSnapshotMetadata, SetDelta,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -150,6 +152,23 @@ impl AgentFrameHookRuntime {
         self.revision.load(Ordering::SeqCst)
     }
 
+    fn hook_control_target(&self) -> HookControlTarget {
+        HookControlTarget {
+            run_id: self.run_id,
+            agent_id: self.agent_id,
+            frame_id: self.frame_id,
+            assignment_id: None,
+        }
+    }
+
+    fn runtime_provenance(
+        &self,
+        turn_id: Option<String>,
+        source: &str,
+    ) -> RuntimeAdapterProvenance {
+        RuntimeAdapterProvenance::runtime_session(self.runtime_session_id.clone(), turn_id, source)
+    }
+
     fn append_diagnostics_inner<I>(&self, entries: I)
     where
         I: IntoIterator<Item = HookDiagnosticEntry>,
@@ -203,6 +222,10 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         &self.runtime_session_id
     }
 
+    fn control_target(&self) -> HookControlTarget {
+        self.hook_control_target()
+    }
+
     fn snapshot(&self) -> SessionHookSnapshot {
         self.snapshot
             .read()
@@ -251,7 +274,14 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         query: SessionHookRefreshQuery,
     ) -> Result<SessionHookSnapshot, HookError> {
         let previous_metadata = self.snapshot().metadata.clone();
-        let mut snapshot = self.provider.refresh_session_snapshot(query).await?;
+        let mut snapshot = self
+            .provider
+            .refresh_frame_snapshot(AgentFrameHookRefreshQuery {
+                target: self.hook_control_target(),
+                provenance: self.runtime_provenance(query.turn_id, "hook_runtime_refresh"),
+                reason: query.reason,
+            })
+            .await?;
         preserve_session_level_metadata(&mut snapshot, previous_metadata.as_ref());
         self.replace_snapshot(snapshot.clone());
         Ok(snapshot)
@@ -286,8 +316,19 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
     async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
         let mut query = query;
         query.token_stats = Some(self.token_stats());
+        let frame_query = AgentFrameHookEvaluationQuery {
+            target: self.hook_control_target(),
+            provenance: self.runtime_provenance(query.turn_id.clone(), "hook_runtime_evaluate"),
+            trigger: query.trigger,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            snapshot: query.snapshot,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        };
 
-        let mut resolution = self.provider.evaluate_hook(query).await?;
+        let mut resolution = self.provider.evaluate_frame_hook(frame_query).await?;
 
         if let Some(advance_request) = resolution.pending_advance.take() {
             match self.provider.advance_workflow_step(advance_request).await {
@@ -511,7 +552,83 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
     use agentdash_spi::hooks::NoopExecutionHookProvider;
+    use agentdash_spi::hooks::{
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
+    };
+
+    #[derive(Default)]
+    struct RecordingFrameProvider {
+        refresh_queries: Mutex<Vec<AgentFrameHookRefreshQuery>>,
+    }
+
+    #[async_trait]
+    impl ExecutionHookProvider for RecordingFrameProvider {
+        async fn load_frame_snapshot(
+            &self,
+            query: AgentFrameHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Ok(SessionHookSnapshot {
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                metadata: Some(SessionSnapshotMetadata {
+                    turn_id: query.provenance.turn_id,
+                    ..Default::default()
+                }),
+                ..SessionHookSnapshot::default()
+            })
+        }
+
+        async fn refresh_frame_snapshot(
+            &self,
+            query: AgentFrameHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            self.refresh_queries
+                .lock()
+                .expect("refresh query lock poisoned")
+                .push(query.clone());
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
+            })
+            .await
+        }
+
+        async fn evaluate_frame_hook(
+            &self,
+            _query: AgentFrameHookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            Ok(HookResolution::default())
+        }
+
+        async fn load_session_snapshot(
+            &self,
+            _query: agentdash_spi::hooks::SessionHookSnapshotQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Err(HookError::Runtime(
+                "session snapshot entry should not be used".to_string(),
+            ))
+        }
+
+        async fn refresh_session_snapshot(
+            &self,
+            _query: SessionHookRefreshQuery,
+        ) -> Result<SessionHookSnapshot, HookError> {
+            Err(HookError::Runtime(
+                "session refresh entry should not be used".to_string(),
+            ))
+        }
+
+        async fn evaluate_hook(
+            &self,
+            _query: HookEvaluationQuery,
+        ) -> Result<HookResolution, HookError> {
+            Err(HookError::Runtime(
+                "session evaluation entry should not be used".to_string(),
+            ))
+        }
+    }
 
     #[test]
     fn from_frame_creates_runtime_scope() {
@@ -608,5 +725,48 @@ mod tests {
         assert_eq!(meta.working_directory.as_deref(), Some("."));
         assert_eq!(meta.connector_id.as_deref(), Some("pi_agent"));
         assert_eq!(meta.executor.as_deref(), Some("local"));
+    }
+
+    #[tokio::test]
+    async fn refresh_uses_frame_target_provider_entry() {
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let frame = agentdash_domain::workflow::AgentFrame::new_revision(agent_id, 7, "test");
+        let provider = Arc::new(RecordingFrameProvider::default());
+        let runtime = AgentFrameHookRuntime::from_frame(
+            run_id,
+            &frame,
+            "sess-1".into(),
+            provider.clone(),
+            SessionHookSnapshot {
+                session_id: "sess-1".into(),
+                ..Default::default()
+            },
+        );
+
+        runtime
+            .refresh(SessionHookRefreshQuery {
+                session_id: "ignored-session-owner".into(),
+                turn_id: Some("turn-2".into()),
+                reason: Some("test_refresh".into()),
+            })
+            .await
+            .expect("refresh should use frame provider entry");
+
+        let queries = provider
+            .refresh_queries
+            .lock()
+            .expect("refresh query lock poisoned");
+        assert_eq!(queries.len(), 1);
+        let query = &queries[0];
+        assert_eq!(query.target.run_id, run_id);
+        assert_eq!(query.target.agent_id, agent_id);
+        assert_eq!(query.target.frame_id, frame.id);
+        assert_eq!(
+            query.provenance.runtime_session_id.as_deref(),
+            Some("sess-1")
+        );
+        assert_eq!(query.provenance.turn_id.as_deref(), Some("turn-2"));
+        assert_eq!(query.reason.as_deref(), Some("test_refresh"));
     }
 }

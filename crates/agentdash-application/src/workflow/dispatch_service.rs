@@ -12,6 +12,7 @@ use agentdash_domain::workflow::{
     WorkflowGraphInstanceRepository,
 };
 
+use super::frame_builder::AgentFrameBuilder;
 use super::WorkflowApplicationError;
 
 /// 业务执行进入控制面的统一入口 service。
@@ -284,12 +285,12 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let session_refs_json = runtime_session_ref.map(|id| serde_json::json!([id.to_string()]));
-        let frame = AgentFrame::new_initial(agent.id, session_refs_json);
-        self.frame_repo
-            .create(&frame)
-            .await
-            ?;
+        let mut builder = AgentFrameBuilder::new(agent.id)
+            .with_created_by("dispatch", None);
+        if let Some(session_id) = runtime_session_ref {
+            builder = builder.with_runtime_session(session_id);
+        }
+        let frame = builder.build(self.frame_repo).await?;
         Ok(frame)
     }
 

@@ -140,6 +140,12 @@ pub async fn open_project_agent_session(
     Path((project_id, agent_key)): Path<(String, String)>,
     Query(query): Query<OpenSessionQuery>,
 ) -> Result<Json<OpenProjectAgentSessionResult>, ApiError> {
+    use agentdash_application::workflow::LifecycleDispatchService;
+    use agentdash_domain::workflow::{
+        AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, RunPolicy,
+        RuntimePolicy, SubjectRef, WorkflowGraphRef,
+    };
+
     let project_id = parse_project_id(&project_id)?;
     let project = load_project_with_permission(
         state.as_ref(),
@@ -157,13 +163,14 @@ pub async fn open_project_agent_session(
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
-    let agent =
+    let agent_context =
         SessionConstructionPlanner::build_project_agent_context(&state.repos, &project_agent)
             .await
             .map_err(ApiError::Internal)?;
 
     let _ = query.force_new;
 
+    // 创建 RuntimeSession（trace/delivery substrate）
     let meta = state.services.session_core.create_session("").await?;
     state
         .services
@@ -180,43 +187,76 @@ pub async fn open_project_agent_session(
         .await
         .map_err(ApiError::from)?;
 
-    // 自动启动显式 Lifecycle；未配置时归属到 freeform LifecycleRun。
-    if let Some(lifecycle_key) = project_agent.default_lifecycle_key.as_deref() {
-        if let Err(err) =
-            auto_start_lifecycle_run(&state, project.id, &meta.id, lifecycle_key).await
-        {
-            tracing::warn!(
-                project_id = %project.id,
-                agent_key = %agent_key,
-                lifecycle_key = %lifecycle_key,
-                error = %err,
-                "自动启动 Lifecycle Run 失败（不阻塞 session 创建）"
-            );
-        }
-    } else if let Err(err) =
-        crate::routes::acp_sessions::ensure_freeform_lifecycle_run(&state, project.id, &meta.id)
-            .await
+    // 解析 workflow graph ref（如果 ProjectAgent 配置了 lifecycle_key）
+    let workflow_graph_ref = if let Some(lifecycle_key) = &project_agent.default_lifecycle_key {
+        Some(WorkflowGraphRef::ByKey {
+            project_id: project.id,
+            key: lifecycle_key.clone(),
+        })
+    } else {
+        None
+    };
+
+    // 构造 ExecutionIntent 并通过 dispatch service 创建 lifecycle 实体
+    let intent = ExecutionIntent {
+        project_id: project.id,
+        source: ExecutionSource::ProjectAgent,
+        subject_ref: Some(SubjectRef::new("project", project.id)),
+        parent_run_id: None,
+        parent_agent_id: None,
+        workflow_graph_ref,
+        agent_procedure_ref: None,
+        run_policy: RunPolicy::CreateLinkedRun,
+        agent_policy: AgentPolicy::Create,
+        context_policy: ContextPolicy::Isolated,
+        capability_policy: CapabilityPolicy::Baseline,
+        runtime_policy: RuntimePolicy::CreateRuntimeSession,
+        gate_policy: None,
+    };
+
+    let dispatch_service = LifecycleDispatchService::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.lifecycle_subject_association_repo.as_ref(),
+        state.repos.lifecycle_gate_repo.as_ref(),
+        state.repos.agent_lineage_repo.as_ref(),
+    );
+
+    let dispatch_result = dispatch_service.dispatch(&intent).await.map_err(|err| {
+        ApiError::Internal(format!("Lifecycle dispatch 失败: {err}"))
+    })?;
+
+    // 绑定 runtime session 到 LifecycleRun（legacy bridge，B7 移除）
+    if let Some(mut run) = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(dispatch_result.run_ref)
+        .await
+        .map_err(ApiError::from)?
     {
-        tracing::warn!(
-            project_id = %project.id,
-            agent_key = %agent_key,
-            error = %err,
-            "自动启动 freeform LifecycleRun 失败（不阻塞 session 创建）"
-        );
+        run.bind_runtime_session(meta.id.clone());
+        state
+            .repos
+            .lifecycle_run_repo
+            .update(&run)
+            .await
+            .map_err(ApiError::from)?;
     }
 
     let session = Some(ProjectAgentSession {
-        binding_id: meta.id.clone(),
+        binding_id: dispatch_result.run_ref.to_string(),
         session_id: meta.id.clone(),
         session_title: Some(meta.title),
         last_activity: Some(meta.updated_at),
     });
-    let summary = build_project_agent_summary(&project, &agent, session);
+    let summary = build_project_agent_summary(&project, &agent_context, session);
 
     Ok(Json(OpenProjectAgentSessionResult {
         created: true,
-        session_id: meta.id.clone(),
-        binding_id: meta.id,
+        session_id: meta.id,
+        binding_id: dispatch_result.run_ref.to_string(),
         agent: summary,
     }))
 }
@@ -622,6 +662,8 @@ async fn resolve_lifecycle_key_for_project_agent(
 }
 
 /// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）
+/// 当前 ProjectAgent open 已迁移到 dispatch service；此函数保留供后续 Task/Routine 接入。
+#[allow(dead_code)]
 async fn auto_start_lifecycle_run(
     state: &Arc<AppState>,
     project_id: Uuid,

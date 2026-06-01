@@ -16,7 +16,7 @@
 //!   PhaseNode 热更新路径可传 `baseline_override = Some(hook_runtime.current_caps())`,
 //!   再叠加 directive 得到新能力集。
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
     ActivityDefinition, AgentProcedure, MountDirective, ToolCapabilityDirective,
@@ -84,17 +84,6 @@ pub struct KickoffPromptFragment {
     pub output_section: String,
     /// input port 引用块(含前驱 "已就绪/未就绪" 状态)。
     pub input_section: String,
-}
-
-impl KickoffPromptFragment {
-    /// 默认拼接方式:主标题 + 完成 tool 提示 + output + input。
-    /// applier 可自行替换。
-    pub fn to_default_prompt(&self) -> String {
-        format!(
-            "{}\n请先完成当前阶段工作,并在完成后调用 `complete_lifecycle_node` 工具提交总结与产物。{}{}",
-            self.title_line, self.output_section, self.input_section
-        )
-    }
 }
 
 /// activate_step 的完整产出 — 各 applier 从中摘取所需字段。
@@ -232,7 +221,8 @@ fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffProm
     );
 
     let output_section = render_output_section(&input.active_activity.output_ports);
-    let input_section = render_input_section(&input.active_activity.input_ports);
+    let input_section =
+        render_input_section(&input.active_activity.input_ports, &input.ready_port_keys);
 
     KickoffPromptFragment {
         title_line,
@@ -255,13 +245,23 @@ fn render_output_section(ports: &[agentdash_domain::workflow::OutputPortDefiniti
     )
 }
 
-fn render_input_section(ports: &[agentdash_domain::workflow::InputPortDefinition]) -> String {
+fn render_input_section(
+    ports: &[agentdash_domain::workflow::InputPortDefinition],
+    ready_port_keys: &BTreeSet<String>,
+) -> String {
     if ports.is_empty() {
         return String::new();
     }
     let items: Vec<String> = ports
         .iter()
-        .map(|ip| format!("- **{}**({})", ip.key, ip.description))
+        .map(|ip| {
+            let status = if ready_port_keys.contains(&ip.key) {
+                "已就绪"
+            } else {
+                "未就绪"
+            };
+            format!("- **{}**({}) — {}", ip.key, ip.description, status)
+        })
         .collect();
     format!(
         "\n\n## 输入上下文\n以下是来自前驱节点的产出,可通过 `read_file` 读取:\n{}",
@@ -328,7 +328,7 @@ pub(crate) async fn apply_to_running_session(
         .await
 }
 
-pub fn build_capability_state_for_activation(
+pub(crate) fn build_capability_state_for_activation(
     activation: &StepActivation,
     base_surface: Option<&CapabilityState>,
 ) -> CapabilityState {
@@ -348,42 +348,9 @@ pub fn build_capability_state_for_activation(
     state
 }
 
-/// 便捷函数:把 CapabilityResolver 的 effective capability key 集转成有序 Vec,
-/// 供 hook runtime 初始化时注入。
-pub fn capability_keys_sorted(activation: &StepActivation) -> Vec<String> {
-    activation.capability_keys.iter().cloned().collect()
-}
-
-/// 把 capability key 集转换成 `Add(simple)` 工具指令序列。
-pub fn tool_directives_from_keys(keys: &BTreeSet<String>) -> Vec<ToolCapabilityDirective> {
-    keys.iter()
-        .cloned()
-        .map(ToolCapabilityDirective::add_simple)
-        .collect()
-}
-
-/// 计算两组 capability key 集之间的指令化 delta（added/removed）。
-pub fn capability_delta_directives(
-    old_keys: &BTreeSet<String>,
-    new_keys: &BTreeSet<String>,
-) -> Vec<ToolCapabilityDirective> {
-    let mut directives: Vec<ToolCapabilityDirective> = new_keys
-        .difference(old_keys)
-        .cloned()
-        .map(ToolCapabilityDirective::add_simple)
-        .collect();
-    directives.extend(
-        old_keys
-            .difference(new_keys)
-            .cloned()
-            .map(ToolCapabilityDirective::remove_simple),
-    );
-    directives
-}
-
 /// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 step activation
 /// 在 phase 热更新路径里解析自定义 `mcp:<name>` 能力。
-pub fn agent_mcp_entries_from_servers(
+pub(crate) fn agent_mcp_entries_from_servers(
     servers: &[agentdash_spi::SessionMcpServer],
 ) -> Vec<AgentMcpServerEntry> {
     servers
@@ -398,7 +365,10 @@ pub fn agent_mcp_entries_from_servers(
 // ─── available_presets 辅助 ────────────────────────────────
 
 /// 构造空的 `AvailableMcpPresets`(调用方未预展开时的占位)。
-pub fn empty_presets() -> AvailableMcpPresets {
+#[cfg(test)]
+fn empty_presets() -> AvailableMcpPresets {
+    use std::collections::BTreeMap;
+
     BTreeMap::new()
 }
 

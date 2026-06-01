@@ -20,7 +20,7 @@ pub mod runtime_launch;
 pub mod scheduler;
 mod session_association;
 mod session_run_context_resolver;
-pub mod step_activation;
+pub(crate) mod step_activation;
 pub mod tools;
 
 pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
@@ -78,8 +78,9 @@ pub use session_association::{
     resolve_activity_session_association,
 };
 pub use session_run_context_resolver::{SessionRunContextResolver, build_session_run_context};
-pub use step_activation::{
-    KickoffPromptFragment, StepActivation, StepActivationInput, activate_step_with_platform,
+#[cfg(test)]
+pub(crate) use step_activation::KickoffPromptFragment;
+pub(crate) use step_activation::{
+    StepActivation, StepActivationInput, activate_step_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation,
-    capability_delta_directives, capability_keys_sorted, empty_presets, tool_directives_from_keys,
 };

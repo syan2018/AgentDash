@@ -239,7 +239,20 @@ Hook runtime 已经是 `AgentFrameHookRuntime`，但入口仍是 `session_id -> 
 - 同一 input 中 raw runtime id 改名为 `delivery_runtime_session_id`，只用于 live connector、runtime registry、context frame event 投递与 runtime delivery outbox。
 - `StepActivation::apply_to_running_session` 仍存在，当前先解析 `target_frame_id` 再传入 delivery runtime id；它是后续纳入 `AgentFrameBuilder` 的剩余边界。
 
-该记录不关闭 P1-08 gate，因为 `SessionHookService` 与 `SessionHookSnapshotQuery` 仍是 session-indexed runtime adapter 入口；后续需要让 hook/capability control command 的 public target 收束到 frame/agent/assignment。
+Phase 4 hook/capability follow-up 调研进一步确认：
+
+- 真正的 control coupling 集中在 SPI 与 application hook 边界：`ExecutionHookProvider`、`SessionHookSnapshotQuery`、`SessionHookRefreshQuery`、`HookEvaluationQuery` 仍以 top-level `session_id` 表达 snapshot / refresh / evaluate。
+- `SessionHookService`、hub hook dispatch lazy rebuild、workflow orchestrator refresh、PhaseNode activation、canvas capability sync、companion parent notification 仍把 session 当成控制命令入口，再反查 frame/hook runtime。
+- `AgentFrameRuntimeTarget`、`delivery_runtime_session_id`、`RuntimeDeliveryCommand`、`AgentFrameRepository::find_by_runtime_session` 已经可以作为正确的 delivery/provenance 边界保留；问题不是删除所有 `session_id`，而是禁止 control command 以 raw session 为 owner。
+
+后续最小封装应拆成：
+
+- `HookControlTarget { frame_id, agent_id, run_id, assignment_id }`。
+- `RuntimeAdapterProvenance { runtime_session_id, turn_id, source }`。
+- frame-first hook service：load / refresh / evaluate 都以 hook target 为主，runtime-session entry 只作为 adapter 并立刻解析到 target。
+- frame-first capability service：live / pending transition 都要求调用方先提供 `AgentFrameRuntimeTarget`，`resolve_runtime_session_frame_id` 只留在 runtime adapter 模块。
+
+该记录不关闭 P1-08 gate，因为 hook SPI、application hook service、workflow/canvas/companion 调用方仍能用 session 作为 command owner；后续必须通过上述 target/provenance 封装把这些入口整体迁走。
 
 ## P1-09 `StepActivation` 没收束进 AgentFrameBuilder
 

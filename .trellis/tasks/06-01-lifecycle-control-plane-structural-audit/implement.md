@@ -6,22 +6,39 @@
 
 ## Phase 1: 固化运行闭环不变量
 
-- [ ] 设计 `ActivityRuntimeAssociationResolver`。
+- [x] 设计 `ActivityRuntimeAssociationResolver`。
   - 输入 runtime terminal / session / turn provenance。
   - 输出 stable assignment / graph instance / activity attempt refs。
   - 不依赖 current frame id 等易变 revision。
-- [ ] 明确 `AgentAssignment` 与 `AgentFrame` revision 的关系。
+- [x] 明确 `AgentAssignment` 与 `AgentFrame` revision 的关系。
   - assignment 绑定执行证据。
   - frame revision 绑定有效 runtime surface。
   - terminal resolution 必须能跨 frame revision 回到 assignment。
-- [ ] 把相关 invariant 写成测试。
+- [x] 把相关 invariant 写成测试。
 
 ### Gate
 
-- [ ] 单元/集成测试证明：同一个 RuntimeSession 绑定的 AgentFrame 发生 revision 后，terminal callback 仍能解析到原 `AgentAssignment` 与 `ActivityAttemptState`。
-- [ ] 失败场景测试证明：无法解析 assignment 时返回结构化 domain/application error，不静默跳过 Activity advancement。
-- [ ] `rg "assignment.frame_id == frame.id"` 不再是 terminal resolution 的唯一判定条件。
-- [ ] 代码审查证明 terminal resolver 不读取 read model，也不依赖前端/route-local DTO。
+- [x] 单元/集成测试证明：同一个 RuntimeSession 绑定的 AgentFrame 发生 revision 后，terminal callback 仍能解析到原 `AgentAssignment` 与 `ActivityAttemptState`。
+- [x] 失败场景测试证明：无法解析 assignment 时返回结构化 domain/application error，不静默跳过 Activity advancement。
+- [x] `rg "assignment.frame_id == frame.id"` 不再是 terminal resolution 的唯一判定条件。
+- [x] 代码审查证明 terminal resolver 不读取 read model，也不依赖前端/route-local DTO。
+
+### 落地记录
+
+2026-06-02 的 Phase 1 slice 已关闭 terminal association gate：
+
+- `ActivityRuntimeAssociationResolver` 以 `RuntimeSession -> current AgentFrame -> LifecycleAgent -> AgentAssignment -> LifecycleRun` 解析 terminal/advance provenance；找不到 runtime frame 时表示非 lifecycle session，已找到 frame/agent 但缺 assignment 时返回 `ActivityRuntimeAssociationError::MissingAssignment`。
+- `select_assignment_for_runtime_frame` 先接受 exact launch frame evidence，再按 current frame 的 `graph_instance_id + activity_key` scope 回到原 assignment；同一 scope 或无 scope 下多 active assignment 会返回 `AmbiguousAssignments`。
+- `resolve_activity_session_association` 保持结构化 application error，orchestrator 只在外层 `String` boundary 格式化；terminal path 不再把 assignment 缺失静默当作 `Ok(None)`。
+- terminal resolver 只读取 frame / agent / assignment / run repositories，不读取 read model、route DTO 或前端 shape。`assignment.frame_id == frame.id` 仍用于 launch-frame exact evidence，但不再是 revision 后 terminal resolution 的唯一条件。
+- Activity state 由 Phase 2 的 graph-instance owner gate 接续验证：association 输出 `graph_instance_id + activity_key + attempt`，`ActivityLifecycleRunService` 用 graph instance id 推进 `ActivityLifecycleRunState`。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::session_association --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::projection --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::orchestrator --lib -- --format terse`
+- `cargo check -p agentdash-application`
 
 ## Phase 2: 拆分 LifecycleRun 与 WorkflowGraphInstance ownership
 

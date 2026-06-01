@@ -86,7 +86,11 @@ pub async fn resolve_active_workflow_projection_for_session(
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let resolver =
         ActivityRuntimeAssociationResolver::new(frame_repo, agent_repo, assignment_repo, run_repo);
-    let Some(association) = resolver.resolve_by_runtime_session(session_id).await? else {
+    let Some(association) = resolver
+        .resolve_by_runtime_session(session_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
         return Ok(None);
     };
     let run = association.run;
@@ -164,7 +168,8 @@ pub async fn resolve_active_workflow_projection_for_target(
         if frame.agent_id != target.agent_id {
             return Ok(None);
         }
-        select_assignment_for_runtime_frame(&assignments, &frame)?
+        select_assignment_for_runtime_frame(&assignments, &frame)
+            .map_err(|error| error.to_string())?
     };
     let Some(assignment) = assignment else {
         return Ok(None);

@@ -142,7 +142,8 @@ impl LifecycleOrchestrator {
             self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
-        .await?
+        .await
+        .map_err(|error| error.to_string())?
         else {
             return Ok(None);
         };
@@ -193,7 +194,8 @@ impl LifecycleOrchestrator {
             self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
-        .await?
+        .await
+        .map_err(|error| error.to_string())?
         else {
             return Err("当前 runtime session 没有关联 lifecycle activity attempt".to_string());
         };

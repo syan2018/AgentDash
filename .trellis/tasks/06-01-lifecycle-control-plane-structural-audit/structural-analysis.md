@@ -36,6 +36,22 @@ Runtime terminal 目标上已经走 `RuntimeSession -> AgentFrame -> LifecycleAg
 
 这比在现有 resolver 里加 OR 条件更重要，因为它把 terminal association 从 hook/session 边界中抽出来，成为 lifecycle execution 的独立查询边界。
 
+### 落地记录
+
+2026-06-02 已完成 terminal association resolver 收口：
+
+- `ActivityRuntimeAssociationResolver` 返回稳定的 run / assignment / attempt evidence；assignment 的 `frame_id` 作为 launch evidence 保留，current frame revision 只用于定位当前 agent 与 graph/activity scope。
+- `ActivityRuntimeAssociationError` 区分 repository failure、missing lifecycle agent、missing assignment、ambiguous assignment、invalid attempt 与 missing run；缺 assignment 不再被 terminal path 静默当作非 lifecycle session。
+- `select_assignment_for_runtime_frame` 的测试覆盖 exact launch frame、frame revision 后按 graph/activity scope 找回旧 assignment、无 scope 歧义和同 scope 歧义。
+- orchestrator terminal/advance path 通过 `resolve_activity_session_association` 获取 `graph_instance_id + activity_key + attempt`，再交给 graph-instance owned activity service 推进。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::session_association --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::projection --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::orchestrator --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
 ## P0-02 `LifecycleRun.activity_state` 与 `WorkflowGraphInstance` 双事实源
 
 ### 原始问题

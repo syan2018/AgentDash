@@ -94,6 +94,12 @@ pub trait ActivityExecutionClaimRepository: Send + Sync {
         &self,
         cutoff: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
+    /// 通过 executor_run_ref 中的 session_id 查找当前 running 的 claim。
+    /// 用于 terminal callback 路径：不再依赖 LifecycleRun.session_id。
+    async fn find_running_by_executor_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ActivityExecutionClaim>, DomainError>;
 }
 
 #[async_trait::async_trait]
@@ -133,6 +139,12 @@ pub trait AgentFrameRepository: Send + Sync {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
+    /// 通过 runtime session ref 反查 AgentFrame。
+    /// Terminal callback 完整链路：RuntimeSession -> AgentFrame -> Agent -> Assignment。
+    async fn find_by_runtime_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<AgentFrame>, DomainError>;
 }
 
 #[async_trait::async_trait]

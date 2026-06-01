@@ -2003,6 +2003,7 @@ mod tests {
         )
         .expect("lifecycle");
         let activity_state = ActivityLifecycleRunState {
+            graph_instance_id: uuid::Uuid::nil(),
             status: agentdash_domain::workflow::ActivityRunStatus::Running,
             attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
                 activity_key: "implement".to_string(),

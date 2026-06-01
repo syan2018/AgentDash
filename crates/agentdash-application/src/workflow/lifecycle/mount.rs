@@ -107,6 +107,7 @@ mod tests {
         )
         .expect("lifecycle");
         let activity_state = ActivityLifecycleRunState {
+            graph_instance_id: uuid::Uuid::nil(),
             status: ActivityRunStatus::Running,
             attempts: vec![ActivityAttemptState {
                 activity_key: "plan".to_string(),

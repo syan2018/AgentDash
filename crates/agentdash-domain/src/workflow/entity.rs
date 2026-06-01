@@ -96,6 +96,7 @@ pub struct ActivityLifecycleDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityExecutionClaim {
     pub run_id: Uuid,
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
     pub claim_id: Uuid,
@@ -111,6 +112,7 @@ pub struct ActivityExecutionClaim {
 impl ActivityExecutionClaim {
     pub fn new(
         run_id: Uuid,
+        graph_instance_id: Uuid,
         activity_key: impl Into<String>,
         attempt: u32,
         executor_kind: impl Into<String>,
@@ -119,12 +121,15 @@ impl ActivityExecutionClaim {
         let now = Utc::now();
         Self {
             run_id,
+            graph_instance_id,
             activity_key: activity_key.clone(),
             attempt,
             claim_id: Uuid::new_v4(),
             executor_kind: executor_kind.into(),
             status: ActivityExecutionClaimStatus::Claiming,
-            idempotency_key: format!("{run_id}:{activity_key}:{attempt}"),
+            idempotency_key: format!(
+                "{run_id}:{graph_instance_id}:{activity_key}:{attempt}"
+            ),
             executor_run_ref: None,
             created_at: now,
             updated_at: now,
@@ -364,14 +369,19 @@ mod tests {
     #[test]
     fn activity_execution_claim_uses_attempt_idempotency_key() {
         let run_id = Uuid::new_v4();
-        let claim = ActivityExecutionClaim::new(run_id, "plan", 2, "agent");
+        let graph_instance_id = Uuid::new_v4();
+        let claim = ActivityExecutionClaim::new(run_id, graph_instance_id, "plan", 2, "agent");
 
         assert_eq!(claim.run_id, run_id);
+        assert_eq!(claim.graph_instance_id, graph_instance_id);
         assert_eq!(claim.activity_key, "plan");
         assert_eq!(claim.attempt, 2);
         assert_eq!(claim.executor_kind, "agent");
         assert_eq!(claim.status, ActivityExecutionClaimStatus::Claiming);
-        assert_eq!(claim.idempotency_key, format!("{run_id}:plan:2"));
+        assert_eq!(
+            claim.idempotency_key,
+            format!("{run_id}:{graph_instance_id}:plan:2")
+        );
         assert!(claim.status.is_active());
         assert!(!ActivityExecutionClaimStatus::Succeeded.is_active());
     }

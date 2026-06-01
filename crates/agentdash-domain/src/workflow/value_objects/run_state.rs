@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +65,10 @@ pub struct ActivityInputArtifact {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityLifecycleRunState {
+    /// 当前 run state 所属的 graph instance，用于保证同一 LifecycleRun
+    /// 内不同 WorkflowGraphInstance 的同名 activity key 互不干扰。
+    #[serde(default = "Uuid::nil")]
+    pub graph_instance_id: Uuid,
     pub status: ActivityRunStatus,
     pub attempts: Vec<ActivityAttemptState>,
     pub outputs: Vec<ActivityOutputArtifact>,
@@ -155,7 +160,7 @@ pub enum LifecycleExecutionEventKind {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LifecycleExecutionEntry {
     pub timestamp: DateTime<Utc>,
-    pub step_key: String,
+    pub activity_key: String,
     pub event_kind: LifecycleExecutionEventKind,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

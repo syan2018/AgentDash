@@ -347,7 +347,8 @@ pub async fn start_lifecycle_run(
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
-    );
+    )
+    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
     let run = service
         .start_run(StartActivityLifecycleRunCommand {
             project_id,
@@ -447,7 +448,8 @@ pub async fn submit_human_decision(
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
-    );
+    )
+    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
     let run = service
         .apply_event(
             run_id,

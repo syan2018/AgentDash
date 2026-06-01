@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
+    LifecycleRunRepository, WorkflowDefinitionRepository,
 };
 use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -17,6 +18,7 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 pub struct WorkflowSnapshotBuilder {
     workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
     activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
@@ -24,11 +26,13 @@ impl WorkflowSnapshotBuilder {
     pub fn new(
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+        activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
             workflow_definition_repo,
             activity_lifecycle_definition_repo,
+            activity_execution_claim_repo,
             lifecycle_run_repo,
         }
     }
@@ -52,6 +56,7 @@ impl WorkflowSnapshotBuilder {
             session_id,
             self.workflow_definition_repo.as_ref(),
             self.activity_lifecycle_definition_repo.as_ref(),
+            self.activity_execution_claim_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         )
         .await

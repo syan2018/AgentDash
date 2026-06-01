@@ -192,6 +192,7 @@ impl SessionConstructionPlanner {
             &session_id,
             repos.workflow_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.activity_execution_claim_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
         .await?;
@@ -333,6 +334,7 @@ impl SessionConstructionPlanner {
             &session_id,
             repos.workflow_definition_repo.as_ref(),
             repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.activity_execution_claim_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
         .await?;

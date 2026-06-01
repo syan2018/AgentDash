@@ -390,6 +390,28 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .map(TryInto::try_into)
         .collect()
     }
+
+    async fn find_by_runtime_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<AgentFrame>, DomainError> {
+        // TODO(agent-frame-construction): runtime_session_refs_json 尚未被所有路径一致填充，
+        // 此查询暂时仅作为完整链路的预留入口。
+        sqlx::query_as::<_, FrameRow>(
+            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
+                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
+                      runtime_session_refs_json,created_by_kind,created_by_id,created_at
+               FROM agent_frames
+               WHERE runtime_session_refs_json::jsonb @> to_jsonb($1::text)
+               ORDER BY created_at DESC LIMIT 1"#,
+        )
+        .bind(runtime_session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -110,6 +110,7 @@ pub(crate) async fn build_session_runtime(
         repos.story_repo.clone(),
         repos.workflow_definition_repo.clone(),
         repos.activity_lifecycle_definition_repo.clone(),
+        repos.activity_execution_claim_repo.clone(),
         repos.lifecycle_run_repo.clone(),
         repos.lifecycle_run_link_repo.clone(),
         repos.inline_file_repo.clone(),

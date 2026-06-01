@@ -679,7 +679,8 @@ async fn auto_start_lifecycle_run(
         state.repos.activity_lifecycle_definition_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
-    );
+    )
+    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
 
     let cmd = StartActivityLifecycleRunCommand {
         project_id,

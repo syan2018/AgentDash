@@ -578,6 +578,12 @@ mod tests {
                 .cloned()
                 .collect())
         }
+        async fn find_by_runtime_session(
+            &self,
+            _runtime_session_id: &str,
+        ) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(None)
+        }
     }
 
     #[derive(Default)]

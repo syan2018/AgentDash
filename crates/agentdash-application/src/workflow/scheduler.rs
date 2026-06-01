@@ -1,6 +1,7 @@
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityExecutionClaim, ActivityExecutionClaimRepository,
-    ActivityExecutionClaimStatus, ActivityLifecycleDefinition, ExecutorRunRef,
+    ActivityExecutionClaimStatus, ActivityLifecycleDefinition, AgentAssignment,
+    AgentAssignmentRepository, ExecutorRunRef,
 };
 use uuid::Uuid;
 
@@ -9,8 +10,9 @@ use super::{
     WorkflowApplicationError,
 };
 
-pub struct ActivityExecutorScheduler<'a, R: ?Sized> {
+pub struct ActivityExecutorScheduler<'a, R: ?Sized, A: ?Sized = dyn AgentAssignmentRepository> {
     claim_repo: &'a R,
+    assignment_repo: Option<&'a A>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,11 +37,12 @@ impl ActivityExecutorStartError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ActivityExecutorLaunchOutcome {
     pub claim: ActivityExecutionClaim,
     pub started: bool,
     pub error: Option<String>,
+    pub assignment: Option<AgentAssignment>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,12 +77,21 @@ pub trait ActivityExecutorLauncher: Send + Sync {
     ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError>;
 }
 
-impl<'a, R: ?Sized> ActivityExecutorScheduler<'a, R>
+impl<'a, R: ?Sized, A: ?Sized> ActivityExecutorScheduler<'a, R, A>
 where
     R: ActivityExecutionClaimRepository,
+    A: AgentAssignmentRepository,
 {
     pub fn new(claim_repo: &'a R) -> Self {
-        Self { claim_repo }
+        Self {
+            claim_repo,
+            assignment_repo: None,
+        }
+    }
+
+    pub fn with_assignment_repo(mut self, assignment_repo: &'a A) -> Self {
+        self.assignment_repo = Some(assignment_repo);
+        self
     }
 
     pub async fn claim_ready_attempts(
@@ -106,6 +118,7 @@ where
                 })?;
             let requested_claim = ActivityExecutionClaim::new(
                 run_id,
+                state.graph_instance_id,
                 activity_key.clone(),
                 attempt,
                 activity.executor.kind(),
@@ -147,6 +160,7 @@ where
                     claim,
                     started: false,
                     error: None,
+                    assignment: None,
                 });
                 continue;
             }
@@ -160,6 +174,9 @@ where
                             start_result.executor_run,
                         )
                         .await?;
+                    let assignment = self
+                        .maybe_create_assignment(run_id, &updated)
+                        .await?;
                     for event in start_result.immediate_events {
                         LifecycleEngine::apply_event(definition, state, event)
                             .map_err(map_engine_error)?;
@@ -168,6 +185,7 @@ where
                         claim: updated,
                         started: true,
                         error: None,
+                        assignment,
                     });
                 }
                 Err(error) => {
@@ -184,6 +202,7 @@ where
                         claim: updated,
                         started: false,
                         error: Some(error.message),
+                        assignment: None,
                     });
                 }
             }
@@ -252,6 +271,31 @@ where
             .await
             .map_err(Into::into)
     }
+
+    /// 在 executor 启动成功后创建 AgentAssignment（如果 assignment_repo 已接入）。
+    ///
+    /// 当前阶段 agent_id / frame_id 使用 placeholder（`Uuid::nil()`），
+    /// 后续由 AgentFrame construction 任务填充真实值。
+    async fn maybe_create_assignment(
+        &self,
+        run_id: Uuid,
+        claim: &ActivityExecutionClaim,
+    ) -> Result<Option<AgentAssignment>, WorkflowApplicationError> {
+        let Some(repo) = self.assignment_repo else {
+            return Ok(None);
+        };
+        let assignment = AgentAssignment::new(
+            run_id,
+            claim.graph_instance_id,
+            claim.activity_key.clone(),
+            claim.attempt as i32,
+            // TODO(agent-frame-construction): 使用真实 agent_id / frame_id
+            Uuid::nil(),
+            Uuid::nil(),
+        );
+        repo.create(&assignment).await?;
+        Ok(Some(assignment))
+    }
 }
 
 fn map_engine_error(error: LifecycleEngineError) -> WorkflowApplicationError {
@@ -290,6 +334,10 @@ mod tests {
 
     use super::*;
     use crate::workflow::{ActivityPortValue, LifecycleEngine};
+
+    fn test_graph_instance_id() -> Uuid {
+        Uuid::nil()
+    }
 
     #[derive(Default)]
     struct InMemoryClaimRepo {
@@ -432,6 +480,27 @@ mod tests {
             }
             Ok(abandoned)
         }
+
+        async fn find_running_by_executor_session(
+            &self,
+            session_id: &str,
+        ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
+            Ok(self
+                .claims
+                .lock()
+                .expect("claim repo lock")
+                .iter()
+                .find(|claim| {
+                    claim.status
+                        == agentdash_domain::workflow::ActivityExecutionClaimStatus::Running
+                        && matches!(
+                            &claim.executor_run_ref,
+                            Some(agentdash_domain::workflow::ExecutorRunRef::AgentSession { session_id: sid })
+                                if sid == session_id
+                        )
+                })
+                .cloned())
+        }
     }
 
     fn port(key: &str) -> OutputPortDefinition {
@@ -518,7 +587,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         let claims = scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)
@@ -526,7 +595,8 @@ mod tests {
             .expect("claims");
 
         assert_eq!(claims.len(), 1);
-        assert_eq!(claims[0].idempotency_key, format!("{run_id}:plan:1"));
+        let gi = test_graph_instance_id();
+        assert_eq!(claims[0].idempotency_key, format!("{run_id}:{gi}:plan:1"));
         assert!(state.attempts.iter().any(|attempt| {
             attempt.activity_key == "plan"
                 && attempt.attempt == 1
@@ -546,7 +616,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)
@@ -585,7 +655,11 @@ mod tests {
             .expect("claim implement");
 
         assert_eq!(claims.len(), 1);
-        assert_eq!(claims[0].idempotency_key, format!("{run_id}:implement:1"));
+        let gi = test_graph_instance_id();
+        assert_eq!(
+            claims[0].idempotency_key,
+            format!("{run_id}:{gi}:implement:1")
+        );
         assert!(state.attempts.iter().any(|attempt| {
             attempt.activity_key == "implement"
                 && attempt.attempt == 1
@@ -599,7 +673,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         let claim = scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)
             .await
@@ -633,7 +707,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         let claim = scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)
             .await
@@ -660,7 +734,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         let claim = scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)
             .await
@@ -687,7 +761,7 @@ mod tests {
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let launcher = FakeLauncher::started("plan-child");
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         let outcomes = scheduler
             .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
@@ -715,7 +789,7 @@ mod tests {
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let definition = definition();
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("state");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("state");
         let launcher = FakeLauncher::completed("proposal");
 
         scheduler
@@ -739,7 +813,7 @@ mod tests {
         let launcher =
             FakeLauncher::failed(ActivityExecutorStartError::retryable("prompt not accepted"));
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         let outcomes = scheduler
             .launch_ready_attempts(run_id, &definition, &mut state, &launcher)
@@ -768,7 +842,7 @@ mod tests {
         let repo = InMemoryClaimRepo::default();
         let scheduler = ActivityExecutorScheduler::new(&repo);
         let run_id = Uuid::new_v4();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         scheduler
             .claim_ready_attempts(run_id, &definition, &mut state)

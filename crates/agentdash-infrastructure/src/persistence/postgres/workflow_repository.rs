@@ -37,7 +37,7 @@ const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,v
 const ACTIVITY_LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
-const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
+const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
 impl WorkflowDefinitionRepository for PostgresWorkflowRepository {
@@ -446,12 +446,13 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         claim: &ActivityExecutionClaim,
     ) -> Result<ActivityExecutionClaim, DomainError> {
         sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "INSERT INTO activity_execution_claims ({ACTIVITY_CLAIM_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) \
+            "INSERT INTO activity_execution_claims ({ACTIVITY_CLAIM_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) \
              ON CONFLICT (idempotency_key) DO UPDATE SET updated_at = activity_execution_claims.updated_at \
              RETURNING {ACTIVITY_CLAIM_COLS}"
         ))
         .bind(claim.claim_id.to_string())
         .bind(claim.run_id.to_string())
+        .bind(claim.graph_instance_id.to_string())
         .bind(&claim.activity_key)
         .bind(claim.attempt as i32)
         .bind(&claim.executor_kind)
@@ -532,6 +533,24 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         .into_iter()
         .map(TryInto::try_into)
         .collect()
+    }
+
+    async fn find_running_by_executor_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
+        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
+            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims \
+             WHERE status = 'running' \
+             AND executor_run_ref::jsonb -> 'AgentSession' ->> 'session_id' = $1 \
+             ORDER BY updated_at DESC LIMIT 1"
+        ))
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
     }
 }
 
@@ -847,6 +866,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
 struct ActivityExecutionClaimRow {
     claim_id: String,
     run_id: String,
+    graph_instance_id: String,
     activity_key: String,
     attempt: i32,
     executor_kind: String,
@@ -876,6 +896,10 @@ impl TryFrom<ActivityExecutionClaimRow> for ActivityExecutionClaim {
             .transpose()?;
         Ok(ActivityExecutionClaim {
             run_id: parse_uuid(&row.run_id, "lifecycle_run")?,
+            graph_instance_id: parse_uuid(
+                &row.graph_instance_id,
+                "activity_execution_claim.graph_instance",
+            )?,
             activity_key: row.activity_key,
             attempt: u32::try_from(row.attempt).map_err(|_| {
                 DomainError::InvalidConfig(format!(
@@ -993,16 +1017,18 @@ mod workflow_claim_tests {
     #[test]
     fn workflow_claim_row_parses_executor_run_ref() {
         let run_id = uuid::Uuid::new_v4();
+        let graph_instance_id = uuid::Uuid::new_v4();
         let claim_id = uuid::Uuid::new_v4();
         let now = chrono::Utc::now();
         let row = ActivityExecutionClaimRow {
             claim_id: claim_id.to_string(),
             run_id: run_id.to_string(),
+            graph_instance_id: graph_instance_id.to_string(),
             activity_key: "plan".to_string(),
             attempt: 2,
             executor_kind: "agent".to_string(),
             status: "running".to_string(),
-            idempotency_key: format!("{run_id}:plan:2"),
+            idempotency_key: format!("{run_id}:{graph_instance_id}:plan:2"),
             executor_run_ref: Some(
                 serde_json::to_string(&ExecutorRunRef::AgentSession {
                     session_id: "child-session".to_string(),
@@ -1016,6 +1042,7 @@ mod workflow_claim_tests {
         let claim = ActivityExecutionClaim::try_from(row).expect("claim");
 
         assert_eq!(claim.run_id, run_id);
+        assert_eq!(claim.graph_instance_id, graph_instance_id);
         assert_eq!(claim.claim_id, claim_id);
         assert_eq!(claim.activity_key, "plan");
         assert_eq!(claim.attempt, 2);

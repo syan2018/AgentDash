@@ -765,6 +765,10 @@ mod tests {
     use super::*;
     use crate::workflow::{ActivityEvent, ActivityLifecycleRunState, ActivityRunStatus};
 
+    fn test_graph_instance_id() -> uuid::Uuid {
+        uuid::Uuid::nil()
+    }
+
     #[derive(Default)]
     struct FakePort {
         sessions: Mutex<Vec<String>>,
@@ -1033,6 +1037,7 @@ mod tests {
 
     fn state() -> ActivityLifecycleRunState {
         ActivityLifecycleRunState {
+            graph_instance_id: test_graph_instance_id(),
             status: ActivityRunStatus::Ready,
             attempts: vec![ActivityAttemptState {
                 activity_key: "plan".to_string(),
@@ -1063,6 +1068,7 @@ mod tests {
         let definition = definition(project_id);
         let claim = ActivityExecutionClaim {
             run_id: uuid::Uuid::new_v4(),
+            graph_instance_id: test_graph_instance_id(),
             activity_key: "plan".to_string(),
             attempt: 1,
             claim_id: uuid::Uuid::new_v4(),
@@ -1108,7 +1114,13 @@ mod tests {
             port,
         );
         let definition = definition(project_id);
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "plan",
+            1,
+            "agent",
+        );
 
         let error = launcher
             .start(&definition, &state(), &claim)
@@ -1132,7 +1144,13 @@ mod tests {
             port,
         );
         let definition = continue_root_definition(project_id);
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "plan",
+            1,
+            "agent",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)
@@ -1181,7 +1199,13 @@ mod tests {
             completed_at: None,
             summary: None,
         });
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "plan", 1, "agent");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "plan",
+            1,
+            "agent",
+        );
 
         let error = launcher
             .start(&definition, &state, &claim)
@@ -1212,7 +1236,13 @@ mod tests {
             FakePort::default(),
         );
         let definition = human_approval_definition(project_id);
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "approval", 1, "human");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "approval",
+            1,
+            "human",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)
@@ -1240,7 +1270,13 @@ mod tests {
             FakePort::default(),
         );
         let definition = function_definition(project_id, bash_spec("echo hello"));
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "collect",
+            1,
+            "function",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)
@@ -1284,7 +1320,13 @@ mod tests {
             FakePort::default(),
         );
         let definition = function_definition(project_id, bash_spec("exit 7"));
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "collect",
+            1,
+            "function",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)
@@ -1324,7 +1366,13 @@ mod tests {
             FakePort::default(),
         );
         let definition = function_definition(project_id, api_spec(url));
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "collect",
+            1,
+            "function",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)
@@ -1354,7 +1402,13 @@ mod tests {
             FakePort::default(),
         );
         let definition = function_definition(project_id, api_spec(url));
-        let claim = ActivityExecutionClaim::new(uuid::Uuid::new_v4(), "collect", 1, "function");
+        let claim = ActivityExecutionClaim::new(
+            uuid::Uuid::new_v4(),
+            test_graph_instance_id(),
+            "collect",
+            1,
+            "function",
+        );
 
         let start_result = launcher
             .start(&definition, &state(), &claim)

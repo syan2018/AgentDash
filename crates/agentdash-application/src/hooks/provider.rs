@@ -4,8 +4,9 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository,
-    LifecycleRunRepository, WorkflowDefinitionRepository, build_effective_contract,
+    ActivityAttemptStatus, ActivityExecutionClaimRepository,
+    ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
+    WorkflowDefinitionRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -48,6 +49,7 @@ impl AppExecutionHookProvider {
         story_repo: Arc<dyn StoryRepository>,
         workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
         activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+        activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -68,6 +70,7 @@ impl AppExecutionHookProvider {
             workflow_builder: WorkflowSnapshotBuilder::new(
                 workflow_definition_repo,
                 activity_lifecycle_definition_repo,
+                activity_execution_claim_repo,
                 lifecycle_run_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),

@@ -838,7 +838,7 @@ pub struct HookTraceEntry {
 #[serde(rename_all = "snake_case")]
 pub struct PendingExecutionLogEntry {
     pub run_id: String,
-    pub step_key: String,
+    pub activity_key: String,
     pub event_kind: String,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

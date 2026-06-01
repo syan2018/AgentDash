@@ -3,7 +3,7 @@
   "name": "workflow-agent-assignment-migration",
   "title": "WorkflowGraph Agent Assignment 迁移",
   "description": "将 scheduler、orchestrator、terminal callback 从 session-first routing 迁到 graph-instance-scoped AgentAssignment。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

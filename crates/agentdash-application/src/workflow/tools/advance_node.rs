@@ -145,7 +145,7 @@ fn build_tool_result(
         AdvanceCurrentNodeStatus::Failed => Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "Activity `{}` 已标记为 **Failed**。{}",
-                result.step_key,
+                result.activity_key,
                 result
                     .run
                     .activity_state
@@ -153,14 +153,14 @@ fn build_tool_result(
                     .and_then(|state| state
                         .attempts
                         .iter()
-                        .find(|attempt| attempt.activity_key == result.step_key))
+                        .find(|attempt| attempt.activity_key == result.activity_key))
                     .and_then(|attempt| attempt.summary.as_deref())
                     .unwrap_or("")
             ))],
             is_error: false,
             details: Some(serde_json::json!({
                 "run_id": result.run.id,
-                "step_key": result.step_key,
+                "activity_key": result.activity_key,
                 "outcome": "failed",
                 "run_status": format!("{:?}", result.run.status),
             })),
@@ -175,14 +175,14 @@ fn build_tool_result(
                 format!(
                     "Activity `{}` 因连续 {gate_collision_count} 次门禁碰撞已标记为 **Failed**。\n\
                      未交付的 output port: [{}]",
-                    result.step_key, missing_list
+                    result.activity_key, missing_list
                 )
             } else {
                 format!(
                     "**门禁拒绝**（碰撞 {gate_collision_count}/3）：Activity `{}` 尚有 {} 个 output port 未交付。\n\
                      缺失: [{}]\n\n\
                      请通过 `write_file` 写入 `lifecycle://artifacts/{{port_key}}` 完成交付后重试。",
-                    result.step_key,
+                    result.activity_key,
                     missing_output_keys.len(),
                     missing_list
                 )
@@ -192,7 +192,7 @@ fn build_tool_result(
                 is_error: true,
                 details: Some(serde_json::json!({
                     "run_id": result.run.id,
-                    "step_key": result.step_key,
+                    "activity_key": result.activity_key,
                     "gate_collision_count": gate_collision_count,
                     "missing_ports": missing_output_keys,
                     "status": if terminal_failed { "failed" } else { "gate_rejected" },
@@ -228,17 +228,17 @@ fn build_tool_result(
             let message = if let Some(warning) = result.orchestration_warning.as_deref() {
                 format!(
                     "Activity `{}` 已完成。{successor_info}\n[warning] {warning}",
-                    result.step_key
+                    result.activity_key
                 )
             } else {
-                format!("Activity `{}` 已完成。{successor_info}", result.step_key)
+                format!("Activity `{}` 已完成。{successor_info}", result.activity_key)
             };
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(message)],
                 is_error: false,
                 details: Some(serde_json::json!({
                     "run_id": result.run.id,
-                    "step_key": result.step_key,
+                    "activity_key": result.activity_key,
                     "outcome": "completed",
                     "run_status": format!("{:?}", result.run.status),
                     "active_node_keys": result.run.active_node_keys,

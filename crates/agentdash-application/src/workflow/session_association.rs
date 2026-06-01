@@ -1,4 +1,6 @@
-use agentdash_domain::workflow::{LifecycleRun, LifecycleRunRepository};
+use agentdash_domain::workflow::{
+    ActivityExecutionClaimRepository, LifecycleRun, LifecycleRunRepository,
+};
 use uuid::Uuid;
 
 /// Lifecycle node 子 session 的 binding label 前缀。
@@ -45,38 +47,35 @@ pub fn lifecycle_activity_parts_from_label(label: &str) -> Option<LifecycleActiv
 
 /// 解析 session 是否为某个 lifecycle activity attempt 的执行 session。
 ///
-/// 直接通过 `LifecycleRunRepository.list_by_session` 查找关联的 run，
-/// 再从 run 的 activity_state 推导当前 running activity。
+/// 通过 `ActivityExecutionClaimRepository.find_running_by_executor_session` 反查
+/// 正在运行的 claim，再从 claim 的 run_id 加载 `LifecycleRun`。
+/// 不再依赖 `LifecycleRun.session_id` 或 `list_by_session`。
+///
+/// TODO(agent-frame-construction): 完整链路应为
+/// RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment -> ActivityAttemptState，
+/// 待 AgentFrame 一致填充 runtime_session_refs 后切换。
 pub async fn resolve_activity_session_association(
     session_id: &str,
+    claim_repo: &dyn ActivityExecutionClaimRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<LifecycleActivitySessionAssociation>, String> {
-    let runs = run_repo
-        .list_by_session(session_id)
+    let Some(claim) = claim_repo
+        .find_running_by_executor_session(session_id)
         .await
-        .map_err(|e| format!("查询 lifecycle runs 失败: {e}"))?;
-
-    for run in runs {
-        let active_info = run.activity_state.as_ref().and_then(|state| {
-            state
-                .attempts
-                .iter()
-                .find(|a| {
-                    a.status == agentdash_domain::workflow::ActivityAttemptStatus::Running
-                        || a.status == agentdash_domain::workflow::ActivityAttemptStatus::Claiming
-                })
-                .map(|a| (a.activity_key.clone(), a.attempt))
-        });
-        if let Some((activity_key, attempt)) = active_info {
-            return Ok(Some(LifecycleActivitySessionAssociation {
-                run,
-                activity_key,
-                attempt,
-            }));
-        }
-    }
-
-    Ok(None)
+        .map_err(|e| format!("查询 activity execution claims 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let run = run_repo
+        .get_by_id(claim.run_id)
+        .await
+        .map_err(|e| format!("查询 lifecycle run 失败: {e}"))?
+        .ok_or_else(|| format!("lifecycle run 不存在: {}", claim.run_id))?;
+    Ok(Some(LifecycleActivitySessionAssociation {
+        run,
+        activity_key: claim.activity_key,
+        attempt: claim.attempt,
+    }))
 }
 
 #[cfg(test)]

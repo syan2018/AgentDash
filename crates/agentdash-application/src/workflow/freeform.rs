@@ -78,7 +78,8 @@ where
         }
 
         let definition = self.ensure_definition(project_id).await?;
-        let state = LifecycleEngine::initialize(&definition)
+        let graph_instance_id = uuid::Uuid::new_v4();
+        let state = LifecycleEngine::initialize(&definition, graph_instance_id)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
         let run = LifecycleRun::new_activity(
             project_id,

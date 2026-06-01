@@ -110,6 +110,7 @@ pub struct LifecycleEngine;
 impl LifecycleEngine {
     pub fn initialize(
         definition: &ActivityLifecycleDefinition,
+        graph_instance_id: uuid::Uuid,
     ) -> Result<ActivityLifecycleRunState, LifecycleEngineError> {
         if !definition
             .activities
@@ -145,6 +146,7 @@ impl LifecycleEngine {
                 }),
         );
         let mut state = ActivityLifecycleRunState {
+            graph_instance_id,
             status: ActivityRunStatus::Ready,
             attempts,
             outputs: vec![],
@@ -653,6 +655,10 @@ mod tests {
 
     use super::*;
 
+    fn test_graph_instance_id() -> uuid::Uuid {
+        uuid::Uuid::nil()
+    }
+
     fn output_port(key: &str) -> OutputPortDefinition {
         OutputPortDefinition {
             key: key.to_string(),
@@ -894,7 +900,7 @@ mod tests {
     #[test]
     fn approval_rejection_creates_next_plan_attempt_with_feedback() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -952,7 +958,7 @@ mod tests {
     #[test]
     fn approval_approved_activates_implement_with_latest_plan() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -999,7 +1005,7 @@ mod tests {
     #[test]
     fn completion_policy_rejects_missing_output_port() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         let error = LifecycleEngine::apply_event(
@@ -1028,7 +1034,7 @@ mod tests {
     #[test]
     fn scheduler_start_failure_can_retry_claiming_attempt() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         LifecycleEngine::apply_event(
             &definition,
             &mut state,
@@ -1061,7 +1067,7 @@ mod tests {
     #[test]
     fn failed_attempt_does_not_activate_successor() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(
@@ -1136,7 +1142,7 @@ mod tests {
             max_traversals: None,
         });
 
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
             &definition,
@@ -1194,7 +1200,7 @@ mod tests {
     #[test]
     fn artifact_field_condition_activates_successor_on_matching_path() {
         let definition = artifact_condition_definition();
-        let mut state = LifecycleEngine::initialize(&definition).expect("init");
+        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(

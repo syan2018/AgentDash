@@ -75,7 +75,7 @@ pub enum AdvanceCurrentNodeStatus {
 #[derive(Debug, Clone)]
 pub struct AdvanceCurrentNodeResult {
     pub run: LifecycleRun,
-    pub step_key: String,
+    pub activity_key: String,
     pub status: AdvanceCurrentNodeStatus,
     pub orchestration_warning: Option<String>,
 }
@@ -136,6 +136,7 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_activity_session_association(
             session_id,
+            self.repos.activity_execution_claim_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -162,7 +163,8 @@ impl LifecycleOrchestrator {
             self.repos.activity_lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        );
+        )
+        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
         let run = service
             .apply_event(association.run.id, event)
             .await
@@ -181,6 +183,7 @@ impl LifecycleOrchestrator {
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_session_association(
             &input.session_id,
+            self.repos.activity_execution_claim_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -231,7 +234,7 @@ impl LifecycleOrchestrator {
             if !missing_output_keys.is_empty() {
                 return Ok(AdvanceCurrentNodeResult {
                     run: association.run,
-                    step_key: association.activity_key,
+                    activity_key: association.activity_key,
                     status: AdvanceCurrentNodeStatus::GateRejected {
                         gate_collision_count: 0,
                         missing_output_keys,
@@ -253,7 +256,8 @@ impl LifecycleOrchestrator {
             self.repos.activity_lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        );
+        )
+        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
         let run = service
             .apply_event(association.run.id, event)
             .await
@@ -274,7 +278,7 @@ impl LifecycleOrchestrator {
         let final_run = self.load_run(run.id).await?;
         Ok(AdvanceCurrentNodeResult {
             run: final_run,
-            step_key: association.activity_key,
+            activity_key: association.activity_key,
             status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
                 AdvanceCurrentNodeStatus::Failed
             } else {
@@ -292,7 +296,8 @@ impl LifecycleOrchestrator {
             self.repos.activity_lifecycle_definition_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        );
+        )
+        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
         let launcher = AgentActivityExecutorLauncher::new(
             AgentActivityLaunchContext {
                 project_id: run.project_id,

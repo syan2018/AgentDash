@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, ActivityLifecycleDefinition,
-    ActivityLifecycleDefinitionRepository, LifecycleRun, LifecycleRunRepository,
-    LifecycleRunStatus,
+    ActivityLifecycleDefinitionRepository, AgentAssignmentRepository, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunStatus,
 };
 
 use super::scheduler::{ActivityExecutorLaunchOutcome, ActivityExecutorLauncher};
@@ -16,6 +16,7 @@ pub struct ActivityLifecycleRunService<'a, D: ?Sized, R: ?Sized, C: ?Sized> {
     definition_repo: &'a D,
     run_repo: &'a R,
     claim_repo: &'a C,
+    assignment_repo: Option<&'a dyn AgentAssignmentRepository>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +38,16 @@ where
             definition_repo,
             run_repo,
             claim_repo,
+            assignment_repo: None,
         }
+    }
+
+    pub fn with_assignment_repo(
+        mut self,
+        assignment_repo: &'a dyn AgentAssignmentRepository,
+    ) -> Self {
+        self.assignment_repo = Some(assignment_repo);
+        self
     }
 
     pub async fn start_run(
@@ -61,7 +71,8 @@ where
             )));
         }
 
-        let state = LifecycleEngine::initialize(&definition)
+        let graph_instance_id = uuid::Uuid::new_v4();
+        let state = LifecycleEngine::initialize(&definition, graph_instance_id)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
         let run =
             LifecycleRun::new_activity(cmd.project_id, definition.id, Some(cmd.session_id), state)
@@ -92,7 +103,10 @@ where
         L: ActivityExecutorLauncher,
     {
         let (definition, mut run, mut state) = self.load_context(run_id).await?;
-        let scheduler = ActivityExecutorScheduler::new(self.claim_repo);
+        let mut scheduler = ActivityExecutorScheduler::new(self.claim_repo);
+        if let Some(assignment_repo) = self.assignment_repo {
+            scheduler = scheduler.with_assignment_repo(assignment_repo);
+        }
         let outcomes = scheduler
             .launch_ready_attempts(run.id, &definition, &mut state, launcher)
             .await?;
@@ -345,6 +359,13 @@ mod tests {
         ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
             Ok(Vec::new())
         }
+
+        async fn find_running_by_executor_session(
+            &self,
+            _session_id: &str,
+        ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
+            Ok(None)
+        }
     }
 
     fn definition(project_id: Uuid) -> ActivityLifecycleDefinition {
@@ -378,7 +399,8 @@ mod tests {
     async fn apply_event_persists_activity_state_to_lifecycle_run() {
         let project_id = Uuid::new_v4();
         let definition = definition(project_id);
-        let state = LifecycleEngine::initialize(&definition).expect("state");
+        let state =
+            LifecycleEngine::initialize(&definition, uuid::Uuid::new_v4()).expect("state");
         let run = LifecycleRun::new_activity(
             project_id,
             definition.id,

@@ -581,6 +581,7 @@ mod tests {
         target: ActivityAttemptStatus,
     ) -> LifecycleRun {
         let state = ActivityLifecycleRunState {
+            graph_instance_id: uuid::Uuid::nil(),
             status: ActivityRunStatus::Running,
             attempts: vec![ActivityAttemptState {
                 activity_key: activity_key.to_string(),

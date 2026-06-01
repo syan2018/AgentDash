@@ -3,7 +3,7 @@
   "name": "agent-frame-construction-migration",
   "title": "AgentFrame Construction 迁移",
   "description": "将 StepActivation、SessionConstruction、Hook runtime、capability/context/VFS/MCP projection 收束为 AgentFrame construction。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

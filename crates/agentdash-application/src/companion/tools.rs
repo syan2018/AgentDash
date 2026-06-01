@@ -897,9 +897,15 @@ impl CompanionRequestTool {
             .find_lifecycle_for_workflow(project_id, workflow_key)
             .await?;
 
-        let state = crate::workflow::LifecycleEngine::initialize(&lifecycle).map_err(|e| {
-            AgentToolError::ExecutionFailed(format!("初始化 activity lifecycle run 失败: {e}"))
-        })?;
+        let graph_instance_id = uuid::Uuid::new_v4();
+        let state =
+            crate::workflow::LifecycleEngine::initialize(&lifecycle, graph_instance_id).map_err(
+                |e| {
+                    AgentToolError::ExecutionFailed(format!(
+                        "初始化 activity lifecycle run 失败: {e}"
+                    ))
+                },
+            )?;
         let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,

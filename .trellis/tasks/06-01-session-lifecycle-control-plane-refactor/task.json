@@ -3,7 +3,7 @@
   "name": "session-lifecycle-control-plane-refactor",
   "title": "Session Lifecycle 控制面重构主线",
   "description": "以 LifecycleRun、WorkflowGraphInstance、LifecycleAgent、AgentFrame、LifecycleSubjectAssociation 为目标事实源，迁出 Session-first / Binding / Step / single-graph 遗留结构。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": "cross-layer-refactor",
   "package": null,

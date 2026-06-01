@@ -1,7 +1,8 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
-    ActivityLifecycleDefinitionRepository, AgentSessionPolicy, LifecycleNodeType, LifecycleRun,
-    LifecycleRunRepository, WorkflowContract, WorkflowDefinition, WorkflowDefinitionRepository,
+    ActivityDefinition, ActivityExecutionClaimRepository, ActivityExecutorSpec,
+    ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository, AgentSessionPolicy,
+    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract,
+    WorkflowDefinition, WorkflowDefinitionRepository,
 };
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
@@ -64,16 +65,19 @@ fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, Lifecycl
 
 /// 解析任意 session 的 Activity workflow projection。
 ///
-/// 通过 LifecycleRun.session_id 反查 run / activity。
+/// 通过 claim executor_run_ref 反查 run / activity，不依赖 LifecycleRun.session_id。
 pub async fn resolve_active_workflow_projection_for_session(
     session_id: &str,
     definition_repo: &dyn WorkflowDefinitionRepository,
     activity_lifecycle_repo: &dyn ActivityLifecycleDefinitionRepository,
+    claim_repo: &dyn ActivityExecutionClaimRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     if let Some(activity_assoc) =
-        super::session_association::resolve_activity_session_association(session_id, run_repo)
-            .await?
+        super::session_association::resolve_activity_session_association(
+            session_id, claim_repo, run_repo,
+        )
+        .await?
     {
         if let Some(projection) = build_activity_projection_from_run(
             activity_assoc.run,
@@ -191,6 +195,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     )
     .expect("lifecycle definition should build");
     let activity_state = ActivityLifecycleRunState {
+        graph_instance_id: uuid::Uuid::nil(),
         status: ActivityRunStatus::Running,
         attempts: vec![ActivityAttemptState {
             activity_key: "implement".to_string(),

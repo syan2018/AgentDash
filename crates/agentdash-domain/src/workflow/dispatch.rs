@@ -102,13 +102,12 @@ pub struct SubjectExecutionRef {
 
 // ─── Intent ──────────────────────────────────────────────────────────────────
 
-/// 业务执行进入控制面的统一入口。
+/// 创建 / 复用 agent runtime surface。
 ///
-/// 所有业务路径（ProjectAgent open、Task execution、Companion dispatch、Routine fire）
-/// 都应构造 `ExecutionIntent` 并提交给 `LifecycleDispatchService`，
-/// 由 dispatch 统一创建 run、agent、frame 与 runtime trace refs。
+/// `subject_ref` 只表达可选的 project/run control association；需要强制 subject
+/// execution 语义时使用 `SubjectExecutionIntent`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionIntent {
+pub struct AgentLaunchIntent {
     pub project_id: Uuid,
     pub source: ExecutionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,8 +116,7 @@ pub struct ExecutionIntent {
     pub parent_run_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_agent_id: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_graph_ref: Option<WorkflowGraphRef>,
+    pub workflow_graph_ref: WorkflowGraphRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_procedure_ref: Option<AgentProcedureRef>,
     pub run_policy: RunPolicy,
@@ -126,31 +124,119 @@ pub struct ExecutionIntent {
     pub context_policy: ContextPolicy,
     pub capability_policy: CapabilityPolicy,
     pub runtime_policy: RuntimePolicy,
+}
+
+/// 以业务 SubjectRef 进入执行控制面。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubjectExecutionIntent {
+    pub project_id: Uuid,
+    pub source: ExecutionSource,
+    pub subject_ref: SubjectRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gate_policy: Option<GatePolicy>,
+    pub parent_run_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_agent_id: Option<Uuid>,
+    pub workflow_graph_ref: WorkflowGraphRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_procedure_ref: Option<AgentProcedureRef>,
+    pub run_policy: RunPolicy,
+    pub agent_policy: AgentPolicy,
+    pub context_policy: ContextPolicy,
+    pub capability_policy: CapabilityPolicy,
+    pub runtime_policy: RuntimePolicy,
+}
+
+/// 只启动 tracked lifecycle process + root graph instance。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleRunStartIntent {
+    pub project_id: Uuid,
+    pub source: ExecutionSource,
+    pub workflow_graph_ref: WorkflowGraphRef,
+}
+
+/// 创建交互 gate，并可选创建 child agent surface。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionDispatchIntent {
+    pub project_id: Uuid,
+    pub source: ExecutionSource,
+    pub parent_run_id: Uuid,
+    pub parent_agent_id: Uuid,
+    pub workflow_graph_ref: WorkflowGraphRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_procedure_ref: Option<AgentProcedureRef>,
+    pub context_policy: ContextPolicy,
+    pub capability_policy: CapabilityPolicy,
+    pub runtime_policy: RuntimePolicy,
+    pub gate_policy: GatePolicy,
+}
+
+/// 业务执行进入控制面的分类入口。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "intent", rename_all = "snake_case")]
+pub enum ExecutionIntent {
+    AgentLaunch(AgentLaunchIntent),
+    SubjectExecution(SubjectExecutionIntent),
+    LifecycleRunStart(LifecycleRunStartIntent),
+    InteractionDispatch(InteractionDispatchIntent),
 }
 
 // ─── Result ──────────────────────────────────────────────────────────────────
 
-/// Dispatch 调度结果——包含所有目标锚点的稳定引用。
-///
-/// 前端可凭此进入 subject view、agent view 或 runtime trace view。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionDispatchResult {
+pub struct AgentLaunchDispatchResult {
     pub run_ref: Uuid,
     pub graph_instance_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_session_ref: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignment_ref: Option<Uuid>,
+    pub trace_ref: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubjectExecutionDispatchResult {
+    pub run_ref: Uuid,
+    pub graph_instance_ref: Uuid,
+    pub agent_ref: Uuid,
+    pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
+    pub subject_execution_ref: SubjectExecutionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gate_ref: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subject_execution_ref: Option<SubjectExecutionRef>,
+    pub runtime_session_ref: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace_ref: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleRunStartDispatchResult {
+    pub run_ref: Uuid,
+    pub graph_instance_ref: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractionGateOpenedDispatchResult {
+    pub run_ref: Uuid,
+    pub graph_instance_ref: Uuid,
+    pub agent_ref: Uuid,
+    pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
+    pub gate_ref: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_session_ref: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_ref: Option<Uuid>,
+}
+
+/// Dispatch 调度结果按 intent family 分类，避免全 optional DTO 掩盖必需锚点。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "result", rename_all = "snake_case")]
+pub enum ExecutionDispatchResult {
+    AgentLaunch(AgentLaunchDispatchResult),
+    SubjectExecution(SubjectExecutionDispatchResult),
+    LifecycleRunStart(LifecycleRunStartDispatchResult),
+    InteractionGateOpened(InteractionGateOpenedDispatchResult),
 }
 
 #[cfg(test)]
@@ -158,47 +244,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn execution_intent_roundtrip_serde() {
-        let intent = ExecutionIntent {
+    fn execution_intent_serializes_as_discriminated_taxonomy() {
+        let intent = ExecutionIntent::SubjectExecution(SubjectExecutionIntent {
             project_id: Uuid::new_v4(),
             source: ExecutionSource::ProjectAgent,
-            subject_ref: Some(SubjectRef::new("project", Uuid::new_v4())),
+            subject_ref: SubjectRef::new("project", Uuid::new_v4()),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: Some(WorkflowGraphRef::ByKey {
+            workflow_graph_ref: WorkflowGraphRef::ByKey {
                 project_id: Uuid::new_v4(),
                 key: "builtin.freeform_session".to_string(),
-            }),
+            },
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
             capability_policy: CapabilityPolicy::Baseline,
             runtime_policy: RuntimePolicy::CreateRuntimeSession,
-            gate_policy: None,
-        };
+        });
         let json = serde_json::to_string(&intent).expect("serialize");
         let deserialized: ExecutionIntent = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deserialized.source, intent.source);
-        assert_eq!(deserialized.run_policy, intent.run_policy);
+        assert!(json.contains("subject_execution"));
+        assert!(matches!(
+            deserialized,
+            ExecutionIntent::SubjectExecution(SubjectExecutionIntent {
+                source: ExecutionSource::ProjectAgent,
+                run_policy: RunPolicy::CreateLinkedRun,
+                ..
+            })
+        ));
     }
 
     #[test]
-    fn dispatch_result_serializes_optional_trace_fields() {
-        let result = ExecutionDispatchResult {
+    fn subject_execution_result_serializes_required_assignment_ref() {
+        let assignment_ref = Uuid::new_v4();
+        let result = ExecutionDispatchResult::SubjectExecution(SubjectExecutionDispatchResult {
             run_ref: Uuid::new_v4(),
             graph_instance_ref: Uuid::new_v4(),
             agent_ref: Uuid::new_v4(),
             frame_ref: Uuid::new_v4(),
+            assignment_ref,
+            subject_execution_ref: SubjectExecutionRef {
+                subject_ref: SubjectRef::new("task", Uuid::new_v4()),
+                association_id: Uuid::new_v4(),
+            },
             runtime_session_ref: None,
-            assignment_ref: Some(Uuid::new_v4()),
-            gate_ref: None,
-            subject_execution_ref: None,
             trace_ref: None,
-        };
+        });
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(!json.contains("runtime_session_ref"));
+        assert!(json.contains(&assignment_ref.to_string()));
         assert!(json.contains("assignment_ref"));
-        assert!(!json.contains("gate_ref"));
+        assert!(json.contains("subject_execution"));
     }
 }

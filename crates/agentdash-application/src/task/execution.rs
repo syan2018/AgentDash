@@ -1,5 +1,6 @@
 use uuid::Uuid;
 
+use agentdash_domain::workflow::SubjectExecutionRef;
 use agentdash_domain::{common::AgentConfig, task::TaskStatus};
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +42,8 @@ pub struct TaskExecutionResult {
     pub run_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
+    pub subject_execution_ref: SubjectExecutionRef,
     /// 运行时 session trace 引用（optional，仅用于调试/追踪）
     pub trace_ref: Option<Uuid>,
     pub status: TaskStatus,

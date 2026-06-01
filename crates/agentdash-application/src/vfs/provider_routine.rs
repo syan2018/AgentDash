@@ -697,6 +697,7 @@ mod tests {
                 run_id: Uuid::new_v4(),
                 agent_id: Uuid::new_v4(),
                 frame_id: Uuid::new_v4(),
+                assignment_id: Uuid::new_v4(),
             }),
             status: RoutineExecutionStatus::Dispatched,
             started_at: Utc::now(),

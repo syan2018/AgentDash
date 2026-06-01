@@ -3,17 +3,18 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource,
-    LifecycleSubjectAssociationRepository, RunPolicy, RuntimePolicy, SubjectRef,
+    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
+    SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
 };
 
 use crate::repository_set::RepositorySet;
 use crate::task::lock::TaskLockMap;
 use crate::workflow::WorkflowApplicationError;
 use crate::workflow::dispatch_service::LifecycleDispatchService;
+use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
 use super::execution::*;
-use super::gateway::{get_task as gw_get_task, map_domain_error};
+use super::gateway::get_task as gw_get_task;
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
 ///
@@ -114,29 +115,33 @@ impl StoryStepActivationService {
             ));
         }
 
-        let intent = ExecutionIntent {
+        let intent = SubjectExecutionIntent {
             project_id: task.project_id,
             source: ExecutionSource::User,
-            subject_ref: Some(SubjectRef::new("task", task.id)),
+            subject_ref: SubjectRef::new("task", task.id),
             parent_run_id: None,
             parent_agent_id: None,
-            workflow_graph_ref: None,
+            workflow_graph_ref: WorkflowGraphRef::ByKey {
+                project_id: task.project_id,
+                key: FREEFORM_LIFECYCLE_KEY.to_string(),
+            },
             agent_procedure_ref: None,
             run_policy: RunPolicy::CreateLinkedRun,
             agent_policy: AgentPolicy::Create,
             context_policy: ContextPolicy::Isolated,
             capability_policy: CapabilityPolicy::Baseline,
             runtime_policy: RuntimePolicy::CreateRuntimeSession,
-            gate_policy: None,
         };
 
-        let result = self.dispatch_intent(&intent).await?;
+        let result = self.dispatch_subject_execution(&intent).await?;
 
         Ok(TaskExecutionResult {
             task_id: task.id,
             run_ref: result.run_ref,
             agent_ref: result.agent_ref,
             frame_ref: result.frame_ref,
+            assignment_ref: result.assignment_ref,
+            subject_execution_ref: result.subject_execution_ref,
             trace_ref: result.trace_ref,
             status: task.status().clone(),
         })
@@ -155,29 +160,33 @@ impl StoryStepActivationService {
                 TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
             })?;
 
-        let intent = ExecutionIntent {
+        let intent = SubjectExecutionIntent {
             project_id: task.project_id,
             source: ExecutionSource::User,
-            subject_ref: Some(SubjectRef::new("task", task.id)),
+            subject_ref: SubjectRef::new("task", task.id),
             parent_run_id: Some(refs.run_id),
             parent_agent_id: Some(refs.agent_id),
-            workflow_graph_ref: None,
+            workflow_graph_ref: WorkflowGraphRef::ByKey {
+                project_id: task.project_id,
+                key: FREEFORM_LIFECYCLE_KEY.to_string(),
+            },
             agent_procedure_ref: None,
             run_policy: RunPolicy::ReuseExisting,
             agent_policy: AgentPolicy::Resume,
             context_policy: ContextPolicy::Inherit,
             capability_policy: CapabilityPolicy::Baseline,
             runtime_policy: RuntimePolicy::CreateRuntimeSession,
-            gate_policy: None,
         };
 
-        let result = self.dispatch_intent(&intent).await?;
+        let result = self.dispatch_subject_execution(&intent).await?;
 
         Ok(TaskExecutionResult {
             task_id: task.id,
             run_ref: result.run_ref,
             agent_ref: result.agent_ref,
             frame_ref: result.frame_ref,
+            assignment_ref: result.assignment_ref,
+            subject_execution_ref: result.subject_execution_ref,
             trace_ref: result.trace_ref,
             status: task.status().clone(),
         })
@@ -266,10 +275,11 @@ impl StoryStepActivationService {
     }
 
     /// 构造 LifecycleDispatchService 并 dispatch intent。
-    async fn dispatch_intent(
+    async fn dispatch_subject_execution(
         &self,
-        intent: &ExecutionIntent,
-    ) -> Result<agentdash_domain::workflow::ExecutionDispatchResult, TaskExecutionError> {
+        intent: &SubjectExecutionIntent,
+    ) -> Result<agentdash_domain::workflow::SubjectExecutionDispatchResult, TaskExecutionError>
+    {
         let dispatch_service = LifecycleDispatchService::new(
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.workflow_graph_repo.as_ref(),
@@ -284,7 +294,7 @@ impl StoryStepActivationService {
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
         dispatch_service
-            .dispatch(intent)
+            .execute_subject(intent)
             .await
             .map_err(map_workflow_error)
     }

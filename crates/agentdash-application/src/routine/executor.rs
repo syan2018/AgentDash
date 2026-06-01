@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use agentdash_domain::project::Project;
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution};
-use agentdash_domain::workflow::ExecutionDispatchResult;
+use agentdash_domain::workflow::SubjectExecutionDispatchResult;
 use agentdash_domain::workspace::Workspace;
 
 use crate::ApplicationError;
@@ -239,18 +239,18 @@ impl RoutineExecutor {
         )
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
-        let result: ExecutionDispatchResult =
-            dispatch_service
-                .dispatch(&intent)
-                .await
-                .map_err(|e: WorkflowApplicationError| {
-                    ApplicationError::Internal(format!("Routine dispatch 失败: {e}"))
-                })?;
+        let result: SubjectExecutionDispatchResult = dispatch_service
+            .execute_subject(&intent)
+            .await
+            .map_err(|e: WorkflowApplicationError| {
+                ApplicationError::Internal(format!("Routine dispatch 失败: {e}"))
+            })?;
 
         let refs = RoutineDispatchRefs {
             run_id: result.run_ref,
             agent_id: result.agent_ref,
             frame_id: result.frame_ref,
+            assignment_id: result.assignment_ref,
         };
 
         execution.mark_dispatched(refs, prompt.to_string());

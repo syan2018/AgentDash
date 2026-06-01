@@ -6,8 +6,8 @@ use agentdash_agent_protocol::{
 };
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
-    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, GatePolicy,
-    RunPolicy, RuntimePolicy,
+    AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
+    InteractionDispatchIntent, RunPolicy, RuntimePolicy, WorkflowGraphRef,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
+use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
 pub use agentdash_spi::CompanionSliceMode;
 
@@ -38,6 +39,13 @@ struct CompanionAgentRef {
     pub gate_id: Option<Uuid>,
     pub run_id: Uuid,
     pub runtime_session_id: Option<String>,
+}
+
+struct CompanionDispatchOutcome {
+    run_ref: Uuid,
+    agent_ref: Uuid,
+    frame_ref: Uuid,
+    gate_ref: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -373,40 +381,15 @@ impl CompanionRequestTool {
             CompanionAdoptionMode::Suggestion => "companion_wait",
         };
 
-        let intent = ExecutionIntent {
+        let workflow_graph_ref = WorkflowGraphRef::ByKey {
             project_id,
-            source: ExecutionSource::ParentAgent,
-            subject_ref: None,
-            parent_run_id: Some(parent_run_id),
-            parent_agent_id: Some(parent_agent_id),
-            workflow_graph_ref: None,
-            agent_procedure_ref: None,
-            run_policy: RunPolicy::AppendGraph,
-            agent_policy: AgentPolicy::SpawnChild,
-            context_policy: match slice_mode {
-                CompanionSliceMode::Full => ContextPolicy::Inherit,
-                _ => ContextPolicy::Slice,
-            },
-            capability_policy: CapabilityPolicy::InheritedSlice,
-            runtime_policy: RuntimePolicy::CreateRuntimeSession,
-            gate_policy: if wait {
-                Some(GatePolicy {
-                    gate_kind: gate_kind.to_string(),
-                    correlation_id: Some(dispatch_plan.dispatch_id.clone()),
-                    payload: Some(serde_json::json!({
-                        "parent_agent_id": parent_agent_id,
-                        "parent_frame_id": parent_frame_id,
-                        "companion_label": companion_label,
-                        "adoption_mode": companion_adoption_mode_key(adoption_mode),
-                        "dispatch_id": dispatch_plan.dispatch_id,
-                    })),
-                })
-            } else {
-                None
-            },
+            key: FREEFORM_LIFECYCLE_KEY.to_string(),
         };
-
-        let dispatch_result = {
+        let context_policy = match slice_mode {
+            CompanionSliceMode::Full => ContextPolicy::Inherit,
+            _ => ContextPolicy::Slice,
+        };
+        let dispatch_result: CompanionDispatchOutcome = {
             let dispatch_svc = LifecycleDispatchService::new(
                 self.repos.lifecycle_run_repo.as_ref(),
                 self.repos.workflow_graph_repo.as_ref(),
@@ -419,10 +402,63 @@ impl CompanionRequestTool {
                 self.repos.agent_lineage_repo.as_ref(),
             )
             .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
-            dispatch_svc
-                .dispatch(&intent)
-                .await
-                .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?
+            if wait {
+                let result = dispatch_svc
+                    .open_interaction_gate(&InteractionDispatchIntent {
+                        project_id,
+                        source: ExecutionSource::ParentAgent,
+                        parent_run_id,
+                        parent_agent_id,
+                        workflow_graph_ref,
+                        agent_procedure_ref: None,
+                        context_policy,
+                        capability_policy: CapabilityPolicy::InheritedSlice,
+                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                        gate_policy: GatePolicy {
+                            gate_kind: gate_kind.to_string(),
+                            correlation_id: Some(dispatch_plan.dispatch_id.clone()),
+                            payload: Some(serde_json::json!({
+                                "parent_agent_id": parent_agent_id,
+                                "parent_frame_id": parent_frame_id,
+                                "companion_label": companion_label,
+                                "adoption_mode": companion_adoption_mode_key(adoption_mode),
+                                "dispatch_id": dispatch_plan.dispatch_id,
+                            })),
+                        },
+                    })
+                    .await
+                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
+                CompanionDispatchOutcome {
+                    run_ref: result.run_ref,
+                    agent_ref: result.agent_ref,
+                    frame_ref: result.frame_ref,
+                    gate_ref: Some(result.gate_ref),
+                }
+            } else {
+                let result = dispatch_svc
+                    .launch_agent(&AgentLaunchIntent {
+                        project_id,
+                        source: ExecutionSource::ParentAgent,
+                        subject_ref: None,
+                        parent_run_id: Some(parent_run_id),
+                        parent_agent_id: Some(parent_agent_id),
+                        workflow_graph_ref,
+                        agent_procedure_ref: None,
+                        run_policy: RunPolicy::AppendGraph,
+                        agent_policy: AgentPolicy::SpawnChild,
+                        context_policy,
+                        capability_policy: CapabilityPolicy::InheritedSlice,
+                        runtime_policy: RuntimePolicy::CreateRuntimeSession,
+                    })
+                    .await
+                    .map_err(|e| AgentToolError::ExecutionFailed(format!("dispatch 失败: {e}")))?;
+                CompanionDispatchOutcome {
+                    run_ref: result.run_ref,
+                    agent_ref: result.agent_ref,
+                    frame_ref: result.frame_ref,
+                    gate_ref: None,
+                }
+            }
         };
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────

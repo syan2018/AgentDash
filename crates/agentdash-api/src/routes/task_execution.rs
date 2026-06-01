@@ -49,6 +49,8 @@ pub async fn start_task(
         run_ref: result.run_ref,
         agent_ref: result.agent_ref,
         frame_ref: result.frame_ref,
+        assignment_ref: result.assignment_ref,
+        subject_execution_ref: result.subject_execution_ref.association_id,
         trace_ref: result.trace_ref,
         status: result.status,
     }))
@@ -97,6 +99,8 @@ pub async fn continue_task(
         run_ref: result.run_ref,
         agent_ref: result.agent_ref,
         frame_ref: result.frame_ref,
+        assignment_ref: result.assignment_ref,
+        subject_execution_ref: result.subject_execution_ref.association_id,
         trace_ref: result.trace_ref,
         status: result.status,
     }))

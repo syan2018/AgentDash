@@ -10,7 +10,7 @@ use agentdash_application::hooks::hook_rule_preset_registry;
 use agentdash_application::workflow::{
     ActivityEvent, ActivityLifecycleCatalogService, ActivityLifecycleRunService,
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
-    StartActivityLifecycleRunCommand,
+    LifecycleDispatchService,
 };
 use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
@@ -18,8 +18,8 @@ use agentdash_contracts::workflow::{
     ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, AgentProcedure, DefinitionSource, LifecycleRun, ValidationIssue,
-    ValidationSeverity, WorkflowGraph,
+    ActivityExecutorSpec, AgentProcedure, DefinitionSource, ExecutionSource, LifecycleRun,
+    LifecycleRunStartIntent, ValidationIssue, ValidationSeverity, WorkflowGraph, WorkflowGraphRef,
 };
 
 use crate::app_state::AppState;
@@ -310,20 +310,43 @@ pub async fn start_lifecycle_run(
         ProjectPermission::Edit,
     )
     .await?;
+    let workflow_graph_ref = workflow_graph_ref_from_start_request(project_id, &req)?;
+    let dispatch_service = LifecycleDispatchService::new(
+        state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.agent_assignment_repo.as_ref(),
+        state.repos.lifecycle_subject_association_repo.as_ref(),
+        state.repos.lifecycle_gate_repo.as_ref(),
+        state.repos.agent_lineage_repo.as_ref(),
+    )
+    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
+    let dispatch_result = dispatch_service
+        .start_lifecycle_run(&LifecycleRunStartIntent {
+            project_id,
+            source: ExecutionSource::Api,
+            workflow_graph_ref,
+        })
+        .await?;
     let service = ActivityLifecycleRunService::new(
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
     );
-    let started = service
-        .start_run(StartActivityLifecycleRunCommand {
-            project_id,
-            lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
-            lifecycle_key: req.lifecycle_key.and_then(normalize_string),
-        })
-        .await?;
-    let run = started.run;
+    let run = state
+        .repos
+        .lifecycle_run_repo
+        .get_by_id(dispatch_result.run_ref)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Internal(format!(
+                "Lifecycle dispatch 未持久化 run {}",
+                dispatch_result.run_ref
+            ))
+        })?;
     let launcher = AgentActivityExecutorLauncher::new(
         AgentActivityLaunchContext {
             project_id: run.project_id,
@@ -343,7 +366,7 @@ pub async fn start_lifecycle_run(
         ),
     );
     service
-        .launch_ready_attempts(started.graph_instance.id, &launcher)
+        .launch_ready_attempts(dispatch_result.graph_instance_ref, &launcher)
         .await?;
 
     let latest_run = state
@@ -721,6 +744,24 @@ fn parse_optional_uuid(raw: Option<&str>, field: &str) -> Result<Option<Uuid>, A
     }) {
         Some(value) => parse_uuid(value, field).map(Some),
         None => Ok(None),
+    }
+}
+
+fn workflow_graph_ref_from_start_request(
+    project_id: Uuid,
+    req: &StartWorkflowRunRequest,
+) -> Result<WorkflowGraphRef, ApiError> {
+    let lifecycle_id = parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?;
+    let lifecycle_key = req.lifecycle_key.clone().and_then(normalize_string);
+    match (lifecycle_id, lifecycle_key) {
+        (Some(_), Some(_)) => Err(ApiError::BadRequest(
+            "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
+        )),
+        (None, None) => Err(ApiError::BadRequest(
+            "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
+        )),
+        (Some(id), None) => Ok(WorkflowGraphRef::ById(id)),
+        (None, Some(key)) => Ok(WorkflowGraphRef::ByKey { project_id, key }),
     }
 }
 

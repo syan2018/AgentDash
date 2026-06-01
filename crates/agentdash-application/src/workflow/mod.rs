@@ -10,6 +10,7 @@ pub mod execution_log;
 pub mod frame_builder;
 pub mod frame_hook_runtime;
 pub mod freeform;
+pub mod graph_resolver;
 pub mod lifecycle;
 pub mod lifecycle_gate_service;
 pub mod orchestrator;
@@ -22,10 +23,7 @@ mod session_run_context_resolver;
 pub mod step_activation;
 pub mod tools;
 
-pub use activity_run::{
-    ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService,
-    StartActivityLifecycleRunCommand,
-};
+pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
 pub use agent_executor::{
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
     AgentActivitySessionPort,
@@ -55,6 +53,7 @@ pub use freeform::{
     FREEFORM_SESSION_LABEL, FreeformLifecycleService, build_freeform_lifecycle,
     build_freeform_workflow,
 };
+pub use graph_resolver::{ResolvedWorkflowGraph, WorkflowGraphResolver};
 pub use lifecycle::mount::{
     append_active_workflow_lifecycle_mount, ensure_active_workflow_lifecycle_mount,
     writable_port_keys_for_active_workflow,

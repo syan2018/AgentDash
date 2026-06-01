@@ -2,9 +2,11 @@ use uuid::Uuid;
 
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineExecution};
 use agentdash_domain::workflow::{
-    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, RunPolicy,
-    RuntimePolicy, SubjectRef,
+    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
+    SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
 };
+
+use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
 /// DispatchStrategy → dispatch policy 映射。
 ///
@@ -21,30 +23,32 @@ fn map_dispatch_strategy(strategy: &DispatchStrategy) -> (RunPolicy, AgentPolicy
     }
 }
 
-/// 从 Routine + RoutineExecution 构造 `ExecutionIntent`。
+/// 从 Routine + RoutineExecution 构造 `SubjectExecutionIntent`。
 ///
-/// prompt 通过 `ExecutionIntent` 的 metadata 或上层 frame builder 注入，
+/// prompt 通过上层 frame builder 注入，
 /// 此处只负责 policy 映射和 subject ref 构造。
 pub fn build_routine_execution_intent(
     routine: &Routine,
     execution: &RoutineExecution,
-) -> ExecutionIntent {
+) -> SubjectExecutionIntent {
     let (run_policy, agent_policy) = map_dispatch_strategy(&routine.dispatch_strategy);
 
-    ExecutionIntent {
+    SubjectExecutionIntent {
         project_id: routine.project_id,
         source: ExecutionSource::Routine,
-        subject_ref: Some(SubjectRef::new("routine_execution", execution.id)),
+        subject_ref: SubjectRef::new("routine_execution", execution.id),
         parent_run_id: None,
         parent_agent_id: None,
-        workflow_graph_ref: None,
+        workflow_graph_ref: WorkflowGraphRef::ByKey {
+            project_id: routine.project_id,
+            key: FREEFORM_LIFECYCLE_KEY.to_string(),
+        },
         agent_procedure_ref: None,
         run_policy,
         agent_policy,
         context_policy: ContextPolicy::Isolated,
         capability_policy: CapabilityPolicy::Baseline,
         runtime_policy: RuntimePolicy::CreateRuntimeSession,
-        gate_policy: None,
     }
 }
 
@@ -56,7 +60,7 @@ pub fn build_routine_execution_intent_with_reuse(
     routine: &Routine,
     execution: &RoutineExecution,
     reuse_run_id: Option<Uuid>,
-) -> ExecutionIntent {
+) -> SubjectExecutionIntent {
     let mut intent = build_routine_execution_intent(routine, execution);
 
     if let Some(run_id) = reuse_run_id {
@@ -96,10 +100,8 @@ mod tests {
         assert_eq!(intent.run_policy, RunPolicy::CreateLinkedRun);
         assert_eq!(intent.agent_policy, AgentPolicy::Create);
         assert_eq!(intent.source, ExecutionSource::Routine);
-        assert!(intent.subject_ref.is_some());
-        let subject = intent.subject_ref.unwrap();
-        assert_eq!(subject.kind, "routine_execution");
-        assert_eq!(subject.id, execution.id);
+        assert_eq!(intent.subject_ref.kind, "routine_execution");
+        assert_eq!(intent.subject_ref.id, execution.id);
     }
 
     #[test]

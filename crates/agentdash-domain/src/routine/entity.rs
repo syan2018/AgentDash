@@ -101,6 +101,7 @@ pub struct RoutineDispatchRefs {
     pub run_id: Uuid,
     pub agent_id: Uuid,
     pub frame_id: Uuid,
+    pub assignment_id: Uuid,
 }
 
 /// 每次触发产生的执行记录

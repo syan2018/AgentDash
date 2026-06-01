@@ -115,10 +115,10 @@ pub async fn launch_project_agent(
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
 ) -> Result<Json<ProjectAgentLaunchResult>, ApiError> {
-    use agentdash_application::workflow::LifecycleDispatchService;
+    use agentdash_application::workflow::{FREEFORM_LIFECYCLE_KEY, LifecycleDispatchService};
     use agentdash_domain::workflow::{
-        AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, RunPolicy,
-        RuntimePolicy, SubjectRef, WorkflowGraphRef,
+        AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
+        RunPolicy, RuntimePolicy, SubjectRef, WorkflowGraphRef,
     };
 
     let project_id = parse_project_id(&project_id)?;
@@ -143,18 +143,17 @@ pub async fn launch_project_agent(
             .await
             .map_err(ApiError::Internal)?;
 
-    // 解析 workflow graph ref（如果 ProjectAgent 配置了 lifecycle_key）
-    let workflow_graph_ref = if let Some(lifecycle_key) = &project_agent.default_lifecycle_key {
-        Some(WorkflowGraphRef::ByKey {
-            project_id: project.id,
-            key: lifecycle_key.clone(),
-        })
-    } else {
-        None
+    // 解析 workflow graph ref（ProjectAgent 未配置时显式使用 freeform graph）
+    let workflow_graph_ref = WorkflowGraphRef::ByKey {
+        project_id: project.id,
+        key: project_agent
+            .default_lifecycle_key
+            .clone()
+            .unwrap_or_else(|| FREEFORM_LIFECYCLE_KEY.to_string()),
     };
 
-    // 构造 ExecutionIntent 并通过 dispatch service 创建 lifecycle 实体
-    let intent = ExecutionIntent {
+    // 构造 AgentLaunchIntent 并通过 dispatch service 创建 lifecycle 实体
+    let intent = AgentLaunchIntent {
         project_id: project.id,
         source: ExecutionSource::ProjectAgent,
         subject_ref: Some(SubjectRef::new("project", project.id)),
@@ -167,7 +166,6 @@ pub async fn launch_project_agent(
         context_policy: ContextPolicy::Isolated,
         capability_policy: CapabilityPolicy::Baseline,
         runtime_policy: RuntimePolicy::CreateRuntimeSession,
-        gate_policy: None,
     };
 
     let dispatch_service = LifecycleDispatchService::new(
@@ -184,7 +182,7 @@ pub async fn launch_project_agent(
     .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
 
     let dispatch_result = dispatch_service
-        .dispatch(&intent)
+        .launch_agent(&intent)
         .await
         .map_err(|err| ApiError::Internal(format!("Lifecycle dispatch 失败: {err}")))?;
     if let Some(mut lifecycle_agent) = state
@@ -225,14 +223,12 @@ pub async fn launch_project_agent(
             .map(|runtime_session_id| RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }),
-        assignment_ref: dispatch_result
-            .assignment_ref
-            .map(|assignment_id| AgentAssignmentRefDto {
-                assignment_id: assignment_id.to_string(),
-                run_id: Some(dispatch_result.run_ref.to_string()),
-                agent_id: Some(dispatch_result.agent_ref.to_string()),
-                frame_id: Some(dispatch_result.frame_ref.to_string()),
-            }),
+        assignment_ref: Some(AgentAssignmentRefDto {
+            assignment_id: dispatch_result.assignment_ref.to_string(),
+            run_id: Some(dispatch_result.run_ref.to_string()),
+            agent_id: Some(dispatch_result.agent_ref.to_string()),
+            frame_id: Some(dispatch_result.frame_ref.to_string()),
+        }),
         subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
             kind: subject.kind.clone(),
             id: subject.id.to_string(),

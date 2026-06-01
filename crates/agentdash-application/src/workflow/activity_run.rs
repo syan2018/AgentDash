@@ -19,13 +19,6 @@ pub struct ActivityLifecycleRunService<'a, D: ?Sized, R: ?Sized, G: ?Sized, C: ?
 }
 
 #[derive(Debug, Clone)]
-pub struct StartActivityLifecycleRunCommand {
-    pub project_id: Uuid,
-    pub lifecycle_id: Option<Uuid>,
-    pub lifecycle_key: Option<String>,
-}
-
-#[derive(Debug, Clone)]
 pub struct ActivityGraphInstanceExecutionResult {
     pub run: LifecycleRun,
     pub graph_instance: WorkflowGraphInstance,
@@ -50,31 +43,6 @@ where
             graph_instance_repo,
             claim_repo,
         }
-    }
-
-    pub async fn start_run(
-        &self,
-        cmd: StartActivityLifecycleRunCommand,
-    ) -> Result<ActivityGraphInstanceExecutionResult, WorkflowApplicationError> {
-        let definition = self.resolve_definition(&cmd).await?;
-
-        let run = LifecycleRun::new_control(cmd.project_id, definition.id);
-        self.run_repo.create(&run).await?;
-
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, definition.id);
-        let state = LifecycleEngine::initialize(&definition, graph_instance.id)
-            .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        graph_instance
-            .replace_activity_state(state)
-            .map_err(WorkflowApplicationError::BadRequest)?;
-        self.graph_instance_repo.create(&graph_instance).await?;
-        let mut run = run;
-        self.sync_run_projection(&mut run, &graph_instance).await?;
-        self.run_repo.update(&run).await?;
-        Ok(ActivityGraphInstanceExecutionResult {
-            run,
-            graph_instance,
-        })
     }
 
     pub async fn apply_event(
@@ -228,46 +196,6 @@ where
             },
         ));
         Ok(())
-    }
-
-    async fn resolve_definition(
-        &self,
-        cmd: &StartActivityLifecycleRunCommand,
-    ) -> Result<WorkflowGraph, WorkflowApplicationError> {
-        match (&cmd.lifecycle_id, &cmd.lifecycle_key) {
-            (Some(_), Some(_)) => Err(WorkflowApplicationError::BadRequest(
-                "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
-            )),
-            (None, None) => Err(WorkflowApplicationError::BadRequest(
-                "必须提供 lifecycle_id 或 lifecycle_key".to_string(),
-            )),
-            (Some(lifecycle_id), None) => {
-                let definition = self
-                    .definition_repo
-                    .get_by_id(*lifecycle_id)
-                    .await?
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::NotFound(format!(
-                            "workflow_graph 不存在: {lifecycle_id}"
-                        ))
-                    })?;
-                if definition.project_id != cmd.project_id {
-                    return Err(WorkflowApplicationError::NotFound(format!(
-                        "workflow_graph 不存在: {lifecycle_id}"
-                    )));
-                }
-                Ok(definition)
-            }
-            (None, Some(lifecycle_key)) => self
-                .definition_repo
-                .get_by_project_and_key(cmd.project_id, lifecycle_key)
-                .await?
-                .ok_or_else(|| {
-                    WorkflowApplicationError::NotFound(format!(
-                        "workflow_graph 不存在: {lifecycle_key}"
-                    ))
-                }),
-        }
     }
 }
 
@@ -533,56 +461,36 @@ mod tests {
         ActivityLifecycleRunService::new(definition_repo, run_repo, graph_instance_repo, claim_repo)
     }
 
-    #[tokio::test]
-    async fn start_run_persists_activity_state_to_graph_instance_not_lifecycle_run() {
-        let project_id = Uuid::new_v4();
-        let definition = definition(project_id);
-        let definition_repo = DefinitionRepo {
-            definition: definition.clone(),
-        };
-        let run_repo = RunRepo::default();
-        let graph_instance_repo = GraphInstanceRepo::default();
-        let claim_repo = ClaimRepo;
-        let service = active_service(
-            &definition_repo,
-            &run_repo,
-            &graph_instance_repo,
-            &claim_repo,
-        );
+    async fn persist_initialized_run(
+        definition: &WorkflowGraph,
+        run_repo: &RunRepo,
+        graph_instance_repo: &GraphInstanceRepo,
+    ) -> ActivityGraphInstanceExecutionResult {
+        let mut run = LifecycleRun::new_control(definition.project_id, definition.id);
+        run_repo.create(&run).await.expect("create run");
 
-        let result = service
-            .start_run(StartActivityLifecycleRunCommand {
-                project_id,
-                lifecycle_id: Some(definition.id),
-                lifecycle_key: None,
-            })
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, definition.id);
+        let state = LifecycleEngine::initialize(definition, graph_instance.id).expect("init state");
+        graph_instance
+            .replace_activity_state(state)
+            .expect("replace state");
+        graph_instance_repo
+            .create(&graph_instance)
             .await
-            .expect("start run");
-
-        let persisted_run = run_repo
-            .get_by_id(result.run.id)
-            .await
-            .expect("run query")
-            .expect("run");
-        let persisted_instance = graph_instance_repo
-            .get(result.graph_instance.id)
-            .await
-            .expect("graph instance query")
-            .expect("graph instance");
-        assert_eq!(persisted_instance.run_id, result.run.id);
-        assert_eq!(persisted_instance.graph_id, definition.id);
-        assert_eq!(
-            persisted_instance
+            .expect("create graph instance");
+        run.sync_graph_instance_activity_projections(
+            graph_instance
                 .activity_state
                 .as_ref()
-                .expect("state")
-                .graph_instance_id,
-            persisted_instance.id
+                .map(|state| (graph_instance.id, state))
+                .into_iter(),
         );
-        assert_eq!(
-            persisted_run.active_node_keys,
-            vec![format!("{}:main", persisted_instance.id)]
-        );
+        run_repo.update(&run).await.expect("update run");
+
+        ActivityGraphInstanceExecutionResult {
+            run,
+            graph_instance,
+        }
     }
 
     #[tokio::test]
@@ -601,14 +509,7 @@ mod tests {
             &graph_instance_repo,
             &claim_repo,
         );
-        let started = service
-            .start_run(StartActivityLifecycleRunCommand {
-                project_id,
-                lifecycle_id: Some(definition.id),
-                lifecycle_key: None,
-            })
-            .await
-            .expect("start run");
+        let started = persist_initialized_run(&definition, &run_repo, &graph_instance_repo).await;
 
         service
             .apply_event(

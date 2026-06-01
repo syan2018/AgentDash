@@ -1724,17 +1724,12 @@ async fn respond_companion_request_resolves_waiting_tool_and_persists_response_e
         "summary": "YES"
     });
 
-    let rx = hub
-        .companion_wait_registry
-        .register(&session.id, "req-1", "turn-1", Some("approval".to_string()))
-        .await;
-
+    // LifecycleGate 模式：control_service 直接通过 gate repo resolve
+    // 此处只验证 respond_companion_request 的通知注入路径（gate 不存在时的 fallback 行为）
     hub.control_service()
         .respond_companion_request(&session.id, "req-1", payload.clone())
         .await
         .expect("respond should succeed");
-
-    assert_eq!(rx.await.expect("wait registry should resolve"), payload);
 
     let events = hub
         .persistence

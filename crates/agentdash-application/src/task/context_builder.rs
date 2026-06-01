@@ -211,7 +211,7 @@ async fn find_active_workflow_via_task_sessions(
             .and_then(|state| {
                 state.attempts.iter().find_map(|attempt| {
                     attempt.executor_run.as_ref().and_then(|exec_ref| {
-                        if let agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                        if let agentdash_domain::workflow::ExecutorRunRef::RuntimeSession {
                             session_id,
                         } = exec_ref
                         {

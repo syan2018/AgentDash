@@ -186,7 +186,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutorSpec, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ExecutorRunRef, WorkflowBindingKind, WorkflowDefinitionSource,
+        AgentSessionPolicy, ExecutorRunRef, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -347,7 +347,7 @@ mod tests {
             "activity_flow",
             "Activity Flow",
             "",
-            vec![WorkflowBindingKind::Project],
+
             WorkflowDefinitionSource::UserAuthored,
             "main",
             vec![ActivityDefinition {
@@ -399,7 +399,7 @@ mod tests {
                 ActivityEvent::ExecutorStarted {
                     activity_key: "main".to_string(),
                     attempt: 1,
-                    executor_run: ExecutorRunRef::AgentSession {
+                    executor_run: ExecutorRunRef::RuntimeSession {
                         session_id: "child".to_string(),
                     },
                 },

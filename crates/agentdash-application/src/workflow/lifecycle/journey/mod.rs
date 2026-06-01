@@ -526,7 +526,7 @@ pub fn current_step(run: &LifecycleRun) -> JourneyResult<ActivityAttemptState> {
 
 pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
     match &attempt.executor_run {
-        Some(ExecutorRunRef::AgentSession { session_id }) => Some(session_id.clone()),
+        Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(session_id.clone()),
         _ => None,
     }
 }

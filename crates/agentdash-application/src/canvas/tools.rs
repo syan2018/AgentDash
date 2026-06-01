@@ -1101,7 +1101,6 @@ mod tests {
                 launch: hub.launch_service(),
                 hooks: hub.hook_service(),
                 capability: hub.capability_service(),
-                companion_wait_registry: hub.companion_wait_registry.clone(),
             })
             .await;
 

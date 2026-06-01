@@ -131,7 +131,8 @@ pub(crate) async fn build_session_runtime(
     .with_runtime_tool_provider(runtime_tool_provider)
     .with_mcp_relay_provider(mcp_relay_provider)
     .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
-    .with_agent_frame_repo(repos.agent_frame_repo.clone());
+    .with_agent_frame_repo(repos.agent_frame_repo.clone())
+    .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone());
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);
@@ -169,7 +170,6 @@ pub(crate) async fn build_session_runtime(
             launch: session_launch.clone(),
             hooks: session_hooks.clone(),
             capability: session_capability.clone(),
-            companion_wait_registry: session_runtime_builder.companion_wait_registry(),
         })
         .await;
 

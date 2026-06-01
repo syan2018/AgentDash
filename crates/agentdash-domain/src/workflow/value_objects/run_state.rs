@@ -89,7 +89,7 @@ pub enum ActivityRunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    AgentSession { session_id: String },
+    RuntimeSession { session_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

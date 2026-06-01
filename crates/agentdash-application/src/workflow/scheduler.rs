@@ -327,7 +327,7 @@ mod tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransition, ActivityTransitionKind,
         AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding,
-        InputPortDefinition, OutputPortDefinition, TransitionCondition, WorkflowBindingKind,
+        InputPortDefinition, OutputPortDefinition, TransitionCondition,
         WorkflowDefinitionSource,
     };
     use serde_json::json;
@@ -353,7 +353,7 @@ mod tests {
         fn started(session_id: &str) -> Self {
             Self {
                 result: Mutex::new(Ok(ActivityExecutorStartResult::started(
-                    agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                    agentdash_domain::workflow::ExecutorRunRef::RuntimeSession {
                         session_id: session_id.to_string(),
                     },
                 ))),
@@ -495,7 +495,7 @@ mod tests {
                         == agentdash_domain::workflow::ActivityExecutionClaimStatus::Running
                         && matches!(
                             &claim.executor_run_ref,
-                            Some(agentdash_domain::workflow::ExecutorRunRef::AgentSession { session_id: sid })
+                            Some(agentdash_domain::workflow::ExecutorRunRef::RuntimeSession { session_id: sid })
                                 if sid == session_id
                         )
                 })
@@ -528,7 +528,7 @@ mod tests {
             "claim_flow",
             "Claim flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![
@@ -628,7 +628,7 @@ mod tests {
             ActivityEvent::ExecutorStarted {
                 activity_key: "plan".to_string(),
                 attempt: 1,
-                executor_run: agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                executor_run: agentdash_domain::workflow::ExecutorRunRef::RuntimeSession {
                     session_id: "plan-child".to_string(),
                 },
             },
@@ -686,7 +686,7 @@ mod tests {
                 &definition,
                 &mut state,
                 &claim,
-                agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                agentdash_domain::workflow::ExecutorRunRef::RuntimeSession {
                     session_id: "plan-child".to_string(),
                 },
             )

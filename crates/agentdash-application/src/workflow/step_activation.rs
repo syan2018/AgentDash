@@ -397,7 +397,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, CapabilityConfig,
-        MountDirective, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+        MountDirective, WorkflowContract, AgentProcedure,
         WorkflowDefinitionSource,
     };
 
@@ -432,7 +432,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -631,7 +631,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )

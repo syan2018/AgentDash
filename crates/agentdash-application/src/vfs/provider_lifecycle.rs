@@ -1090,7 +1090,7 @@ mod tests {
             activity_key: key.to_string(),
             attempt: 1,
             status: ActivityAttemptStatus::Running,
-            executor_run: Some(ExecutorRunRef::AgentSession {
+            executor_run: Some(ExecutorRunRef::RuntimeSession {
                 session_id: session_id.to_string(),
             }),
             started_at: Some(Utc::now()),

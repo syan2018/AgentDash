@@ -2,7 +2,6 @@
   "key": "trellis_dag_task",
   "name": "Trellis DAG Lifecycle / Task",
   "description": "DAG 编排示例：research → implement，每个 Activity 创建独立 session。",
-  "binding_kinds": ["story"],
   "workflows": [
     {
       "key": "trellis_dag_task_research",

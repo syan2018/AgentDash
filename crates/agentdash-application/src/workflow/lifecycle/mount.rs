@@ -66,7 +66,7 @@ mod tests {
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         WorkflowGraph, ActivityLifecycleRunState, ActivityRunStatus,
         BashExecExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition,
-        WorkflowBindingKind, WorkflowDefinitionSource,
+        WorkflowDefinitionSource,
     };
     use uuid::Uuid;
 
@@ -99,7 +99,7 @@ mod tests {
             "workflow_admin",
             "Workflow Admin",
             "Workflow admin lifecycle",
-            vec![WorkflowBindingKind::Project],
+
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
             vec![activity.clone()],

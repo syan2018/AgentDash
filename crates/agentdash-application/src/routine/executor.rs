@@ -52,10 +52,7 @@ struct RoutineAgentContext {
 }
 
 impl RoutineExecutor {
-    pub fn new(
-        repos: RepositorySet,
-        availability: Arc<dyn BackendAvailability>,
-    ) -> Self {
+    pub fn new(repos: RepositorySet, availability: Arc<dyn BackendAvailability>) -> Self {
         Self {
             repos,
             availability,
@@ -225,9 +222,7 @@ impl RoutineExecutor {
         execution: &mut RoutineExecution,
     ) -> Result<(), ApplicationError> {
         // PerEntity: 解析 entity_key 并查找可复用的 dispatch_run_id
-        let reuse_run_id = self
-            .resolve_reuse_run_id(routine, execution)
-            .await?;
+        let reuse_run_id = self.resolve_reuse_run_id(routine, execution).await?;
 
         let intent = build_routine_execution_intent_with_reuse(routine, execution, reuse_run_id);
 
@@ -239,14 +234,16 @@ impl RoutineExecutor {
             self.repos.lifecycle_subject_association_repo.as_ref(),
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
-        );
+        )
+        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
-        let result: ExecutionDispatchResult = dispatch_service
-            .dispatch(&intent)
-            .await
-            .map_err(|e: WorkflowApplicationError| {
-                ApplicationError::Internal(format!("Routine dispatch 失败: {e}"))
-            })?;
+        let result: ExecutionDispatchResult =
+            dispatch_service
+                .dispatch(&intent)
+                .await
+                .map_err(|e: WorkflowApplicationError| {
+                    ApplicationError::Internal(format!("Routine dispatch 失败: {e}"))
+                })?;
 
         let refs = RoutineDispatchRefs {
             run_id: result.run_ref,

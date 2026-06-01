@@ -1,5 +1,6 @@
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, LifecycleRun, LifecycleRunRepository,
+    AgentAssignmentRepository, AgentFrameRepository, LifecycleAgentRepository, LifecycleRun,
+    LifecycleRunRepository,
 };
 use uuid::Uuid;
 
@@ -47,34 +48,48 @@ pub fn lifecycle_activity_parts_from_label(label: &str) -> Option<LifecycleActiv
 
 /// 解析 session 是否为某个 lifecycle activity attempt 的执行 session。
 ///
-/// 通过 `ActivityExecutionClaimRepository.find_running_by_executor_session` 反查
-/// 正在运行的 claim，再从 claim 的 run_id 加载 `LifecycleRun`。
-/// 不再依赖 `LifecycleRun.session_id` 或 `list_by_session`。
-///
-/// TODO(agent-frame-construction): 完整链路应为
-/// RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment -> ActivityAttemptState，
-/// 待 AgentFrame 一致填充 runtime_session_refs 后切换。
+/// 通过 RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment 反查。
 pub async fn resolve_activity_session_association(
     session_id: &str,
-    claim_repo: &dyn ActivityExecutionClaimRepository,
+    frame_repo: &dyn AgentFrameRepository,
+    agent_repo: &dyn LifecycleAgentRepository,
+    assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<LifecycleActivitySessionAssociation>, String> {
-    let Some(claim) = claim_repo
-        .find_running_by_executor_session(session_id)
+    let Some(frame) = frame_repo
+        .find_by_runtime_session(session_id)
         .await
-        .map_err(|e| format!("查询 activity execution claims 失败: {e}"))?
+        .map_err(|e| format!("查询 runtime session 对应 AgentFrame 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(agent) = agent_repo
+        .get(frame.agent_id)
+        .await
+        .map_err(|e| format!("查询 lifecycle agent 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let assignments = assignment_repo
+        .list_by_run(agent.run_id)
+        .await
+        .map_err(|e| format!("查询 agent assignments 失败: {e}"))?;
+    let Some(assignment) = assignments
+        .into_iter()
+        .filter(|assignment| assignment.lease_status == "active")
+        .find(|assignment| assignment.frame_id == frame.id && assignment.agent_id == agent.id)
     else {
         return Ok(None);
     };
     let run = run_repo
-        .get_by_id(claim.run_id)
+        .get_by_id(assignment.run_id)
         .await
         .map_err(|e| format!("查询 lifecycle run 失败: {e}"))?
-        .ok_or_else(|| format!("lifecycle run 不存在: {}", claim.run_id))?;
+        .ok_or_else(|| format!("lifecycle run 不存在: {}", assignment.run_id))?;
     Ok(Some(LifecycleActivitySessionAssociation {
         run,
-        activity_key: claim.activity_key,
-        attempt: claim.attempt,
+        activity_key: assignment.activity_key,
+        attempt: assignment.attempt as u32,
     }))
 }
 

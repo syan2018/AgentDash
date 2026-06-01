@@ -1,4 +1,4 @@
-﻿use agentdash_agent_protocol::SourceInfo;
+use agentdash_agent_protocol::SourceInfo;
 use agentdash_domain::common::AgentConfig;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTrigger, HookTurnStartNotice, SharedHookRuntime,
@@ -247,10 +247,7 @@ impl TurnPreparer {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
-        if let Some(frame) = launch_plan
-            .continuation_context_frame
-            .clone()
-        {
+        if let Some(frame) = launch_plan.continuation_context_frame.clone() {
             accepted_context_frames_to_emit.push(frame.clone());
             turn_context_frames.push(frame);
         }
@@ -258,9 +255,7 @@ impl TurnPreparer {
         turn_context_frames.extend(pending_transition_application.context_frames.clone());
 
         if let Some(hook_runtime_for) = hook_runtime.as_ref() {
-            turn_context_frames.extend(collect_queued_turn_start_frames(
-                hook_runtime_for.as_ref(),
-            ));
+            turn_context_frames.extend(collect_queued_turn_start_frames(hook_runtime_for.as_ref()));
 
             let snapshot = hook_runtime_for.snapshot();
             let runtime = hook_runtime_for.runtime_snapshot();

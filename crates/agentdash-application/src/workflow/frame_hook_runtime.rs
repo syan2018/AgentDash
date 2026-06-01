@@ -106,15 +106,18 @@ impl AgentFrameHookRuntime {
         }
     }
 
-    /// 创建独立的 hook runtime（无 lifecycle/frame 上下文）。
-    /// 用于非 workflow 驱动的 session 启动路径。
+    /// 创建 trace-only hook runtime（无 lifecycle/frame 上下文）。
+    ///
+    /// 生产 lifecycle runtime 必须使用 [`Self::from_frame`]；这里仅服务无法反查
+    /// AgentFrame 的 runtime trace fallback 与测试场景。
     pub fn new_standalone(
         runtime_session_id: String,
         provider: Arc<dyn ExecutionHookProvider>,
         snapshot: SessionHookSnapshot,
     ) -> Self {
+        let trace_run_id = Uuid::new_v4();
         Self::new(
-            Uuid::nil(),
+            trace_run_id,
             Uuid::new_v4(),
             Uuid::new_v4(),
             0,
@@ -535,13 +538,13 @@ mod tests {
     }
 
     #[test]
-    fn standalone_creates_with_nil_run_id() {
+    fn standalone_creates_trace_only_run_id() {
         let runtime = AgentFrameHookRuntime::new_standalone(
             "sess-standalone".to_string(),
             Arc::new(NoopExecutionHookProvider),
             SessionHookSnapshot::default(),
         );
-        assert_eq!(runtime.run_id, Uuid::nil());
+        assert_ne!(runtime.run_id, Uuid::from_u128(0));
         assert_eq!(runtime.session_id(), "sess-standalone");
     }
 
@@ -588,11 +591,8 @@ mod tests {
             ..Default::default()
         };
         let provider = Arc::new(NoopExecutionHookProvider);
-        let runtime = AgentFrameHookRuntime::new_standalone(
-            "sess-1".into(),
-            provider,
-            initial_snapshot,
-        );
+        let runtime =
+            AgentFrameHookRuntime::new_standalone("sess-1".into(), provider, initial_snapshot);
 
         let refreshed = runtime
             .refresh(SessionHookRefreshQuery {

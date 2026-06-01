@@ -1,4 +1,4 @@
-﻿use crate::platform_config::SharedPlatformConfig;
+use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::tools::SessionToolServices;
 use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
@@ -231,7 +231,10 @@ fn build_tool_result(
                     result.activity_key
                 )
             } else {
-                format!("Activity `{}` 已完成。{successor_info}", result.activity_key)
+                format!(
+                    "Activity `{}` 已完成。{successor_info}",
+                    result.activity_key
+                )
             };
             Ok(AgentToolResult {
                 content: vec![ContentPart::text(message)],

@@ -2,10 +2,9 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
-    ActivityJoinPolicy, WorkflowGraph, WorkflowGraphRepository,
-    AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, LifecycleRun,
-    LifecycleRunRepository, WorkflowContract, AgentProcedure,
-    AgentProcedureRepository, WorkflowDefinitionSource,
+    ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
+    AgentSessionPolicy, ArtifactAliasPolicy, LifecycleRun, LifecycleRunRepository,
+    WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowGraphRepository,
 };
 
 use super::{LifecycleEngine, WorkflowApplicationError};
@@ -220,10 +219,7 @@ mod tests {
             Ok(())
         }
 
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()

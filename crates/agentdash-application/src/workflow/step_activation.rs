@@ -1,4 +1,4 @@
-﻿//! `activate_step` — 单 step 激活的唯一计算入口。
+//! `activate_step` — 单 step 激活的唯一计算入口。
 //!
 //! 把分散在 `plan_builder` / `session_runtime_inputs` / `turn_context` /
 //! `orchestrator` / `advance_node` 五处的"查 workflow → 算 capabilities →
@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, MountDirective, ToolCapabilityDirective, AgentProcedure,
+    ActivityDefinition, AgentProcedure, MountDirective, ToolCapabilityDirective,
 };
 use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::SharedHookRuntime;
@@ -274,8 +274,8 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 //   A. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session
 //   B. PhaseNode / advance tool 热更新 —— apply_to_running_session
 //
-// 新 session 的 launch construction 必须走 SessionConstructionPlan，不再公开把
-// activation 直接写入 launch plan 的 applier。
+// 新 RuntimeSession launch 必须先写入 AgentFrame revision，再由 frame 投影
+// RuntimeLaunchRequest；running session 只消费已生效的 runtime capability transition。
 
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
@@ -396,9 +396,8 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, CapabilityConfig,
-        MountDirective, WorkflowContract, AgentProcedure,
-        WorkflowDefinitionSource,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        CapabilityConfig, MountDirective, WorkflowContract, WorkflowDefinitionSource,
     };
 
     fn sample_step(
@@ -432,7 +431,6 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -631,7 +629,6 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )

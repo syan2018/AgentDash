@@ -1,17 +1,42 @@
--- Lifecycle Gates: durable 等待机制，替代 in-memory CompanionWaitRegistry。
--- 支持 companion_request(wait=true) 的持久化等待与异步 resolve。
+-- Lifecycle gates are durable wait/review/resume anchors scoped by run/agent/frame.
+-- The clean baseline already creates this target schema; this migration keeps
+-- existing dev databases aligned with the same columns and indexes.
 
 CREATE TABLE IF NOT EXISTS lifecycle_gates (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    run_id UUID NOT NULL,
-    agent_id UUID NOT NULL,
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
+    agent_id TEXT,
+    frame_id TEXT,
     gate_kind TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    payload JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    correlation_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    payload_json TEXT,
+    resolved_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_pending
-    ON lifecycle_gates(run_id, agent_id)
-    WHERE status = 'pending';
+ALTER TABLE lifecycle_gates
+    ADD COLUMN IF NOT EXISTS frame_id TEXT;
+ALTER TABLE lifecycle_gates
+    ADD COLUMN IF NOT EXISTS correlation_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE lifecycle_gates
+    ADD COLUMN IF NOT EXISTS payload_json TEXT;
+ALTER TABLE lifecycle_gates
+    ADD COLUMN IF NOT EXISTS resolved_by TEXT;
+
+UPDATE lifecycle_gates
+SET status = 'open'
+WHERE status = 'pending';
+
+DROP INDEX IF EXISTS idx_lifecycle_gates_pending;
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_run_id
+    ON lifecycle_gates(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_agent_status
+    ON lifecycle_gates(agent_id, status)
+    WHERE agent_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_correlation
+    ON lifecycle_gates(correlation_id);

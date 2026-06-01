@@ -4,10 +4,9 @@ use agentdash_domain::common::error::DomainError;
 use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
-    AgentProcedure, AgentProcedureRepository, ExecutorRunRef,
-    LifecycleRun, LifecycleRunRepository, WorkflowGraph,
-    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
-    WorkflowTemplateInstallResult,
+    AgentProcedure, AgentProcedureRepository, ExecutorRunRef, LifecycleRun, LifecycleRunRepository,
+    WorkflowGraph, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
+    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
 };
 
 pub struct PostgresWorkflowRepository {
@@ -114,9 +113,16 @@ impl AgentProcedureRepository for PostgresWorkflowRepository {
         &self,
         project_id: uuid::Uuid,
     ) -> Result<Vec<AgentProcedure>, DomainError> {
-        sqlx::query_as::<_, AgentProcedureRow>(&format!("SELECT {WF_COLS} FROM agent_procedures WHERE project_id = $1 ORDER BY created_at DESC"))
-            .bind(project_id.to_string()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
+        sqlx::query_as::<_, AgentProcedureRow>(&format!(
+            "SELECT {WF_COLS} FROM agent_procedures WHERE project_id = $1 ORDER BY created_at DESC"
+        ))
+        .bind(project_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
     }
 
     async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
@@ -174,10 +180,7 @@ impl WorkflowGraphRepository for PostgresWorkflowRepository {
         Ok(())
     }
 
-    async fn get_by_id(
-        &self,
-        id: uuid::Uuid,
-    ) -> Result<Option<WorkflowGraph>, DomainError> {
+    async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
         sqlx::query_as::<_, WorkflowGraphRow>(&format!(
             "SELECT {WG_COLS} FROM workflow_graphs WHERE id = $1"
         ))
@@ -243,11 +246,7 @@ impl WorkflowGraphRepository for PostgresWorkflowRepository {
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
-        ensure_rows_affected(
-            result.rows_affected(),
-            "workflow_graph",
-            &lifecycle.id,
-        )
+        ensure_rows_affected(result.rows_affected(), "workflow_graph", &lifecycle.id)
     }
 
     async fn delete(&self, id: uuid::Uuid) -> Result<(), DomainError> {
@@ -525,7 +524,7 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
             "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims \
              WHERE status = 'running' \
-             AND executor_run_ref::jsonb -> 'RuntimeSession' ->> 'session_id' = $1 \
+             AND executor_run_ref::jsonb @> jsonb_build_object('kind', 'runtime_session', 'session_id', $1::text) \
              ORDER BY updated_at DESC LIMIT 1"
         ))
         .bind(session_id)
@@ -1131,14 +1130,11 @@ mod workflow_claim_tests {
                 .await
                 .expect("get procedure")
                 .expect("procedure exists");
-        let lifecycle = WorkflowGraphRepository::get_by_project_and_key(
-            &repo,
-            project_id,
-            &lifecycle_key,
-        )
-        .await
-        .expect("get lifecycle")
-        .expect("lifecycle exists");
+        let lifecycle =
+            WorkflowGraphRepository::get_by_project_and_key(&repo, project_id, &lifecycle_key)
+                .await
+                .expect("get lifecycle")
+                .expect("lifecycle exists");
         assert_eq!(procedure.version, 2);
         assert_eq!(lifecycle.version, 2);
         assert_eq!(

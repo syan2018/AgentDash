@@ -30,10 +30,10 @@ use uuid::Uuid;
 
 pub use crate::connector::SetDelta;
 
-/// Session 的 run-derived 业务上下文（由 LifecycleRunLink 投影得出）。
+/// Session 的 run-derived 业务上下文。
 ///
-/// 替代旧的 `HookOwnerSummary`（基于 SessionBinding 反查）。
-/// 通过 `LifecycleRun.session_id -> run -> links -> subjects` 路径获取。
+/// Hook runtime 只消费由 LifecycleSubjectAssociation、LifecycleAgent 与
+/// AgentFrame 投影出的业务上下文，RuntimeSession id 仅作为 trace key。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionRunContext {
@@ -78,7 +78,9 @@ pub struct HookDiagnosticEntry {
     pub message: String,
 }
 
-#[deprecated(note = "迁移到 AgentFrameHookRuntime；session-indexed snapshot 仅保留 trace adapter 语义")]
+#[deprecated(
+    note = "迁移到 AgentFrameHookRuntime；session-indexed snapshot 仅保留 trace adapter 语义"
+)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionHookSnapshot {

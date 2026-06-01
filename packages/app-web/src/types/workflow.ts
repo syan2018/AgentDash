@@ -287,7 +287,6 @@ export interface WorkflowRun {
   id: string;
   project_id: string;
   lifecycle_id: string;
-  session_id: string;
   status: WorkflowRunStatus;
   active_node_keys?: string[];
   execution_log: LifecycleExecutionEntry[];

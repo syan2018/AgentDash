@@ -7,7 +7,7 @@ import type {
   Task,
   Workspace,
 } from "../types";
-import { StorySessionPanel } from "../features/story/story-session-panel";
+import { StorySubjectExecutionPanel } from "../features/story/story-subject-execution-panel";
 import { TaskStatusBadge } from "../components/ui/status-badge";
 import { TaskDrawer } from "../features/task/task-drawer";
 import { useStoryStore, findStoryById } from "../stores/storyStore";
@@ -153,11 +153,6 @@ function StoryTaskRows({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="truncate font-medium text-foreground">{task.title}</span>
-              {task.lifecycle_step_key && (
-                <span className="hidden shrink-0 rounded-[6px] bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground md:inline">
-                  {task.lifecycle_step_key}
-                </span>
-              )}
             </div>
             {task.description && (
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.description}</p>
@@ -185,7 +180,6 @@ export function StoryPage() {
   const projects = useProjectStore((s) => s.projects);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);
   const tasksByStoryId = useStoryStore((s) => s.tasksByStoryId);
-  const sessionsByStoryId = useStoryStore((s) => s.sessionsByStoryId);
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const fetchTasks = useStoryStore((s) => s.fetchTasks);
   const updateStory = useStoryStore((s) => s.updateStory);
@@ -234,7 +228,6 @@ export function StoryPage() {
     return workspacesByProjectId[story.project_id] ?? [];
   }, [story, workspacesByProjectId]);
 
-  const sessions = story ? sessionsByStoryId[story.id] ?? [] : [];
   const contextCount = story ? contextSignalCount(story) : 0;
 
   const [editOverrides, setEditOverrides] = useState<{
@@ -398,11 +391,11 @@ export function StoryPage() {
             <section className="grid h-[calc(100vh-7rem)] gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
               <div className="flex min-h-0 flex-col overflow-hidden rounded-[8px] border border-border bg-background">
                 <SectionTitle
-                  title="关联 Session"
-                  badge={`${sessions.length}`}
+                  title="Subject Execution"
+                  badge="Story"
                 />
                 <div className="min-h-0 flex-1 overflow-hidden border-t border-border">
-                  <StorySessionPanel story={story} />
+                  <StorySubjectExecutionPanel story={story} />
                 </div>
               </div>
 

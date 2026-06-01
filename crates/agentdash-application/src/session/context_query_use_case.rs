@@ -1,12 +1,11 @@
 use uuid::Uuid;
 
 use crate::error::ApplicationError;
-use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
-use crate::session::construction_planner::SessionConstructionPlanner;
+use crate::session::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
+use crate::session::construction_planner::RuntimeContextInspectionPlanner;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::construction_use_case::{
-    SessionConstructionProjectionMode, SessionConstructionUseCaseDeps,
-    finalize_session_construction_projection,
+    SessionConstructionUseCaseDeps, finalize_session_construction_projection,
 };
 use crate::session::{LaunchCommand, RuntimeCommandRecord, SessionMeta, UserPromptInput};
 use agentdash_domain::project::Project;
@@ -42,14 +41,14 @@ pub struct SessionContextQueryInput {
 pub async fn build_session_context_plan(
     deps: &SessionConstructionUseCaseDeps<'_>,
     input: SessionContextQueryInput,
-) -> Result<Option<SessionConstructionPlan>, ApplicationError> {
+) -> Result<Option<RuntimeContextInspectionPlan>, ApplicationError> {
     let mut plan = match input.owner_facts {
         SessionContextQueryOwnerFacts::Task {
             task_id,
             workspace_id,
             agent_binding,
         } => {
-            SessionConstructionPlanner::plan_task_context_query(
+            RuntimeContextInspectionPlanner::plan_task_context_query(
                 deps.repos,
                 &deps.services.vfs_service,
                 deps.services.extra_skill_dirs,
@@ -64,7 +63,7 @@ pub async fn build_session_context_plan(
             .await
         }
         SessionContextQueryOwnerFacts::Story { story } => {
-            let Some(plan) = SessionConstructionPlanner::plan_story_context_query(
+            let Some(plan) = RuntimeContextInspectionPlanner::plan_story_context_query(
                 deps.repos,
                 &deps.services.vfs_service,
                 deps.services.extra_skill_dirs,
@@ -84,7 +83,7 @@ pub async fn build_session_context_plan(
         SessionContextQueryOwnerFacts::Project {
             project,
             binding_label,
-        } => SessionConstructionPlanner::plan_project_context_query(
+        } => RuntimeContextInspectionPlanner::plan_project_context_query(
             deps.repos,
             &deps.services.vfs_service,
             deps.services.extra_skill_dirs,
@@ -120,15 +119,7 @@ pub async fn build_session_context_plan(
         had_existing_runtime: input.had_existing_runtime,
         requested_runtime_commands: input.requested_runtime_commands,
     };
-    plan = finalize_session_construction_projection(
-        deps,
-        plan,
-        Vec::new(),
-        None,
-        &facts,
-        SessionConstructionProjectionMode::Inspect,
-    )
-    .await?;
+    plan = finalize_session_construction_projection(deps, plan, Vec::new(), None, &facts).await?;
 
     Ok(Some(plan))
 }

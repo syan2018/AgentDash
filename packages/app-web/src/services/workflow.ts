@@ -71,7 +71,12 @@ const ACTIVITY_RUN_STATUSES = new Set<string>([
   "ready", "running", "blocked", "completed", "failed", "cancelled",
 ]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
-  "step_activated", "step_completed", "artifact_appended", "context_injected",
+  "activity_activated",
+  "activity_completed",
+  "constraint_blocked",
+  "completion_evaluated",
+  "artifact_appended",
+  "context_injected",
 ]);
 
 function normalizeEnum<T extends string>(value: unknown, allowed: Set<string>, field: string): T {
@@ -417,8 +422,8 @@ function mapExecutorRunRef(raw: unknown): ExecutorRunRef | undefined {
   const value = asRecord(raw);
   if (!value) return undefined;
   const kind = requireStringField(value, "kind");
-  if (kind === "agent_session") {
-    return { kind: "agent_session", session_id: requireStringField(value, "session_id") };
+  if (kind === "runtime_session") {
+    return { kind: "runtime_session", session_id: requireStringField(value, "session_id") };
   }
   if (kind === "function_run") {
     return { kind: "function_run", run_id: requireStringField(value, "run_id") };
@@ -472,7 +477,7 @@ export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure 
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.target_kinds ?? raw.binding_kinds, "workflow target kinds"),
+    target_kinds: normalizeTargetKinds(raw.target_kinds, "workflow target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
@@ -489,7 +494,7 @@ export function mapWorkflowGraph(raw: Record<string, unknown>): WorkflowGraph {
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.target_kinds ?? raw.binding_kinds, "activity lifecycle target kinds"),
+    target_kinds: normalizeTargetKinds(raw.target_kinds, "workflow graph target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "activity lifecycle definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
@@ -506,7 +511,6 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
     lifecycle_id: requireStringField(raw, "lifecycle_id"),
-    session_id: requireStringField(raw, "session_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     active_node_keys: asStringArray(raw.active_node_keys),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
@@ -523,9 +527,9 @@ export async function fetchAgentProcedures(opts?: {
 }): Promise<AgentProcedure[]> {
   const params = new URLSearchParams();
   if (opts?.projectId) params.set("project_id", opts.projectId);
-  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
+  if (opts?.targetKind) params.set("target_kind", opts.targetKind);
   const query = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(`/workflow-definitions${query}`);
+  const raw = await api.get<Record<string, unknown>[]>(`/agent-procedures${query}`);
   return raw.map(mapAgentProcedure);
 }
 
@@ -535,9 +539,9 @@ export async function fetchWorkflowGraphs(opts?: {
 }): Promise<WorkflowGraph[]> {
   const params = new URLSearchParams();
   if (opts?.projectId) params.set("project_id", opts.projectId);
-  if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
+  if (opts?.targetKind) params.set("target_kind", opts.targetKind);
   const query = params.toString() ? `?${params}` : "";
-  const raw = await api.get<Record<string, unknown>[]>(`/activity-lifecycle-definitions${query}`);
+  const raw = await api.get<Record<string, unknown>[]>(`/workflow-graphs${query}`);
   return raw.map(mapWorkflowGraph);
 }
 
@@ -551,11 +555,12 @@ export async function createWorkflowGraph(input: {
   activities: ActivityDefinition[];
   transitions: ActivityTransition[];
 }): Promise<WorkflowGraph> {
-  const raw = await api.post<Record<string, unknown>>("/activity-lifecycle-definitions", {
+  const raw = await api.post<Record<string, unknown>>("/workflow-graphs", {
     project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
+    target_kinds: input.target_kinds,
     entry_activity_key: input.entry_activity_key,
     activities: input.activities,
     transitions: input.transitions,
@@ -564,7 +569,7 @@ export async function createWorkflowGraph(input: {
 }
 
 export async function getWorkflowGraph(id: string): Promise<WorkflowGraph> {
-  const raw = await api.get<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`);
+  const raw = await api.get<Record<string, unknown>>(`/workflow-graphs/${id}`);
   return mapWorkflowGraph(raw);
 }
 
@@ -578,7 +583,7 @@ export async function updateWorkflowGraph(
     transitions?: ActivityTransition[];
   },
 ): Promise<WorkflowGraph> {
-  const raw = await api.put<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`, {
+  const raw = await api.put<Record<string, unknown>>(`/workflow-graphs/${id}`, {
     name: input.name,
     description: input.description,
     entry_activity_key: input.entry_activity_key,
@@ -598,11 +603,12 @@ export async function validateWorkflowGraph(input: {
   activities: ActivityDefinition[];
   transitions: ActivityTransition[];
 }): Promise<WorkflowValidationResult> {
-  const raw = await api.post<Record<string, unknown>>("/activity-lifecycle-definitions/validate", {
+  const raw = await api.post<Record<string, unknown>>("/workflow-graphs/validate", {
     project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
+    target_kinds: input.target_kinds,
     entry_activity_key: input.entry_activity_key,
     activities: input.activities,
     transitions: input.transitions,
@@ -621,31 +627,7 @@ export async function validateWorkflowGraph(input: {
 }
 
 export async function deleteWorkflowGraph(id: string): Promise<void> {
-  await api.delete(`/activity-lifecycle-definitions/${id}`);
-}
-
-export async function fetchWorkflowRunsBySession(
-  sessionId: string,
-): Promise<WorkflowRun[]> {
-  const raw = await api.get<Record<string, unknown>[]>(
-    `/lifecycle-runs/by-session/${sessionId}`,
-  );
-  return raw.map(mapWorkflowRun);
-}
-
-export async function startWorkflowRun(input: {
-  lifecycle_id?: string;
-  lifecycle_key?: string;
-  session_id: string;
-  project_id: string;
-}): Promise<WorkflowRun> {
-  const raw = await api.post<Record<string, unknown>>("/lifecycle-runs", {
-    lifecycle_id: input.lifecycle_id,
-    lifecycle_key: input.lifecycle_key,
-    session_id: input.session_id,
-    project_id: input.project_id,
-  });
-  return mapWorkflowRun(raw);
+  await api.delete(`/workflow-graphs/${id}`);
 }
 
 export async function submitHumanDecision(input: {
@@ -675,18 +657,19 @@ export async function createAgentProcedure(input: {
   target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
 }): Promise<AgentProcedure> {
-  const raw = await api.post<Record<string, unknown>>("/workflow-definitions", {
+  const raw = await api.post<Record<string, unknown>>("/agent-procedures", {
     project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
+    target_kinds: input.target_kinds,
     contract: input.contract,
   });
   return mapAgentProcedure(raw);
 }
 
 export async function getAgentProcedure(id: string): Promise<AgentProcedure> {
-  const raw = await api.get<Record<string, unknown>>(`/workflow-definitions/${id}`);
+  const raw = await api.get<Record<string, unknown>>(`/agent-procedures/${id}`);
   return mapAgentProcedure(raw);
 }
 
@@ -698,7 +681,7 @@ export async function updateAgentProcedure(
     contract?: WorkflowContract;
   },
 ): Promise<AgentProcedure> {
-  const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, {
+  const raw = await api.put<Record<string, unknown>>(`/agent-procedures/${id}`, {
     name: input.name,
     description: input.description,
     contract: input.contract,
@@ -714,11 +697,12 @@ export async function validateAgentProcedure(input: {
   target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
 }): Promise<WorkflowValidationResult> {
-  const raw = await api.post<Record<string, unknown>>("/workflow-definitions/validate", {
+  const raw = await api.post<Record<string, unknown>>("/agent-procedures/validate", {
     project_id: input.project_id,
     key: input.key,
     name: input.name,
     description: input.description,
+    target_kinds: input.target_kinds,
     contract: input.contract,
   });
   return {
@@ -735,7 +719,7 @@ export async function validateAgentProcedure(input: {
 }
 
 export async function deleteAgentProcedure(id: string): Promise<void> {
-  await api.delete(`/workflow-definitions/${id}`);
+  await api.delete(`/agent-procedures/${id}`);
 }
 
 // ─── Tool Catalog ──

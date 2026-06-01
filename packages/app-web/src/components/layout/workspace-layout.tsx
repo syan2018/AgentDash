@@ -33,7 +33,7 @@ const NAV_ITEMS: NavItem[] = [
     key: "agent",
     label: "Agent",
     defaultPath: "/dashboard/agent",
-    pathPrefixes: ["/dashboard/agent", "/session/"],
+    pathPrefixes: ["/dashboard/agent", "/agent/", "/run/", "/subject/", "/session/"],
     icon: (
       <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 8V4H8" />
@@ -113,6 +113,9 @@ export function WorkspaceLayout() {
 
   // 路由高亮匹配：useMatch 调用顺序必须稳定
   const agentDashboardMatch = useMatch("/dashboard/agent");
+  const agentRouteMatch = useMatch("/agent/:agentId");
+  const runRouteMatch = useMatch("/run/:runId");
+  const subjectRouteMatch = useMatch("/subject/:kind/:id");
   const sessionRouteMatch = useMatch("/session/:sessionId");
   const storyDashboardMatch = useMatch("/dashboard/story");
   const storyRouteMatch = useMatch("/story/:storyId");
@@ -121,7 +124,7 @@ export function WorkspaceLayout() {
   const routineDashboardMatch = useMatch("/dashboard/routine");
 
   const activeMap: Record<NavKey, boolean> = {
-    agent: !!agentDashboardMatch || !!sessionRouteMatch,
+    agent: !!agentDashboardMatch || !!agentRouteMatch || !!runRouteMatch || !!subjectRouteMatch || !!sessionRouteMatch,
     story: !!storyDashboardMatch || !!storyRouteMatch,
     assets: !!assetsDashboardMatch || !!unifiedWorkflowEditorMatch,
     routine: !!routineDashboardMatch,

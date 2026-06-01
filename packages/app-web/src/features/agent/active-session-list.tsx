@@ -6,7 +6,6 @@
  */
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import type { LifecycleRunView, LifecycleAgentView } from "../../types";
 
@@ -41,7 +40,6 @@ function StatusDot({ status }: { status: string }) {
 
 interface AgentRowProps {
   agent: LifecycleAgentView;
-  runId: string;
   isSelected: boolean;
   onSelect: () => void;
 }
@@ -79,8 +77,9 @@ function RunGroup({ run, agents, selectedAgentId, onSelectAgent }: RunGroupProps
   const [collapsed, setCollapsed] = useState(false);
 
   const subjectLabel = run.subject_associations[0]
-    ? `${run.subject_associations[0].subject_kind} · ${run.subject_associations[0].subject_id.slice(0, 8)}`
+    ? `${run.subject_associations[0].subject_ref.kind} · ${run.subject_associations[0].subject_ref.id.slice(0, 8)}`
     : null;
+  const runId = run.run_ref.run_id;
 
   return (
     <div>
@@ -96,7 +95,7 @@ function RunGroup({ run, agents, selectedAgentId, onSelectAgent }: RunGroupProps
         </span>
         <StatusDot status={run.status} />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-          Run · {run.id.slice(0, 8)}
+          Run · {runId.slice(0, 8)}
         </span>
         {subjectLabel && (
           <span className="shrink-0 text-[10px] text-muted-foreground/60">{subjectLabel}</span>
@@ -108,11 +107,10 @@ function RunGroup({ run, agents, selectedAgentId, onSelectAgent }: RunGroupProps
       {!collapsed &&
         agents.map((agent) => (
           <AgentRow
-            key={agent.id}
+            key={agent.agent_ref.agent_id}
             agent={agent}
-            runId={run.id}
-            isSelected={selectedAgentId === agent.id}
-            onSelect={() => onSelectAgent(run.id, agent.id)}
+            isSelected={selectedAgentId === agent.agent_ref.agent_id}
+            onSelect={() => onSelectAgent(runId, agent.agent_ref.agent_id)}
           />
         ))}
     </div>
@@ -195,11 +193,11 @@ export function ActiveLifecycleList({
     const lower = keyword.toLowerCase();
     return runList.filter(
       (r) =>
-        r.id.toLowerCase().includes(lower) ||
+        r.run_ref.run_id.toLowerCase().includes(lower) ||
         r.subject_associations.some(
           (sa) =>
-            sa.subject_kind.toLowerCase().includes(lower) ||
-            sa.subject_id.toLowerCase().includes(lower),
+            sa.subject_ref.kind.toLowerCase().includes(lower) ||
+            sa.subject_ref.id.toLowerCase().includes(lower),
         ),
     );
   }, [runList, keyword]);
@@ -207,9 +205,9 @@ export function ActiveLifecycleList({
   const agentsByRunId = useMemo(() => {
     const map = new Map<string, LifecycleAgentView[]>();
     for (const agent of agents.values()) {
-      const arr = map.get(agent.run_id) ?? [];
+      const arr = map.get(agent.agent_ref.run_id) ?? [];
       arr.push(agent);
-      map.set(agent.run_id, arr);
+      map.set(agent.agent_ref.run_id, arr);
     }
     return map;
   }, [agents]);
@@ -255,9 +253,9 @@ export function ActiveLifecycleList({
         ) : (
           filteredRuns.map((run) => (
             <RunGroup
-              key={run.id}
+              key={run.run_ref.run_id}
               run={run}
-              agents={agentsByRunId.get(run.id) ?? []}
+              agents={agentsByRunId.get(run.run_ref.run_id) ?? []}
               selectedAgentId={selectedAgentId}
               onSelectAgent={onSelectAgent}
             />
@@ -267,5 +265,3 @@ export function ActiveLifecycleList({
     </div>
   );
 }
-
-export { ActiveLifecycleList as ActiveSessionList };

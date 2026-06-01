@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 装配对象与尚待下沉的 session 内部实现。
+//! `SessionRuntimeInner` 装配对象与尚待下沉的 session 内部实现。
 //!
 //! 按能力服务拆分后的剩余范围：
 //! - [`facade`]：测试入口与少量 session 内部 helper。
@@ -81,5 +81,6 @@ pub struct SessionRuntimeInner {
     /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
-    pub(super) lifecycle_gate_repo: Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,
+    pub(super) lifecycle_gate_repo:
+        Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,
 }

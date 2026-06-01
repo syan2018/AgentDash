@@ -112,7 +112,7 @@ pub(crate) async fn build_session_runtime(
         repos.workflow_graph_repo.clone(),
         repos.activity_execution_claim_repo.clone(),
         repos.lifecycle_run_repo.clone(),
-        repos.lifecycle_run_link_repo.clone(),
+        repos.lifecycle_subject_association_repo.clone(),
         repos.inline_file_repo.clone(),
         |preset_scripts| {
             Arc::new(agentdash_infrastructure::RhaiHookScriptEvaluator::new(

@@ -2,7 +2,7 @@
  * Project service 层。
  *
  * 收口 project / project-agent / grant / project-session 相关的 api.client 调用，
- * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / OpenProjectAgentSession /
+ * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / ProjectAgentLaunch /
  * ProjectSessionInfo）集中于此。projectStore 只消费此层导出的函数，不直连 api。
  */
 
@@ -10,10 +10,9 @@ import { api } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import type {
   ContextContainerDefinition,
-  OpenProjectAgentSessionResult,
   Project,
   ProjectAgent,
-  ProjectAgentSession,
+  ProjectAgentLaunchResult,
   ProjectAgentSummary,
   ProjectConfig,
   ProjectRole,
@@ -28,8 +27,6 @@ import { isThinkingLevel } from "../types";
 function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSummary {
   const rawExecutor =
     raw.executor && typeof raw.executor === "object" ? (raw.executor as Record<string, unknown>) : {};
-  const rawSession =
-    raw.session && typeof raw.session === "object" ? (raw.session as Record<string, unknown>) : null;
   const thinkingLevel = isThinkingLevel(rawExecutor.thinking_level) ? rawExecutor.thinking_level : null;
 
   return {
@@ -47,27 +44,56 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
     },
     preset_name: raw.preset_name != null ? String(raw.preset_name) : null,
     source: String(raw.source ?? ""),
-    session: rawSession
-      ? {
-          run_ref: requireStringField(rawSession, "run_ref"),
-          session_id: String(rawSession.session_id ?? ""),
-          session_title: rawSession.session_title != null ? String(rawSession.session_title) : null,
-          last_activity: rawSession.last_activity != null ? Number(rawSession.last_activity) : null,
-        }
-      : null,
   };
 }
 
-function mapOpenProjectAgentSessionResult(
-  raw: Record<string, unknown>,
-): OpenProjectAgentSessionResult {
+function requireRecordField(raw: Record<string, unknown>, field: string): Record<string, unknown> {
+  const value = raw[field];
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error(`字段 ${field} 必须是对象`);
+}
+
+function mapProjectAgentLaunchResult(raw: Record<string, unknown>): ProjectAgentLaunchResult {
   const rawAgent =
     raw.agent && typeof raw.agent === "object" ? (raw.agent as Record<string, unknown>) : {};
+  const runRef = requireRecordField(raw, "run_ref");
+  const agentRef = requireRecordField(raw, "agent_ref");
+  const frameRef = requireRecordField(raw, "frame_ref");
+  const runtimeRef = raw.runtime_session_ref == null ? null : requireRecordField(raw, "runtime_session_ref");
+  const assignmentRef = raw.assignment_ref == null ? null : requireRecordField(raw, "assignment_ref");
+  const subjectRef = raw.subject_ref == null ? null : requireRecordField(raw, "subject_ref");
 
   return {
     created: Boolean(raw.created),
-    session_id: String(raw.session_id ?? ""),
-    run_ref: requireStringField(raw, "run_ref"),
+    run_ref: { run_id: requireStringField(runRef, "run_id") },
+    agent_ref: {
+      run_id: requireStringField(agentRef, "run_id"),
+      agent_id: requireStringField(agentRef, "agent_id"),
+    },
+    frame_ref: {
+      agent_id: requireStringField(frameRef, "agent_id"),
+      frame_id: requireStringField(frameRef, "frame_id"),
+      revision: typeof frameRef.revision === "number" ? frameRef.revision : undefined,
+    },
+    runtime_session_ref: runtimeRef
+      ? { runtime_session_id: requireStringField(runtimeRef, "runtime_session_id") }
+      : undefined,
+    assignment_ref: assignmentRef
+      ? {
+          assignment_id: requireStringField(assignmentRef, "assignment_id"),
+          run_id: assignmentRef.run_id != null ? String(assignmentRef.run_id) : undefined,
+          agent_id: assignmentRef.agent_id != null ? String(assignmentRef.agent_id) : undefined,
+          frame_id: assignmentRef.frame_id != null ? String(assignmentRef.frame_id) : undefined,
+        }
+      : undefined,
+    subject_ref: subjectRef
+      ? {
+          kind: requireStringField(subjectRef, "kind"),
+          id: requireStringField(subjectRef, "id"),
+        }
+      : undefined,
     agent: mapProjectAgentSummary(rawAgent),
   };
 }
@@ -86,15 +112,6 @@ function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo
     vfs: (raw.vfs as ProjectSessionInfo["vfs"]) ?? null,
     runtime_surface: (raw.runtime_surface as ProjectSessionInfo["runtime_surface"]) ?? null,
     context_snapshot: contextSnapshot,
-  };
-}
-
-function mapProjectAgentSession(raw: Record<string, unknown>): ProjectAgentSession {
-  return {
-    run_ref: requireStringField(raw, "run_ref"),
-    session_id: String(raw.session_id ?? ""),
-    session_title: raw.session_title != null ? String(raw.session_title) : null,
-    last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
   };
 }
 
@@ -203,36 +220,15 @@ export async function fetchProjectAgents(projectId: string): Promise<ProjectAgen
   return response.map(mapProjectAgentSummary);
 }
 
-export async function openProjectAgentSession(
+export async function launchProjectAgent(
   projectId: string,
   agentKey: string,
-): Promise<OpenProjectAgentSessionResult> {
+): Promise<ProjectAgentLaunchResult> {
   const response = await api.post<Record<string, unknown>>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session`,
+    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/launch`,
     {},
   );
-  return mapOpenProjectAgentSessionResult(response);
-}
-
-export async function forceNewProjectAgentSession(
-  projectId: string,
-  agentKey: string,
-): Promise<OpenProjectAgentSessionResult> {
-  const response = await api.post<Record<string, unknown>>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/session?force_new=true`,
-    {},
-  );
-  return mapOpenProjectAgentSessionResult(response);
-}
-
-export async function fetchProjectAgentSessions(
-  projectId: string,
-  agentKey: string,
-): Promise<ProjectAgentSession[]> {
-  const response = await api.get<Record<string, unknown>[]>(
-    `/projects/${projectId}/agents/${encodeURIComponent(agentKey)}/sessions`,
-  );
-  return response.map(mapProjectAgentSession);
+  return mapProjectAgentLaunchResult(response);
 }
 
 export async function fetchProjectSessionInfo(

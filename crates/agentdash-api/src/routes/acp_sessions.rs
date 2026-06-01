@@ -1,4 +1,4 @@
-﻿use std::convert::Infallible;
+use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -493,7 +493,9 @@ pub async fn get_session_context(
         return Ok(Json(SessionContextResponse::empty()));
     };
 
-    Ok(Json(SessionContextResponse::from_construction_plan(plan)))
+    Ok(Json(SessionContextResponse::from_runtime_context_plan(
+        plan,
+    )))
 }
 
 /// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。

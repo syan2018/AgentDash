@@ -7,10 +7,11 @@ use super::value_objects::{AgentBinding, Artifact, TaskStatus};
 /// Task — 用户工作项状态视图
 ///
 /// 面向用户展示的工作项容器，承载归属关系、状态投影、声明式执行偏好和结果摘要。
-/// 真实执行在 Session / LifecycleRun 中发生；Task 通过 workspace_id 外键关联逻辑工作空间。
+/// 真实执行由 LifecycleRun / LifecycleAgent / AgentFrame 证据链承载；
+/// Task 通过 workspace_id 外键关联逻辑工作空间。
 ///
 /// Task entity 不持有 AgentDash 内部 session_id，也不持有执行器原生 resume id。
-/// Session 归属由 LifecycleRunLink 与 CapabilityScope 管理。
+/// 业务归属由 LifecycleSubjectAssociation 与 CapabilityScope 管理。
 ///
 /// **M2：投影字段可见性规则**（见 `.trellis/spec/backend/story-task-runtime.md` §2.4）
 ///

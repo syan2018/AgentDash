@@ -15,8 +15,8 @@ use crate::workflow::FreeformLifecycleService;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    WorkflowGraphRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, AgentProcedureRepository,
+    AgentProcedureRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    WorkflowGraphRepository,
 };
 
 /// 启动对账管线的依赖集合
@@ -122,8 +122,8 @@ async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseRepo
     let errors = Vec::new();
 
     for project in projects {
-        // TODO: migrate to LifecycleRunLink query for session discovery
-        // For now, skip freeform lifecycle reconciliation as session_binding is removed
+        // Freeform reconciliation should derive its work queue from subject associations
+        // and AgentFrame runtime refs so recovery follows the same control-plane evidence chain.
         let _ = (&service, &project);
     }
 

@@ -7,6 +7,7 @@ use agentdash_application::auth::session_service::AuthSessionService;
 use agentdash_application::repository_set::RepositorySet;
 use agentdash_application::session::SessionPersistence;
 use agentdash_application::shared_library::{PluginEmbeddedLibraryAssetSeed, SharedLibraryService};
+use agentdash_application::workflow::SessionPersistenceRuntimeSessionCreator;
 use agentdash_infrastructure::{
     FilesystemExtensionPackageArtifactStorage, PostgresAgentAssignmentRepository,
     PostgresAgentFrameRepository, PostgresAgentLineageRepository, PostgresAuthSessionRepository,
@@ -17,12 +18,11 @@ use agentdash_infrastructure::{
     PostgresLlmProviderRepository, PostgresMcpPresetRepository, PostgresProjectAgentRepository,
     PostgresProjectBackendAccessRepository, PostgresProjectExtensionInstallationRepository,
     PostgresProjectRepository, PostgresProjectVfsMountRepository,
-    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRunLinkRepository,
-    PostgresRuntimeHealthRepository, PostgresSessionRepository, PostgresSettingsRepository,
-    PostgresSharedLibraryRepository, PostgresSkillAssetRepository, PostgresStateChangeRepository,
-    PostgresStoryRepository, PostgresUserDirectoryRepository,
-    PostgresWorkflowGraphInstanceRepository, PostgresWorkflowRepository,
-    PostgresWorkspaceRepository,
+    PostgresRoutineExecutionRepository, PostgresRoutineRepository, PostgresRuntimeHealthRepository,
+    PostgresSessionRepository, PostgresSettingsRepository, PostgresSharedLibraryRepository,
+    PostgresSkillAssetRepository, PostgresStateChangeRepository, PostgresStoryRepository,
+    PostgresUserDirectoryRepository, PostgresWorkflowGraphInstanceRepository,
+    PostgresWorkflowRepository, PostgresWorkspaceRepository,
 };
 use agentdash_spi::extension_package::ExtensionPackageArtifactStorage;
 
@@ -51,6 +51,9 @@ pub(crate) async fn build_repositories(
     let state_change_repo = Arc::new(PostgresStateChangeRepository::new(pool.clone()));
 
     let session_repo = Arc::new(PostgresSessionRepository::new(pool.clone()));
+    let runtime_session_creator = Arc::new(SessionPersistenceRuntimeSessionCreator::new(
+        session_repo.clone(),
+    ));
 
     let backend_repo = Arc::new(PostgresBackendRepository::new(pool.clone()));
     let runtime_health_repo = Arc::new(PostgresRuntimeHealthRepository::new(pool.clone()));
@@ -104,15 +107,14 @@ pub(crate) async fn build_repositories(
     let skill_asset_repo = Arc::new(PostgresSkillAssetRepository::new(pool.clone()));
 
     let inline_file_repo = Arc::new(PostgresInlineFileRepository::new(pool.clone()));
-    let run_link_repo = Arc::new(PostgresRunLinkRepository::new(pool.clone()));
-
     let workflow_graph_instance_repo =
         Arc::new(PostgresWorkflowGraphInstanceRepository::new(pool.clone()));
     let lifecycle_agent_repo = Arc::new(PostgresLifecycleAgentRepository::new(pool.clone()));
     let agent_frame_repo = Arc::new(PostgresAgentFrameRepository::new(pool.clone()));
     let agent_assignment_repo = Arc::new(PostgresAgentAssignmentRepository::new(pool.clone()));
-    let lifecycle_subject_association_repo =
-        Arc::new(PostgresLifecycleSubjectAssociationRepository::new(pool.clone()));
+    let lifecycle_subject_association_repo = Arc::new(
+        PostgresLifecycleSubjectAssociationRepository::new(pool.clone()),
+    );
     let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
     let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
 
@@ -147,7 +149,6 @@ pub(crate) async fn build_repositories(
         workflow_graph_repo: workflow_repo.clone(),
         activity_execution_claim_repo: workflow_repo.clone(),
         lifecycle_run_repo: workflow_repo.clone(),
-        lifecycle_run_link_repo: run_link_repo.clone(),
         workflow_graph_instance_repo: workflow_graph_instance_repo.clone(),
         lifecycle_agent_repo: lifecycle_agent_repo.clone(),
         agent_frame_repo: agent_frame_repo.clone(),
@@ -155,6 +156,7 @@ pub(crate) async fn build_repositories(
         lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
+        runtime_session_creator: runtime_session_creator.clone(),
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),
         inline_file_repo: inline_file_repo.clone(),

@@ -59,4 +59,3 @@ pub struct TaskExecutionView {
     pub trace_ref: Option<Uuid>,
     pub task_status: TaskStatus,
 }
-

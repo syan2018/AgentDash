@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use agentdash_application::session::construction::SessionConstructionPlan;
+use agentdash_application::session::construction::RuntimeContextInspectionPlan;
 use agentdash_application::session::context::SessionContextSnapshot;
 
 #[derive(Debug, Deserialize)]
@@ -66,7 +66,7 @@ impl SessionContextResponse {
         }
     }
 
-    pub(crate) fn from_construction_plan(plan: SessionConstructionPlan) -> Self {
+    pub(crate) fn from_runtime_context_plan(plan: RuntimeContextInspectionPlan) -> Self {
         let projection = plan.context_projection;
         Self {
             workspace_id: projection.workspace_id.map(|id| id.to_string()),

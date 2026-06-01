@@ -119,8 +119,7 @@ mod tests {
         });
         let execution = RoutineExecution::new(routine.id, "github:issues.opened");
         let run_id = Uuid::new_v4();
-        let intent =
-            build_routine_execution_intent_with_reuse(&routine, &execution, Some(run_id));
+        let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(run_id));
 
         assert_eq!(intent.run_policy, RunPolicy::ReuseExisting);
         assert_eq!(intent.agent_policy, AgentPolicy::Resume);

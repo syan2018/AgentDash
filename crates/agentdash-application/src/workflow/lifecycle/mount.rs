@@ -64,9 +64,9 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        WorkflowGraph, ActivityLifecycleRunState, ActivityRunStatus,
-        BashExecExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition,
-        WorkflowDefinitionSource,
+        ActivityLifecycleRunState, ActivityRunStatus, BashExecExecutorSpec,
+        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, WorkflowDefinitionSource,
+        WorkflowGraph,
     };
     use uuid::Uuid;
 
@@ -99,7 +99,6 @@ mod tests {
             "workflow_admin",
             "Workflow Admin",
             "Workflow admin lifecycle",
-
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
             vec![activity.clone()],
@@ -107,7 +106,7 @@ mod tests {
         )
         .expect("lifecycle");
         let activity_state = ActivityLifecycleRunState {
-            graph_instance_id: uuid::Uuid::nil(),
+            graph_instance_id: uuid::Uuid::new_v4(),
             status: ActivityRunStatus::Running,
             attempts: vec![ActivityAttemptState {
                 activity_key: "plan".to_string(),
@@ -121,13 +120,8 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(
-            project_id,
-            lifecycle.id,
-            Some("sess-owner".to_string()),
-            activity_state,
-        )
-        .expect("run");
+        let run =
+            LifecycleRun::new_activity(project_id, lifecycle.id, activity_state).expect("run");
 
         ActiveWorkflowProjection {
             run,

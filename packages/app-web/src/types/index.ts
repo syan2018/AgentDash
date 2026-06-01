@@ -21,10 +21,9 @@ import type {
   ProjectVfsMountResponse,
 } from "../generated/vfs-contracts";
 import type {
-  OpenProjectAgentSessionResult as GeneratedOpenProjectAgentSessionResult,
   ProjectAgent as GeneratedProjectAgent,
   ProjectAgentExecutor as GeneratedProjectAgentExecutor,
-  ProjectAgentSession as GeneratedProjectAgentSession,
+  ProjectAgentLaunchResult as GeneratedProjectAgentLaunchResult,
   ProjectAgentSummary as GeneratedProjectAgentSummary,
 } from "../generated/project-agent-contracts";
 
@@ -263,25 +262,16 @@ export type ProjectAgentExecutor = Omit<
   permission_policy?: string | null;
 };
 
-export type ProjectAgentSession = Omit<
-  GeneratedProjectAgentSession,
-  "session_title" | "last_activity"
-> & {
-  session_title: string | null;
-  last_activity: number | null;
-};
-
 export type ProjectAgentSummary = Omit<
   GeneratedProjectAgentSummary,
-  "executor" | "preset_name" | "session"
+  "executor" | "preset_name"
 > & {
   executor: ProjectAgentExecutor;
   preset_name?: string | null;
-  session?: ProjectAgentSession | null;
 };
 
-export type OpenProjectAgentSessionResult = Omit<
-  GeneratedOpenProjectAgentSessionResult,
+export type ProjectAgentLaunchResult = Omit<
+  GeneratedProjectAgentLaunchResult,
   "agent"
 > & {
   agent: ProjectAgentSummary;
@@ -418,10 +408,6 @@ export interface RegenerateTokenResponse {
   endpoint_id: string;
   webhook_token: string;
 }
-
-// ─── Story Runs (LifecycleRunLink-based) ─────────────────
-
-export type { StoryRunsResponse, StoryRunOverviewDto, LifecycleRunLinkDto, RunLinksResponse, AttachRunLinkRequest } from "../generated/workflow-contracts";
 
 // ─── Re-exports from domain-split files ──────────────────
 

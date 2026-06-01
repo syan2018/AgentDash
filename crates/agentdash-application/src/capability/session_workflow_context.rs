@@ -18,9 +18,8 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
-    WorkflowGraphRepository, ToolCapabilityDirective, AgentProcedure,
-    AgentProcedureRepository,
+    ActivityDefinition, ActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
+    ToolCapabilityDirective, WorkflowGraph, WorkflowGraphRepository,
 };
 
 use crate::capability::ToolContribution;
@@ -257,10 +256,9 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
-        WorkflowGraphRepository, AgentActivityExecutorSpec, AgentSessionPolicy,
-        ToolCapabilityDirective, WorkflowContract, AgentProcedure,
-        AgentProcedureRepository, WorkflowDefinitionSource,
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
+        AgentProcedureRepository, AgentSessionPolicy, ToolCapabilityDirective, WorkflowContract,
+        WorkflowDefinitionSource, WorkflowGraph, WorkflowGraphRepository,
     };
 
     use super::*;
@@ -367,10 +365,7 @@ mod tests {
             self.defs.lock().await.push(def.clone());
             Ok(())
         }
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
         async fn get_by_project_and_key(
@@ -526,7 +521,6 @@ mod tests {
             "builtin_workflow_admin",
             "Workflow Admin",
             "",
-
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
             vec![plan],
@@ -548,7 +542,6 @@ mod tests {
             ENTRY_procedure_key,
             "Workflow Admin / Plan",
             "",
-
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -980,7 +973,6 @@ mod tests {
             "sample",
             "Sample",
             "",
-
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )

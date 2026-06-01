@@ -337,7 +337,11 @@ impl LifecycleJourneyProjection {
             .collect())
     }
 
-    pub async fn read_records_map(&self, run_id: Uuid, activity_key: &str) -> JourneyResult<String> {
+    pub async fn read_records_map(
+        &self,
+        run_id: Uuid,
+        activity_key: &str,
+    ) -> JourneyResult<String> {
         let map = self.records_map(run_id, activity_key).await?;
         to_json_pretty(&map)
     }

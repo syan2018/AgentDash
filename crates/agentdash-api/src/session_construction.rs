@@ -1,18 +1,9 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_application::session::construction::{
-    OwnerResolutionTrace, ResolvedSessionOwner, SessionConstructionPlan,
+    OwnerResolutionTrace, ResolvedSessionOwner, RuntimeContextInspectionPlan,
 };
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
-use agentdash_application::session::construction_provider::{
-    CompanionLaunchSource, SessionConstructionProviderInput, TaskLaunchSource,
-};
-use agentdash_application::session::construction_use_case::{
-    SessionConstructionConfigDeps, SessionConstructionServiceDeps, SessionConstructionUseCaseDeps,
-};
-use agentdash_application::session::{UserPromptInput, construction_use_case};
-use agentdash_application::workspace::BackendAvailability;
+use agentdash_application::session::construction_planner::RuntimeContextInspectionPlanner;
 use agentdash_plugin_api::AuthIdentity;
 use agentdash_spi::CapabilityScope;
 
@@ -21,57 +12,11 @@ use crate::auth::{ProjectPermission, load_project_with_permission};
 use crate::rpc::ApiError;
 use crate::vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection;
 
-pub(crate) async fn build_session_construction_for_launch(
-    state: &Arc<AppState>,
-    session_id: &str,
-    user_input: &UserPromptInput,
-    task_input: Option<TaskLaunchSource>,
-    companion_input: Option<CompanionLaunchSource>,
-    source_mcp_declarations: Vec<agentdash_spi::SessionMcpServer>,
-    local_relay_workspace_root: Option<PathBuf>,
-    facts: SessionConstructionProviderInput,
-) -> Result<SessionConstructionPlan, ApiError> {
-    let deps = session_construction_deps(state);
-    construction_use_case::build_session_construction_for_launch(
-        &deps,
-        session_id,
-        user_input,
-        task_input,
-        companion_input,
-        source_mcp_declarations,
-        local_relay_workspace_root,
-        facts,
-    )
-    .await
-    .map_err(ApiError::from)
-}
-
-pub(crate) fn session_construction_deps<'a>(
-    state: &'a Arc<AppState>,
-) -> SessionConstructionUseCaseDeps<'a> {
-    let backend_registry: Arc<dyn BackendAvailability> = state.services.backend_registry.clone();
-    SessionConstructionUseCaseDeps {
-        repos: &state.repos,
-        services: SessionConstructionServiceDeps {
-            connector: state.services.connector.clone(),
-            vfs_service: state.services.vfs_service.clone(),
-            extra_skill_dirs: &state.services.extra_skill_dirs,
-            backend_registry,
-            audit_bus: state.services.audit_bus.clone(),
-            session_capability: &state.services.session_capability,
-            session_eventing: &state.services.session_eventing,
-        },
-        config: SessionConstructionConfigDeps {
-            platform_config: state.config.platform_config.clone(),
-        },
-    }
-}
-
 pub(crate) async fn build_session_context_plan(
     state: &Arc<AppState>,
     current_user: &AuthIdentity,
     session_id: &str,
-) -> Result<Option<SessionConstructionPlan>, ApiError> {
+) -> Result<Option<RuntimeContextInspectionPlan>, ApiError> {
     let session_meta = state
         .services
         .session_core
@@ -102,7 +47,7 @@ pub(crate) async fn build_session_context_plan(
         )
         .await?;
         let binding_label = agentdash_application::workflow::FREEFORM_SESSION_LABEL.to_string();
-        SessionConstructionPlanner::plan_project_context_query(
+        RuntimeContextInspectionPlanner::plan_project_context_query(
             &state.repos,
             &state.services.vfs_service,
             &state.services.extra_skill_dirs,
@@ -133,7 +78,7 @@ pub(crate) async fn build_session_context_plan(
 async fn attach_runtime_surface(
     state: &Arc<AppState>,
     session_id: &str,
-    plan: &mut SessionConstructionPlan,
+    plan: &mut RuntimeContextInspectionPlan,
 ) -> Result<(), ApiError> {
     let Some(vfs) = runtime_surface_vfs(plan) else {
         return Ok(());
@@ -156,15 +101,15 @@ async fn attach_runtime_surface(
     Ok(())
 }
 
-fn runtime_surface_vfs(plan: &SessionConstructionPlan) -> Option<&agentdash_spi::Vfs> {
+fn runtime_surface_vfs(plan: &RuntimeContextInspectionPlan) -> Option<&agentdash_spi::Vfs> {
     plan.surface.vfs.as_ref()
 }
 
 #[cfg(test)]
 mod tests {
     use agentdash_application::session::construction::{
-        OwnerResolutionTrace, ResolvedSessionOwner, SessionConstructionContextProjection,
-        SessionConstructionPlan,
+        OwnerResolutionTrace, ResolvedSessionOwner, RuntimeContextInspectionPlan,
+        SessionConstructionContextProjection,
     };
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::{CapabilityScope, Vfs};
@@ -196,7 +141,7 @@ mod tests {
                 selected_reason: "test".to_string(),
             },
         };
-        let mut plan = SessionConstructionPlan::new(
+        let mut plan = RuntimeContextInspectionPlan::new(
             "s1",
             owner,
             SessionConstructionContextProjection::default(),

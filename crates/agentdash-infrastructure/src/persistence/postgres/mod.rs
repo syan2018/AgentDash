@@ -14,7 +14,6 @@ mod project_extension_installation_repository;
 mod project_repository;
 mod project_vfs_mount_repository;
 mod routine_repository;
-mod run_link_repository;
 mod runtime_health_repository;
 mod session_repository;
 mod settings_repository;
@@ -141,18 +140,18 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
-pub use lifecycle_anchor_repository::{
-    PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
-    PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
-    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
-    PostgresWorkflowGraphInstanceRepository,
-};
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;
 pub use canvas_repository::PostgresCanvasRepository;
 pub use extension_package_artifact_repository::PostgresExtensionPackageArtifactRepository;
 pub use inline_file_repository::PostgresInlineFileRepository;
+pub use lifecycle_anchor_repository::{
+    PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
+    PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresWorkflowGraphInstanceRepository,
+};
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,
 };
@@ -163,7 +162,6 @@ pub use project_extension_installation_repository::PostgresProjectExtensionInsta
 pub use project_repository::PostgresProjectRepository;
 pub use project_vfs_mount_repository::PostgresProjectVfsMountRepository;
 pub use routine_repository::{PostgresRoutineExecutionRepository, PostgresRoutineRepository};
-pub use run_link_repository::PostgresRunLinkRepository;
 pub use runtime_health_repository::PostgresRuntimeHealthRepository;
 pub use session_repository::PostgresSessionRepository;
 pub use settings_repository::PostgresSettingsRepository;

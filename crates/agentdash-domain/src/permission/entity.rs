@@ -196,7 +196,6 @@ impl PermissionGrant {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::RunLinkSubjectKind;
 
     fn sample_grant() -> PermissionGrant {
         PermissionGrant::new(
@@ -266,7 +265,7 @@ mod tests {
     #[test]
     fn scope_escalation_path() {
         let mut grant = sample_grant().with_escalation_intent(ScopeEscalationIntent {
-            target_subject_kind: RunLinkSubjectKind::Story,
+            target_subject_kind: "story".to_string(),
             unlocked_paths: vec![ToolCapabilityPath::parse("task_management").unwrap()],
         });
 

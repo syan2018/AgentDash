@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use agentdash_domain::backend::BackendExecutionLease;
 use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
@@ -284,13 +284,9 @@ impl<'a> LaunchPlanner<'a> {
                 selection,
                 reason_tag,
             )?),
-            None if has_available_relay_executor(transport.as_ref(), executor_id) => {
-                Some(selection_request_from_vfs_hint(
-                    executor_id,
-                    req.typed_vfs.as_ref(),
-                    reason_tag,
-                ))
-            }
+            None if has_available_relay_executor(transport.as_ref(), executor_id) => Some(
+                selection_request_from_vfs_hint(executor_id, req.typed_vfs.as_ref(), reason_tag),
+            ),
             None => None,
         };
         let Some(request) = request else {

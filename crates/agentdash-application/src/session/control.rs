@@ -76,18 +76,13 @@ impl SessionControlService {
         // 从 LifecycleGate 获取请求元数据（request_type / turn_id）
         let gate_id = uuid::Uuid::parse_str(request_id).ok();
         let gate = if let Some(gid) = gate_id {
-            self.lifecycle_gate_repo
-                .get(gid)
-                .await
-                .ok()
-                .flatten()
+            self.lifecycle_gate_repo.get(gid).await.ok().flatten()
         } else {
             None
         };
 
-        let gate_meta: Option<serde_json::Value> = gate
-            .as_ref()
-            .and_then(|g| g.payload_json.clone());
+        let gate_meta: Option<serde_json::Value> =
+            gate.as_ref().and_then(|g| g.payload_json.clone());
         let wait_request_type = gate_meta
             .as_ref()
             .and_then(|m| m.get("request_type"))

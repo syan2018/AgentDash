@@ -1,9 +1,8 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, WorkflowGraph,
-    WorkflowGraphRepository, AgentAssignmentRepository, LifecycleRun,
-    LifecycleRunRepository, LifecycleRunStatus,
+    ActivityExecutionClaimRepository, AgentAssignmentRepository, LifecycleRun,
+    LifecycleRunRepository, LifecycleRunStatus, WorkflowGraph, WorkflowGraphRepository,
 };
 
 use super::scheduler::{ActivityExecutorLaunchOutcome, ActivityExecutorLauncher};
@@ -16,7 +15,6 @@ pub struct ActivityLifecycleRunService<'a, D: ?Sized, R: ?Sized, C: ?Sized> {
     definition_repo: &'a D,
     run_repo: &'a R,
     claim_repo: &'a C,
-    assignment_repo: Option<&'a dyn AgentAssignmentRepository>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,15 +35,10 @@ where
             definition_repo,
             run_repo,
             claim_repo,
-            assignment_repo: None,
         }
     }
 
-    pub fn with_assignment_repo(
-        mut self,
-        assignment_repo: &'a dyn AgentAssignmentRepository,
-    ) -> Self {
-        self.assignment_repo = Some(assignment_repo);
+    pub fn with_assignment_repo(self, _assignment_repo: &'a dyn AgentAssignmentRepository) -> Self {
         self
     }
 
@@ -86,10 +79,7 @@ where
         L: ActivityExecutorLauncher,
     {
         let (definition, mut run, mut state) = self.load_context(run_id).await?;
-        let mut scheduler = ActivityExecutorScheduler::new(self.claim_repo);
-        if let Some(assignment_repo) = self.assignment_repo {
-            scheduler = scheduler.with_assignment_repo(assignment_repo);
-        }
+        let scheduler = ActivityExecutorScheduler::new(self.claim_repo);
         let outcomes = scheduler
             .launch_ready_attempts(run.id, &definition, &mut state, launcher)
             .await?;
@@ -101,14 +91,8 @@ where
     async fn load_context(
         &self,
         run_id: Uuid,
-    ) -> Result<
-        (
-            WorkflowGraph,
-            LifecycleRun,
-            ActivityLifecycleRunState,
-        ),
-        WorkflowApplicationError,
-    > {
+    ) -> Result<(WorkflowGraph, LifecycleRun, ActivityLifecycleRunState), WorkflowApplicationError>
+    {
         let run = self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
             WorkflowApplicationError::NotFound(format!("lifecycle_run 不存在: {run_id}"))
         })?;
@@ -197,17 +181,11 @@ mod tests {
 
     #[async_trait::async_trait]
     impl WorkflowGraphRepository for DefinitionRepo {
-        async fn create(
-            &self,
-            _lifecycle: &WorkflowGraph,
-        ) -> Result<(), DomainError> {
+        async fn create(&self, _lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             Ok(())
         }
 
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok((self.definition.id == id).then(|| self.definition.clone()))
         }
 
@@ -231,10 +209,7 @@ mod tests {
                 .unwrap_or_default())
         }
 
-        async fn update(
-            &self,
-            _lifecycle: &WorkflowGraph,
-        ) -> Result<(), DomainError> {
+        async fn update(&self, _lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             Ok(())
         }
 
@@ -347,7 +322,6 @@ mod tests {
             "activity_flow",
             "Activity Flow",
             "",
-
             WorkflowDefinitionSource::UserAuthored,
             "main",
             vec![ActivityDefinition {
@@ -372,8 +346,7 @@ mod tests {
     async fn apply_event_persists_activity_state_to_lifecycle_run() {
         let project_id = Uuid::new_v4();
         let definition = definition(project_id);
-        let state =
-            LifecycleEngine::initialize(&definition, uuid::Uuid::new_v4()).expect("state");
+        let state = LifecycleEngine::initialize(&definition, uuid::Uuid::new_v4()).expect("state");
         let run = LifecycleRun::new_activity(project_id, definition.id, state).expect("run");
         let run_id = run.id;
         let definition_repo = DefinitionRepo { definition };

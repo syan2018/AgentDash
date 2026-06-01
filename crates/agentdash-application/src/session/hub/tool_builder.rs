@@ -1,4 +1,4 @@
-﻿//! Hub 的工具构建与运行时 MCP 热更职责。
+//! Hub 的工具构建与运行时 MCP 热更职责。
 //!
 //! 集中：
 //! - `build_tools_for_execution_context`：runtime tool + 直连 MCP + relay MCP
@@ -83,7 +83,10 @@ impl SessionRuntimeInner {
                 Ok(Some(current_frame)) => {
                     let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
                         .with_capability_state(&state)
-                        .with_created_by("runtime_context_transition", Some(session_id.to_string()));
+                        .with_created_by(
+                            "runtime_context_transition",
+                            Some(session_id.to_string()),
+                        );
                     if let Some(ctx) = current_frame.context_slice_json {
                         builder = builder.with_context(ctx);
                     }
@@ -114,10 +117,7 @@ impl SessionRuntimeInner {
                     );
                 }
                 Err(error) => {
-                    tracing::warn!(
-                        session_id,
-                        "查找 session 关联的 AgentFrame 失败: {error}"
-                    );
+                    tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
                 }
             }
         }

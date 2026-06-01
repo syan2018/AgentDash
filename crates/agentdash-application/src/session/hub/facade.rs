@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 装配对象的内部 helper 与测试入口。
+//! `SessionRuntimeInner` 装配对象的内部 helper 与测试入口。
 //!
 //! 新的外部调用点必须依赖具体 service；Commit 8 会继续把内部业务实现
 //! 下沉到明确的能力服务或依赖包。
@@ -7,11 +7,13 @@ use std::io;
 
 #[cfg(test)]
 #[cfg(test)]
-use super::super::construction::SessionConstructionPlan;
+use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
 use super::super::types::*;
 use super::SessionRuntimeInner;
+#[cfg(test)]
+use crate::workflow::runtime_launch::{LaunchResolutionTrace, RuntimeLaunchRequest};
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
@@ -49,10 +51,7 @@ impl SessionRuntimeInner {
         let _ = self.eventing_service().ensure_session(session_id).await;
     }
 
-    pub async fn get_hook_runtime(
-        &self,
-        session_id: &str,
-    ) -> Option<SharedHookRuntime> {
+    pub async fn get_hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
         self.runtime_registry.hook_runtime(session_id).await
     }
 
@@ -114,10 +113,11 @@ impl SessionRuntimeInner {
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
-        construction: SessionConstructionPlan,
+        construction: RuntimeContextInspectionPlan,
     ) -> Result<String, ConnectorError> {
+        let launch_request = runtime_launch_request_from_construction(construction);
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
-            .launch_with_construction_for_test(session_id, construction)
+            .launch_with_request_for_test(session_id, launch_request)
             .await
     }
 
@@ -142,5 +142,44 @@ impl SessionRuntimeInner {
         self.eventing_service()
             .persist_notification(session_id, envelope)
             .await
+    }
+}
+
+#[cfg(test)]
+fn runtime_launch_request_from_construction(
+    construction: RuntimeContextInspectionPlan,
+) -> RuntimeLaunchRequest {
+    RuntimeLaunchRequest {
+        agent_id: uuid::Uuid::new_v4(),
+        frame_id: uuid::Uuid::new_v4(),
+        frame_revision: 1,
+        procedure_ref: None,
+        capability_surface: serde_json::Value::Null,
+        context_slice: serde_json::Value::Null,
+        vfs_surface: serde_json::Value::Null,
+        mcp_surface: serde_json::Value::Null,
+        runtime_session_id: Some(construction.session_id.clone()),
+        graph_instance_id: None,
+        activity_key: None,
+        executor_config: construction.execution_profile.executor_config,
+        working_directory: construction.workspace.working_directory,
+        prompt_blocks: None,
+        environment_variables: std::collections::HashMap::new(),
+        identity: None,
+        terminal_hook_effect_binding: None,
+        discovered_guidelines: construction.projections.discovered_guidelines,
+        extension_runtime: construction.projections.extension_runtime,
+        context_bundle: construction.context.bundle,
+        typed_capability_state: construction.projections.capability_state,
+        typed_vfs: construction.surface.vfs,
+        typed_mcp_servers: construction.projections.mcp_servers,
+        continuation_context_frame: None,
+        base_capability_state: construction.resolution.runtime_base_capability_state,
+        resolution_trace: LaunchResolutionTrace {
+            vfs_source: construction.resolution.vfs_source,
+            mcp_source: construction.resolution.mcp_source,
+            capability_source: construction.resolution.capability_source,
+            pending_overlay_applied: construction.resolution.pending_overlay_applied,
+        },
     }
 }

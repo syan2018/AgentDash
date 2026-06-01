@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, WorkflowGraph, ActivityTransition,
-    WorkflowContract, AgentProcedure, WorkflowDefinitionSource,
+    ActivityDefinition, ActivityTransition, AgentProcedure, WorkflowContract,
+    WorkflowDefinitionSource, WorkflowGraph,
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";
@@ -74,10 +74,7 @@ impl BuiltinWorkflowTemplateBundle {
             self.graph.transitions.clone(),
         )?;
 
-        Ok(BuiltinWorkflowBundle {
-            procedures,
-            graph,
-        })
+        Ok(BuiltinWorkflowBundle { procedures, graph })
     }
 }
 

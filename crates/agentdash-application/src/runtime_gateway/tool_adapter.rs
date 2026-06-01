@@ -26,7 +26,7 @@ pub struct RuntimeActionToolSpec {
 }
 
 impl RuntimeActionToolSpec {
-    pub fn agent_session(
+    pub fn runtime_session(
         tool_name: impl Into<String>,
         description: impl Into<String>,
         parameters_schema: Value,
@@ -215,7 +215,7 @@ mod tests {
         );
         let adapter = RuntimeActionToolAdapter::new(
             gateway,
-            RuntimeActionToolSpec::agent_session(
+            RuntimeActionToolSpec::runtime_session(
                 "runtime_echo",
                 "Echo through Runtime Gateway",
                 json!({ "type": "object" }),
@@ -257,7 +257,7 @@ mod tests {
             RuntimeGateway::new()
                 .with_provider(Arc::new(EchoProvider::new("runtime.echo", captured_input))),
         );
-        let mut spec = RuntimeActionToolSpec::agent_session(
+        let mut spec = RuntimeActionToolSpec::runtime_session(
             "runtime_echo",
             "Echo through Runtime Gateway",
             json!({ "type": "object" }),

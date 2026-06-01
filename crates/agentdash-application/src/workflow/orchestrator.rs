@@ -136,7 +136,9 @@ impl LifecycleOrchestrator {
     ) -> Result<Option<OrchestrationResult>, String> {
         let Some(association) = resolve_activity_session_association(
             session_id,
-            self.repos.activity_execution_claim_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -163,8 +165,7 @@ impl LifecycleOrchestrator {
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        )
-        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
+        );
         let run = service
             .apply_event(association.run.id, event)
             .await
@@ -183,7 +184,9 @@ impl LifecycleOrchestrator {
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_session_association(
             &input.runtime_session_id,
-            self.repos.activity_execution_claim_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
@@ -256,8 +259,7 @@ impl LifecycleOrchestrator {
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        )
-        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
+        );
         let run = service
             .apply_event(association.run.id, event)
             .await
@@ -296,8 +298,7 @@ impl LifecycleOrchestrator {
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
-        )
-        .with_assignment_repo(self.repos.agent_assignment_repo.as_ref());
+        );
         let launcher = AgentActivityExecutorLauncher::new(
             AgentActivityLaunchContext {
                 project_id: run.project_id,

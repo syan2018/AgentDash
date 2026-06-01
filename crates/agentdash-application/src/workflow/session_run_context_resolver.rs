@@ -1,7 +1,7 @@
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunLink,
-    LifecycleRunLinkRepository, LifecycleRunRepository, RunLinkRole, RunLinkSubjectKind,
+    AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunRepository,
+    LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::SessionRunContext;
@@ -11,7 +11,7 @@ use crate::ApplicationError;
 
 pub struct SessionRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
-    lifecycle_run_link_repo: &'a dyn LifecycleRunLinkRepository,
+    lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
     lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     story_repo: &'a dyn StoryRepository,
@@ -20,21 +20,21 @@ pub struct SessionRunContextResolver<'a> {
 impl<'a> SessionRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
-        lifecycle_run_link_repo: &'a dyn LifecycleRunLinkRepository,
+        lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
         agent_frame_repo: &'a dyn AgentFrameRepository,
         lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         story_repo: &'a dyn StoryRepository,
     ) -> Self {
         Self {
             lifecycle_run_repo,
-            lifecycle_run_link_repo,
+            lifecycle_subject_association_repo,
             agent_frame_repo,
             lifecycle_agent_repo,
             story_repo,
         }
     }
 
-    /// RuntimeSession → AgentFrame → LifecycleAgent → LifecycleRun → RunLinks → context
+    /// RuntimeSession → AgentFrame → LifecycleAgent → LifecycleRun → SubjectAssociations → context
     pub async fn resolve_for_session(
         &self,
         session_id: &str,
@@ -63,33 +63,47 @@ impl<'a> SessionRunContextResolver<'a> {
         else {
             return Ok(None);
         };
-        self.resolve_for_run(&run).await.map(Some)
+        let mut associations = self
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, Some(agent.id))
+            .await
+            .map_err(ApplicationError::from)?;
+        if associations.is_empty() {
+            associations = self
+                .lifecycle_subject_association_repo
+                .list_by_anchor(run.id, None)
+                .await
+                .map_err(ApplicationError::from)?;
+        }
+        build_session_run_context(run.project_id, &associations, self.story_repo)
+            .await
+            .map(Some)
     }
 
     pub async fn resolve_for_run(
         &self,
         run: &LifecycleRun,
     ) -> Result<SessionRunContext, ApplicationError> {
-        let links = self
-            .lifecycle_run_link_repo
-            .list_by_run(run.id)
+        let associations = self
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run.id, None)
             .await
             .map_err(ApplicationError::from)?;
-        build_session_run_context(run.project_id, &links, self.story_repo).await
+        build_session_run_context(run.project_id, &associations, self.story_repo).await
     }
 }
 
 pub async fn build_session_run_context(
     project_id: Uuid,
-    links: &[LifecycleRunLink],
+    associations: &[LifecycleSubjectAssociation],
     story_repo: &dyn StoryRepository,
 ) -> Result<SessionRunContext, ApplicationError> {
-    if let Some(link) = select_link(links, RunLinkSubjectKind::Task) {
-        return task_context(project_id, link.subject_id, story_repo).await;
+    if let Some(assoc) = select_association(associations, "task") {
+        return task_context(project_id, assoc.subject_id, story_repo).await;
     }
 
-    if let Some(link) = select_link(links, RunLinkSubjectKind::Story) {
-        return story_context(project_id, link.subject_id, story_repo).await;
+    if let Some(assoc) = select_association(associations, "story") {
+        return story_context(project_id, assoc.subject_id, story_repo).await;
     }
 
     Ok(SessionRunContext {
@@ -102,23 +116,24 @@ pub async fn build_session_run_context(
     })
 }
 
-fn select_link(
-    links: &[LifecycleRunLink],
-    kind: RunLinkSubjectKind,
-) -> Option<&LifecycleRunLink> {
-    links
+fn select_association<'a>(
+    associations: &'a [LifecycleSubjectAssociation],
+    kind: &str,
+) -> Option<&'a LifecycleSubjectAssociation> {
+    associations
         .iter()
-        .filter(|link| link.subject_kind == kind)
-        .min_by_key(|link| (role_rank(link.role), link.created_at, link.id))
+        .filter(|assoc| assoc.subject_kind == kind)
+        .min_by_key(|assoc| (role_rank(&assoc.role), assoc.created_at, assoc.id))
 }
 
-fn role_rank(role: RunLinkRole) -> u8 {
+fn role_rank(role: &str) -> u8 {
     match role {
-        RunLinkRole::Subject => 0,
-        RunLinkRole::ProjectionTarget => 1,
-        RunLinkRole::ControlScope => 2,
-        RunLinkRole::Source => 3,
-        RunLinkRole::SpawnedBy => 4,
+        "subject" => 0,
+        "projection_target" => 1,
+        "control_scope" => 2,
+        "source" => 3,
+        "lineage" => 4,
+        _ => 9,
     }
 }
 

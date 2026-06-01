@@ -1,14 +1,14 @@
-﻿use std::path::Path;
+use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookRuntimeAccess, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookRuntime,
+    HookRuntimeAccess, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+    SharedHookRuntime,
 };
 
-use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
+use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
 pub struct SessionHookService {
@@ -25,15 +25,10 @@ impl SessionHookService {
         session_id: &str,
         turn_id: Option<&str>,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
-        self.hub
-            .ensure_hook_runtime(session_id, turn_id)
-            .await
+        self.hub.ensure_hook_runtime(session_id, turn_id).await
     }
 
-    pub async fn get_hook_runtime(
-        &self,
-        session_id: &str,
-    ) -> Option<SharedHookRuntime> {
+    pub async fn get_hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
         self.hub.get_hook_runtime(session_id).await
     }
 
@@ -101,11 +96,7 @@ impl SessionHookService {
         working_directory: &Path,
         is_owner_bootstrap: bool,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
-        let existing = self
-            .hub
-            .runtime_registry
-            .hook_runtime(session_id)
-            .await;
+        let existing = self.hub.runtime_registry.hook_runtime(session_id).await;
 
         if is_owner_bootstrap || existing.is_none() {
             return self

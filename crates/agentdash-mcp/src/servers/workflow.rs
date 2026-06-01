@@ -17,10 +17,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, WorkflowGraph, ActivityTransition,
-    ActivityTransitionKind, ArtifactBinding, InputPortDefinition, OutputPortDefinition,
-    ValidationSeverity, WorkflowContract, AgentProcedure,
-    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    ActivityDefinition, ActivityExecutorSpec, ActivityTransition, ActivityTransitionKind,
+    AgentProcedure, ArtifactBinding, InputPortDefinition, OutputPortDefinition, ValidationSeverity,
+    WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowHookRuleSpec,
+    WorkflowHookTrigger,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -517,9 +517,7 @@ impl WorkflowMcpServer {
             .get_by_project_and_key(self.project_id, &params.lifecycle_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 失败: {e}")))?
-            .ok_or_else(|| {
-                McpError::not_found("WorkflowGraph", &params.lifecycle_key)
-            })?;
+            .ok_or_else(|| McpError::not_found("WorkflowGraph", &params.lifecycle_key))?;
 
         let result = serde_json::to_value(&lifecycle)
             .map_err(|e| McpError::Internal(format!("序列化失败: {e}")))?;

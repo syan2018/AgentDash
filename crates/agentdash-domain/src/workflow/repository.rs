@@ -3,9 +3,7 @@ use uuid::Uuid;
 use super::agent_assignment::AgentAssignment;
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
-use super::entity::{
-    ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph,
-};
+use super::entity::{ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph};
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
@@ -23,10 +21,7 @@ pub trait AgentProcedureRepository: Send + Sync {
         key: &str,
     ) -> Result<Option<AgentProcedure>, DomainError>;
     async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError>;
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<AgentProcedure>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<AgentProcedure>, DomainError>;
     async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
@@ -34,17 +29,13 @@ pub trait AgentProcedureRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait WorkflowGraphRepository: Send + Sync {
     async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid)
-    -> Result<Option<WorkflowGraph>, DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError>;
     async fn get_by_project_and_key(
         &self,
         project_id: Uuid,
         key: &str,
     ) -> Result<Option<WorkflowGraph>, DomainError>;
-    async fn list_by_project(
-        &self,
-        project_id: Uuid,
-    ) -> Result<Vec<WorkflowGraph>, DomainError>;
+    async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<WorkflowGraph>, DomainError>;
     async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
@@ -130,8 +121,14 @@ pub trait LifecycleAgentRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait AgentFrameRepository: Send + Sync {
     async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
+    async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
     async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
+    async fn attach_runtime_session_ref(
+        &self,
+        frame_id: Uuid,
+        runtime_session_id: &str,
+    ) -> Result<(), DomainError>;
     /// 通过 runtime session ref 反查 AgentFrame。
     /// Terminal callback 完整链路：RuntimeSession -> AgentFrame -> Agent -> Assignment。
     async fn find_by_runtime_session(

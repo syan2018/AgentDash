@@ -4,7 +4,7 @@
  * 包含完整的 ACP 会话交互能力：流式输出、富文本输入（@ 文件引用）、
  * 执行器选择、上下文用量指示、发送/取消。
  *
- * SessionPage 和 StorySessionPanel 等场景复用此组件，
+ * SessionPage 等 runtime trace 场景复用此组件，
  * 由父组件管理 sessionId 生命周期和外层导航。
  */
 

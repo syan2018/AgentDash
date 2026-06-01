@@ -12,9 +12,8 @@ use uuid::Uuid;
 use super::db_err;
 
 fn parse_uuid(s: &str, ctx: &str) -> Result<Uuid, DomainError> {
-    Uuid::parse_str(s).map_err(|e| {
-        DomainError::InvalidConfig(format!("{ctx}: invalid uuid `{s}`: {e}"))
-    })
+    Uuid::parse_str(s)
+        .map_err(|e| DomainError::InvalidConfig(format!("{ctx}: invalid uuid `{s}`: {e}")))
 }
 
 fn opt_uuid(s: Option<&String>, ctx: &str) -> Result<Option<Uuid>, DomainError> {
@@ -183,9 +182,15 @@ impl TryFrom<AgentRow> for LifecycleAgent {
             project_id: parse_uuid(&row.project_id, "lifecycle_agents.project_id")?,
             agent_kind: row.agent_kind,
             agent_role: row.agent_role,
-            project_agent_id: opt_uuid(row.project_agent_id.as_ref(), "lifecycle_agents.project_agent_id")?,
+            project_agent_id: opt_uuid(
+                row.project_agent_id.as_ref(),
+                "lifecycle_agents.project_agent_id",
+            )?,
             status: row.status,
-            current_frame_id: opt_uuid(row.current_frame_id.as_ref(), "lifecycle_agents.current_frame_id")?,
+            current_frame_id: opt_uuid(
+                row.current_frame_id.as_ref(),
+                "lifecycle_agents.current_frame_id",
+            )?,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -308,14 +313,26 @@ impl TryFrom<FrameRow> for AgentFrame {
             agent_id: parse_uuid(&row.agent_id, "agent_frames.agent_id")?,
             revision: row.revision,
             procedure_id: opt_uuid(row.procedure_id.as_ref(), "agent_frames.procedure_id")?,
-            graph_instance_id: opt_uuid(row.graph_instance_id.as_ref(), "agent_frames.graph_instance_id")?,
+            graph_instance_id: opt_uuid(
+                row.graph_instance_id.as_ref(),
+                "agent_frames.graph_instance_id",
+            )?,
             activity_key: row.activity_key,
-            effective_capability_json: parse_opt_json(row.effective_capability_json, "effective_capability_json")?,
+            effective_capability_json: parse_opt_json(
+                row.effective_capability_json,
+                "effective_capability_json",
+            )?,
             context_slice_json: parse_opt_json(row.context_slice_json, "context_slice_json")?,
             vfs_surface_json: parse_opt_json(row.vfs_surface_json, "vfs_surface_json")?,
             mcp_surface_json: parse_opt_json(row.mcp_surface_json, "mcp_surface_json")?,
-            runtime_session_refs_json: parse_opt_json(row.runtime_session_refs_json, "runtime_session_refs_json")?,
-            execution_profile_json: parse_opt_json(row.execution_profile_json, "execution_profile_json")?,
+            runtime_session_refs_json: parse_opt_json(
+                row.runtime_session_refs_json,
+                "runtime_session_refs_json",
+            )?,
+            execution_profile_json: parse_opt_json(
+                row.execution_profile_json,
+                "execution_profile_json",
+            )?,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -364,6 +381,22 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         Ok(())
     }
 
+    async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+        sqlx::query_as::<_, FrameRow>(
+            r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
+                      effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
+                      runtime_session_refs_json,execution_profile_json,
+                      created_by_kind,created_by_id,created_at
+               FROM agent_frames WHERE id=$1"#,
+        )
+        .bind(frame_id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
     async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
@@ -397,19 +430,41 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .collect()
     }
 
+    async fn attach_runtime_session_ref(
+        &self,
+        frame_id: Uuid,
+        runtime_session_id: &str,
+    ) -> Result<(), DomainError> {
+        let mut frame = self
+            .get(frame_id)
+            .await?
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_frame",
+                id: frame_id.to_string(),
+            })?;
+        frame.attach_runtime_session_ref(runtime_session_id);
+        sqlx::query("UPDATE agent_frames SET runtime_session_refs_json=$1 WHERE id=$2")
+            .bind(opt_json_str(&frame.runtime_session_refs_json)?)
+            .bind(frame_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn find_by_runtime_session(
         &self,
         runtime_session_id: &str,
     ) -> Result<Option<AgentFrame>, DomainError> {
-        // TODO(agent-frame-construction): runtime_session_refs_json 尚未被所有路径一致填充，
-        // 此查询暂时仅作为完整链路的预留入口。
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames
-               WHERE runtime_session_refs_json::jsonb @> to_jsonb($1::text)
+               WHERE runtime_session_refs_json::jsonb @> jsonb_build_array(
+                   jsonb_build_object('kind', 'runtime_session', 'session_id', $1::text)
+               )
                ORDER BY created_at DESC LIMIT 1"#,
         )
         .bind(runtime_session_id)
@@ -455,7 +510,10 @@ impl TryFrom<AssignmentRow> for AgentAssignment {
         Ok(AgentAssignment {
             id: parse_uuid(&row.id, "agent_assignments.id")?,
             run_id: parse_uuid(&row.run_id, "agent_assignments.run_id")?,
-            graph_instance_id: parse_uuid(&row.graph_instance_id, "agent_assignments.graph_instance_id")?,
+            graph_instance_id: parse_uuid(
+                &row.graph_instance_id,
+                "agent_assignments.graph_instance_id",
+            )?,
             activity_key: row.activity_key,
             attempt: row.attempt,
             agent_id: parse_uuid(&row.agent_id, "agent_assignments.agent_id")?,
@@ -526,15 +584,13 @@ impl AgentAssignmentRepository for PostgresAgentAssignmentRepository {
     }
 
     async fn update(&self, a: &AgentAssignment) -> Result<(), DomainError> {
-        sqlx::query(
-            "UPDATE agent_assignments SET lease_status=$1, released_at=$2 WHERE id=$3",
-        )
-        .bind(&a.lease_status)
-        .bind(a.released_at)
-        .bind(a.id.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(db_err)?;
+        sqlx::query("UPDATE agent_assignments SET lease_status=$1, released_at=$2 WHERE id=$3")
+            .bind(&a.lease_status)
+            .bind(a.released_at)
+            .bind(a.id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
         Ok(())
     }
 }
@@ -570,8 +626,14 @@ impl TryFrom<AssocRow> for LifecycleSubjectAssociation {
     fn try_from(row: AssocRow) -> Result<Self, Self::Error> {
         Ok(LifecycleSubjectAssociation {
             id: parse_uuid(&row.id, "lifecycle_subject_associations.id")?,
-            anchor_run_id: parse_uuid(&row.anchor_run_id, "lifecycle_subject_associations.anchor_run_id")?,
-            anchor_agent_id: opt_uuid(row.anchor_agent_id.as_ref(), "lifecycle_subject_associations.anchor_agent_id")?,
+            anchor_run_id: parse_uuid(
+                &row.anchor_run_id,
+                "lifecycle_subject_associations.anchor_run_id",
+            )?,
+            anchor_agent_id: opt_uuid(
+                row.anchor_agent_id.as_ref(),
+                "lifecycle_subject_associations.anchor_agent_id",
+            )?,
             subject_kind: row.subject_kind,
             subject_id: parse_uuid(&row.subject_id, "lifecycle_subject_associations.subject_id")?,
             role: row.role,
@@ -836,10 +898,16 @@ impl TryFrom<LineageRow> for AgentLineage {
         Ok(AgentLineage {
             id: parse_uuid(&row.id, "agent_lineages.id")?,
             run_id: parse_uuid(&row.run_id, "agent_lineages.run_id")?,
-            parent_agent_id: opt_uuid(row.parent_agent_id.as_ref(), "agent_lineages.parent_agent_id")?,
+            parent_agent_id: opt_uuid(
+                row.parent_agent_id.as_ref(),
+                "agent_lineages.parent_agent_id",
+            )?,
             child_agent_id: parse_uuid(&row.child_agent_id, "agent_lineages.child_agent_id")?,
             relation_kind: row.relation_kind,
-            source_frame_id: opt_uuid(row.source_frame_id.as_ref(), "agent_lineages.source_frame_id")?,
+            source_frame_id: opt_uuid(
+                row.source_frame_id.as_ref(),
+                "agent_lineages.source_frame_id",
+            )?,
             metadata_json: row
                 .metadata_json
                 .map(|s| serde_json::from_str(&s))

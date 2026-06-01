@@ -572,11 +572,64 @@ pub struct DeleteHookPresetResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct LifecycleRunLinkDto {
+pub struct SubjectRefDto {
+    pub kind: String,
     pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleRunRefDto {
     pub run_id: String,
-    pub subject_kind: String,
-    pub subject_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentRefDto {
+    pub run_id: String,
+    pub agent_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentFrameRefDto {
+    pub agent_id: String,
+    pub frame_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub revision: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSessionRefDto {
+    pub runtime_session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct AgentAssignmentRefDto {
+    pub assignment_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleSubjectAssociationDto {
+    pub id: String,
+    pub anchor_run_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub anchor_agent_id: Option<String>,
+    pub subject_ref: SubjectRefDto,
     pub role: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -586,39 +639,138 @@ pub struct LifecycleRunLinkDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct StoryRunOverviewDto {
+pub struct ActivityAttemptView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub graph_instance_id: Option<String>,
+    pub activity_key: String,
+    pub attempt: u32,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub assignment_ref: Option<AgentAssignmentRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub executor_run_ref: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivityStateView {
+    pub activity_key: String,
+    pub status: String,
+    pub attempts: Vec<ActivityAttemptView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct WorkflowGraphInstanceView {
     pub id: String,
+    pub run_id: String,
+    pub graph_id: String,
+    pub role: String,
+    pub status: String,
+    #[serde(default)]
+    pub activities: Vec<ActivityStateView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleAgentView {
+    pub agent_ref: LifecycleAgentRefDto,
+    pub project_id: String,
+    pub agent_kind: String,
+    pub agent_role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project_agent_id: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_frame_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct LifecycleRunView {
+    pub run_ref: LifecycleRunRefDto,
+    pub project_id: String,
     pub lifecycle_id: String,
     pub status: LifecycleRunStatus,
+    #[serde(default)]
+    pub workflow_graph_instances: Vec<WorkflowGraphInstanceView>,
+    #[serde(default)]
+    pub agents: Vec<LifecycleAgentView>,
+    #[serde(default)]
+    pub subject_associations: Vec<LifecycleSubjectAssociationDto>,
+    #[serde(default)]
+    pub runtime_trace_refs: Vec<RuntimeSessionRefDto>,
+    #[serde(default)]
+    pub execution_log: Vec<LifecycleExecutionEntry>,
     pub created_at: String,
     pub updated_at: String,
     pub last_activity_at: String,
-    pub links: Vec<LifecycleRunLinkDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
-pub struct StoryRunsResponse {
-    pub story_id: String,
-    pub runs: Vec<StoryRunOverviewDto>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct RunLinksResponse {
-    pub run_id: String,
-    pub links: Vec<LifecycleRunLinkDto>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub struct AttachRunLinkRequest {
-    pub subject_kind: String,
-    pub subject_id: String,
-    pub role: String,
+pub struct AgentFrameRuntimeView {
+    pub frame_ref: AgentFrameRefDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub metadata: Option<Value>,
+    pub procedure_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub graph_instance_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub activity_key: Option<String>,
+    #[serde(default)]
+    pub capability_surface: Value,
+    #[serde(default)]
+    pub context_slice: Value,
+    #[serde(default)]
+    pub vfs_surface: Value,
+    #[serde(default)]
+    pub mcp_surface: Value,
+    #[serde(default)]
+    pub runtime_session_refs: Vec<RuntimeSessionRefDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub execution_profile: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct SubjectExecutionView {
+    pub subject_ref: SubjectRefDto,
+    #[serde(default)]
+    pub associations: Vec<LifecycleSubjectAssociationDto>,
+    #[serde(default)]
+    pub runs: Vec<LifecycleRunView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub current_agent: Option<LifecycleAgentView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub latest_attempt: Option<ActivityAttemptView>,
+    #[serde(default)]
+    pub artifacts: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct RuntimeSessionTraceView {
+    pub runtime_session_ref: RuntimeSessionRefDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frame_ref: Option<AgentFrameRefDto>,
+    #[serde(default)]
+    pub events: Vec<Value>,
+    #[serde(default)]
+    pub turns: Vec<Value>,
 }
 
 fn bool_true() -> bool {

@@ -1,1 +1,2 @@
-ALTER TABLE workflow_definitions RENAME TO agent_procedures;
+-- Agent procedures are created under their target table name in the clean baseline.
+-- Keep this historical version id as a no-op so migration ordering remains stable.

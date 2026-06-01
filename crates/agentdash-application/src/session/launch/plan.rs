@@ -1,15 +1,15 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
     SessionContextBundle, SessionMcpServer,
 };
-use agentdash_spi::hooks::ContextFrame;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
@@ -106,7 +106,9 @@ pub struct LaunchPlanTraceEntry {
     pub source: String,
 }
 
-#[deprecated(note = "迁移到 RuntimeLaunchRequest；新 launch 路径从 AgentFrame → RuntimeLaunchRequest")]
+#[deprecated(
+    note = "迁移到 RuntimeLaunchRequest；新 launch 路径从 AgentFrame → RuntimeLaunchRequest"
+)]
 pub struct LaunchPlan {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
@@ -186,9 +188,16 @@ impl LaunchPlan {
             follow_up_source: input.follow_up_source,
             pending_transition_count,
             vfs_source: input.launch_request.resolution_trace.vfs_source.clone(),
-            pending_vfs_overlay_applied: input.launch_request.resolution_trace.pending_overlay_applied,
+            pending_vfs_overlay_applied: input
+                .launch_request
+                .resolution_trace
+                .pending_overlay_applied,
             mcp_source: input.launch_request.resolution_trace.mcp_source.clone(),
-            capability_source: input.launch_request.resolution_trace.capability_source.clone(),
+            capability_source: input
+                .launch_request
+                .resolution_trace
+                .capability_source
+                .clone(),
             working_directory: working_directory.clone(),
             has_vfs: vfs.is_some(),
             backend_execution_backend_id: input
@@ -317,12 +326,13 @@ mod tests {
     use super::*;
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
-        SessionConstructionContextProjection, SessionConstructionPlan,
+        RuntimeContextInspectionPlan, SessionConstructionContextProjection,
     };
     use crate::session::launch::{LaunchCommand, LaunchSource};
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
+    use crate::workflow::runtime_launch::LaunchResolutionTrace;
     use std::path::Path;
 
     fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchPlanInput {
@@ -351,7 +361,7 @@ mod tests {
         };
         let mut capability_state = CapabilityState::default();
         capability_state.vfs.active = Some(vfs.clone());
-        let mut construction = SessionConstructionPlan::new(
+        let mut construction = RuntimeContextInspectionPlan::new(
             "sess-launch",
             owner,
             SessionConstructionContextProjection::default(),
@@ -372,9 +382,10 @@ mod tests {
         let resolved_payload = UserPromptInput::from_text("hello")
             .resolve_prompt_payload()
             .expect("resolved payload");
+        let launch_request = launch_request_from_construction(construction);
         LaunchPlanInput {
             resolved_payload,
-            construction,
+            launch_request,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
             lifecycle,
@@ -414,6 +425,44 @@ mod tests {
             restored_session_state: None,
             post_turn_handler: None,
             backend_execution: None,
+        }
+    }
+
+    fn launch_request_from_construction(
+        construction: RuntimeContextInspectionPlan,
+    ) -> RuntimeLaunchRequest {
+        RuntimeLaunchRequest {
+            agent_id: uuid::Uuid::new_v4(),
+            frame_id: uuid::Uuid::new_v4(),
+            frame_revision: 1,
+            procedure_ref: None,
+            capability_surface: serde_json::Value::Null,
+            context_slice: serde_json::Value::Null,
+            vfs_surface: serde_json::Value::Null,
+            mcp_surface: serde_json::Value::Null,
+            runtime_session_id: Some("sess-launch".to_string()),
+            graph_instance_id: None,
+            activity_key: None,
+            executor_config: construction.execution_profile.executor_config,
+            working_directory: construction.workspace.working_directory,
+            prompt_blocks: None,
+            environment_variables: HashMap::new(),
+            identity: None,
+            terminal_hook_effect_binding: None,
+            discovered_guidelines: construction.projections.discovered_guidelines,
+            extension_runtime: construction.projections.extension_runtime,
+            context_bundle: construction.context.bundle,
+            typed_capability_state: construction.projections.capability_state,
+            typed_vfs: construction.surface.vfs,
+            typed_mcp_servers: construction.projections.mcp_servers,
+            continuation_context_frame: None,
+            base_capability_state: construction.resolution.runtime_base_capability_state,
+            resolution_trace: LaunchResolutionTrace {
+                vfs_source: construction.resolution.vfs_source,
+                mcp_source: construction.resolution.mcp_source,
+                capability_source: construction.resolution.capability_source,
+                pending_overlay_applied: construction.resolution.pending_overlay_applied,
+            },
         }
     }
 
@@ -518,12 +567,15 @@ mod tests {
             created_at: 3,
             source_turn_id: None,
         }];
-        input.construction.resolution.vfs_source =
+        input.launch_request.resolution_trace.vfs_source =
             Some("runtime_command.pending_vfs_overlay".to_string());
-        input.construction.resolution.pending_overlay_applied = true;
-        input.construction.resolution.mcp_source =
+        input
+            .launch_request
+            .resolution_trace
+            .pending_overlay_applied = true;
+        input.launch_request.resolution_trace.mcp_source =
             Some("runtime_command.pending_transition".to_string());
-        input.construction.resolution.capability_source =
+        input.launch_request.resolution_trace.capability_source =
             Some("runtime_command.pending_transition".to_string());
 
         let execution = LaunchPlan::build(input);

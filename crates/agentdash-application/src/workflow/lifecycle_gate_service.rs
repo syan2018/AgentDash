@@ -50,10 +50,7 @@ impl LifecycleGateService {
 
     /// 轮询等待 gate 被 resolve，返回 resolve 后的 payload。
     /// 如果 gate 已经 resolved 则立即返回。
-    pub async fn wait_for_gate(
-        &self,
-        gate_id: Uuid,
-    ) -> Result<serde_json::Value, String> {
+    pub async fn wait_for_gate(&self, gate_id: Uuid) -> Result<serde_json::Value, String> {
         let poll_interval = std::time::Duration::from_millis(500);
         let timeout = std::time::Duration::from_secs(300);
         let deadline = tokio::time::Instant::now() + timeout;

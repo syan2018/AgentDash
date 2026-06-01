@@ -891,7 +891,11 @@ mod tests {
 
         let projected = project_capability_state_from_frame(&frame);
         assert_eq!(
-            projected.vfs.active.as_ref().and_then(|v| v.default_mount_id.as_deref()),
+            projected
+                .vfs
+                .active
+                .as_ref()
+                .and_then(|v| v.default_mount_id.as_deref()),
             Some("override"),
             "vfs_surface_json 应覆盖 effective_capability_json 中嵌入的 VFS"
         );

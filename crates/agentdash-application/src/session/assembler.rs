@@ -34,7 +34,7 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{ActivityDefinition, WorkflowGraph, LifecycleRun};
+use agentdash_domain::workflow::{ActivityDefinition, LifecycleRun, WorkflowGraph};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
@@ -66,9 +66,9 @@ use crate::project::context_builder::{ProjectContextBuildInput, contribute_proje
 use crate::repository_set::RepositorySet;
 use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
+use crate::session::assembly_builder::SessionAssemblyBuilder;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
-use crate::session::assembly_builder::SessionAssemblyBuilder;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
@@ -1040,8 +1040,8 @@ impl<'a> SessionRequestAssembler<'a> {
     /// 5. CapabilityResolver（以 workflow baseline 或空集为输入）
     /// 6. 组装 `Vec<Contribution>` → `build_session_context_bundle` 产出 bundle 与 prompt resource block
     ///
-    /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
-    /// construction provider handoff 后交 launch executor 派发。
+    /// 输出统一为 `SessionAssemblyBuilder`；调用方投影到 `AgentFrameBuilder`，
+    /// 再由 frame 生成 runtime launch request。
     pub(crate) async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
@@ -1146,7 +1146,8 @@ impl<'a> SessionRequestAssembler<'a> {
         )
         .await?;
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder, prepared,
+            frame_builder,
+            prepared,
         ))
     }
 
@@ -1174,7 +1175,8 @@ impl<'a> SessionRequestAssembler<'a> {
             dispatch_prompt: spec.dispatch_prompt,
         });
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder, prepared,
+            frame_builder,
+            prepared,
         ))
     }
 
@@ -1213,7 +1215,8 @@ impl<'a> SessionRequestAssembler<'a> {
         )
         .await?;
         Ok(crate::session::assembly_builder::project_assembly_to_frame(
-            frame_builder, prepared,
+            frame_builder,
+            prepared,
         ))
     }
 
@@ -1255,11 +1258,17 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     ),
     String,
 > {
-    let prepared =
-        compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
-            .await?;
+    let prepared = compose_lifecycle_node_with_audit(
+        repos,
+        platform_config,
+        spec,
+        audit_bus,
+        audit_session_key,
+    )
+    .await?;
     Ok(crate::session::assembly_builder::project_assembly_to_frame(
-        frame_builder, prepared,
+        frame_builder,
+        prepared,
     ))
 }
 
@@ -1522,7 +1531,7 @@ pub struct StoryStepSpec<'a> {
     pub explicit_executor_config: Option<AgentConfig>,
     /// 若为 true,executor 解析失败时直接返回 Err;否则返回 failed 状态继续。
     pub strict_config_resolution: bool,
-    /// 对应活跃 lifecycle run 的投影（由 facade 通过 LifecycleRunLink 定位后传入）。
+    /// 对应活跃 lifecycle run 的投影（由 facade 通过 subject association 定位后传入）。
     pub active_workflow: Option<ActiveWorkflowProjection>,
     /// 审计总线用于索引的 session key。
     pub audit_session_key: Option<String>,
@@ -1674,7 +1683,6 @@ pub(crate) async fn compose_companion_with_workflow(
         .build())
 }
 
-
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 6:内部 helper
 // ═══════════════════════════════════════════════════════════════════
@@ -1727,7 +1735,9 @@ async fn resolve_owner_workflow_tool_directives(
         .iter()
         .find(|a| a.key == lifecycle.entry_activity_key)?;
     let procedure_key = match &entry_activity.executor {
-        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => spec.procedure_key.as_str(),
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => {
+            spec.procedure_key.as_str()
+        }
         _ => return None,
     };
 
@@ -1747,10 +1757,9 @@ mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
-        ActivityLifecycleRunState, AgentActivityExecutorSpec, InputPortDefinition,
-        OutputPortDefinition, WorkflowContract, AgentProcedure,
-        WorkflowDefinitionSource, WorkflowInjectionSpec,
+        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
+        AgentActivityExecutorSpec, AgentProcedure, InputPortDefinition, OutputPortDefinition,
+        WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -2040,7 +2049,6 @@ mod tests {
         let run = agentdash_domain::workflow::LifecycleRun::new_activity(
             project_id,
             lifecycle.id,
-            Some("sess-story".to_string()),
             activity_state,
         )
         .expect("run");
@@ -2128,14 +2136,14 @@ mod tests {
         use super::super::*;
         use crate::session::UserPromptInput;
         use crate::session::assembly_builder::apply_session_assembly;
-        use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
+        use crate::session::construction::{ResolvedSessionOwner, RuntimeContextInspectionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;
 
-        fn base_plan() -> SessionConstructionPlan {
+        fn base_plan() -> RuntimeContextInspectionPlan {
             let user_input = UserPromptInput::from_text("ping");
             let owner = ResolvedSessionOwner::project(uuid::Uuid::new_v4());
-            SessionConstructionPlan::from_source_input("test-session", owner, &user_input)
+            RuntimeContextInspectionPlan::from_source_input("test-session", owner, &user_input)
         }
 
         fn session_server(name: &str, url: &str) -> agentdash_spi::SessionMcpServer {

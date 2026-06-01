@@ -14,7 +14,7 @@ import {
   hasAgentBindingSelection,
   normalizeAgentBinding,
 } from "./agent-binding";
-import { TaskAgentSessionPanel } from "./task-agent-session-panel";
+import { TaskSubjectExecutionPanel } from "./task-subject-execution-panel";
 
 interface TaskDrawerProps {
   task: Task | null;
@@ -245,11 +245,11 @@ export function TaskDrawer({
 
           <div className="space-y-4">
             <DetailSection
-              title="Agent 执行会话"
-              description="不跳转页面，直接在抽屉中查看实时输出和进度。"
+              title="Subject Execution"
+              description="从 lifecycle target view 查看当前 Agent、attempt 与产物投影。"
             >
               <div className="h-[32rem] overflow-hidden rounded-[12px] border border-border">
-                <TaskAgentSessionPanel
+                <TaskSubjectExecutionPanel
                   task={task}
                   onTaskUpdated={(updated) => {
                     applyTaskSnapshot(updated);

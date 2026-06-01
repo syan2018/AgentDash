@@ -1,20 +1,19 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use agentdash_contracts::core::{
-    AgentBinding, AgentPreset, Artifact, ArtifactType, ContextContainerDefinition,
-    BackendCapabilitiesResponse, BackendExecutorCapabilityResponse,
-    BackendMcpServerCapabilityResponse, BackendResponse, BackendRuntimeHealthResponse,
-    BackendShareScopeKind, BackendType, BackendVisibility, BackendWithStatusResponse,
-    ContextContainerFile, ContextContainerProvider, ContextDelivery, ContextSlot,
-    ContextSourceKind, ContextSourceRef, DeletedFlagResponse, DeletedIdResponse,
-    DeletedProjectSubjectGrantResponse, PendingExecutionResponse, ProjectAccessSummaryResponse,
-    ProjectConfig, ProjectDetailResponse, ProjectResponse, ProjectRole,
-    ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
-    RevokedIdResponse, RuntimeHealthStatus, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
-    StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus,
-    UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
-    WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
-    WorkspaceStatus,
+    AgentBinding, AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
+    BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
+    BackendRuntimeHealthResponse, BackendShareScopeKind, BackendType, BackendVisibility,
+    BackendWithStatusResponse, ContextContainerDefinition, ContextContainerFile,
+    ContextContainerProvider, ContextDelivery, ContextSlot, ContextSourceKind, ContextSourceRef,
+    DeletedFlagResponse, DeletedIdResponse, DeletedProjectSubjectGrantResponse,
+    PendingExecutionResponse, ProjectAccessSummaryResponse, ProjectConfig, ProjectDetailResponse,
+    ProjectResponse, ProjectRole, ProjectSubjectGrantResponse, ProjectSubjectType,
+    ProjectVisibility, RevokeProjectGrantResponse, RevokedIdResponse, RuntimeHealthStatus,
+    SchedulingConfig, SessionComposition, SessionRequiredContextBlock, StoryContext, StoryPriority,
+    StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus, UpdatedIdResponse,
+    VfsCapabilityDto, WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
+    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
@@ -57,8 +56,8 @@ use agentdash_contracts::mcp_preset::{
     McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent, ProjectAgentExecutor,
-    ProjectAgentSession, ProjectAgentSummary, UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, ProjectAgent, ProjectAgentExecutor, ProjectAgentLaunchResult,
+    ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
@@ -92,13 +91,15 @@ use agentdash_contracts::vfs::{
     UpdateProjectVfsMountRequest,
 };
 use agentdash_contracts::workflow::{
-    ActivityDefinition, ActivityLifecycleRunState, ActivityTransition, AttachRunLinkRequest,
-    DeleteWorkflowGraphResponse, DeleteHookPresetResponse,
-    DeleteAgentProcedureResponse, EffectiveSessionContract, HookPresetResponse,
-    HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
-    RegisterHookPresetResponse, RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowContract,
-    WorkflowDefinitionSource,
+    ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState, ActivityStateView,
+    ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto, AgentFrameRuntimeView,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LifecycleAgentRefDto,
+    LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
+    LifecycleRunView, LifecycleSubjectAssociationDto, RegisterHookPresetResponse,
+    RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView, SubjectRefDto,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowContract, WorkflowDefinitionSource,
+    WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -258,11 +259,21 @@ fn main() {
             export_all::<LifecycleRunStatus>(dir);
             export_all::<EffectiveSessionContract>(dir);
             export_all::<ValidationIssue>(dir);
-            export_all::<LifecycleRunLinkDto>(dir);
-            export_all::<StoryRunOverviewDto>(dir);
-            export_all::<StoryRunsResponse>(dir);
-            export_all::<RunLinksResponse>(dir);
-            export_all::<AttachRunLinkRequest>(dir);
+            export_all::<SubjectRefDto>(dir);
+            export_all::<LifecycleRunRefDto>(dir);
+            export_all::<LifecycleAgentRefDto>(dir);
+            export_all::<AgentFrameRefDto>(dir);
+            export_all::<RuntimeSessionRefDto>(dir);
+            export_all::<AgentAssignmentRefDto>(dir);
+            export_all::<LifecycleSubjectAssociationDto>(dir);
+            export_all::<ActivityAttemptView>(dir);
+            export_all::<ActivityStateView>(dir);
+            export_all::<WorkflowGraphInstanceView>(dir);
+            export_all::<LifecycleRunView>(dir);
+            export_all::<LifecycleAgentView>(dir);
+            export_all::<AgentFrameRuntimeView>(dir);
+            export_all::<SubjectExecutionView>(dir);
+            export_all::<RuntimeSessionTraceView>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
@@ -392,9 +403,8 @@ fn main() {
         |dir| {
             export_all::<ProjectAgent>(dir);
             export_all::<ProjectAgentExecutor>(dir);
-            export_all::<ProjectAgentSession>(dir);
             export_all::<ProjectAgentSummary>(dir);
-            export_all::<OpenProjectAgentSessionResult>(dir);
+            export_all::<ProjectAgentLaunchResult>(dir);
             export_all::<CreateProjectAgentRequest>(dir);
             export_all::<UpdateProjectAgentRequest>(dir);
         },

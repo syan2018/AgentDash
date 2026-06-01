@@ -22,6 +22,7 @@ import {
   fetchLifecycleRun,
   fetchSubjectExecution,
   fetchAgentFrameRuntime,
+  fetchRuntimeTrace,
 } from "../services/lifecycle";
 
 // ─── State Shape ─────────────────────────────────────────
@@ -54,6 +55,7 @@ interface LifecycleState {
   fetchAndIngestRun: (runId: string) => Promise<LifecycleRunView | null>;
   fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
   fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
+  fetchRuntimeTrace: (runtimeSessionId: string) => Promise<RuntimeSessionTraceView | null>;
 
   // ── derived views ──
   /** 按 subject association 聚合：返回指定 subject 关联的所有 run */
@@ -77,7 +79,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   setRun: (run) =>
     set((s) => {
       const next = new Map(s.runs);
-      next.set(run.id, run);
+      next.set(run.run_ref.run_id, run);
       return { runs: next };
     }),
 
@@ -91,20 +93,20 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   setAgent: (agent) =>
     set((s) => {
       const next = new Map(s.agents);
-      next.set(agent.id, agent);
+      next.set(agent.agent_ref.agent_id, agent);
       return { agents: next };
     }),
 
   setFrame: (frame) =>
     set((s) => {
       const next = new Map(s.frames);
-      next.set(frame.id, frame);
+      next.set(frame.frame_ref.frame_id, frame);
       return { frames: next };
     }),
 
   setSubjectExecution: (view) =>
     set((s) => {
-      const key = subjectExecutionKey(view.subject_kind, view.subject_id);
+      const key = subjectExecutionKey(view.subject_ref.kind, view.subject_ref.id);
       const next = new Map(s.subjectExecutions);
       next.set(key, view);
       return { subjectExecutions: next };
@@ -113,7 +115,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   setRuntimeTrace: (trace) =>
     set((s) => {
       const next = new Map(s.runtimeTraces);
-      next.set(trace.id, trace);
+      next.set(trace.runtime_session_ref.runtime_session_id, trace);
       return { runtimeTraces: next };
     }),
 
@@ -123,7 +125,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   ingestRun: (run) =>
     set((s) => {
       const nextRuns = new Map(s.runs);
-      nextRuns.set(run.id, run);
+      nextRuns.set(run.run_ref.run_id, run);
 
       const nextGraphInstances = new Map(s.graphInstances);
       for (const gi of run.workflow_graph_instances) {
@@ -132,7 +134,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
 
       const nextAgents = new Map(s.agents);
       for (const agent of run.agents) {
-        nextAgents.set(agent.id, agent);
+        nextAgents.set(agent.agent_ref.agent_id, agent);
       }
 
       return {
@@ -179,13 +181,24 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     }
   },
 
+  fetchRuntimeTrace: async (runtimeSessionId) => {
+    try {
+      const trace = await fetchRuntimeTrace(runtimeSessionId);
+      get().setRuntimeTrace(trace);
+      return trace;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
   // ── derived views ──
 
   runsBySubject: (subjectKind, subjectId) => {
     const result: LifecycleRunView[] = [];
     for (const run of get().runs.values()) {
       const hasSubject = run.subject_associations.some(
-        (sa) => sa.subject_kind === subjectKind && sa.subject_id === subjectId,
+        (sa) => sa.subject_ref.kind === subjectKind && sa.subject_ref.id === subjectId,
       );
       if (hasSubject) result.push(run);
     }
@@ -195,7 +208,7 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   agentsByRun: (runId) => {
     const result: LifecycleAgentView[] = [];
     for (const agent of get().agents.values()) {
-      if (agent.run_id === runId) result.push(agent);
+      if (agent.agent_ref.run_id === runId) result.push(agent);
     }
     return result;
   },

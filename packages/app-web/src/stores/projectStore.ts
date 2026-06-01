@@ -1,9 +1,8 @@
 import { create } from 'zustand';
 import type {
   ContextContainerDefinition,
-  OpenProjectAgentSessionResult,
   ProjectAgent,
-  ProjectAgentSession,
+  ProjectAgentLaunchResult,
   ProjectSessionInfo,
   ProjectRole,
   ProjectSubjectGrant,
@@ -69,9 +68,7 @@ interface ProjectState {
   revokeProjectGroup: (projectId: string, groupId: string) => Promise<boolean>;
   cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
-  openProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
-  forceNewProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
-  fetchProjectAgentSessions: (projectId: string, agentKey: string) => Promise<ProjectAgentSession[]>;
+  launchProjectAgent: (projectId: string, agentKey: string) => Promise<ProjectAgentLaunchResult | null>;
   fetchProjectSessionInfo: (projectId: string, sessionId: string) => Promise<ProjectSessionInfo | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
@@ -370,9 +367,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  openProjectAgentSession: async (projectId, agentKey) => {
+  launchProjectAgent: async (projectId, agentKey) => {
     try {
-      const result = await projectService.openProjectAgentSession(projectId, agentKey);
+      const result = await projectService.launchProjectAgent(projectId, agentKey);
       set((state) => ({
         agentsByProjectId: {
           ...state.agentsByProjectId,
@@ -384,32 +381,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
-    }
-  },
-
-  forceNewProjectAgentSession: async (projectId, agentKey) => {
-    try {
-      const result = await projectService.forceNewProjectAgentSession(projectId, agentKey);
-      set((state) => ({
-        agentsByProjectId: {
-          ...state.agentsByProjectId,
-          [projectId]: upsertAgentSummary(state.agentsByProjectId[projectId] ?? [], result.agent),
-        },
-        error: null,
-      }));
-      return result;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  fetchProjectAgentSessions: async (projectId, agentKey) => {
-    try {
-      return await projectService.fetchProjectAgentSessions(projectId, agentKey);
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return [];
     }
   },
 

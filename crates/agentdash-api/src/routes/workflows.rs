@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     Json,
@@ -16,23 +13,22 @@ use agentdash_application::workflow::{
     StartActivityLifecycleRunCommand,
 };
 use agentdash_contracts::workflow::{
-    DeleteWorkflowGraphResponse, DeleteHookPresetResponse,
-    DeleteAgentProcedureResponse, HookPresetResponse, HookPresetsResponse,
-    RegisterHookPresetResponse, ValidateHookScriptResponse,
+    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
+    HookPresetResponse, HookPresetsResponse, RegisterHookPresetResponse,
+    ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, WorkflowGraph, LifecycleRun, ValidationIssue,
-    ValidationSeverity, AgentProcedure, WorkflowDefinitionSource,
+    ActivityExecutorSpec, AgentProcedure, LifecycleRun, ValidationIssue, ValidationSeverity,
+    WorkflowDefinitionSource, WorkflowGraph,
 };
 
 use crate::app_state::AppState;
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CreateWorkflowGraphRequest, CreateAgentProcedureRequest, ListWorkflowsQuery,
+    CreateAgentProcedureRequest, CreateWorkflowGraphRequest, ListWorkflowsQuery,
     RegisterPresetRequest, StartWorkflowRunRequest, SubmitHumanDecisionRequest, ToolCatalogQuery,
-    UpdateWorkflowGraphRequest, UpdateAgentProcedureRequest,
-    ValidateWorkflowGraphRequest, ValidateScriptRequest,
-    ValidateAgentProcedureRequest, WorkflowValidationResponse,
+    UpdateAgentProcedureRequest, UpdateWorkflowGraphRequest, ValidateAgentProcedureRequest,
+    ValidateScriptRequest, ValidateWorkflowGraphRequest, WorkflowValidationResponse,
 };
 use crate::rpc::ApiError;
 use agentdash_application::session::context::normalize_string;
@@ -61,29 +57,29 @@ pub async fn list_workflows(
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
         .route(
-            "/workflow-definitions",
+            "/agent-procedures",
             axum::routing::get(list_workflows).post(create_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions",
+            "/workflow-graphs",
             axum::routing::get(list_activity_lifecycles).post(create_workflow_graph),
         )
         .route(
-            "/workflow-definitions/validate",
+            "/agent-procedures/validate",
             axum::routing::post(validate_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions/validate",
+            "/workflow-graphs/validate",
             axum::routing::post(validate_workflow_graph),
         )
         .route(
-            "/workflow-definitions/{id}",
+            "/agent-procedures/{id}",
             axum::routing::get(get_agent_procedure)
                 .put(update_agent_procedure)
                 .delete(delete_agent_procedure),
         )
         .route(
-            "/activity-lifecycle-definitions/{id}",
+            "/workflow-graphs/{id}",
             axum::routing::get(get_workflow_graph)
                 .put(update_workflow_graph)
                 .delete(delete_workflow_graph),
@@ -162,9 +158,7 @@ pub async fn create_workflow_graph(
         state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
     );
-    let saved = service
-        .upsert_workflow_graph(definition)
-        .await?;
+    let saved = service.upsert_workflow_graph(definition).await?;
     Ok(Json(saved))
 }
 
@@ -229,9 +223,7 @@ pub async fn update_workflow_graph(
         state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
     );
-    let saved = service
-        .upsert_workflow_graph(definition)
-        .await?;
+    let saved = service.upsert_workflow_graph(definition).await?;
     Ok(Json(saved))
 }
 
@@ -263,9 +255,7 @@ pub async fn validate_workflow_graph(
                 state.repos.agent_procedure_repo.as_ref(),
                 state.repos.workflow_graph_repo.as_ref(),
             );
-            let issues = service
-                .validate_workflow_graph(&definition)
-                .await?;
+            let issues = service.validate_workflow_graph(&definition).await?;
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
                     .iter()
@@ -303,14 +293,8 @@ pub async fn delete_workflow_graph(
         ProjectPermission::Edit,
     )
     .await?;
-    state
-        .repos
-        .workflow_graph_repo
-        .delete(id)
-        .await?;
-    Ok(Json(DeleteWorkflowGraphResponse {
-        deleted: true,
-    }))
+    state.repos.workflow_graph_repo.delete(id).await?;
+    Ok(Json(DeleteWorkflowGraphResponse { deleted: true }))
 }
 
 pub async fn start_lifecycle_run(
@@ -565,10 +549,7 @@ pub async fn validate_agent_procedure(
     ) {
         Ok(definition) => {
             let mut issues = definition.validate_full();
-            issues.extend(
-                validate_workflow_graph_references(state.as_ref(), &definition)
-                    .await?,
-            );
+            issues.extend(validate_workflow_graph_references(state.as_ref(), &definition).await?);
             Ok(Json(WorkflowValidationResponse {
                 valid: !issues
                     .iter()
@@ -678,19 +659,11 @@ async fn upsert_agent_procedure(
         updated.version = existing.version + 1;
         updated.created_at = existing.created_at;
         updated.updated_at = chrono::Utc::now();
-        state
-            .repos
-            .agent_procedure_repo
-            .update(&updated)
-            .await?;
+        state.repos.agent_procedure_repo.update(&updated).await?;
         return Ok(updated);
     }
 
-    state
-        .repos
-        .agent_procedure_repo
-        .create(&definition)
-        .await?;
+    state.repos.agent_procedure_repo.create(&definition).await?;
     Ok(definition)
 }
 
@@ -837,86 +810,4 @@ pub async fn query_tool_catalog(
         .collect();
     let catalog = agentdash_application::capability::query_tool_catalog(&keys);
     Json(catalog)
-}
-
-// -- Run Links --
-
-use agentdash_contracts::workflow::{AttachRunLinkRequest, LifecycleRunLinkDto, RunLinksResponse};
-use agentdash_domain::workflow::{LifecycleRunLink, RunLinkRole, RunLinkSubjectKind};
-
-fn link_to_dto(link: &LifecycleRunLink) -> LifecycleRunLinkDto {
-    LifecycleRunLinkDto {
-        id: link.id.to_string(),
-        run_id: link.run_id.to_string(),
-        subject_kind: link.subject_kind.as_str().to_string(),
-        subject_id: link.subject_id.to_string(),
-        role: link.role.as_str().to_string(),
-        metadata: link.metadata.clone(),
-        created_at: link.created_at.to_rfc3339(),
-    }
-}
-
-/// GET /lifecycle-runs/{run_id}/links
-pub async fn list_run_links(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(run_id): Path<String>,
-) -> Result<Json<RunLinksResponse>, ApiError> {
-    let run_uuid = parse_uuid(&run_id, "run_id")?;
-    let run = load_lifecycle_run(&state, run_uuid).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    let links = state
-        .repos
-        .lifecycle_run_link_repo
-        .list_by_run(run_uuid)
-        .await?;
-
-    Ok(Json(RunLinksResponse {
-        run_id,
-        links: links.iter().map(link_to_dto).collect(),
-    }))
-}
-
-/// POST /lifecycle-runs/{run_id}/links
-pub async fn attach_run_link(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(run_id): Path<String>,
-    Json(req): Json<AttachRunLinkRequest>,
-) -> Result<Json<LifecycleRunLinkDto>, ApiError> {
-    let run_uuid = parse_uuid(&run_id, "run_id")?;
-    let run = load_lifecycle_run(&state, run_uuid).await?;
-    load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        run.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-
-    let subject_kind = RunLinkSubjectKind::parse(&req.subject_kind).ok_or_else(|| {
-        ApiError::BadRequest(format!("Invalid subject_kind: {}", req.subject_kind))
-    })?;
-    let subject_id: Uuid = req
-        .subject_id
-        .parse()
-        .map_err(|_| ApiError::BadRequest(format!("Invalid subject_id: {}", req.subject_id)))?;
-    let role = RunLinkRole::parse(&req.role)
-        .ok_or_else(|| ApiError::BadRequest(format!("Invalid role: {}", req.role)))?;
-
-    let mut link = LifecycleRunLink::new(run_uuid, subject_kind, subject_id, role);
-    if let Some(metadata) = req.metadata {
-        link = link.with_metadata(metadata);
-    }
-
-    state.repos.lifecycle_run_link_repo.create(&link).await?;
-
-    Ok(Json(link_to_dto(&link)))
 }

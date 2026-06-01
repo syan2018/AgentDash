@@ -106,7 +106,7 @@ pub struct SubjectExecutionRef {
 ///
 /// 所有业务路径（ProjectAgent open、Task execution、Companion dispatch、Routine fire）
 /// 都应构造 `ExecutionIntent` 并提交给 `LifecycleDispatchService`，
-/// 而非自行组装 SessionBinding / owner DTO / SessionConstructionPlan。
+/// 由 dispatch 统一创建 run、agent、frame 与 runtime trace refs。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionIntent {
     pub project_id: Uuid,
@@ -184,20 +184,21 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_result_optional_fields_are_none() {
+    fn dispatch_result_serializes_optional_trace_fields() {
         let result = ExecutionDispatchResult {
             run_ref: Uuid::new_v4(),
             graph_instance_ref: Uuid::new_v4(),
             agent_ref: Uuid::new_v4(),
             frame_ref: Uuid::new_v4(),
             runtime_session_ref: None,
-            assignment_ref: None,
+            assignment_ref: Some(Uuid::new_v4()),
             gate_ref: None,
             subject_execution_ref: None,
             trace_ref: None,
         };
         let json = serde_json::to_string(&result).expect("serialize");
         assert!(!json.contains("runtime_session_ref"));
+        assert!(json.contains("assignment_ref"));
         assert!(!json.contains("gate_ref"));
     }
 }

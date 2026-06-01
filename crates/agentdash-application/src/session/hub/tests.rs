@@ -1,4 +1,4 @@
-﻿//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -33,7 +33,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
 use super::super::RuntimeCommandStatus;
-use super::super::construction::{ConstructionResolutionPlan, SessionConstructionPlan};
+use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
     TurnExecution, TurnState, build_user_message_envelopes, parse_turn_terminal_event_from_envelope,
@@ -99,7 +99,7 @@ fn runtime_transition_from_state(
     RuntimeCapabilityTransition::from_records(Vec::new(), effects)
 }
 
-fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
+fn simple_prompt_request(prompt: &str) -> RuntimeContextInspectionPlan {
     let user_input = UserPromptInput {
         executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
         ..UserPromptInput::from_text(prompt)
@@ -112,7 +112,7 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
         },
     };
     let mut construction =
-        SessionConstructionPlan::from_source_input("test-session", owner, &user_input);
+        RuntimeContextInspectionPlan::from_source_input("test-session", owner, &user_input);
     let root = std::env::current_dir().expect("current dir");
     let vfs = local_workspace_vfs(&root);
     let mut capability_state = CapabilityState::default();
@@ -132,7 +132,7 @@ fn simple_prompt_request(prompt: &str) -> SessionConstructionPlan {
     construction
 }
 
-fn owner_bootstrap_request(prompt: &str, system_context: &str) -> SessionConstructionPlan {
+fn owner_bootstrap_request(prompt: &str, system_context: &str) -> RuntimeContextInspectionPlan {
     let mut construction = simple_prompt_request(prompt);
     let bundle_session_id = uuid::Uuid::new_v4();
     let bundle = crate::context::build_continuation_bundle_from_markdown(
@@ -3011,6 +3011,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_provider() {
     use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
+    use crate::workflow::runtime_launch::RuntimeLaunchRequest;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -3021,10 +3022,10 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
 
     #[async_trait::async_trait]
     impl SessionConstructionProvider for SpyConstructionProvider {
-        async fn build_construction(
+        async fn build_frame_construction(
             &self,
             input: SessionConstructionProviderInput,
-        ) -> Result<SessionConstructionPlan, ConnectorError> {
+        ) -> Result<RuntimeLaunchRequest, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = input
                 .command

@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
@@ -12,8 +15,74 @@ use agentdash_domain::workflow::{
     WorkflowGraphInstanceRepository,
 };
 
-use super::frame_builder::AgentFrameBuilder;
 use super::WorkflowApplicationError;
+use super::frame_builder::AgentFrameBuilder;
+use crate::session::{
+    ExecutionStatus, SessionBootstrapState, SessionMeta, SessionPersistence, TitleSource,
+};
+
+#[derive(Debug, Clone)]
+pub struct RuntimeSessionCreationRequest {
+    pub project_id: Uuid,
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub source: ExecutionSource,
+}
+
+#[async_trait]
+pub trait RuntimeSessionCreator: Send + Sync {
+    async fn create_runtime_session(
+        &self,
+        request: RuntimeSessionCreationRequest,
+    ) -> Result<Uuid, WorkflowApplicationError>;
+}
+
+#[derive(Clone)]
+pub struct SessionPersistenceRuntimeSessionCreator {
+    persistence: Arc<dyn SessionPersistence>,
+}
+
+impl SessionPersistenceRuntimeSessionCreator {
+    pub fn new(persistence: Arc<dyn SessionPersistence>) -> Self {
+        Self { persistence }
+    }
+}
+
+#[async_trait]
+impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
+    async fn create_runtime_session(
+        &self,
+        request: RuntimeSessionCreationRequest,
+    ) -> Result<Uuid, WorkflowApplicationError> {
+        let session_id = Uuid::new_v4();
+        let now = chrono::Utc::now().timestamp_millis();
+        let meta = SessionMeta {
+            id: session_id.to_string(),
+            title: runtime_session_title(&request),
+            title_source: TitleSource::Auto,
+            project_id: Some(request.project_id.to_string()),
+            created_at: now,
+            updated_at: now,
+            last_event_seq: 0,
+            last_execution_status: ExecutionStatus::Idle,
+            last_turn_id: None,
+            last_terminal_message: None,
+            executor_config: None,
+            executor_session_id: None,
+            companion_context: None,
+            tab_layout: None,
+            visible_canvas_mount_ids: Vec::new(),
+            bootstrap_state: SessionBootstrapState::Pending,
+        };
+        self.persistence
+            .create_session(&meta)
+            .await
+            .map_err(|error| {
+                WorkflowApplicationError::Internal(format!("RuntimeSession 创建失败: {error}"))
+            })?;
+        Ok(session_id)
+    }
+}
 
 /// 业务执行进入控制面的统一入口 service。
 ///
@@ -35,6 +104,7 @@ pub struct LifecycleDispatchService<'a> {
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
+    runtime_session_creator: Option<&'a dyn RuntimeSessionCreator>,
 }
 
 impl<'a> LifecycleDispatchService<'a> {
@@ -55,7 +125,13 @@ impl<'a> LifecycleDispatchService<'a> {
             association_repo,
             gate_repo,
             lineage_repo,
+            runtime_session_creator: None,
         }
+    }
+
+    pub fn with_runtime_session_creator(mut self, creator: &'a dyn RuntimeSessionCreator) -> Self {
+        self.runtime_session_creator = Some(creator);
+        self
     }
 
     /// 按 ExecutionIntent 的 policy 编排所有目标锚点。
@@ -74,32 +150,35 @@ impl<'a> LifecycleDispatchService<'a> {
             .resolve_or_create_graph_instance(&run, graph_id, intent)
             .await?;
 
-        // 4. 创建 LifecycleSubjectAssociation（如果有 subject_ref）
+        // 4. 创建或复用 LifecycleAgent
+        let agent = self.resolve_or_create_agent(&run, intent).await?;
+
+        // 5. 创建 LifecycleSubjectAssociation（如果有 subject_ref）
         let association = if let Some(subject_ref) = &intent.subject_ref {
             Some(
-                self.create_subject_association(run.id, subject_ref, &intent.source)
+                self.create_subject_association(run.id, agent.id, subject_ref, &intent.source)
                     .await?,
             )
         } else {
             None
         };
 
-        // 5. 创建或复用 LifecycleAgent
-        let agent = self.resolve_or_create_agent(&run, intent).await?;
+        // 6. 创建或附加 RuntimeSession ref
+        let runtime_session_ref = self
+            .resolve_or_create_runtime_session(intent, &run, &agent)
+            .await?;
 
-        // 6. 创建 AgentFrame initial revision
-        let runtime_session_ref = resolve_runtime_session_ref(&intent.runtime_policy);
-        let frame = self.create_initial_frame(&agent, runtime_session_ref).await?;
+        // 7. 创建 AgentFrame initial revision
+        let frame = self
+            .create_initial_frame(&agent, runtime_session_ref)
+            .await?;
 
-        // 7. 更新 agent.current_frame_id
+        // 8. 更新 agent.current_frame_id
         let mut agent = agent;
         agent.set_current_frame(frame.id);
-        self.agent_repo
-            .update(&agent)
-            .await
-?;
+        self.agent_repo.update(&agent).await?;
 
-        // 8. 按需创建 AgentLineage
+        // 9. 按需创建 AgentLineage
         if let Some(parent_agent_id) = intent.parent_agent_id {
             let lineage = AgentLineage::new(
                 run.id,
@@ -112,29 +191,30 @@ impl<'a> LifecycleDispatchService<'a> {
             self.lineage_repo.create(&lineage).await?;
         }
 
-        // 9. 按需创建 LifecycleGate
+        // 10. 按需创建 LifecycleGate
         let gate_ref = if let Some(gate_policy) = &intent.gate_policy {
             Some(self.create_gate(&run, &agent, &frame, gate_policy).await?)
         } else {
             None
         };
 
-        // 10. 组装结果
+        // 11. 组装结果
         let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
             subject_ref: intent.subject_ref.clone().unwrap(),
             association_id: assoc.id,
         });
+        let assignment_ref = Option::<Uuid>::None;
 
         Ok(ExecutionDispatchResult {
             run_ref: run.id,
             graph_instance_ref: graph_instance.id,
             agent_ref: agent.id,
             frame_ref: frame.id,
-            runtime_session_ref: resolve_runtime_session_ref(&intent.runtime_policy),
-            assignment_ref: None,
+            runtime_session_ref,
+            assignment_ref,
             gate_ref,
             subject_execution_ref,
-            trace_ref: None,
+            trace_ref: runtime_session_ref,
         })
     }
 
@@ -147,27 +227,17 @@ impl<'a> LifecycleDispatchService<'a> {
         match (&intent.run_policy, intent.parent_run_id) {
             // same-run: 复用现有 run 或追加 graph
             (RunPolicy::ReuseExisting | RunPolicy::AppendGraph, Some(run_id)) => {
-                let run = self
-                    .run_repo
-                    .get_by_id(run_id)
-                    .await
-                    ?
-                    .ok_or_else(|| {
-                        WorkflowApplicationError::BadRequest(format!(
-                            "parent_run_id {run_id} 不存在"
-                        ))
-                    })?;
+                let run = self.run_repo.get_by_id(run_id).await?.ok_or_else(|| {
+                    WorkflowApplicationError::BadRequest(format!("parent_run_id {run_id} 不存在"))
+                })?;
                 Ok(run)
             }
             // 创建新 run
             _ => {
                 let graph_id =
-                    resolve_graph_id(&intent.workflow_graph_ref)?.unwrap_or(Uuid::nil());
+                    resolve_graph_id(&intent.workflow_graph_ref)?.unwrap_or_else(Uuid::new_v4);
                 let run = create_lifecycle_run(intent.project_id, graph_id);
-                self.run_repo
-                    .create(&run)
-                    .await
-                    ?;
+                self.run_repo.create(&run).await?;
                 Ok(run)
             }
         }
@@ -186,37 +256,24 @@ impl<'a> LifecycleDispatchService<'a> {
         match intent.run_policy {
             RunPolicy::ReuseExisting => {
                 // 尝试复用现有 root graph instance
-                let instances = self
-                    .graph_instance_repo
-                    .list_by_run(run.id)
-                    .await
-                    ?;
+                let instances = self.graph_instance_repo.list_by_run(run.id).await?;
                 if let Some(existing) = instances.into_iter().find(|gi| gi.is_root()) {
                     return Ok(existing);
                 }
                 let instance = WorkflowGraphInstance::new_root(run.id, effective_graph_id);
-                self.graph_instance_repo
-                    .create(&instance)
-                    .await
-                    ?;
+                self.graph_instance_repo.create(&instance).await?;
                 Ok(instance)
             }
             RunPolicy::AppendGraph => {
                 let role = graph_instance_role_from_source(&intent.source);
                 let instance = WorkflowGraphInstance::new(run.id, effective_graph_id, role);
-                self.graph_instance_repo
-                    .create(&instance)
-                    .await
-                    ?;
+                self.graph_instance_repo.create(&instance).await?;
                 Ok(instance)
             }
             RunPolicy::CreateLinkedRun => {
                 // 新 run 创建 root graph instance
                 let instance = WorkflowGraphInstance::new_root(run.id, effective_graph_id);
-                self.graph_instance_repo
-                    .create(&instance)
-                    .await
-                    ?;
+                self.graph_instance_repo.create(&instance).await?;
                 Ok(instance)
             }
         }
@@ -227,15 +284,17 @@ impl<'a> LifecycleDispatchService<'a> {
     async fn create_subject_association(
         &self,
         run_id: Uuid,
+        agent_id: Uuid,
         subject_ref: &SubjectRef,
         source: &ExecutionSource,
     ) -> Result<LifecycleSubjectAssociation, WorkflowApplicationError> {
         let role = association_role_from_source(source);
-        let assoc = LifecycleSubjectAssociation::new_run_scoped(run_id, subject_ref, role, None);
-        self.association_repo
-            .create(&assoc)
-            .await
-            ?;
+        let assoc = if subject_ref.kind == "task" {
+            LifecycleSubjectAssociation::new_agent_scoped(run_id, agent_id, subject_ref, role, None)
+        } else {
+            LifecycleSubjectAssociation::new_run_scoped(run_id, subject_ref, role, None)
+        };
+        self.association_repo.create(&assoc).await?;
         Ok(assoc)
     }
 
@@ -248,11 +307,7 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
         match intent.agent_policy {
             AgentPolicy::Reuse | AgentPolicy::Resume => {
-                let agents = self
-                    .agent_repo
-                    .list_by_run(run.id)
-                    .await
-                    ?;
+                let agents = self.agent_repo.list_by_run(run.id).await?;
                 if let Some(existing) = agents.into_iter().find(|a| a.status == "active") {
                     return Ok(existing);
                 }
@@ -271,10 +326,7 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
         let agent_kind = agent_kind_from_source(&intent.source);
         let agent = LifecycleAgent::new_root(run.id, intent.project_id, agent_kind);
-        self.agent_repo
-            .create(&agent)
-            .await
-            ?;
+        self.agent_repo.create(&agent).await?;
         Ok(agent)
     }
 
@@ -285,13 +337,38 @@ impl<'a> LifecycleDispatchService<'a> {
         agent: &LifecycleAgent,
         runtime_session_ref: Option<Uuid>,
     ) -> Result<AgentFrame, WorkflowApplicationError> {
-        let mut builder = AgentFrameBuilder::new(agent.id)
-            .with_created_by("dispatch", None);
+        let mut builder = AgentFrameBuilder::new(agent.id).with_created_by("dispatch", None);
         if let Some(session_id) = runtime_session_ref {
-            builder = builder.with_runtime_session(session_id);
+            builder = builder.with_runtime_session(session_id.to_string());
         }
         let frame = builder.build(self.frame_repo).await?;
         Ok(frame)
+    }
+
+    async fn resolve_or_create_runtime_session(
+        &self,
+        intent: &ExecutionIntent,
+        run: &LifecycleRun,
+        agent: &LifecycleAgent,
+    ) -> Result<Option<Uuid>, WorkflowApplicationError> {
+        match intent.runtime_policy {
+            RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => Ok(Some(id)),
+            RuntimePolicy::CreateRuntimeSession => {
+                let creator = self.runtime_session_creator.ok_or_else(|| {
+                    WorkflowApplicationError::Internal(
+                        "RuntimePolicy::CreateRuntimeSession 缺少 RuntimeSessionCreator"
+                            .to_string(),
+                    )
+                })?;
+                let request = RuntimeSessionCreationRequest {
+                    project_id: intent.project_id,
+                    run_id: run.id,
+                    agent_id: agent.id,
+                    source: intent.source.clone(),
+                };
+                Ok(Some(creator.create_runtime_session(request).await?))
+            }
+        }
     }
 
     // ─── Gate Creation ───────────────────────────────────────────────────
@@ -316,10 +393,7 @@ impl<'a> LifecycleDispatchService<'a> {
             policy.payload.clone(),
         );
         let gate_id = gate.id;
-        self.gate_repo
-            .create(&gate)
-            .await
-            ?;
+        self.gate_repo.create(&gate).await?;
         Ok(gate_id)
     }
 }
@@ -337,13 +411,6 @@ fn resolve_graph_id(
             Ok(None)
         }
         None => Ok(None),
-    }
-}
-
-fn resolve_runtime_session_ref(policy: &RuntimePolicy) -> Option<Uuid> {
-    match policy {
-        RuntimePolicy::AttachExisting(id) | RuntimePolicy::ContinueCurrent(id) => Some(*id),
-        RuntimePolicy::CreateRuntimeSession => None,
     }
 }
 
@@ -373,13 +440,19 @@ fn graph_instance_role_from_source(source: &ExecutionSource) -> &'static str {
 
 fn association_role_from_source(source: &ExecutionSource) -> &'static str {
     match source {
-        ExecutionSource::User => "user_initiated",
-        ExecutionSource::Routine => "routine_source",
-        ExecutionSource::ParentAgent => "parent_delegated",
-        ExecutionSource::ProjectAgent => "project_agent",
-        ExecutionSource::Api => "api_triggered",
-        ExecutionSource::Migration => "migration",
+        ExecutionSource::Routine => "source",
+        ExecutionSource::Migration => "lineage",
+        _ => "subject",
     }
+}
+
+fn runtime_session_title(request: &RuntimeSessionCreationRequest) -> String {
+    format!(
+        "{} run {} agent {}",
+        agent_kind_from_source(&request.source),
+        request.run_id,
+        request.agent_id
+    )
 }
 
 fn agent_kind_from_source(source: &ExecutionSource) -> &'static str {
@@ -555,6 +628,15 @@ mod tests {
             self.items.lock().unwrap().push(frame.clone());
             Ok(())
         }
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
         async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             let items = self.items.lock().unwrap();
             let mut frames: Vec<_> = items.iter().filter(|f| f.agent_id == agent_id).collect();
@@ -570,6 +652,22 @@ mod tests {
                 .filter(|f| f.agent_id == agent_id)
                 .cloned()
                 .collect())
+        }
+        async fn attach_runtime_session_ref(
+            &self,
+            frame_id: Uuid,
+            runtime_session_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let frame = items
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.attach_runtime_session_ref(runtime_session_id);
+            Ok(())
         }
         async fn find_by_runtime_session(
             &self,
@@ -697,6 +795,23 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct InMemoryRuntimeSessionCreator {
+        items: Mutex<Vec<Uuid>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeSessionCreator for InMemoryRuntimeSessionCreator {
+        async fn create_runtime_session(
+            &self,
+            _request: RuntimeSessionCreationRequest,
+        ) -> Result<Uuid, WorkflowApplicationError> {
+            let session_id = Uuid::new_v4();
+            self.items.lock().unwrap().push(session_id);
+            Ok(session_id)
+        }
+    }
+
     // ─── Helper ──────────────────────────────────────────────────────────
 
     fn make_service<'a>(
@@ -707,6 +822,7 @@ mod tests {
         association_repo: &'a dyn LifecycleSubjectAssociationRepository,
         gate_repo: &'a dyn LifecycleGateRepository,
         lineage_repo: &'a dyn AgentLineageRepository,
+        runtime_session_creator: &'a dyn RuntimeSessionCreator,
     ) -> LifecycleDispatchService<'a> {
         LifecycleDispatchService::new(
             run_repo,
@@ -717,6 +833,7 @@ mod tests {
             gate_repo,
             lineage_repo,
         )
+        .with_runtime_session_creator(runtime_session_creator)
     }
 
     fn new_project_agent_intent(project_id: Uuid) -> ExecutionIntent {
@@ -748,6 +865,7 @@ mod tests {
         let assoc_repo = InMemoryAssociationRepo::default();
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let service = make_service(
             &run_repo,
             &gi_repo,
@@ -756,6 +874,7 @@ mod tests {
             &assoc_repo,
             &gate_repo,
             &lineage_repo,
+            &runtime_session_creator,
         );
 
         let project_id = Uuid::new_v4();
@@ -767,7 +886,9 @@ mod tests {
         assert!(gi_repo.items.lock().unwrap()[0].is_root());
         assert_eq!(agent_repo.items.lock().unwrap().len(), 1);
         assert_eq!(frame_repo.items.lock().unwrap().len(), 1);
+        assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
         assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
+        assert!(result.runtime_session_ref.is_some());
         assert!(result.subject_execution_ref.is_some());
         assert!(result.gate_ref.is_none());
     }
@@ -781,14 +902,11 @@ mod tests {
         let assoc_repo = InMemoryAssociationRepo::default();
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
 
         let project_id = Uuid::new_v4();
         let existing_run = create_lifecycle_run(project_id, Uuid::new_v4());
-        run_repo
-            .items
-            .lock()
-            .unwrap()
-            .push(existing_run.clone());
+        run_repo.items.lock().unwrap().push(existing_run.clone());
 
         let service = make_service(
             &run_repo,
@@ -798,6 +916,7 @@ mod tests {
             &assoc_repo,
             &gate_repo,
             &lineage_repo,
+            &runtime_session_creator,
         );
 
         let intent = ExecutionIntent {
@@ -836,6 +955,7 @@ mod tests {
         let assoc_repo = InMemoryAssociationRepo::default();
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let service = make_service(
             &run_repo,
             &gi_repo,
@@ -844,6 +964,7 @@ mod tests {
             &assoc_repo,
             &gate_repo,
             &lineage_repo,
+            &runtime_session_creator,
         );
 
         let project_id = Uuid::new_v4();
@@ -872,6 +993,7 @@ mod tests {
         let assoc_repo = InMemoryAssociationRepo::default();
         let gate_repo = InMemoryGateRepo::default();
         let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
         let service = make_service(
             &run_repo,
             &gi_repo,
@@ -880,6 +1002,7 @@ mod tests {
             &assoc_repo,
             &gate_repo,
             &lineage_repo,
+            &runtime_session_creator,
         );
 
         let project_id = Uuid::new_v4();

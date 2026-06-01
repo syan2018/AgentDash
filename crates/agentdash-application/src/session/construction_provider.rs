@@ -10,18 +10,14 @@
 
 use std::sync::Arc;
 
-use agentdash_domain::workflow::{
-    ActivityDefinition, WorkflowGraph, LifecycleRun, AgentProcedure,
-};
-use agentdash_spi::ConnectorError;
-use async_trait::async_trait;
-use uuid::Uuid;
-
-use super::construction::SessionConstructionPlan;
 use super::launch::LaunchCommand;
 use super::runtime_commands::RuntimeCommandRecord;
 use super::types::SessionMeta;
 use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
+use agentdash_spi::ConnectorError;
+use async_trait::async_trait;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskLaunchPhase {
@@ -81,69 +77,6 @@ pub trait SessionConstructionProvider: Send + Sync {
         &self,
         input: SessionConstructionProviderInput,
     ) -> Result<RuntimeLaunchRequest, ConnectorError>;
-}
-
-/// 从 `SessionConstructionPlan` 投影到 `RuntimeLaunchRequest`。
-pub fn runtime_launch_request_from_construction_plan(
-    plan: &SessionConstructionPlan,
-) -> RuntimeLaunchRequest {
-    use crate::workflow::runtime_launch::LaunchResolutionTrace;
-
-    let typed_capability_state = plan.projections.capability_state.clone();
-    let typed_vfs = plan.active_vfs().cloned();
-    let typed_mcp_servers = plan.projections.mcp_servers.clone();
-    let capability_surface = typed_capability_state
-        .as_ref()
-        .and_then(|s| serde_json::to_value(s).ok())
-        .unwrap_or(serde_json::Value::Null);
-    let vfs_surface = typed_vfs
-        .as_ref()
-        .and_then(|v| serde_json::to_value(v).ok())
-        .unwrap_or(serde_json::Value::Null);
-    let mcp_surface = if typed_mcp_servers.is_empty() {
-        serde_json::Value::Null
-    } else {
-        serde_json::to_value(&typed_mcp_servers).unwrap_or(serde_json::Value::Null)
-    };
-
-    RuntimeLaunchRequest {
-        agent_id: Uuid::nil(),
-        frame_id: Uuid::nil(),
-        frame_revision: 0,
-        procedure_ref: None,
-        capability_surface,
-        context_slice: plan
-            .context
-            .bundle
-            .as_ref()
-            .and_then(|b| serde_json::to_value(b.bundle_id).ok())
-            .unwrap_or(serde_json::Value::Null),
-        vfs_surface,
-        mcp_surface,
-        runtime_session_id: None,
-        graph_instance_id: None,
-        activity_key: None,
-        executor_config: plan.execution_profile.executor_config.clone(),
-        working_directory: plan.workspace.working_directory.clone(),
-        prompt_blocks: plan.prompt.prompt_blocks.clone(),
-        environment_variables: plan.prompt.environment_variables.clone(),
-        identity: plan.identity.identity.clone(),
-        terminal_hook_effect_binding: plan.effects.terminal_hook_effect_binding.clone(),
-        discovered_guidelines: plan.projections.discovered_guidelines.clone(),
-        extension_runtime: plan.projections.extension_runtime.clone(),
-        context_bundle: plan.context.bundle.clone(),
-        typed_capability_state,
-        typed_vfs,
-        typed_mcp_servers,
-        continuation_context_frame: plan.context.continuation_context_frame.clone(),
-        base_capability_state: plan.resolution.runtime_base_capability_state.clone(),
-        resolution_trace: LaunchResolutionTrace {
-            vfs_source: plan.resolution.vfs_source.clone(),
-            mcp_source: plan.resolution.mcp_source.clone(),
-            capability_source: plan.resolution.capability_source.clone(),
-            pending_overlay_applied: plan.resolution.pending_overlay_applied,
-        },
-    }
 }
 
 /// 动态类型别名，便于在 hub 内存储。

@@ -39,12 +39,12 @@ use crate::{
 };
 
 use super::construction::{
-    ResolvedSessionOwner, SessionConstructionContextProjection, SessionConstructionPlan,
+    ResolvedSessionOwner, RuntimeContextInspectionPlan, SessionConstructionContextProjection,
 };
 
-pub struct SessionConstructionPlanner;
+pub struct RuntimeContextInspectionPlanner;
 
-pub const PROJECT_AGENT_SESSION_LABEL_PREFIX: &str = "project_agent:";
+pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
 
 #[derive(Debug, Clone)]
 pub struct ResolvedProjectAgentContext {
@@ -59,19 +59,19 @@ pub struct ResolvedProjectAgentContext {
     pub project_agent: ProjectAgent,
 }
 
-impl SessionConstructionPlanner {
-    pub fn parse_project_agent_session_label(label: &str) -> Option<&str> {
+impl RuntimeContextInspectionPlanner {
+    pub fn parse_project_agent_binding_label(label: &str) -> Option<&str> {
         let agent_key = label
             .trim()
-            .strip_prefix(PROJECT_AGENT_SESSION_LABEL_PREFIX)?;
+            .strip_prefix(PROJECT_AGENT_BINDING_LABEL_PREFIX)?;
         if agent_key.trim().is_empty() {
             return None;
         }
         Some(agent_key)
     }
 
-    pub fn project_agent_session_label(agent_key: &str) -> String {
-        format!("{PROJECT_AGENT_SESSION_LABEL_PREFIX}{}", agent_key.trim())
+    pub fn project_agent_binding_label(agent_key: &str) -> String {
+        format!("{PROJECT_AGENT_BINDING_LABEL_PREFIX}{}", agent_key.trim())
     }
 
     pub async fn resolve_project_workspace(
@@ -122,7 +122,7 @@ impl SessionConstructionPlanner {
         workspace_id: Option<Uuid>,
         agent_binding: AgentBinding,
         session_meta: Option<&SessionMeta>,
-    ) -> SessionConstructionPlan {
+    ) -> RuntimeContextInspectionPlan {
         let session_id = session_id.into();
         let built_context = crate::task::context_builder::build_task_session_context(
             repos,
@@ -162,7 +162,7 @@ impl SessionConstructionPlanner {
         owner: ResolvedSessionOwner,
         story: &Story,
         session_meta: Option<&SessionMeta>,
-    ) -> Result<Option<SessionConstructionPlan>, String> {
+    ) -> Result<Option<RuntimeContextInspectionPlan>, String> {
         let Some(session_meta) = session_meta else {
             return Ok(None);
         };
@@ -312,9 +312,9 @@ impl SessionConstructionPlanner {
         project: &Project,
         binding_label: &str,
         session_meta: &SessionMeta,
-    ) -> Result<SessionConstructionPlan, String> {
+    ) -> Result<RuntimeContextInspectionPlan, String> {
         let session_id = session_id.into();
-        let agent_key = Self::parse_project_agent_session_label(binding_label)
+        let agent_key = Self::parse_project_agent_binding_label(binding_label)
             .ok_or_else(|| format!("无效的项目 Agent session label: {binding_label}"))?;
         let project_agent = resolve_project_agent_context(repos, project.id, agent_key)
             .await?
@@ -474,8 +474,8 @@ impl SessionConstructionPlanner {
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
         projection: SessionConstructionContextProjection,
-    ) -> SessionConstructionPlan {
-        SessionConstructionPlan::new(session_id, owner, projection)
+    ) -> RuntimeContextInspectionPlan {
+        RuntimeContextInspectionPlan::new(session_id, owner, projection)
     }
 }
 

@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -594,11 +594,7 @@ async fn sync_canvas_mount_capability_state(
         return Ok(());
     };
 
-    let Some(hook_runtime) = session_services
-        .hooks
-        .get_hook_runtime(session_id)
-        .await
-    else {
+    let Some(hook_runtime) = session_services.hooks.get_hook_runtime(session_id).await else {
         tracing::debug!(
             session_id = %session_id,
             canvas_id = %canvas.mount_id,
@@ -670,7 +666,7 @@ mod tests {
 
     use crate::session::construction::{
         ConstructionResolutionPlan, OwnerResolutionTrace, ResolvedSessionOwner,
-        SessionConstructionPlan,
+        RuntimeContextInspectionPlan,
     };
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::{MemorySessionPersistence, UserPromptInput, local_workspace_vfs};
@@ -862,7 +858,7 @@ mod tests {
         session_id: &str,
         project_id: Uuid,
         working_dir: &std::path::Path,
-    ) -> SessionConstructionPlan {
+    ) -> RuntimeContextInspectionPlan {
         let user_input = UserPromptInput {
             executor_config: Some(agentdash_spi::AgentConfig::new("PI_AGENT")),
             ..UserPromptInput::from_text("present canvas")
@@ -875,7 +871,7 @@ mod tests {
             },
         };
         let mut construction =
-            SessionConstructionPlan::from_source_input(session_id, owner, &user_input);
+            RuntimeContextInspectionPlan::from_source_input(session_id, owner, &user_input);
         let vfs = local_workspace_vfs(working_dir);
         let mut capability_state =
             CapabilityState::from_clusters([agentdash_spi::ToolCluster::Canvas]);

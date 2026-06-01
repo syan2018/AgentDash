@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::workflow::{RunLinkSubjectKind, ToolCapabilityPath};
+use crate::workflow::ToolCapabilityPath;
 
 /// Grant 的生效范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +99,7 @@ impl GrantStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeEscalationIntent {
     /// 目标 scope 类型（如 Story → Agent 将创建/管理 Story）
-    pub target_subject_kind: RunLinkSubjectKind,
+    pub target_subject_kind: String,
     /// 期望获取的具体 capability paths（escalation 后额外解锁的部分）
     pub unlocked_paths: Vec<ToolCapabilityPath>,
 }

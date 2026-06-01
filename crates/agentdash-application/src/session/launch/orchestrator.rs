@@ -186,10 +186,7 @@ impl SessionLaunchOrchestrator {
     ) -> RuntimeLaunchRequest {
         use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
-        let mut base_capability_state = req
-            .typed_capability_state
-            .clone()
-            .unwrap_or_default();
+        let mut base_capability_state = req.typed_capability_state.clone().unwrap_or_default();
         if let Some(ref vfs) = req.typed_vfs {
             base_capability_state.vfs.active = Some(vfs.clone());
         }
@@ -315,10 +312,7 @@ impl SessionLaunchOrchestrator {
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(
-                        session_id,
-                        "查找 session 关联的 AgentFrame 失败: {error}"
-                    );
+                    tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
                 }
             }
         }

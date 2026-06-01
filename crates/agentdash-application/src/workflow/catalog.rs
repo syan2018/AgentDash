@@ -1,8 +1,8 @@
 use chrono::Utc;
 
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, WorkflowGraph, WorkflowGraphRepository,
-    ValidationIssue, ValidationSeverity, AgentProcedure, AgentProcedureRepository,
+    ActivityExecutorSpec, AgentProcedure, AgentProcedureRepository, ValidationIssue,
+    ValidationSeverity, WorkflowGraph, WorkflowGraphRepository,
 };
 
 use super::definition::BuiltinWorkflowBundle;
@@ -33,9 +33,7 @@ where
         &self,
         lifecycle: WorkflowGraph,
     ) -> Result<WorkflowGraph, WorkflowApplicationError> {
-        let issues = self
-            .validate_workflow_graph(&lifecycle)
-            .await?;
+        let issues = self.validate_workflow_graph(&lifecycle).await?;
         let errors: Vec<&ValidationIssue> = issues
             .iter()
             .filter(|item| item.severity == ValidationSeverity::Error)
@@ -115,9 +113,7 @@ where
             persisted_procedures.push(self.upsert_agent_procedure(procedure).await?);
         }
 
-        let graph = self
-            .upsert_workflow_graph(bundle.graph)
-            .await?;
+        let graph = self.upsert_workflow_graph(bundle.graph).await?;
         Ok(BuiltinWorkflowBundle {
             procedures: persisted_procedures,
             graph,
@@ -188,10 +184,10 @@ mod tests {
 
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
-        ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        WorkflowGraphRepository, ActivityTransition, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ContextStrategy, GateStrategy, InputPortDefinition,
-        OutputPortDefinition, WorkflowContract, WorkflowDefinitionSource,
+        ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityTransition,
+        AgentActivityExecutorSpec, AgentSessionPolicy, ContextStrategy, GateStrategy,
+        InputPortDefinition, OutputPortDefinition, WorkflowContract, WorkflowDefinitionSource,
+        WorkflowGraphRepository,
     };
 
     use super::*;
@@ -303,10 +299,7 @@ mod tests {
             Ok(())
         }
 
-        async fn get_by_id(
-            &self,
-            id: Uuid,
-        ) -> Result<Option<WorkflowGraph>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -408,10 +401,7 @@ mod tests {
         .expect("workflow definition")
     }
 
-    fn activity_lifecycle_with_agent(
-        project_id: Uuid,
-        procedure_key: &str,
-    ) -> WorkflowGraph {
+    fn activity_lifecycle_with_agent(project_id: Uuid, procedure_key: &str) -> WorkflowGraph {
         WorkflowGraph::new(
             project_id,
             "activity_lc",
@@ -480,15 +470,11 @@ mod tests {
             ActivityLifecycleCatalogService::new(&workflow_repo, &activity_lifecycle_repo);
 
         let first = service
-            .upsert_workflow_graph(activity_lifecycle_with_agent(
-                project_id, "wf_plan",
-            ))
+            .upsert_workflow_graph(activity_lifecycle_with_agent(project_id, "wf_plan"))
             .await
             .expect("create activity lifecycle");
         let second = service
-            .upsert_workflow_graph(activity_lifecycle_with_agent(
-                project_id, "wf_plan",
-            ))
+            .upsert_workflow_graph(activity_lifecycle_with_agent(project_id, "wf_plan"))
             .await
             .expect("update activity lifecycle");
 
@@ -516,8 +502,8 @@ mod tests {
             .expect("bootstrap 内建工作流应通过所有校验");
 
         assert_eq!(saved.procedures.len(), 2);
-        assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
-        assert_eq!(saved.lifecycle.activities.len(), 2);
+        assert_eq!(saved.graph.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
+        assert_eq!(saved.graph.activities.len(), 2);
         for workflow in &saved.procedures {
             assert!(
                 workflow.contract.injection.guidance.is_some(),
@@ -557,7 +543,7 @@ mod tests {
             .expect("bootstrap Trellis DAG Task 应通过 Activity port 校验");
 
         assert_eq!(saved.procedures.len(), 2);
-        assert_eq!(saved.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        assert_eq!(saved.lifecycle.activities.len(), 2);
+        assert_eq!(saved.graph.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
+        assert_eq!(saved.graph.activities.len(), 2);
     }
 }

@@ -11,25 +11,21 @@
 //!   → RuntimeSession events
 //! ```
 //!
-//! launch 路径从 `SessionConstructionPlan → LaunchPlan → ConnectorInputPlan → ExecutionContext`
-//! 迁移到 `AgentFrame → RuntimeLaunchRequest → ExecutionContext`。
-//!
 //! ### Session 创建 + Connector 启动
 //!
-//! `RuntimeLaunchRequest` 同时承载 surface 投影和 session 创建所需的执行器配置。
-//! compose 函数产出 `(AgentFrameBuilder, RuntimeLaunchRequest)`：
-//! - `AgentFrameBuilder.build()` 持久化 frame revision
-//! - `RuntimeLaunchRequest` 驱动 runtime session 创建 + connector 启动
+//! `RuntimeLaunchRequest` 同时承载 surface 投影和 connector 启动所需的执行器配置。
+//! compose 函数先通过 `AgentFrameBuilder.build()` 持久化 frame revision，
+//! 随后由 `RuntimeLaunchRequest::from_frame()` 投影 connector 输入。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef};
+use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, SessionContextBundle,
     SessionMcpServer, Vfs,
 };
-use agentdash_spi::hooks::ContextFrame;
 use uuid::Uuid;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
@@ -59,7 +55,7 @@ pub struct RuntimeLaunchRequest {
     pub context_slice: serde_json::Value,
     pub vfs_surface: serde_json::Value,
     pub mcp_surface: serde_json::Value,
-    pub runtime_session_id: Option<Uuid>,
+    pub runtime_session_id: Option<String>,
     pub graph_instance_id: Option<Uuid>,
     pub activity_key: Option<String>,
 
@@ -91,13 +87,7 @@ impl RuntimeLaunchRequest {
     /// JSON 字段 fallback 到 `serde_json::Value::Null`，
     /// connector 侧按需做 nullable 检查。
     pub fn from_frame(frame: &AgentFrame) -> Self {
-        let runtime_session_id = frame
-            .runtime_session_refs_json
-            .as_ref()
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .and_then(|s| Uuid::parse_str(s).ok());
+        let runtime_session_id = frame.first_runtime_session_id();
 
         let procedure_ref = frame.procedure_id.map(AgentProcedureRef::ById);
 
@@ -127,7 +117,6 @@ impl RuntimeLaunchRequest {
             .and_then(|vfs| vfs.default_mount())
             .map(|mount| PathBuf::from(mount.root_ref.trim()))
             .filter(|path| !path.as_os_str().is_empty());
-
         Self {
             agent_id: frame.agent_id,
             frame_id: frame.id,
@@ -262,7 +251,8 @@ mod tests {
         frame.context_slice_json = Some(serde_json::json!({"project": "demo"}));
         frame.vfs_surface_json = Some(serde_json::json!({"mounts": []}));
         frame.mcp_surface_json = Some(serde_json::json!({"servers": []}));
-        frame.runtime_session_refs_json = Some(serde_json::json!([session_id.to_string()]));
+        frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json([session_id.to_string()]);
 
         let request = RuntimeLaunchRequest::from_frame(&frame);
 
@@ -271,7 +261,7 @@ mod tests {
         assert_eq!(request.frame_revision, 3);
         assert_eq!(request.graph_instance_id, Some(gi_id));
         assert_eq!(request.activity_key.as_deref(), Some("implement"));
-        assert_eq!(request.runtime_session_id, Some(session_id));
+        assert_eq!(request.runtime_session_id, Some(session_id.to_string()));
         assert!(matches!(
             request.procedure_ref,
             Some(AgentProcedureRef::ById(id)) if id == proc_id
@@ -320,10 +310,10 @@ mod tests {
         let s2 = Uuid::new_v4();
         let mut frame = AgentFrame::new_revision(agent_id, 2, "test");
         frame.runtime_session_refs_json =
-            Some(serde_json::json!([s1.to_string(), s2.to_string()]));
+            AgentFrame::runtime_session_refs_json([s1.to_string(), s2.to_string()]);
 
         let request = RuntimeLaunchRequest::from_frame(&frame);
-        assert_eq!(request.runtime_session_id, Some(s1));
+        assert_eq!(request.runtime_session_id, Some(s1.to_string()));
     }
 
     #[test]
@@ -335,7 +325,10 @@ mod tests {
 
         let request = RuntimeLaunchRequest::from_frame(&frame);
         assert_eq!(
-            request.executor_config.as_ref().map(|c| c.executor.as_str()),
+            request
+                .executor_config
+                .as_ref()
+                .map(|c| c.executor.as_str()),
             Some("PI_AGENT")
         );
     }

@@ -43,8 +43,10 @@ interface ProjectAgentEntity {
   id: string;
 }
 
-interface OpenProjectAgentSessionResult {
-  session_id: string;
+interface ProjectAgentLaunchResult {
+  runtime_session_ref?: {
+    runtime_session_id?: string;
+  };
 }
 
 interface PackResult {
@@ -169,18 +171,19 @@ async function createProjectAgent(
   return (await resp.json()) as ProjectAgentEntity;
 }
 
-async function openProjectAgentSession(
+async function launchProjectAgentRuntime(
   request: APIRequestContext,
   projectId: string,
   agentId: string,
 ): Promise<string> {
-  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/agents/${agentId}/session?force_new=true`, {
+  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/agents/${agentId}/launch`, {
     data: {},
   });
   expect(resp.ok()).toBeTruthy();
-  const result = (await resp.json()) as OpenProjectAgentSessionResult;
-  expect(result.session_id).not.toBe("");
-  return result.session_id;
+  const result = (await resp.json()) as ProjectAgentLaunchResult;
+  const sessionId = result.runtime_session_ref?.runtime_session_id ?? "";
+  expect(sessionId).not.toBe("");
+  return sessionId;
 }
 
 async function packLocalHello(): Promise<PackResult> {
@@ -284,7 +287,7 @@ test("Local Hello packaged archive 可安装并通过 WorkspacePanel 调用本�
   const workspace = await createWorkspace(request, project.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
   const agent = await createProjectAgent(request, project.id, suffix);
-  const sessionId = await openProjectAgentSession(request, project.id, agent.id);
+  const sessionId = await launchProjectAgentRuntime(request, project.id, agent.id);
 
   await uploadAndInstallArchive(request, project.id, packed);
   await waitForExtensionProjection(request, project.id);

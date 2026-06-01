@@ -1,6 +1,5 @@
-﻿use agentdash_spi::hooks::{
-    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource,
-    SharedHookRuntime,
+use agentdash_spi::hooks::{
+    ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource, SharedHookRuntime,
 };
 
 pub(crate) trait ContextFramePayload {

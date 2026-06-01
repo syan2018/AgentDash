@@ -34,7 +34,6 @@ pub use persistence::postgres::PostgresProjectRepository;
 pub use persistence::postgres::PostgresProjectVfsMountRepository;
 pub use persistence::postgres::PostgresRoutineExecutionRepository;
 pub use persistence::postgres::PostgresRoutineRepository;
-pub use persistence::postgres::PostgresRunLinkRepository;
 pub use persistence::postgres::PostgresRuntimeHealthRepository;
 pub use persistence::postgres::PostgresSessionRepository;
 pub use persistence::postgres::PostgresSettingsRepository;

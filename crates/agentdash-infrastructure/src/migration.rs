@@ -20,7 +20,6 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
     "inline_fs_files",
     "lifecycle_agents",
     "lifecycle_gates",
-    "lifecycle_run_links",
     "lifecycle_runs",
     "lifecycle_subject_associations",
     "lifecycle_workflow_instances",

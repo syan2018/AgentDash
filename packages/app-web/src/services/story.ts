@@ -1,5 +1,5 @@
 /**
- * Story / Task / StorySession service 层。
+ * Story / Task service 层。
  *
  * 收口 story 相关的 api.client 调用与后端 JSON ↔ 前端类型的 mapper。
  * storyStore 只消费此层导出的函数，不直连 api。
@@ -12,14 +12,10 @@ import type {
   ContextContainerDefinition,
   ContextSourceRef,
   ExecutionVfs,
-  ResolvedVfsSurface,
   SessionComposition,
-  SessionContextSnapshot,
   Story,
   StoryContext,
   StorySessionInfo,
-  StoryRunsResponse,
-  StoryRunOverviewDto,
   Task,
 } from "../types";
 import { isThinkingLevel } from "../types";
@@ -205,7 +201,6 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     project_id: requireStringField(raw, "project_id"),
     story_id: requireStringField(raw, "story_id"),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : null,
-    lifecycle_step_key: raw.lifecycle_step_key ? String(raw.lifecycle_step_key) : null,
     title: requireStringField(raw, "title"),
     description: raw.description ? String(raw.description) : "",
     status: normalizeTaskStatus(requireStringField(raw, "status")),
@@ -227,23 +222,6 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     updated_at: requireStringField(raw, "updated_at"),
   };
 };
-
-/** Story 级会话绑定条目（替代已移除的 SessionBinding） */
-export interface StorySessionEntry {
-  id: string;
-  session_id: string;
-  label: string;
-  session_title?: string;
-  session_updated_at?: number;
-}
-
-const mapStorySessionEntry = (raw: Record<string, unknown>): StorySessionEntry => ({
-  id: requireStringField(raw, "id"),
-  session_id: requireStringField(raw, "session_id"),
-  label: requireStringField(raw, "label"),
-  session_title: raw.session_title != null ? String(raw.session_title) : undefined,
-  session_updated_at: raw.session_updated_at != null ? Number(raw.session_updated_at) : undefined,
-});
 
 const requireStorySessionField = (raw: Record<string, unknown>, field: string): string => {
   const value = raw[field];
@@ -363,7 +341,6 @@ export interface CreateTaskPayload {
   title: string;
   description?: string;
   workspace_id?: string | null;
-  lifecycle_step_key?: string | null;
   agent_binding?: AgentBinding;
 }
 
@@ -376,7 +353,6 @@ export interface UpdateTaskPayload {
   title?: string;
   description?: string;
   workspace_id?: string | null;
-  lifecycle_step_key?: string | null;
   agent_binding?: AgentBinding;
 }
 
@@ -422,47 +398,6 @@ export async function deleteTask(taskId: string): Promise<void> {
 export async function fetchTasks(storyId: string): Promise<Task[]> {
   const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/tasks`);
   return response.map(mapTask);
-}
-
-export interface TaskSessionPayload {
-  task_id: string;
-  workspace_id: string | null;
-  session_id: string | null;
-  task_status: Task["status"];
-  agent_binding: AgentBinding;
-  session_title: string | null;
-  last_activity: number | null;
-  vfs: ExecutionVfs | null;
-  runtime_surface: ResolvedVfsSurface | null;
-  context_snapshot: SessionContextSnapshot | null;
-}
-
-export async function fetchTaskSession(taskId: string): Promise<TaskSessionPayload> {
-  const raw = await api.get<Record<string, unknown>>(`/tasks/${taskId}/session`);
-  return {
-    task_id: requireStringField(raw, "task_id"),
-    workspace_id: readNullableStringField(raw, "workspace_id"),
-    session_id: readNullableStringField(raw, "session_id"),
-    task_status: normalizeTaskStatus(requireStringField(raw, "task_status")),
-    agent_binding: mapAgentBinding(raw.agent_binding),
-    session_title: readNullableStringField(raw, "session_title"),
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ExecutionVfs) ?? null,
-    runtime_surface: (raw.runtime_surface as ResolvedVfsSurface | undefined) ?? null,
-    context_snapshot: (raw.context_snapshot as SessionContextSnapshot) ?? null,
-  };
-}
-
-// ─── Story Runs API (run-oriented) ───────────────────────
-
-export async function fetchStoryRuns(storyId: string): Promise<StoryRunOverviewDto[]> {
-  const response = await api.get<StoryRunsResponse>(`/stories/${storyId}/runs`);
-  return response.runs;
-}
-
-export async function fetchActiveStoryRun(storyId: string): Promise<StoryRunOverviewDto | null> {
-  const response = await api.get<StoryRunOverviewDto | null>(`/stories/${storyId}/runs/active`);
-  return response;
 }
 
 // ─── Story Session API (runtime trace 查询) ──────────────────────────────

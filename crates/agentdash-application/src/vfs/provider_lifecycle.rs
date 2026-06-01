@@ -886,7 +886,6 @@ mod tests {
                 .collect())
         }
 
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut guard = self.runs.lock().unwrap();
             if let Some(existing) = guard.iter_mut().find(|existing| existing.id == run.id) {
@@ -1189,13 +1188,8 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = LifecycleRun::new_activity(
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Some("sess-root".to_string()),
-            activity_state,
-        )
-        .expect("run");
+        let run = LifecycleRun::new_activity(Uuid::new_v4(), Uuid::new_v4(), activity_state)
+            .expect("run");
         run_repo.create(&run).await.expect("store run");
 
         persistence

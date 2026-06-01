@@ -16,9 +16,7 @@ use agentdash_domain::shared_library::{
     LibraryAssetSource, LibraryAssetType, McpServerTemplatePayload, SkillTemplateFilePayload,
     SkillTemplatePayload, VfsMountTemplatePayload,
 };
-use agentdash_domain::workflow::{
-    ActivityExecutorSpec, WorkflowGraph, AgentProcedure,
-};
+use agentdash_domain::workflow::{ActivityExecutorSpec, AgentProcedure, WorkflowGraph};
 
 use crate::repository_set::RepositorySet;
 use crate::shared_library::seed_digest;

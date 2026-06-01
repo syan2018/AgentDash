@@ -10,7 +10,7 @@ describe("workflow service mappers", () => {
       key: "builtin_workflow_admin_apply",
       name: "Workflow Admin / Apply",
       description: "",
-      binding_kinds: ["project"],
+      target_kinds: ["project"],
       source: "builtin_seed",
       version: 1,
       contract: {
@@ -46,7 +46,7 @@ describe("workflow service mappers", () => {
       key: "builtin_workflow_admin",
       name: "Workflow Admin",
       description: "",
-      binding_kinds: ["project"],
+      target_kinds: ["project"],
       source: "builtin_seed",
       version: 3,
       entry_activity_key: "plan",

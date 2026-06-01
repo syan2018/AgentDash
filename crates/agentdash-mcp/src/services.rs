@@ -3,7 +3,7 @@ use std::sync::Arc;
 use agentdash_domain::{
     project::ProjectRepository,
     story::{StateChangeRepository, StoryRepository},
-    workflow::{WorkflowGraphRepository, AgentProcedureRepository},
+    workflow::{AgentProcedureRepository, WorkflowGraphRepository},
     workspace::WorkspaceRepository,
 };
 

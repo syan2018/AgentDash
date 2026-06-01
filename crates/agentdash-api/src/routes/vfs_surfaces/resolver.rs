@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentdash_application::session::construction_planner::SessionConstructionPlanner;
+use agentdash_application::session::construction_planner::RuntimeContextInspectionPlanner;
 use agentdash_application::vfs::{
     ResolvedVfsSurface, ResolvedVfsSurfaceSource, SessionMountTarget,
     build_project_agent_knowledge_vfs, build_project_skill_asset_management_mount,
@@ -42,7 +42,7 @@ pub(crate) async fn resolve_surface_bundle(
                 load_project_with_permission(state.as_ref(), current_user, *project_id, permission)
                     .await?;
             let workspace =
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                RuntimeContextInspectionPlanner::resolve_project_workspace(&state.repos, &project)
                     .await
                     .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
@@ -76,7 +76,7 @@ pub(crate) async fn resolve_surface_bundle(
                 ));
             }
             let workspace =
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                RuntimeContextInspectionPlanner::resolve_project_workspace(&state.repos, &project)
                     .await
                     .map_err(ApiError::Internal)?;
             let project_vfs_mounts = load_project_vfs_mounts(state, project.id).await?;
@@ -117,7 +117,7 @@ pub(crate) async fn resolve_surface_bundle(
                     .await
                     .map_err(ApiError::from)?
             } else {
-                SessionConstructionPlanner::resolve_project_workspace(&state.repos, &project)
+                RuntimeContextInspectionPlanner::resolve_project_workspace(&state.repos, &project)
                     .await
                     .map_err(ApiError::Internal)?
             };

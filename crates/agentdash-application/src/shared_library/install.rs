@@ -564,11 +564,7 @@ async fn install_workflow_template(
         .await?;
 
     Ok(InstallLibraryAssetOutput::WorkflowTemplate {
-        workflow_ids: result
-            .procedures
-            .iter()
-            .map(|p| p.id)
-            .collect(),
+        workflow_ids: result.procedures.iter().map(|p| p.id).collect(),
         lifecycle_id: result.graph.id,
     })
 }

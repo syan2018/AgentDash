@@ -9,8 +9,8 @@ use agentdash_domain::workflow::{
 
 use crate::repository_set::RepositorySet;
 use crate::task::lock::TaskLockMap;
-use crate::workflow::dispatch_service::LifecycleDispatchService;
 use crate::workflow::WorkflowApplicationError;
+use crate::workflow::dispatch_service::LifecycleDispatchService;
 
 use super::execution::*;
 use super::gateway::{get_task as gw_get_task, map_domain_error};
@@ -58,7 +58,10 @@ impl StoryStepActivationService {
             .await
     }
 
-    pub async fn cancel_task(&self, task_id: Uuid) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
+    pub async fn cancel_task(
+        &self,
+        task_id: Uuid,
+    ) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
         self.lock_map
             .with_lock(task_id, || async { self.cancel_task_inner(task_id).await })
             .await
@@ -72,12 +75,18 @@ impl StoryStepActivationService {
         let task = gw_get_task(&self.repos, task_id).await?;
         let refs = self.resolve_task_execution_refs(task_id).await?;
 
-        let (execution_status, agent_ref, run_ref, frame_ref, trace_ref) =
-            if let Some(refs) = refs {
-                (Some("active".to_string()), Some(refs.agent_id), Some(refs.run_id), refs.frame_id, None)
-            } else {
-                (None, None, None, None, None)
-            };
+        let (execution_status, agent_ref, run_ref, frame_ref, trace_ref) = if let Some(refs) = refs
+        {
+            (
+                Some("active".to_string()),
+                Some(refs.agent_id),
+                Some(refs.run_id),
+                refs.frame_id,
+                None,
+            )
+        } else {
+            (None, None, None, None, None)
+        };
 
         Ok(TaskExecutionView {
             task_id: task.id,
@@ -143,9 +152,7 @@ impl StoryStepActivationService {
             .resolve_task_execution_refs(task.id)
             .await?
             .ok_or_else(|| {
-                TaskExecutionError::UnprocessableEntity(
-                    "Task 尚未启动，请先执行 start".into(),
-                )
+                TaskExecutionError::UnprocessableEntity("Task 尚未启动，请先执行 start".into())
             })?;
 
         let intent = ExecutionIntent {
@@ -176,7 +183,10 @@ impl StoryStepActivationService {
         })
     }
 
-    async fn cancel_task_inner(&self, task_id: Uuid) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
+    async fn cancel_task_inner(
+        &self,
+        task_id: Uuid,
+    ) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
         let task = gw_get_task(&self.repos, task_id).await?;
 
         let refs = self
@@ -195,12 +205,8 @@ impl StoryStepActivationService {
             .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
 
         if let Some(frame) = frame {
-            if let Some(refs_json) = &frame.runtime_session_refs_json {
-                if let Some(arr) = refs_json.as_array() {
-                    if let Some(first) = arr.first().and_then(|v| v.as_str()) {
-                        self.dispatcher.cancel_session(first).await?;
-                    }
-                }
+            if let Some(session_id) = frame.first_runtime_session_id() {
+                self.dispatcher.cancel_session(&session_id).await?;
             }
         }
 
@@ -222,21 +228,31 @@ impl StoryStepActivationService {
             .await
             .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
 
-        let Some(assoc) = associations.first() else {
+        let Some(assoc) = associations
+            .iter()
+            .find(|assoc| assoc.anchor_agent_id.is_some())
+            .or_else(|| associations.first())
+        else {
             return Ok(None);
         };
 
-        // 从 association 获取 run_id，再查找 active agent
         let run_id = assoc.anchor_run_id;
-        let agents = self
-            .repos
-            .lifecycle_agent_repo
-            .list_by_run(run_id)
-            .await
-            .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
-
-        let active_agent = agents.into_iter().find(|a| a.status == "active");
-        let Some(agent) = active_agent else {
+        let agent = if let Some(agent_id) = assoc.anchor_agent_id {
+            self.repos
+                .lifecycle_agent_repo
+                .get(agent_id)
+                .await
+                .map_err(|e| TaskExecutionError::Internal(e.to_string()))?
+        } else {
+            self.repos
+                .lifecycle_agent_repo
+                .list_by_run(run_id)
+                .await
+                .map_err(|e| TaskExecutionError::Internal(e.to_string()))?
+                .into_iter()
+                .find(|a| a.status == "active")
+        };
+        let Some(agent) = agent else {
             return Ok(None);
         };
 
@@ -262,9 +278,13 @@ impl StoryStepActivationService {
             self.repos.lifecycle_subject_association_repo.as_ref(),
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
-        );
+        )
+        .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
-        dispatch_service.dispatch(intent).await.map_err(map_workflow_error)
+        dispatch_service
+            .dispatch(intent)
+            .await
+            .map_err(map_workflow_error)
     }
 }
 

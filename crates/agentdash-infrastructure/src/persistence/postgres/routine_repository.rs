@@ -217,7 +217,11 @@ impl TryFrom<ExecutionRow> for RoutineExecution {
     type Error = DomainError;
 
     fn try_from(row: ExecutionRow) -> Result<Self, Self::Error> {
-        let dispatch_refs = match (row.dispatch_run_id, row.dispatch_agent_id, row.dispatch_frame_id) {
+        let dispatch_refs = match (
+            row.dispatch_run_id,
+            row.dispatch_agent_id,
+            row.dispatch_frame_id,
+        ) {
             (Some(run_id), Some(agent_id), Some(frame_id)) => Some(RoutineDispatchRefs {
                 run_id: parse_uuid(&run_id, "routine_executions.dispatch_run_id")?,
                 agent_id: parse_uuid(&agent_id, "routine_executions.dispatch_agent_id")?,

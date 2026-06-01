@@ -10,7 +10,9 @@ use crate::canvas::append_visible_canvas_mounts;
 use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
-use crate::session::construction::SessionConstructionPlan;
+#[cfg(test)]
+use crate::session::construction::RuntimeContextInspectionPlan;
+#[cfg(test)]
 use crate::session::context::apply_workspace_defaults;
 use crate::session::types::UserPromptInput;
 use crate::vfs::build_lifecycle_mount_with_ports;
@@ -30,10 +32,11 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 ///
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
+#[cfg(test)]
 pub(crate) fn apply_session_assembly(
-    mut plan: SessionConstructionPlan,
+    mut plan: RuntimeContextInspectionPlan,
     prepared: SessionAssemblyBuilder,
-) -> SessionConstructionPlan {
+) -> RuntimeContextInspectionPlan {
     if let Some(blocks) = prepared.prompt_blocks {
         plan.prompt.prompt_blocks = Some(blocks);
     }
@@ -363,13 +366,16 @@ pub(super) fn slice_companion_bundle(
 
 /// 将 `SessionAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
 ///
-/// 替代 `apply_session_assembly`（合入 SessionConstructionPlan）的新路径。
+/// 替代 `apply_session_assembly`（合入 RuntimeContextInspectionPlan）的新路径。
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
 pub(super) fn project_assembly_to_frame(
     mut frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     prepared: SessionAssemblyBuilder,
-) -> (crate::workflow::frame_builder::AgentFrameBuilder, AssemblyLaunchExtras) {
+) -> (
+    crate::workflow::frame_builder::AgentFrameBuilder,
+    AssemblyLaunchExtras,
+) {
     if let Some(ref state) = prepared.capability_state {
         frame_builder = frame_builder.with_capability_state(state);
     }
@@ -382,7 +388,14 @@ pub(super) fn project_assembly_to_frame(
     if let Some(ref config) = prepared.executor_config {
         frame_builder = frame_builder.with_execution_profile(config);
     }
-
+    if let Some(ref bundle) = prepared.context_bundle {
+        frame_builder = frame_builder.with_context(serde_json::json!({
+            "bundle_id": bundle.bundle_id,
+            "session_id": bundle.session_id,
+            "phase_tag": bundle.phase_tag,
+            "fragment_count": bundle.bootstrap_fragments.len(),
+        }));
+    }
     let extras = AssemblyLaunchExtras {
         context_bundle: prepared.context_bundle,
         prompt_blocks: prepared.prompt_blocks,
@@ -400,7 +413,7 @@ pub(super) fn project_assembly_to_frame(
 /// `project_assembly_to_frame` 的 launch-only 输出。
 ///
 /// 这些数据不写入 AgentFrame，而是传递给 RuntimeLaunchRequest 或 launch pipeline。
-pub(super) struct AssemblyLaunchExtras {
+pub struct AssemblyLaunchExtras {
     pub context_bundle: Option<SessionContextBundle>,
     pub prompt_blocks: Option<Vec<serde_json::Value>>,
     pub executor_config: Option<AgentConfig>,

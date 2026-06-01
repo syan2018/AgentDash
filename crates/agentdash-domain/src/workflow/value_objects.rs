@@ -37,7 +37,7 @@ pub use run_state::{
 };
 
 #[cfg(test)]
-use super::validation::{validate_workflow_graph, validate_agent_procedure};
+use super::validation::{validate_agent_procedure, validate_workflow_graph};
 
 #[cfg(test)]
 mod tests {
@@ -220,14 +220,8 @@ mod tests {
             },
         ];
 
-        validate_workflow_graph(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect("approval loop should be bounded by typed decision and retry policy");
+        validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect("approval loop should be bounded by typed decision and retry policy");
     }
 
     #[test]
@@ -250,14 +244,8 @@ mod tests {
             max_traversals: None,
         }];
 
-        let err = validate_workflow_graph(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("missing output port should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("missing output port should fail");
         assert!(err.contains("from_port"));
     }
 
@@ -293,14 +281,8 @@ mod tests {
             },
         ];
 
-        let err = validate_workflow_graph(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("unbounded loop should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("unbounded loop should fail");
         assert!(err.contains("循环 transition"));
     }
 
@@ -320,14 +302,8 @@ mod tests {
             max_traversals: Some(3),
         }];
 
-        let err = validate_workflow_graph(
-            "lc",
-            "Lifecycle",
-            "plan",
-            &activities,
-            &transitions,
-        )
-        .expect_err("unconditional self loop should fail");
+        let err = validate_workflow_graph("lc", "Lifecycle", "plan", &activities, &transitions)
+            .expect_err("unconditional self loop should fail");
         assert!(err.contains("无条件自环"));
     }
 

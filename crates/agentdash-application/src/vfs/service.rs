@@ -649,13 +649,11 @@ impl VfsService {
             ctx: &ctx,
         };
         match crate::vfs::apply_patch_to_target(&target, patch).await {
-            Ok(result) => {
-                Ok(ApplyPatchResult {
-                    added: result.added,
-                    modified: result.modified,
-                    deleted: result.deleted,
-                })
-            }
+            Ok(result) => Ok(ApplyPatchResult {
+                added: result.added,
+                modified: result.modified,
+                deleted: result.deleted,
+            }),
             Err(crate::vfs::ApplyPatchError::Capabilities(cap_error)) => {
                 let request = ApplyPatchRequest {
                     patch: patch.to_string(),

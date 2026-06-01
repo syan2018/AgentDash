@@ -52,8 +52,10 @@ interface ProjectAgentEntity {
   id: string;
 }
 
-interface OpenProjectAgentSessionResult {
-  session_id: string;
+interface ProjectAgentLaunchResult {
+  runtime_session_ref?: {
+    runtime_session_id?: string;
+  };
 }
 
 interface PackResult {
@@ -172,19 +174,19 @@ async function createProjectAgent(
   return (await resp.json()) as ProjectAgentEntity;
 }
 
-async function openProjectAgentSession(
+async function launchProjectAgentRuntime(
   request: APIRequestContext,
   projectId: string,
   agentId: string,
 ): Promise<string> {
-  const resp = await request.post(
-    `${API_ORIGIN}/projects/${projectId}/agents/${agentId}/session?force_new=true`,
-    { data: {} },
-  );
+  const resp = await request.post(`${API_ORIGIN}/projects/${projectId}/agents/${agentId}/launch`, {
+    data: {},
+  });
   expect(resp.ok(), await resp.text()).toBeTruthy();
-  const result = (await resp.json()) as OpenProjectAgentSessionResult;
-  expect(result.session_id).not.toBe("");
-  return result.session_id;
+  const result = (await resp.json()) as ProjectAgentLaunchResult;
+  const sessionId = result.runtime_session_ref?.runtime_session_id ?? "";
+  expect(sessionId).not.toBe("");
+  return sessionId;
 }
 
 async function packLocalHello(): Promise<PackResult> {
@@ -242,7 +244,7 @@ test("Local Hello 归档可在 Assets 面板上传/安装/卸载", async ({ page
   await updateProjectDefaultWorkspace(request, project, workspace.id);
   // 准备一个 session，用于 AddTabMenu 子断言（projection -> workspace tab catalog）。
   const agent = await createProjectAgent(request, project.id, suffix);
-  const sessionId = await openProjectAgentSession(request, project.id, agent.id);
+  const sessionId = await launchProjectAgentRuntime(request, project.id, agent.id);
 
   // Step 1：进入 Extension 类目。Assets 页 useProjectStore.fetchProjects() 会
   // 自动选中第一个 Project；本测试串行运行所以新建的 project 即第一个候选。

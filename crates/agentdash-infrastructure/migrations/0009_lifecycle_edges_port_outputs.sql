@@ -1,2 +1,2 @@
-ALTER TABLE lifecycle_definitions ADD COLUMN IF NOT EXISTS edges TEXT NOT NULL DEFAULT '[]';
-ALTER TABLE lifecycle_runs ADD COLUMN IF NOT EXISTS port_outputs TEXT NOT NULL DEFAULT '{}';
+-- Workflow graphs start with activity nodes and transitions in the clean baseline.
+-- Keep this historical version id as a no-op so migration ordering remains stable.

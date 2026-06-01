@@ -237,7 +237,9 @@ pub enum SessionBootstrapState {
     Bootstrapped,
 }
 
-#[deprecated(note = "companion 控制面已迁移到 LifecycleGate + AgentLineage；此类型仅保留向后反序列化兼容")]
+#[deprecated(
+    note = "companion 控制面已迁移到 LifecycleGate + AgentLineage；此类型仅保留向后反序列化兼容"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompanionSessionContext {

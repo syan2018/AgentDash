@@ -1,1 +1,2 @@
-ALTER TABLE lifecycle_definitions RENAME TO workflow_graphs;
+-- Workflow graphs are created under their target table name in the clean baseline.
+-- Keep this historical version id as a no-op so migration ordering remains stable.

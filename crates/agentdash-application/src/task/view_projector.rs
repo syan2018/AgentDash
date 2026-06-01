@@ -8,7 +8,7 @@
 //!
 //! 投影匹配策略（B5a）：
 //! 通过 `LifecycleSubjectAssociation(subject_kind=task, subject_id=task_id)`
-//! 关联 run → activity state，不再使用 `Task.lifecycle_step_key`。
+//! 关联 run → activity state。
 //!
 //! 1. 遍历所有 project 的 active LifecycleRun
 //! 2. 通过 `LifecycleSubjectAssociation` 找到 task_id → run 的映射
@@ -63,9 +63,7 @@ pub async fn project_task_views_on_boot(
             }
 
             // 查找该 run 下所有 task subject associations
-            let run_associations = association_repo
-                .list_by_anchor(run.id, None)
-                .await?;
+            let run_associations = association_repo.list_by_anchor(run.id, None).await?;
 
             let task_associations: Vec<_> = run_associations
                 .into_iter()
@@ -275,7 +273,13 @@ mod tests {
             Ok(())
         }
         async fn get_by_id(&self, id: Uuid) -> Result<Option<Project>, DomainError> {
-            Ok(self.projects.lock().unwrap().iter().find(|p| p.id == id).cloned())
+            Ok(self
+                .projects
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.id == id)
+                .cloned())
         }
         async fn list_all(&self) -> Result<Vec<Project>, DomainError> {
             Ok(self.projects.lock().unwrap().clone())
@@ -291,13 +295,24 @@ mod tests {
             self.projects.lock().unwrap().retain(|p| p.id != id);
             Ok(())
         }
-        async fn list_subject_grants(&self, _project_id: Uuid) -> Result<Vec<ProjectSubjectGrant>, DomainError> {
+        async fn list_subject_grants(
+            &self,
+            _project_id: Uuid,
+        ) -> Result<Vec<ProjectSubjectGrant>, DomainError> {
             Ok(vec![])
         }
-        async fn upsert_subject_grant(&self, _grant: &ProjectSubjectGrant) -> Result<(), DomainError> {
+        async fn upsert_subject_grant(
+            &self,
+            _grant: &ProjectSubjectGrant,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
-        async fn delete_subject_grant(&self, _project_id: Uuid, _subject_type: ProjectSubjectType, _subject_id: &str) -> Result<(), DomainError> {
+        async fn delete_subject_grant(
+            &self,
+            _project_id: Uuid,
+            _subject_type: ProjectSubjectType,
+            _subject_id: &str,
+        ) -> Result<(), DomainError> {
             Ok(())
         }
     }
@@ -313,10 +328,23 @@ mod tests {
             Ok(())
         }
         async fn get_by_id(&self, id: Uuid) -> Result<Option<Story>, DomainError> {
-            Ok(self.stories.lock().unwrap().iter().find(|s| s.id == id).cloned())
+            Ok(self
+                .stories
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.id == id)
+                .cloned())
         }
         async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<Story>, DomainError> {
-            Ok(self.stories.lock().unwrap().iter().filter(|s| s.project_id == project_id).cloned().collect())
+            Ok(self
+                .stories
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.project_id == project_id)
+                .cloned()
+                .collect())
         }
         async fn update(&self, story: &Story) -> Result<(), DomainError> {
             let mut guard = self.stories.lock().unwrap();
@@ -330,7 +358,13 @@ mod tests {
             Ok(())
         }
         async fn find_by_task_id(&self, task_id: Uuid) -> Result<Option<Story>, DomainError> {
-            Ok(self.stories.lock().unwrap().iter().find(|s| s.tasks.iter().any(|t| t.id == task_id)).cloned())
+            Ok(self
+                .stories
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|s| s.tasks.iter().any(|t| t.id == task_id))
+                .cloned())
         }
     }
 
@@ -340,12 +374,39 @@ mod tests {
 
     #[async_trait]
     impl StateChangeRepository for InMemoryStateChangeRepo {
-        async fn get_changes_since(&self, _since_id: i64, _limit: i64) -> Result<Vec<StateChange>, DomainError> { Ok(vec![]) }
-        async fn get_changes_since_by_project(&self, _project_id: Uuid, _since_id: i64, _limit: i64) -> Result<Vec<StateChange>, DomainError> { Ok(vec![]) }
-        async fn latest_event_id(&self) -> Result<i64, DomainError> { Ok(0) }
-        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> { Ok(0) }
-        async fn append_change(&self, project_id: Uuid, entity_id: Uuid, kind: ChangeKind, _payload: serde_json::Value, _backend_id: Option<&str>) -> Result<(), DomainError> {
-            self.changes.lock().unwrap().push((project_id, entity_id, kind));
+        async fn get_changes_since(
+            &self,
+            _since_id: i64,
+            _limit: i64,
+        ) -> Result<Vec<StateChange>, DomainError> {
+            Ok(vec![])
+        }
+        async fn get_changes_since_by_project(
+            &self,
+            _project_id: Uuid,
+            _since_id: i64,
+            _limit: i64,
+        ) -> Result<Vec<StateChange>, DomainError> {
+            Ok(vec![])
+        }
+        async fn latest_event_id(&self) -> Result<i64, DomainError> {
+            Ok(0)
+        }
+        async fn latest_event_id_by_project(&self, _project_id: Uuid) -> Result<i64, DomainError> {
+            Ok(0)
+        }
+        async fn append_change(
+            &self,
+            project_id: Uuid,
+            entity_id: Uuid,
+            kind: ChangeKind,
+            _payload: serde_json::Value,
+            _backend_id: Option<&str>,
+        ) -> Result<(), DomainError> {
+            self.changes
+                .lock()
+                .unwrap()
+                .push((project_id, entity_id, kind));
             Ok(())
         }
     }
@@ -356,13 +417,66 @@ mod tests {
 
     #[async_trait]
     impl LifecycleRunRepository for InMemoryLifecycleRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> { self.runs.lock().unwrap().push(run.clone()); Ok(()) }
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().find(|r| r.id == id).cloned()) }
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect()) }
-        async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| r.project_id == project_id).cloned().collect()) }
-        async fn list_by_lifecycle(&self, lifecycle_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| r.lifecycle_id == lifecycle_id).cloned().collect()) }
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> { let mut guard = self.runs.lock().unwrap(); if let Some(existing) = guard.iter_mut().find(|r| r.id == run.id) { *existing = run.clone(); } Ok(()) }
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> { self.runs.lock().unwrap().retain(|r| r.id != id); Ok(()) }
+        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().push(run.clone());
+            Ok(())
+        }
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.id == id)
+                .cloned())
+        }
+        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| ids.contains(&r.id))
+                .cloned()
+                .collect())
+        }
+        async fn list_by_project(
+            &self,
+            project_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.project_id == project_id)
+                .cloned()
+                .collect())
+        }
+        async fn list_by_lifecycle(
+            &self,
+            lifecycle_id: Uuid,
+        ) -> Result<Vec<LifecycleRun>, DomainError> {
+            Ok(self
+                .runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.lifecycle_id == lifecycle_id)
+                .cloned()
+                .collect())
+        }
+        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
+            let mut guard = self.runs.lock().unwrap();
+            if let Some(existing) = guard.iter_mut().find(|r| r.id == run.id) {
+                *existing = run.clone();
+            }
+            Ok(())
+        }
+        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
+            self.runs.lock().unwrap().retain(|r| r.id != id);
+            Ok(())
+        }
     }
 
     struct InMemorySubjectAssociationRepo {
@@ -375,11 +489,32 @@ mod tests {
             self.associations.lock().unwrap().push(assoc.clone());
             Ok(())
         }
-        async fn list_by_subject(&self, subject: &SubjectRef) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(self.associations.lock().unwrap().iter().filter(|a| a.subject_kind == subject.kind && a.subject_id == subject.id).cloned().collect())
+        async fn list_by_subject(
+            &self,
+            subject: &SubjectRef,
+        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+            Ok(self
+                .associations
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.subject_kind == subject.kind && a.subject_id == subject.id)
+                .cloned()
+                .collect())
         }
-        async fn list_by_anchor(&self, run_id: Uuid, agent_id: Option<Uuid>) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
-            Ok(self.associations.lock().unwrap().iter().filter(|a| a.anchor_run_id == run_id && a.anchor_agent_id == agent_id).cloned().collect())
+        async fn list_by_anchor(
+            &self,
+            run_id: Uuid,
+            agent_id: Option<Uuid>,
+        ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError> {
+            Ok(self
+                .associations
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.anchor_run_id == run_id && a.anchor_agent_id == agent_id)
+                .cloned()
+                .collect())
         }
         async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
             self.associations.lock().unwrap().retain(|a| a.id != id);
@@ -392,7 +527,7 @@ mod tests {
     fn make_run_with_activity_status(
         project_id: Uuid,
         lifecycle_id: Uuid,
-        session_id: &str,
+        _session_id: &str,
         activity_key: &str,
         target: ActivityAttemptStatus,
     ) -> LifecycleRun {
@@ -411,13 +546,7 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let mut run = LifecycleRun::new_activity(
-            project_id,
-            lifecycle_id,
-            Some(session_id.to_string()),
-            state,
-        )
-        .expect("run");
+        let mut run = LifecycleRun::new_activity(project_id, lifecycle_id, state).expect("run");
         run.status = LifecycleRunStatus::Running;
         run
     }
@@ -445,22 +574,48 @@ mod tests {
 
         let lifecycle_id = Uuid::new_v4();
         let run = make_run_with_activity_status(
-            project_id, lifecycle_id, "sess-boot-running", "only",
+            project_id,
+            lifecycle_id,
+            "sess-boot-running",
+            "only",
             ActivityAttemptStatus::Running,
         );
         let assoc = association_for_task(run.id, task_id);
 
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo { projects: Mutex::new(vec![project]) });
-        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo { stories: Mutex::new(vec![story]) });
-        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo { changes: Mutex::new(Vec::new()) });
-        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> = Arc::new(InMemorySubjectAssociationRepo { associations: Mutex::new(vec![assoc]) });
-        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> = Arc::new(InMemoryLifecycleRunRepo { runs: Mutex::new(vec![run]) });
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![assoc]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![run]),
+            });
 
-        project_task_views_on_boot(&project_repo, &state_change_repo, &story_repo, &association_repo, &lifecycle_run_repo)
-            .await.expect("reconcile ok");
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+        )
+        .await
+        .expect("reconcile ok");
 
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
-        assert_eq!(*after.find_task(task_id).unwrap().status(), TaskStatus::Running, "step=Running → task=Running");
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::Running,
+            "step=Running → task=Running"
+        );
     }
 
     #[tokio::test]
@@ -476,22 +631,47 @@ mod tests {
 
         let lifecycle_id = Uuid::new_v4();
         let run = make_run_with_activity_status(
-            project_id, lifecycle_id, "sess-boot-completed", "only",
+            project_id,
+            lifecycle_id,
+            "sess-boot-completed",
+            "only",
             ActivityAttemptStatus::Completed,
         );
         let assoc = association_for_task(run.id, task_id);
 
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo { projects: Mutex::new(vec![project]) });
-        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo { stories: Mutex::new(vec![story]) });
-        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo { changes: Mutex::new(Vec::new()) });
-        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> = Arc::new(InMemorySubjectAssociationRepo { associations: Mutex::new(vec![assoc]) });
-        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> = Arc::new(InMemoryLifecycleRunRepo { runs: Mutex::new(vec![run]) });
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![assoc]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![run]),
+            });
 
-        project_task_views_on_boot(&project_repo, &state_change_repo, &story_repo, &association_repo, &lifecycle_run_repo)
-            .await.expect("reconcile ok");
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+        )
+        .await
+        .expect("reconcile ok");
 
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
-        assert_eq!(*after.find_task(task_id).unwrap().status(), TaskStatus::AwaitingVerification);
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::AwaitingVerification
+        );
     }
 
     #[tokio::test]
@@ -505,17 +685,40 @@ mod tests {
         story.add_task(task);
         story.force_set_task_status(task_id, TaskStatus::Running);
 
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo { projects: Mutex::new(vec![project]) });
-        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo { stories: Mutex::new(vec![story]) });
-        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo { changes: Mutex::new(Vec::new()) });
-        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> = Arc::new(InMemorySubjectAssociationRepo { associations: Mutex::new(vec![]) });
-        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> = Arc::new(InMemoryLifecycleRunRepo { runs: Mutex::new(vec![]) });
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![]),
+            });
 
-        project_task_views_on_boot(&project_repo, &state_change_repo, &story_repo, &association_repo, &lifecycle_run_repo)
-            .await.expect("reconcile ok");
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+        )
+        .await
+        .expect("reconcile ok");
 
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
-        assert_eq!(*after.find_task(task_id).unwrap().status(), TaskStatus::Failed, "孤儿 Running task → Failed");
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::Failed,
+            "孤儿 Running task → Failed"
+        );
     }
 
     #[tokio::test]
@@ -530,23 +733,49 @@ mod tests {
 
         let lifecycle_id = Uuid::new_v4();
         let mut run = make_run_with_activity_status(
-            project_id, lifecycle_id, "sess-boot-inactive", "only",
+            project_id,
+            lifecycle_id,
+            "sess-boot-inactive",
+            "only",
             ActivityAttemptStatus::Running,
         );
         run.status = LifecycleRunStatus::Completed;
         let assoc = association_for_task(run.id, task_id);
 
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo { projects: Mutex::new(vec![project]) });
-        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo { stories: Mutex::new(vec![story]) });
-        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo { changes: Mutex::new(Vec::new()) });
-        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> = Arc::new(InMemorySubjectAssociationRepo { associations: Mutex::new(vec![assoc]) });
-        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> = Arc::new(InMemoryLifecycleRunRepo { runs: Mutex::new(vec![run]) });
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![assoc]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![run]),
+            });
 
-        project_task_views_on_boot(&project_repo, &state_change_repo, &story_repo, &association_repo, &lifecycle_run_repo)
-            .await.expect("reconcile ok");
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+        )
+        .await
+        .expect("reconcile ok");
 
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
-        assert_eq!(*after.find_task(task_id).unwrap().status(), TaskStatus::Pending, "非活跃 run 不应影响 task 状态");
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::Pending,
+            "非活跃 run 不应影响 task 状态"
+        );
     }
 
     #[tokio::test]
@@ -561,20 +790,46 @@ mod tests {
 
         let lifecycle_id = Uuid::new_v4();
         let run = make_run_with_activity_status(
-            project_id, lifecycle_id, "sess-boot-no-assoc", "only",
+            project_id,
+            lifecycle_id,
+            "sess-boot-no-assoc",
+            "only",
             ActivityAttemptStatus::Running,
         );
 
-        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo { projects: Mutex::new(vec![project]) });
-        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo { stories: Mutex::new(vec![story]) });
-        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo { changes: Mutex::new(Vec::new()) });
-        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> = Arc::new(InMemorySubjectAssociationRepo { associations: Mutex::new(vec![]) });
-        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> = Arc::new(InMemoryLifecycleRunRepo { runs: Mutex::new(vec![run]) });
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![run]),
+            });
 
-        project_task_views_on_boot(&project_repo, &state_change_repo, &story_repo, &association_repo, &lifecycle_run_repo)
-            .await.expect("reconcile ok");
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+        )
+        .await
+        .expect("reconcile ok");
 
         let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
-        assert_eq!(*after.find_task(task_id).unwrap().status(), TaskStatus::Pending, "无 association 的 task 保持原状");
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::Pending,
+            "无 association 的 task 保持原状"
+        );
     }
 }

@@ -10,6 +10,7 @@ pub mod extension_runtime;
 pub mod file_picker;
 pub mod health;
 pub mod identity_directory;
+pub mod lifecycle_views;
 pub mod llm_providers;
 pub mod mcp_presets;
 pub mod me;
@@ -78,6 +79,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(stories::router())
         .merge(story_runs::router())
         .merge(task_execution::router())
+        .merge(lifecycle_views::router())
         .merge(workflows::router())
         .merge(backends::router())
         .merge(settings::router())

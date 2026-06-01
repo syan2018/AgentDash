@@ -1,12 +1,12 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, ActivityExecutionClaimRepository,
-    WorkflowGraphRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
-    AgentProcedureRepository, build_effective_contract,
+    ActivityAttemptStatus, ActivityExecutionClaimRepository, AgentProcedureRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
+    build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -25,9 +25,7 @@ use super::script_engine::HookScriptEngine;
 use super::snapshot_helpers::*;
 use super::workflow_contribution::build_workflow_step_fragments;
 use super::workflow_snapshot::WorkflowSnapshotBuilder;
-use super::{
-    dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source,
-};
+use super::{dedupe_tags, global_builtin_source, workflow_scope_key, workflow_source};
 use crate::ApplicationError;
 
 /// Facade：组合 SessionOwnerResolver + WorkflowSnapshotBuilder + HookScriptEngine，
@@ -51,7 +49,7 @@ impl AppExecutionHookProvider {
         workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
-        lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
+        lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         script_evaluator_factory: F,
     ) -> Self
@@ -65,7 +63,7 @@ impl AppExecutionHookProvider {
             owner_resolver: SessionOwnerResolver::new(
                 project_repo,
                 story_repo,
-                lifecycle_run_link_repo,
+                lifecycle_subject_association_repo,
             ),
             workflow_builder: WorkflowSnapshotBuilder::new(
                 agent_procedure_repo,

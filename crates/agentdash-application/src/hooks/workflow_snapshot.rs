@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, WorkflowGraphRepository,
-    LifecycleRunRepository, AgentProcedureRepository,
+    ActivityExecutionClaimRepository, AgentProcedureRepository, LifecycleRunRepository,
+    WorkflowGraphRepository,
 };
 use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;

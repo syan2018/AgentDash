@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use crate::session::build_hook_trace_envelope;
 use agentdash_agent_protocol::{
@@ -395,7 +395,8 @@ impl CompanionRequestTool {
                 self.repos.lifecycle_subject_association_repo.as_ref(),
                 self.repos.lifecycle_gate_repo.as_ref(),
                 self.repos.agent_lineage_repo.as_ref(),
-            );
+            )
+            .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
             dispatch_svc
                 .dispatch(&intent)
                 .await
@@ -435,9 +436,7 @@ impl CompanionRequestTool {
                 AgentToolError::ExecutionFailed("dispatch 未创建 gate（内部错误）".to_string())
             })?;
 
-            let result_payload = self
-                .poll_gate_until_resolved(gate_id, cancel)
-                .await?;
+            let result_payload = self.poll_gate_until_resolved(gate_id, cancel).await?;
 
             let summary = result_payload
                 .get("summary")
@@ -485,8 +484,10 @@ impl CompanionRequestTool {
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已派发 companion agent（异步）。\n- dispatch_id: {}\n- label: {}\n- agent_ref: {}\n- frame_ref: {}",
-                dispatch_plan.dispatch_id, companion_label,
-                dispatch_result.agent_ref, dispatch_result.frame_ref,
+                dispatch_plan.dispatch_id,
+                companion_label,
+                dispatch_result.agent_ref,
+                dispatch_result.frame_ref,
             ))],
             is_error: false,
             details: Some(serde_json::json!({
@@ -518,9 +519,7 @@ impl CompanionRequestTool {
                 .get(gate_id)
                 .await
                 .map_err(|e| AgentToolError::ExecutionFailed(format!("gate 查询失败: {e}")))?
-                .ok_or_else(|| {
-                    AgentToolError::ExecutionFailed(format!("gate {gate_id} 不存在"))
-                })?;
+                .ok_or_else(|| AgentToolError::ExecutionFailed(format!("gate {gate_id} 不存在")))?;
 
             if !gate.is_open() {
                 return Ok(gate.payload_json.unwrap_or(serde_json::json!({})));
@@ -601,18 +600,9 @@ impl CompanionRequestTool {
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed("parent agent 没有活跃的 frame".to_string())
             })?;
-        let parent_session_id = parent_frame
-            .runtime_session_refs_json
-            .as_ref()
-            .and_then(|v| v.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "parent frame 没有关联的 runtime session".to_string(),
-                )
-            })?;
+        let parent_session_id = parent_frame.first_runtime_session_id().ok_or_else(|| {
+            AgentToolError::ExecutionFailed("parent frame 没有关联的 runtime session".to_string())
+        })?;
 
         let request_id = format!("review-{}", Uuid::new_v4().simple());
         let companion_label = format!("child:{}", child_frame.agent_id);
@@ -741,7 +731,9 @@ impl CompanionRequestTool {
                 "request_type": payload_type,
             });
             let run_id = self.current_run_id.ok_or_else(|| {
-                AgentToolError::ExecutionFailed("缺少 lifecycle run_id，无法创建等待 gate".to_string())
+                AgentToolError::ExecutionFailed(
+                    "缺少 lifecycle run_id，无法创建等待 gate".to_string(),
+                )
             })?;
             let agent_id = self.current_agent_id.ok_or_else(|| {
                 AgentToolError::ExecutionFailed("缺少 agent_id，无法创建等待 gate".to_string())
@@ -802,7 +794,8 @@ impl CompanionRequestTool {
                     ));
                 }
 
-                let g = self.repos
+                let g = self
+                    .repos
                     .lifecycle_gate_repo
                     .get(gate_id)
                     .await
@@ -908,7 +901,6 @@ impl CompanionRequestTool {
         }
     }
 
-
     async fn resolve_companion_agent_config(
         &self,
         hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
@@ -946,7 +938,6 @@ impl CompanionRequestTool {
             available.join(", ")
         )))
     }
-
 }
 
 // ─── companion_respond ──────────────────────────────────────────────
@@ -1308,16 +1299,13 @@ impl CompanionRespondTool {
 
         // Emit notification to parent session (if resolvable)
         if let Some(session_services) = self.session_services_handle.get().await {
-            if let Ok(Some(parent_frame)) =
-                self.repos.agent_frame_repo.get_current(parent_agent_id).await
+            if let Ok(Some(parent_frame)) = self
+                .repos
+                .agent_frame_repo
+                .get_current(parent_agent_id)
+                .await
             {
-                let parent_session_ref = parent_frame
-                    .runtime_session_refs_json
-                    .as_ref()
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                let parent_session_ref = parent_frame.first_runtime_session_id();
                 if let Some(ref parent_sid) = parent_session_ref {
                     let parent_notification = build_companion_event_notification(
                         parent_sid,

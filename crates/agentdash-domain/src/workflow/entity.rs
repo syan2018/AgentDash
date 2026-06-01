@@ -4,12 +4,11 @@ use uuid::Uuid;
 
 use crate::shared_library::InstalledAssetSource;
 
-use super::validation::{validate_workflow_graph, validate_agent_procedure};
+use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
-    LifecycleRunStatus, ValidationIssue, WorkflowContract,
-    WorkflowDefinitionSource,
+    LifecycleRunStatus, ValidationIssue, WorkflowContract, WorkflowDefinitionSource,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,9 +121,7 @@ impl ActivityExecutionClaim {
             claim_id: Uuid::new_v4(),
             executor_kind: executor_kind.into(),
             status: ActivityExecutionClaimStatus::Claiming,
-            idempotency_key: format!(
-                "{run_id}:{graph_instance_id}:{activity_key}:{attempt}"
-            ),
+            idempotency_key: format!("{run_id}:{graph_instance_id}:{activity_key}:{attempt}"),
             executor_run_ref: None,
             created_at: now,
             updated_at: now,
@@ -146,13 +143,7 @@ impl WorkflowGraph {
         let key = key.into();
         let name = name.into();
         let entry_activity_key = entry_activity_key.into();
-        validate_workflow_graph(
-            &key,
-            &name,
-            &entry_activity_key,
-            &activities,
-            &transitions,
-        )?;
+        validate_workflow_graph(&key, &name, &entry_activity_key, &activities, &transitions)?;
 
         let now = Utc::now();
         Ok(Self {

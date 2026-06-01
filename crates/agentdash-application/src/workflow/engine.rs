@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityInputArtifact,
-    WorkflowGraph, ActivityLifecycleRunState, ActivityOutputArtifact,
-    ActivityPortValue, ActivityRunStatus, ActivityTransition, ExecutorRunRef, TransitionCondition,
+    ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue, ActivityRunStatus,
+    ActivityTransition, ExecutorRunRef, TransitionCondition, WorkflowGraph,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -582,10 +582,7 @@ fn expect_status(
     }
 }
 
-fn derive_run_status(
-    definition: &WorkflowGraph,
-    state: &mut ActivityLifecycleRunState,
-) {
+fn derive_run_status(definition: &WorkflowGraph, state: &mut ActivityLifecycleRunState) {
     if state.attempts.iter().any(|attempt| {
         matches!(
             attempt.status,
@@ -649,14 +646,13 @@ mod tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransitionKind, AgentActivityExecutorSpec,
         AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, OutputPortDefinition,
-        WorkflowDefinitionSource,
+        HumanApprovalExecutorSpec, OutputPortDefinition, WorkflowDefinitionSource,
     };
 
     use super::*;
 
     fn test_graph_instance_id() -> uuid::Uuid {
-        uuid::Uuid::nil()
+        uuid::Uuid::new_v4()
     }
 
     fn output_port(key: &str) -> OutputPortDefinition {
@@ -674,7 +670,6 @@ mod tests {
             "approval_flow",
             "Approval flow",
             "",
-
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![
@@ -807,7 +802,6 @@ mod tests {
             "artifact_condition",
             "Artifact condition",
             "",
-
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![
@@ -900,7 +894,8 @@ mod tests {
     #[test]
     fn approval_rejection_creates_next_plan_attempt_with_feedback() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -958,7 +953,8 @@ mod tests {
     #[test]
     fn approval_approved_activates_implement_with_latest_plan() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
 
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
@@ -1005,7 +1001,8 @@ mod tests {
     #[test]
     fn completion_policy_rejects_missing_output_port() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         let error = LifecycleEngine::apply_event(
@@ -1034,7 +1031,8 @@ mod tests {
     #[test]
     fn scheduler_start_failure_can_retry_claiming_attempt() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         LifecycleEngine::apply_event(
             &definition,
             &mut state,
@@ -1067,7 +1065,8 @@ mod tests {
     #[test]
     fn failed_attempt_does_not_activate_successor() {
         let definition = approval_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(
@@ -1142,7 +1141,8 @@ mod tests {
             max_traversals: None,
         });
 
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
         LifecycleEngine::apply_event(
             &definition,
@@ -1200,7 +1200,8 @@ mod tests {
     #[test]
     fn artifact_field_condition_activates_successor_on_matching_path() {
         let definition = artifact_condition_definition();
-        let mut state = LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
         start_attempt(&definition, &mut state, "plan", 1);
 
         LifecycleEngine::apply_event(

@@ -56,12 +56,14 @@ pub mod turn_processor;
 mod turn_supervisor;
 pub mod types;
 
+pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use assembler::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
     CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
     SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
     compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
+pub use assembly_builder::AssemblyLaunchExtras;
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
     SessionProjectionRollbackRequest, SessionProjectionRollbackResult,
@@ -96,7 +98,6 @@ pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
-pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};

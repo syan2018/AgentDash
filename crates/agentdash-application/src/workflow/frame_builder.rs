@@ -4,15 +4,16 @@
 //! ## 设计定位
 //!
 //! - **唯一事实源**：capability / context / VFS / MCP surface 只从 builder 写入
-//!   frame revision，不再由 SessionConstructionPlan、AgentFrameHookRuntime、live
-//!   session maps 等并行事实源决定。
+//!   frame revision，runtime launch 从已持久化 frame 投影。
 //! - **不可变快照**：`build()` 产出新 revision，旧 revision 保持不变，
 //!   revision 序列天然提供 provenance。
 //! - **面向 dispatch**：`LifecycleDispatchService` 在创建 agent 后通过
 //!   builder 产出带 surface 的 initial frame，取代当前 `new_initial` 裸构造。
 
-use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentProcedureRef};
 use agentdash_domain::DomainError;
+use agentdash_domain::workflow::{
+    AgentFrame, AgentFrameRepository, AgentProcedureRef, RUNTIME_SESSION_REF_KIND,
+};
 use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
@@ -30,7 +31,7 @@ pub struct AgentFrameBuilder {
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
     execution_profile: Option<serde_json::Value>,
-    runtime_session_refs: Vec<Uuid>,
+    runtime_session_refs: Vec<String>,
     graph_instance_id: Option<Uuid>,
     activity_key: Option<String>,
     created_by_kind: String,
@@ -126,12 +127,16 @@ impl AgentFrameBuilder {
         self
     }
 
-    pub fn with_runtime_session(mut self, session_id: Uuid) -> Self {
-        self.runtime_session_refs.push(session_id);
+    pub fn with_runtime_session(mut self, session_id: impl Into<String>) -> Self {
+        self.runtime_session_refs.push(session_id.into());
         self
     }
 
-    pub fn with_graph_instance(mut self, graph_instance_id: Uuid, activity_key: impl Into<String>) -> Self {
+    pub fn with_graph_instance(
+        mut self,
+        graph_instance_id: Uuid,
+        activity_key: impl Into<String>,
+    ) -> Self {
         self.graph_instance_id = Some(graph_instance_id);
         self.activity_key = Some(activity_key.into());
         self
@@ -146,36 +151,21 @@ impl AgentFrameBuilder {
     /// 构建新 revision 并通过 repository 持久化。
     ///
     /// 从 repository 读取当前最新 revision number，递增后创建新 frame。
-    pub async fn build(
-        &self,
-        repo: &dyn AgentFrameRepository,
-    ) -> Result<AgentFrame, DomainError> {
+    pub async fn build(&self, repo: &dyn AgentFrameRepository) -> Result<AgentFrame, DomainError> {
         let next_revision = match repo.get_current(self.agent_id).await? {
             Some(current) => current.revision + 1,
             None => 1,
         };
 
-        let session_refs_json = if self.runtime_session_refs.is_empty() {
-            None
-        } else {
-            Some(serde_json::json!(
-                self.runtime_session_refs
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-            ))
-        };
+        let session_refs_json = AgentFrame::runtime_session_refs_json(&self.runtime_session_refs);
 
         let procedure_id = self.procedure_ref.as_ref().and_then(|r| match r {
             AgentProcedureRef::ById(id) => Some(*id),
             AgentProcedureRef::ByKey { .. } => None,
         });
 
-        let mut frame = AgentFrame::new_revision(
-            self.agent_id,
-            next_revision,
-            &self.created_by_kind,
-        );
+        let mut frame =
+            AgentFrame::new_revision(self.agent_id, next_revision, &self.created_by_kind);
         frame.procedure_id = procedure_id;
         frame.graph_instance_id = self.graph_instance_id;
         frame.activity_key = self.activity_key.clone();
@@ -208,6 +198,15 @@ mod tests {
             self.items.lock().unwrap().push(frame.clone());
             Ok(())
         }
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
         async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
             let items = self.items.lock().unwrap();
             let mut frames: Vec<_> = items.iter().filter(|f| f.agent_id == agent_id).collect();
@@ -223,6 +222,22 @@ mod tests {
                 .filter(|f| f.agent_id == agent_id)
                 .cloned()
                 .collect())
+        }
+        async fn attach_runtime_session_ref(
+            &self,
+            frame_id: Uuid,
+            runtime_session_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut items = self.items.lock().unwrap();
+            let frame = items
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.attach_runtime_session_ref(runtime_session_id);
+            Ok(())
         }
         async fn find_by_runtime_session(
             &self,
@@ -279,7 +294,7 @@ mod tests {
         let session_id = Uuid::new_v4();
 
         let frame = AgentFrameBuilder::new(agent_id)
-            .with_runtime_session(session_id)
+            .with_runtime_session(session_id.to_string())
             .build(&repo)
             .await
             .expect("build");
@@ -287,7 +302,11 @@ mod tests {
         let refs = frame.runtime_session_refs_json.unwrap();
         let arr = refs.as_array().unwrap();
         assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0].as_str().unwrap(), session_id.to_string());
+        assert_eq!(arr[0]["kind"].as_str().unwrap(), RUNTIME_SESSION_REF_KIND);
+        assert_eq!(
+            arr[0]["session_id"].as_str().unwrap(),
+            session_id.to_string()
+        );
     }
 
     #[tokio::test]

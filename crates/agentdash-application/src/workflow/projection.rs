@@ -1,8 +1,7 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutionClaimRepository, ActivityExecutorSpec,
-    WorkflowGraph, WorkflowGraphRepository, AgentSessionPolicy,
-    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract,
-    AgentProcedure, AgentProcedureRepository,
+    ActivityDefinition, ActivityExecutionClaimRepository, ActivityExecutorSpec, AgentProcedure,
+    AgentProcedureRepository, AgentSessionPolicy, LifecycleNodeType, LifecycleRun,
+    LifecycleRunRepository, WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
 };
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
@@ -73,15 +72,19 @@ pub async fn resolve_active_workflow_projection_for_session(
     claim_repo: &dyn ActivityExecutionClaimRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    if let Some(activity_assoc) =
-        super::session_association::resolve_activity_session_association(
-            session_id, claim_repo, run_repo,
-        )
-        .await?
+    if let Some(claim) = claim_repo
+        .find_running_by_executor_session(session_id)
+        .await
+        .map_err(|error| format!("查询 activity execution claims 失败: {error}"))?
     {
+        let run = run_repo
+            .get_by_id(claim.run_id)
+            .await
+            .map_err(|error| format!("查询 lifecycle run 失败: {error}"))?
+            .ok_or_else(|| format!("lifecycle run 不存在: {}", claim.run_id))?;
         if let Some(projection) = build_activity_projection_from_run(
-            activity_assoc.run,
-            &activity_assoc.activity_key,
+            run,
+            &claim.activity_key,
             definition_repo,
             activity_lifecycle_repo,
         )
@@ -140,9 +143,9 @@ async fn build_activity_projection_from_run(
 pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowProjection {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        WorkflowGraph, ActivityLifecycleRunState, ActivityRunStatus,
-        AgentActivityExecutorSpec, OutputPortDefinition, WorkflowContract,
-        AgentProcedure, WorkflowDefinitionSource, WorkflowInjectionSpec,
+        ActivityLifecycleRunState, ActivityRunStatus, AgentActivityExecutorSpec, AgentProcedure,
+        OutputPortDefinition, WorkflowContract, WorkflowDefinitionSource, WorkflowGraph,
+        WorkflowInjectionSpec,
     };
     use uuid::Uuid;
 
@@ -159,7 +162,6 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         "trellis_dev_task_implement",
         "Trellis Dev Workflow / Implement",
         "workflow desc",
-
         WorkflowDefinitionSource::BuiltinSeed,
         contract,
     )
@@ -187,7 +189,6 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         "trellis_dev_task",
         "Trellis Dev Lifecycle",
         "lifecycle desc",
-
         WorkflowDefinitionSource::BuiltinSeed,
         "implement",
         vec![active_activity.clone()],
@@ -195,7 +196,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     )
     .expect("lifecycle definition should build");
     let activity_state = ActivityLifecycleRunState {
-        graph_instance_id: uuid::Uuid::nil(),
+        graph_instance_id: uuid::Uuid::new_v4(),
         status: ActivityRunStatus::Running,
         attempts: vec![ActivityAttemptState {
             activity_key: "implement".to_string(),
@@ -209,13 +210,8 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         outputs: Vec::new(),
         inputs: Vec::new(),
     };
-    let run = LifecycleRun::new_activity(
-        project_id,
-        lifecycle.id,
-        Some("sess-test".to_string()),
-        activity_state,
-    )
-    .expect("activity run should build");
+    let run = LifecycleRun::new_activity(project_id, lifecycle.id, activity_state)
+        .expect("activity run should build");
     let (active_procedure_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,

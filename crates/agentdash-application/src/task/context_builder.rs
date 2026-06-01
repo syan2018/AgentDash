@@ -178,53 +178,61 @@ pub async fn build_task_session_context(
     })
 }
 
-/// 通过 task 关联的 run → agent → frame 查找活跃 lifecycle workflow projection。
+/// 通过 task 关联的 agent → frame 查找活跃 lifecycle workflow projection。
 ///
-/// 链路: RunLink(Task) → LifecycleRun → LifecycleAgent → AgentFrame → runtime session
-///      → resolve_active_workflow_projection_for_session
+/// 链路: LifecycleSubjectAssociation(Task) → LifecycleAgent → AgentFrame
+///      → runtime session → resolve_active_workflow_projection_for_session
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
 async fn find_active_workflow_via_task_sessions(
     repos: &RepositorySet,
     task_id: Uuid,
 ) -> Option<ActiveWorkflowProjection> {
-    let links = repos
-        .lifecycle_run_link_repo
-        .list_by_subject(
-            agentdash_domain::workflow::RunLinkSubjectKind::Task,
-            task_id,
-        )
+    let subject = agentdash_domain::workflow::SubjectRef::new("task", task_id);
+    let associations = repos
+        .lifecycle_subject_association_repo
+        .list_by_subject(&subject)
         .await
         .ok()?;
 
-    for link in &links {
-        let run = repos
-            .lifecycle_run_repo
-            .get_by_id(link.run_id)
+    for assoc in associations
+        .iter()
+        .filter(|assoc| assoc.anchor_agent_id.is_some())
+    {
+        let Some(agent_id) = assoc.anchor_agent_id else {
+            continue;
+        };
+        let agent = repos
+            .lifecycle_agent_repo
+            .get(agent_id)
             .await
             .ok()
             .flatten();
-        let Some(run) = run else { continue };
-        let session_id = run
-            .activity_state
-            .as_ref()
-            .and_then(|state| {
-                state.attempts.iter().find_map(|attempt| {
-                    attempt.executor_run.as_ref().and_then(|exec_ref| {
-                        if let agentdash_domain::workflow::ExecutorRunRef::RuntimeSession {
-                            session_id,
-                        } = exec_ref
-                        {
-                            Some(session_id.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                })
-            });
-        let Some(session_id) = session_id else { continue };
+        let Some(agent) = agent else { continue };
+        let Some(_run) = repos
+            .lifecycle_run_repo
+            .get_by_id(assoc.anchor_run_id)
+            .await
+            .ok()
+            .flatten()
+        else {
+            continue;
+        };
+        let frame = match agent.current_frame_id {
+            Some(_) => repos
+                .agent_frame_repo
+                .get_current(agent.id)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        let Some(frame) = frame else { continue };
+        let Some(session_id) = frame.first_runtime_session_id() else {
+            continue;
+        };
         if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
-            session_id,
+            &session_id,
             repos.agent_procedure_repo.as_ref(),
             repos.workflow_graph_repo.as_ref(),
             repos.activity_execution_claim_repo.as_ref(),

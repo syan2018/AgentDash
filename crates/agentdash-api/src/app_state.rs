@@ -230,11 +230,11 @@ impl AppState {
                 project_repo: project_repo_port.clone(),
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
-                lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.clone(),
-                agent_procedure_repo: repos.agent_procedure_repo.clone(),
-                workflow_graph_repo: repos
-                    .workflow_graph_repo
+                lifecycle_subject_association_repo: repos
+                    .lifecycle_subject_association_repo
                     .clone(),
+                agent_procedure_repo: repos.agent_procedure_repo.clone(),
+                workflow_graph_repo: repos.workflow_graph_repo.clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };
             let report = agentdash_application::reconcile::boot::run_boot_reconcile(&deps).await;
@@ -324,9 +324,8 @@ impl AppState {
 
         let mut state = Arc::new(state);
 
-        // 注入 SessionConstructionProvider：让 session 内部 auto-resume 等 prompt
-        // 路径与 HTTP 主通道共享同一条 `build_session_construction_for_launch`，
-        // 避免 owner / MCP / capability_state / context_bundle 漂移。
+        // 注入 RuntimeSession launch provider：所有 prompt 先定位 AgentFrame，
+        // 再从 frame revision 投影 connector 所需的 runtime surface。
         {
             let provider = Arc::new(
                 crate::bootstrap::session_construction_provider::AppStateSessionConstructionProvider::new(

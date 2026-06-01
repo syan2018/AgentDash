@@ -1,4 +1,4 @@
-﻿//! Hub 的 hook 调度职责。
+//! Hub 的 hook 调度职责。
 //!
 //! 集中：
 //! - `emit_session_hook_trigger`（从 `session/event_bridge.rs` 迁入，顺手删 `_tx` 占位）
@@ -14,7 +14,6 @@ use super::super::hook_delegate::{
 };
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
-use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
 use super::super::terminal_effects::{
@@ -22,11 +21,12 @@ use super::super::terminal_effects::{
 };
 use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
+use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookEffect, HookEvaluationQuery, HookInjection, HookRuntimeAccess, HookTraceEntry,
-    HookTrigger, SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookRuntime,
+    HookEffect, HookEvaluationQuery, HookInjection, HookRuntimeAccess, HookTraceEntry, HookTrigger,
+    SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookRuntime,
 };
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
@@ -155,8 +155,7 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
     ) -> Vec<HookInjection> {
-        let Some(hook_runtime) = self.runtime_registry.hook_runtime(session_id).await
-        else {
+        let Some(hook_runtime) = self.runtime_registry.hook_runtime(session_id).await else {
             return Vec::new();
         };
 

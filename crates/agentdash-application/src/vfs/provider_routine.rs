@@ -503,7 +503,7 @@ mod tests {
     use super::*;
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::inline_file::InlineFileRepository;
-    use agentdash_domain::routine::RoutineExecutionStatus;
+    use agentdash_domain::routine::{RoutineDispatchRefs, RoutineExecutionStatus};
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Mutex;
@@ -693,14 +693,17 @@ mod tests {
             trigger_source: "webhook".to_string(),
             trigger_payload: Some(json!({ "pull_request": { "number": 42 } })),
             resolved_prompt: Some("review PR 42".to_string()),
-            session_id: Some("sess-routine".to_string()),
-            status: RoutineExecutionStatus::Completed,
+            dispatch_refs: Some(RoutineDispatchRefs {
+                run_id: Uuid::new_v4(),
+                agent_id: Uuid::new_v4(),
+                frame_id: Uuid::new_v4(),
+            }),
+            status: RoutineExecutionStatus::Dispatched,
             started_at: Utc::now(),
-            completed_at: Some(Utc::now()),
+            completed_at: None,
             error: None,
             entity_key: Some("PR/42".to_string()),
         };
-        execution.mark_completed();
 
         let provider = RoutineMountProvider::new(
             Arc::new(MemoryExecutionRepo { execution }),

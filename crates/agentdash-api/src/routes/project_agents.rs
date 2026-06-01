@@ -1,26 +1,28 @@
 use std::sync::Arc;
 
 use agentdash_application::session::construction_planner::{
-    ResolvedProjectAgentContext, SessionConstructionPlanner,
+    ResolvedProjectAgentContext, RuntimeContextInspectionPlanner,
 };
 use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Path, State},
 };
 use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedFlagResponse;
 use agentdash_contracts::project_agent::{
-    CreateProjectAgentRequest, OpenProjectAgentSessionResult, ProjectAgent as ProjectAgentResponse,
-    ProjectAgentExecutor, ProjectAgentSession, ProjectAgentSummary, ThinkingLevel,
-    UpdateProjectAgentRequest,
+    CreateProjectAgentRequest, ProjectAgent as ProjectAgentResponse, ProjectAgentExecutor,
+    ProjectAgentLaunchResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
+};
+use agentdash_contracts::workflow::{
+    AgentAssignmentRefDto, AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto,
+    RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_project_with_permission},
-    dto::OpenSessionQuery,
     rpc::ApiError,
 };
 
@@ -44,12 +46,6 @@ mod tests {
             },
             preset_name: Some("preset".to_string()),
             source: "project.config.default_agent_type".to_string(),
-            session: Some(ProjectAgentSession {
-                run_ref: "run-ref-1".to_string(),
-                session_id: "sess-1".to_string(),
-                session_title: Some("title".to_string()),
-                last_activity: Some(1),
-            }),
         })
         .expect("serialize project agent summary");
 
@@ -57,22 +53,6 @@ mod tests {
         assert!(value.get("preset_name").is_some());
         assert!(value.get("displayName").is_none());
         assert!(value.get("presetName").is_none());
-    }
-
-    #[test]
-    fn parse_project_agent_session_label_requires_expected_prefix() {
-        assert_eq!(
-            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:agent-1"),
-            Some("agent-1")
-        );
-        assert_eq!(
-            SessionConstructionPlanner::parse_project_agent_session_label("agent-1"),
-            None
-        );
-        assert_eq!(
-            SessionConstructionPlanner::parse_project_agent_session_label("project_agent:   "),
-            None
-        );
     }
 }
 
@@ -91,12 +71,8 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::put(update_project_agent).delete(delete_project_agent),
         )
         .route(
-            "/projects/{id}/agents/{project_agent_id}/session",
-            axum::routing::post(open_project_agent_session),
-        )
-        .route(
-            "/projects/{id}/agents/{project_agent_id}/sessions",
-            axum::routing::get(list_project_agent_sessions),
+            "/projects/{id}/agents/{project_agent_id}/launch",
+            axum::routing::post(launch_project_agent),
         )
 }
 
@@ -123,23 +99,22 @@ pub async fn list_project_agents(
 
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
-        let bridge = SessionConstructionPlanner::build_project_agent_context(&state.repos, agent)
-            .await
-            .map_err(ApiError::Internal)?;
-        let session = find_project_agent_session(&state, project.id, &bridge.key).await?;
-        response.push(build_project_agent_summary(&project, &bridge, session));
+        let bridge =
+            RuntimeContextInspectionPlanner::build_project_agent_context(&state.repos, agent)
+                .await
+                .map_err(ApiError::Internal)?;
+        response.push(build_project_agent_summary(&project, &bridge));
     }
 
     response.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     Ok(Json(response))
 }
 
-pub async fn open_project_agent_session(
+pub async fn launch_project_agent(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path((project_id, agent_key)): Path<(String, String)>,
-    Query(query): Query<OpenSessionQuery>,
-) -> Result<Json<OpenProjectAgentSessionResult>, ApiError> {
+) -> Result<Json<ProjectAgentLaunchResult>, ApiError> {
     use agentdash_application::workflow::LifecycleDispatchService;
     use agentdash_domain::workflow::{
         AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, RunPolicy,
@@ -164,28 +139,9 @@ pub async fn open_project_agent_session(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let agent_context =
-        SessionConstructionPlanner::build_project_agent_context(&state.repos, &project_agent)
+        RuntimeContextInspectionPlanner::build_project_agent_context(&state.repos, &project_agent)
             .await
             .map_err(ApiError::Internal)?;
-
-    let _ = query.force_new;
-
-    // 创建 RuntimeSession（trace/delivery substrate）
-    let meta = state.services.session_core.create_session("").await?;
-    state
-        .services
-        .session_core
-        .update_session_meta(&meta.id, |meta| {
-            meta.project_id = Some(project.id.to_string());
-        })
-        .await
-        .map_err(ApiError::from)?;
-    state
-        .services
-        .session_core
-        .mark_owner_bootstrap_pending(&meta.id)
-        .await
-        .map_err(ApiError::from)?;
 
     // 解析 workflow graph ref（如果 ProjectAgent 配置了 lifecycle_key）
     let workflow_graph_ref = if let Some(lifecycle_key) = &project_agent.default_lifecycle_key {
@@ -222,32 +178,69 @@ pub async fn open_project_agent_session(
         state.repos.lifecycle_subject_association_repo.as_ref(),
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
-    );
+    )
+    .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
 
-    let dispatch_result = dispatch_service.dispatch(&intent).await.map_err(|err| {
-        ApiError::Internal(format!("Lifecycle dispatch 失败: {err}"))
-    })?;
+    let dispatch_result = dispatch_service
+        .dispatch(&intent)
+        .await
+        .map_err(|err| ApiError::Internal(format!("Lifecycle dispatch 失败: {err}")))?;
+    if let Some(mut lifecycle_agent) = state
+        .repos
+        .lifecycle_agent_repo
+        .get(dispatch_result.agent_ref)
+        .await
+        .map_err(ApiError::from)?
+    {
+        lifecycle_agent.project_agent_id = Some(project_agent.id);
+        state
+            .repos
+            .lifecycle_agent_repo
+            .update(&lifecycle_agent)
+            .await
+            .map_err(ApiError::from)?;
+    }
 
-    let session = Some(ProjectAgentSession {
-        run_ref: dispatch_result.run_ref.to_string(),
-        session_id: meta.id.clone(),
-        session_title: Some(meta.title),
-        last_activity: Some(meta.updated_at),
-    });
-    let summary = build_project_agent_summary(&project, &agent_context, session);
+    let summary = build_project_agent_summary(&project, &agent_context);
 
-    Ok(Json(OpenProjectAgentSessionResult {
+    Ok(Json(ProjectAgentLaunchResult {
         created: true,
-        session_id: meta.id,
-        run_ref: dispatch_result.run_ref.to_string(),
         agent: summary,
+        run_ref: LifecycleRunRefDto {
+            run_id: dispatch_result.run_ref.to_string(),
+        },
+        agent_ref: LifecycleAgentRefDto {
+            run_id: dispatch_result.run_ref.to_string(),
+            agent_id: dispatch_result.agent_ref.to_string(),
+        },
+        frame_ref: AgentFrameRefDto {
+            agent_id: dispatch_result.agent_ref.to_string(),
+            frame_id: dispatch_result.frame_ref.to_string(),
+            revision: None,
+        },
+        runtime_session_ref: dispatch_result
+            .runtime_session_ref
+            .map(|runtime_session_id| RuntimeSessionRefDto {
+                runtime_session_id: runtime_session_id.to_string(),
+            }),
+        assignment_ref: dispatch_result
+            .assignment_ref
+            .map(|assignment_id| AgentAssignmentRefDto {
+                assignment_id: assignment_id.to_string(),
+                run_id: Some(dispatch_result.run_ref.to_string()),
+                agent_id: Some(dispatch_result.agent_ref.to_string()),
+                frame_id: Some(dispatch_result.frame_ref.to_string()),
+            }),
+        subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
+            kind: subject.kind.clone(),
+            id: subject.id.to_string(),
+        }),
     }))
 }
 
 fn build_project_agent_summary(
     _project: &Project,
     agent: &ResolvedProjectAgentContext,
-    session: Option<ProjectAgentSession>,
 ) -> ProjectAgentSummary {
     ProjectAgentSummary {
         key: agent.key.clone(),
@@ -266,7 +259,6 @@ fn build_project_agent_summary(
         },
         preset_name: agent.preset_name.clone(),
         source: agent.source.clone(),
-        session,
     }
 }
 
@@ -281,31 +273,6 @@ fn thinking_level_response(level: agentdash_spi::ThinkingLevel) -> ThinkingLevel
         SpiThinkingLevel::High => ThinkingLevel::High,
         SpiThinkingLevel::Xhigh => ThinkingLevel::Xhigh,
     }
-}
-
-async fn find_project_agent_session(
-    _state: &Arc<AppState>,
-    _project_id: Uuid,
-    _agent_key: &str,
-) -> Result<Option<ProjectAgentSession>, ApiError> {
-    Ok(None)
-}
-
-pub async fn list_project_agent_sessions(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((project_id, _agent_key)): Path<(String, String)>,
-) -> Result<Json<Vec<ProjectAgentSession>>, ApiError> {
-    let project_id = parse_project_id(&project_id)?;
-    let _project = load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        project_id,
-        ProjectPermission::View,
-    )
-    .await?;
-
-    Ok(Json(vec![]))
 }
 
 fn parse_project_id(project_id: &str) -> Result<Uuid, ApiError> {
@@ -579,7 +546,7 @@ async fn resolve_lifecycle_key_for_project_agent(
             return Ok(None);
         }
 
-        let workflow = state
+        let _procedure = state
             .repos
             .agent_procedure_repo
             .get_by_project_and_key(project_id, &wk)
@@ -599,8 +566,8 @@ async fn resolve_lifecycle_key_for_project_agent(
         if existing.is_none() {
             use agentdash_domain::workflow::{
                 ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-                WorkflowGraph, AgentActivityExecutorSpec, AgentSessionPolicy,
-                WorkflowDefinitionSource,
+                AgentActivityExecutorSpec, AgentSessionPolicy, WorkflowDefinitionSource,
+                WorkflowGraph,
             };
             let lifecycle = WorkflowGraph {
                 id: Uuid::new_v4(),
@@ -641,62 +608,4 @@ async fn resolve_lifecycle_key_for_project_agent(
     }
 
     Ok(None)
-}
-
-/// 自动启动 lifecycle run（首步含 procedure_key 时同时激活首步）
-/// 当前 ProjectAgent open 已迁移到 dispatch service；此函数保留供后续 Task/Routine 接入。
-#[allow(dead_code)]
-async fn auto_start_lifecycle_run(
-    state: &Arc<AppState>,
-    project_id: Uuid,
-    session_id: &str,
-    lifecycle_key: &str,
-) -> Result<(), String> {
-    use agentdash_application::workflow::{
-        ActivityLifecycleRunService, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
-        AgentActivityRuntimePort, StartActivityLifecycleRunCommand,
-    };
-
-    let service = ActivityLifecycleRunService::new(
-        state.repos.workflow_graph_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-        state.repos.activity_execution_claim_repo.as_ref(),
-    )
-    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
-
-    let cmd = StartActivityLifecycleRunCommand {
-        project_id,
-        lifecycle_id: None,
-        lifecycle_key: Some(lifecycle_key.to_string()),
-    };
-
-    let run = service
-        .start_run(cmd)
-        .await
-        .map_err(|e| format!("start_run 失败: {e}"))?;
-
-    let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext {
-            project_id: run.project_id,
-            lifecycle_key: lifecycle_key.to_string(),
-            root_runtime_session_id: session_id.to_string(),
-        },
-        AgentActivityRuntimePort::new(
-            state.services.session_core.clone(),
-            state.services.session_launch.clone(),
-            state.repos.clone(),
-            Arc::new(agentdash_infrastructure::DefaultFunctionRunner::new()),
-        )
-        .with_runtime_context(
-            state.services.session_hooks.clone(),
-            state.services.session_capability.clone(),
-            state.config.platform_config.clone(),
-        ),
-    );
-    service
-        .launch_ready_attempts(run.id, &launcher)
-        .await
-        .map_err(|e| format!("启动 lifecycle activity 失败: {e}"))?;
-
-    Ok(())
 }

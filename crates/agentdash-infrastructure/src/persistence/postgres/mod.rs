@@ -5,6 +5,7 @@ mod backend_repository;
 mod canvas_repository;
 mod extension_package_artifact_repository;
 mod inline_file_repository;
+mod lifecycle_anchor_repository;
 mod llm_provider_repository;
 mod mcp_preset_repository;
 mod permission_grant_repository;
@@ -140,6 +141,12 @@ fn database_constraint_message(
 }
 
 pub use agent_repository::PostgresProjectAgentRepository;
+pub use lifecycle_anchor_repository::{
+    PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
+    PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
+    PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
+    PostgresWorkflowGraphInstanceRepository,
+};
 pub use auth_session_repository::PostgresAuthSessionRepository;
 pub use backend_execution_lease_repository::PostgresBackendExecutionLeaseRepository;
 pub use backend_repository::PostgresBackendRepository;

@@ -1,9 +1,16 @@
 use uuid::Uuid;
 
+use super::agent_assignment::AgentAssignment;
+use super::agent_frame::AgentFrame;
+use super::agent_lineage::AgentLineage;
 use super::entity::{
     ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
 };
+use super::lifecycle_agent::LifecycleAgent;
+use super::lifecycle_gate::LifecycleGate;
+use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 use super::value_objects::WorkflowBindingKind;
+use super::workflow_graph_instance::WorkflowGraphInstance;
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
@@ -101,4 +108,72 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+// ─── Target Anchor Repositories ─────────────────────────────────────────────
+
+#[async_trait::async_trait]
+pub trait WorkflowGraphInstanceRepository: Send + Sync {
+    async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
+    async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<WorkflowGraphInstance>, DomainError>;
+    async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait LifecycleAgentRepository: Send + Sync {
+    async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError>;
+    async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError>;
+    async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait AgentFrameRepository: Send + Sync {
+    async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError>;
+    async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError>;
+    async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait AgentAssignmentRepository: Send + Sync {
+    async fn create(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
+    async fn find_for_attempt(
+        &self,
+        graph_instance_id: Uuid,
+        activity_key: &str,
+        attempt: i32,
+    ) -> Result<Option<AgentAssignment>, DomainError>;
+    async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError>;
+    async fn update(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait LifecycleSubjectAssociationRepository: Send + Sync {
+    async fn create(&self, assoc: &LifecycleSubjectAssociation) -> Result<(), DomainError>;
+    async fn list_by_subject(
+        &self,
+        subject: &SubjectRef,
+    ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError>;
+    async fn list_by_anchor(
+        &self,
+        run_id: Uuid,
+        agent_id: Option<Uuid>,
+    ) -> Result<Vec<LifecycleSubjectAssociation>, DomainError>;
+    async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait LifecycleGateRepository: Send + Sync {
+    async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError>;
+    async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError>;
+    async fn list_open_for_agent(&self, agent_id: Uuid) -> Result<Vec<LifecycleGate>, DomainError>;
+    async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError>;
+}
+
+#[async_trait::async_trait]
+pub trait AgentLineageRepository: Send + Sync {
+    async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError>;
+    async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
+    async fn find_parent(&self, child_agent_id: Uuid) -> Result<Option<AgentLineage>, DomainError>;
 }

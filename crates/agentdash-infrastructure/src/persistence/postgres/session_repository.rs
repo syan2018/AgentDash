@@ -153,16 +153,17 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             "#,
         )
         .bind(&meta.id)
         .bind(&meta.title)
         .bind(title_source_to_str(meta.title_source))
+        .bind(&meta.project_id)
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)
@@ -184,7 +185,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn get_session_meta(&self, session_id: &str) -> SessionStoreResult<Option<SessionMeta>> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
@@ -202,7 +203,7 @@ impl SessionMetaStore for PostgresSessionRepository {
     async fn list_sessions(&self) -> SessionStoreResult<Vec<SessionMeta>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
+            SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
                    executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
@@ -230,14 +231,15 @@ impl SessionMetaStore for PostgresSessionRepository {
         sqlx::query(
             r#"
             INSERT INTO sessions (
-                id, title, title_source, created_at, updated_at, last_event_seq, last_execution_status,
+                id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
                 executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
+                project_id = COALESCE(excluded.project_id, sessions.project_id),
                 created_at = excluded.created_at,
                 updated_at = GREATEST(sessions.updated_at, excluded.updated_at),
                 last_event_seq = GREATEST(sessions.last_event_seq, excluded.last_event_seq),
@@ -271,6 +273,7 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(&meta.id)
         .bind(&meta.title)
         .bind(title_source_to_str(meta.title_source))
+        .bind(&meta.project_id)
         .bind(meta.created_at)
         .bind(meta.updated_at)
         .bind(last_event_seq)

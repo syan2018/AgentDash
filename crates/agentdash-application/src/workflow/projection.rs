@@ -1,9 +1,11 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, AgentAssignment, AgentAssignmentRepository,
-    AgentFrameRepository, AgentProcedure, AgentProcedureRepository, AgentSessionPolicy,
-    LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
-    WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
+    ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository, AgentFrameRepository,
+    AgentProcedure, AgentProcedureRepository, AgentSessionPolicy, LifecycleAgentRepository,
+    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract, WorkflowGraph,
+    WorkflowGraphRepository,
 };
+
+use super::session_association::ActivityRuntimeAssociationResolver;
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
 ///
@@ -76,40 +78,20 @@ pub async fn resolve_active_workflow_projection_for_session(
     assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
-    let Some(frame) = frame_repo
-        .find_by_runtime_session(session_id)
-        .await
-        .map_err(|error| format!("查询 runtime session 对应 AgentFrame 失败: {error}"))?
-    else {
+    let resolver =
+        ActivityRuntimeAssociationResolver::new(frame_repo, agent_repo, assignment_repo, run_repo);
+    let Some(association) = resolver.resolve_by_runtime_session(session_id).await? else {
         return Ok(None);
     };
-    let Some(agent) = agent_repo
-        .get(frame.agent_id)
-        .await
-        .map_err(|error| format!("查询 lifecycle agent 失败: {error}"))?
-    else {
-        return Ok(None);
-    };
-    let assignments = assignment_repo
-        .list_by_run(agent.run_id)
-        .await
-        .map_err(|error| format!("查询 agent assignment 失败: {error}"))?;
-    let Some(assignment) = select_assignment_for_frame(&assignments, &frame) else {
-        return Ok(None);
-    };
-    let run = run_repo
-        .get_by_id(assignment.run_id)
-        .await
-        .map_err(|error| format!("查询 lifecycle run 失败: {error}"))?
-        .ok_or_else(|| format!("lifecycle run 不存在: {}", assignment.run_id))?;
+    let run = association.run;
+    let assignment = association.assignment;
+    let attempt = association.attempt;
     let Some(activity_state) = run.activity_state.as_ref() else {
         return Ok(None);
     };
     if activity_state.graph_instance_id != assignment.graph_instance_id {
         return Ok(None);
     }
-    let attempt = u32::try_from(assignment.attempt)
-        .map_err(|_| format!("agent assignment attempt 无效: {}", assignment.attempt))?;
     if !activity_state
         .attempts
         .iter()
@@ -125,27 +107,6 @@ pub async fn resolve_active_workflow_projection_for_session(
         activity_lifecycle_repo,
     )
     .await
-}
-
-fn select_assignment_for_frame<'a>(
-    assignments: &'a [AgentAssignment],
-    frame: &agentdash_domain::workflow::AgentFrame,
-) -> Option<&'a AgentAssignment> {
-    assignments
-        .iter()
-        .filter(|assignment| assignment.lease_status == "active")
-        .filter(|assignment| assignment.agent_id == frame.agent_id)
-        .find(|assignment| {
-            assignment.frame_id == frame.id
-                || frame.graph_instance_id == Some(assignment.graph_instance_id)
-                    && frame.activity_key.as_deref() == Some(assignment.activity_key.as_str())
-        })
-        .or_else(|| {
-            assignments
-                .iter()
-                .filter(|assignment| assignment.lease_status == "active")
-                .find(|assignment| assignment.agent_id == frame.agent_id)
-        })
 }
 
 async fn build_activity_projection_from_run(
@@ -276,7 +237,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::workflow::session_association::select_assignment_for_runtime_frame;
     use agentdash_domain::workflow::{AgentAssignment, AgentFrame};
     use uuid::Uuid;
 
@@ -300,7 +261,8 @@ mod tests {
         );
 
         let assignments = [assignment.clone()];
-        let selected = select_assignment_for_frame(&assignments, &current_frame)
+        let selected = select_assignment_for_runtime_frame(&assignments, &current_frame)
+            .expect("selection should not error")
             .expect("assignment should resolve through agent and activity scope");
 
         assert_eq!(selected.id, assignment.id);
@@ -323,6 +285,10 @@ mod tests {
             frame.id,
         );
 
-        assert!(select_assignment_for_frame(&[assignment], &frame).is_none());
+        assert!(
+            select_assignment_for_runtime_frame(&[assignment], &frame)
+                .expect("selection should not error")
+                .is_none()
+        );
     }
 }

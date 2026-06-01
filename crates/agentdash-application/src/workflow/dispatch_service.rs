@@ -700,15 +700,15 @@ mod tests {
 
     // ─── Helper ──────────────────────────────────────────────────────────
 
-    fn make_service(
-        run_repo: &dyn LifecycleRunRepository,
-        graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
-        agent_repo: &dyn LifecycleAgentRepository,
-        frame_repo: &dyn AgentFrameRepository,
-        association_repo: &dyn LifecycleSubjectAssociationRepository,
-        gate_repo: &dyn LifecycleGateRepository,
-        lineage_repo: &dyn AgentLineageRepository,
-    ) -> LifecycleDispatchService<'_> {
+    fn make_service<'a>(
+        run_repo: &'a dyn LifecycleRunRepository,
+        graph_instance_repo: &'a dyn WorkflowGraphInstanceRepository,
+        agent_repo: &'a dyn LifecycleAgentRepository,
+        frame_repo: &'a dyn AgentFrameRepository,
+        association_repo: &'a dyn LifecycleSubjectAssociationRepository,
+        gate_repo: &'a dyn LifecycleGateRepository,
+        lineage_repo: &'a dyn AgentLineageRepository,
+    ) -> LifecycleDispatchService<'a> {
         LifecycleDispatchService::new(
             run_repo,
             graph_instance_repo,

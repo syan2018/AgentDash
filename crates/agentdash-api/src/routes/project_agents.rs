@@ -16,8 +16,7 @@ use agentdash_contracts::project_agent::{
     ProjectAgentLaunchResult, ProjectAgentSummary, ThinkingLevel, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::workflow::{
-    AgentAssignmentRefDto, AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto,
-    RuntimeSessionRefDto, SubjectRefDto,
+    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto, SubjectRefDto,
 };
 
 use crate::{
@@ -223,12 +222,7 @@ pub async fn launch_project_agent(
             .map(|runtime_session_id| RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }),
-        assignment_ref: Some(AgentAssignmentRefDto {
-            assignment_id: dispatch_result.assignment_ref.to_string(),
-            run_id: Some(dispatch_result.run_ref.to_string()),
-            agent_id: Some(dispatch_result.agent_ref.to_string()),
-            frame_id: Some(dispatch_result.frame_ref.to_string()),
-        }),
+        assignment_ref: None,
         subject_ref: intent.subject_ref.as_ref().map(|subject| SubjectRefDto {
             kind: subject.kind.clone(),
             id: subject.id.to_string(),

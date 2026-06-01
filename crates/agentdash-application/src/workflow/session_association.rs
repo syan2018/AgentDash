@@ -158,6 +158,9 @@ impl<'a> ActivityRuntimeAssociationResolver<'a> {
             })?;
         let Some(assignment) = select_assignment_for_runtime_frame(&assignments, &current_frame)?
         else {
+            if current_frame.graph_instance_id.is_none() && current_frame.activity_key.is_none() {
+                return Ok(None);
+            }
             return Err(ActivityRuntimeAssociationError::MissingAssignment {
                 runtime_session_id: session_id.to_string(),
                 frame_id: current_frame.id,
@@ -731,6 +734,44 @@ mod tests {
                 agent_id: owner,
             } if runtime_session_id == "sess-1" && id == frame_id && owner == agent_id
         ));
+    }
+
+    #[tokio::test]
+    async fn resolver_ignores_agent_surface_frame_without_activity_scope() {
+        let project_id = Uuid::new_v4();
+        let lifecycle_id = Uuid::new_v4();
+        let run_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        run.id = run_id;
+        let mut agent = LifecycleAgent::new_root(run_id, project_id, "worker");
+        agent.id = agent_id;
+        let mut current_frame = AgentFrame::new_revision(agent_id, 1, "agent_launch");
+        current_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["sess-1"]);
+        let frame_repo = TestFrameRepo {
+            frames: [(current_frame.id, current_frame)].into_iter().collect(),
+        };
+        let agent_repo = TestAgentRepo {
+            agents: [(agent_id, agent)].into_iter().collect(),
+        };
+        let assignment_repo = TestAssignmentRepo::default();
+        let run_repo = TestRunRepo {
+            runs: [(run_id, run)].into_iter().collect(),
+        };
+        let resolver = ActivityRuntimeAssociationResolver::new(
+            &frame_repo,
+            &agent_repo,
+            &assignment_repo,
+            &run_repo,
+        );
+
+        assert!(
+            resolver
+                .resolve_by_runtime_session("sess-1")
+                .await
+                .expect("surface frame without activity scope should be non-activity runtime")
+                .is_none()
+        );
     }
 
     #[tokio::test]

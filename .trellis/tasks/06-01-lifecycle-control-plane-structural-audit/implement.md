@@ -73,18 +73,37 @@
 
 ## Phase 3: 重塑 Dispatch Intent Taxonomy
 
-- [ ] 拆清 `AgentLaunchIntent`、`SubjectExecutionIntent`、`LifecycleRunStartIntent`。
-- [ ] `ExecutionDispatchResult` 改为 discriminated result，避免全 optional refs。
-- [ ] Subject execution 必须返回 assignment ref 或 pending assignment ref。
+- [x] 拆清 `AgentLaunchIntent`、`SubjectExecutionIntent`、`LifecycleRunStartIntent`。
+- [x] `ExecutionDispatchResult` 改为 discriminated result，避免全 optional refs。
+- [x] Subject execution 必须返回 assignment ref 或 pending assignment ref。
 - [ ] ProjectAgent open、Task start、Companion dispatch、Routine fire、manual run、Story root/freeform 都通过统一 dispatch 分类进入。
-- [ ] 修复 `WorkflowGraphRef::ByKey`，将 graph resolution 移出 dispatch 的临时 helper。
+  - ProjectAgent open、Task start/continue、Companion sub dispatch、Routine fire、manual run 已进入 typed dispatch；Story root/freeform 写侧 launch 尚未关闭。
+- [x] 修复 `WorkflowGraphRef::ByKey`，将 graph resolution 移出 dispatch 的临时 helper。
 
 ### Gate
 
-- [ ] 类型层面不再依赖一个全 optional `ExecutionDispatchResult` 表达所有 intent；不同 result variant 有明确 required refs。
-- [ ] `WorkflowGraphRef::ByKey` 解析失败有测试，并返回错误而不是生成随机 graph/lifecycle id。
+- [x] 类型层面不再依赖一个全 optional `ExecutionDispatchResult` 表达所有 intent；不同 result variant 有明确 required refs。
+- [x] `WorkflowGraphRef::ByKey` 解析失败有测试，并返回错误而不是生成随机 graph/lifecycle id。
 - [ ] API route 检查证明 ProjectAgent、Task、Companion、Routine、manual run、Story root/freeform 都进入 typed dispatch。
-- [ ] Subject execution 测试证明返回 assignment 或 pending assignment ref，且 SubjectRef 能追溯到 ActivityAttemptState。
+- [x] Subject execution 测试证明返回 assignment 或 pending assignment ref，且 SubjectRef 能追溯到 ActivityAttemptState。
+
+### 落地记录
+
+2026-06-02 的 Phase 3 slice 已关闭 dispatch taxonomy 的核心语义 gate，但整阶段仍因 Story root/freeform 写侧入口未迁入 dispatch 保持 partial：
+
+- `ExecutionIntent` / `ExecutionDispatchResult` 已是 discriminated taxonomy；`AgentLaunchDispatchResult` 不再携带 required `assignment_ref`，ProjectAgent launch response 也不再把 agent surface launch 伪装成 ActivityAttempt assignment。
+- `LifecycleDispatchService` 通过 `bind_entry_assignment` 显式区分 pure agent launch 与会绑定 ActivityAttempt 的 subject / interaction execution；`AgentLaunchIntent` 只创建 run / graph instance / agent / frame / runtime surface，`SubjectExecutionIntent` 与 `InteractionDispatchIntent` 才创建 entry assignment。
+- dispatch 创建或复用 `WorkflowGraphInstance` 时会初始化 `ActivityLifecycleRunState` 并同步 run projection；`SubjectExecutionDispatchResult.assignment_ref` 对应的 assignment 现在有同一 `graph_instance_id + activity_key + attempt` 的 ActivityAttemptState。
+- runtime terminal resolver 对没有 `graph_instance_id + activity_key` scope 的 AgentFrame 返回 `Ok(None)`，把纯 agent surface runtime 视为非 Activity runtime；有 activity scope 但缺 assignment 仍返回结构化 error。
+- `WorkflowGraphResolver` 已作为 dispatch 前置边界解析 `ById` / `ByKey`，missing key 测试证明不会创建随机 run / graph / assignment。
+
+验证记录：
+
+- `cargo test -p agentdash-domain workflow::dispatch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::session_association --lib -- --format terse`
+- `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
+- `cargo check -p agentdash-domain -p agentdash-application -p agentdash-api -p agentdash-contracts`
 
 ## Phase 4: 收束 AgentFrame 作为 runtime surface owner
 

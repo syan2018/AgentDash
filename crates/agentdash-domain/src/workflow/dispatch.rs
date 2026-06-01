@@ -188,7 +188,6 @@ pub struct AgentLaunchDispatchResult {
     pub graph_instance_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub assignment_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_session_ref: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -68,8 +68,7 @@ use crate::runtime::RuntimeMcpServer;
 use crate::runtime_bridge::session_mcp_servers_to_runtime;
 #[cfg(test)]
 use crate::session::assembly_builder::slice_companion_bundle;
-use crate::session::assembly_builder::{SessionAssemblyBuilder, apply_session_assembly};
-use crate::session::construction::SessionConstructionPlan;
+use crate::session::assembly_builder::SessionAssemblyBuilder;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
 use crate::story::context_builder::{StoryContextBuildInput, contribute_story_context};
 use crate::task::execution::TaskExecutionError;
@@ -707,7 +706,7 @@ impl<'a> SessionRequestAssembler<'a> {
     }
 
     /// Owner 级 session bootstrap(Story / Project / Routine)。
-    async fn compose_owner_bootstrap(
+    pub(crate) async fn compose_owner_bootstrap(
         &self,
         spec: OwnerBootstrapSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, String> {
@@ -771,16 +770,6 @@ impl<'a> SessionRequestAssembler<'a> {
         }
 
         Ok(builder.build())
-    }
-
-    pub async fn compose_owner_bootstrap_prompt(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: OwnerBootstrapSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        self.compose_owner_bootstrap(spec)
-            .await
-            .map(|prepared| apply_session_assembly(plan, prepared))
     }
 
     /// owner_bootstrap 的 frame builder 路径。
@@ -1053,7 +1042,7 @@ impl<'a> SessionRequestAssembler<'a> {
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方通过 `apply_session_assembly` 合入 base
     /// construction provider handoff 后交 launch executor 派发。
-    async fn compose_story_step(
+    pub(crate) async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, TaskExecutionError> {
@@ -1104,30 +1093,6 @@ impl<'a> SessionRequestAssembler<'a> {
         Ok(builder.build())
     }
 
-    pub async fn compose_story_step_prompt(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: StoryStepSpec<'_>,
-    ) -> Result<SessionConstructionPlan, TaskExecutionError> {
-        let task_id = spec.task.id;
-        let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
-        self.compose_story_step(spec).await.map(|prepared| {
-            let mut plan = apply_session_assembly(plan, prepared);
-            plan.effects.terminal_hook_effect_binding = Some(TerminalHookEffectBinding {
-                handler: serde_json::json!({
-                    "kind": "task",
-                    "task_id": task_id,
-                    "backend_id": backend_id,
-                }),
-                supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
-                    .iter()
-                    .map(|kind| (*kind).to_string())
-                    .collect(),
-            });
-            plan
-        })
-    }
-
     /// story_step 的 frame builder 路径。
     pub async fn compose_story_step_to_frame(
         &self,
@@ -1158,81 +1123,6 @@ impl<'a> SessionRequestAssembler<'a> {
                 .collect(),
         });
         Ok((fb, extras, hook_binding))
-    }
-
-    pub async fn compose_lifecycle_node_prompt(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: LifecycleNodeSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        compose_lifecycle_node_prompt_with_audit(
-            plan,
-            self.repos,
-            self.platform_config,
-            spec,
-            self.audit_bus.clone(),
-            None,
-        )
-        .await
-    }
-
-    pub fn compose_companion_prompt(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: CompanionSpec<'_>,
-    ) -> SessionConstructionPlan {
-        compose_companion_prompt(plan, spec)
-    }
-
-    pub async fn compose_companion_prompt_from_parent(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: CompanionParentSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        let parent_facts = self
-            .resolve_companion_parent_facts(spec.parent_session_id)
-            .await?;
-        Ok(compose_companion_prompt(
-            plan,
-            CompanionSpec {
-                parent_vfs: parent_facts.parent_vfs.as_ref(),
-                parent_mcp_servers: &parent_facts.parent_mcp_servers,
-                parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
-                slice_mode: spec.slice_mode,
-                companion_executor_config: spec.companion_executor_config,
-                dispatch_prompt: spec.dispatch_prompt,
-            },
-        ))
-    }
-
-    pub async fn compose_companion_with_workflow_prompt_from_parent(
-        &self,
-        plan: SessionConstructionPlan,
-        spec: CompanionParentWorkflowSpec<'_>,
-    ) -> Result<SessionConstructionPlan, String> {
-        let parent_facts = self
-            .resolve_companion_parent_facts(spec.companion.parent_session_id)
-            .await?;
-        compose_companion_with_workflow_prompt(
-            plan,
-            self.repos,
-            self.platform_config,
-            CompanionWorkflowSpec {
-                companion: CompanionSpec {
-                    parent_vfs: parent_facts.parent_vfs.as_ref(),
-                    parent_mcp_servers: &parent_facts.parent_mcp_servers,
-                    parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
-                    slice_mode: spec.companion.slice_mode,
-                    companion_executor_config: spec.companion.companion_executor_config,
-                    dispatch_prompt: spec.companion.dispatch_prompt,
-                },
-                run: spec.run,
-                lifecycle: spec.lifecycle,
-                activity: spec.activity,
-                workflow: spec.workflow,
-            },
-        )
-        .await
     }
 
     /// lifecycle_node 的 frame builder 路径。
@@ -1327,7 +1217,7 @@ impl<'a> SessionRequestAssembler<'a> {
         ))
     }
 
-    async fn resolve_companion_parent_facts(
+    pub(crate) async fn resolve_companion_parent_facts(
         &self,
         parent_session_id: &str,
     ) -> Result<CompanionParentFacts, String> {
@@ -1350,29 +1240,7 @@ impl<'a> SessionRequestAssembler<'a> {
     }
 }
 
-pub async fn compose_lifecycle_node_prompt(
-    plan: SessionConstructionPlan,
-    repos: &RepositorySet,
-    platform_config: &PlatformConfig,
-    spec: LifecycleNodeSpec<'_>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_lifecycle_node_prompt_with_audit(plan, repos, platform_config, spec, None, None).await
-}
-
-pub async fn compose_lifecycle_node_prompt_with_audit(
-    plan: SessionConstructionPlan,
-    repos: &RepositorySet,
-    platform_config: &PlatformConfig,
-    spec: LifecycleNodeSpec<'_>,
-    audit_bus: Option<SharedContextAuditBus>,
-    audit_session_key: Option<&str>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
-        .await
-        .map(|prepared| apply_session_assembly(plan, prepared))
-}
-
-/// `compose_lifecycle_node_prompt_with_audit` 的 frame builder 路径。
+/// lifecycle_node 的 frame builder 路径（free-standing 版本）。
 pub async fn compose_lifecycle_node_to_frame_with_audit(
     frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     repos: &RepositorySet,
@@ -1395,7 +1263,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     ))
 }
 
-async fn compose_lifecycle_node_with_audit(
+pub(crate) async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
@@ -1596,7 +1464,7 @@ fn contribute_lifecycle_context(
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
 ///
 /// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
-fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
+pub(crate) fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
     SessionAssemblyBuilder::new()
         .apply_companion_slice(
             spec.parent_vfs,
@@ -1607,13 +1475,6 @@ fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
             spec.dispatch_prompt,
         )
         .build()
-}
-
-pub fn compose_companion_prompt(
-    plan: SessionConstructionPlan,
-    spec: CompanionSpec<'_>,
-) -> SessionConstructionPlan {
-    apply_session_assembly(plan, compose_companion(spec))
 }
 
 fn build_story_step_trigger_prompt_blocks(phase: TaskExecutionPhase) -> Vec<serde_json::Value> {
@@ -1702,10 +1563,10 @@ pub struct CompanionParentWorkflowSpec<'a> {
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
 }
 
-struct CompanionParentFacts {
-    parent_vfs: Option<Vfs>,
-    parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    parent_context_bundle: Option<SessionContextBundle>,
+pub(crate) struct CompanionParentFacts {
+    pub(crate) parent_vfs: Option<Vfs>,
+    pub(crate) parent_mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub(crate) parent_context_bundle: Option<SessionContextBundle>,
 }
 
 /// Companion + Workflow 组合 compose 输入。
@@ -1722,7 +1583,7 @@ pub struct CompanionWorkflowSpec<'a> {
 ///
 /// 基于 companion VFS slice 叠加 lifecycle mount 和 workflow 能力/MCP，
 /// 通过 `SessionAssemblyBuilder` 声明式组合两个关注点。
-async fn compose_companion_with_workflow(
+pub(crate) async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
@@ -1813,16 +1674,6 @@ async fn compose_companion_with_workflow(
         .build())
 }
 
-pub async fn compose_companion_with_workflow_prompt(
-    plan: SessionConstructionPlan,
-    repos: &RepositorySet,
-    platform_config: &PlatformConfig,
-    spec: CompanionWorkflowSpec<'_>,
-) -> Result<SessionConstructionPlan, String> {
-    compose_companion_with_workflow(repos, platform_config, spec)
-        .await
-        .map(|prepared| apply_session_assembly(plan, prepared))
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // SECTION 6:内部 helper
@@ -1898,7 +1749,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
         ActivityLifecycleRunState, AgentActivityExecutorSpec, InputPortDefinition,
-        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+        OutputPortDefinition, WorkflowContract, AgentProcedure,
         WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
@@ -2165,7 +2016,6 @@ mod tests {
             "dev",
             "Dev",
             "dev lifecycle",
-            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             "implement",
             vec![activity.clone()],
@@ -2199,7 +2049,6 @@ mod tests {
             "wf_impl",
             "Implementation",
             "实现工作流",
-            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             WorkflowContract {
                 injection: WorkflowInjectionSpec {
@@ -2278,6 +2127,7 @@ mod tests {
     mod apply_session_assembly_tests {
         use super::super::*;
         use crate::session::UserPromptInput;
+        use crate::session::assembly_builder::apply_session_assembly;
         use crate::session::construction::{ResolvedSessionOwner, SessionConstructionPlan};
         use agentdash_spi::Vfs;
         use std::collections::HashMap;

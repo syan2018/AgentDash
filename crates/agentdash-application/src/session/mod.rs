@@ -10,7 +10,6 @@ pub mod capability_service;
 pub mod capability_state;
 mod compaction_checkpoint;
 mod compaction_context_frame;
-pub mod companion_wait;
 pub mod construction;
 pub mod construction_planner;
 pub mod construction_provider;
@@ -60,10 +59,8 @@ pub mod types;
 pub use assembler::{
     AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, CompanionSpec,
     CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
-    SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
-    compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
-    compose_lifecycle_node_prompt_with_audit, compose_lifecycle_node_to_frame_with_audit,
-    extract_agent_mcp_entries, load_available_presets,
+    SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
+    compose_lifecycle_node_to_frame_with_audit, extract_agent_mcp_entries, load_available_presets,
 };
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,

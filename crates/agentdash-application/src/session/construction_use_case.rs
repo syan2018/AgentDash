@@ -24,11 +24,13 @@ use crate::session::construction_provider::{
 use crate::session::local_workspace_vfs;
 use crate::session::replay_runtime_capability_transitions;
 use crate::session::{
-    AgentLevelMcp, CompanionParentSpec, CompanionParentWorkflowSpec, LifecycleNodeSpec,
+    AgentLevelMcp, LifecycleNodeSpec,
     OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope, SessionMeta, SessionPromptLifecycle,
     SessionRepositoryRehydrateMode, SessionRequestAssembler, StoryStepPhase, StoryStepSpec,
-    compose_lifecycle_node_prompt_with_audit, resolve_session_prompt_lifecycle,
+    resolve_session_prompt_lifecycle,
 };
+use crate::session::assembler::compose_lifecycle_node_with_audit;
+use crate::session::assembly_builder::apply_session_assembly;
 use crate::session::{
     SessionCapabilityProjectionInput, derive_session_capability_projection,
     normalize_capability_state_dimensions,
@@ -558,32 +560,30 @@ async fn build_story_owner_prompt_request(
 
     let existing_vfs = plan.surface.vfs.clone();
     let assembler = build_session_assembler(state);
-    let mut plan = assembler
-        .compose_owner_bootstrap_prompt(
-            plan,
-            OwnerBootstrapSpec {
-                owner: OwnerScope::Story {
-                    story,
-                    project,
-                    workspace,
-                },
-                executor_config: effective_executor_config,
-                user_prompt_blocks,
-                agent_mcp: AgentLevelMcp::default(),
-                agent_tool_directives: Vec::new(),
-                agent_skill_asset_keys: Vec::new(),
-                agent_vfs_access_grants: Vec::new(),
-                request_mcp_servers: source_mcp_declarations,
-                existing_vfs,
-                visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-                active_workflow,
-                lifecycle,
-                audit_session_key: Some(session_id.to_string()),
-                caller_agent_id: None,
+    let prepared = assembler
+        .compose_owner_bootstrap(OwnerBootstrapSpec {
+            owner: OwnerScope::Story {
+                story,
+                project,
+                workspace,
             },
-        )
+            executor_config: effective_executor_config,
+            user_prompt_blocks,
+            agent_mcp: AgentLevelMcp::default(),
+            agent_tool_directives: Vec::new(),
+            agent_skill_asset_keys: Vec::new(),
+            agent_vfs_access_grants: Vec::new(),
+            request_mcp_servers: source_mcp_declarations,
+            existing_vfs,
+            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
+            active_workflow,
+            lifecycle,
+            audit_session_key: Some(session_id.to_string()),
+            caller_agent_id: None,
+        })
         .await
         .map_err(ApplicationError::BadRequest)?;
+    let mut plan = apply_session_assembly(plan, prepared);
 
     plan.context.continuation_context_frame = continuation_context_frame;
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
@@ -685,34 +685,32 @@ async fn build_project_owner_prompt_request(
 
     let existing_vfs = plan.surface.vfs.clone();
     let assembler = build_session_assembler(state);
-    let mut plan = assembler
-        .compose_owner_bootstrap_prompt(
-            plan,
-            OwnerBootstrapSpec {
-                owner: OwnerScope::Project {
-                    project,
-                    workspace: workspace.as_ref(),
-                    agent_id,
-                    agent_display_name,
-                    preset_name,
-                },
-                executor_config: effective_executor_config,
-                user_prompt_blocks,
-                agent_mcp: AgentLevelMcp { preset_mcp_servers },
-                agent_tool_directives,
-                agent_skill_asset_keys,
-                agent_vfs_access_grants,
-                request_mcp_servers: source_mcp_declarations,
-                existing_vfs,
-                visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
-                active_workflow,
-                lifecycle,
-                audit_session_key: Some(session_id.to_string()),
-                caller_agent_id: agent_id,
+    let prepared = assembler
+        .compose_owner_bootstrap(OwnerBootstrapSpec {
+            owner: OwnerScope::Project {
+                project,
+                workspace: workspace.as_ref(),
+                agent_id,
+                agent_display_name,
+                preset_name,
             },
-        )
+            executor_config: effective_executor_config,
+            user_prompt_blocks,
+            agent_mcp: AgentLevelMcp { preset_mcp_servers },
+            agent_tool_directives,
+            agent_skill_asset_keys,
+            agent_vfs_access_grants,
+            request_mcp_servers: source_mcp_declarations,
+            existing_vfs,
+            visible_canvas_mount_ids: visible_canvas_mount_ids.to_vec(),
+            active_workflow,
+            lifecycle,
+            audit_session_key: Some(session_id.to_string()),
+            caller_agent_id: agent_id,
+        })
         .await
         .map_err(ApplicationError::BadRequest)?;
+    let mut plan = apply_session_assembly(plan, prepared);
 
     plan.context.continuation_context_frame = continuation_context_frame;
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
@@ -796,8 +794,7 @@ async fn build_lifecycle_node_prompt_request(
     };
     let audit_bus = Some(state.services.audit_bus.clone());
 
-    let plan = compose_lifecycle_node_prompt_with_audit(
-        plan,
+    let prepared = compose_lifecycle_node_with_audit(
         state.repos,
         &state.config.platform_config,
         LifecycleNodeSpec {
@@ -812,6 +809,7 @@ async fn build_lifecycle_node_prompt_request(
     )
     .await
     .map_err(ApplicationError::BadRequest)?;
+    let plan = apply_session_assembly(plan, prepared);
 
     if matches!(lifecycle_kind, SessionPromptLifecycle::Plain) {
         return clear_plain_lifecycle_context(user_input, plan);
@@ -824,39 +822,52 @@ async fn build_companion_dispatch_prompt_request(
     plan: SessionConstructionPlan,
     companion: CompanionLaunchSource,
 ) -> Result<SessionConstructionPlan, ApplicationError> {
+    use crate::session::assembler::{
+        compose_companion, compose_companion_with_workflow, CompanionWorkflowSpec,
+    };
+    use crate::session::CompanionSpec;
+
     let assembler = build_session_assembler(state);
     if let Some(workflow) = companion.workflow {
-        assembler
-            .compose_companion_with_workflow_prompt_from_parent(
-                plan,
-                CompanionParentWorkflowSpec {
-                    companion: CompanionParentSpec {
-                        parent_session_id: &companion.parent_session_id,
-                        slice_mode: companion.slice_mode,
-                        companion_executor_config: companion.companion_executor_config,
-                        dispatch_prompt: companion.dispatch_prompt,
-                    },
-                    run: &workflow.run,
-                    lifecycle: &workflow.lifecycle,
-                    activity: &workflow.activity,
-                    workflow: workflow.workflow.as_ref(),
-                },
-            )
+        let parent_facts = assembler
+            .resolve_companion_parent_facts(&companion.parent_session_id)
             .await
-            .map_err(ApplicationError::BadRequest)
-    } else {
-        assembler
-            .compose_companion_prompt_from_parent(
-                plan,
-                CompanionParentSpec {
-                    parent_session_id: &companion.parent_session_id,
+            .map_err(ApplicationError::BadRequest)?;
+        let prepared = compose_companion_with_workflow(
+            state.repos,
+            &state.config.platform_config,
+            CompanionWorkflowSpec {
+                companion: CompanionSpec {
+                    parent_vfs: parent_facts.parent_vfs.as_ref(),
+                    parent_mcp_servers: &parent_facts.parent_mcp_servers,
+                    parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
                     slice_mode: companion.slice_mode,
                     companion_executor_config: companion.companion_executor_config,
                     dispatch_prompt: companion.dispatch_prompt,
                 },
-            )
+                run: &workflow.run,
+                lifecycle: &workflow.lifecycle,
+                activity: &workflow.activity,
+                workflow: workflow.workflow.as_ref(),
+            },
+        )
+        .await
+        .map_err(ApplicationError::BadRequest)?;
+        Ok(apply_session_assembly(plan, prepared))
+    } else {
+        let parent_facts = assembler
+            .resolve_companion_parent_facts(&companion.parent_session_id)
             .await
-            .map_err(ApplicationError::BadRequest)
+            .map_err(ApplicationError::BadRequest)?;
+        let prepared = compose_companion(CompanionSpec {
+            parent_vfs: parent_facts.parent_vfs.as_ref(),
+            parent_mcp_servers: &parent_facts.parent_mcp_servers,
+            parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+            slice_mode: companion.slice_mode,
+            companion_executor_config: companion.companion_executor_config,
+            dispatch_prompt: companion.dispatch_prompt,
+        });
+        Ok(apply_session_assembly(plan, prepared))
     }
 }
 
@@ -997,33 +1008,48 @@ async fn build_task_owner_prompt_request(
         .and_then(|input| input.phase)
         .unwrap_or(TaskLaunchPhase::Continue);
     let assembler = build_session_assembler(state);
-    let mut plan = assembler
-        .compose_story_step_prompt(
-            plan,
-            StoryStepSpec {
-                task: &task,
-                story: &story,
-                project: &project,
-                workspace: workspace.as_ref(),
-                phase: match task_phase {
-                    TaskLaunchPhase::Start => StoryStepPhase::Start,
-                    TaskLaunchPhase::Continue => StoryStepPhase::Continue,
-                },
-                override_prompt: task_input
-                    .as_ref()
-                    .and_then(|input| input.override_prompt.as_deref()),
-                additional_prompt: task_input
-                    .as_ref()
-                    .and_then(|input| input.additional_prompt.as_deref()),
-                request_mcp_servers: &source_mcp_declarations,
-                explicit_executor_config: effective_executor_config.clone(),
-                strict_config_resolution: true,
-                active_workflow,
-                audit_session_key: Some(session_id.to_string()),
+    let task_id = task.id;
+    let backend_id =
+        crate::task::gateway::resolve_task_backend_id(state.repos, state.services.backend_registry.as_ref(), &task)
+            .await
+            .map_err(ApplicationError::from)?;
+    let prepared = assembler
+        .compose_story_step(StoryStepSpec {
+            task: &task,
+            story: &story,
+            project: &project,
+            workspace: workspace.as_ref(),
+            phase: match task_phase {
+                TaskLaunchPhase::Start => StoryStepPhase::Start,
+                TaskLaunchPhase::Continue => StoryStepPhase::Continue,
             },
-        )
+            override_prompt: task_input
+                .as_ref()
+                .and_then(|input| input.override_prompt.as_deref()),
+            additional_prompt: task_input
+                .as_ref()
+                .and_then(|input| input.additional_prompt.as_deref()),
+            request_mcp_servers: &source_mcp_declarations,
+            explicit_executor_config: effective_executor_config.clone(),
+            strict_config_resolution: true,
+            active_workflow,
+            audit_session_key: Some(session_id.to_string()),
+        })
         .await
         .map_err(ApplicationError::from)?;
+    let mut plan = apply_session_assembly(plan, prepared);
+    plan.effects.terminal_hook_effect_binding =
+        Some(crate::session::post_turn_handler::TerminalHookEffectBinding {
+            handler: serde_json::json!({
+                "kind": "task",
+                "task_id": task_id,
+                "backend_id": backend_id,
+            }),
+            supported_effect_kinds: crate::task::gateway::effect_executor::TaskHookEffectExecutor::SUPPORTED_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string())
+                .collect(),
+        });
 
     if let Some(space) = plan.surface.vfs.as_mut() {
         append_visible_canvas_mounts(

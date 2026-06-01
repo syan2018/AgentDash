@@ -30,7 +30,7 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 ///
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
-pub(super) fn apply_session_assembly(
+pub(crate) fn apply_session_assembly(
     mut plan: SessionConstructionPlan,
     prepared: SessionAssemblyBuilder,
 ) -> SessionConstructionPlan {

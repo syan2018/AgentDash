@@ -37,7 +37,6 @@ pub struct TaskMutationInput {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<Option<Uuid>>,
-    pub lifecycle_step_key: Option<Option<String>>,
     pub agent_binding: Option<AgentBinding>,
 }
 
@@ -195,12 +194,10 @@ pub fn build_task(
     title: String,
     description: String,
     workspace_id: Option<Uuid>,
-    lifecycle_step_key: Option<String>,
     agent_binding: AgentBinding,
 ) -> Task {
     let mut task = Task::new(project_id, story_id, title, description);
     task.workspace_id = workspace_id;
-    task.lifecycle_step_key = lifecycle_step_key;
     task.agent_binding = agent_binding;
     task
 }
@@ -214,9 +211,6 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
     }
     if let Some(workspace_id) = input.workspace_id {
         task.workspace_id = workspace_id;
-    }
-    if let Some(lifecycle_step_key) = input.lifecycle_step_key {
-        task.lifecycle_step_key = lifecycle_step_key.and_then(normalize_string);
     }
     if let Some(agent_binding) = input.agent_binding {
         task.agent_binding = agent_binding;

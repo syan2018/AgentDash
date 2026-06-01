@@ -339,7 +339,6 @@ pub async fn create_task(
         title.to_string(),
         req.description.unwrap_or_default(),
         workspace_id,
-        normalize_optional_string(req.lifecycle_step_key),
         agent_binding,
     );
 
@@ -425,10 +424,6 @@ pub async fn update_task(
         None
     };
 
-    let lifecycle_step_key = req
-        .lifecycle_step_key
-        .map(|raw| normalize_optional_string(Some(raw)));
-
     let agent_binding = req.agent_binding.map(|value| {
         build_agent_binding(Some(AgentBindingInput {
             agent_type: value.agent_type,
@@ -445,7 +440,6 @@ pub async fn update_task(
             title,
             description: req.description,
             workspace_id,
-            lifecycle_step_key,
             agent_binding,
         },
     );
@@ -460,7 +454,6 @@ pub async fn update_task(
         *view.title = task.title.clone();
         *view.description = task.description.clone();
         *view.workspace_id = task.workspace_id;
-        *view.lifecycle_step_key = task.lifecycle_step_key.clone();
         *view.agent_binding = task.agent_binding.clone();
     });
     if updated_spec.is_none() {

@@ -57,7 +57,6 @@ pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub lifecycle_step_key: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,
 }
 
@@ -66,6 +65,5 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub lifecycle_step_key: Option<String>,
     pub agent_binding: Option<CreateTaskAgentBindingRequest>,
 }

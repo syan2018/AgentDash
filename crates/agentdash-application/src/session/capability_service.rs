@@ -130,7 +130,7 @@ impl SessionCapabilityService {
             hook_runtime,
             LiveRuntimeContextTransitionInput {
                 target_frame_id: target.frame_id,
-                session_id,
+                delivery_runtime_session_id: session_id,
                 turn_id: None,
                 phase_node: phase_node.to_string(),
                 run_id: None,

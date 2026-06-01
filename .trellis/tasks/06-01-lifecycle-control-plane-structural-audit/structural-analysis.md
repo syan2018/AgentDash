@@ -231,6 +231,16 @@ Hook runtime 已经是 `AgentFrameHookRuntime`，但入口仍是 `session_id -> 
 
 `session_id` lookup 只能存在于 runtime callback adapter 中，并且 adapter 命名要明确是 trace-to-frame resolution。
 
+### 落地记录
+
+2026-06-01 的 Phase 4 follow-up 已把 runtime context transition input 的 delivery 语义显式化：
+
+- `LiveRuntimeContextTransitionInput` / `PendingRuntimeContextTransitionInput` 使用 `target_frame_id` 作为 frame surface target。
+- 同一 input 中 raw runtime id 改名为 `delivery_runtime_session_id`，只用于 live connector、runtime registry、context frame event 投递与 runtime delivery outbox。
+- `StepActivation::apply_to_running_session` 仍存在，当前先解析 `target_frame_id` 再传入 delivery runtime id；它是后续纳入 `AgentFrameBuilder` 的剩余边界。
+
+该记录不关闭 P1-08 gate，因为 `SessionHookService` 与 `SessionHookSnapshotQuery` 仍是 session-indexed runtime adapter 入口；后续需要让 hook/capability control command 的 public target 收束到 frame/agent/assignment。
+
 ## P1-09 `StepActivation` 没收束进 AgentFrameBuilder
 
 ### 原始问题

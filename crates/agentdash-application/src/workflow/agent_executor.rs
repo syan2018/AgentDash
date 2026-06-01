@@ -474,7 +474,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     target_frame_id,
-                    session_id: root_runtime_session_id.to_string(),
+                    delivery_runtime_session_id: root_runtime_session_id.to_string(),
                     turn_id: None,
                     frame_transition_id: format!(
                         "activity-{}-{}-{}",

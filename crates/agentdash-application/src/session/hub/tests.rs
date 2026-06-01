@@ -1182,7 +1182,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
             &hook_runtime,
             LiveRuntimeContextTransitionInput {
                 target_frame_id: frame.id,
-                session_id: session.id.clone(),
+                delivery_runtime_session_id: session.id.clone(),
                 turn_id: None,
                 phase_node: "canvas".to_string(),
                 run_id: None,
@@ -1264,7 +1264,7 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
             target_frame_id: uuid::Uuid::new_v4(),
-            session_id: session.id.clone(),
+            delivery_runtime_session_id: session.id.clone(),
             turn_id: None,
             frame_transition_id: "transition-skill-vfs".to_string(),
             phase_node: "review".to_string(),

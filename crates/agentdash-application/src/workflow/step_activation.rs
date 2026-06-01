@@ -313,7 +313,7 @@ pub(crate) async fn apply_to_running_session(
             hook_runtime,
             LiveRuntimeContextTransitionInput {
                 target_frame_id,
-                session_id: session_id.to_string(),
+                delivery_runtime_session_id: session_id.to_string(),
                 turn_id: turn_id.map(ToString::to_string),
                 phase_node: phase_node_key.to_string(),
                 run_id,

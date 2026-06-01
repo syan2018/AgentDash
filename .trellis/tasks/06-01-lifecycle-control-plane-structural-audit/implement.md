@@ -25,17 +25,34 @@
 
 ## Phase 2: 拆分 LifecycleRun 与 WorkflowGraphInstance ownership
 
-- [ ] 让 `WorkflowGraphInstance` 成为 activity_state 的 owner。
-- [ ] Engine / scheduler / orchestrator 接收 graph instance execution context。
-- [ ] `LifecycleRun` 只聚合 graph instances、agents、subjects、events、artifacts、gates。
-- [ ] 验证同一 run 多 graph instance 不覆盖状态。
+- [x] 让 `WorkflowGraphInstance` 成为 activity_state 的 owner。
+- [x] Engine / scheduler / orchestrator 接收 graph instance execution context。
+- [x] `LifecycleRun` 只聚合 graph instances、agents、subjects、events、artifacts、gates。
+- [x] 验证同一 run 多 graph instance 不覆盖状态。
 
 ### Gate
 
-- [ ] 测试证明同一 `LifecycleRun` 下两个 `WorkflowGraphInstance` 使用相同 `activity_key` 时，attempt / claim / assignment 状态互不污染。
-- [ ] Engine / scheduler / orchestrator 的主推进接口接收 graph instance context 或 graph instance id。
-- [ ] `LifecycleRun.activity_state` 不再是新写入的主事实源；若仍保留，只能作为迁移/投影缓存并有明确 source。
-- [ ] `WorkflowGraphInstance` repository 支持读写 activity state，且关键查询覆盖 `run_id + graph_instance_id`。
+- [x] 测试证明同一 `LifecycleRun` 下两个 `WorkflowGraphInstance` 使用相同 `activity_key` 时，attempt / claim / assignment 状态互不污染。
+- [x] Engine / scheduler / orchestrator 的主推进接口接收 graph instance context 或 graph instance id。
+- [x] `LifecycleRun.activity_state` 不再是新写入的主事实源；若仍保留，只能作为迁移/投影缓存并有明确 source。
+- [x] `WorkflowGraphInstance` repository 支持读写 activity state，且关键查询覆盖 `run_id + graph_instance_id`。
+
+### 落地记录
+
+2026-06-02 的 Phase 2 slice 已关闭 graph-instance ownership gate：
+
+- `WorkflowGraphInstance` 持有 typed `ActivityLifecycleRunState`，`replace_activity_state` 校验 `graph_instance_id` 与 instance id 一致。
+- `ActivityLifecycleRunService::apply_event(graph_instance_id, event)` 与 `launch_ready_attempts(graph_instance_id, launcher)` 以 graph instance id 作为推进入口；workflow orchestrator terminal/advance 路径先解析 assignment association，再用 `association.graph_instance_id` 推进。
+- `LifecycleRun` 不再持有 `activity_state`；`active_node_keys` 是由 graph instance state 派生的 run-level projection，并带有 `graph_instance_id:activity_key` 前缀。
+- Postgres `lifecycle_workflow_instances.activity_state_json` 读写 typed state，`WorkflowGraphInstanceRepository::get_by_run_and_id(run_id, graph_instance_id)` 覆盖关键查询；migration `0086_drop_lifecycle_run_activity_state.sql` 删除 run 级 `activity_state`。
+- 前端 `ContextOverviewTab` 改为消费 generated `LifecycleRunView.workflow_graph_instances[].activities[].attempts`，`WorkflowRun` 类型与 mapper 不再暴露 `activity_state` / `active_node_keys` 作为 UI 运行态入口。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::activity_run --lib -- --format terse`
+- `pnpm --filter app-web test -- ContextOverviewTab.projection.test.tsx`
+- `pnpm --filter app-web run typecheck`
+- `rg -n "ActivityLifecycleRunState|ActivityAttemptState|activity_state|active_node_keys|WorkflowRun\\[\\]|run\\.id === activeWorkflow|mapActivityLifecycleRunState" packages/app-web/src/types packages/app-web/src/services packages/app-web/src/features/workspace-panel packages/app-web/src/features/workspace-runtime` 无命中。
 
 ## Phase 3: 重塑 Dispatch Intent Taxonomy
 

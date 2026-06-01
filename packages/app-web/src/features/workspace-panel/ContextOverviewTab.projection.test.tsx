@@ -2,10 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type {
+  HookSessionRuntimeInfo,
+  LifecycleRunView,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
-  WorkflowRun,
 } from "../../types";
 import { ContextOverviewTab } from "./ContextOverviewTab";
 
@@ -104,7 +105,78 @@ const sessionCapabilities: SessionBaselineCapabilities = {
   ],
 };
 
-const workflowRuns: WorkflowRun[] = [];
+const workflowRuns: LifecycleRunView[] = [];
+
+const lifecycleRunView: LifecycleRunView = {
+  run_ref: { run_id: "run-projection-123456" },
+  project_id: "project-projection",
+  lifecycle_id: "lifecycle-projection",
+  status: "running",
+  workflow_graph_instances: [
+    {
+      id: "graph-instance-projection",
+      run_id: "run-projection-123456",
+      graph_id: "graph-projection",
+      role: "primary",
+      status: "running",
+      activities: [
+        {
+          activity_key: "implement",
+          status: "running",
+          attempts: [
+            {
+              graph_instance_id: "graph-instance-projection",
+              activity_key: "implement",
+              attempt: 2,
+              status: "running",
+            },
+            {
+              graph_instance_id: "graph-instance-projection",
+              activity_key: "review",
+              attempt: 1,
+              status: "completed",
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  agents: [],
+  subject_associations: [],
+  runtime_trace_refs: [],
+  execution_log: [],
+  created_at: "2026-06-02T00:00:00Z",
+  updated_at: "2026-06-02T00:00:00Z",
+  last_activity_at: "2026-06-02T00:00:00Z",
+};
+
+const hookRuntime: HookSessionRuntimeInfo = {
+  session_id: "sess-projection",
+  revision: 1,
+  snapshot: {
+    session_id: "sess-projection",
+    sources: [],
+    tags: [],
+    injections: [],
+    diagnostics: [],
+    metadata: {
+      active_workflow: {
+        lifecycle_id: "lifecycle-projection",
+        lifecycle_key: "projection-lifecycle",
+        lifecycle_name: "Projection Lifecycle",
+        run_id: "run-projection-123456",
+        run_status: "running",
+        activity_key: "implement",
+        activity_title: "Implement Projection",
+        primary_workflow_id: "graph-projection",
+        primary_workflow_name: "Primary Projection",
+      },
+    },
+  },
+  diagnostics: [],
+  trace: [],
+  pending_actions: [],
+};
 
 describe("ContextOverviewTab projection contract", () => {
   it("只从 final runtime surface 展示 Session 地址空间与派生能力", () => {
@@ -125,5 +197,25 @@ describe("ContextOverviewTab projection contract", () => {
     expect(html).toContain("Runtime Lifecycle");
     expect(html).toContain("2 个运行时 mount");
     expect(html).toContain("runtime-skill");
+  });
+
+  it("从 lifecycle run view 的 graph instance projection 展示活跃 attempt", () => {
+    const html = renderToStaticMarkup(
+      <ContextOverviewTab
+        contextSnapshot={contextSnapshot}
+        ownerStory={null}
+        ownerProjectName="Projection Project"
+        executorSummary={contextSnapshot.executor}
+        runtimeSurface={runtimeSurface}
+        hookRuntime={hookRuntime}
+        sessionCapabilities={sessionCapabilities}
+        workflowRuns={[lifecycleRunView]}
+      />,
+    );
+
+    expect(html).toContain("Projection Lifecycle");
+    expect(html).toContain("Attempt · Running");
+    expect(html).toContain("进度 1/2");
+    expect(html).toContain("graph-instance-projection:implement");
   });
 });

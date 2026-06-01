@@ -71,6 +71,22 @@ Runtime terminal 目标上已经走 `RuntimeSession -> AgentFrame -> LifecycleAg
 
 迁移顺序上，不应先到处替换字段名，而应先把 engine 的函数签名从 `LifecycleRun` 改成 `GraphInstanceExecutionContext`，让 run 成为 context 而不是状态容器。
 
+### 落地记录
+
+2026-06-02 已完成 `WorkflowGraphInstance` activity state ownership 收口：
+
+- `WorkflowGraphInstance` 成为 typed `ActivityLifecycleRunState` 的持有者，写入时校验 state 内的 `graph_instance_id` 与 instance id 一致。
+- `ActivityLifecycleRunService` 的推进入口以 `graph_instance_id` 定位 graph instance；orchestrator terminal/advance 路径通过 `ActivityRuntimeAssociationResolver` 的 association 结果推进对应 graph instance。
+- `LifecycleRun` 只保存 lifecycle-level 状态与从 graph instances 派生的 control projection；`active_node_keys` 带 `graph_instance_id:activity_key` 前缀，用于表达跨 graph instance 的活跃节点集合。
+- persistence 层将 state 存入 `lifecycle_workflow_instances.activity_state_json`，并提供 `run_id + graph_instance_id` 查询；run 表的 `activity_state` 已由 migration 删除。
+- frontend runtime overview 不再把旧 `WorkflowRun.activity_state` 当作运行态事实源，改为从 generated `LifecycleRunView.workflow_graph_instances` 展示 attempt/progress。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::activity_run --lib -- --format terse`
+- `pnpm --filter app-web test -- ContextOverviewTab.projection.test.tsx`
+- `pnpm --filter app-web run typecheck`
+
 ## P0-03 `LifecycleDispatchService` 不创建 `AgentAssignment`
 
 ### 原始问题

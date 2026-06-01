@@ -1,12 +1,12 @@
 import type {
   ExtensionRuntimeProjectionResponse,
   HookSessionRuntimeInfo,
+  LifecycleRunView,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
   Story,
   TaskSessionExecutorSummary,
-  WorkflowRun,
 } from "../../../types";
 
 export type SessionRuntimeStateStatus = "idle" | "loading" | "ready" | "refreshing" | "error";
@@ -40,6 +40,6 @@ export interface WorkspaceRuntimeData {
   workspaceBackend: WorkspaceBackendTarget | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  workflowRuns: WorkflowRun[];
+  workflowRuns: LifecycleRunView[];
   activeCanvasId: string | null;
 }

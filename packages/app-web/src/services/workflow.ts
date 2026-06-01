@@ -8,14 +8,10 @@ import type {
   ActivityExecutorSpec,
   ActivityJoinPolicy,
   WorkflowGraph,
-  ActivityLifecycleRunState,
-  ActivityAttemptStatus,
-  ActivityRunStatus,
   ActivityTransition,
   ArtifactAliasPolicy,
   ArtifactBinding,
   CapabilityDirective,
-  ExecutorRunRef,
   HookRulePreset,
   ContextStrategy,
   GateStrategy,
@@ -64,12 +60,6 @@ const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", 
 const AGENT_SESSION_POLICIES = new Set<string>(["spawn_child", "continue_root", "attach_existing"]);
 const ARTIFACT_ALIAS_POLICIES = new Set<string>(["latest", "per_attempt", "latest_and_history"]);
 const ACTIVITY_TRANSITION_KINDS = new Set<string>(["flow", "artifact"]);
-const ACTIVITY_ATTEMPT_STATUSES = new Set<string>([
-  "pending", "ready", "claiming", "running", "completed", "failed", "cancelled",
-]);
-const ACTIVITY_RUN_STATUSES = new Set<string>([
-  "ready", "running", "blocked", "completed", "failed", "cancelled",
-]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
   "activity_activated",
   "activity_completed",
@@ -418,56 +408,6 @@ function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExec
   };
 }
 
-function mapExecutorRunRef(raw: unknown): ExecutorRunRef | undefined {
-  const value = asRecord(raw);
-  if (!value) return undefined;
-  const kind = requireStringField(value, "kind");
-  if (kind === "runtime_session") {
-    return { kind: "runtime_session", session_id: requireStringField(value, "session_id") };
-  }
-  if (kind === "function_run") {
-    return { kind: "function_run", run_id: requireStringField(value, "run_id") };
-  }
-  if (kind === "human_decision") {
-    return { kind: "human_decision", decision_id: requireStringField(value, "decision_id") };
-  }
-  throw new Error(`未知的 executor run ref: ${kind}`);
-}
-
-function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState | null {
-  const value = asRecord(raw);
-  if (!value) return null;
-  return {
-    status: normalizeEnum<ActivityRunStatus>(value.status, ACTIVITY_RUN_STATUSES, "activity run status"),
-    attempts: asRecordArray(value.attempts).map((attempt) => ({
-      activity_key: requireStringField(attempt, "activity_key"),
-      attempt: Number(attempt.attempt),
-      status: normalizeEnum<ActivityAttemptStatus>(attempt.status, ACTIVITY_ATTEMPT_STATUSES, "activity attempt status"),
-      executor_run: mapExecutorRunRef(attempt.executor_run),
-      started_at: optUndef(attempt.started_at),
-      completed_at: optUndef(attempt.completed_at),
-      summary: optUndef(attempt.summary),
-    })),
-    outputs: asRecordArray(value.outputs).map((artifact) => ({
-      activity_key: requireStringField(artifact, "activity_key"),
-      attempt: Number(artifact.attempt),
-      port_key: requireStringField(artifact, "port_key"),
-      value: mapJsonValue(artifact.value, "activity output artifact value"),
-      created_at: requireStringField(artifact, "created_at"),
-    })),
-    inputs: asRecordArray(value.inputs).map((artifact) => ({
-      activity_key: requireStringField(artifact, "activity_key"),
-      attempt: Number(artifact.attempt),
-      port_key: requireStringField(artifact, "port_key"),
-      source_activity_key: requireStringField(artifact, "source_activity_key"),
-      source_attempt: Number(artifact.source_attempt),
-      source_port_key: requireStringField(artifact, "source_port_key"),
-      value: mapJsonValue(artifact.value, "activity input artifact value"),
-      created_at: requireStringField(artifact, "created_at"),
-    })),
-  };
-}
-
 // ─── Entity mapper ─────────────────────────────────────
 
 export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure {
@@ -512,9 +452,7 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
     project_id: requireStringField(raw, "project_id"),
     lifecycle_id: requireStringField(raw, "lifecycle_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
-    active_node_keys: asStringArray(raw.active_node_keys),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
-    activity_state: mapActivityLifecycleRunState(raw.activity_state),
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
     last_activity_at: requireStringField(raw, "last_activity_at"),

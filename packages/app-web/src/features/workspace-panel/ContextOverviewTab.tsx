@@ -10,9 +10,10 @@ import { SurfaceCard } from "../session-context";
 import { ATTEMPT_STATUS_LABEL, RUN_STATUS_LABEL } from "../workflow/shared-labels";
 import type {
   ActiveWorkflowHookMetadata,
-  ActivityAttemptState,
+  ActivityAttemptView,
   HookInjection,
   HookSessionRuntimeInfo,
+  LifecycleRunView,
   ResolvedMountSummary,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -20,7 +21,6 @@ import type {
   SessionContextSnapshot,
   Story,
   TaskSessionExecutorSummary,
-  WorkflowRun,
 } from "../../types";
 
 // ─── Props ──────────────────────────────────────────────
@@ -33,7 +33,7 @@ export interface ContextOverviewTabProps {
   runtimeSurface: ResolvedVfsSurface | null;
   hookRuntime: HookSessionRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
-  workflowRuns: WorkflowRun[];
+  workflowRuns: LifecycleRunView[];
 }
 
 // ─── Constants ──────────────────────────────────────────
@@ -61,12 +61,18 @@ function hasCompositionContent(composition: SessionComposition | null | undefine
   );
 }
 
+function formatAttemptStatus(status: string): string {
+  return status in ATTEMPT_STATUS_LABEL
+    ? ATTEMPT_STATUS_LABEL[status as keyof typeof ATTEMPT_STATUS_LABEL]
+    : status;
+}
+
 function resolveActiveRun(
-  workflowRuns: WorkflowRun[],
+  workflowRuns: LifecycleRunView[],
   activeWorkflow: ActiveWorkflowHookMetadata | null,
-): WorkflowRun | null {
+): LifecycleRunView | null {
   if (activeWorkflow) {
-    const matched = workflowRuns.find((run) => run.id === activeWorkflow.run_id);
+    const matched = workflowRuns.find((run) => run.run_ref.run_id === activeWorkflow.run_id);
     if (matched) return matched;
   }
   return (
@@ -77,15 +83,21 @@ function resolveActiveRun(
   );
 }
 
-function resolveActiveAttempt(
-  run: WorkflowRun | null,
-  activeWorkflow: ActiveWorkflowHookMetadata | null,
-): ActivityAttemptState | null {
-  const attempts = run?.activity_state?.attempts;
-  if (!attempts || attempts.length === 0) return null;
+function collectAttempts(run: LifecycleRunView | null): ActivityAttemptView[] {
+  return run?.workflow_graph_instances.flatMap((instance) => (
+    instance.activities.flatMap((activity) => activity.attempts)
+  )) ?? [];
+}
 
-  const latestByActivity = (key: string): ActivityAttemptState | null => {
-    let best: ActivityAttemptState | null = null;
+function resolveActiveAttempt(
+  run: LifecycleRunView | null,
+  activeWorkflow: ActiveWorkflowHookMetadata | null,
+): ActivityAttemptView | null {
+  const attempts = collectAttempts(run);
+  if (attempts.length === 0) return null;
+
+  const latestByActivity = (key: string): ActivityAttemptView | null => {
+    let best: ActivityAttemptView | null = null;
     for (const attempt of attempts) {
       if (attempt.activity_key !== key) continue;
       if (!best || attempt.attempt >= best.attempt) best = attempt;
@@ -97,17 +109,26 @@ function resolveActiveAttempt(
     const matched = latestByActivity(activeWorkflow.activity_key);
     if (matched) return matched;
   }
-  const activeKey = run?.active_node_keys?.[0] ?? null;
-  if (activeKey) {
-    const matched = latestByActivity(activeKey);
-    if (matched) return matched;
-  }
   return (
     attempts.find((a) => a.status === "running" || a.status === "claiming")
     ?? attempts.find((a) => a.status === "ready")
     ?? attempts[attempts.length - 1]
     ?? null
   );
+}
+
+function activeAttemptLabels(run: LifecycleRunView | null): string[] {
+  return collectAttempts(run)
+    .filter((attempt) => (
+      attempt.status === "running"
+      || attempt.status === "claiming"
+      || attempt.status === "ready"
+    ))
+    .map((attempt) => (
+      attempt.graph_instance_id
+        ? `${attempt.graph_instance_id}:${attempt.activity_key}`
+        : attempt.activity_key
+    ));
 }
 
 function isWorkflowContextInjection(injection: HookInjection): boolean {
@@ -200,13 +221,14 @@ function WorkflowContextCard({
   composition,
 }: {
   hookRuntime: HookSessionRuntimeInfo | null;
-  workflowRuns: WorkflowRun[];
+  workflowRuns: LifecycleRunView[];
   runtimeSurface: ResolvedVfsSurface | null;
   composition: SessionComposition | null;
 }) {
   const activeWorkflow = hookRuntime?.snapshot.metadata?.active_workflow ?? null;
   const activeRun = resolveActiveRun(workflowRuns, activeWorkflow);
   const activeAttempt = resolveActiveAttempt(activeRun, activeWorkflow);
+  const activeLabels = activeAttemptLabels(activeRun);
   const lifecycleMounts = runtimeSurface?.mounts.filter((mount) => mount.provider === "lifecycle_vfs") ?? [];
   const workflowInjections = hookRuntime?.snapshot.injections.filter(isWorkflowContextInjection) ?? [];
   const hasLegacySteps = (composition?.workflow_steps.length ?? 0) > 0;
@@ -221,7 +243,7 @@ function WorkflowContextCard({
     );
   }
 
-  const attempts = activeRun?.activity_state?.attempts ?? [];
+  const attempts = collectAttempts(activeRun);
   const completedCount = attempts.filter((a) => a.status === "completed").length;
   const totalCount = attempts.length;
 
@@ -243,7 +265,7 @@ function WorkflowContextCard({
         )}
         {activeAttempt && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            Attempt · {ATTEMPT_STATUS_LABEL[activeAttempt.status] ?? activeAttempt.status}
+            Attempt · {formatAttemptStatus(activeAttempt.status)}
           </span>
         )}
         {totalCount > 0 && (
@@ -268,12 +290,9 @@ function WorkflowContextCard({
               </p>
             </>
           )}
-          {activeAttempt?.summary && (
-            <p className="text-[11px] leading-5 text-muted-foreground">{activeAttempt.summary}</p>
-          )}
-          {activeRun?.active_node_keys && activeRun.active_node_keys.length > 0 && (
+          {activeLabels.length > 0 && (
             <p className="text-[11px] text-muted-foreground">
-              Active nodes: {activeRun.active_node_keys.join(", ")}
+              Active attempts: {activeLabels.join(", ")}
             </p>
           )}
         </div>

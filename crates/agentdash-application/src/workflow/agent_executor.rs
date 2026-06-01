@@ -27,7 +27,7 @@ use crate::session::{
     LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
     SessionLaunchService, UserPromptInput,
 };
-use crate::workflow::step_activation::apply_to_running_session;
+use crate::workflow::step_activation::apply_to_frame_runtime_target;
 use crate::workflow::{
     AgentFrameBuilder, RuntimeSessionCreationRequest, activate_step_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation, load_port_output_map,
@@ -388,10 +388,18 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             )
             .await
             .map_err(|error| error.to_string())?;
-            apply_to_running_session(
+            let target = session_capability
+                .resolve_runtime_session_target(root_runtime_session_id)
+                .await?;
+            let base_surface = session_capability
+                .get_current_capability_state(&target.delivery_runtime_session_id)
+                .await;
+            apply_to_frame_runtime_target(
                 &activation,
                 &hook_runtime,
                 session_capability,
+                target,
+                base_surface,
                 None,
                 &activity.key,
                 Some(claim.run_id),
@@ -468,13 +476,13 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             }
             let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
             CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
-            let target_frame_id = session_capability
-                .resolve_runtime_session_frame_id(root_runtime_session_id)
+            let target = session_capability
+                .resolve_runtime_session_target(root_runtime_session_id)
                 .await?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
-                    target_frame_id,
-                    delivery_runtime_session_id: root_runtime_session_id.to_string(),
+                    target_frame_id: target.frame_id,
+                    delivery_runtime_session_id: target.delivery_runtime_session_id,
                     turn_id: None,
                     frame_transition_id: format!(
                         "activity-{}-{}-{}",

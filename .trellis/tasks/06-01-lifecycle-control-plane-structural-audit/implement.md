@@ -110,7 +110,7 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；完整 gate 仍取决于 `SessionHookService`、capability live update 与 companion notification 入口迁到 target-first service。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply 已改为接收 `AgentFrameRuntimeTarget` 与 base surface。完整 gate 仍取决于 `SessionHookService`、canvas capability sync、companion notification 与 ContinueRoot policy 入口迁到 target-first service。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
 - [x] 明确多 RuntimeSession selection policy。
@@ -123,6 +123,7 @@
 - [ ] Static gate：`rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \\{|ensure_hook_runtime\\(|get_hook_runtime\\(|resolve_runtime_session_frame_id\\(" crates/agentdash-application/src` 只允许命中 runtime adapter、tests 或显式 provenance/trace sink。
 - [ ] Hook gate：测试证明 hook snapshot load / refresh / evaluate 可从 `frame_id + assignment_id` 执行，不需要 raw runtime session id 作为 owner。
 - [ ] Capability gate：PhaseNode 与 canvas live update 测试直接传入 `AgentFrameRuntimeTarget`，workflow/canvas control logic 不调用 `resolve_runtime_session_frame_id`。
+  - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`，但 canvas 仍直接 `resolve_runtime_session_frame_id`，ContinueRoot 仍从 root runtime session 解析 delivery target，因此 gate 未关闭。
 - [ ] Companion gate：companion parent result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace payload。
 - [ ] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
 - [x] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
@@ -135,12 +136,23 @@
 - `build_lifecycle_activation_surface` 成为 lifecycle `StepActivation` → frame surface 的封装边界，负责把 base VFS、activation lifecycle VFS、mount directives、MCP servers 与 capability state 归一化成同一份 frame-owned surface。
 - `SessionAssemblyBuilder::apply_lifecycle_activation` 只消费该 frame-owned surface，避免在 session assembly 层复制 capability/VFS/MCP 归一化规则。
 - `workflow::frame_builder` 单测新增同源 revision gate，证明同一次 activation surface 能在同一 AgentFrame revision 中同时落下 procedure、context、capability、VFS/MCP、runtime refs 与 graph activity scope。
-- 该 slice 不关闭「将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段」主项，因为 `StepActivation::apply_to_running_session`、companion skill projection 和 ContinueRoot 仍在 builder 外部消费 activation。
+- 该 slice 不关闭「将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段」主项，因为 `StepActivation` live apply 虽已 target-first，仍和 companion skill projection、ContinueRoot 一样在 builder 外部消费 activation。
+
+2026-06-02 的 StepActivation live apply slice 已关闭 workflow 内部“applier 自行 session -> frame lookup”的局部缺口，但 Phase 4 capability gate 仍保持 partial：
+
+- `SessionCapabilityService::resolve_runtime_session_target` 成为 runtime adapter 到 `AgentFrameRuntimeTarget` 的解析入口；workflow 调用点不再直接拿 `target_frame_id` 字符串。
+- `StepActivation::apply_to_frame_runtime_target` 改为接收 `AgentFrameRuntimeTarget` 与调用方提供的 base capability surface，只负责把 activation 归一化成目标 surface 并执行 runtime context transition。
+- `AgentActivityExecutor` 的 live 与 pending transition 均传递显式 `target_frame_id + delivery_runtime_session_id`，不再让 StepActivation applier 自行反查 frame。
+- 该 slice 不关闭 capability gate，因为 canvas live update 仍可从 raw session id 解析 frame，ContinueRoot 仍以 `root_runtime_session_id` 同时表达 reuse policy 与 delivery target，companion parent notification 也尚未迁入 frame/assignment target。
 
 验证记录：
 
 - `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
 - `cargo check -p agentdash-application`
+- `cargo fmt --all --check`
+- `git diff --check`
 
 ## Phase 5: 收束业务入口与 interaction/gate
 

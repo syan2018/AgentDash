@@ -51,6 +51,17 @@ impl SessionCapabilityService {
             .map_err(|error| error.to_string())
     }
 
+    pub(crate) async fn resolve_runtime_session_target(
+        &self,
+        session_id: &str,
+    ) -> Result<AgentFrameRuntimeTarget, String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        Ok(AgentFrameRuntimeTarget {
+            frame_id,
+            delivery_runtime_session_id: session_id.to_string(),
+        })
+    }
+
     pub async fn list_requested_runtime_commands(
         &self,
         session_id: &str,

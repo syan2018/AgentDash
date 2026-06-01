@@ -33,6 +33,7 @@ use crate::capability::{
 };
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
+use crate::session::types::AgentFrameRuntimeTarget;
 use crate::session::{SessionCapabilityService, compose_vfs_with_overlay_and_directives};
 use crate::vfs::build_lifecycle_mount_with_ports;
 
@@ -278,7 +279,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 //
 // 两个 applier 对应两条激活路径:
 //   A. Orchestrator 创建 AgentNode session —— apply_to_new_lifecycle_session
-//   B. PhaseNode / advance tool 热更新 —— apply_to_running_session
+//   B. PhaseNode / advance tool 热更新 —— apply_to_frame_runtime_target
 //
 // 新 RuntimeSession launch 必须先写入 AgentFrame revision，再由 frame 投影
 // RuntimeLaunchRequest；running session 只消费已生效的 runtime capability transition。
@@ -286,22 +287,24 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
 /// runtime context update 事件。
-pub(crate) async fn apply_to_running_session(
+pub(crate) async fn apply_to_frame_runtime_target(
     activation: &StepActivation,
     hook_runtime: &SharedHookRuntime,
     session_capability: &SessionCapabilityService,
+    target: AgentFrameRuntimeTarget,
+    base_surface: Option<CapabilityState>,
     turn_id: Option<&str>,
     phase_node_key: &str,
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
-    let session_id = hook_runtime.session_id();
-    let target_frame_id = session_capability
-        .resolve_runtime_session_frame_id(session_id)
-        .await?;
-    let base_surface = session_capability
-        .get_current_capability_state(session_id)
-        .await;
+    if hook_runtime.session_id() != target.delivery_runtime_session_id {
+        return Err(format!(
+            "Hook runtime session `{}` 与 delivery RuntimeSession `{}` 不一致，拒绝热更新能力状态",
+            hook_runtime.session_id(),
+            target.delivery_runtime_session_id
+        ));
+    }
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
     let key_delta = SetDelta::compute(
         &hook_runtime.current_capabilities(),
@@ -312,8 +315,8 @@ pub(crate) async fn apply_to_running_session(
         .apply_live_runtime_context_transition(
             hook_runtime,
             LiveRuntimeContextTransitionInput {
-                target_frame_id,
-                delivery_runtime_session_id: session_id.to_string(),
+                target_frame_id: target.frame_id,
+                delivery_runtime_session_id: target.delivery_runtime_session_id,
                 turn_id: turn_id.map(ToString::to_string),
                 phase_node: phase_node_key.to_string(),
                 run_id,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    AgentFrameRepository, AgentLineageRepository, LifecycleGateRepository,
+    AgentFrameRepository, AgentLineageRepository, LifecycleGate, LifecycleGateRepository,
     RuntimeSessionSelectionPolicy,
 };
 use async_trait::async_trait;
@@ -12,6 +12,8 @@ use super::{
     build_companion_human_response_notification, payload_types,
 };
 use crate::{ApplicationError, session::SessionEventingService};
+
+const COMPANION_PARENT_REQUEST_GATE_KIND: &str = "companion_parent_request";
 
 #[derive(Debug, Clone)]
 pub struct RespondCompanionGateCommand {
@@ -32,6 +34,46 @@ pub struct CompleteCompanionChildResultCommand {
     pub request_id: String,
     pub child_runtime_session_id: String,
     pub resolved_turn_id: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenCompanionParentRequestCommand {
+    pub child_runtime_session_id: String,
+    pub turn_id: String,
+    pub wait: bool,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionParentRequestOpenResult {
+    pub gate_id: Uuid,
+    pub request_id: String,
+    pub run_id: Uuid,
+    pub parent_agent_id: Uuid,
+    pub parent_frame_id: Uuid,
+    pub parent_delivery_runtime_session_id: String,
+    pub child_agent_id: Uuid,
+    pub child_frame_id: Uuid,
+    pub child_delivery_runtime_session_id: String,
+    pub companion_label: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolveCompanionParentRequestCommand {
+    pub request_id: String,
+    pub parent_runtime_session_id: String,
+    pub resolved_turn_id: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionParentRequestResolveResult {
+    pub gate_id: Uuid,
+    pub parent_agent_id: Uuid,
+    pub parent_frame_id: Uuid,
+    pub parent_delivery_runtime_session_id: String,
     pub payload: serde_json::Value,
 }
 
@@ -357,6 +399,220 @@ impl CompanionGateControlService {
             parent_agent_id,
             parent_delivery_runtime_session_id,
             child_delivery_runtime_session_id,
+            payload: resolution_payload,
+        }))
+    }
+
+    pub async fn open_parent_request(
+        &self,
+        command: OpenCompanionParentRequestCommand,
+    ) -> Result<CompanionParentRequestOpenResult, ApplicationError> {
+        if let Some(error) = payload_types::payload_object_error(&command.payload) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+        let prompt = command
+            .payload
+            .get("prompt")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ApplicationError::BadRequest("payload.prompt 不能为空".to_string()))?;
+
+        let child_frame = self
+            .frame_repo
+            .find_by_runtime_session(&command.child_runtime_session_id)
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::Conflict(
+                    "当前 runtime session 没有关联的 AgentFrame，无法向 parent 提审".to_string(),
+                )
+            })?;
+        let child_delivery_runtime_session_id = child_frame
+            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                runtime_session_id: command.child_runtime_session_id.clone(),
+            })
+            .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "child frame {} 不包含 runtime session {}",
+                    child_frame.id, command.child_runtime_session_id
+                ))
+            })?;
+        let lineage = self
+            .lineage_repo
+            .find_parent(child_frame.agent_id)
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::Conflict(
+                    "当前 agent 没有 parent lineage，无法向 parent 提审".to_string(),
+                )
+            })?;
+        let parent_agent_id = lineage.parent_agent_id.ok_or_else(|| {
+            ApplicationError::Conflict("lineage 中 parent_agent_id 为空".to_string())
+        })?;
+        let parent_frame = self
+            .frame_repo
+            .get_current(parent_agent_id)
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::Conflict("parent agent 没有活跃的 frame".to_string())
+            })?;
+        let parent_delivery_runtime_session_id = parent_frame
+            .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+            .ok_or_else(|| {
+                ApplicationError::Conflict("parent frame 没有关联的 runtime session".to_string())
+            })?;
+
+        let companion_label = format!("child:{}", child_frame.agent_id);
+        let mut gate = LifecycleGate::open(
+            lineage.run_id,
+            Some(parent_agent_id),
+            Some(parent_frame.id),
+            COMPANION_PARENT_REQUEST_GATE_KIND,
+            "pending-parent-request",
+            None,
+        );
+        gate.correlation_id = gate.id.to_string();
+        let request_id = gate.id.to_string();
+        let review_payload = serde_json::json!({
+            "gate_id": request_id,
+            "request_id": request_id,
+            "run_id": lineage.run_id.to_string(),
+            "child_agent_id": child_frame.agent_id.to_string(),
+            "child_frame_id": child_frame.id.to_string(),
+            "parent_agent_id": parent_agent_id.to_string(),
+            "parent_frame_id": parent_frame.id.to_string(),
+            "companion_label": companion_label,
+            "companion_session_id": child_delivery_runtime_session_id,
+            "parent_session_id": parent_delivery_runtime_session_id,
+            "request_type": "review",
+            "adoption_mode": agentdash_spi::action_type::FOLLOW_UP_REQUIRED,
+            "status": "pending",
+            "summary": prompt,
+            "turn_id": command.turn_id,
+            "wait": command.wait,
+            "payload": command.payload,
+        });
+        gate.payload_json = Some(review_payload.clone());
+        self.gate_repo.create(&gate).await?;
+
+        let notification = CompanionGateEventNotification {
+            delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+            turn_id: command.turn_id,
+            event_type: "companion_review_request".to_string(),
+            message: format!("Companion `{companion_label}` 请求审阅: {prompt}"),
+            payload: review_payload.clone(),
+        };
+        if let Err(error) = self.delivery.deliver_companion_event(notification).await {
+            tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "parent companion request gate opened but runtime notification delivery failed");
+        }
+
+        Ok(CompanionParentRequestOpenResult {
+            gate_id: gate.id,
+            request_id,
+            run_id: gate.run_id,
+            parent_agent_id,
+            parent_frame_id: parent_frame.id,
+            parent_delivery_runtime_session_id,
+            child_agent_id: child_frame.agent_id,
+            child_frame_id: child_frame.id,
+            child_delivery_runtime_session_id,
+            companion_label,
+            payload: review_payload,
+        })
+    }
+
+    pub async fn resolve_parent_request(
+        &self,
+        command: ResolveCompanionParentRequestCommand,
+    ) -> Result<Option<CompanionParentRequestResolveResult>, ApplicationError> {
+        if let Some(error) = payload_types::payload_object_error(&command.payload) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+        let registry = PayloadTypeRegistry::with_builtins();
+        if let Some(error) = registry.validate_response(&command.payload, None) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+
+        let request_id = command.request_id.trim();
+        let Ok(gate_id) = Uuid::parse_str(request_id) else {
+            return Ok(None);
+        };
+        let Some(mut gate) = self.gate_repo.get(gate_id).await? else {
+            return Ok(None);
+        };
+        if gate.gate_kind != COMPANION_PARENT_REQUEST_GATE_KIND {
+            return Ok(None);
+        }
+
+        let parent_frame = self
+            .frame_repo
+            .find_by_runtime_session(&command.parent_runtime_session_id)
+            .await?
+            .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "runtime session {} 没有关联的 parent AgentFrame",
+                    command.parent_runtime_session_id
+                ))
+            })?;
+        if gate.agent_id != Some(parent_frame.agent_id) || gate.frame_id != Some(parent_frame.id) {
+            return Err(ApplicationError::Conflict(format!(
+                "parent request gate {} 不属于当前 parent frame {}",
+                gate.id, parent_frame.id
+            )));
+        }
+        if !gate.is_open() {
+            return Err(ApplicationError::Conflict(format!(
+                "parent request gate 已关闭: {}",
+                gate.id
+            )));
+        }
+        let parent_delivery_runtime_session_id = parent_frame
+            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                runtime_session_id: command.parent_runtime_session_id.clone(),
+            })
+            .ok_or_else(|| {
+                ApplicationError::Conflict(format!(
+                    "parent frame {} 不包含 runtime session {}",
+                    parent_frame.id, command.parent_runtime_session_id
+                ))
+            })?;
+
+        let mut resolution_payload = command.payload.clone();
+        if let Some(object) = resolution_payload.as_object_mut() {
+            object.insert(
+                "gate_id".to_string(),
+                serde_json::Value::String(gate.id.to_string()),
+            );
+            object.insert(
+                "request_id".to_string(),
+                serde_json::Value::String(gate.id.to_string()),
+            );
+            object.insert(
+                "resolved_turn_id".to_string(),
+                serde_json::Value::String(command.resolved_turn_id.clone()),
+            );
+        }
+
+        gate.payload_json = Some(resolution_payload.clone());
+        gate.resolve(format!("parent_agent:{}", parent_frame.agent_id));
+        self.gate_repo.update(&gate).await?;
+
+        let notification = CompanionGateEventNotification {
+            delivery_runtime_session_id: parent_delivery_runtime_session_id.clone(),
+            turn_id: command.resolved_turn_id,
+            event_type: "companion_parent_request_resolved".to_string(),
+            message: "Parent companion request 已通过 LifecycleGate resolve".to_string(),
+            payload: resolution_payload.clone(),
+        };
+        if let Err(error) = self.delivery.deliver_companion_event(notification).await {
+            tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_frame.agent_id, "parent companion request gate resolved but runtime notification delivery failed");
+        }
+
+        Ok(Some(CompanionParentRequestResolveResult {
+            gate_id: gate.id,
+            parent_agent_id: parent_frame.agent_id,
+            parent_frame_id: parent_frame.id,
+            parent_delivery_runtime_session_id,
             payload: resolution_payload,
         }))
     }
@@ -818,5 +1074,245 @@ mod tests {
             event_notifications[1].delivery_runtime_session_id,
             "child-session"
         );
+    }
+
+    #[tokio::test]
+    async fn open_parent_request_creates_parent_owned_gate_and_delivery_event() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+
+        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
+        parent_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame_id = parent_frame.id;
+        let mut child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
+        child_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["child-session"]);
+        let child_frame_id = child_frame.id;
+        let lineage = AgentLineage::new(
+            run_id,
+            Some(parent_agent_id),
+            child_agent_id,
+            "companion",
+            Some(child_frame_id),
+            None,
+        );
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo
+            .create(&parent_frame)
+            .await
+            .expect("seed parent frame");
+        frame_repo
+            .create(&child_frame)
+            .await
+            .expect("seed child frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        lineage_repo.create(&lineage).await.expect("seed lineage");
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service = CompanionGateControlService::new(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+        );
+
+        let result = service
+            .open_parent_request(OpenCompanionParentRequestCommand {
+                child_runtime_session_id: "child-session".to_string(),
+                turn_id: "turn-child-1".to_string(),
+                wait: true,
+                payload: serde_json::json!({ "prompt": "please review" }),
+            })
+            .await
+            .expect("open parent request");
+
+        assert_eq!(result.request_id, result.gate_id.to_string());
+        assert_eq!(result.run_id, run_id);
+        assert_eq!(result.parent_agent_id, parent_agent_id);
+        assert_eq!(result.parent_frame_id, parent_frame_id);
+        assert_eq!(result.child_agent_id, child_agent_id);
+        assert_eq!(result.child_frame_id, child_frame_id);
+        assert_eq!(result.parent_delivery_runtime_session_id, "parent-session");
+        assert_eq!(result.child_delivery_runtime_session_id, "child-session");
+
+        let stored = gate_repo
+            .get(result.gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert!(stored.is_open());
+        assert_eq!(stored.agent_id, Some(parent_agent_id));
+        assert_eq!(stored.frame_id, Some(parent_frame_id));
+        assert_eq!(stored.gate_kind, COMPANION_PARENT_REQUEST_GATE_KIND);
+        assert_eq!(stored.correlation_id, result.gate_id.to_string());
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("request_id"))
+                .and_then(serde_json::Value::as_str),
+            Some(result.request_id.as_str())
+        );
+
+        let event_notifications = delivery.event_notifications.lock().unwrap();
+        assert_eq!(event_notifications.len(), 1);
+        assert_eq!(
+            event_notifications[0].delivery_runtime_session_id,
+            "parent-session"
+        );
+        assert_eq!(
+            event_notifications[0].event_type,
+            "companion_review_request"
+        );
+        assert_eq!(
+            event_notifications[0]
+                .payload
+                .get("parent_frame_id")
+                .and_then(serde_json::Value::as_str),
+            Some(parent_frame_id.to_string().as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_parent_request_resolves_only_parent_owned_gate() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
+        parent_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame_id = parent_frame.id;
+        let mut gate = LifecycleGate::open(
+            run_id,
+            Some(parent_agent_id),
+            Some(parent_frame_id),
+            COMPANION_PARENT_REQUEST_GATE_KIND,
+            "pending-parent-request",
+            Some(serde_json::json!({
+                "request_type": "review",
+                "summary": "please review"
+            })),
+        );
+        gate.correlation_id = gate.id.to_string();
+        let gate_id = gate.id;
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo
+            .create(&parent_frame)
+            .await
+            .expect("seed parent frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service = CompanionGateControlService::new(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+        );
+
+        let result = service
+            .resolve_parent_request(ResolveCompanionParentRequestCommand {
+                request_id: gate_id.to_string(),
+                parent_runtime_session_id: "parent-session".to_string(),
+                resolved_turn_id: "turn-parent-1".to_string(),
+                payload: serde_json::json!({
+                    "status": "approved",
+                    "summary": "looks good"
+                }),
+            })
+            .await
+            .expect("resolve parent request")
+            .expect("matched parent request gate");
+
+        assert_eq!(result.gate_id, gate_id);
+        assert_eq!(result.parent_agent_id, parent_agent_id);
+        assert_eq!(result.parent_frame_id, parent_frame_id);
+        assert_eq!(result.parent_delivery_runtime_session_id, "parent-session");
+
+        let stored = gate_repo
+            .get(gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert!(!stored.is_open());
+        let expected_resolved_by = format!("parent_agent:{parent_agent_id}");
+        assert_eq!(
+            stored.resolved_by.as_deref(),
+            Some(expected_resolved_by.as_str())
+        );
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("request_id"))
+                .and_then(serde_json::Value::as_str),
+            Some(gate_id.to_string().as_str())
+        );
+
+        let event_notifications = delivery.event_notifications.lock().unwrap();
+        assert_eq!(event_notifications.len(), 1);
+        assert_eq!(
+            event_notifications[0].event_type,
+            "companion_parent_request_resolved"
+        );
+        assert_eq!(
+            event_notifications[0].delivery_runtime_session_id,
+            "parent-session"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_parent_request_rejects_delivery_session_for_another_frame() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let other_agent_id = Uuid::new_v4();
+        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
+        parent_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let parent_frame_id = parent_frame.id;
+        let mut other_frame = AgentFrame::new_revision(other_agent_id, 1, "other");
+        other_frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["other"]);
+        let mut gate = LifecycleGate::open(
+            run_id,
+            Some(parent_agent_id),
+            Some(parent_frame_id),
+            COMPANION_PARENT_REQUEST_GATE_KIND,
+            "pending-parent-request",
+            None,
+        );
+        gate.correlation_id = gate.id.to_string();
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo
+            .create(&parent_frame)
+            .await
+            .expect("seed parent frame");
+        frame_repo
+            .create(&other_frame)
+            .await
+            .expect("seed other frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service =
+            CompanionGateControlService::new(gate_repo, frame_repo, lineage_repo, delivery.clone());
+
+        let error = service
+            .resolve_parent_request(ResolveCompanionParentRequestCommand {
+                request_id: gate.id.to_string(),
+                parent_runtime_session_id: "other".to_string(),
+                resolved_turn_id: "turn-parent-1".to_string(),
+                payload: serde_json::json!({ "status": "approved" }),
+            })
+            .await
+            .expect_err("wrong frame should be rejected");
+
+        assert!(matches!(error, ApplicationError::Conflict(_)));
+        assert!(delivery.event_notifications.lock().unwrap().is_empty());
     }
 }

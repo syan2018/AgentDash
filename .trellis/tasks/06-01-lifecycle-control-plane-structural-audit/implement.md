@@ -110,7 +110,7 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply 与 canvas capability sync 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas capability caller。完整 gate 仍取决于 companion notification、hook SPI/session facade 与 ContinueRoot policy 入口迁到 target-first service。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade、hub lazy rebuild 与 ContinueRoot policy 入口迁到 target-first service。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
 - [x] 明确多 RuntimeSession selection policy。
@@ -124,10 +124,10 @@
 - [ ] Hook gate：测试证明 hook snapshot load / refresh / evaluate 可从 `frame_id + assignment_id` 执行，不需要 raw runtime session id 作为 owner。
 - [ ] Capability gate：PhaseNode 与 canvas live update 测试直接传入 `AgentFrameRuntimeTarget`，workflow/canvas control logic 不调用 `resolve_runtime_session_frame_id`。
   - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`；canvas capability sync 已拆出 runtime-delivery adapter 与 target-first apply helper，不再直接调用 `resolve_runtime_session_frame_id`；workflow/canvas 获取 hook runtime 时会校验 hook runtime target 与 `AgentFrameRuntimeTarget` 一致。gate 仍未关闭，因为 companion notification、hook SPI/session facade 与 ContinueRoot policy 入口还没有统一迁到 frame/assignment target。
-- [ ] Companion gate：companion parent request / result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace/delivery payload。
+- [x] Companion gate：companion parent request / result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace/delivery payload。
   - [x] Parent result return 已由 `CompanionGateControlService` resolve gate 后交给 delivery adapter 投递。
-  - [ ] Parent request initial notification 与 hook evaluation 仍需迁到 parent frame/assignment target。
-- [ ] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
+  - [x] Parent request initial notification 由 `CompanionGateControlService::open_parent_request` 打开 parent-frame-owned `LifecycleGate` 后交给 delivery adapter；hook evaluation 通过 `ensure_hook_runtime_for_target(AgentFrameRuntimeTarget)` 进入 parent frame target。
+- [x] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
 - [x] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
 
 ### 落地记录
@@ -145,21 +145,21 @@
 - `SessionCapabilityService::resolve_runtime_session_target` 成为 runtime adapter 到 `AgentFrameRuntimeTarget` 的解析入口；workflow 调用点不再直接拿 `target_frame_id` 字符串。
 - `StepActivation::apply_to_frame_runtime_target` 改为接收 `AgentFrameRuntimeTarget` 与调用方提供的 base capability surface，只负责把 activation 归一化成目标 surface 并执行 runtime context transition。
 - `AgentActivityExecutor` 的 live 与 pending transition 均传递显式 `target_frame_id + delivery_runtime_session_id`，不再让 StepActivation applier 自行反查 frame。
-- 该 slice 不关闭 capability gate，因为 canvas live update 当时仍可从 raw session id 解析 frame，ContinueRoot 仍以 `root_runtime_session_id` 同时表达 reuse policy 与 delivery target，companion parent request initial notification / hook control 也尚未迁入 frame/assignment target。
+- 该 slice 当时不关闭 capability gate，因为 canvas live update 仍可从 raw session id 解析 frame，ContinueRoot 以 `root_runtime_session_id` 同时表达 reuse policy 与 delivery target，companion parent request initial notification / hook control 尚未迁入 frame/assignment target；后续 slice 已分别收束 canvas 与 companion caller，完整 Phase 4 gate 仍取决于 hook SPI/session facade 与 ContinueRoot policy。
 
 2026-06-02 的 canvas capability sync slice 已关闭 canvas 直接 frame lookup 缺口：
 
 - `expose_canvas_to_session` 只调用 `sync_canvas_mount_capability_state_for_runtime_delivery` adapter；该 adapter 在确认存在 base capability state 与 hook runtime 后，把 delivery runtime session 解析为 `AgentFrameRuntimeTarget`。
 - `sync_canvas_mount_capability_state` 改为接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime，再调用 `apply_live_vfs_capability_state`；canvas apply helper 不再知道 `resolve_runtime_session_frame_id`。
 - Static check 中 `resolve_runtime_session_frame_id(` 在 application src 只剩 `SessionCapabilityService` 与 hub adapter 定义/调用。
-- 该 slice 仍不关闭完整 Phase 4 gate，因为 hook SPI/session facade、ContinueRoot policy 与 companion parent request initial notification / hook control 仍未迁成 frame/assignment target。
+- 该 slice 当时不关闭完整 Phase 4 gate，因为 hook SPI/session facade、ContinueRoot policy 与 companion parent request initial notification / hook control 尚未迁成 frame/assignment target；后续 companion caller 已迁到 `AgentFrameRuntimeTarget`，剩余缺口是 hook SPI/session facade 与 ContinueRoot policy。
 
 2026-06-02 的 hook runtime target-aware caller slice 已关闭 workflow/canvas capability caller 直接使用 session-first hook getter 的缺口：
 
 - `SessionHookService::ensure_hook_runtime_for_target` / `get_hook_runtime_for_target` 以 `AgentFrameRuntimeTarget` 为输入，内部仍使用 delivery runtime session adapter，但会校验 hook runtime 的 `session_id` 与 `control_target.frame_id` 均匹配 target。
 - `AgentActivityExecutor` 先解析 `AgentFrameRuntimeTarget`，再通过 target-aware ensure 获取 hook runtime；ContinueRoot live apply 不再裸调 `ensure_hook_runtime(root_runtime_session_id)`。
 - canvas capability sync 先解析 target，再通过 `get_hook_runtime_for_target` 获取 hook runtime；不再裸调 `get_hook_runtime(session_id)`。
-- 该 slice 仍不关闭 Hook gate，因为 snapshot load / refresh / evaluate 的 SPI/session facade、hub lazy rebuild 与 companion parent hook evaluation 仍存在 session-shaped入口。
+- companion parent request 已在后续 slice 迁到 `AgentFrameRuntimeTarget` caller；该 slice 仍不关闭 Hook gate，因为 snapshot load / refresh / evaluate 的 SPI/session facade 与 hub lazy rebuild 仍存在 session-shaped 入口。
 
 2026-06-02 的 ContinueRoot target resolution slice 已关闭 start/apply 内部反复分发 root runtime session 的缺口，但不关闭 `AgentReusePolicy + RuntimeSessionPolicy` 主项：
 
@@ -174,6 +174,8 @@
 - `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
 - `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
+- `cargo test -p agentdash-application companion::gate_control --lib -- --format terse`
+- `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 - `cargo check -p agentdash-application`
 - `cargo fmt --all --check`
 - `git diff --check`
@@ -184,10 +186,10 @@
 - [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
 - [x] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
 - [x] Task view status vocabulary 区分 Cancelled 与 Failed；取消投影不再伪装成失败业务状态。
-- [ ] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
+- [x] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
   - Human request/respond 已迁到 gate-first：请求创建 `LifecycleGate(frame_id)`，API 通过 `gate_id` resolve，runtime notification 只是 delivery adapter。
   - Parent result return 已迁到 gate-first：child completion resolve child-owned `LifecycleGate`，parent/child notification 只是 delivery adapter。
-  - 主项仍未关闭，因为 parent request pending action 与 parent hook/control 仍以 runtime session / hook runtime 为 owner。
+  - Parent request 已迁到 gate-first：parent-frame-owned `LifecycleGate` 是 request/resume truth，hook pending action 只使用同一 `gate_id` 作为 delivery/cache key。
 - [x] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
 - [ ] Permission 明确 source runtime session 只是 provenance，effect owner 是 frame。
 
@@ -195,10 +197,10 @@
 
 - [x] Task start/continue/cancel 的 active execution path 测试证明 command target 是 `SubjectRef` / assignment / frame，而不是 raw RuntimeSession。
 - [x] Task wait/gate scope audit 证明当前 Task execution 不创建、不等待 `LifecycleGate`；Task cancel gate 不应硬塞进 `SubjectExecutionControlService`。未来若引入 Subject wait gate，必须先建立 subject gate owner/index，再要求 cancel 同事务关闭 gate truth。
-- [ ] Companion wait/resume 测试证明 durable `LifecycleGate` 是 truth，runtime notification 只是 delivery。
+- [x] Companion wait/resume 测试证明 durable `LifecycleGate` 是 truth，runtime notification 只是 delivery。
   - [x] Human gate：`companion_request(target=human)` 创建 frame-owned `LifecycleGate`，`POST /companion-gates/{gate_id}/respond` 先 resolve gate，再由 delivery adapter 注入 runtime notification。
   - [x] Parent result return gate：`companion_respond` 从 child runtime session 解析 child frame，只 resolve child-owned open `LifecycleGate.correlation_id`，parent/child runtime event 由 `CompanionGateNotificationDelivery` 产生。
-  - [ ] Parent request gate：parent pending action / hook evaluation 仍需从 hook runtime truth 迁入 gate/channel truth。
+  - [x] Parent request gate：`companion_request(target=parent)` 创建 parent-frame-owned `LifecycleGate`，`request_id = gate_id`；`companion_respond` 先 resolve parent gate，再清理 hook pending action delivery/cache。
 - [x] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
 - [ ] Permission query 测试证明 frame/run/subject 是主查询入口，session 只作为审计 provenance filter。
 
@@ -255,7 +257,7 @@
 - `pnpm --filter app-web run typecheck`
 - `pnpm run contracts:check`
 
-2026-06-02 的 Phase 5 Companion human gate slice 已关闭 human request/respond 的 session-first 缺口；Phase 5 整体仍因 parent gate/channel、Story root/freeform、Task execution preference 和 Permission provenance 保持 partial：
+2026-06-02 的 Phase 5 Companion human gate slice 已关闭 human request/respond 的 session-first 缺口；该 slice 当时保持 P1-20 partial，原因是 parent request gate/channel 尚未收束：
 
 - 新增 `CompanionGateControlService` 作为 gate-first respond boundary；它依赖 `LifecycleGateRepository`、`AgentFrameRepository`、`AgentLineageRepository` 与 `CompanionGateNotificationDelivery`，先 resolve durable gate truth，再把 runtime notification 作为 delivery 副作用。
 - `companion_request(target=human)` 的 wait 与 non-wait 请求都会创建 frame-owned `LifecycleGate`，通知 payload 暴露 `gate_id`；non-wait 不阻塞 agent，但用户后续回应仍有 durable interaction owner。
@@ -263,7 +265,7 @@
 - API 删除 `/sessions/{id}/companion-requests/{request_id}/respond`，新增 `/companion-gates/{gate_id}/respond`，鉴权先从 gate owner 解析到 LifecycleAgent/Project，再写 gate。
 - `agentdash-contracts` 新增 `companion-contracts.ts`；前端 `SessionCompanionRequestCard` 不再把 `sessionId` 传给 respond service，而是提交 `gateId + payload`。
 - `SessionControlService` 不再依赖 `LifecycleGateRepository`，session control 重新收束为 runtime session / tool approval 控制面。
-- 该 slice 不关闭完整 P1-20，因为 parent request 仍通过 parent hook runtime pending action 与 parent session notification 表达部分 resume/control truth。
+- 该 slice 当时不关闭完整 P1-20，因为 parent request 通过 parent hook runtime pending action 与 parent session notification 表达部分 resume/control truth；后续 parent request gate slice 已关闭该缺口。
 
 验证记录：
 
@@ -271,6 +273,19 @@
 - `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
 - `cargo check -p agentdash-api`
+
+2026-06-02 的 Phase 5 Companion parent request gate slice 已关闭 P1-20 的剩余 gate/channel 缺口；Phase 5 整体仍因 Story root/freeform、Task execution preference 与 Permission provenance 保持 partial：
+
+- `CompanionGateControlService::open_parent_request` 成为 parent request owner boundary：从 child runtime delivery ref 解析 child frame 与 lineage，再创建 parent-frame-owned `LifecycleGate(gate_kind=companion_parent_request)`；`request_id` 与 hook pending action id 均使用 `gate_id`。
+- `CompanionGateControlService::resolve_parent_request` 先按 `gate_id` 读取 gate，再校验当前 parent runtime delivery ref 所属 frame 与 gate owner frame 一致；错误 frame 的 delivery session 会被拒绝。
+- `companion_request(target=parent)` 不再手写 parent session notification；打开 gate 后由 `CompanionGateNotificationDelivery` 投递 `companion_review_request`，runtime notification 只是 delivery 副作用。
+- parent hook evaluation 改为通过 `SessionHookService::ensure_hook_runtime_for_target(AgentFrameRuntimeTarget)` 获取 hook runtime；hook pending action 只承载同一 `gate_id` 的 UI/注入缓存，不再生成独立 owner id。
+- `companion_respond` 在 resolve hook pending action 前先尝试 resolve parent-owned gate；命中 parent request gate 时，gate truth 与 pending action cache 会在同一次 tool call 中对齐。
+
+验证记录：
+
+- `cargo test -p agentdash-application companion::gate_control --lib -- --format terse`
+- `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 
 ## Phase 6: 建立稳定 Read Models
 

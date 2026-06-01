@@ -720,7 +720,7 @@ Task cancel command 已能写入 `ActivityAttemptStatus::Cancelled`，但 Task v
 
 ### 原始问题
 
-原始扫描时，Companion dispatch 已使用 dispatch/gate，但 parent notification、human wait、轮询仍依赖 session notification / hook runtime。后续 human respond 与 parent result return 已迁到 gate-first，剩余风险集中在 parent request / hook control。
+原始扫描时，Companion dispatch 已使用 dispatch/gate，但 parent notification、human wait、轮询仍依赖 session notification / hook runtime。后续 human respond、parent result return 与 parent request 都已迁到 gate-first；剩余 hook SPI/session-shaped query 问题归属 Phase 4 Hook gate，不再由 Companion wait/resume truth 承担。
 
 ### 结构性分析
 
@@ -752,7 +752,16 @@ Companion 是交互通道，Gate 是 durable wait/resume fact，RuntimeSession n
 - parent result return 按 child runtime session 找 child frame，再按 child agent 的 open `LifecycleGate.correlation_id` resolve gate；这与 `InteractionDispatchIntent` 创建 child-owned gate 的事实源一致。
 - `CompanionGateNotificationDelivery` 扩展为 parent/child runtime event delivery adapter；parent/child session notification 只是 gate resolved 之后的投递副作用。
 - `companion::gate_control` 单测证明 child-owned gate 被 resolve，parent/child runtime event 均由 delivery adapter 产生。
-- 完整 P1-20 仍未关闭，因为 parent request 的 pending action、hook evaluation 与 initial review notification 仍由 parent hook runtime/session 承载；这条路径还缺 `CompanionChannel` / gate owner 封装来表达“parent 正在等待谁、谁能恢复”。
+
+2026-06-02 的 companion parent-request slice 关闭了 P1-20 剩余 gate/channel 缺口：
+
+- `CompanionGateControlService::open_parent_request` 创建 parent-frame-owned `LifecycleGate(gate_kind=companion_parent_request)`，`request_id = gate_id`；gate payload 记录 parent/child agent、frame 与 delivery runtime refs。
+- parent request initial notification 由 `CompanionGateNotificationDelivery` 在 gate 创建后投递，runtime notification 只表达 delivery，不再拥有 request truth。
+- parent hook evaluation 通过 `SessionHookService::ensure_hook_runtime_for_target(AgentFrameRuntimeTarget)` 进入 parent frame target；hook pending action id 使用同一 `gate_id`，只作为 UI/注入缓存。
+- `CompanionGateControlService::resolve_parent_request` 按 `gate_id` 读取 durable gate，并校验当前 parent delivery runtime session 所属 frame 与 gate owner frame 一致；错误 frame 会被拒绝。
+- `companion::gate_control` 单测覆盖 parent request open、resolve 与 wrong-frame delivery rejection；`companion::tools` 单测覆盖 hook pending action 使用 request/gate id 作为 owner key。
+
+P1-20 当前已关闭：Companion human request/respond、parent result return、parent request 三条 wait/resume path 都以 durable `LifecycleGate` 为 truth，runtime notification 与 hook pending action 均是 delivery/cache。仍存在的 `HookEvaluationQuery { session_id }` 等 SPI/rule-engine 形状不再表达 companion owner，而归入 P1-08 / Phase 4 Hook gate 继续收束。
 
 ## P1-21 Routine Reuse 策略无 anchor lookup
 

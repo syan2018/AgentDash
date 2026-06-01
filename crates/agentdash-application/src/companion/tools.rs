@@ -7,8 +7,7 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, RunPolicy, RuntimePolicy, RuntimeSessionSelectionPolicy,
-    WorkflowGraphRef,
+    InteractionDispatchIntent, RunPolicy, RuntimePolicy, WorkflowGraphRef,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -27,8 +26,10 @@ use uuid::Uuid;
 
 use super::{
     CompanionGateControlService, CompleteCompanionChildResultCommand, NoopCompanionGateDelivery,
+    OpenCompanionParentRequestCommand, ResolveCompanionParentRequestCommand,
     SessionEventingCompanionGateDelivery, build_companion_event_notification,
 };
+use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
 use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
@@ -599,7 +600,7 @@ impl CompanionRequestTool {
         }
     }
 
-    /// target=parent 的执行逻辑：在父 session 的 hook runtime 中创建 pending action
+    /// target=parent 的执行逻辑：打开 parent frame 持有的 durable gate。
     async fn execute_parent_request(
         &self,
         wait: bool,
@@ -628,69 +629,35 @@ impl CompanionRequestTool {
             )
         })?;
 
-        // 通过 AgentLineage 查找 parent agent
-        let child_frame = self
-            .repos
-            .agent_frame_repo
-            .find_by_runtime_session(&current_session_id)
+        let delivery = Arc::new(SessionEventingCompanionGateDelivery::new(
+            session_services.eventing.clone(),
+        ))
+            as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>;
+        let gate_control = CompanionGateControlService::new(
+            self.repos.lifecycle_gate_repo.clone(),
+            self.repos.agent_frame_repo.clone(),
+            self.repos.agent_lineage_repo.clone(),
+            delivery,
+        );
+        let opened = gate_control
+            .open_parent_request(OpenCompanionParentRequestCommand {
+                child_runtime_session_id: current_session_id,
+                turn_id: self.current_turn_id.clone(),
+                wait,
+                payload: payload.clone(),
+            })
             .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 session 没有关联的 AgentFrame，无法使用 target=parent".to_string(),
-                )
-            })?;
-        let lineage = self
-            .repos
-            .agent_lineage_repo
-            .find_parent(child_frame.agent_id)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "当前 agent 没有 parent lineage，无法使用 target=parent 向上提审".to_string(),
-                )
-            })?;
-        let parent_agent_id = lineage.parent_agent_id.ok_or_else(|| {
-            AgentToolError::ExecutionFailed("lineage 中 parent_agent_id 为空".to_string())
-        })?;
-        let parent_frame = self
-            .repos
-            .agent_frame_repo
-            .get_current(parent_agent_id)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed("parent agent 没有活跃的 frame".to_string())
-            })?;
-        let parent_session_id = parent_frame
-            .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
-            .ok_or_else(|| {
-                AgentToolError::ExecutionFailed(
-                    "parent frame 没有关联的 runtime session".to_string(),
-                )
-            })?;
-
-        let request_id = format!("review-{}", Uuid::new_v4().simple());
-        let companion_label = format!("child:{}", child_frame.agent_id);
-
-        let review_payload = serde_json::json!({
-            "child_agent_id": child_frame.agent_id.to_string(),
-            "parent_agent_id": parent_agent_id.to_string(),
-            "companion_label": companion_label,
-            "companion_session_id": current_session_id,
-            "parent_session_id": parent_session_id,
-            "request_id": request_id,
-            "request_type": "review",
-            "adoption_mode": at::FOLLOW_UP_REQUIRED,
-            "status": "pending",
-            "summary": prompt,
-            "wait": wait,
-        });
+            .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 
         if let Some(parent_hook_runtime) = session_services
             .hooks
-            .ensure_hook_runtime(&parent_session_id, None)
+            .ensure_hook_runtime_for_target(
+                &AgentFrameRuntimeTarget {
+                    frame_id: opened.parent_frame_id,
+                    delivery_runtime_session_id: opened.parent_delivery_runtime_session_id.clone(),
+                },
+                None,
+            )
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
         {
@@ -698,14 +665,14 @@ impl CompanionRequestTool {
                 parent_hook_runtime.as_ref(),
                 HookTrigger::CompanionResult,
                 None,
-                &companion_label,
-                Some(review_payload.clone()),
+                &opened.companion_label,
+                Some(opened.payload.clone()),
             )
             .await?;
             if let Some(action) = build_subagent_pending_action(
-                &request_id,
-                &companion_label,
-                &review_payload,
+                &opened.request_id,
+                &opened.companion_label,
+                &opened.payload,
                 &resolution,
             ) {
                 parent_hook_runtime.enqueue_pending_action(action);
@@ -716,34 +683,29 @@ impl CompanionRequestTool {
                 None,
                 HookTrigger::CompanionResult,
                 "review_request",
-                &companion_label,
+                &opened.companion_label,
                 &resolution,
             )
             .await;
         }
 
-        let notification = build_companion_event_notification(
-            &parent_session_id,
-            &self.current_turn_id,
-            "companion_review_request",
-            format!("Companion `{companion_label}` 请求审阅: {prompt}"),
-            review_payload,
-        );
-        let _ = session_services
-            .eventing
-            .inject_notification(&parent_session_id, notification)
-            .await;
-
         Ok(AgentToolResult {
             content: vec![ContentPart::text(format!(
-                "已向父 agent 提审。\n- request_id: {request_id}\n- parent_agent_id: {parent_agent_id}",
+                "已向父 agent 提审。\n- request_id: {}\n- gate_id: {}\n- parent_agent_id: {}",
+                opened.request_id, opened.gate_id, opened.parent_agent_id,
             ))],
             is_error: false,
             details: Some(serde_json::json!({
-                "request_id": request_id,
+                "request_id": opened.request_id,
+                "gate_id": opened.gate_id.to_string(),
                 "wait": wait,
-                "parent_agent_id": parent_agent_id.to_string(),
-                "parent_session_id": parent_session_id,
+                "run_id": opened.run_id.to_string(),
+                "parent_agent_id": opened.parent_agent_id.to_string(),
+                "parent_frame_id": opened.parent_frame_id.to_string(),
+                "parent_session_id": opened.parent_delivery_runtime_session_id,
+                "child_agent_id": opened.child_agent_id.to_string(),
+                "child_frame_id": opened.child_frame_id.to_string(),
+                "child_session_id": opened.child_delivery_runtime_session_id,
             })),
         })
     }
@@ -1054,7 +1016,7 @@ impl CompanionRequestTool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompanionRespondParams {
-    /// 回应的 request_id（companion_request 返回的 dispatch_id 或 hook pending action id）
+    /// 回应的 request_id（companion_request 返回的 gate id / dispatch id / pending action id）
     pub request_id: String,
     /// 结构化 JSON object payload。示例：{"type":"resolution","status":"approved","summary":"..."}
     #[schemars(schema_with = "json_object_payload_schema")]
@@ -1138,10 +1100,15 @@ impl AgentTool for CompanionRespondTool {
             )
         })?;
 
-        // 两个独立副作用，不互斥：
-        // 1. resolve 当前 session 的 pending action（hook runtime → 解锁 before_stop gate）
-        // 2. 通过 child-owned LifecycleGate 回传结果给 parent agent
+        // 多个独立副作用，不互斥：
+        // 1. parent agent resolve parent-owned LifecycleGate
+        // 2. resolve 当前 session 的 pending action delivery/cache
+        // 3. child agent 通过 child-owned LifecycleGate 回传结果给 parent agent
         // 哪些命中由上下文决定，可以同时命中多个。
+
+        let resolved_parent_request = self
+            .try_resolve_parent_request_gate(request_id, &current_session_id, &payload)
+            .await?;
 
         let resolved_action = self
             .try_resolve_pending_action(request_id, &current_session_id, &payload)
@@ -1153,6 +1120,9 @@ impl AgentTool for CompanionRespondTool {
 
         // 根据命中情况构造返回值
         let mut modes = Vec::new();
+        if resolved_parent_request.is_some() {
+            modes.push("resolve_parent_request_gate");
+        }
         if resolved_action.is_some() {
             modes.push("resolve_pending_action");
         }
@@ -1175,7 +1145,8 @@ impl AgentTool for CompanionRespondTool {
         }
 
         // 优先使用 pending action 的返回值（包含结案详情），其次用 complete_to_parent 的
-        let result = resolved_action
+        let result = resolved_parent_request
+            .or(resolved_action)
             .or(completed_to_parent)
             .unwrap_or_else(|| AgentToolResult {
                 content: vec![ContentPart::text(format!(
@@ -1217,6 +1188,65 @@ impl CompanionRespondTool {
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         Ok(gates.into_iter().next().map(|g| g.correlation_id))
+    }
+
+    /// 路径 0：parent agent 回应 parent-owned LifecycleGate。
+    async fn try_resolve_parent_request_gate(
+        &self,
+        request_id: &str,
+        current_session_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<Option<AgentToolResult>, AgentToolError> {
+        let delivery = self
+            .session_services_handle
+            .get()
+            .await
+            .map(|services| {
+                Arc::new(SessionEventingCompanionGateDelivery::new(services.eventing))
+                    as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>
+            })
+            .unwrap_or_else(|| Arc::new(NoopCompanionGateDelivery));
+        let service = CompanionGateControlService::new(
+            self.repos.lifecycle_gate_repo.clone(),
+            self.repos.agent_frame_repo.clone(),
+            self.repos.agent_lineage_repo.clone(),
+            delivery,
+        );
+        let Some(result) = service
+            .resolve_parent_request(ResolveCompanionParentRequestCommand {
+                request_id: request_id.to_string(),
+                parent_runtime_session_id: current_session_id.to_string(),
+                resolved_turn_id: self.current_turn_id.clone(),
+                payload: payload.clone(),
+            })
+            .await
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+
+        let status = result
+            .payload
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("resolved");
+
+        Ok(Some(AgentToolResult {
+            content: vec![ContentPart::text(format!(
+                "已回应 parent companion 请求（resolve LifecycleGate）。\n- request_id: {}\n- gate_id: {}\n- status: {}",
+                request_id, result.gate_id, status
+            ))],
+            is_error: false,
+            details: Some(serde_json::json!({
+                "mode": "resolve_parent_request_gate",
+                "request_id": request_id,
+                "gate_id": result.gate_id.to_string(),
+                "parent_agent_id": result.parent_agent_id.to_string(),
+                "parent_frame_id": result.parent_frame_id.to_string(),
+                "parent_delivery_runtime_session_id": result.parent_delivery_runtime_session_id,
+                "payload": result.payload,
+            })),
+        }))
     }
 
     /// 路径 1：resolve 当前 session 的 hook pending action（替代 resolve_hook_action）
@@ -1597,7 +1627,7 @@ async fn record_subagent_trace(
 }
 
 fn build_subagent_pending_action(
-    parent_turn_id: &str,
+    fallback_request_id: &str,
     companion_label: &str,
     payload: &serde_json::Value,
     resolution: &agentdash_spi::HookResolution,
@@ -1633,8 +1663,21 @@ fn build_subagent_pending_action(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("-");
 
+    let request_id = payload
+        .get("request_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback_request_id);
+    let source_turn_id = payload
+        .get("turn_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback_request_id);
+
     Some(HookPendingAction {
-        id: format!("{adoption_mode}:{dispatch_id}:{parent_turn_id}"),
+        id: request_id.to_string(),
         created_at_ms: chrono::Utc::now().timestamp_millis(),
         title: if adoption_mode == at::BLOCKING_REVIEW {
             format!("Companion `{companion_label}` 结果需要阻塞式 review")
@@ -1643,7 +1686,7 @@ fn build_subagent_pending_action(
         },
         summary: format!("status={status}, dispatch_id={dispatch_id}, summary={summary}"),
         action_type: adoption_mode,
-        turn_id: Some(parent_turn_id.to_string()),
+        turn_id: Some(source_turn_id.to_string()),
         source: RuntimeEventSource::CompanionResult,
         status: agentdash_spi::HookPendingActionStatus::Pending,
         last_injected_at_ms: None,
@@ -2039,9 +2082,10 @@ mod companion_tests {
         CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
         build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, build_platform_capability_grant_payload,
-        companion_owner_candidates,
+        build_subagent_pending_action, companion_owner_candidates,
     };
     use agentdash_spi::CapabilityScope;
+    use agentdash_spi::action_type as at;
     use agentdash_spi::{McpTransportConfig, MountCapability, SessionMcpServer, Vfs};
     use uuid::Uuid;
 
@@ -2298,6 +2342,33 @@ mod companion_tests {
         assert!(prompt.contains("companion_respond"));
         assert!(prompt.contains("dispatch_id: dispatch-1"));
         assert!(prompt.contains("请帮我 review 当前实现"));
+    }
+
+    #[test]
+    fn subagent_pending_action_uses_request_id_as_owner_key() {
+        let resolution = agentdash_spi::HookResolution {
+            injections: vec![agentdash_spi::HookInjection {
+                slot: "workflow".to_string(),
+                content: "review context".to_string(),
+                source: "active_workflow_step".to_string(),
+            }],
+            ..agentdash_spi::HookResolution::default()
+        };
+        let payload = serde_json::json!({
+            "request_id": "gate-123",
+            "turn_id": "turn-child-1",
+            "adoption_mode": at::FOLLOW_UP_REQUIRED,
+            "status": "pending",
+            "summary": "please review"
+        });
+
+        let action =
+            build_subagent_pending_action("gate-123", "child:agent", &payload, &resolution)
+                .expect("pending action");
+
+        assert_eq!(action.id, "gate-123");
+        assert_eq!(action.turn_id.as_deref(), Some("turn-child-1"));
+        assert_eq!(action.action_type, at::FOLLOW_UP_REQUIRED);
     }
 
     #[test]

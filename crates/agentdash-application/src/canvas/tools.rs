@@ -655,9 +655,13 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_domain::DomainError;
+    use agentdash_domain::workflow::{
+        AgentFrame, AgentFrameRepository, LifecycleGate, LifecycleGateRepository,
+    };
     use agentdash_spi::hooks::{
-        ExecutionHookProvider, HookEvaluationQuery, HookResolution, SessionHookRefreshQuery,
-        SessionHookSnapshot, SessionHookSnapshotQuery,
+        ActiveWorkflowMeta, ExecutionHookProvider, HookEvaluationQuery, HookResolution,
+        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        SessionSnapshotMetadata,
     };
     use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
     use async_trait::async_trait;
@@ -760,6 +764,134 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct MemoryAgentFrameRepository {
+        frames: RwLock<Vec<AgentFrame>>,
+    }
+
+    #[async_trait]
+    impl AgentFrameRepository for MemoryAgentFrameRepository {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.frames.write().await.push(frame.clone());
+            Ok(())
+        }
+
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .read()
+                .await
+                .iter()
+                .find(|frame| frame.id == frame_id)
+                .cloned())
+        }
+
+        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            let frames = self.frames.read().await;
+            Ok(frames
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .max_by_key(|frame| frame.revision)
+                .cloned())
+        }
+
+        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .read()
+                .await
+                .iter()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn attach_runtime_session_ref(
+            &self,
+            frame_id: Uuid,
+            runtime_session_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut frames = self.frames.write().await;
+            let frame = frames
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.attach_runtime_session_ref(runtime_session_id);
+            Ok(())
+        }
+
+        async fn find_by_runtime_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .read()
+                .await
+                .iter()
+                .filter(|frame| {
+                    frame
+                        .runtime_session_ids()
+                        .iter()
+                        .any(|session_id| session_id == runtime_session_id)
+                })
+                .max_by_key(|frame| frame.revision)
+                .cloned())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryLifecycleGateRepository {
+        gates: RwLock<Vec<LifecycleGate>>,
+    }
+
+    #[async_trait]
+    impl LifecycleGateRepository for MemoryLifecycleGateRepository {
+        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            self.gates.write().await.push(gate.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .read()
+                .await
+                .iter()
+                .find(|gate| gate.id == id)
+                .cloned())
+        }
+
+        async fn list_open_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .read()
+                .await
+                .iter()
+                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            let mut gates = self.gates.write().await;
+            if let Some(existing) = gates.iter_mut().find(|existing| existing.id == gate.id) {
+                *existing = gate.clone();
+                return Ok(());
+            }
+            Err(DomainError::NotFound {
+                entity: "lifecycle_gate",
+                id: gate.id.to_string(),
+            })
+        }
+    }
+
+    #[derive(Default)]
     struct PendingConnector;
 
     #[async_trait]
@@ -821,8 +953,25 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct EmptyHookProvider;
+    struct EmptyHookProvider {
+        active_run_id: Uuid,
+    }
+
+    impl EmptyHookProvider {
+        fn snapshot(&self, session_id: String) -> SessionHookSnapshot {
+            SessionHookSnapshot {
+                session_id,
+                metadata: Some(SessionSnapshotMetadata {
+                    active_workflow: Some(ActiveWorkflowMeta {
+                        run_id: Some(self.active_run_id),
+                        ..ActiveWorkflowMeta::default()
+                    }),
+                    ..SessionSnapshotMetadata::default()
+                }),
+                ..SessionHookSnapshot::default()
+            }
+        }
+    }
 
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
@@ -830,20 +979,14 @@ mod tests {
             &self,
             query: SessionHookSnapshotQuery,
         ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
-            })
+            Ok(self.snapshot(query.session_id))
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
         ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(SessionHookSnapshot {
-                session_id: query.session_id,
-                ..SessionHookSnapshot::default()
-            })
+            Ok(self.snapshot(query.session_id))
         }
 
         async fn evaluate_hook(
@@ -1065,16 +1208,26 @@ mod tests {
         registry.register(Arc::new(CanvasFsMountProvider::new(canvas_repo.clone())));
         let vfs_service = Arc::new(VfsService::new(Arc::new(registry)));
         let base = tempfile::tempdir().expect("tempdir");
+        let active_run_id = Uuid::new_v4();
+        let frame_repo = Arc::new(MemoryAgentFrameRepository::default());
+        let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
-            Some(Arc::new(EmptyHookProvider)),
+            Some(Arc::new(EmptyHookProvider { active_run_id })),
             Arc::new(MemorySessionPersistence::default()),
         )
-        .with_vfs_service(vfs_service);
+        .with_vfs_service(vfs_service)
+        .with_agent_frame_repo(frame_repo.clone())
+        .with_lifecycle_gate_repo(gate_repo);
         let session = hub
             .create_session("present-canvas")
             .await
             .expect("session 应能创建");
+        let frame = AgentFrame::new_initial(
+            Uuid::new_v4(),
+            AgentFrame::runtime_session_refs_json([session.id.as_str()]),
+        );
+        frame_repo.create(&frame).await.expect("frame 应能写入");
         hub.ensure_session(&session.id).await;
         let turn_id = hub
             .start_prompt(

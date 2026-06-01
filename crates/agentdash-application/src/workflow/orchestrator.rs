@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityPortValue, ExecutorRunRef, LifecycleRun,
-    WorkflowSessionTerminalState,
+    WorkflowGraphInstance, WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
 use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookRuntime};
@@ -75,6 +75,7 @@ pub enum AdvanceCurrentNodeStatus {
 #[derive(Debug, Clone)]
 pub struct AdvanceCurrentNodeResult {
     pub run: LifecycleRun,
+    pub graph_instance: WorkflowGraphInstance,
     pub activity_key: String,
     pub status: AdvanceCurrentNodeStatus,
     pub orchestration_warning: Option<String>,
@@ -164,16 +165,19 @@ impl LifecycleOrchestrator {
         let service = ActivityLifecycleRunService::new(
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_instance_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         );
-        let run = service
-            .apply_event(association.run.id, event)
+        let update = service
+            .apply_event(association.graph_instance_id, event)
             .await
             .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
-        let activated_nodes = self.launch_ready_activity_attempts(&run).await?;
+        let activated_nodes = self
+            .launch_ready_activity_attempts(&update.run, update.graph_instance.id)
+            .await?;
 
         Ok(Some(OrchestrationResult {
-            run_id: run.id,
+            run_id: update.run.id,
             activated_nodes,
         }))
     }
@@ -194,16 +198,28 @@ impl LifecycleOrchestrator {
             return Err("当前 runtime session 没有关联 lifecycle activity attempt".to_string());
         };
 
+        let graph_instance = self
+            .repos
+            .workflow_graph_instance_repo
+            .get_by_run_and_id(association.run.id, association.graph_instance_id)
+            .await
+            .map_err(|error| format!("加载 workflow graph instance 失败: {error}"))?
+            .ok_or_else(|| {
+                format!(
+                    "workflow graph instance 不存在: {}",
+                    association.graph_instance_id
+                )
+            })?;
         let definition = self
             .repos
             .workflow_graph_repo
-            .get_by_id(association.run.lifecycle_id)
+            .get_by_id(graph_instance.graph_id)
             .await
             .map_err(|error| format!("加载 activity lifecycle definition 失败: {error}"))?
             .ok_or_else(|| {
                 format!(
                     "activity lifecycle definition 不存在: {}",
-                    association.run.lifecycle_id
+                    graph_instance.graph_id
                 )
             })?;
         let activity = definition
@@ -237,6 +253,7 @@ impl LifecycleOrchestrator {
             if !missing_output_keys.is_empty() {
                 return Ok(AdvanceCurrentNodeResult {
                     run: association.run,
+                    graph_instance,
                     activity_key: association.activity_key,
                     status: AdvanceCurrentNodeStatus::GateRejected {
                         gate_collision_count: 0,
@@ -258,17 +275,21 @@ impl LifecycleOrchestrator {
         let service = ActivityLifecycleRunService::new(
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_instance_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         );
-        let run = service
-            .apply_event(association.run.id, event)
+        let update = service
+            .apply_event(association.graph_instance_id, event)
             .await
             .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
         self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
             .await?;
 
         let orchestration_warning = if input.outcome == LifecycleNodeAdvanceOutcome::Completed {
-            match self.launch_ready_activity_attempts(&run).await {
+            match self
+                .launch_ready_activity_attempts(&update.run, update.graph_instance.id)
+                .await
+            {
                 Ok(_) => None,
                 Err(error) => Some(format!(
                     "activity 已完成，但后继 executor 启动失败：{error}"
@@ -277,9 +298,17 @@ impl LifecycleOrchestrator {
         } else {
             None
         };
-        let final_run = self.load_run(run.id).await?;
+        let final_run = self.load_run(update.run.id).await?;
+        let final_graph_instance = self
+            .repos
+            .workflow_graph_instance_repo
+            .get_by_run_and_id(final_run.id, update.graph_instance.id)
+            .await
+            .map_err(|e| format!("加载 workflow graph instance 失败: {e}"))?
+            .unwrap_or(update.graph_instance);
         Ok(AdvanceCurrentNodeResult {
             run: final_run,
+            graph_instance: final_graph_instance,
             activity_key: association.activity_key,
             status: if input.outcome == LifecycleNodeAdvanceOutcome::Failed {
                 AdvanceCurrentNodeStatus::Failed
@@ -293,10 +322,12 @@ impl LifecycleOrchestrator {
     async fn launch_ready_activity_attempts(
         &self,
         run: &LifecycleRun,
+        graph_instance_id: Uuid,
     ) -> Result<Vec<ActivatedNode>, String> {
         let service = ActivityLifecycleRunService::new(
             self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_instance_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         );
         let launcher = AgentActivityExecutorLauncher::new(
@@ -317,8 +348,8 @@ impl LifecycleOrchestrator {
                 self.platform_config.clone(),
             ),
         );
-        let (_run, outcomes) = service
-            .launch_ready_attempts(run.id, &launcher)
+        let (_update, outcomes) = service
+            .launch_ready_attempts(graph_instance_id, &launcher)
             .await
             .map_err(|error| format!("启动后继 activity executor 失败: {error}"))?;
         Ok(outcomes

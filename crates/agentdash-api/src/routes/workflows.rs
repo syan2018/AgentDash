@@ -104,7 +104,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_lifecycle_run),
         )
         .route(
-            "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
+            "/lifecycle-runs/{run_id}/graph-instances/{graph_instance_id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             axum::routing::post(submit_human_decision),
         )
 }
@@ -313,16 +313,17 @@ pub async fn start_lifecycle_run(
     let service = ActivityLifecycleRunService::new(
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
-    )
-    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
-    let run = service
+    );
+    let started = service
         .start_run(StartActivityLifecycleRunCommand {
             project_id,
             lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
             lifecycle_key: req.lifecycle_key.and_then(normalize_string),
         })
         .await?;
+    let run = started.run;
     let launcher = AgentActivityExecutorLauncher::new(
         AgentActivityLaunchContext {
             project_id: run.project_id,
@@ -341,7 +342,9 @@ pub async fn start_lifecycle_run(
             state.config.platform_config.clone(),
         ),
     );
-    service.launch_ready_attempts(run.id, &launcher).await?;
+    service
+        .launch_ready_attempts(started.graph_instance.id, &launcher)
+        .await?;
 
     let latest_run = state
         .repos
@@ -372,10 +375,11 @@ pub async fn get_lifecycle_run(
 pub async fn submit_human_decision(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
-    Path((run_id, activity_key, attempt)): Path<(String, String, u32)>,
+    Path((run_id, graph_instance_id, activity_key, attempt)): Path<(String, String, String, u32)>,
     Json(req): Json<SubmitHumanDecisionRequest>,
 ) -> Result<Json<LifecycleRun>, ApiError> {
     let run_id = parse_uuid(&run_id, "run_id")?;
+    let graph_instance_id = parse_uuid(&graph_instance_id, "graph_instance_id")?;
     let existing_run = load_lifecycle_run(&state, run_id).await?;
     load_project_with_permission(
         state.as_ref(),
@@ -384,15 +388,25 @@ pub async fn submit_human_decision(
         ProjectPermission::Edit,
     )
     .await?;
+    state
+        .repos
+        .workflow_graph_instance_repo
+        .get_by_run_and_id(run_id, graph_instance_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "workflow_graph_instance 不存在: {graph_instance_id}"
+            ))
+        })?;
     let service = ActivityLifecycleRunService::new(
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
-    )
-    .with_assignment_repo(state.repos.agent_assignment_repo.as_ref());
-    let run = service
+    );
+    let update = service
         .apply_event(
-            run_id,
+            graph_instance_id,
             ActivityEvent::HumanDecisionSubmitted {
                 activity_key,
                 attempt,
@@ -402,6 +416,7 @@ pub async fn submit_human_decision(
             },
         )
         .await?;
+    let run = update.run;
     let launcher = AgentActivityExecutorLauncher::new(
         AgentActivityLaunchContext {
             project_id: run.project_id,
@@ -420,7 +435,9 @@ pub async fn submit_human_decision(
             state.config.platform_config.clone(),
         ),
     );
-    service.launch_ready_attempts(run.id, &launcher).await?;
+    service
+        .launch_ready_attempts(update.graph_instance.id, &launcher)
+        .await?;
     let latest_run = state
         .repos
         .lifecycle_run_repo

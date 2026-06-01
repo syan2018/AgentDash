@@ -263,7 +263,7 @@ mod tests {
 
     use super::*;
 
-    const ENTRY_procedure_key: &str = "builtin_workflow_admin_plan";
+    const ENTRY_PROCEDURE_KEY: &str = "builtin_workflow_admin_plan";
 
     // ── in-memory mocks ──────────────────────────────────────────────
 
@@ -507,7 +507,7 @@ mod tests {
             key: "plan".to_string(),
             description: String::new(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: ENTRY_procedure_key.to_string(),
+                procedure_key: ENTRY_PROCEDURE_KEY.to_string(),
                 session_policy: AgentSessionPolicy::SpawnChild,
             }),
             output_ports: vec![],
@@ -539,7 +539,7 @@ mod tests {
         };
         AgentProcedure::new(
             project_id,
-            ENTRY_procedure_key,
+            ENTRY_PROCEDURE_KEY,
             "Workflow Admin / Plan",
             "",
             DefinitionSource::BuiltinSeed,

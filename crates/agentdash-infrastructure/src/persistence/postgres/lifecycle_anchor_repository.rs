@@ -1,9 +1,10 @@
 use agentdash_domain::common::error::DomainError;
 use agentdash_domain::workflow::{
-    AgentAssignment, AgentAssignmentRepository, AgentFrame, AgentFrameRepository, AgentLineage,
-    AgentLineageRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
-    LifecycleGateRepository, LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
-    SubjectRef, WorkflowGraphInstance, WorkflowGraphInstanceRepository,
+    ActivityLifecycleRunState, AgentAssignment, AgentAssignmentRepository, AgentFrame,
+    AgentFrameRepository, AgentLineage, AgentLineageRepository, LifecycleAgent,
+    LifecycleAgentRepository, LifecycleGate, LifecycleGateRepository, LifecycleSubjectAssociation,
+    LifecycleSubjectAssociationRepository, SubjectRef, WorkflowGraphInstance,
+    WorkflowGraphInstanceRepository,
 };
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
@@ -58,9 +59,9 @@ impl TryFrom<GraphInstanceRow> for WorkflowGraphInstance {
             graph_id: parse_uuid(&row.graph_id, "lifecycle_workflow_instances.graph_id")?,
             role: row.role,
             status: row.status,
-            activity_state_json: row
+            activity_state: row
                 .activity_state_json
-                .map(|s| serde_json::from_str(&s))
+                .map(|s| serde_json::from_str::<ActivityLifecycleRunState>(&s))
                 .transpose()
                 .map_err(|e| DomainError::InvalidConfig(format!("activity_state_json: {e}")))?,
             created_at: row.created_at,
@@ -73,7 +74,7 @@ impl TryFrom<GraphInstanceRow> for WorkflowGraphInstance {
 impl WorkflowGraphInstanceRepository for PostgresWorkflowGraphInstanceRepository {
     async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
         let activity_state = instance
-            .activity_state_json
+            .activity_state
             .as_ref()
             .map(|v| serde_json::to_string(v))
             .transpose()
@@ -109,6 +110,23 @@ impl WorkflowGraphInstanceRepository for PostgresWorkflowGraphInstanceRepository
         .transpose()
     }
 
+    async fn get_by_run_and_id(
+        &self,
+        run_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
+        sqlx::query_as::<_, GraphInstanceRow>(
+            "SELECT id,run_id,graph_id,role,status,activity_state_json,created_at,updated_at FROM lifecycle_workflow_instances WHERE run_id=$1 AND id=$2",
+        )
+        .bind(run_id.to_string())
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_err)?
+        .map(TryInto::try_into)
+        .transpose()
+    }
+
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<WorkflowGraphInstance>, DomainError> {
         sqlx::query_as::<_, GraphInstanceRow>(
             "SELECT id,run_id,graph_id,role,status,activity_state_json,created_at,updated_at FROM lifecycle_workflow_instances WHERE run_id=$1 ORDER BY created_at",
@@ -124,7 +142,7 @@ impl WorkflowGraphInstanceRepository for PostgresWorkflowGraphInstanceRepository
 
     async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError> {
         let activity_state = instance
-            .activity_state_json
+            .activity_state
             .as_ref()
             .map(|v| serde_json::to_string(v))
             .transpose()

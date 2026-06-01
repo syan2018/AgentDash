@@ -22,7 +22,10 @@ mod session_run_context_resolver;
 pub mod step_activation;
 pub mod tools;
 
-pub use activity_run::{ActivityLifecycleRunService, StartActivityLifecycleRunCommand};
+pub use activity_run::{
+    ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService,
+    StartActivityLifecycleRunCommand,
+};
 pub use agent_executor::{
     AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
     AgentActivitySessionPort,

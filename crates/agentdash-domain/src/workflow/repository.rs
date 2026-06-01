@@ -100,6 +100,11 @@ pub trait LifecycleRunRepository: Send + Sync {
 pub trait WorkflowGraphInstanceRepository: Send + Sync {
     async fn create(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
     async fn get(&self, id: Uuid) -> Result<Option<WorkflowGraphInstance>, DomainError>;
+    async fn get_by_run_and_id(
+        &self,
+        run_id: Uuid,
+        id: Uuid,
+    ) -> Result<Option<WorkflowGraphInstance>, DomainError>;
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<WorkflowGraphInstance>, DomainError>;
     async fn update(&self, instance: &WorkflowGraphInstance) -> Result<(), DomainError>;
 }

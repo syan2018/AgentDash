@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, State},
 };
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use agentdash_contracts::workflow::{
@@ -15,9 +15,10 @@ use agentdash_contracts::workflow::{
     LifecycleSubjectAssociationDto, SubjectExecutionView, SubjectRefDto, WorkflowGraphInstanceView,
 };
 use agentdash_domain::workflow::{
-    AgentAssignment, LifecycleAgent,
+    ActivityLifecycleRunState, AgentAssignment, LifecycleAgent,
     LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus, LifecycleSubjectAssociation, SubjectRef,
+    WorkflowGraphInstance,
 };
 
 use crate::{
@@ -115,6 +116,11 @@ async fn build_subject_execution_view(
             .agent_assignment_repo
             .list_by_run(run.id)
             .await?;
+        let graph_instances = state
+            .repos
+            .workflow_graph_instance_repo
+            .list_by_run(run.id)
+            .await?;
         let run_associations = associations
             .iter()
             .filter(|association| association.anchor_run_id == run.id)
@@ -130,21 +136,17 @@ async fn build_subject_execution_view(
                 select_current_agent(&associations, &agents).map(lifecycle_agent_to_view);
         }
         if latest_attempt.is_none() {
-            latest_attempt = latest_attempt_view(run, &assignments);
+            latest_attempt = latest_attempt_view(&graph_instances, &assignments);
         }
         if artifacts == json!({}) {
-            artifacts = run
-                .activity_state
-                .as_ref()
-                .and_then(|state| serde_json::to_value(&state.outputs).ok())
-                .unwrap_or_else(|| json!({}));
+            artifacts = graph_instances_outputs_json(&graph_instances);
         }
 
         run_views.push(lifecycle_run_to_view(
             run,
             agent_views,
             run_associations.iter().map(association_to_dto).collect(),
-            workflow_graph_instances_for_run(run, &assignments),
+            workflow_graph_instances_for_run(&graph_instances, &assignments),
         ));
     }
 
@@ -256,38 +258,51 @@ fn lifecycle_run_to_view(
 }
 
 fn workflow_graph_instances_for_run(
-    run: &LifecycleRun,
+    graph_instances: &[WorkflowGraphInstance],
     assignments: &[AgentAssignment],
 ) -> Vec<WorkflowGraphInstanceView> {
-    let Some(activity_state) = &run.activity_state else {
-        return Vec::new();
-    };
+    graph_instances
+        .iter()
+        .map(|instance| WorkflowGraphInstanceView {
+            id: instance.id.to_string(),
+            run_id: instance.run_id.to_string(),
+            graph_id: instance.graph_id.to_string(),
+            role: instance.role.clone(),
+            status: instance.status.clone(),
+            activities: instance
+                .activity_state
+                .as_ref()
+                .map(|state| activity_state_views(instance.id, state, assignments))
+                .unwrap_or_default(),
+        })
+        .collect()
+}
 
+fn activity_state_views(
+    graph_instance_id: Uuid,
+    activity_state: &ActivityLifecycleRunState,
+    assignments: &[AgentAssignment],
+) -> Vec<ActivityStateView> {
     let mut attempts_by_activity: BTreeMap<String, Vec<ActivityAttemptView>> = BTreeMap::new();
     for attempt in &activity_state.attempts {
         attempts_by_activity
             .entry(attempt.activity_key.clone())
             .or_default()
-            .push(activity_attempt_to_view(attempt, assignments));
+            .push(activity_attempt_to_view(
+                graph_instance_id,
+                attempt,
+                assignments,
+            ));
     }
 
-    let activities = attempts_by_activity
+    attempts_by_activity
         .into_iter()
         .map(|(activity_key, attempts)| ActivityStateView {
             activity_key,
             status: serialized_string(&activity_state.status),
             attempts,
         })
-        .collect();
-
-    vec![WorkflowGraphInstanceView {
-        id: run.lifecycle_id.to_string(),
-        run_id: run.id.to_string(),
-        graph_id: run.lifecycle_id.to_string(),
-        role: "root".to_string(),
-        status: serialized_string(&activity_state.status),
-        activities,
-    }]
+        .collect()
 }
 
 fn execution_entry_to_dto(
@@ -328,28 +343,38 @@ fn execution_event_kind_to_dto(
 }
 
 fn latest_attempt_view(
-    run: &LifecycleRun,
+    graph_instances: &[WorkflowGraphInstance],
     assignments: &[AgentAssignment],
 ) -> Option<ActivityAttemptView> {
-    let activity_state = run.activity_state.as_ref()?;
-    activity_state
-        .attempts
+    graph_instances
         .iter()
-        .max_by_key(|attempt| (attempt.completed_at, attempt.started_at, attempt.attempt))
-        .map(|attempt| activity_attempt_to_view(attempt, assignments))
+        .filter_map(|instance| {
+            let state = instance.activity_state.as_ref()?;
+            state
+                .attempts
+                .iter()
+                .max_by_key(|attempt| (attempt.completed_at, attempt.started_at, attempt.attempt))
+                .map(|attempt| (instance.id, attempt))
+        })
+        .max_by_key(|(_, attempt)| (attempt.completed_at, attempt.started_at, attempt.attempt))
+        .map(|(graph_instance_id, attempt)| {
+            activity_attempt_to_view(graph_instance_id, attempt, assignments)
+        })
 }
 
 fn activity_attempt_to_view(
+    graph_instance_id: Uuid,
     attempt: &agentdash_domain::workflow::ActivityAttemptState,
     assignments: &[AgentAssignment],
 ) -> ActivityAttemptView {
     let assignment = assignments.iter().find(|assignment| {
-        assignment.activity_key == attempt.activity_key
+        assignment.graph_instance_id == graph_instance_id
+            && assignment.activity_key == attempt.activity_key
             && assignment.attempt == attempt.attempt as i32
     });
 
     ActivityAttemptView {
-        graph_instance_id: assignment.map(|assignment| assignment.graph_instance_id.to_string()),
+        graph_instance_id: Some(graph_instance_id.to_string()),
         activity_key: attempt.activity_key.clone(),
         attempt: attempt.attempt,
         status: serialized_string(&attempt.status),
@@ -364,6 +389,18 @@ fn activity_attempt_to_view(
             .as_ref()
             .and_then(|executor_run| serde_json::to_value(executor_run).ok()),
     }
+}
+
+fn graph_instances_outputs_json(graph_instances: &[WorkflowGraphInstance]) -> Value {
+    let outputs = graph_instances
+        .iter()
+        .filter_map(|instance| instance.activity_state.as_ref())
+        .flat_map(|state| state.outputs.iter())
+        .collect::<Vec<_>>();
+    if outputs.is_empty() {
+        return json!({});
+    }
+    serde_json::to_value(outputs).unwrap_or_else(|_| json!({}))
 }
 
 fn select_current_agent<'a>(

@@ -82,7 +82,7 @@
         "description": "需求分析与技术调研（独立 Agent Session）。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "trellis_dag_task_research",
+          "procedure_key": "trellis_dag_task_research",
           "session_policy": "spawn_child"
         },
         "output_ports": [
@@ -102,7 +102,7 @@
         "description": "基于调研结论执行实现（独立 Agent Session）。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "trellis_dag_task_implement",
+          "procedure_key": "trellis_dag_task_implement",
           "session_policy": "spawn_child"
         },
         "input_ports": [

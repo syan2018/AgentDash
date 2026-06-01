@@ -1,8 +1,8 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository, AgentFrameRepository,
-    AgentProcedure, AgentProcedureRepository, AgentSessionPolicy, LifecycleAgentRepository,
-    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract, WorkflowGraph,
-    WorkflowGraphRepository,
+    ActivityAttemptState, ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository,
+    AgentFrameRepository, AgentProcedure, AgentProcedureRepository, AgentSessionPolicy,
+    LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
+    WorkflowContract, WorkflowGraph, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 use super::session_association::ActivityRuntimeAssociationResolver;
@@ -21,8 +21,10 @@ use super::session_association::ActivityRuntimeAssociationResolver;
 #[derive(Debug, Clone)]
 pub struct ActiveWorkflowProjection {
     pub run: LifecycleRun,
+    pub graph_instance_id: uuid::Uuid,
     pub lifecycle: WorkflowGraph,
     pub active_activity: ActivityDefinition,
+    pub active_attempt: ActivityAttemptState,
     /// 由 activity executor 推导的 node 语义:
     /// `ContinueRoot` → PhaseNode,`SpawnChild` / `AttachExisting` → AgentNode。
     pub active_node_type: LifecycleNodeType,
@@ -77,6 +79,7 @@ pub async fn resolve_active_workflow_projection_for_session(
     agent_repo: &dyn LifecycleAgentRepository,
     assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
+    graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let resolver =
         ActivityRuntimeAssociationResolver::new(frame_repo, agent_repo, assignment_repo, run_repo);
@@ -86,23 +89,34 @@ pub async fn resolve_active_workflow_projection_for_session(
     let run = association.run;
     let assignment = association.assignment;
     let attempt = association.attempt;
-    let Some(activity_state) = run.activity_state.as_ref() else {
+    let Some(graph_instance) = graph_instance_repo
+        .get_by_run_and_id(run.id, assignment.graph_instance_id)
+        .await
+        .map_err(|e| format!("加载 workflow graph instance 失败: {e}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(activity_state) = graph_instance.activity_state.as_ref() else {
         return Ok(None);
     };
     if activity_state.graph_instance_id != assignment.graph_instance_id {
         return Ok(None);
     }
-    if !activity_state
+    let Some(active_attempt) = activity_state
         .attempts
         .iter()
-        .any(|state| state.activity_key == assignment.activity_key && state.attempt == attempt)
-    {
+        .find(|state| state.activity_key == assignment.activity_key && state.attempt == attempt)
+        .cloned()
+    else {
         return Ok(None);
-    }
+    };
 
     build_activity_projection_from_run(
         run,
+        graph_instance.id,
+        graph_instance.graph_id,
         &assignment.activity_key,
+        active_attempt,
         definition_repo,
         activity_lifecycle_repo,
     )
@@ -111,12 +125,15 @@ pub async fn resolve_active_workflow_projection_for_session(
 
 async fn build_activity_projection_from_run(
     run: LifecycleRun,
+    graph_instance_id: uuid::Uuid,
+    graph_id: uuid::Uuid,
     activity_key: &str,
+    active_attempt: ActivityAttemptState,
     definition_repo: &dyn AgentProcedureRepository,
     activity_lifecycle_repo: &dyn WorkflowGraphRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let Some(activity_lifecycle) = activity_lifecycle_repo
-        .get_by_id(run.lifecycle_id)
+        .get_by_id(graph_id)
         .await
         .map_err(|e| format!("加载 activity lifecycle definition 失败: {e}"))?
     else {
@@ -141,8 +158,10 @@ async fn build_activity_projection_from_run(
 
     Ok(Some(ActiveWorkflowProjection {
         run,
+        graph_instance_id,
         lifecycle: activity_lifecycle,
         active_activity,
+        active_attempt,
         active_node_type,
         active_procedure_key,
         primary_workflow,
@@ -222,13 +241,19 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         outputs: Vec::new(),
         inputs: Vec::new(),
     };
-    let run = LifecycleRun::new_activity(project_id, lifecycle.id, activity_state)
-        .expect("activity run should build");
+    let mut run = LifecycleRun::new_control(project_id, lifecycle.id);
+    run.sync_graph_instance_activity_projections([(
+        activity_state.graph_instance_id,
+        &activity_state,
+    )]);
+    let active_attempt = activity_state.attempts[0].clone();
     let (active_procedure_key, active_node_type) = derive_node_facts(&active_activity);
     ActiveWorkflowProjection {
         run,
+        graph_instance_id: activity_state.graph_instance_id,
         lifecycle,
         active_activity,
+        active_attempt,
         active_node_type,
         active_procedure_key,
         primary_workflow: Some(definition),

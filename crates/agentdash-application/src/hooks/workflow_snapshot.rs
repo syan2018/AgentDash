@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use agentdash_domain::workflow::{
     AgentAssignmentRepository, AgentFrameRepository, AgentProcedureRepository,
-    LifecycleAgentRepository, LifecycleRunRepository, WorkflowGraphRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository,
 };
 use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -22,6 +23,7 @@ pub struct WorkflowSnapshotBuilder {
     lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
     agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
@@ -32,6 +34,7 @@ impl WorkflowSnapshotBuilder {
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     ) -> Self {
         Self {
             agent_procedure_repo,
@@ -40,6 +43,7 @@ impl WorkflowSnapshotBuilder {
             lifecycle_agent_repo,
             agent_assignment_repo,
             lifecycle_run_repo,
+            workflow_graph_instance_repo,
         }
     }
 
@@ -66,6 +70,7 @@ impl WorkflowSnapshotBuilder {
             self.lifecycle_agent_repo.as_ref(),
             self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
+            self.workflow_graph_instance_repo.as_ref(),
         )
         .await
         .map_err(HookError::Runtime)

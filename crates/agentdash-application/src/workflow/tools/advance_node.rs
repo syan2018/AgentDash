@@ -147,7 +147,7 @@ fn build_tool_result(
                 "Activity `{}` 已标记为 **Failed**。{}",
                 result.activity_key,
                 result
-                    .run
+                    .graph_instance
                     .activity_state
                     .as_ref()
                     .and_then(|state| state
@@ -201,7 +201,7 @@ fn build_tool_result(
         }
         AdvanceCurrentNodeStatus::Completed => {
             let newly_ready: Vec<&str> = result
-                .run
+                .graph_instance
                 .activity_state
                 .as_ref()
                 .map(|state| {

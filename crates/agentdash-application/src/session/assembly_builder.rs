@@ -134,11 +134,16 @@ impl SessionAssemblyBuilder {
     pub(super) fn append_lifecycle_mount(
         mut self,
         run_id: Uuid,
+        graph_instance_id: Uuid,
         lifecycle_key: &str,
         writable_port_keys: &[String],
     ) -> Self {
-        let lifecycle_mount =
-            build_lifecycle_mount_with_ports(run_id, lifecycle_key, writable_port_keys);
+        let lifecycle_mount = build_lifecycle_mount_with_ports(
+            run_id,
+            graph_instance_id,
+            lifecycle_key,
+            writable_port_keys,
+        );
         let mut overlay = Vfs::default();
         overlay.mounts.push(lifecycle_mount);
         self.vfs = Some(compose_vfs_with_overlay_and_directives(

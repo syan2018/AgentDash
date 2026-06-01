@@ -331,15 +331,34 @@ impl AppStateSessionConstructionProvider {
         run: LifecycleRun,
         command: &LaunchCommand,
     ) -> Result<RuntimeLaunchRequest, ConnectorError> {
+        let graph_instance_id = frame.graph_instance_id.ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 graph_instance_id", frame.id))
+        })?;
+        let graph_instance = self
+            .state
+            .repos
+            .workflow_graph_instance_repo
+            .get_by_run_and_id(run.id, graph_instance_id)
+            .await
+            .map_err(connector_internal)?
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!(
+                    "WorkflowGraphInstance {graph_instance_id} 不属于 run {}",
+                    run.id
+                ))
+            })?;
         let lifecycle = self
             .state
             .repos
             .workflow_graph_repo
-            .get_by_id(run.lifecycle_id)
+            .get_by_id(graph_instance.graph_id)
             .await
             .map_err(connector_internal)?
             .ok_or_else(|| {
-                ConnectorError::InvalidConfig(format!("WorkflowGraph {} 不存在", run.lifecycle_id))
+                ConnectorError::InvalidConfig(format!(
+                    "WorkflowGraph {} 不存在",
+                    graph_instance.graph_id
+                ))
             })?;
         let activity_key = frame.activity_key.clone().ok_or_else(|| {
             ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 activity_key", frame.id))
@@ -377,6 +396,7 @@ impl AppStateSessionConstructionProvider {
                 self.state.config.platform_config.as_ref(),
                 LifecycleNodeSpec {
                     run: &run,
+                    graph_instance_id,
                     lifecycle: &lifecycle,
                     activity,
                     workflow: workflow.as_ref(),
@@ -512,6 +532,7 @@ impl AppStateSessionConstructionProvider {
                             dispatch_prompt: companion.dispatch_prompt,
                         },
                         run: &workflow.run,
+                        graph_instance_id: workflow.graph_instance_id,
                         lifecycle: &workflow.lifecycle,
                         activity: &workflow.activity,
                         workflow: workflow.workflow.as_ref(),

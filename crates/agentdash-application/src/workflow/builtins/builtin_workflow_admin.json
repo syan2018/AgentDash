@@ -26,7 +26,7 @@
       "description": "执行 Workflow/Lifecycle 的 Upsert 与校验，必要时回滚。",
       "contract": {
         "injection": {
-          "guidance": "当前处于 Apply 阶段。基于 Plan 阶段的设计执行实际写入。\n\n要求：\n- 每次调用 upsert_workflow_tool / upsert_lifecycle_tool 前，先用 get_workflow / get_lifecycle 读取当前定义，避免覆盖并行改动\n- upsert 失败时先看返回的 ValidationResponse：按 error severity 逐条修正，再重新提交；不要忽略 warning\n- Activity 的 agent executor workflow_key 引用必须先存在，先 upsert workflow 再 upsert lifecycle\n- 完成后用 list_workflows 回读确认新定义已生效"
+          "guidance": "当前处于 Apply 阶段。基于 Plan 阶段的设计执行实际写入。\n\n要求：\n- 每次调用 upsert_workflow_tool / upsert_lifecycle_tool 前，先用 get_workflow / get_lifecycle 读取当前定义，避免覆盖并行改动\n- upsert 失败时先看返回的 ValidationResponse：按 error severity 逐条修正，再重新提交；不要忽略 warning\n- Activity 的 agent executor procedure_key 引用必须先存在，先 upsert workflow 再 upsert lifecycle\n- 完成后用 list_workflows 回读确认新定义已生效"
         },
         "capability_config": {
           "tool_directives": [
@@ -47,7 +47,7 @@
         "description": "理解现状并输出调整方案（仅读，不写）。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "builtin_workflow_admin_plan",
+          "procedure_key": "builtin_workflow_admin_plan",
           "session_policy": "spawn_child"
         }
       },
@@ -56,7 +56,7 @@
         "description": "执行 Upsert 与校验。",
         "executor": {
           "kind": "agent",
-          "workflow_key": "builtin_workflow_admin_apply",
+          "procedure_key": "builtin_workflow_admin_apply",
           "session_policy": "spawn_child"
         }
       }

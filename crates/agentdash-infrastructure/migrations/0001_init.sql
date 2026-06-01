@@ -261,9 +261,9 @@ CREATE TABLE IF NOT EXISTS lifecycle_runs (
     project_id TEXT NOT NULL,
     lifecycle_id TEXT NOT NULL,
     status TEXT NOT NULL,
+    active_node_keys TEXT NOT NULL DEFAULT '[]',
     record_artifacts TEXT NOT NULL DEFAULT '[]',
     execution_log TEXT NOT NULL DEFAULT '[]',
-    activity_state TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP

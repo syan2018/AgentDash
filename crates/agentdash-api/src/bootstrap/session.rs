@@ -114,6 +114,7 @@ pub(crate) async fn build_session_runtime(
         repos.lifecycle_agent_repo.clone(),
         repos.agent_assignment_repo.clone(),
         repos.lifecycle_run_repo.clone(),
+        repos.workflow_graph_instance_repo.clone(),
         repos.lifecycle_subject_association_repo.clone(),
         repos.inline_file_repo.clone(),
         |preset_scripts| {

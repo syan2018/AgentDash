@@ -187,14 +187,12 @@ pub struct LifecycleRun {
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
     pub status: LifecycleRunStatus,
-    /// 当前所有可执行（Ready/Running）的 node key 集合。
-    /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
+    /// 当前所有可执行（Ready/Running）的 graph-scoped node key 集合。
+    /// 这是从 `WorkflowGraphInstance.activity_state` 派生出的 run-level control projection。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_node_keys: Vec<String>,
     #[serde(default)]
     pub execution_log: Vec<LifecycleExecutionEntry>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activity_state: Option<ActivityLifecycleRunState>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_activity_at: DateTime<Utc>,
@@ -207,35 +205,36 @@ impl LifecycleRun {
         self.active_node_keys.first().map(String::as_str)
     }
 
-    pub fn new_activity(
-        project_id: Uuid,
-        lifecycle_id: Uuid,
-        activity_state: ActivityLifecycleRunState,
-    ) -> Result<Self, String> {
-        if activity_state.attempts.is_empty() {
-            return Err("activity lifecycle run 至少需要一个 attempt".to_string());
-        }
+    pub fn new_control(project_id: Uuid, lifecycle_id: Uuid) -> Self {
         let now = Utc::now();
-        let active_node_keys = active_activity_keys(&activity_state);
-        let status = lifecycle_status_from_activity_status(activity_state.status);
-        Ok(Self {
+        Self {
             id: Uuid::new_v4(),
             project_id,
             lifecycle_id,
-            status,
-            active_node_keys,
+            status: LifecycleRunStatus::Ready,
+            active_node_keys: Vec::new(),
             execution_log: Vec::new(),
-            activity_state: Some(activity_state),
             created_at: now,
             updated_at: now,
             last_activity_at: now,
-        })
+        }
     }
 
-    pub fn replace_activity_state(&mut self, activity_state: ActivityLifecycleRunState) {
-        self.status = lifecycle_status_from_activity_status(activity_state.status);
-        self.active_node_keys = active_activity_keys(&activity_state);
-        self.activity_state = Some(activity_state);
+    pub fn sync_graph_instance_activity_projections<'a, I>(&mut self, states: I)
+    where
+        I: IntoIterator<Item = (Uuid, &'a ActivityLifecycleRunState)>,
+    {
+        let states = states.into_iter().collect::<Vec<_>>();
+        self.status = aggregate_lifecycle_status(states.iter().map(|(_, state)| state.status));
+        self.active_node_keys = states
+            .iter()
+            .flat_map(|(graph_instance_id, state)| {
+                active_activity_keys(state)
+                    .into_iter()
+                    .map(|activity_key| format!("{graph_instance_id}:{activity_key}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
         let now = Utc::now();
         self.updated_at = now;
         self.last_activity_at = now;
@@ -267,15 +266,51 @@ fn active_activity_keys(activity_state: &ActivityLifecycleRunState) -> Vec<Strin
         .collect()
 }
 
-fn lifecycle_status_from_activity_status(status: ActivityRunStatus) -> LifecycleRunStatus {
-    match status {
-        ActivityRunStatus::Ready => LifecycleRunStatus::Ready,
-        ActivityRunStatus::Running => LifecycleRunStatus::Running,
-        ActivityRunStatus::Blocked => LifecycleRunStatus::Blocked,
-        ActivityRunStatus::Completed => LifecycleRunStatus::Completed,
-        ActivityRunStatus::Failed => LifecycleRunStatus::Failed,
-        ActivityRunStatus::Cancelled => LifecycleRunStatus::Cancelled,
+fn aggregate_lifecycle_status<I>(statuses: I) -> LifecycleRunStatus
+where
+    I: IntoIterator<Item = ActivityRunStatus>,
+{
+    let statuses = statuses.into_iter().collect::<Vec<_>>();
+    if statuses.is_empty() {
+        return LifecycleRunStatus::Ready;
     }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Failed)
+    {
+        return LifecycleRunStatus::Failed;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Running)
+    {
+        return LifecycleRunStatus::Running;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Ready)
+    {
+        return LifecycleRunStatus::Ready;
+    }
+    if statuses
+        .iter()
+        .any(|status| *status == ActivityRunStatus::Blocked)
+    {
+        return LifecycleRunStatus::Blocked;
+    }
+    if statuses
+        .iter()
+        .all(|status| *status == ActivityRunStatus::Completed)
+    {
+        return LifecycleRunStatus::Completed;
+    }
+    if statuses
+        .iter()
+        .all(|status| *status == ActivityRunStatus::Cancelled)
+    {
+        return LifecycleRunStatus::Cancelled;
+    }
+    LifecycleRunStatus::Running
 }
 
 pub fn build_effective_contract(

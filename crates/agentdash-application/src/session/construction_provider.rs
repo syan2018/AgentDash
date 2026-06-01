@@ -43,6 +43,7 @@ pub struct RoutineLaunchSource {
 #[derive(Clone)]
 pub struct CompanionLaunchWorkflowSource {
     pub run: LifecycleRun,
+    pub graph_instance_id: Uuid,
     pub lifecycle: WorkflowGraph,
     pub activity: ActivityDefinition,
     pub workflow: Option<AgentProcedure>,

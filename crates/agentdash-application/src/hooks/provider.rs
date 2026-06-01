@@ -6,7 +6,8 @@ use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, AgentAssignmentRepository, AgentFrameRepository,
     AgentProcedureRepository, LifecycleAgentRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, WorkflowGraphRepository, build_effective_contract,
+    LifecycleSubjectAssociationRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -51,6 +52,7 @@ impl AppExecutionHookProvider {
         lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
         agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
         lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
         script_evaluator_factory: F,
@@ -74,6 +76,7 @@ impl AppExecutionHookProvider {
                 lifecycle_agent_repo,
                 agent_assignment_repo,
                 lifecycle_run_repo,
+                workflow_graph_instance_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),
         }
@@ -155,30 +158,18 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 } else {
                     workflow.active_activity.description.clone()
                 };
-                let activity_status = workflow
-                    .run
-                    .activity_state
-                    .as_ref()
-                    .and_then(|state| {
-                        state
-                            .attempts
-                            .iter()
-                            .find(|a| a.activity_key == workflow.active_activity.key)
-                    })
-                    .map(|attempt| {
-                        match attempt.status {
-                            ActivityAttemptStatus::Pending => "pending",
-                            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => {
-                                "ready"
-                            }
-                            ActivityAttemptStatus::Running => "running",
-                            ActivityAttemptStatus::Completed => "completed",
-                            ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
-                                "failed"
-                            }
+                let activity_status = Some(
+                    match workflow.active_attempt.status {
+                        ActivityAttemptStatus::Pending => "pending",
+                        ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => "ready",
+                        ActivityAttemptStatus::Running => "running",
+                        ActivityAttemptStatus::Completed => "completed",
+                        ActivityAttemptStatus::Failed | ActivityAttemptStatus::Cancelled => {
+                            "failed"
                         }
-                        .to_string()
-                    });
+                    }
+                    .to_string(),
+                );
                 let node_type = Some(match workflow.active_node_type {
                     agentdash_domain::workflow::LifecycleNodeType::AgentNode => {
                         "agent_node".to_string()

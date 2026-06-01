@@ -572,7 +572,6 @@ fn create_lifecycle_run(project_id: Uuid, lifecycle_id: Uuid) -> LifecycleRun {
         status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
         active_node_keys: Vec::new(),
         execution_log: Vec::new(),
-        activity_state: None,
         created_at: now,
         updated_at: now,
         last_activity_at: now,
@@ -763,6 +762,19 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|i| i.id == id)
+                .cloned())
+        }
+        async fn get_by_run_and_id(
+            &self,
+            run_id: Uuid,
+            id: Uuid,
+        ) -> Result<Option<WorkflowGraphInstance>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|instance| instance.run_id == run_id && instance.id == id)
                 .cloned())
         }
         async fn list_by_run(

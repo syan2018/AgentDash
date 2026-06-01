@@ -12,6 +12,7 @@ pub const LIFECYCLE_ACTIVITY_LABEL_PREFIX: &str = "lifecycle_activity:";
 #[derive(Debug, Clone)]
 pub struct LifecycleActivitySessionAssociation {
     pub run: LifecycleRun,
+    pub graph_instance_id: Uuid,
     pub activity_key: String,
     pub attempt: u32,
 }
@@ -196,6 +197,7 @@ pub async fn resolve_activity_session_association(
             } = association;
             LifecycleActivitySessionAssociation {
                 run,
+                graph_instance_id: assignment.graph_instance_id,
                 activity_key: assignment.activity_key,
                 attempt,
             }

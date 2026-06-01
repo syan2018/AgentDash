@@ -16,7 +16,7 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
     AgentProcedureRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    WorkflowGraphRepository,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 /// 启动对账管线的依赖集合
@@ -31,6 +31,7 @@ pub struct BootReconcileDeps {
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    pub workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
@@ -161,6 +162,7 @@ async fn run_task_view_projection(deps: &BootReconcileDeps) -> PhaseReport {
         &deps.story_repo,
         &deps.lifecycle_subject_association_repo,
         &deps.lifecycle_run_repo,
+        &deps.workflow_graph_instance_repo,
     )
     .await
     {

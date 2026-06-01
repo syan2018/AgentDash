@@ -9,7 +9,8 @@ use std::sync::Arc;
 use agentdash_agent_protocol::BackboneEvent;
 use agentdash_domain::inline_file::{InlineFile, InlineFileOwnerKind, InlineFileRepository};
 use agentdash_domain::workflow::{
-    ActivityAttemptState, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    ActivityAttemptState, ActivityAttemptStatus, ExecutorRunRef, LifecycleRun, LifecycleRunStatus,
+    WorkflowGraphInstance,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -441,7 +442,7 @@ pub struct LifecycleRunOverview<'a> {
     project_id: Uuid,
     lifecycle_id: Uuid,
     status: &'a LifecycleRunStatus,
-    current_activity_key: Option<&'a str>,
+    current_activity_key: Option<String>,
     step_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -449,18 +450,21 @@ pub struct LifecycleRunOverview<'a> {
     last_activity_at: chrono::DateTime<chrono::Utc>,
 }
 
-pub fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
+pub fn run_overview<'a>(
+    run: &'a LifecycleRun,
+    graph_instances: &[WorkflowGraphInstance],
+) -> LifecycleRunOverview<'a> {
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
         lifecycle_id: run.lifecycle_id,
         status: &run.status,
-        current_activity_key: run.current_activity_key(),
-        step_count: run
-            .activity_state
-            .as_ref()
+        current_activity_key: run.current_activity_key().map(str::to_string),
+        step_count: graph_instances
+            .iter()
+            .filter_map(|instance| instance.activity_state.as_ref())
             .map(|state| state.attempts.len())
-            .unwrap_or(0),
+            .sum(),
         log_count: run.execution_log.len(),
         created_at: run.created_at,
         updated_at: run.updated_at,
@@ -501,31 +505,40 @@ pub fn group_events_into_turn_summaries(events: &[PersistedSessionEvent]) -> Vec
 }
 
 /// 取展示用的 Activity attempt 列表（投影 node 列表用）。
-pub fn step_states_from_run(run: &LifecycleRun) -> Vec<ActivityAttemptState> {
-    run.activity_state
-        .as_ref()
-        .map(|state| state.attempts.clone())
-        .unwrap_or_default()
+pub fn step_states_from_graph_instance(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<Vec<ActivityAttemptState>> {
+    Ok(graph_instance_state(graph_instance)?.attempts.clone())
 }
 
-pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<ActivityAttemptState> {
-    run.activity_state
-        .as_ref()
-        .and_then(|state| {
-            state
-                .attempts
-                .iter()
-                .find(|attempt| attempt.activity_key == key)
-                .cloned()
-        })
+pub fn find_step(
+    graph_instance: &WorkflowGraphInstance,
+    key: &str,
+) -> JourneyResult<ActivityAttemptState> {
+    graph_instance_state(graph_instance)?
+        .attempts
+        .iter()
+        .find(|attempt| attempt.activity_key == key)
+        .cloned()
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node 不存在: {key}")))
 }
 
-pub fn current_step(run: &LifecycleRun) -> JourneyResult<ActivityAttemptState> {
-    let key = run.current_activity_key().ok_or_else(|| {
-        LifecycleJourneyError::NotFound("当前 lifecycle run 没有活跃 node".to_string())
-    })?;
-    find_step(run, key)
+pub fn current_step(graph_instance: &WorkflowGraphInstance) -> JourneyResult<ActivityAttemptState> {
+    graph_instance_state(graph_instance)?
+        .attempts
+        .iter()
+        .find(|attempt| {
+            matches!(
+                attempt.status,
+                ActivityAttemptStatus::Ready
+                    | ActivityAttemptStatus::Claiming
+                    | ActivityAttemptStatus::Running
+            )
+        })
+        .cloned()
+        .ok_or_else(|| {
+            LifecycleJourneyError::NotFound("当前 graph instance 没有活跃 node".to_string())
+        })
 }
 
 pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
@@ -535,17 +548,30 @@ pub fn attempt_session_id(attempt: &ActivityAttemptState) -> Option<String> {
     }
 }
 
-pub fn step_session_id(run: &LifecycleRun, key: &str) -> JourneyResult<String> {
-    attempt_session_id(&find_step(run, key)?)
+pub fn step_session_id(graph_instance: &WorkflowGraphInstance, key: &str) -> JourneyResult<String> {
+    attempt_session_id(&find_step(graph_instance, key)?)
         .ok_or_else(|| LifecycleJourneyError::NotFound(format!("node `{key}` 没有关联 session")))
 }
 
-pub fn current_step_session_id(run: &LifecycleRun) -> JourneyResult<(String, String)> {
-    let attempt = current_step(run)?;
+pub fn current_step_session_id(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<(String, String)> {
+    let attempt = current_step(graph_instance)?;
     let session_id = attempt_session_id(&attempt).ok_or_else(|| {
         LifecycleJourneyError::NotFound(format!("node `{}` 没有关联 session", attempt.activity_key))
     })?;
     Ok((attempt.activity_key, session_id))
+}
+
+fn graph_instance_state(
+    graph_instance: &WorkflowGraphInstance,
+) -> JourneyResult<&agentdash_domain::workflow::ActivityLifecycleRunState> {
+    graph_instance.activity_state.as_ref().ok_or_else(|| {
+        LifecycleJourneyError::NotFound(format!(
+            "graph instance {} 缺少 activity state",
+            graph_instance.id
+        ))
+    })
 }
 
 pub fn join_rest(rest: &[&str]) -> JourneyResult<String> {

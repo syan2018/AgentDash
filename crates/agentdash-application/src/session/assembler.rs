@@ -1208,6 +1208,7 @@ impl<'a> SessionRequestAssembler<'a> {
                     dispatch_prompt: spec.companion.dispatch_prompt,
                 },
                 run: spec.run,
+                graph_instance_id: spec.graph_instance_id,
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
                 workflow: spec.workflow,
@@ -1292,6 +1293,7 @@ pub(crate) async fn compose_lifecycle_node_with_audit(
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
+            graph_instance_id: spec.graph_instance_id,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, spec.run.project_id).await,
@@ -1540,6 +1542,7 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
+    pub graph_instance_id: Uuid,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1567,6 +1570,7 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
+    pub graph_instance_id: Uuid,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1583,6 +1587,7 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
+    pub graph_instance_id: Uuid,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1617,6 +1622,7 @@ pub(crate) async fn compose_companion_with_workflow(
             active_activity: spec.activity,
             workflow: spec.workflow,
             run_id: spec.run.id,
+            graph_instance_id: spec.graph_instance_id,
             lifecycle_key: &spec.lifecycle.key,
             agent_mcp_servers: vec![],
             available_presets: load_available_presets(repos, project_id).await,
@@ -1923,8 +1929,12 @@ mod tests {
     }
 
     fn test_step_activation(run_id: Uuid) -> crate::workflow::StepActivation {
-        let lifecycle_mount =
-            build_lifecycle_mount_with_ports(run_id, "test-lifecycle", &["report".to_string()]);
+        let lifecycle_mount = build_lifecycle_mount_with_ports(
+            run_id,
+            Uuid::new_v4(),
+            "test-lifecycle",
+            &["report".to_string()],
+        );
         crate::workflow::StepActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
@@ -1950,7 +1960,7 @@ mod tests {
     #[test]
     fn append_lifecycle_mount_creates_vfs_when_base_is_absent() {
         let prepared = SessionAssemblyBuilder::new()
-            .append_lifecycle_mount(Uuid::new_v4(), "test-lifecycle", &[])
+            .append_lifecycle_mount(Uuid::new_v4(), Uuid::new_v4(), "test-lifecycle", &[])
             .build();
 
         let vfs = prepared.vfs.expect("lifecycle mount should create VFS");
@@ -2031,8 +2041,9 @@ mod tests {
             vec![],
         )
         .expect("lifecycle");
+        let graph_instance_id = uuid::Uuid::new_v4();
         let activity_state = ActivityLifecycleRunState {
-            graph_instance_id: uuid::Uuid::nil(),
+            graph_instance_id,
             status: agentdash_domain::workflow::ActivityRunStatus::Running,
             attempts: vec![agentdash_domain::workflow::ActivityAttemptState {
                 activity_key: "implement".to_string(),
@@ -2046,12 +2057,9 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run = agentdash_domain::workflow::LifecycleRun::new_activity(
-            project_id,
-            lifecycle.id,
-            activity_state,
-        )
-        .expect("run");
+        let mut run =
+            agentdash_domain::workflow::LifecycleRun::new_control(project_id, lifecycle.id);
+        run.sync_graph_instance_activity_projections([(graph_instance_id, &activity_state)]);
         let workflow = AgentProcedure::new(
             project_id,
             "wf_impl",
@@ -2069,6 +2077,7 @@ mod tests {
         .expect("workflow");
         let mount = crate::vfs::build_lifecycle_mount_with_ports(
             run.id,
+            graph_instance_id,
             &lifecycle.key,
             &["summary".into()],
         );
@@ -2095,6 +2104,7 @@ mod tests {
 
         let spec = LifecycleNodeSpec {
             run: &run,
+            graph_instance_id,
             lifecycle: &lifecycle,
             activity: &activity,
             workflow: Some(&workflow),

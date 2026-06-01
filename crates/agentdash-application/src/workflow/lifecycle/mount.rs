@@ -30,6 +30,7 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
 pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
     let mount = build_lifecycle_mount_with_ports(
         workflow.run.id,
+        workflow.graph_instance_id,
         &workflow.lifecycle.key,
         &writable_port_keys_for_active_workflow(workflow),
     );
@@ -119,13 +120,19 @@ mod tests {
             outputs: Vec::new(),
             inputs: Vec::new(),
         };
-        let run =
-            LifecycleRun::new_activity(project_id, lifecycle.id, activity_state).expect("run");
+        let mut run = LifecycleRun::new_control(project_id, lifecycle.id);
+        run.sync_graph_instance_activity_projections([(
+            activity_state.graph_instance_id,
+            &activity_state,
+        )]);
+        let active_attempt = activity_state.attempts[0].clone();
 
         ActiveWorkflowProjection {
             run,
+            graph_instance_id: activity_state.graph_instance_id,
             lifecycle,
             active_activity: activity,
+            active_attempt,
             active_node_type: agentdash_domain::workflow::LifecycleNodeType::AgentNode,
             active_procedure_key: None,
             primary_workflow: None,
@@ -158,7 +165,10 @@ mod tests {
         assert_eq!(lifecycle.provider, "lifecycle_vfs");
         assert_eq!(
             lifecycle.root_ref,
-            format!("lifecycle://run/{}", workflow.run.id)
+            format!(
+                "lifecycle://run/{}/graph/{}",
+                workflow.run.id, workflow.graph_instance_id
+            )
         );
         assert!(lifecycle.capabilities.contains(&MountCapability::Write));
         assert_eq!(
@@ -177,7 +187,7 @@ mod tests {
         let base = Vfs {
             mounts: vec![
                 workspace_mount(),
-                build_lifecycle_mount_with_ports(stale_run_id, "stale", &[]),
+                build_lifecycle_mount_with_ports(stale_run_id, Uuid::new_v4(), "stale", &[]),
             ],
             default_mount_id: Some("main".to_string()),
             source_project_id: None,
@@ -196,7 +206,10 @@ mod tests {
         assert_eq!(lifecycle_mounts.len(), 1);
         assert_eq!(
             lifecycle_mounts[0].root_ref,
-            format!("lifecycle://run/{}", workflow.run.id)
+            format!(
+                "lifecycle://run/{}/graph/{}",
+                workflow.run.id, workflow.graph_instance_id
+            )
         );
         assert_eq!(vfs.default_mount_id.as_deref(), Some("main"));
     }

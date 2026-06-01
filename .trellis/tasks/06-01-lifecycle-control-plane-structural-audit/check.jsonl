@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/raw-exposed-issues-checklist.md", "reason": "质量检查必须确认所有原始问题被覆盖或有明确拆分。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/structural-analysis.md", "reason": "质量检查必须验证实现是否解决结构性耦合，而非只做表面替换。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/design.md", "reason": "质量检查对照目标边界与不变量。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-structural-audit/implement.md", "reason": "质量检查对照阶段顺序与验证要求。"}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/abstraction-boundary-and-coupling-review.md", "reason": "检查新增抽象是否拥有事实源、不变量、查询边界或事务边界。"}

@@ -1,0 +1,140 @@
+# 执行计划：彻底解决结构性问题
+
+## Purpose
+
+本文不是机械修改列表。它规定后续修复顺序：先修事实源与封装边界，再删旧路径和补测试。任何实现任务都应从这里拆分子任务。
+
+## Phase 1: 固化运行闭环不变量
+
+- [ ] 设计 `ActivityRuntimeAssociationResolver`。
+  - 输入 runtime terminal / session / turn provenance。
+  - 输出 stable assignment / graph instance / activity attempt refs。
+  - 不依赖 current frame id 等易变 revision。
+- [ ] 明确 `AgentAssignment` 与 `AgentFrame` revision 的关系。
+  - assignment 绑定执行证据。
+  - frame revision 绑定有效 runtime surface。
+  - terminal resolution 必须能跨 frame revision 回到 assignment。
+- [ ] 把相关 invariant 写成测试。
+
+### Gate
+
+- [ ] 单元/集成测试证明：同一个 RuntimeSession 绑定的 AgentFrame 发生 revision 后，terminal callback 仍能解析到原 `AgentAssignment` 与 `ActivityAttemptState`。
+- [ ] 失败场景测试证明：无法解析 assignment 时返回结构化 domain/application error，不静默跳过 Activity advancement。
+- [ ] `rg "assignment.frame_id == frame.id"` 不再是 terminal resolution 的唯一判定条件。
+- [ ] 代码审查证明 terminal resolver 不读取 read model，也不依赖前端/route-local DTO。
+
+## Phase 2: 拆分 LifecycleRun 与 WorkflowGraphInstance ownership
+
+- [ ] 让 `WorkflowGraphInstance` 成为 activity_state 的 owner。
+- [ ] Engine / scheduler / orchestrator 接收 graph instance execution context。
+- [ ] `LifecycleRun` 只聚合 graph instances、agents、subjects、events、artifacts、gates。
+- [ ] 验证同一 run 多 graph instance 不覆盖状态。
+
+### Gate
+
+- [ ] 测试证明同一 `LifecycleRun` 下两个 `WorkflowGraphInstance` 使用相同 `activity_key` 时，attempt / claim / assignment 状态互不污染。
+- [ ] Engine / scheduler / orchestrator 的主推进接口接收 graph instance context 或 graph instance id。
+- [ ] `LifecycleRun.activity_state` 不再是新写入的主事实源；若仍保留，只能作为迁移/投影缓存并有明确 source。
+- [ ] `WorkflowGraphInstance` repository 支持读写 activity state，且关键查询覆盖 `run_id + graph_instance_id`。
+
+## Phase 3: 重塑 Dispatch Intent Taxonomy
+
+- [ ] 拆清 `AgentLaunchIntent`、`SubjectExecutionIntent`、`LifecycleRunStartIntent`。
+- [ ] `ExecutionDispatchResult` 改为 discriminated result，避免全 optional refs。
+- [ ] Subject execution 必须返回 assignment ref 或 pending assignment ref。
+- [ ] ProjectAgent open、Task start、Companion dispatch、Routine fire、manual run、Story root/freeform 都通过统一 dispatch 分类进入。
+- [ ] 修复 `WorkflowGraphRef::ByKey`，将 graph resolution 移出 dispatch 的临时 helper。
+
+### Gate
+
+- [ ] 类型层面不再依赖一个全 optional `ExecutionDispatchResult` 表达所有 intent；不同 result variant 有明确 required refs。
+- [ ] `WorkflowGraphRef::ByKey` 解析失败有测试，并返回错误而不是生成随机 graph/lifecycle id。
+- [ ] API route 检查证明 ProjectAgent、Task、Companion、Routine、manual run、Story root/freeform 都进入 typed dispatch。
+- [ ] Subject execution 测试证明返回 assignment 或 pending assignment ref，且 SubjectRef 能追溯到 ActivityAttemptState。
+
+## Phase 4: 收束 AgentFrame 作为 runtime surface owner
+
+- [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
+- [ ] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
+- [ ] Hook/capability command primary target 改为 agent/frame/assignment。
+- [ ] `session_id` 仅作为 runtime adapter provenance。
+- [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
+- [ ] 明确多 RuntimeSession selection policy。
+
+### Gate
+
+- [ ] `AgentFrameBuilder` 测试覆盖 procedure、context、capability、VFS/MCP、runtime refs 的同源 frame revision 输出。
+- [ ] Runtime command 表或接口只表达 delivery；frame transition 有独立事实源或明确 repository。
+- [ ] Hook/capability control command 的 primary target 是 agent/frame/assignment，只有 runtime adapter 接收 raw session id。
+- [ ] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
+
+## Phase 5: 收束业务入口与 interaction/gate
+
+- [ ] Story root/freeform launch 进入 dispatch，创建 Story subject association。
+- [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
+- [ ] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
+- [ ] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
+- [ ] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
+- [ ] Permission 明确 source runtime session 只是 provenance，effect owner 是 frame。
+
+### Gate
+
+- [ ] Task start/continue/cancel 测试证明 command target 是 `SubjectRef` / assignment / gate，而不是 raw RuntimeSession。
+- [ ] Companion wait/resume 测试证明 durable `LifecycleGate` 是 truth，runtime notification 只是 delivery。
+- [ ] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
+- [ ] Permission query 测试证明 frame/run/subject 是主查询入口，session 只作为审计 provenance filter。
+
+## Phase 6: 建立稳定 Read Models
+
+- [ ] 新增 `ProjectActiveAgentsView` generated contract / API / service / tests。
+- [ ] 所有 `LifecycleRunView` 由唯一 builder 组装，story-specific route 不复制字段。
+- [ ] Task execution API response 进入 generated contracts。
+- [ ] `ExecutorRunRef` 中 raw `session_id` 转为 `RuntimeSessionRefDto` / runtime trace ref。
+- [ ] `/session/:id` 页面收束为纯 RuntimeSessionTraceView，下钻回链到 agent/frame/subject。
+
+### Gate
+
+- [ ] `ProjectActiveAgentsView` 有 Rust contract、generated TS、API route、frontend service、store selector 和 test。
+- [ ] 所有 route 返回 `LifecycleRunView` 时都调用同一个 builder；story-specific route 不手写核心字段。
+- [ ] `pnpm run contracts:check` 覆盖 Task execution result 和 ProjectActiveAgentsView。
+- [ ] Frontend tests 证明 project active list 按 project scoped view 渲染，不从 global lifecycle store 自行拼装。
+- [ ] RuntimeSession trace page 测试证明它只消费 `RuntimeSessionTraceView`，控制面信息通过 refs 回链。
+
+## Phase 7: 清理命名与入口旧语义
+
+- [ ] `WorkflowContract` 重命名为 `AgentProcedureContract` 或最终确定的 procedure contract 名。
+- [ ] 删除 shared-library legacy `entry_step_key / steps / edges` 自动兼容入口。
+- [ ] 清理 route-local lifecycle / task / story session shape。
+- [ ] 删除不再需要的 owner_type / session-first UI types。
+
+### Gate
+
+- [ ] `rg "WorkflowContract|entry_step_key|legacy_step_to_activity|TaskSessionPayload|SessionBindingResponse|runsBySessionId"` 只允许出现在迁移说明或测试快照中，核心代码无命中。
+- [ ] Shared Library import/update 测试拒绝旧 step payload，或只通过显式 migration command 接受。
+- [ ] UI 文案中 Workflow 仅指 graph config，AgentProcedure 仅指单 Agent Activity contract。
+- [ ] route-local lifecycle / subject / agent / frame DTO 清零，跨层 DTO 全部进入 `agentdash-contracts`。
+
+## Phase 8: 架构级验证
+
+- [ ] schema assertion 检查目标列、旧列删除、索引和约束。
+- [ ] `pnpm run contracts:check`。
+- [ ] backend unit tests：terminal resolver、graph instance state、dispatch taxonomy、AgentFrame transitions。
+- [ ] frontend tests：ProjectActiveAgentsView、SubjectExecution panel、RuntimeSessionTraceView。
+- [ ] critical E2E：ProjectAgent、Story root、Task SubjectExecution、Companion gate、Routine reuse。
+- [ ] 最终 `pnpm run check`。
+
+### Gate
+
+- [ ] clean database migration 和 existing developer database migration 都通过 schema invariant assertion。
+- [ ] `pnpm run contracts:check`、backend targeted tests、frontend targeted tests、critical E2E 全部通过。
+- [ ] 每个 P0/P1/P2 checklist 项都有对应代码证据或测试证据证明关闭。
+- [ ] 最终审计文档记录每个 gate 的命令、结果和仍需 follow-up；没有“未验证但看起来对”的完成声明。
+
+## Implementation Rules
+
+- 不以 grep 旧字段消失作为完成标准。
+- 不允许新增 route-local lifecycle/subject/agent/frame DTO。
+- 不允许 command path 读取 read-model view 后再写事实源。
+- 不允许业务模块直接构造 RuntimeSession launch payload。
+- 不允许前端从 global lifecycle store 拼装 project runtime truth。
+- 每个新增 service 必须说明自己拥有的事实源、不变量、事务边界或外部依赖隔离价值。

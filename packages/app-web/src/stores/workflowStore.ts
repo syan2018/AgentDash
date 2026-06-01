@@ -1072,7 +1072,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           ? await updateAgentProcedure(wfDraft.id, {
               name: wfDraft.name || activity.key,
               description: wfDraft.description,
-              binding_kinds: wfDraft.target_kinds,
               contract: wfDraft.contract,
             })
           : await createAgentProcedure({
@@ -1096,7 +1095,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         ? await updateWorkflowGraph(originalId, {
             name: draft.name,
             description: draft.description,
-            binding_kinds: draft.target_kinds,
             entry_activity_key: draft.entry_activity_key,
             activities: activitiesAfterSave,
             transitions: draft.transitions,

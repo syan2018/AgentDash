@@ -472,7 +472,7 @@ export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure 
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.binding_kinds, "workflow target kinds"),
+    target_kinds: normalizeTargetKinds(raw.target_kinds ?? raw.binding_kinds, "workflow target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "workflow definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
@@ -489,7 +489,7 @@ export function mapWorkflowGraph(raw: Record<string, unknown>): WorkflowGraph {
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.binding_kinds, "activity lifecycle target kinds"),
+    target_kinds: normalizeTargetKinds(raw.target_kinds ?? raw.binding_kinds, "activity lifecycle target kinds"),
     source: normalizeEnum<WorkflowDefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "activity lifecycle definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
@@ -556,7 +556,6 @@ export async function createWorkflowGraph(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kinds: input.target_kinds,
     entry_activity_key: input.entry_activity_key,
     activities: input.activities,
     transitions: input.transitions,
@@ -574,7 +573,6 @@ export async function updateWorkflowGraph(
   input: {
     name?: string;
     description?: string;
-    binding_kinds?: WorkflowTargetKind[];
     entry_activity_key?: string;
     activities?: ActivityDefinition[];
     transitions?: ActivityTransition[];
@@ -583,7 +581,6 @@ export async function updateWorkflowGraph(
   const raw = await api.put<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`, {
     name: input.name,
     description: input.description,
-    binding_kinds: input.binding_kinds,
     entry_activity_key: input.entry_activity_key,
     activities: input.activities,
     transitions: input.transitions,
@@ -606,7 +603,6 @@ export async function validateWorkflowGraph(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kinds: input.target_kinds,
     entry_activity_key: input.entry_activity_key,
     activities: input.activities,
     transitions: input.transitions,
@@ -684,7 +680,6 @@ export async function createAgentProcedure(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kinds: input.target_kinds,
     contract: input.contract,
   });
   return mapAgentProcedure(raw);
@@ -700,14 +695,12 @@ export async function updateAgentProcedure(
   input: {
     name?: string;
     description?: string;
-    binding_kinds?: WorkflowTargetKind[];
     contract?: WorkflowContract;
   },
 ): Promise<AgentProcedure> {
   const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, {
     name: input.name,
     description: input.description,
-    binding_kinds: input.binding_kinds,
     contract: input.contract,
   });
   return mapAgentProcedure(raw);
@@ -726,7 +719,6 @@ export async function validateAgentProcedure(input: {
     key: input.key,
     name: input.name,
     description: input.description,
-    binding_kinds: input.target_kinds,
     contract: input.contract,
   });
   return {

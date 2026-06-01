@@ -39,7 +39,6 @@ import type {
   TransitionCondition,
   ValidationIssue,
   ValidationSeverity,
-  WorkflowBindingKind,
   WorkflowContextBinding,
   WorkflowContract as GeneratedWorkflowContract,
   WorkflowDefinitionSource,
@@ -86,7 +85,6 @@ export type {
   TransitionCondition,
   ValidationIssue,
   ValidationSeverity,
-  WorkflowBindingKind,
   WorkflowContextBinding,
   WorkflowDefinitionSource,
   WorkflowHookRuleSpec,
@@ -94,7 +92,7 @@ export type {
   WorkflowInjectionSpec,
 };
 
-export type WorkflowTargetKind = WorkflowBindingKind;
+export type WorkflowTargetKind = "project" | "story";
 export type WorkflowRunStatus = LifecycleRunStatus;
 export type CapabilityDirective = ToolCapabilityDirective;
 

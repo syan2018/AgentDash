@@ -19,8 +19,8 @@ use super::error::WorkflowApplicationError;
 
 fn parse_event_kind(s: &str) -> Option<LifecycleExecutionEventKind> {
     match s {
-        "step_activated" => Some(LifecycleExecutionEventKind::StepActivated),
-        "step_completed" => Some(LifecycleExecutionEventKind::StepCompleted),
+        "activity_activated" => Some(LifecycleExecutionEventKind::ActivityActivated),
+        "activity_completed" => Some(LifecycleExecutionEventKind::ActivityCompleted),
         "constraint_blocked" => Some(LifecycleExecutionEventKind::ConstraintBlocked),
         "completion_evaluated" => Some(LifecycleExecutionEventKind::CompletionEvaluated),
         "artifact_appended" => Some(LifecycleExecutionEventKind::ArtifactAppended),
@@ -71,7 +71,7 @@ pub async fn flush_execution_log_entries(
     Ok(())
 }
 
-pub fn step_completed_entry(
+pub fn activity_completed_entry(
     run_id: &str,
     activity_key: &str,
     summary: &str,
@@ -79,7 +79,7 @@ pub fn step_completed_entry(
     PendingExecutionLogEntry {
         run_id: run_id.to_string(),
         activity_key: activity_key.to_string(),
-        event_kind: "step_completed".to_string(),
+        event_kind: "activity_completed".to_string(),
         summary: summary.to_string(),
         detail: None,
     }

@@ -47,13 +47,13 @@ export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
-export type DeleteActivityLifecycleDefinitionResponse = { deleted: boolean, };
+export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 
 export type DeleteWorkflowDefinitionResponse = { deleted: boolean, };
 
-export type EffectiveSessionContract = { lifecycle_key?: string, active_step_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
+export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
 export type ExecutorRunRef = { "kind": "agent_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 
@@ -71,9 +71,9 @@ export type HumanApprovalExecutorSpec = { form_schema_key: string, title?: strin
 
 export type InputPortDefinition = { key: string, description: string, context_strategy: ContextStrategy, context_template?: string, standalone_fulfillment: StandaloneFulfillment, };
 
-export type LifecycleExecutionEntry = { timestamp: string, step_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
+export type LifecycleExecutionEntry = { timestamp: string, activity_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
 
-export type LifecycleExecutionEventKind = "step_activated" | "step_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
+export type LifecycleExecutionEventKind = "activity_activated" | "activity_completed" | "constraint_blocked" | "completion_evaluated" | "artifact_appended" | "context_injected";
 
 export type LifecycleRunLinkDto = { id: string, run_id: string, subject_kind: string, subject_id: string, role: string, metadata?: JsonValue, created_at: string, };
 

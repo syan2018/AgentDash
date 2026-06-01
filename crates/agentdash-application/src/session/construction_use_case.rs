@@ -549,7 +549,7 @@ async fn build_story_owner_prompt_request(
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )
@@ -676,7 +676,7 @@ async fn build_project_owner_prompt_request(
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )
@@ -762,14 +762,14 @@ async fn build_lifecycle_node_prompt_request(
         })?;
     let lifecycle = state
         .repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_id(run.lifecycle_id)
         .await
         .map_err(ApplicationError::from)?
         .ok_or_else(|| {
             ApplicationError::NotFound(format!("Lifecycle {} 不存在", run.lifecycle_id))
         })?;
-    let current_step_key = run.current_step_key().ok_or_else(|| {
+    let current_activity_key = run.current_activity_key().ok_or_else(|| {
         ApplicationError::BadRequest(format!(
             "Lifecycle node session {session_id} 无当前 activity"
         ))
@@ -777,19 +777,19 @@ async fn build_lifecycle_node_prompt_request(
     let activity = lifecycle
         .activities
         .iter()
-        .find(|item| item.key == current_step_key)
+        .find(|item| item.key == current_activity_key)
         .cloned()
         .ok_or_else(|| {
             ApplicationError::BadRequest(format!(
                 "Lifecycle {} 中不存在当前 activity `{}`",
-                lifecycle.id, current_step_key
+                lifecycle.id, current_activity_key
             ))
         })?;
     let workflow = match &activity.executor {
         agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => state
             .repos
             .workflow_definition_repo
-            .get_by_project_and_key(run.project_id, &spec.workflow_key)
+            .get_by_project_and_key(run.project_id, &spec.procedure_key)
             .await
             .map_err(ApplicationError::from)?,
         _ => None,
@@ -980,7 +980,7 @@ async fn build_task_owner_prompt_request(
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
         state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
     )

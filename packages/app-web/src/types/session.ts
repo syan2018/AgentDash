@@ -99,8 +99,8 @@ export interface ActiveWorkflowHookMetadata {
   lifecycle_name: string;
   run_id: string;
   run_status: string;
-  step_key: string;
-  step_title: string;
+  activity_key: string;
+  activity_title: string;
   primary_workflow_id: string;
   workflow_key?: string | null;
   primary_workflow_name: string;

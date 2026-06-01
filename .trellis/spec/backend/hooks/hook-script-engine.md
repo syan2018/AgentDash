@@ -34,7 +34,7 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | --- | --- |
 | `trigger` / `tool_name` / `tool_call_id` / `turn_id` / `session_id` | 触发信息 |
 | `snapshot` | Session Snapshot 切片（owners / tags / injections） |
-| `workflow` | Workflow 元数据（lifecycle_key / step_key / transition_policy 等） |
+| `workflow` | Workflow 元数据（lifecycle_key / activity_key / transition_policy 等） |
 | `contract` | Contract 切片（hook_rules / constraints / checks） |
 | `meta` | Session 元数据（permission_policy / workspace_root 等） |
 | `params` | `WorkflowHookRuleSpec.params` 透传 |

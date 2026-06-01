@@ -5,8 +5,8 @@ use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityExecutionClaimRepository,
-    ActivityLifecycleDefinitionRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
-    WorkflowDefinitionRepository, build_effective_contract,
+    WorkflowGraphRepository, LifecycleRunLinkRepository, LifecycleRunRepository,
+    AgentProcedureRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -47,8 +47,8 @@ impl AppExecutionHookProvider {
     pub fn new<F>(
         project_repo: Arc<dyn ProjectRepository>,
         story_repo: Arc<dyn StoryRepository>,
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+        agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
@@ -68,8 +68,8 @@ impl AppExecutionHookProvider {
                 lifecycle_run_link_repo,
             ),
             workflow_builder: WorkflowSnapshotBuilder::new(
-                workflow_definition_repo,
-                activity_lifecycle_definition_repo,
+                agent_procedure_repo,
+                workflow_graph_repo,
                 activity_execution_claim_repo,
                 lifecycle_run_repo,
             ),
@@ -153,7 +153,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 } else {
                     workflow.active_activity.description.clone()
                 };
-                let step_status = workflow
+                let activity_status = workflow
                     .run
                     .activity_state
                     .as_ref()
@@ -191,11 +191,11 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     lifecycle_name: Some(workflow.lifecycle.name.clone()),
                     run_id: Some(workflow.run.id),
                     run_status: Some(workflow.run.status),
-                    step_key: Some(workflow.active_activity.key.clone()),
-                    step_title: Some(step_title),
-                    step_status,
+                    activity_key: Some(workflow.active_activity.key.clone()),
+                    activity_title: Some(step_title),
+                    activity_status,
                     node_type,
-                    workflow_key: workflow.active_workflow_key.clone(),
+                    procedure_key: workflow.active_workflow_key.clone(),
                     transition_policy: Some(transition_policy.to_string()),
                     primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
                     primary_workflow_name: workflow

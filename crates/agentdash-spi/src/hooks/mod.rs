@@ -133,13 +133,13 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_status: Option<LifecycleRunStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_key: Option<String>,
+    pub activity_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_title: Option<String>,
+    pub activity_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_policy: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow_key: Option<String>,
+    pub procedure_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_workflow_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,7 +147,7 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effective_contract: Option<EffectiveSessionContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_status: Option<String>,
+    pub activity_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_type: Option<String>,
 
@@ -797,7 +797,7 @@ pub struct HookCompletionStatus {
 #[serde(rename_all = "snake_case")]
 pub struct HookStepAdvanceRequest {
     pub run_id: String,
-    pub step_key: String,
+    pub activity_key: String,
     pub completion_mode: String,
     pub summary: Option<String>,
     pub record_artifacts: Vec<serde_json::Value>,

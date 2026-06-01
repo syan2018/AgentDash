@@ -94,7 +94,7 @@ function resolveActiveAttempt(
   };
 
   if (activeWorkflow) {
-    const matched = latestByActivity(activeWorkflow.step_key);
+    const matched = latestByActivity(activeWorkflow.activity_key);
     if (matched) return matched;
   }
   const activeKey = run?.active_node_keys?.[0] ?? null;
@@ -262,7 +262,7 @@ function WorkflowContextCard({
         <div className="mt-3 space-y-1 rounded-[8px] border border-border bg-secondary/20 px-3 py-2 text-xs">
           {activeWorkflow && (
             <>
-              <p className="font-medium text-foreground">{activeWorkflow.step_title}</p>
+              <p className="font-medium text-foreground">{activeWorkflow.activity_title}</p>
               <p className="text-[11px] text-muted-foreground">
                 lifecycle: {activeWorkflow.lifecycle_key} · run: {activeWorkflow.run_id.slice(0, 8)}
               </p>

@@ -7,7 +7,7 @@ import type {
   ActivityDefinition,
   ActivityExecutorSpec,
   ActivityJoinPolicy,
-  ActivityLifecycleDefinition,
+  WorkflowGraph,
   ActivityLifecycleRunState,
   ActivityAttemptStatus,
   ActivityRunStatus,
@@ -406,7 +406,7 @@ function mapActivityTransition(raw: unknown): ActivityTransition {
 function mapLifecycleExecutionEntry(raw: Record<string, unknown>): LifecycleExecutionEntry {
   return {
     timestamp: requireStringField(raw, "timestamp"),
-    step_key: requireStringField(raw, "step_key"),
+    activity_key: requireStringField(raw, "activity_key"),
     event_kind: normalizeEnum<LifecycleExecutionEventKind>(raw.event_kind, LIFECYCLE_EXECUTION_EVENT_KINDS, "lifecycle execution event kind"),
     summary: requireStringField(raw, "summary"),
     detail: mapOptionalJsonValue(raw.detail, "lifecycle execution detail"),
@@ -482,7 +482,7 @@ export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDef
   };
 }
 
-export function mapActivityLifecycleDefinition(raw: Record<string, unknown>): ActivityLifecycleDefinition {
+export function mapWorkflowGraph(raw: Record<string, unknown>): WorkflowGraph {
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
@@ -529,19 +529,19 @@ export async function fetchWorkflowDefinitions(opts?: {
   return raw.map(mapWorkflowDefinition);
 }
 
-export async function fetchActivityLifecycleDefinitions(opts?: {
+export async function fetchWorkflowGraphs(opts?: {
   projectId?: string;
   targetKind?: WorkflowTargetKind;
-}): Promise<ActivityLifecycleDefinition[]> {
+}): Promise<WorkflowGraph[]> {
   const params = new URLSearchParams();
   if (opts?.projectId) params.set("project_id", opts.projectId);
   if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
   const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/activity-lifecycle-definitions${query}`);
-  return raw.map(mapActivityLifecycleDefinition);
+  return raw.map(mapWorkflowGraph);
 }
 
-export async function createActivityLifecycleDefinition(input: {
+export async function createWorkflowGraph(input: {
   project_id: string;
   key: string;
   name: string;
@@ -550,7 +550,7 @@ export async function createActivityLifecycleDefinition(input: {
   entry_activity_key: string;
   activities: ActivityDefinition[];
   transitions: ActivityTransition[];
-}): Promise<ActivityLifecycleDefinition> {
+}): Promise<WorkflowGraph> {
   const raw = await api.post<Record<string, unknown>>("/activity-lifecycle-definitions", {
     project_id: input.project_id,
     key: input.key,
@@ -561,15 +561,15 @@ export async function createActivityLifecycleDefinition(input: {
     activities: input.activities,
     transitions: input.transitions,
   });
-  return mapActivityLifecycleDefinition(raw);
+  return mapWorkflowGraph(raw);
 }
 
-export async function getActivityLifecycleDefinition(id: string): Promise<ActivityLifecycleDefinition> {
+export async function getWorkflowGraph(id: string): Promise<WorkflowGraph> {
   const raw = await api.get<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`);
-  return mapActivityLifecycleDefinition(raw);
+  return mapWorkflowGraph(raw);
 }
 
-export async function updateActivityLifecycleDefinition(
+export async function updateWorkflowGraph(
   id: string,
   input: {
     name?: string;
@@ -579,7 +579,7 @@ export async function updateActivityLifecycleDefinition(
     activities?: ActivityDefinition[];
     transitions?: ActivityTransition[];
   },
-): Promise<ActivityLifecycleDefinition> {
+): Promise<WorkflowGraph> {
   const raw = await api.put<Record<string, unknown>>(`/activity-lifecycle-definitions/${id}`, {
     name: input.name,
     description: input.description,
@@ -588,10 +588,10 @@ export async function updateActivityLifecycleDefinition(
     activities: input.activities,
     transitions: input.transitions,
   });
-  return mapActivityLifecycleDefinition(raw);
+  return mapWorkflowGraph(raw);
 }
 
-export async function validateActivityLifecycleDefinition(input: {
+export async function validateWorkflowGraph(input: {
   project_id: string;
   key: string;
   name: string;
@@ -624,7 +624,7 @@ export async function validateActivityLifecycleDefinition(input: {
   };
 }
 
-export async function deleteActivityLifecycleDefinition(id: string): Promise<void> {
+export async function deleteWorkflowGraph(id: string): Promise<void> {
   await api.delete(`/activity-lifecycle-definitions/${id}`);
 }
 

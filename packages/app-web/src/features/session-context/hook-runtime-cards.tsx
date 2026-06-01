@@ -106,13 +106,13 @@ function HookRuntimeWorkflowMetaCard({
     <div className="mt-3 rounded-[8px] border border-border bg-background/70 px-3 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-foreground">
-          {metadata.lifecycle_name} / {metadata.step_title}
+          {metadata.lifecycle_name} / {metadata.activity_title}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
           run: {metadata.run_status}
         </span>
         <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[10px] text-muted-foreground">
-          step: {metadata.step_key}
+          activity: {metadata.activity_key}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">

@@ -1,18 +1,18 @@
 use agentdash_domain::workflow::{WorkflowContract, WorkflowHookRuleSpec, WorkflowHookTrigger};
 use agentdash_spi::{ActiveWorkflowMeta, SessionHookSnapshot, SessionSnapshotMetadata};
 
-pub fn snapshot_with_workflow(step_key: &str, completion_mode: &str) -> SessionHookSnapshot {
-    snapshot_with_workflow_ports(step_key, completion_mode, &[], &[])
+pub fn snapshot_with_workflow(activity_key: &str, completion_mode: &str) -> SessionHookSnapshot {
+    snapshot_with_workflow_ports(activity_key, completion_mode, &[], &[])
 }
 
 /// 构建带 output port 配置的 workflow snapshot，用于 port_output_gate 测试。
 pub fn snapshot_with_workflow_ports(
-    step_key: &str,
+    activity_key: &str,
     completion_mode: &str,
     output_port_keys: &[&str],
     fulfilled_port_keys: &[&str],
 ) -> SessionHookSnapshot {
-    let (transition_policy, workflow_key, contract) = match completion_mode {
+    let (transition_policy, procedure_key, contract) = match completion_mode {
         "checklist_passed" => (
             "auto",
             Some("trellis_dev_task_check"),
@@ -52,7 +52,7 @@ pub fn snapshot_with_workflow_ports(
         hook_rules: contract.hook_rules,
         ..Default::default()
     };
-    let workflow_source = format!("workflow:trellis_dev_task:{step_key}");
+    let workflow_source = format!("workflow:trellis_dev_task:{activity_key}");
     let port_keys_opt = if output_port_keys.is_empty() {
         None
     } else {
@@ -69,9 +69,9 @@ pub fn snapshot_with_workflow_ports(
         metadata: Some(SessionSnapshotMetadata {
             active_workflow: Some(ActiveWorkflowMeta {
                 lifecycle_key: Some("trellis_dev_task".to_string()),
-                step_key: Some(step_key.to_string()),
+                activity_key: Some(activity_key.to_string()),
                 transition_policy: Some(transition_policy.to_string()),
-                workflow_key: workflow_key.map(str::to_string),
+                procedure_key: procedure_key.map(str::to_string),
                 run_id: Some(
                     uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000aa").unwrap(),
                 ),

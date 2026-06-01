@@ -314,7 +314,7 @@ impl LifecycleJourneyProjection {
     pub async fn records_map(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
     ) -> JourneyResult<BTreeMap<String, String>> {
         let files = self
             .inline_file_repo
@@ -325,7 +325,7 @@ impl LifecycleJourneyProjection {
             )
             .await
             .map_err(map_domain_err)?;
-        let prefix = format!("{step_key}/");
+        let prefix = format!("{activity_key}/");
         Ok(files
             .into_iter()
             .filter_map(|file| {
@@ -337,19 +337,19 @@ impl LifecycleJourneyProjection {
             .collect())
     }
 
-    pub async fn read_records_map(&self, run_id: Uuid, step_key: &str) -> JourneyResult<String> {
-        let map = self.records_map(run_id, step_key).await?;
+    pub async fn read_records_map(&self, run_id: Uuid, activity_key: &str) -> JourneyResult<String> {
+        let map = self.records_map(run_id, activity_key).await?;
         to_json_pretty(&map)
     }
 
     pub async fn read_record(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
         rest: &[&str],
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let path = format!("{step_key}/{name}");
+        let path = format!("{activity_key}/{name}");
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
@@ -366,12 +366,12 @@ impl LifecycleJourneyProjection {
     pub async fn write_record(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
         rest: &[&str],
         content: &str,
     ) -> JourneyResult<String> {
         let name = join_rest(rest)?;
-        let path = format!("{step_key}/{name}");
+        let path = format!("{activity_key}/{name}");
         let file = InlineFile::new(
             InlineFileOwnerKind::LifecycleRun,
             run_id,
@@ -413,20 +413,20 @@ impl LifecycleJourneyProjection {
     pub async fn read_node_conclusions(
         &self,
         run_id: Uuid,
-        step_key: &str,
+        activity_key: &str,
     ) -> JourneyResult<String> {
         self.inline_file_repo
             .get_file(
                 InlineFileOwnerKind::LifecycleRun,
                 run_id,
                 SESSION_RECORDS_CONTAINER,
-                &format!("{step_key}/conclusions"),
+                &format!("{activity_key}/conclusions"),
             )
             .await
             .map_err(map_domain_err)?
             .and_then(|file| file.into_text_content())
             .ok_or_else(|| {
-                LifecycleJourneyError::NotFound(format!("node `{step_key}` 没有 conclusions"))
+                LifecycleJourneyError::NotFound(format!("node `{activity_key}` 没有 conclusions"))
             })
     }
 }
@@ -437,7 +437,7 @@ pub struct LifecycleRunOverview<'a> {
     project_id: Uuid,
     lifecycle_id: Uuid,
     status: &'a LifecycleRunStatus,
-    current_step_key: Option<&'a str>,
+    current_activity_key: Option<&'a str>,
     step_count: usize,
     log_count: usize,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -451,7 +451,7 @@ pub fn run_overview(run: &LifecycleRun) -> LifecycleRunOverview<'_> {
         project_id: run.project_id,
         lifecycle_id: run.lifecycle_id,
         status: &run.status,
-        current_step_key: run.current_step_key(),
+        current_activity_key: run.current_activity_key(),
         step_count: run
             .activity_state
             .as_ref()
@@ -518,7 +518,7 @@ pub fn find_step(run: &LifecycleRun, key: &str) -> JourneyResult<ActivityAttempt
 }
 
 pub fn current_step(run: &LifecycleRun) -> JourneyResult<ActivityAttemptState> {
-    let key = run.current_step_key().ok_or_else(|| {
+    let key = run.current_activity_key().ok_or_else(|| {
         LifecycleJourneyError::NotFound("当前 lifecycle run 没有活跃 node".to_string())
     })?;
     find_step(run, key)

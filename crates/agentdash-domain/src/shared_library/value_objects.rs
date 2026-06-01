@@ -300,10 +300,10 @@ fn legacy_step_to_activity(step: Value) -> Result<Value, DomainError> {
         DomainError::InvalidConfig("workflow_template.lifecycle.steps[] 必须是对象".to_string())
     })?;
     let key = json_string_field(object, "key", "workflow_template.lifecycle.steps[].key")?;
-    let workflow_key = json_string_field(
+    let procedure_key = json_string_field(
         object,
-        "workflow_key",
-        "workflow_template.lifecycle.steps[].workflow_key",
+        "procedure_key",
+        "workflow_template.lifecycle.steps[].procedure_key",
     )?;
     let node_type = object
         .get("node_type")
@@ -340,7 +340,7 @@ fn legacy_step_to_activity(step: Value) -> Result<Value, DomainError> {
         "executor".to_string(),
         json!({
             "kind": "agent",
-            "workflow_key": workflow_key,
+            "procedure_key": procedure_key,
             "session_policy": if node_type == "phase_node" { "continue_root" } else { "spawn_child" },
         }),
     );
@@ -1889,12 +1889,12 @@ mod tests {
                     "entry_step_key": "plan",
                     "steps": [{
                         "key": "plan",
-                        "workflow_key": "review_plan",
+                        "procedure_key": "review_plan",
                         "node_type": "agent_node",
                         "output_ports": [{"key": "proposal", "description": "Proposal"}]
                     }, {
                         "key": "apply",
-                        "workflow_key": "review_apply",
+                        "procedure_key": "review_apply",
                         "node_type": "phase_node",
                         "input_ports": [{"key": "proposal", "description": "Proposal"}]
                     }],

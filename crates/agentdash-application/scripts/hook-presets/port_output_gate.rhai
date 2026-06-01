@@ -38,7 +38,7 @@ if missing.len() == 0 {
     return #{};
 }
 
-let step_key = if ctx.workflow.step_key != () { ctx.workflow.step_key } else { "unknown" };
+let activity_key = if ctx.workflow.activity_key != () { ctx.workflow.activity_key } else { "unknown" };
 let collision_count = if ctx.workflow.gate_collision_count != () { ctx.workflow.gate_collision_count } else { 0 };
 let src = ctx.workflow.source;
 let missing_list = missing.reduce(|acc, k| acc + ", " + k, "");
@@ -51,13 +51,13 @@ let missing_list = missing.reduce(|acc, k| acc + ", " + k, "");
     },
     inject: [
         make_injection("workflow",
-            "## Port Output Gate\n当前 lifecycle node `" + step_key + "` 有 **" + missing.len() + "** 个 output port 尚未交付：\n- " + missing.reduce(|acc, k| acc + "\n- " + k, "") + "\n\n请通过 `write_file` 工具将产出写入 `lifecycle://artifacts/{port_key}` 路径，每个 port_key 对应一份产出。\n\n已碰撞门禁 " + collision_count + " 次，超过 3 次将自动标记为失败。",
+            "## Port Output Gate\n当前 lifecycle node `" + activity_key + "` 有 **" + missing.len() + "** 个 output port 尚未交付：\n- " + missing.reduce(|acc, k| acc + "\n- " + k, "") + "\n\n请通过 `write_file` 工具将产出写入 `lifecycle://artifacts/{port_key}` 路径，每个 port_key 对应一份产出。\n\n已碰撞门禁 " + collision_count + " 次，超过 3 次将自动标记为失败。",
             src)
     ],
     diagnostics: [
         make_diagnostic(
             "port_output_gate_unsatisfied",
-            "Node `" + step_key + "` output port 未满足: [" + missing_list + "]（collision=" + collision_count + "）"
+            "Node `" + activity_key + "` output port 未满足: [" + missing_list + "]（collision=" + collision_count + "）"
         )
     ]
 }

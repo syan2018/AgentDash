@@ -21,8 +21,8 @@ pub(crate) fn session_permission_policy(snapshot: &SessionHookSnapshot) -> Optio
     snapshot.metadata.as_ref()?.permission_policy.as_deref()
 }
 
-pub(crate) fn workflow_step_key(snapshot: &SessionHookSnapshot) -> Option<&str> {
-    active_workflow(snapshot)?.step_key.as_deref()
+pub(crate) fn workflow_activity_key(snapshot: &SessionHookSnapshot) -> Option<&str> {
+    active_workflow(snapshot)?.activity_key.as_deref()
 }
 
 pub(crate) fn active_workflow_hook_rules(
@@ -39,6 +39,6 @@ pub(crate) fn active_workflow_source_from_snapshot(snapshot: &SessionHookSnapsho
     let lifecycle_key = active_workflow(snapshot)
         .and_then(|aw| aw.lifecycle_key.as_deref())
         .unwrap_or("unknown");
-    let step_key = workflow_step_key(snapshot).unwrap_or("unknown");
-    format!("workflow:{lifecycle_key}:{step_key}")
+    let activity_key = workflow_activity_key(snapshot).unwrap_or("unknown");
+    format!("workflow:{lifecycle_key}:{activity_key}")
 }

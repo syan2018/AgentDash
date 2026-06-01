@@ -8,12 +8,12 @@ if node_type != "agent_node" {
     return #{};
 }
 
-let step_status = ctx.workflow.step_status;
+let step_status = ctx.workflow.activity_status;
 if step_status == "completed" || step_status == "failed" {
     return #{};
 }
 
-let step_key = if ctx.workflow.step_key != () { ctx.workflow.step_key } else { "unknown" };
+let activity_key = if ctx.workflow.activity_key != () { ctx.workflow.activity_key } else { "unknown" };
 let src = ctx.workflow.source;
 
 #{
@@ -24,13 +24,13 @@ let src = ctx.workflow.source;
     },
     inject: [
         make_injection("workflow",
-            "## Lifecycle Node Gate\n当前 lifecycle node `" + step_key + "` 尚未完成推进。\n\n**必须调用 `complete_lifecycle_node` 工具声明当前阶段完成后，session 才允许结束。**\n\n请确保已完成当前阶段的核心工作，然后调用该工具并附上工作摘要。",
+            "## Lifecycle Node Gate\n当前 lifecycle node `" + activity_key + "` 尚未完成推进。\n\n**必须调用 `complete_lifecycle_node` 工具声明当前阶段完成后，session 才允许结束。**\n\n请确保已完成当前阶段的核心工作，然后调用该工具并附上工作摘要。",
             src)
     ],
     diagnostics: [
         make_diagnostic(
             "before_stop_lifecycle_advance_pending",
-            "Lifecycle node `" + step_key + "` 未完成推进（status=" + step_status + "），阻止 session 结束"
+            "Lifecycle node `" + activity_key + "` 未完成推进（status=" + step_status + "），阻止 session 结束"
         )
     ]
 }

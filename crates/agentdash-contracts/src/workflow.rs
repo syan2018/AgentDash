@@ -202,7 +202,7 @@ pub struct EffectiveSessionContract {
     pub lifecycle_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub active_step_key: Option<String>,
+    pub active_activity_key: Option<String>,
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]
@@ -237,7 +237,7 @@ pub enum ActivityExecutorSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct AgentActivityExecutorSpec {
-    pub workflow_key: String,
+    pub procedure_key: String,
     #[serde(default)]
     pub session_policy: AgentSessionPolicy,
 }
@@ -504,8 +504,8 @@ pub enum LifecycleRunStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleExecutionEventKind {
-    StepActivated,
-    StepCompleted,
+    ActivityActivated,
+    ActivityCompleted,
     ConstraintBlocked,
     CompletionEvaluated,
     ArtifactAppended,
@@ -515,7 +515,7 @@ pub enum LifecycleExecutionEventKind {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 pub struct LifecycleExecutionEntry {
     pub timestamp: DateTime<Utc>,
-    pub step_key: String,
+    pub activity_key: String,
     pub event_kind: LifecycleExecutionEventKind,
     pub summary: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -532,12 +532,12 @@ pub enum LifecycleNodeType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct DeleteActivityLifecycleDefinitionResponse {
+pub struct DeleteWorkflowGraphResponse {
     pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct DeleteWorkflowDefinitionResponse {
+pub struct DeleteAgentProcedureResponse {
     pub deleted: bool,
 }
 
@@ -597,9 +597,6 @@ pub struct StoryRunOverviewDto {
     pub id: String,
     pub lifecycle_id: String,
     pub status: LifecycleRunStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub session_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_activity_at: String,

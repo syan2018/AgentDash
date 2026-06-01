@@ -149,8 +149,8 @@ pub enum LifecycleRunStatus {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleExecutionEventKind {
-    StepActivated,
-    StepCompleted,
+    ActivityActivated,
+    ActivityCompleted,
     ConstraintBlocked,
     CompletionEvaluated,
     ArtifactAppended,

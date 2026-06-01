@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::shared_library::InstalledAssetSource;
 
-use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+use super::validation::{validate_workflow_graph, validate_agent_procedure};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
@@ -13,7 +13,7 @@ use super::value_objects::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowDefinition {
+pub struct AgentProcedure {
     pub id: Uuid,
     pub project_id: Uuid,
     pub key: String,
@@ -29,7 +29,7 @@ pub struct WorkflowDefinition {
     pub updated_at: DateTime<Utc>,
 }
 
-impl WorkflowDefinition {
+impl AgentProcedure {
     pub fn new(
         project_id: Uuid,
         key: impl Into<String>,
@@ -42,7 +42,7 @@ impl WorkflowDefinition {
         let key = key.into();
         let name = name.into();
         let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
-        validate_workflow_definition(&key, &name, &contract)?;
+        validate_agent_procedure(&key, &name, &contract)?;
 
         let now = Utc::now();
         Ok(Self {
@@ -62,10 +62,10 @@ impl WorkflowDefinition {
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
-        match validate_workflow_definition(&self.key, &self.name, &self.contract) {
+        match validate_agent_procedure(&self.key, &self.name, &self.contract) {
             Ok(()) => Vec::new(),
             Err(error) => vec![ValidationIssue::error(
-                "workflow_definition_invalid",
+                "agent_procedure_invalid",
                 error,
                 "contract",
             )],
@@ -74,7 +74,7 @@ impl WorkflowDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivityLifecycleDefinition {
+pub struct WorkflowGraph {
     pub id: Uuid,
     pub project_id: Uuid,
     pub key: String,
@@ -137,7 +137,7 @@ impl ActivityExecutionClaim {
     }
 }
 
-impl ActivityLifecycleDefinition {
+impl WorkflowGraph {
     pub fn new(
         project_id: Uuid,
         key: impl Into<String>,
@@ -153,7 +153,7 @@ impl ActivityLifecycleDefinition {
         let name = name.into();
         let entry_activity_key = entry_activity_key.into();
         let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
-        validate_activity_lifecycle_definition(
+        validate_workflow_graph(
             &key,
             &name,
             &entry_activity_key,
@@ -181,7 +181,7 @@ impl ActivityLifecycleDefinition {
     }
 
     pub fn validate_full(&self) -> Vec<ValidationIssue> {
-        match validate_activity_lifecycle_definition(
+        match validate_workflow_graph(
             &self.key,
             &self.name,
             &self.entry_activity_key,
@@ -190,7 +190,7 @@ impl ActivityLifecycleDefinition {
         ) {
             Ok(()) => Vec::new(),
             Err(error) => vec![ValidationIssue::error(
-                "activity_lifecycle_definition_invalid",
+                "workflow_graph_invalid",
                 error,
                 "activities",
             )],
@@ -218,9 +218,9 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
-    /// 返回「当前活跃」的首个 step key。线性推进时即唯一活跃 step；
+    /// 返回「当前活跃」的首个 activity key。线性推进时即唯一活跃 activity；
     /// DAG 下返回 `active_node_keys.first()`。
-    pub fn current_step_key(&self) -> Option<&str> {
+    pub fn current_activity_key(&self) -> Option<&str> {
         self.active_node_keys.first().map(String::as_str)
     }
 
@@ -297,19 +297,19 @@ fn lifecycle_status_from_activity_status(status: ActivityRunStatus) -> Lifecycle
 
 pub fn build_effective_contract(
     lifecycle_key: &str,
-    active_step_key: &str,
-    primary_workflow: Option<&WorkflowDefinition>,
+    active_activity_key: &str,
+    primary_workflow: Option<&AgentProcedure>,
 ) -> EffectiveSessionContract {
     match primary_workflow {
         Some(w) => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
-            active_step_key: Some(active_step_key.to_string()),
+            active_activity_key: Some(active_activity_key.to_string()),
             injection: w.contract.injection.clone(),
             hook_rules: w.contract.hook_rules.clone(),
         },
         None => EffectiveSessionContract {
             lifecycle_key: Some(lifecycle_key.to_string()),
-            active_step_key: Some(active_step_key.to_string()),
+            active_activity_key: Some(active_activity_key.to_string()),
             ..Default::default()
         },
     }
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn effective_contract_matches_primary_workflow() {
-        let primary = WorkflowDefinition::new(
+        let primary = AgentProcedure::new(
             Uuid::new_v4(),
             "wf_primary",
             "Primary",

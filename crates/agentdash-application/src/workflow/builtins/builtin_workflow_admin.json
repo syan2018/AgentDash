@@ -37,7 +37,7 @@
       }
     }
   ],
-  "lifecycle": {
+  "graph": {
     "key": "builtin_workflow_admin",
     "name": "Builtin / Workflow Admin Lifecycle",
     "description": "Plan → Apply：两个 Activity 串联；Plan 负责设计，Apply 负责写入。",

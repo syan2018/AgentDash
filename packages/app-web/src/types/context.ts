@@ -140,7 +140,7 @@ export interface SessionBaselineCapabilities {
 }
 
 export interface StorySessionInfo {
-  binding_id: string;
+  run_ref: string;
   session_id: string;
   session_title: string | null;
   last_activity: number | null;
@@ -150,7 +150,7 @@ export interface StorySessionInfo {
 }
 
 export interface ProjectSessionInfo {
-  binding_id: string;
+  run_ref: string;
   session_id: string;
   session_title: string | null;
   last_activity: number | null;

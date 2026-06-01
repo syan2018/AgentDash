@@ -28,7 +28,7 @@ import type {
   InputPortDefinition,
   OutputPortDefinition,
   WorkflowContextBinding,
-  WorkflowDefinition,
+  AgentProcedure,
   WorkflowHookRuleSpec,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
@@ -49,7 +49,7 @@ export interface ActivityInspectorProps {
   activity: ActivityDefinition;
   workflowDraft: WorkflowEditorDraft;
   isEntry: boolean;
-  availableWorkflows: WorkflowDefinition[];
+  availableWorkflows: AgentProcedure[];
   hookPresets: HookRulePreset[];
   targetKinds: WorkflowTargetKind[];
   projectId: string;

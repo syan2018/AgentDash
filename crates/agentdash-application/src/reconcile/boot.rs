@@ -15,8 +15,8 @@ use crate::workflow::FreeformLifecycleService;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    ActivityLifecycleDefinitionRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, WorkflowDefinitionRepository,
+    WorkflowGraphRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, AgentProcedureRepository,
 };
 
 /// 启动对账管线的依赖集合
@@ -29,8 +29,8 @@ pub struct BootReconcileDeps {
     pub state_change_repo: Arc<dyn StateChangeRepository>,
     pub story_repo: Arc<dyn StoryRepository>,
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
-    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
@@ -114,8 +114,8 @@ async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseRepo
         }
     };
     let service = FreeformLifecycleService::new(
-        deps.workflow_definition_repo.as_ref(),
-        deps.activity_lifecycle_definition_repo.as_ref(),
+        deps.agent_procedure_repo.as_ref(),
+        deps.workflow_graph_repo.as_ref(),
         deps.lifecycle_run_repo.as_ref(),
     );
     let reconciled = 0;

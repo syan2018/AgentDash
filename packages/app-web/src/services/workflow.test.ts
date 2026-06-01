@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { mapActivityLifecycleDefinition, mapWorkflowDefinition } from "./workflow";
+import { mapWorkflowGraph, mapAgentProcedure } from "./workflow";
 
 describe("workflow service mappers", () => {
   it("preserves backend capability_config tool directives", () => {
-    const definition = mapWorkflowDefinition({
+    const definition = mapAgentProcedure({
       id: "wf-1",
       project_id: "project-1",
       key: "builtin_workflow_admin_apply",
@@ -40,7 +40,7 @@ describe("workflow service mappers", () => {
   });
 
   it("preserves activity lifecycle agent executor and ports during mapping", () => {
-    const definition = mapActivityLifecycleDefinition({
+    const definition = mapWorkflowGraph({
       id: "lc-1",
       project_id: "project-1",
       key: "builtin_workflow_admin",
@@ -56,7 +56,7 @@ describe("workflow service mappers", () => {
           description: "Plan",
           executor: {
             kind: "agent",
-            workflow_key: "builtin_workflow_admin_plan",
+            procedure_key: "builtin_workflow_admin_plan",
             session_policy: "spawn_child",
           },
           output_ports: [],
@@ -82,7 +82,7 @@ describe("workflow service mappers", () => {
 
     expect(definition.activities[0].executor).toEqual({
       kind: "agent",
-      workflow_key: "builtin_workflow_admin_plan",
+      procedure_key: "builtin_workflow_admin_plan",
       session_policy: "spawn_child",
     });
     expect(definition.activities[0].input_ports[0].standalone_fulfillment).toEqual({

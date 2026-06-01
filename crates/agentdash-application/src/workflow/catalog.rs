@@ -1,8 +1,8 @@
 use chrono::Utc;
 
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository,
-    ValidationIssue, ValidationSeverity, WorkflowDefinition, WorkflowDefinitionRepository,
+    ActivityExecutorSpec, WorkflowGraph, WorkflowGraphRepository,
+    ValidationIssue, ValidationSeverity, AgentProcedure, AgentProcedureRepository,
     workflow_binding_kinds_cover,
 };
 
@@ -20,8 +20,8 @@ pub struct ActivityLifecycleCatalogService<'a, D: ?Sized, A: ?Sized> {
 
 impl<'a, D: ?Sized, A: ?Sized> ActivityLifecycleCatalogService<'a, D, A>
 where
-    D: WorkflowDefinitionRepository,
-    A: ActivityLifecycleDefinitionRepository,
+    D: AgentProcedureRepository,
+    A: WorkflowGraphRepository,
 {
     pub fn new(definition_repo: &'a D, activity_lifecycle_repo: &'a A) -> Self {
         Self {
@@ -30,12 +30,12 @@ where
         }
     }
 
-    pub async fn upsert_activity_lifecycle_definition(
+    pub async fn upsert_workflow_graph(
         &self,
-        lifecycle: ActivityLifecycleDefinition,
-    ) -> Result<ActivityLifecycleDefinition, WorkflowApplicationError> {
+        lifecycle: WorkflowGraph,
+    ) -> Result<WorkflowGraph, WorkflowApplicationError> {
         let issues = self
-            .validate_activity_lifecycle_definition(&lifecycle)
+            .validate_workflow_graph(&lifecycle)
             .await?;
         let errors: Vec<&ValidationIssue> = issues
             .iter()
@@ -70,9 +70,9 @@ where
         Ok(lifecycle)
     }
 
-    pub async fn validate_activity_lifecycle_definition(
+    pub async fn validate_workflow_graph(
         &self,
-        lifecycle: &ActivityLifecycleDefinition,
+        lifecycle: &WorkflowGraph,
     ) -> Result<Vec<ValidationIssue>, WorkflowApplicationError> {
         let mut issues = lifecycle.validate_full();
         issues.extend(self.validate_agent_workflow_references(lifecycle).await?);
@@ -81,7 +81,7 @@ where
 
     async fn validate_agent_workflow_references(
         &self,
-        lifecycle: &ActivityLifecycleDefinition,
+        lifecycle: &WorkflowGraph,
     ) -> Result<Vec<ValidationIssue>, WorkflowApplicationError> {
         let mut issues = Vec::new();
         for (activity_index, activity) in lifecycle.activities.iter().enumerate() {
@@ -90,16 +90,16 @@ where
             };
             let Some(workflow) = self
                 .definition_repo
-                .get_by_project_and_key(lifecycle.project_id, &agent.workflow_key)
+                .get_by_project_and_key(lifecycle.project_id, &agent.procedure_key)
                 .await?
             else {
                 issues.push(ValidationIssue::error(
                     "activity_workflow_missing",
                     format!(
                         "activity `{}` 引用的 workflow `{}` 在当前 project 中不存在",
-                        activity.key, agent.workflow_key
+                        activity.key, agent.procedure_key
                     ),
-                    format!("activities[{activity_index}].executor.workflow_key"),
+                    format!("activities[{activity_index}].executor.procedure_key"),
                 ));
                 continue;
             };
@@ -111,7 +111,7 @@ where
                         "activity `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
                         activity.key, workflow.key, workflow.binding_kinds, lifecycle.binding_kinds
                     ),
-                    format!("activities[{activity_index}].executor.workflow_key"),
+                    format!("activities[{activity_index}].executor.procedure_key"),
                 ));
             }
         }
@@ -122,24 +122,24 @@ where
         &self,
         bundle: BuiltinWorkflowBundle,
     ) -> Result<BuiltinWorkflowBundle, WorkflowApplicationError> {
-        let mut persisted_workflows = Vec::with_capacity(bundle.workflows.len());
-        for workflow in bundle.workflows {
-            persisted_workflows.push(self.upsert_workflow_definition(workflow).await?);
+        let mut persisted_procedures = Vec::with_capacity(bundle.procedures.len());
+        for procedure in bundle.procedures {
+            persisted_procedures.push(self.upsert_agent_procedure(procedure).await?);
         }
 
-        let lifecycle = self
-            .upsert_activity_lifecycle_definition(bundle.lifecycle)
+        let graph = self
+            .upsert_workflow_graph(bundle.graph)
             .await?;
         Ok(BuiltinWorkflowBundle {
-            workflows: persisted_workflows,
-            lifecycle,
+            procedures: persisted_procedures,
+            graph,
         })
     }
 
-    async fn upsert_workflow_definition(
+    async fn upsert_agent_procedure(
         &self,
-        definition: WorkflowDefinition,
-    ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
+        definition: AgentProcedure,
+    ) -> Result<AgentProcedure, WorkflowApplicationError> {
         if let Some(existing) = self
             .definition_repo
             .get_by_project_and_key(definition.project_id, &definition.key)
@@ -161,16 +161,16 @@ where
 
 impl<'a, D: ?Sized> WorkflowCatalogService<'a, D>
 where
-    D: WorkflowDefinitionRepository,
+    D: AgentProcedureRepository,
 {
     pub fn new(definition_repo: &'a D) -> Self {
         Self { definition_repo }
     }
 
-    pub async fn upsert_workflow_definition(
+    pub async fn upsert_agent_procedure(
         &self,
-        definition: WorkflowDefinition,
-    ) -> Result<WorkflowDefinition, WorkflowApplicationError> {
+        definition: AgentProcedure,
+    ) -> Result<AgentProcedure, WorkflowApplicationError> {
         if let Some(existing) = self
             .definition_repo
             .get_by_project_and_key(definition.project_id, &definition.key)
@@ -201,7 +201,7 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleDefinitionRepository, ActivityTransition, AgentActivityExecutorSpec,
+        WorkflowGraphRepository, ActivityTransition, AgentActivityExecutorSpec,
         AgentSessionPolicy, ContextStrategy, GateStrategy, InputPortDefinition,
         OutputPortDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
     };
@@ -209,12 +209,12 @@ mod tests {
     use super::*;
 
     #[derive(Default)]
-    struct TestWorkflowDefinitionRepo {
-        items: Mutex<BTreeMap<String, WorkflowDefinition>>,
+    struct TestAgentProcedureRepo {
+        items: Mutex<BTreeMap<String, AgentProcedure>>,
     }
 
-    impl TestWorkflowDefinitionRepo {
-        fn seed(&self, workflow: WorkflowDefinition) {
+    impl TestAgentProcedureRepo {
+        fn seed(&self, workflow: AgentProcedure) {
             self.items
                 .lock()
                 .expect("workflow repo lock")
@@ -223,13 +223,13 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl WorkflowDefinitionRepository for TestWorkflowDefinitionRepo {
-        async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
+    impl AgentProcedureRepository for TestAgentProcedureRepo {
+        async fn create(&self, workflow: &AgentProcedure) -> Result<(), DomainError> {
             self.seed(workflow.clone());
             Ok(())
         }
 
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -239,7 +239,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -252,7 +252,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<WorkflowDefinition>, DomainError> {
+        ) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -262,7 +262,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -275,7 +275,7 @@ mod tests {
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -289,7 +289,7 @@ mod tests {
         async fn list_by_binding_kind(
             &self,
             binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -300,7 +300,7 @@ mod tests {
                 .collect())
         }
 
-        async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
+        async fn update(&self, workflow: &AgentProcedure) -> Result<(), DomainError> {
             self.seed(workflow.clone());
             Ok(())
         }
@@ -315,13 +315,13 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TestActivityLifecycleDefinitionRepo {
-        items: Mutex<BTreeMap<String, ActivityLifecycleDefinition>>,
+    struct TestWorkflowGraphRepo {
+        items: Mutex<BTreeMap<String, WorkflowGraph>>,
     }
 
     #[async_trait::async_trait]
-    impl ActivityLifecycleDefinitionRepository for TestActivityLifecycleDefinitionRepo {
-        async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+    impl WorkflowGraphRepository for TestWorkflowGraphRepo {
+        async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             self.items
                 .lock()
                 .expect("activity lifecycle repo lock")
@@ -332,7 +332,7 @@ mod tests {
         async fn get_by_id(
             &self,
             id: Uuid,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -346,7 +346,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -359,7 +359,7 @@ mod tests {
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Vec<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -370,7 +370,7 @@ mod tests {
                 .collect())
         }
 
-        async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+        async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             self.items
                 .lock()
                 .expect("activity lifecycle repo lock")
@@ -391,7 +391,7 @@ mod tests {
         key: &str,
         output_ports: &[&str],
         input_ports: &[&str],
-    ) -> WorkflowDefinition {
+    ) -> AgentProcedure {
         workflow_with_ports_in_project(Uuid::new_v4(), key, output_ports, input_ports)
     }
 
@@ -400,7 +400,7 @@ mod tests {
         key: &str,
         output_ports: &[&str],
         input_ports: &[&str],
-    ) -> WorkflowDefinition {
+    ) -> AgentProcedure {
         let contract = WorkflowContract {
             output_ports: output_ports
                 .iter()
@@ -423,7 +423,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        WorkflowDefinition::new(
+        AgentProcedure::new(
             project_id,
             key,
             format!("workflow {key}"),
@@ -437,9 +437,9 @@ mod tests {
 
     fn activity_lifecycle_with_agent(
         project_id: Uuid,
-        workflow_key: &str,
-    ) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+        procedure_key: &str,
+    ) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "activity_lc",
             "Activity lifecycle",
@@ -451,7 +451,7 @@ mod tests {
                 key: "plan".to_string(),
                 description: "plan".to_string(),
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    workflow_key: workflow_key.to_string(),
+                    procedure_key: procedure_key.to_string(),
                     session_policy: AgentSessionPolicy::SpawnChild,
                 }),
                 input_ports: vec![],
@@ -466,24 +466,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn validate_activity_lifecycle_resolves_agent_workflow_in_same_project_only() {
+    async fn validate_workflow_graph_resolves_agent_workflow_in_same_project_only() {
         let lifecycle_project_id = Uuid::new_v4();
         let other_project_id = Uuid::new_v4();
-        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let workflow_repo = TestAgentProcedureRepo::default();
         workflow_repo.seed(workflow_with_ports_in_project(
             other_project_id,
             "wf_plan",
             &[],
             &[],
         ));
-        let activity_lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let activity_lifecycle_repo = TestWorkflowGraphRepo::default();
         let service =
             ActivityLifecycleCatalogService::new(&workflow_repo, &activity_lifecycle_repo);
 
         let lifecycle = activity_lifecycle_with_agent(lifecycle_project_id, "wf_plan");
 
         let issues = service
-            .validate_activity_lifecycle_definition(&lifecycle)
+            .validate_workflow_graph(&lifecycle)
             .await
             .expect("validate activity lifecycle");
 
@@ -496,25 +496,25 @@ mod tests {
     #[tokio::test]
     async fn upsert_activity_lifecycle_preserves_id_and_bumps_version() {
         let project_id = Uuid::new_v4();
-        let workflow_repo = TestWorkflowDefinitionRepo::default();
+        let workflow_repo = TestAgentProcedureRepo::default();
         workflow_repo.seed(workflow_with_ports_in_project(
             project_id,
             "wf_plan",
             &[],
             &[],
         ));
-        let activity_lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let activity_lifecycle_repo = TestWorkflowGraphRepo::default();
         let service =
             ActivityLifecycleCatalogService::new(&workflow_repo, &activity_lifecycle_repo);
 
         let first = service
-            .upsert_activity_lifecycle_definition(activity_lifecycle_with_agent(
+            .upsert_workflow_graph(activity_lifecycle_with_agent(
                 project_id, "wf_plan",
             ))
             .await
             .expect("create activity lifecycle");
         let second = service
-            .upsert_activity_lifecycle_definition(activity_lifecycle_with_agent(
+            .upsert_workflow_graph(activity_lifecycle_with_agent(
                 project_id, "wf_plan",
             ))
             .await
@@ -534,8 +534,8 @@ mod tests {
         let bundle = build_builtin_workflow_bundle(project_id, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY)
             .expect("build builtin_workflow_admin bundle");
 
-        let workflow_repo = TestWorkflowDefinitionRepo::default();
-        let lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let workflow_repo = TestAgentProcedureRepo::default();
+        let lifecycle_repo = TestWorkflowGraphRepo::default();
         let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service
@@ -543,10 +543,10 @@ mod tests {
             .await
             .expect("bootstrap 内建工作流应通过所有校验");
 
-        assert_eq!(saved.workflows.len(), 2);
+        assert_eq!(saved.procedures.len(), 2);
         assert_eq!(saved.lifecycle.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
         assert_eq!(saved.lifecycle.activities.len(), 2);
-        for workflow in &saved.workflows {
+        for workflow in &saved.procedures {
             assert!(
                 workflow.contract.injection.guidance.is_some(),
                 "内建 workflow `{}` 必须保留 guidance 注入",
@@ -575,8 +575,8 @@ mod tests {
         let bundle = build_builtin_workflow_bundle(project_id, TRELLIS_DAG_TASK_TEMPLATE_KEY)
             .expect("build trellis_dag_task bundle");
 
-        let workflow_repo = TestWorkflowDefinitionRepo::default();
-        let lifecycle_repo = TestActivityLifecycleDefinitionRepo::default();
+        let workflow_repo = TestAgentProcedureRepo::default();
+        let lifecycle_repo = TestWorkflowGraphRepo::default();
         let service = ActivityLifecycleCatalogService::new(&workflow_repo, &lifecycle_repo);
 
         let saved = service
@@ -584,7 +584,7 @@ mod tests {
             .await
             .expect("bootstrap Trellis DAG Task 应通过 Activity port 校验");
 
-        assert_eq!(saved.workflows.len(), 2);
+        assert_eq!(saved.procedures.len(), 2);
         assert_eq!(saved.lifecycle.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
         assert_eq!(saved.lifecycle.activities.len(), 2);
     }

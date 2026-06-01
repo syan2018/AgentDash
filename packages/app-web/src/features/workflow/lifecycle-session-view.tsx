@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ActivityAttemptState,
   ActivityDefinition,
-  ActivityLifecycleDefinition,
+  WorkflowGraph,
   WorkflowRun,
 } from "../../types";
 import { useWorkflowStore } from "../../stores/workflowStore";
@@ -315,7 +315,7 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
     void fetchLifecycles({ projectId: activeRun.project_id });
   }, [activeRun, fetchLifecycles]);
 
-  const lifecycle: ActivityLifecycleDefinition | null = useMemo(
+  const lifecycle: WorkflowGraph | null = useMemo(
     () => (activeRun ? lifecycleDefinitions.find((l) => l.id === activeRun.lifecycle_id) ?? null : null),
     [activeRun, lifecycleDefinitions],
   );

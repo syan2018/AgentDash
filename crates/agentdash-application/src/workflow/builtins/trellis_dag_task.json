@@ -72,7 +72,7 @@
       }
     }
   ],
-  "lifecycle": {
+  "graph": {
     "key": "trellis_dag_task",
     "name": "Trellis DAG Lifecycle / Task",
     "description": "DAG 编排示例：research → implement，每个 activity 为独立 Agent Session。",

@@ -34,7 +34,7 @@ use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
 use agentdash_domain::task::Task;
 use agentdash_domain::workflow::ToolCapabilityDirective;
-use agentdash_domain::workflow::{ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun};
+use agentdash_domain::workflow::{ActivityDefinition, WorkflowGraph, LifecycleRun};
 use agentdash_domain::workspace::Workspace;
 use agentdash_spi::{CapabilityScope, CapabilityScopeCtx};
 use agentdash_spi::{CapabilityState, SessionContextBundle, Vfs};
@@ -1500,9 +1500,9 @@ pub struct StoryStepSpec<'a> {
 /// Lifecycle AgentNode compose 输入。
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
     pub inherited_executor_config: Option<AgentConfig>,
 }
 
@@ -1527,9 +1527,9 @@ pub struct CompanionParentSpec<'a> {
 pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
 }
 
 struct CompanionParentFacts {
@@ -1543,9 +1543,9 @@ pub struct CompanionWorkflowSpec<'a> {
     pub companion: CompanionSpec<'a>,
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
-    pub lifecycle: &'a ActivityLifecycleDefinition,
+    pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
-    pub workflow: Option<&'a agentdash_domain::workflow::WorkflowDefinition>,
+    pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
 }
 
 /// Companion + Workflow 组合组装。
@@ -1694,9 +1694,9 @@ async fn resolve_owner_workflow_tool_directives(
         .map(str::trim)
         .filter(|s| !s.is_empty())?;
 
-    // 2. 查 activity lifecycle 定义 → entry activity → workflow_key
+    // 2. 查 activity lifecycle 定义 → entry activity → procedure_key
     let lifecycle = repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .get_by_project_and_key(project_id, lifecycle_key)
         .await
         .ok()
@@ -1705,15 +1705,15 @@ async fn resolve_owner_workflow_tool_directives(
         .activities
         .iter()
         .find(|a| a.key == lifecycle.entry_activity_key)?;
-    let workflow_key = match &entry_activity.executor {
-        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => spec.workflow_key.as_str(),
+    let procedure_key = match &entry_activity.executor {
+        agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => spec.procedure_key.as_str(),
         _ => return None,
     };
 
     // 3. 查 workflow 定义 → contract.capability_config.tool_directives
     let workflow = repos
-        .workflow_definition_repo
-        .get_by_project_and_key(project_id, workflow_key)
+        .agent_procedure_repo
+        .get_by_project_and_key(project_id, procedure_key)
         .await
         .ok()
         .flatten()?;
@@ -1726,9 +1726,9 @@ mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
+        ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
         ActivityLifecycleRunState, AgentActivityExecutorSpec, InputPortDefinition,
-        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, AgentProcedure,
         WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
@@ -1970,7 +1970,7 @@ mod tests {
             key: "implement".to_string(),
             description: "实现功能".to_string(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: "wf_impl".to_string(),
+                procedure_key: "wf_impl".to_string(),
                 session_policy: Default::default(),
             }),
             input_ports: vec![InputPortDefinition {
@@ -1990,7 +1990,7 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = ActivityLifecycleDefinition::new(
+        let lifecycle = WorkflowGraph::new(
             project_id,
             "dev",
             "Dev",
@@ -2024,7 +2024,7 @@ mod tests {
             activity_state,
         )
         .expect("run");
-        let workflow = WorkflowDefinition::new(
+        let workflow = AgentProcedure::new(
             project_id,
             "wf_impl",
             "Implementation",

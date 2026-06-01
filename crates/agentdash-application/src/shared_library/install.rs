@@ -58,8 +58,8 @@ pub struct ProjectAssetSourceStatus {
     pub mcp_presets: Vec<ProjectAssetSourceStatusItem>,
     pub skill_assets: Vec<ProjectAssetSourceStatusItem>,
     pub vfs_mounts: Vec<ProjectAssetSourceStatusItem>,
-    pub workflow_definitions: Vec<ProjectAssetSourceStatusItem>,
-    pub activity_lifecycle_definitions: Vec<ProjectAssetSourceStatusItem>,
+    pub agent_procedures: Vec<ProjectAssetSourceStatusItem>,
+    pub workflow_graphs: Vec<ProjectAssetSourceStatusItem>,
     pub extension_installations: Vec<ProjectAssetSourceStatusItem>,
 }
 
@@ -244,17 +244,17 @@ pub async fn list_project_asset_source_status(
         }
     }
 
-    let mut workflow_definitions = Vec::new();
+    let mut agent_procedures = Vec::new();
     for workflow in repos
-        .workflow_definition_repo
+        .agent_procedure_repo
         .list_by_project(project_id)
         .await?
     {
         if let Some(installed_source) = workflow.installed_source {
-            workflow_definitions.push(
+            agent_procedures.push(
                 source_status_item(
                     repos,
-                    "workflow_definition",
+                    "agent_procedure",
                     workflow.id,
                     workflow.key,
                     installed_source,
@@ -264,17 +264,17 @@ pub async fn list_project_asset_source_status(
         }
     }
 
-    let mut activity_lifecycle_definitions = Vec::new();
+    let mut workflow_graphs = Vec::new();
     for lifecycle in repos
-        .activity_lifecycle_definition_repo
+        .workflow_graph_repo
         .list_by_project(project_id)
         .await?
     {
         if let Some(installed_source) = lifecycle.installed_source {
-            activity_lifecycle_definitions.push(
+            workflow_graphs.push(
                 source_status_item(
                     repos,
-                    "activity_lifecycle_definition",
+                    "workflow_graph",
                     lifecycle.id,
                     lifecycle.key,
                     installed_source,
@@ -309,8 +309,8 @@ pub async fn list_project_asset_source_status(
         mcp_presets,
         skill_assets,
         vfs_mounts,
-        workflow_definitions,
-        activity_lifecycle_definitions,
+        agent_procedures,
+        workflow_graphs,
         extension_installations,
     })
 }
@@ -546,30 +546,30 @@ async fn install_workflow_template(
         .build_bundle(input.project_id)
         .map_err(DomainError::InvalidConfig)?;
     let installed_source = installed_source_from_asset(&asset);
-    for workflow in &mut bundle.workflows {
-        workflow.source = WorkflowDefinitionSource::UserAuthored;
-        workflow.installed_source = Some(installed_source.clone());
+    for procedure in &mut bundle.procedures {
+        procedure.source = WorkflowDefinitionSource::UserAuthored;
+        procedure.installed_source = Some(installed_source.clone());
     }
 
-    let mut lifecycle = bundle.lifecycle;
+    let mut lifecycle = bundle.graph;
     lifecycle.source = WorkflowDefinitionSource::UserAuthored;
     lifecycle.installed_source = Some(installed_source);
     let result = repos
         .workflow_template_install_repo
         .install_workflow_template_bundle(WorkflowTemplateInstallBundle {
-            workflows: bundle.workflows,
-            lifecycle,
+            procedures: bundle.procedures,
+            graph: lifecycle,
             overwrite: input.overwrite,
         })
         .await?;
 
     Ok(InstallLibraryAssetOutput::WorkflowTemplate {
         workflow_ids: result
-            .workflows
+            .procedures
             .iter()
-            .map(|workflow| workflow.id)
+            .map(|p| p.id)
             .collect(),
-        lifecycle_id: result.lifecycle.id,
+        lifecycle_id: result.graph.id,
     })
 }
 

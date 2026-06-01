@@ -1,8 +1,8 @@
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinition,
-    ActivityLifecycleDefinitionRepository, AgentAssignmentRepository, LifecycleRun,
+    ActivityExecutionClaimRepository, WorkflowGraph,
+    WorkflowGraphRepository, AgentAssignmentRepository, LifecycleRun,
     LifecycleRunRepository, LifecycleRunStatus,
 };
 
@@ -28,7 +28,7 @@ pub struct StartActivityLifecycleRunCommand {
 
 impl<'a, D: ?Sized, R: ?Sized, C: ?Sized> ActivityLifecycleRunService<'a, D, R, C>
 where
-    D: ActivityLifecycleDefinitionRepository,
+    D: WorkflowGraphRepository,
     R: LifecycleRunRepository,
     C: ActivityExecutionClaimRepository,
 {
@@ -103,7 +103,7 @@ where
         run_id: Uuid,
     ) -> Result<
         (
-            ActivityLifecycleDefinition,
+            WorkflowGraph,
             LifecycleRun,
             ActivityLifecycleRunState,
         ),
@@ -124,13 +124,13 @@ where
             .await?
             .ok_or_else(|| {
                 WorkflowApplicationError::NotFound(format!(
-                    "activity_lifecycle_definition 不存在: {}",
+                    "workflow_graph 不存在: {}",
                     run.lifecycle_id
                 ))
             })?;
         if definition.project_id != run.project_id {
             return Err(WorkflowApplicationError::NotFound(format!(
-                "activity_lifecycle_definition 不存在: {}",
+                "workflow_graph 不存在: {}",
                 run.lifecycle_id
             )));
         }
@@ -140,7 +140,7 @@ where
     async fn resolve_definition(
         &self,
         cmd: &StartActivityLifecycleRunCommand,
-    ) -> Result<ActivityLifecycleDefinition, WorkflowApplicationError> {
+    ) -> Result<WorkflowGraph, WorkflowApplicationError> {
         match (&cmd.lifecycle_id, &cmd.lifecycle_key) {
             (Some(_), Some(_)) => Err(WorkflowApplicationError::BadRequest(
                 "lifecycle_id 与 lifecycle_key 只能提供一个".to_string(),
@@ -155,12 +155,12 @@ where
                     .await?
                     .ok_or_else(|| {
                         WorkflowApplicationError::NotFound(format!(
-                            "activity_lifecycle_definition 不存在: {lifecycle_id}"
+                            "workflow_graph 不存在: {lifecycle_id}"
                         ))
                     })?;
                 if definition.project_id != cmd.project_id {
                     return Err(WorkflowApplicationError::NotFound(format!(
-                        "activity_lifecycle_definition 不存在: {lifecycle_id}"
+                        "workflow_graph 不存在: {lifecycle_id}"
                     )));
                 }
                 Ok(definition)
@@ -171,7 +171,7 @@ where
                 .await?
                 .ok_or_else(|| {
                     WorkflowApplicationError::NotFound(format!(
-                        "activity_lifecycle_definition 不存在: {lifecycle_key}"
+                        "workflow_graph 不存在: {lifecycle_key}"
                     ))
                 }),
         }
@@ -192,14 +192,14 @@ mod tests {
     use super::*;
 
     struct DefinitionRepo {
-        definition: ActivityLifecycleDefinition,
+        definition: WorkflowGraph,
     }
 
     #[async_trait::async_trait]
-    impl ActivityLifecycleDefinitionRepository for DefinitionRepo {
+    impl WorkflowGraphRepository for DefinitionRepo {
         async fn create(
             &self,
-            _lifecycle: &ActivityLifecycleDefinition,
+            _lifecycle: &WorkflowGraph,
         ) -> Result<(), DomainError> {
             Ok(())
         }
@@ -207,7 +207,7 @@ mod tests {
         async fn get_by_id(
             &self,
             id: Uuid,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok((self.definition.id == id).then(|| self.definition.clone()))
         }
 
@@ -215,7 +215,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(
                 (self.definition.project_id == project_id && self.definition.key == key)
                     .then(|| self.definition.clone()),
@@ -225,7 +225,7 @@ mod tests {
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Vec<WorkflowGraph>, DomainError> {
             Ok((self.definition.project_id == project_id)
                 .then(|| vec![self.definition.clone()])
                 .unwrap_or_default())
@@ -233,7 +233,7 @@ mod tests {
 
         async fn update(
             &self,
-            _lifecycle: &ActivityLifecycleDefinition,
+            _lifecycle: &WorkflowGraph,
         ) -> Result<(), DomainError> {
             Ok(())
         }
@@ -341,8 +341,8 @@ mod tests {
         }
     }
 
-    fn definition(project_id: Uuid) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn definition(project_id: Uuid) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "activity_flow",
             "Activity Flow",
@@ -354,7 +354,7 @@ mod tests {
                 key: "main".to_string(),
                 description: "main".to_string(),
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    workflow_key: "wf_main".to_string(),
+                    procedure_key: "wf_main".to_string(),
                     session_policy: AgentSessionPolicy::SpawnChild,
                 }),
                 input_ports: Vec::new(),

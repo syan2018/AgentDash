@@ -15,7 +15,7 @@ function activity(key: string, overrides: Partial<ActivityDefinition> = {}): Act
   return {
     key,
     description: "",
-    executor: { kind: "agent", workflow_key: `demo.${key}`, session_policy: "spawn_child" },
+    executor: { kind: "agent", procedure_key: `demo.${key}`, session_policy: "spawn_child" },
     output_ports: [],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },

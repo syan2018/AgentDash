@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
-    ActivityLifecycleDefinitionRepository, ToolCapabilityDirective, WorkflowDefinition,
-    WorkflowDefinitionRepository,
+    ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
+    WorkflowGraphRepository, ToolCapabilityDirective, AgentProcedure,
+    AgentProcedureRepository,
 };
 
 use crate::capability::ToolContribution;
@@ -45,10 +45,10 @@ pub enum SessionWorkflowOwner {
 /// helper 所需的 repository 依赖。调用方从 AppState 传 `Arc<dyn _>` 的 `as_ref()` 即可。
 pub struct SessionWorkflowRepos<'a> {
     pub project_agent: &'a dyn ProjectAgentRepository,
-    pub activity_lifecycle_def: &'a dyn ActivityLifecycleDefinitionRepository,
-    /// workflow_def 在解析链末端用于拉取 entry activity 对应的 WorkflowDefinition,
+    pub activity_lifecycle_def: &'a dyn WorkflowGraphRepository,
+    /// workflow_def 在解析链末端用于拉取 entry activity 对应的 AgentProcedure,
     /// 其 `contract.capability_config.tool_directives` 即 session bootstrap baseline。
-    pub workflow_def: &'a dyn WorkflowDefinitionRepository,
+    pub workflow_def: &'a dyn AgentProcedureRepository,
 }
 
 /// 解析 session bootstrap workflow 上下文，直接返回 `Option<ToolContribution>`。
@@ -138,8 +138,8 @@ async fn resolve_for_story(
 }
 
 async fn resolve_from_lifecycle_key(
-    activity_lifecycle_def: &dyn ActivityLifecycleDefinitionRepository,
-    workflow_def: &dyn WorkflowDefinitionRepository,
+    activity_lifecycle_def: &dyn WorkflowGraphRepository,
+    workflow_def: &dyn AgentProcedureRepository,
     project_id: Uuid,
     lifecycle_key: &str,
 ) -> Option<ToolContribution> {
@@ -177,7 +177,7 @@ async fn resolve_from_lifecycle_key(
         return None;
     };
 
-    let Some(workflow_key) = entry_activity_workflow_key(entry_activity) else {
+    let Some(procedure_key) = entry_activity_procedure_key(entry_activity) else {
         return Some(ToolContribution {
             directives: Vec::new(),
             has_active_workflow: true,
@@ -185,7 +185,7 @@ async fn resolve_from_lifecycle_key(
     };
 
     let workflow = match workflow_def
-        .get_by_project_and_key(project_id, workflow_key)
+        .get_by_project_and_key(project_id, procedure_key)
         .await
     {
         Ok(Some(workflow)) => workflow,
@@ -193,7 +193,7 @@ async fn resolve_from_lifecycle_key(
             tracing::warn!(
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
-                workflow_key = %workflow_key,
+                procedure_key = %procedure_key,
                 "resolve_session_workflow_context: entry step 引用的 workflow 不存在"
             );
             return None;
@@ -202,7 +202,7 @@ async fn resolve_from_lifecycle_key(
             tracing::warn!(
                 project_id = %project_id,
                 lifecycle_key = %lifecycle_key,
-                workflow_key = %workflow_key,
+                procedure_key = %procedure_key,
                 error = %error,
                 "resolve_session_workflow_context: 读取 workflow 定义失败"
             );
@@ -216,16 +216,16 @@ async fn resolve_from_lifecycle_key(
     })
 }
 
-fn find_entry_activity(lifecycle: &ActivityLifecycleDefinition) -> Option<&ActivityDefinition> {
+fn find_entry_activity(lifecycle: &WorkflowGraph) -> Option<&ActivityDefinition> {
     lifecycle
         .activities
         .iter()
         .find(|activity| activity.key == lifecycle.entry_activity_key)
 }
 
-fn entry_activity_workflow_key(activity: &ActivityDefinition) -> Option<&str> {
+fn entry_activity_procedure_key(activity: &ActivityDefinition) -> Option<&str> {
     match &activity.executor {
-        ActivityExecutorSpec::Agent(spec) => Some(spec.workflow_key.as_str()),
+        ActivityExecutorSpec::Agent(spec) => Some(spec.procedure_key.as_str()),
         _ => None,
     }
 }
@@ -242,7 +242,7 @@ fn normalize_lifecycle_key(raw: Option<&str>) -> Option<String> {
 /// session bootstrap 阶段直接使用这些 directive；hook runtime 的动态增减（`ToolCapabilityDirective`）
 /// 由 workflow 级调用方在运行时叠加。
 pub fn tool_directives_from_active_workflow(
-    workflow: &WorkflowDefinition,
+    workflow: &AgentProcedure,
 ) -> Vec<ToolCapabilityDirective> {
     workflow.contract.capability_config.tool_directives.clone()
 }
@@ -257,15 +257,15 @@ mod tests {
     use agentdash_domain::agent::{ProjectAgent, ProjectAgentRepository};
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
-        ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition,
-        ActivityLifecycleDefinitionRepository, AgentActivityExecutorSpec, AgentSessionPolicy,
-        ToolCapabilityDirective, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
-        WorkflowDefinitionRepository, WorkflowDefinitionSource,
+        ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
+        WorkflowGraphRepository, AgentActivityExecutorSpec, AgentSessionPolicy,
+        ToolCapabilityDirective, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+        AgentProcedureRepository, WorkflowDefinitionSource,
     };
 
     use super::*;
 
-    const ENTRY_WORKFLOW_KEY: &str = "builtin_workflow_admin_plan";
+    const ENTRY_procedure_key: &str = "builtin_workflow_admin_plan";
 
     // ── in-memory mocks ──────────────────────────────────────────────
 
@@ -352,32 +352,32 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct MockLifecycleDefRepo {
-        defs: Arc<Mutex<Vec<ActivityLifecycleDefinition>>>,
+        defs: Arc<Mutex<Vec<WorkflowGraph>>>,
     }
 
     impl MockLifecycleDefRepo {
-        async fn insert(&self, def: ActivityLifecycleDefinition) {
+        async fn insert(&self, def: WorkflowGraph) {
             self.defs.lock().await.push(def);
         }
     }
 
     #[async_trait]
-    impl ActivityLifecycleDefinitionRepository for MockLifecycleDefRepo {
-        async fn create(&self, def: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+    impl WorkflowGraphRepository for MockLifecycleDefRepo {
+        async fn create(&self, def: &WorkflowGraph) -> Result<(), DomainError> {
             self.defs.lock().await.push(def.clone());
             Ok(())
         }
         async fn get_by_id(
             &self,
             id: Uuid,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
         async fn get_by_project_and_key(
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -389,7 +389,7 @@ mod tests {
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Vec<WorkflowGraph>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -399,7 +399,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn update(&self, def: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+        async fn update(&self, def: &WorkflowGraph) -> Result<(), DomainError> {
             let mut lock = self.defs.lock().await;
             if let Some(existing) = lock.iter_mut().find(|d| d.id == def.id) {
                 *existing = def.clone();
@@ -414,25 +414,25 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct MockWorkflowDefRepo {
-        defs: Arc<Mutex<Vec<WorkflowDefinition>>>,
+        defs: Arc<Mutex<Vec<AgentProcedure>>>,
     }
 
     impl MockWorkflowDefRepo {
-        async fn insert(&self, def: WorkflowDefinition) {
+        async fn insert(&self, def: AgentProcedure) {
             self.defs.lock().await.push(def);
         }
     }
 
     #[async_trait]
-    impl WorkflowDefinitionRepository for MockWorkflowDefRepo {
-        async fn create(&self, def: &WorkflowDefinition) -> Result<(), DomainError> {
+    impl AgentProcedureRepository for MockWorkflowDefRepo {
+        async fn create(&self, def: &AgentProcedure) -> Result<(), DomainError> {
             self.defs.lock().await.push(def.clone());
             Ok(())
         }
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self.defs.lock().await.iter().find(|d| d.id == id).cloned())
         }
-        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -445,7 +445,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<WorkflowDefinition>, DomainError> {
+        ) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -454,13 +454,13 @@ mod tests {
                 .find(|d| d.project_id == project_id && d.key == key)
                 .cloned())
         }
-        async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self.defs.lock().await.clone())
         }
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -473,7 +473,7 @@ mod tests {
         async fn list_by_binding_kind(
             &self,
             binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .defs
                 .lock()
@@ -483,7 +483,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn update(&self, def: &WorkflowDefinition) -> Result<(), DomainError> {
+        async fn update(&self, def: &AgentProcedure) -> Result<(), DomainError> {
             let mut lock = self.defs.lock().await;
             if let Some(existing) = lock.iter_mut().find(|d| d.id == def.id) {
                 *existing = def.clone();
@@ -519,12 +519,12 @@ mod tests {
 
     /// 构造 `builtin_workflow_admin` lifecycle 及其 entry activity workflow。
     /// Plan 阶段必须保留 workflow_management 只读工具，同时屏蔽 upsert 写入工具。
-    fn admin_lifecycle(project_id: Uuid) -> ActivityLifecycleDefinition {
+    fn admin_lifecycle(project_id: Uuid) -> WorkflowGraph {
         let plan = ActivityDefinition {
             key: "plan".to_string(),
             description: String::new(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: ENTRY_WORKFLOW_KEY.to_string(),
+                procedure_key: ENTRY_procedure_key.to_string(),
                 session_policy: AgentSessionPolicy::SpawnChild,
             }),
             output_ports: vec![],
@@ -533,7 +533,7 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        ActivityLifecycleDefinition::new(
+        WorkflowGraph::new(
             project_id,
             "builtin_workflow_admin",
             "Workflow Admin",
@@ -547,7 +547,7 @@ mod tests {
         .expect("build lifecycle")
     }
 
-    fn admin_entry_workflow(project_id: Uuid) -> WorkflowDefinition {
+    fn admin_entry_workflow(project_id: Uuid) -> AgentProcedure {
         let contract = WorkflowContract {
             capability_config: agentdash_domain::workflow::CapabilityConfig {
                 tool_directives: admin_plan_directives(),
@@ -555,9 +555,9 @@ mod tests {
             },
             ..WorkflowContract::default()
         };
-        WorkflowDefinition::new(
+        AgentProcedure::new(
             project_id,
-            ENTRY_WORKFLOW_KEY,
+            ENTRY_procedure_key,
             "Workflow Admin / Plan",
             "",
             vec![WorkflowBindingKind::Project],
@@ -567,7 +567,7 @@ mod tests {
         .expect("workflow definition")
     }
 
-    fn lifecycle_without_entry_step(project_id: Uuid) -> ActivityLifecycleDefinition {
+    fn lifecycle_without_entry_step(project_id: Uuid) -> WorkflowGraph {
         let mut def = admin_lifecycle(project_id);
         def.entry_activity_key = "missing".to_string();
         def
@@ -987,7 +987,7 @@ mod tests {
             },
             ..WorkflowContract::default()
         };
-        let workflow = WorkflowDefinition::new(
+        let workflow = AgentProcedure::new(
             Uuid::new_v4(),
             "sample",
             "Sample",

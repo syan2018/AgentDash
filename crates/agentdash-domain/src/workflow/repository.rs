@@ -4,7 +4,7 @@ use super::agent_assignment::AgentAssignment;
 use super::agent_frame::AgentFrame;
 use super::agent_lineage::AgentLineage;
 use super::entity::{
-    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
+    ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph,
 };
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
@@ -14,57 +14,57 @@ use super::workflow_graph_instance::WorkflowGraphInstance;
 use crate::common::error::DomainError;
 
 #[async_trait::async_trait]
-pub trait WorkflowDefinitionRepository: Send + Sync {
-    async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
-    async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError>;
-    async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError>;
+pub trait AgentProcedureRepository: Send + Sync {
+    async fn create(&self, procedure: &AgentProcedure) -> Result<(), DomainError>;
+    async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError>;
+    async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError>;
     async fn get_by_project_and_key(
         &self,
         project_id: Uuid,
         key: &str,
-    ) -> Result<Option<WorkflowDefinition>, DomainError>;
-    async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError>;
+    ) -> Result<Option<AgentProcedure>, DomainError>;
+    async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError>;
     async fn list_by_project(
         &self,
         project_id: Uuid,
-    ) -> Result<Vec<WorkflowDefinition>, DomainError>;
+    ) -> Result<Vec<AgentProcedure>, DomainError>;
     async fn list_by_binding_kind(
         &self,
         binding_kind: WorkflowBindingKind,
-    ) -> Result<Vec<WorkflowDefinition>, DomainError>;
-    async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError>;
+    ) -> Result<Vec<AgentProcedure>, DomainError>;
+    async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]
-pub trait ActivityLifecycleDefinitionRepository: Send + Sync {
-    async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError>;
+pub trait WorkflowGraphRepository: Send + Sync {
+    async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError>;
     async fn get_by_id(&self, id: Uuid)
-    -> Result<Option<ActivityLifecycleDefinition>, DomainError>;
+    -> Result<Option<WorkflowGraph>, DomainError>;
     async fn get_by_project_and_key(
         &self,
         project_id: Uuid,
         key: &str,
-    ) -> Result<Option<ActivityLifecycleDefinition>, DomainError>;
+    ) -> Result<Option<WorkflowGraph>, DomainError>;
     async fn list_by_project(
         &self,
         project_id: Uuid,
-    ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError>;
-    async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError>;
+    ) -> Result<Vec<WorkflowGraph>, DomainError>;
+    async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkflowTemplateInstallBundle {
-    pub workflows: Vec<WorkflowDefinition>,
-    pub lifecycle: ActivityLifecycleDefinition,
+    pub procedures: Vec<AgentProcedure>,
+    pub graph: WorkflowGraph,
     pub overwrite: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkflowTemplateInstallResult {
-    pub workflows: Vec<WorkflowDefinition>,
-    pub lifecycle: ActivityLifecycleDefinition,
+    pub procedures: Vec<AgentProcedure>,
+    pub graph: WorkflowGraph,
 }
 
 #[async_trait::async_trait]

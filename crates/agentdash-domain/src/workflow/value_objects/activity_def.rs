@@ -41,7 +41,7 @@ impl ActivityExecutorSpec {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentActivityExecutorSpec {
-    pub workflow_key: String,
+    pub procedure_key: String,
     #[serde(default)]
     pub session_policy: AgentSessionPolicy,
 }

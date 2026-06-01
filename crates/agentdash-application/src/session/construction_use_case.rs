@@ -548,7 +548,7 @@ async fn build_story_owner_prompt_request(
         resolve_continuation_system_context(state, session_id, lifecycle).await?;
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
@@ -675,7 +675,7 @@ async fn build_project_owner_prompt_request(
         resolve_continuation_system_context(state, session_id, lifecycle).await?;
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
@@ -788,7 +788,7 @@ async fn build_lifecycle_node_prompt_request(
     let workflow = match &activity.executor {
         agentdash_domain::workflow::ActivityExecutorSpec::Agent(spec) => state
             .repos
-            .workflow_definition_repo
+            .agent_procedure_repo
             .get_by_project_and_key(run.project_id, &spec.procedure_key)
             .await
             .map_err(ApplicationError::from)?,
@@ -979,7 +979,7 @@ async fn build_task_owner_prompt_request(
     // 不带 lifecycle workflow injection。
     let active_workflow = resolve_active_workflow_projection_for_session(
         session_id,
-        state.repos.workflow_definition_repo.as_ref(),
+        state.repos.agent_procedure_repo.as_ref(),
         state.repos.workflow_graph_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),

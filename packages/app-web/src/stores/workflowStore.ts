@@ -5,30 +5,30 @@ import type {
   ActivityDefinition,
   ActivityExecutorSpec,
   ActivityJoinPolicy,
-  ActivityLifecycleDefinition,
+  WorkflowGraph,
   ActivityTransition,
   ArtifactBinding,
   HookRulePreset,
   WorkflowContract,
-  WorkflowDefinition,
+  AgentProcedure,
   WorkflowRun,
   WorkflowTargetKind,
   WorkflowValidationResult,
 } from "../types";
 import {
-  createActivityLifecycleDefinition,
-  createWorkflowDefinition,
-  deleteActivityLifecycleDefinition,
-  deleteWorkflowDefinition,
-  fetchActivityLifecycleDefinitions,
-  fetchWorkflowDefinitions,
+  createWorkflowGraph,
+  createAgentProcedure,
+  deleteWorkflowGraph,
+  deleteAgentProcedure,
+  fetchWorkflowGraphs,
+  fetchAgentProcedures,
   fetchWorkflowRunsBySession,
   fetchHookPresets,
-  getActivityLifecycleDefinition,
+  getWorkflowGraph,
   startWorkflowRun,
-  updateActivityLifecycleDefinition,
-  updateWorkflowDefinition,
-  validateActivityLifecycleDefinition,
+  updateWorkflowGraph,
+  updateAgentProcedure,
+  validateWorkflowGraph,
 } from "../services/workflow";
 import { findUnboundedCycles } from "../features/workflow/model/dag-layout";
 import type { ValidationIssue } from "../types";
@@ -189,7 +189,7 @@ function reconcileDecisionPort(
 //
 // 每个 activity 关联的 workflow contract 放在
 // `workflowDraftsByActivityKey[activity.key]`，索引以 activity.key 为准
-// （不是 workflow_key，避免新建 activity 时 workflow_key 还未定型的情况）。
+// （不是 procedure_key，避免新建 activity 时 procedure_key 还未定型的情况）。
 
 export interface LifecycleEditorState {
   draft: LifecycleEditorDraft | null;
@@ -234,7 +234,7 @@ function emptyLifecycleEditor(): LifecycleEditorState {
   };
 }
 
-function definitionToDraft(definition: WorkflowDefinition): WorkflowEditorDraft {
+function definitionToDraft(definition: AgentProcedure): WorkflowEditorDraft {
   return {
     id: definition.id,
     project_id: definition.project_id,
@@ -261,7 +261,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
       description: "",
       executor: {
         kind: "agent",
-        workflow_key: "",
+        procedure_key: "",
         session_policy: "spawn_child",
       },
       output_ports: [],
@@ -274,7 +274,7 @@ export function createEmptyLifecycleDraft(projectId = "", seed: LifecycleDraftSe
   };
 }
 
-function lifecycleToDraft(definition: ActivityLifecycleDefinition): LifecycleEditorDraft {
+function lifecycleToDraft(definition: WorkflowGraph): LifecycleEditorDraft {
   return {
     id: definition.id,
     project_id: definition.project_id,
@@ -290,7 +290,7 @@ function lifecycleToDraft(definition: ActivityLifecycleDefinition): LifecycleEdi
 
 /**
  * 为 activity 创建一个对应的空 workflow contract draft。
- * 约定：activity 新建时自动派生 workflow_key = <lifecycle_key>_<activity_key>。
+ * 约定：activity 新建时自动派生 procedure_key = <lifecycle_key>_<activity_key>。
  */
 export function createActivityWorkflowDraft(
   projectId: string,
@@ -298,11 +298,11 @@ export function createActivityWorkflowDraft(
   activityKey: string,
   targetKinds: WorkflowTargetKind[] = ["story"],
 ): WorkflowEditorDraft {
-  const workflowKey = lifecycleKey && activityKey ? `${lifecycleKey}_${activityKey}` : activityKey || "";
+  const ProcedureKey = lifecycleKey && activityKey ? `${lifecycleKey}_${activityKey}` : activityKey || "";
   return {
     id: null,
     project_id: projectId,
-    key: workflowKey,
+    key: ProcedureKey,
     name: activityKey || "Untitled",
     description: "",
     target_kinds: [...targetKinds],
@@ -361,8 +361,8 @@ function rewriteTransitionConditionActivity(
 // ─── Store ───────────────────────────────────────────────
 
 interface WorkflowState {
-  definitions: WorkflowDefinition[];
-  lifecycleDefinitions: ActivityLifecycleDefinition[];
+  definitions: AgentProcedure[];
+  lifecycleDefinitions: WorkflowGraph[];
   runsBySessionId: Record<string, WorkflowRun[]>;
   hookPresets: HookRulePreset[];
   isLoading: boolean;
@@ -372,8 +372,8 @@ interface WorkflowState {
   lifecycleEditor: LifecycleEditorState;
 
   fetchHookPresets: () => Promise<HookRulePreset[]>;
-  fetchDefinitions: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<WorkflowDefinition[]>;
-  fetchLifecycles: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<ActivityLifecycleDefinition[]>;
+  fetchDefinitions: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<AgentProcedure[]>;
+  fetchLifecycles: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<WorkflowGraph[]>;
   fetchRunsBySession: (sessionId: string) => Promise<WorkflowRun[]>;
   startRun: (input: {
     lifecycle_id?: string;
@@ -393,9 +393,9 @@ interface WorkflowState {
   updateLifecycleEditorDraft: (patch: Partial<LifecycleEditorDraft>) => void;
   updateLifecycleEditorActivity: (activityKey: string, patch: Partial<ActivityDefinition>) => void;
   updateActivityWorkflowDraft: (activityKey: string, patch: Partial<WorkflowEditorDraft>) => void;
-  addLifecycleEditorActivity: (opts?: { activityKey?: string; initialFromWorkflow?: WorkflowDefinition }) => string | null;
+  addLifecycleEditorActivity: (opts?: { activityKey?: string; initialFromWorkflow?: AgentProcedure }) => string | null;
   removeLifecycleEditorActivity: (activityKey: string) => void;
-  cloneWorkflowIntoActivity: (activityKey: string, source: WorkflowDefinition) => void;
+  cloneWorkflowIntoActivity: (activityKey: string, source: AgentProcedure) => void;
 
   // ── Activity 内嵌字段编辑（粒度更细的 setter，避免 inspector 自己 patch 大对象） ──
   setActivityExecutor: (
@@ -417,7 +417,7 @@ interface WorkflowState {
   removeArtifactBinding: (id: string, idx: number) => void;
 
   validateLifecycleBundle: () => Promise<WorkflowValidationResult | null>;
-  saveLifecycleBundle: () => Promise<ActivityLifecycleDefinition | null>;
+  saveLifecycleBundle: () => Promise<WorkflowGraph | null>;
   closeLifecycleEditor: () => void;
 }
 
@@ -446,7 +446,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   fetchDefinitions: async (opts) => {
     try {
-      const definitions = await fetchWorkflowDefinitions(opts);
+      const definitions = await fetchAgentProcedures(opts);
       set((state) => {
         const targetKind = opts?.targetKind;
         const next = targetKind
@@ -463,7 +463,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   fetchLifecycles: async (opts) => {
     try {
-      const lifecycleDefinitions = await fetchActivityLifecycleDefinitions(opts);
+      const lifecycleDefinitions = await fetchWorkflowGraphs(opts);
       set((state) => {
         const targetKind = opts?.targetKind;
         const next = targetKind
@@ -506,7 +506,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   removeDefinition: async (id) => {
     set({ error: null });
     try {
-      await deleteWorkflowDefinition(id);
+      await deleteAgentProcedure(id);
       set((state) => ({ definitions: state.definitions.filter((item) => item.id !== id) }));
       return true;
     } catch (error) {
@@ -518,7 +518,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   removeLifecycle: async (id) => {
     set({ error: null });
     try {
-      await deleteActivityLifecycleDefinition(id);
+      await deleteWorkflowGraph(id);
       set((state) => ({ lifecycleDefinitions: state.lifecycleDefinitions.filter((item) => item.id !== id) }));
       return true;
     } catch (error) {
@@ -536,10 +536,10 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const drafts: Record<string, WorkflowEditorDraft> = {};
     if (activityKey) {
       drafts[activityKey] = createActivityWorkflowDraft(projectId, lifecycleKey, activityKey, draft.target_kinds);
-      // 同时把 agent activity 的 workflow_key 派生出来
+      // 同时把 agent activity 的 procedure_key 派生出来
       draft.activities[0].executor = {
         kind: "agent",
-        workflow_key: drafts[activityKey].key,
+        procedure_key: drafts[activityKey].key,
         session_policy: "spawn_child",
       };
     }
@@ -556,14 +556,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   openLifecycleById: async (id) => {
     set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, isLoading: true, error: null } }));
     try {
-      const definition = await getActivityLifecycleDefinition(id);
+      const definition = await getWorkflowGraph(id);
       const draft = lifecycleToDraft(definition);
-      // 拉取项目下所有 workflow definitions（用于 agent activity executor.workflow_key → contract 映射）
-      const wfDefs = await fetchWorkflowDefinitions({ projectId: definition.project_id });
+      // 拉取项目下所有 workflow definitions（用于 agent activity executor.procedure_key → contract 映射）
+      const wfDefs = await fetchAgentProcedures({ projectId: definition.project_id });
       const wfByKey = new Map(wfDefs.map((d) => [d.key, d]));
       const drafts: Record<string, WorkflowEditorDraft> = {};
       for (const activity of draft.activities) {
-        const wfKey = activity.executor.kind === "agent" ? activity.executor.workflow_key.trim() : "";
+        const wfKey = activity.executor.kind === "agent" ? activity.executor.procedure_key.trim() : "";
         if (!wfKey) {
           drafts[activity.key] = createActivityWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
           continue;
@@ -572,7 +572,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         if (wf) {
           drafts[activity.key] = definitionToDraft(wf);
         } else {
-          // workflow_key 引用了未加载到的 workflow，落回空 draft（保留 key）
+          // procedure_key 引用了未加载到的 workflow，落回空 draft（保留 key）
           const fallback = createActivityWorkflowDraft(definition.project_id, draft.key, activity.key, draft.target_kinds);
           fallback.key = wfKey;
           drafts[activity.key] = fallback;
@@ -759,7 +759,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       description: "",
       executor: {
         kind: "agent",
-        workflow_key: wfDraft.key,
+        procedure_key: wfDraft.key,
         session_policy: "spawn_child",
       },
       output_ports: [...wfDraft.contract.output_ports],
@@ -856,7 +856,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
                 input_ports: [...next.contract.input_ports],
                 executor:
                   activity.executor.kind === "agent"
-                    ? { ...activity.executor, workflow_key: next.key }
+                    ? { ...activity.executor, procedure_key: next.key }
                     : activity.executor,
               }
             : activity,
@@ -1077,7 +1077,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     if (!draft) return null;
     set((s) => ({ lifecycleEditor: { ...s.lifecycleEditor, isValidating: true, error: null } }));
     try {
-      const serverResult = await validateActivityLifecycleDefinition({
+      const serverResult = await validateWorkflowGraph({
         project_id: draft.project_id,
         key: draft.key,
         name: draft.name,
@@ -1119,13 +1119,13 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
           continue;
         }
         const saved = wfDraft.id
-          ? await updateWorkflowDefinition(wfDraft.id, {
+          ? await updateAgentProcedure(wfDraft.id, {
               name: wfDraft.name || activity.key,
               description: wfDraft.description,
               binding_kinds: wfDraft.target_kinds,
               contract: wfDraft.contract,
             })
-          : await createWorkflowDefinition({
+          : await createAgentProcedure({
               project_id: wfDraft.project_id,
               key: wfDraft.key,
               name: wfDraft.name || activity.key,
@@ -1136,14 +1136,14 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
         updatedDrafts[activity.key] = definitionToDraft(saved);
         activitiesAfterSave.push({
           ...activity,
-          executor: { ...activity.executor, workflow_key: saved.key },
+          executor: { ...activity.executor, procedure_key: saved.key },
         });
         set((s) => ({ definitions: upsert(s.definitions, saved) }));
       }
 
       // 2) 再 upsert activity lifecycle
       const nextLifecycle = originalId
-        ? await updateActivityLifecycleDefinition(originalId, {
+        ? await updateWorkflowGraph(originalId, {
             name: draft.name,
             description: draft.description,
             binding_kinds: draft.target_kinds,
@@ -1151,7 +1151,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
             activities: activitiesAfterSave,
             transitions: draft.transitions,
           })
-        : await createActivityLifecycleDefinition({
+        : await createWorkflowGraph({
             project_id: draft.project_id,
             key: draft.key,
             name: draft.name,

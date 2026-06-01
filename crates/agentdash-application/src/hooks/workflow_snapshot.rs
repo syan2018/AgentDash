@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
-    LifecycleRunRepository, WorkflowDefinitionRepository,
+    ActivityExecutionClaimRepository, WorkflowGraphRepository,
+    LifecycleRunRepository, AgentProcedureRepository,
 };
 use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -16,22 +16,22 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 
 /// 根据 session 信息构建 ActiveWorkflowProjection，以及 workflow 推进与日志写入。
 pub struct WorkflowSnapshotBuilder {
-    workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-    activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
 impl WorkflowSnapshotBuilder {
     pub fn new(
-        workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
-        activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+        agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
         activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
-            workflow_definition_repo,
-            activity_lifecycle_definition_repo,
+            agent_procedure_repo,
+            workflow_graph_repo,
             activity_execution_claim_repo,
             lifecycle_run_repo,
         }
@@ -54,8 +54,8 @@ impl WorkflowSnapshotBuilder {
     ) -> Result<Option<ActiveWorkflowProjection>, HookError> {
         resolve_active_workflow_projection_for_session(
             session_id,
-            self.workflow_definition_repo.as_ref(),
-            self.activity_lifecycle_definition_repo.as_ref(),
+            self.agent_procedure_repo.as_ref(),
+            self.workflow_graph_repo.as_ref(),
             self.activity_execution_claim_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         )

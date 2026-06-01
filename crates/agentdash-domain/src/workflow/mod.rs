@@ -21,22 +21,22 @@ pub use dispatch::{
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use entity::{
-    ActivityExecutionClaim, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
+    ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph,
     build_effective_contract,
 };
 pub use lifecycle_agent::LifecycleAgent;
 pub use lifecycle_gate::LifecycleGate;
 pub use lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
 pub use repository::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
+    ActivityExecutionClaimRepository, AgentProcedureRepository, WorkflowGraphRepository,
     AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, WorkflowDefinitionRepository,
+    LifecycleSubjectAssociationRepository,
     WorkflowGraphInstanceRepository, WorkflowTemplateInstallBundle,
     WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
 };
 pub use run_link::{LifecycleRunLink, LifecycleRunLinkRepository, RunLinkRole, RunLinkSubjectKind};
-pub use validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+pub use validation::{validate_workflow_graph, validate_agent_procedure};
 pub use workflow_graph_instance::WorkflowGraphInstance;
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

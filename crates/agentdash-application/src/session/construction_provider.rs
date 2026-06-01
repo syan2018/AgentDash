@@ -1,4 +1,4 @@
-﻿//! Session construction provider 契约。
+//! Session construction provider 契约。
 //!
 //! Session 的主通道（用户 HTTP prompt）和 auto-resume 通道都必须通过同一份
 //! construction 逻辑才能拿到 owner context / MCP server 绑定 / flow capabilities /
@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityLifecycleDefinition, LifecycleRun, WorkflowDefinition,
+    ActivityDefinition, WorkflowGraph, LifecycleRun, AgentProcedure,
 };
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
@@ -46,9 +46,9 @@ pub struct RoutineLaunchSource {
 #[derive(Clone)]
 pub struct CompanionLaunchWorkflowSource {
     pub run: LifecycleRun,
-    pub lifecycle: ActivityLifecycleDefinition,
+    pub lifecycle: WorkflowGraph,
     pub activity: ActivityDefinition,
-    pub workflow: Option<WorkflowDefinition>,
+    pub workflow: Option<AgentProcedure>,
 }
 
 #[derive(Clone)]

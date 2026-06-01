@@ -29,7 +29,7 @@ import type {
   TransitionCondition,
   WorkflowContextBinding,
   WorkflowContract,
-  WorkflowDefinition,
+  AgentProcedure,
   WorkflowDefinitionSource,
   WorkflowCapabilityConfig,
   WorkflowHookRuleSpec,
@@ -250,7 +250,7 @@ function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
   if (kind === "agent") {
     return {
       kind: "agent",
-      workflow_key: requireStringField(value, "workflow_key"),
+      procedure_key: requireStringField(value, "procedure_key"),
       session_policy: value.session_policy != null
         ? normalizeEnum(value.session_policy, AGENT_SESSION_POLICIES, "agent session policy")
         : "spawn_child",
@@ -465,7 +465,7 @@ function mapActivityLifecycleRunState(raw: unknown): ActivityLifecycleRunState |
 
 // ─── Entity mapper ─────────────────────────────────────
 
-export function mapWorkflowDefinition(raw: Record<string, unknown>): WorkflowDefinition {
+export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure {
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
@@ -517,16 +517,16 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   };
 }
 
-export async function fetchWorkflowDefinitions(opts?: {
+export async function fetchAgentProcedures(opts?: {
   projectId?: string;
   targetKind?: WorkflowTargetKind;
-}): Promise<WorkflowDefinition[]> {
+}): Promise<AgentProcedure[]> {
   const params = new URLSearchParams();
   if (opts?.projectId) params.set("project_id", opts.projectId);
   if (opts?.targetKind) params.set("binding_kind", opts.targetKind);
   const query = params.toString() ? `?${params}` : "";
   const raw = await api.get<Record<string, unknown>[]>(`/workflow-definitions${query}`);
-  return raw.map(mapWorkflowDefinition);
+  return raw.map(mapAgentProcedure);
 }
 
 export async function fetchWorkflowGraphs(opts?: {
@@ -671,14 +671,14 @@ export async function submitHumanDecision(input: {
   return mapWorkflowRun(raw);
 }
 
-export async function createWorkflowDefinition(input: {
+export async function createAgentProcedure(input: {
   project_id: string;
   key: string;
   name: string;
   description?: string;
   target_kinds: WorkflowTargetKind[];
   contract: WorkflowContract;
-}): Promise<WorkflowDefinition> {
+}): Promise<AgentProcedure> {
   const raw = await api.post<Record<string, unknown>>("/workflow-definitions", {
     project_id: input.project_id,
     key: input.key,
@@ -687,15 +687,15 @@ export async function createWorkflowDefinition(input: {
     binding_kinds: input.target_kinds,
     contract: input.contract,
   });
-  return mapWorkflowDefinition(raw);
+  return mapAgentProcedure(raw);
 }
 
-export async function getWorkflowDefinition(id: string): Promise<WorkflowDefinition> {
+export async function getAgentProcedure(id: string): Promise<AgentProcedure> {
   const raw = await api.get<Record<string, unknown>>(`/workflow-definitions/${id}`);
-  return mapWorkflowDefinition(raw);
+  return mapAgentProcedure(raw);
 }
 
-export async function updateWorkflowDefinition(
+export async function updateAgentProcedure(
   id: string,
   input: {
     name?: string;
@@ -703,17 +703,17 @@ export async function updateWorkflowDefinition(
     binding_kinds?: WorkflowTargetKind[];
     contract?: WorkflowContract;
   },
-): Promise<WorkflowDefinition> {
+): Promise<AgentProcedure> {
   const raw = await api.put<Record<string, unknown>>(`/workflow-definitions/${id}`, {
     name: input.name,
     description: input.description,
     binding_kinds: input.binding_kinds,
     contract: input.contract,
   });
-  return mapWorkflowDefinition(raw);
+  return mapAgentProcedure(raw);
 }
 
-export async function validateWorkflowDefinition(input: {
+export async function validateAgentProcedure(input: {
   project_id: string;
   key: string;
   name: string;
@@ -742,7 +742,7 @@ export async function validateWorkflowDefinition(input: {
   };
 }
 
-export async function deleteWorkflowDefinition(id: string): Promise<void> {
+export async function deleteAgentProcedure(id: string): Promise<void> {
   await api.delete(`/workflow-definitions/${id}`);
 }
 

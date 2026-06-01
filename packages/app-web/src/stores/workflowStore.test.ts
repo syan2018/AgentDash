@@ -40,10 +40,10 @@ describe("unified lifecycle editor", () => {
     expect(editor.draft?.key).toBe("my_wf");
     expect(editor.draft?.activities).toHaveLength(1);
     expect(editor.draft?.activities[0].key).toBe("start");
-    // 自动派生 workflow_key
+    // 自动派生 procedure_key
     expect(editor.draft?.activities[0].executor).toEqual({
       kind: "agent",
-      workflow_key: "my_wf_start",
+      procedure_key: "my_wf_start",
       session_policy: "spawn_child",
     });
     expect(editor.workflowDraftsByActivityKey["start"]).toBeDefined();
@@ -51,7 +51,7 @@ describe("unified lifecycle editor", () => {
     expect(selectedActivityKey(editor)).toBe("start");
   });
 
-  it("addLifecycleEditorActivity 添加新 step 自动派生 workflow_key 并选中", () => {
+  it("addLifecycleEditorActivity 添加新 step 自动派生 procedure_key 并选中", () => {
     const store = useWorkflowStore.getState();
     store.openLifecycleForm("project-1", { key: "lc1", initial_activity_key: "start" });
     const newKey = store.addLifecycleEditorActivity();

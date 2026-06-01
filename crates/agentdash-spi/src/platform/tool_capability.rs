@@ -529,7 +529,7 @@ pub fn platform_tool_descriptors() -> Vec<ToolDescriptor> {
         ToolDescriptor::platform_mcp(
             "upsert_lifecycle_tool",
             "Upsert Lifecycle",
-            "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.workflow_key 引用的 Workflow 必须已存在。",
+            "创建或更新 Lifecycle 定义（多步 DAG 编排）并自动绑定到当前 Project。保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。step.procedure_key 引用的 Workflow 必须已存在。",
             PlatformMcpScope::Workflow,
             CAP_WORKFLOW_MANAGEMENT,
         ),

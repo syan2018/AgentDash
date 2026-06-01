@@ -45,7 +45,7 @@ mod tests {
             preset_name: Some("preset".to_string()),
             source: "project.config.default_agent_type".to_string(),
             session: Some(ProjectAgentSession {
-                binding_id: "binding-1".to_string(),
+                run_ref: "run-ref-1".to_string(),
                 session_id: "sess-1".to_string(),
                 session_title: Some("title".to_string()),
                 last_activity: Some(1),
@@ -229,7 +229,7 @@ pub async fn open_project_agent_session(
     })?;
 
     let session = Some(ProjectAgentSession {
-        binding_id: dispatch_result.run_ref.to_string(),
+        run_ref: dispatch_result.run_ref.to_string(),
         session_id: meta.id.clone(),
         session_title: Some(meta.title),
         last_activity: Some(meta.updated_at),
@@ -239,7 +239,7 @@ pub async fn open_project_agent_session(
     Ok(Json(OpenProjectAgentSessionResult {
         created: true,
         session_id: meta.id,
-        binding_id: dispatch_result.run_ref.to_string(),
+        run_ref: dispatch_result.run_ref.to_string(),
         agent: summary,
     }))
 }
@@ -406,7 +406,7 @@ pub async fn create_project_agent(
         &state,
         project_id,
         req.default_lifecycle_key,
-        req.default_workflow_key,
+        req.default_procedure_key,
     )
     .await?;
 
@@ -470,12 +470,12 @@ pub async fn update_project_agent(
     if let Some(config) = req.config {
         agent.config = config;
     }
-    if req.default_lifecycle_key.is_some() || req.default_workflow_key.is_some() {
+    if req.default_lifecycle_key.is_some() || req.default_procedure_key.is_some() {
         agent.default_lifecycle_key = resolve_lifecycle_key_for_project_agent(
             &state,
             project_id,
             req.default_lifecycle_key,
-            req.default_workflow_key,
+            req.default_procedure_key,
         )
         .await?;
     }
@@ -548,15 +548,15 @@ pub async fn delete_project_agent(
     Ok(Json(DeletedFlagResponse { deleted: true }))
 }
 
-/// 统一处理 lifecycle_key / workflow_key 的解析
+/// 统一处理 lifecycle_key / procedure_key 的解析
 ///
-/// 如果用户指定了 `default_workflow_key`（单个 workflow），
+/// 如果用户指定了 `default_procedure_key`（单个 workflow），
 /// 自动创建一个单步 lifecycle 包装它。
 async fn resolve_lifecycle_key_for_project_agent(
     state: &Arc<AppState>,
     project_id: Uuid,
     lifecycle_key: Option<String>,
-    workflow_key: Option<String>,
+    procedure_key: Option<String>,
 ) -> Result<Option<String>, ApiError> {
     if let Some(lk) = lifecycle_key {
         let trimmed = lk.trim().to_string();
@@ -565,7 +565,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         }
         state
             .repos
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .get_by_project_and_key(project_id, &trimmed)
             .await
             .map_err(ApiError::from)?
@@ -573,7 +573,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         return Ok(Some(trimmed));
     }
 
-    if let Some(wk) = workflow_key {
+    if let Some(wk) = procedure_key {
         let wk = wk.trim().to_string();
         if wk.is_empty() {
             return Ok(None);
@@ -581,7 +581,7 @@ async fn resolve_lifecycle_key_for_project_agent(
 
         let workflow = state
             .repos
-            .workflow_definition_repo
+            .agent_procedure_repo
             .get_by_project_and_key(project_id, &wk)
             .await
             .map_err(ApiError::from)?
@@ -591,7 +591,7 @@ async fn resolve_lifecycle_key_for_project_agent(
 
         let existing = state
             .repos
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .get_by_project_and_key(project_id, &auto_key)
             .await
             .map_err(ApiError::from)?;
@@ -599,10 +599,10 @@ async fn resolve_lifecycle_key_for_project_agent(
         if existing.is_none() {
             use agentdash_domain::workflow::{
                 ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-                ActivityLifecycleDefinition, AgentActivityExecutorSpec, AgentSessionPolicy,
+                WorkflowGraph, AgentActivityExecutorSpec, AgentSessionPolicy,
                 WorkflowDefinitionSource,
             };
-            let lifecycle = ActivityLifecycleDefinition {
+            let lifecycle = WorkflowGraph {
                 id: Uuid::new_v4(),
                 project_id,
                 key: auto_key.clone(),
@@ -616,7 +616,7 @@ async fn resolve_lifecycle_key_for_project_agent(
                     key: "main".to_string(),
                     description: String::new(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: wk,
+                        procedure_key: wk,
                         session_policy: AgentSessionPolicy::ContinueRoot,
                     }),
                     output_ports: vec![],
@@ -632,7 +632,7 @@ async fn resolve_lifecycle_key_for_project_agent(
             };
             state
                 .repos
-                .activity_lifecycle_definition_repo
+                .workflow_graph_repo
                 .create(&lifecycle)
                 .await
                 .map_err(ApiError::from)?;
@@ -644,7 +644,7 @@ async fn resolve_lifecycle_key_for_project_agent(
     Ok(None)
 }
 
-/// 自动启动 lifecycle run（首步含 workflow_key 时同时激活首步）
+/// 自动启动 lifecycle run（首步含 procedure_key 时同时激活首步）
 /// 当前 ProjectAgent open 已迁移到 dispatch service；此函数保留供后续 Task/Routine 接入。
 #[allow(dead_code)]
 async fn auto_start_lifecycle_run(
@@ -659,7 +659,7 @@ async fn auto_start_lifecycle_run(
     };
 
     let service = ActivityLifecycleRunService::new(
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.activity_execution_claim_repo.as_ref(),
     )
@@ -680,7 +680,7 @@ async fn auto_start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: lifecycle_key.to_string(),
-            root_session_id: run.session_id.clone().unwrap_or_default(),
+            root_session_id: session_id.to_string(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),

@@ -102,7 +102,7 @@ export interface ActiveWorkflowHookMetadata {
   activity_key: string;
   activity_title: string;
   primary_workflow_id: string;
-  workflow_key?: string | null;
+  procedure_key?: string | null;
   primary_workflow_name: string;
 }
 

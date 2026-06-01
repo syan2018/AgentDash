@@ -64,7 +64,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityRunStatus,
+        WorkflowGraph, ActivityLifecycleRunState, ActivityRunStatus,
         BashExecExecutorSpec, FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition,
         WorkflowBindingKind, WorkflowDefinitionSource,
     };
@@ -94,7 +94,7 @@ mod tests {
             iteration_policy: Default::default(),
             join_policy: Default::default(),
         };
-        let lifecycle = ActivityLifecycleDefinition::new(
+        let lifecycle = WorkflowGraph::new(
             project_id,
             "workflow_admin",
             "Workflow Admin",
@@ -134,7 +134,7 @@ mod tests {
             lifecycle,
             active_activity: activity,
             active_node_type: agentdash_domain::workflow::LifecycleNodeType::AgentNode,
-            active_workflow_key: None,
+            active_procedure_key: None,
             primary_workflow: None,
         }
     }

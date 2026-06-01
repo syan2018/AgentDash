@@ -353,7 +353,6 @@ fn create_lifecycle_run(project_id: Uuid, lifecycle_id: Uuid) -> LifecycleRun {
         id: Uuid::new_v4(),
         project_id,
         lifecycle_id,
-        session_id: None,
         status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
         active_node_keys: Vec::new(),
         execution_log: Vec::new(),

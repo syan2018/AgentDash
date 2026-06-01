@@ -29,7 +29,7 @@ export type ActivityTransition = { from: string, to: string, kind: ActivityTrans
 
 export type ActivityTransitionKind = "flow" | "artifact";
 
-export type AgentActivityExecutorSpec = { workflow_key: string, session_policy: AgentSessionPolicy, };
+export type AgentActivityExecutorSpec = { procedure_key: string, session_policy: AgentSessionPolicy, };
 
 export type AgentSessionPolicy = "spawn_child" | "continue_root" | "attach_existing";
 
@@ -51,7 +51,7 @@ export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 
-export type DeleteWorkflowDefinitionResponse = { deleted: boolean, };
+export type DeleteAgentProcedureResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 

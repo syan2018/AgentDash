@@ -46,7 +46,7 @@ pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, materialize_step_summary};
 pub use freeform::{
-    FREEFORM_ACTIVITY_KEY, FREEFORM_AGENT_WORKFLOW_KEY, FREEFORM_LIFECYCLE_KEY,
+    FREEFORM_ACTIVITY_KEY, FREEFORM_AGENT_PROCEDURE_KEY, FREEFORM_LIFECYCLE_KEY,
     FREEFORM_SESSION_LABEL, FreeformLifecycleService, build_freeform_lifecycle,
     build_freeform_workflow,
 };

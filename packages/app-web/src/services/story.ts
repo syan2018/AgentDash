@@ -465,15 +465,15 @@ export async function fetchActiveStoryRun(storyId: string): Promise<StoryRunOver
   return response;
 }
 
-// ─── Story Session 绑定 API ──────────────────────────────
+// ─── Story Session API (runtime trace 查询) ──────────────────────────────
 
 export async function fetchStorySessionInfo(
   storyId: string,
-  bindingId: string,
+  sessionId: string,
 ): Promise<StorySessionInfo> {
-  const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/sessions/${bindingId}`);
+  const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/runtime-traces/${sessionId}`);
   return {
-    binding_id: requireStorySessionField(raw, "binding_id"),
+    run_ref: requireStorySessionField(raw, "run_ref"),
     session_id: requireStorySessionField(raw, "session_id"),
     session_title: readNullableStringField(raw, "session_title"),
     last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
@@ -481,27 +481,4 @@ export async function fetchStorySessionInfo(
     runtime_surface: (raw.runtime_surface as StorySessionInfo["runtime_surface"]) ?? null,
     context_snapshot: (raw.context_snapshot as StorySessionInfo["context_snapshot"]) ?? null,
   };
-}
-
-export async function fetchStorySessions(storyId: string): Promise<StorySessionEntry[]> {
-  const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/sessions`);
-  return response.map(mapStorySessionEntry);
-}
-
-export interface CreateStorySessionInput {
-  session_id?: string;
-  title?: string;
-  label?: string;
-}
-
-export async function createStorySession(
-  storyId: string,
-  input: CreateStorySessionInput,
-): Promise<StorySessionEntry> {
-  const raw = await api.post<Record<string, unknown>>(`/stories/${storyId}/sessions`, input);
-  return mapStorySessionEntry(raw);
-}
-
-export async function unbindStorySession(storyId: string, bindingId: string): Promise<void> {
-  await api.delete(`/stories/${storyId}/sessions/${bindingId}`);
 }

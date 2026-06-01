@@ -48,8 +48,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         project_repo: state.repos.project_repo.clone(),
         story_repo: state.repos.story_repo.clone(),
         workspace_repo: state.repos.workspace_repo.clone(),
-        workflow_definition_repo: state.repos.workflow_definition_repo.clone(),
-        activity_lifecycle_definition_repo: state.repos.activity_lifecycle_definition_repo.clone(),
+        agent_procedure_repo: state.repos.agent_procedure_repo.clone(),
+        workflow_graph_repo: state.repos.workflow_graph_repo.clone(),
         state_change_repo: state.repos.state_change_repo.clone(),
     });
     let mcp = McpRouterBuilder::new(mcp_services)

@@ -29,7 +29,7 @@ interface ProjectState {
     agent_type: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_workflow_key?: string;
+    default_procedure_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
   }) => Promise<ProjectAgent | null>;
@@ -38,7 +38,7 @@ interface ProjectState {
     agent_type?: string;
     config?: Record<string, unknown>;
     default_lifecycle_key?: string;
-    default_workflow_key?: string;
+    default_procedure_key?: string;
     is_default_for_story?: boolean;
     is_default_for_task?: boolean;
     knowledge_enabled?: boolean;
@@ -72,7 +72,7 @@ interface ProjectState {
   openProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
   forceNewProjectAgentSession: (projectId: string, agentKey: string) => Promise<OpenProjectAgentSessionResult | null>;
   fetchProjectAgentSessions: (projectId: string, agentKey: string) => Promise<ProjectAgentSession[]>;
-  fetchProjectSessionInfo: (projectId: string, bindingId: string) => Promise<ProjectSessionInfo | null>;
+  fetchProjectSessionInfo: (projectId: string, sessionId: string) => Promise<ProjectSessionInfo | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -413,9 +413,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  fetchProjectSessionInfo: async (projectId, bindingId) => {
+  fetchProjectSessionInfo: async (projectId, sessionId) => {
     try {
-      return await projectService.fetchProjectSessionInfo(projectId, bindingId);
+      return await projectService.fetchProjectSessionInfo(projectId, sessionId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

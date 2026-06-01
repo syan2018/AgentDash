@@ -4,12 +4,12 @@ import {
   mergeWorkflowPortsIntoLifecycleStep,
   syncLifecycleStepPortsForArtifactEdges,
 } from "./lifecycle-port-sync";
-import type { ActivityDefinition, ActivityTransition, WorkflowDefinition } from "../../../types";
+import type { ActivityDefinition, ActivityTransition, AgentProcedure } from "../../../types";
 
 function workflow(key: string, ports: {
   output?: string[];
   input?: string[];
-} = {}): WorkflowDefinition {
+} = {}): AgentProcedure {
   return {
     id: key,
     project_id: "project-1",
@@ -40,11 +40,11 @@ function workflow(key: string, ports: {
   };
 }
 
-function step(key: string, workflow_key: string): ActivityDefinition {
+function step(key: string, procedure_key: string): ActivityDefinition {
   return {
     key,
     description: "",
-    executor: { kind: "agent", workflow_key, session_policy: "spawn_child" },
+    executor: { kind: "agent", procedure_key, session_policy: "spawn_child" },
     output_ports: [],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },

@@ -352,12 +352,12 @@ fn project_source_status_response(status: ProjectAssetSourceStatus) -> ProjectAs
             .map(source_status_item_response)
             .collect(),
         status
-            .workflow_definitions
+            .agent_procedures
             .into_iter()
             .map(source_status_item_response)
             .collect(),
         status
-            .activity_lifecycle_definitions
+            .workflow_graphs
             .into_iter()
             .map(source_status_item_response)
             .collect(),

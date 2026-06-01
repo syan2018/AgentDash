@@ -15,13 +15,10 @@ import {
   canMapTaskFromPayload,
   mapStoryFromPayload,
   mapTaskFromPayload,
-  type CreateStorySessionInput,
   type StorySessionEntry,
   type TaskSessionPayload,
 } from '../services/story';
 import type { StorySessionInfo } from '../types';
-
-export type { CreateStorySessionInput } from '../services/story';
 
 export interface CreateTaskInput {
   title: string;
@@ -113,15 +110,13 @@ interface StoryState {
   cancelTaskExecution: (taskId: string) => Promise<Task | null>;
   refreshTask: (taskId: string) => Promise<Task | null>;
   fetchTaskSession: (taskId: string) => Promise<TaskSessionPayload | null>;
-  fetchStorySessionInfo: (storyId: string, bindingId: string) => Promise<StorySessionInfo | null>;
+  fetchStorySessionInfo: (storyId: string, sessionId: string) => Promise<StorySessionInfo | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
   fetchTasks: (storyId: string) => Promise<void>;
   fetchStoryRuns: (storyId: string) => Promise<void>;
   fetchStorySessions: (storyId: string) => Promise<void>;
-  createStorySession: (storyId: string, input: CreateStorySessionInput) => Promise<StorySessionEntry | null>;
-  unbindStorySession: (storyId: string, bindingId: string) => Promise<void>;
   handleStateChange: (change: StateChange) => void;
 }
 
@@ -428,9 +423,9 @@ export const useStoryStore = create<StoryState>((set) => ({
     }
   },
 
-  fetchStorySessionInfo: async (storyId, bindingId) => {
+  fetchStorySessionInfo: async (storyId, sessionId) => {
     try {
-      return await storyService.fetchStorySessionInfo(storyId, bindingId);
+      return await storyService.fetchStorySessionInfo(storyId, sessionId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;
@@ -486,42 +481,6 @@ export const useStoryStore = create<StoryState>((set) => ({
       set((s) => ({
         sessionsByStoryId: { ...s.sessionsByStoryId, [storyId]: bindings },
       }));
-    } catch (e) {
-      set({ error: (e as Error).message });
-    }
-  },
-
-  createStorySession: async (storyId, input) => {
-    try {
-      const binding = await storyService.createStorySession(storyId, input);
-      set((s) => {
-        const existing = s.sessionsByStoryId[storyId] ?? [];
-        return {
-          sessionsByStoryId: {
-            ...s.sessionsByStoryId,
-            [storyId]: [...existing, binding],
-          },
-        };
-      });
-      return binding;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  unbindStorySession: async (storyId, bindingId) => {
-    try {
-      await storyService.unbindStorySession(storyId, bindingId);
-      set((s) => {
-        const existing = s.sessionsByStoryId[storyId] ?? [];
-        return {
-          sessionsByStoryId: {
-            ...s.sessionsByStoryId,
-            [storyId]: existing.filter((b) => b.id !== bindingId),
-          },
-        };
-      });
     } catch (e) {
       set({ error: (e as Error).message });
     }

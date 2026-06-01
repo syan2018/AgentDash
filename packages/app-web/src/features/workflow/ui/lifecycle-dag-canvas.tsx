@@ -33,7 +33,7 @@ import type {
   ActivityTransition,
   TransitionCondition,
   ValidationIssue,
-  WorkflowDefinition,
+  AgentProcedure,
 } from "../../../types";
 import { ADD_NEW_INPUT_HANDLE, DagNode, type DagNodeData } from "./dag-node";
 import { applyDagreLayout, generateLinearEdges } from "../model/dag-layout";
@@ -70,7 +70,7 @@ function buildActivityTooltip(step: ActivityDefinition, workflowName: string | n
   const lines: string[] = [];
   if (step.description) lines.push(step.description);
   if (step.executor.kind === "agent") {
-    lines.push(`Agent · ${workflowName ?? step.executor.workflow_key} · ${step.executor.session_policy}`);
+    lines.push(`Agent · ${workflowName ?? step.executor.procedure_key} · ${step.executor.session_policy}`);
   } else if (step.executor.kind === "human") {
     lines.push(`Human · ${step.executor.title ?? step.executor.form_schema_key}`);
   } else {
@@ -97,14 +97,14 @@ function countValidationIssuesForActivity(issues: ValidationIssue[], activityKey
 function stepsToNodes(
   steps: ActivityDefinition[],
   entryStepKey: string,
-  workflowDefs: WorkflowDefinition[],
+  workflowDefs: AgentProcedure[],
   positions: Record<string, { x: number; y: number }>,
   validationIssues: ValidationIssue[],
 ): Node<DagNodeData>[] {
   const wfMap = new Map(workflowDefs.map((d) => [d.key, d]));
   return steps.map((step, idx) => {
-    const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key : null;
-    const wf = workflowKey ? wfMap.get(workflowKey) : null;
+    const ProcedureKey = step.executor.kind === "agent" ? step.executor.procedure_key : null;
+    const wf = ProcedureKey ? wfMap.get(ProcedureKey) : null;
     const data: DagNodeData = {
       activityKey: step.key,
       description: step.description,
@@ -227,7 +227,7 @@ export interface LifecycleDagCanvasProps {
   activities: ActivityDefinition[];
   transitions: ActivityTransition[];
   entryActivityKey: string;
-  workflowDefs: WorkflowDefinition[];
+  workflowDefs: AgentProcedure[];
   selectedActivityKey: string | null;
   /** 当前选中的 transition id（与 selectedActivityKey 互斥，由 shell 的 selection 模型派生） */
   selectedTransitionId?: string | null;

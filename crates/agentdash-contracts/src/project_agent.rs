@@ -35,7 +35,7 @@ pub struct ProjectAgentExecutor {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProjectAgentSession {
-    pub binding_id: String,
+    pub run_ref: String,
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -65,7 +65,7 @@ pub struct ProjectAgentSummary {
 pub struct OpenProjectAgentSessionResult {
     pub created: bool,
     pub session_id: String,
-    pub binding_id: String,
+    pub run_ref: String,
     pub agent: ProjectAgentSummary,
 }
 
@@ -98,7 +98,7 @@ pub struct CreateProjectAgentRequest {
     pub default_lifecycle_key: Option<String>,
     #[serde(default)]
     #[ts(optional)]
-    pub default_workflow_key: Option<String>,
+    pub default_procedure_key: Option<String>,
     #[serde(default)]
     pub is_default_for_story: bool,
     #[serde(default)]
@@ -121,7 +121,7 @@ pub struct UpdateProjectAgentRequest {
     pub default_lifecycle_key: Option<String>,
     #[serde(default)]
     #[ts(optional)]
-    pub default_workflow_key: Option<String>,
+    pub default_procedure_key: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub is_default_for_story: Option<bool>,

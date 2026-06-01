@@ -11,7 +11,7 @@ import type {
   InputPortDefinition,
   OutputPortDefinition,
   WorkflowContextBinding,
-  WorkflowDefinition,
+  AgentProcedure,
   WorkflowHookRuleSpec,
   WorkflowInjectionSpec,
   WorkflowTargetKind,
@@ -254,7 +254,7 @@ export function ExecutorSection({
 }: {
   activity: ActivityDefinition;
   workflowDraft: WorkflowEditorDraft;
-  availableWorkflows: WorkflowDefinition[];
+  availableWorkflows: AgentProcedure[];
   isEntry: boolean;
   onExecutorChange: (next: ActivityExecutorSpec) => void;
 }) {
@@ -263,7 +263,7 @@ export function ExecutorSection({
     if (kind === "agent") {
       onExecutorChange({
         kind: "agent",
-        workflow_key: workflowDraft.key,
+        procedure_key: workflowDraft.key,
         session_policy: "spawn_child",
       });
     } else if (kind === "human") {
@@ -303,7 +303,7 @@ export function ExecutorSection({
       {activity.executor.kind === "agent" && (
         <AgentExecutorForm
           executor={activity.executor}
-          workflowKeyHint={workflowDraft.key}
+          ProcedureKeyHint={workflowDraft.key}
           availableWorkflows={availableWorkflows}
           onChange={onExecutorChange}
         />
@@ -322,19 +322,19 @@ export function ExecutorSection({
 
 function AgentExecutorForm({
   executor,
-  workflowKeyHint,
+  ProcedureKeyHint,
   availableWorkflows,
   onChange,
 }: {
   executor: Extract<ActivityExecutorSpec, { kind: "agent" }>;
-  workflowKeyHint: string;
-  availableWorkflows: WorkflowDefinition[];
+  ProcedureKeyHint: string;
+  availableWorkflows: AgentProcedure[];
   onChange: (next: ActivityExecutorSpec) => void;
 }) {
   const sortedWorkflows = [...availableWorkflows].sort((a, b) =>
     a.name.localeCompare(b.name, "zh-CN"),
   );
-  const isOwn = executor.workflow_key === workflowKeyHint;
+  const isOwn = executor.procedure_key === ProcedureKeyHint;
   const mode: "own" | "reference" = isOwn ? "own" : "reference";
 
   return (
@@ -344,15 +344,15 @@ function AgentExecutorForm({
         <div className="flex gap-1 rounded-[8px] border border-border bg-secondary/35 p-1">
           <ModeButton
             active={mode === "own"}
-            onClick={() => onChange({ ...executor, workflow_key: workflowKeyHint })}
+            onClick={() => onChange({ ...executor, procedure_key: ProcedureKeyHint })}
           >
             专属（随此 activity 创建）
           </ModeButton>
           <ModeButton
             active={mode === "reference"}
             onClick={() => {
-              const first = sortedWorkflows.find((w) => w.key !== workflowKeyHint);
-              onChange({ ...executor, workflow_key: first?.key ?? "" });
+              const first = sortedWorkflows.find((w) => w.key !== ProcedureKeyHint);
+              onChange({ ...executor, procedure_key: first?.key ?? "" });
             }}
           >
             引用已有
@@ -363,23 +363,23 @@ function AgentExecutorForm({
       {mode === "own" ? (
         <div className="rounded-[8px] border border-primary/30 bg-primary/5 px-3 py-2">
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Workflow Key</p>
-          <p className="mt-0.5 truncate font-mono text-xs text-foreground">{workflowKeyHint}</p>
+          <p className="mt-0.5 truncate font-mono text-xs text-foreground">{ProcedureKeyHint}</p>
         </div>
       ) : (
         <div>
           <label className="agentdash-form-label">引用 Workflow</label>
           <select
-            value={executor.workflow_key}
-            onChange={(e) => onChange({ ...executor, workflow_key: e.target.value })}
+            value={executor.procedure_key}
+            onChange={(e) => onChange({ ...executor, procedure_key: e.target.value })}
             className="agentdash-form-select"
           >
-            {!sortedWorkflows.some((w) => w.key === executor.workflow_key) && (
-              <option value={executor.workflow_key}>
-                {executor.workflow_key || "(请选择)"}
+            {!sortedWorkflows.some((w) => w.key === executor.procedure_key) && (
+              <option value={executor.procedure_key}>
+                {executor.procedure_key || "(请选择)"}
               </option>
             )}
             {sortedWorkflows
-              .filter((w) => w.key !== workflowKeyHint)
+              .filter((w) => w.key !== ProcedureKeyHint)
               .map((w) => (
                 <option key={w.id} value={w.key}>
                   {w.name}{w.name !== w.key ? ` · ${w.key}` : ""}

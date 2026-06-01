@@ -53,7 +53,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
         activity_key: "check",
         activity_title: "Check",
         primary_workflow_id: "wf-1",
-        workflow_key: "demo_lifecycle_check",
+        procedure_key: "demo_lifecycle_check",
         primary_workflow_name: "Demo Task / Check",
       },
     },

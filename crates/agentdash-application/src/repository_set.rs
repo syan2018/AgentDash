@@ -23,10 +23,10 @@ use agentdash_domain::shared_library::{
 use agentdash_domain::skill_asset::SkillAssetRepository;
 use agentdash_domain::story::{StateChangeRepository, StoryRepository};
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, ActivityLifecycleDefinitionRepository,
+    ActivityExecutionClaimRepository, WorkflowGraphRepository,
     AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunLinkRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowDefinitionRepository,
+    LifecycleRunRepository, LifecycleSubjectAssociationRepository, AgentProcedureRepository,
     WorkflowGraphInstanceRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
@@ -62,9 +62,9 @@ pub struct RepositorySet {
     pub skill_asset_repo: Arc<dyn SkillAssetRepository>,
     pub project_agent_repo: Arc<dyn ProjectAgentRepository>,
     pub project_vfs_mount_repo: Arc<dyn ProjectVfsMountRepository>,
-    pub workflow_definition_repo: Arc<dyn WorkflowDefinitionRepository>,
+    pub agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     pub workflow_template_install_repo: Arc<dyn WorkflowTemplateInstallRepository>,
-    pub activity_lifecycle_definition_repo: Arc<dyn ActivityLifecycleDefinitionRepository>,
+    pub workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
     pub activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     pub lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     pub lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,

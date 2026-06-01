@@ -253,7 +253,7 @@ export interface WorkflowTemplate {
   };
 }
 
-export interface WorkflowDefinition {
+export interface AgentProcedure {
   id: string;
   project_id: string;
   key: string;
@@ -268,7 +268,7 @@ export interface WorkflowDefinition {
   updated_at: string;
 }
 
-export interface ActivityLifecycleDefinition {
+export interface WorkflowGraph {
   id: string;
   project_id: string;
   key: string;

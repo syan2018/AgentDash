@@ -160,7 +160,7 @@ impl LifecycleOrchestrator {
         );
 
         let service = ActivityLifecycleRunService::new(
-            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         )
@@ -193,7 +193,7 @@ impl LifecycleOrchestrator {
 
         let definition = self
             .repos
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .get_by_id(association.run.lifecycle_id)
             .await
             .map_err(|error| format!("加载 activity lifecycle definition 失败: {error}"))?
@@ -253,7 +253,7 @@ impl LifecycleOrchestrator {
         };
 
         let service = ActivityLifecycleRunService::new(
-            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         )
@@ -293,7 +293,7 @@ impl LifecycleOrchestrator {
         run: &LifecycleRun,
     ) -> Result<Vec<ActivatedNode>, String> {
         let service = ActivityLifecycleRunService::new(
-            self.repos.activity_lifecycle_definition_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
             self.repos.activity_execution_claim_repo.as_ref(),
         )
@@ -524,7 +524,7 @@ mod tests {
             key: "build".to_string(),
             description: String::new(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: "workflow".to_string(),
+                procedure_key: "workflow".to_string(),
                 session_policy: AgentSessionPolicy::SpawnChild,
             }),
             input_ports: Vec::new(),

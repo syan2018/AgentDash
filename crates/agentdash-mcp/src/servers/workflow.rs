@@ -17,9 +17,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleDefinition, ActivityTransition,
+    ActivityDefinition, ActivityExecutorSpec, WorkflowGraph, ActivityTransition,
     ActivityTransitionKind, ArtifactBinding, InputPortDefinition, OutputPortDefinition,
-    ValidationSeverity, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+    ValidationSeverity, WorkflowBindingKind, WorkflowContract, AgentProcedure,
     WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
     workflow_binding_kinds_cover,
 };
@@ -34,7 +34,7 @@ use crate::services::McpServices;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GetWorkflowParams {
     #[schemars(description = "Workflow 唯一标识 key")]
-    pub workflow_key: String,
+    pub procedure_key: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -122,7 +122,7 @@ pub struct ActivityInput {
     #[schemars(description = "Activity 描述")]
     pub description: Option<String>,
     #[schemars(
-        description = "Activity executor；agent executor 必须引用当前 Project 内已存在的 workflow_key"
+        description = "Activity executor；agent executor 必须引用当前 Project 内已存在的 procedure_key"
     )]
     pub executor: Value,
     #[schemars(description = "输入端口列表")]
@@ -202,9 +202,9 @@ impl WorkflowMcpServer {
     /// Upsert workflow：按 key 查重，存在则更新版本，不存在则创建。
     async fn upsert_workflow(
         &self,
-        definition: WorkflowDefinition,
-    ) -> Result<WorkflowDefinition, McpError> {
-        let repo = self.services.workflow_definition_repo.as_ref();
+        definition: AgentProcedure,
+    ) -> Result<AgentProcedure, McpError> {
+        let repo = self.services.agent_procedure_repo.as_ref();
 
         if let Some(existing) = repo
             .get_by_project_and_key(self.project_id, &definition.key)
@@ -227,11 +227,11 @@ impl WorkflowMcpServer {
 
     async fn validate_workflow_binding_references(
         &self,
-        definition: &WorkflowDefinition,
+        definition: &AgentProcedure,
     ) -> Result<(), McpError> {
         let lifecycles = self
             .services
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .list_by_project(self.project_id)
             .await
             .map_err(McpError::from)?;
@@ -243,7 +243,7 @@ impl WorkflowMcpServer {
                     .iter()
                     .filter_map(|activity| match &activity.executor {
                         ActivityExecutorSpec::Agent(agent)
-                            if agent.workflow_key == definition.key.as_str() =>
+                            if agent.procedure_key == definition.key.as_str() =>
                         {
                             Some(activity.key.as_str())
                         }
@@ -286,19 +286,19 @@ impl WorkflowMcpServer {
     /// Upsert activity lifecycle：先做完整校验（域层 + workflow 引用），再持久化。
     async fn upsert_lifecycle_definition(
         &self,
-        lifecycle: ActivityLifecycleDefinition,
-    ) -> Result<ActivityLifecycleDefinition, McpError> {
+        lifecycle: WorkflowGraph,
+    ) -> Result<WorkflowGraph, McpError> {
         // 域层结构校验
         let mut issues = lifecycle.validate_full();
 
         // workflow 引用校验
-        let repo = self.services.workflow_definition_repo.as_ref();
+        let repo = self.services.agent_procedure_repo.as_ref();
         for (idx, activity) in lifecycle.activities.iter().enumerate() {
             let ActivityExecutorSpec::Agent(agent) = &activity.executor else {
                 continue;
             };
             match repo
-                .get_by_project_and_key(lifecycle.project_id, &agent.workflow_key)
+                .get_by_project_and_key(lifecycle.project_id, &agent.procedure_key)
                 .await
             {
                 Ok(Some(wf)) => {
@@ -307,9 +307,9 @@ impl WorkflowMcpServer {
                             "binding_kind_mismatch",
                             format!(
                                 "activity `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
-                                activity.key, agent.workflow_key, wf.binding_kinds, lifecycle.binding_kinds
+                                activity.key, agent.procedure_key, wf.binding_kinds, lifecycle.binding_kinds
                             ),
-                            format!("activities[{idx}].executor.workflow_key"),
+                            format!("activities[{idx}].executor.procedure_key"),
                         ));
                     }
                 }
@@ -318,9 +318,9 @@ impl WorkflowMcpServer {
                         "workflow_not_found",
                         format!(
                             "activity `{}` 引用的 workflow `{}` 不存在，请先通过 upsert_workflow 创建",
-                            activity.key, agent.workflow_key
+                            activity.key, agent.procedure_key
                         ),
-                        format!("activities[{idx}].executor.workflow_key"),
+                        format!("activities[{idx}].executor.procedure_key"),
                     ));
                 }
                 Err(e) => {
@@ -344,7 +344,7 @@ impl WorkflowMcpServer {
             ));
         }
 
-        let lc_repo = self.services.activity_lifecycle_definition_repo.as_ref();
+        let lc_repo = self.services.workflow_graph_repo.as_ref();
         if let Some(existing) = lc_repo
             .get_by_project_and_key(lifecycle.project_id, &lifecycle.key)
             .await
@@ -551,14 +551,14 @@ impl WorkflowMcpServer {
         self.require_project(McpProjectPermission::View).await?;
         let workflows = self
             .services
-            .workflow_definition_repo
+            .agent_procedure_repo
             .list_by_project(self.project_id)
             .await
             .map_err(|e| McpError::Internal(format!("加载 workflow 列表失败: {e}")))?;
 
         let lifecycles = self
             .services
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .list_by_project(self.project_id)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 列表失败: {e}")))?;
@@ -597,11 +597,11 @@ impl WorkflowMcpServer {
         self.require_project(McpProjectPermission::View).await?;
         let workflow = self
             .services
-            .workflow_definition_repo
-            .get_by_project_and_key(self.project_id, &params.workflow_key)
+            .agent_procedure_repo
+            .get_by_project_and_key(self.project_id, &params.procedure_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 workflow 失败: {e}")))?
-            .ok_or_else(|| McpError::not_found("WorkflowDefinition", &params.workflow_key))?;
+            .ok_or_else(|| McpError::not_found("AgentProcedure", &params.procedure_key))?;
 
         let result = serde_json::to_value(&workflow)
             .map_err(|e| McpError::Internal(format!("序列化失败: {e}")))?;
@@ -621,12 +621,12 @@ impl WorkflowMcpServer {
         self.require_project(McpProjectPermission::View).await?;
         let lifecycle = self
             .services
-            .activity_lifecycle_definition_repo
+            .workflow_graph_repo
             .get_by_project_and_key(self.project_id, &params.lifecycle_key)
             .await
             .map_err(|e| McpError::Internal(format!("加载 lifecycle 失败: {e}")))?
             .ok_or_else(|| {
-                McpError::not_found("ActivityLifecycleDefinition", &params.lifecycle_key)
+                McpError::not_found("WorkflowGraph", &params.lifecycle_key)
             })?;
 
         let result = serde_json::to_value(&lifecycle)
@@ -648,7 +648,7 @@ impl WorkflowMcpServer {
         let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let contract = build_contract(&params.contract)?;
 
-        let definition = WorkflowDefinition::new(
+        let definition = AgentProcedure::new(
             self.project_id,
             params.key,
             params.name,
@@ -668,7 +668,7 @@ impl WorkflowMcpServer {
     }
 
     #[tool(
-        description = "创建或更新 Activity Lifecycle 定义（多 Activity DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。agent executor 引用的 workflow_key 必须已存在。"
+        description = "创建或更新 Activity Lifecycle 定义（多 Activity DAG 编排）并自动绑定到当前 Project。\n\n保存时自动校验 DAG 拓扑、port 契约和 workflow 引用。agent executor 引用的 procedure_key 必须已存在。"
     )]
     async fn upsert_lifecycle_tool(
         &self,
@@ -679,7 +679,7 @@ impl WorkflowMcpServer {
         let activities = build_activities(&params.activities)?;
         let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default())?;
 
-        let definition = ActivityLifecycleDefinition::new(
+        let definition = WorkflowGraph::new(
             self.project_id,
             params.key,
             params.name,
@@ -717,8 +717,8 @@ impl ServerHandler for WorkflowMcpServer {
 
 ## 领域模型
 
-- **WorkflowDefinition**：单步行为契约，定义一个 Agent session 的注入规则、I/O ports 和 hook 脚本。output ports 同时作为完成门禁。
-- **ActivityLifecycleDefinition**：多 Activity DAG 编排，每个 Activity 通过 executor 描述执行主体；agent executor 引用 Workflow，function/human executor 可直接作为编排节点。
+- **AgentProcedure**：单步行为契约，定义一个 Agent session 的注入规则、I/O ports 和 hook 脚本。output ports 同时作为完成门禁。
+- **WorkflowGraph**：多 Activity DAG 编排，每个 Activity 通过 executor 描述执行主体；agent executor 引用 Workflow，function/human executor 可直接作为编排节点。
 
 ## 推荐流程
 
@@ -729,7 +729,7 @@ impl ServerHandler for WorkflowMcpServer {
 
 ## 注意事项
 
-- agent executor 的 workflow_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
+- agent executor 的 procedure_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
 - binding_kinds 可设置为一个或多个挂载类型（project / story），后续可编辑
 - hook_rules 支持 preset（预设名引用）和 script（Rhai 脚本）两种模式
 - 所有写操作都会即时校验，失败会返回详细错误信息供修正"#,

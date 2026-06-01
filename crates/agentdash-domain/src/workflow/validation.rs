@@ -1,16 +1,16 @@
 use super::value_objects::*;
 
-pub fn validate_workflow_definition(
+pub fn validate_agent_procedure(
     key: &str,
     name: &str,
     contract: &WorkflowContract,
 ) -> Result<(), String> {
-    validate_identity("workflow.key", key)?;
-    validate_non_empty("workflow.name", name)?;
-    validate_contract(contract, "workflow.contract")
+    validate_identity("procedure.key", key)?;
+    validate_non_empty("procedure.name", name)?;
+    validate_contract(contract, "procedure.contract")
 }
 
-pub fn validate_activity_lifecycle_definition(
+pub fn validate_workflow_graph(
     key: &str,
     name: &str,
     entry_activity_key: &str,
@@ -67,7 +67,7 @@ fn validate_activity_executor(
 ) -> Result<(), String> {
     match executor {
         ActivityExecutorSpec::Agent(spec) => {
-            validate_identity(&format!("{field_path}.workflow_key"), &spec.workflow_key)?;
+            validate_identity(&format!("{field_path}.procedure_key"), &spec.procedure_key)?;
         }
         ActivityExecutorSpec::Function(FunctionActivityExecutorSpec::ApiRequest(spec)) => {
             validate_non_empty(&format!("{field_path}.method"), &spec.method)?;

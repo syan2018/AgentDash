@@ -3,7 +3,7 @@ import type {
   ActivityTransition,
   InputPortDefinition,
   OutputPortDefinition,
-  WorkflowDefinition,
+  AgentProcedure,
 } from "../../../types";
 
 function cloneOutputPort(port: OutputPortDefinition): OutputPortDefinition {
@@ -29,15 +29,15 @@ function fallbackInputPort(key: string): InputPortDefinition {
 
 function workflowForStep(
   step: ActivityDefinition,
-  workflowByKey: Map<string, WorkflowDefinition>,
-): WorkflowDefinition | null {
-  const workflowKey = step.executor.kind === "agent" ? step.executor.workflow_key.trim() : "";
-  return workflowKey ? workflowByKey.get(workflowKey) ?? null : null;
+  workflowByKey: Map<string, AgentProcedure>,
+): AgentProcedure | null {
+  const ProcedureKey = step.executor.kind === "agent" ? step.executor.procedure_key.trim() : "";
+  return ProcedureKey ? workflowByKey.get(ProcedureKey) ?? null : null;
 }
 
 export function mergeWorkflowPortsIntoLifecycleStep(
   step: ActivityDefinition,
-  workflow: WorkflowDefinition,
+  workflow: AgentProcedure,
 ): ActivityDefinition {
   const existingOutputKeys = new Set(step.output_ports.map((port) => port.key));
   const existingInputKeys = new Set(step.input_ports.map((port) => port.key));
@@ -67,7 +67,7 @@ export function mergeWorkflowPortsIntoLifecycleStep(
 export function syncLifecycleStepPortsForArtifactEdges(input: {
   steps: ActivityDefinition[];
   edges: ActivityTransition[];
-  workflows: WorkflowDefinition[];
+  workflows: AgentProcedure[];
 }): { steps: ActivityDefinition[]; changed: boolean } {
   const workflowByKey = new Map(input.workflows.map((workflow) => [workflow.key, workflow]));
   const stepIndexByKey = new Map(input.steps.map((step, index) => [step.key, index]));

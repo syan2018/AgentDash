@@ -41,7 +41,7 @@ pub use run_state::{
 };
 
 #[cfg(test)]
-use super::validation::{validate_activity_lifecycle_definition, validate_workflow_definition};
+use super::validation::{validate_workflow_graph, validate_agent_procedure};
 
 #[cfg(test)]
 mod tests {
@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_workflow_definition_rejects_duplicate_output_port_keys() {
+    fn validate_agent_procedure_rejects_duplicate_output_port_keys() {
         let mut contract = sample_contract();
         contract.output_ports = vec![
             OutputPortDefinition {
@@ -82,7 +82,7 @@ mod tests {
             },
         ];
 
-        let error = validate_workflow_definition("wf", "Workflow", &contract).expect_err("fail");
+        let error = validate_agent_procedure("wf", "Workflow", &contract).expect_err("fail");
         assert!(error.contains("重复"));
     }
 
@@ -95,7 +95,7 @@ mod tests {
             key: key.to_string(),
             description: String::new(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: format!("workflow.{key}"),
+                procedure_key: format!("workflow.{key}"),
                 session_policy: AgentSessionPolicy::SpawnChild,
             }),
             input_ports,
@@ -156,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_activity_lifecycle_accepts_human_approval_loop() {
+    fn validate_workflow_graph_accepts_human_approval_loop() {
         let activities = vec![
             activity_agent(
                 "plan",
@@ -224,7 +224,7 @@ mod tests {
             },
         ];
 
-        validate_activity_lifecycle_definition(
+        validate_workflow_graph(
             "lc",
             "Lifecycle",
             "plan",
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_missing_artifact_port() {
+    fn validate_workflow_graph_rejects_missing_artifact_port() {
         let activities = vec![
             activity_agent("plan", vec![], vec![output_port("proposal")]),
             activity_agent("implement", vec![input_port("approved_plan")], vec![]),
@@ -254,7 +254,7 @@ mod tests {
             max_traversals: None,
         }];
 
-        let err = validate_activity_lifecycle_definition(
+        let err = validate_workflow_graph(
             "lc",
             "Lifecycle",
             "plan",
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_unbounded_entry_loop() {
+    fn validate_workflow_graph_rejects_unbounded_entry_loop() {
         let mut plan = activity_agent("plan", vec![], vec![output_port("proposal")]);
         plan.iteration_policy.max_attempts = None;
         let activities = vec![
@@ -297,7 +297,7 @@ mod tests {
             },
         ];
 
-        let err = validate_activity_lifecycle_definition(
+        let err = validate_workflow_graph(
             "lc",
             "Lifecycle",
             "plan",
@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_activity_lifecycle_rejects_unconditional_self_loop() {
+    fn validate_workflow_graph_rejects_unconditional_self_loop() {
         let activities = vec![activity_agent(
             "plan",
             vec![],
@@ -324,7 +324,7 @@ mod tests {
             max_traversals: Some(3),
         }];
 
-        let err = validate_activity_lifecycle_definition(
+        let err = validate_workflow_graph(
             "lc",
             "Lifecycle",
             "plan",
@@ -369,13 +369,13 @@ mod tests {
     #[test]
     fn activity_executor_serializes_agent_kind() {
         let executor = ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-            workflow_key: "workflow.plan".to_string(),
+            procedure_key: "workflow.plan".to_string(),
             session_policy: AgentSessionPolicy::SpawnChild,
         });
 
         let value = serde_json::to_value(executor).expect("serialize executor");
         assert_eq!(value["kind"], "agent");
-        assert_eq!(value["workflow_key"], "workflow.plan");
+        assert_eq!(value["procedure_key"], "workflow.plan");
         assert_eq!(value["session_policy"], "spawn_child");
     }
 

@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
-    ActivityLifecycleDefinition, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
+    WorkflowGraph, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
     FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
 };
 use agentdash_spi::CapabilityScope;
@@ -67,17 +67,17 @@ pub trait AgentActivitySessionPort: Send + Sync {
     ) -> Result<(), String>;
     async fn apply_continue_root_activity(
         &self,
-        _definition: &ActivityLifecycleDefinition,
+        _definition: &WorkflowGraph,
         _activity: &ActivityDefinition,
         _claim: &ActivityExecutionClaim,
-        _workflow_key: &str,
+        _procedure_key: &str,
         _root_session_id: &str,
     ) -> Result<(), String> {
         Ok(())
     }
     async fn execute_function_activity(
         &self,
-        _definition: &ActivityLifecycleDefinition,
+        _definition: &WorkflowGraph,
         _activity: &ActivityDefinition,
         _claim: &ActivityExecutionClaim,
         _spec: &FunctionActivityExecutorSpec,
@@ -191,10 +191,10 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
 
     async fn apply_continue_root_activity(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
-        workflow_key: &str,
+        procedure_key: &str,
         root_session_id: &str,
     ) -> Result<(), String> {
         let session_hooks = self
@@ -211,11 +211,11 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .ok_or_else(|| "ContinueRoot 缺少 platform config".to_string())?;
         let workflow = self
             .repos
-            .workflow_definition_repo
-            .get_by_project_and_key(definition.project_id, workflow_key)
+            .agent_procedure_repo
+            .get_by_project_and_key(definition.project_id, procedure_key)
             .await
             .map_err(|error| format!("加载 ContinueRoot workflow 失败: {error}"))?
-            .ok_or_else(|| format!("ContinueRoot workflow 不存在: {workflow_key}"))?;
+            .ok_or_else(|| format!("ContinueRoot workflow 不存在: {procedure_key}"))?;
 
         let available_presets =
             crate::session::load_available_presets(&self.repos, definition.project_id).await;
@@ -368,7 +368,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
 
     async fn execute_function_activity(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
         spec: &FunctionActivityExecutorSpec,
@@ -393,7 +393,7 @@ where
 {
     async fn start(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
     ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
@@ -414,7 +414,7 @@ where
                     self.start_continue_root(
                         definition,
                         activity,
-                        spec.workflow_key.as_str(),
+                        spec.procedure_key.as_str(),
                         state,
                         claim,
                     )
@@ -447,7 +447,7 @@ where
 {
     async fn start_spawn_child(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         claim: &ActivityExecutionClaim,
     ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
         let title = format!(
@@ -488,9 +488,9 @@ where
 
     async fn start_continue_root(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         activity: &ActivityDefinition,
-        workflow_key: &str,
+        procedure_key: &str,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
     ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
@@ -518,7 +518,7 @@ where
                 definition,
                 activity,
                 claim,
-                workflow_key,
+                procedure_key,
                 &self.context.root_session_id,
             )
             .await
@@ -532,7 +532,7 @@ where
 
     async fn start_function(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
         spec: &FunctionActivityExecutorSpec,
@@ -552,7 +552,7 @@ where
 
 async fn execute_function_activity(
     function_runner: &dyn FunctionRunner,
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
     spec: &FunctionActivityExecutorSpec,
@@ -646,7 +646,7 @@ async fn execute_bash(
 }
 
 fn function_template_context(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     activity: &ActivityDefinition,
     claim: &ActivityExecutionClaim,
     state: &ActivityLifecycleRunState,
@@ -818,10 +818,10 @@ mod tests {
 
         async fn apply_continue_root_activity(
             &self,
-            _definition: &ActivityLifecycleDefinition,
+            _definition: &WorkflowGraph,
             _activity: &ActivityDefinition,
             claim: &ActivityExecutionClaim,
-            _workflow_key: &str,
+            _procedure_key: &str,
             _root_session_id: &str,
         ) -> Result<(), String> {
             self.continue_root_applies
@@ -833,7 +833,7 @@ mod tests {
 
         async fn execute_function_activity(
             &self,
-            definition: &ActivityLifecycleDefinition,
+            definition: &WorkflowGraph,
             activity: &ActivityDefinition,
             claim: &ActivityExecutionClaim,
             spec: &FunctionActivityExecutorSpec,
@@ -854,8 +854,8 @@ mod tests {
         }
     }
 
-    fn definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn definition(project_id: uuid::Uuid) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "agent_flow",
             "Agent flow",
@@ -867,7 +867,7 @@ mod tests {
                 key: "plan".to_string(),
                 description: "plan".to_string(),
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    workflow_key: "wf_plan".to_string(),
+                    procedure_key: "wf_plan".to_string(),
                     session_policy: AgentSessionPolicy::SpawnChild,
                 }),
                 input_ports: vec![],
@@ -883,12 +883,12 @@ mod tests {
         .expect("definition")
     }
 
-    fn continue_root_definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
+    fn continue_root_definition(project_id: uuid::Uuid) -> WorkflowGraph {
         continue_root_definition_with_activities(project_id, &["plan"])
     }
 
-    fn human_approval_definition(project_id: uuid::Uuid) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn human_approval_definition(project_id: uuid::Uuid) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "approval_flow",
             "Approval flow",
@@ -921,8 +921,8 @@ mod tests {
     fn function_definition(
         project_id: uuid::Uuid,
         spec: FunctionActivityExecutorSpec,
-    ) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    ) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "function_flow",
             "Function flow",
@@ -994,8 +994,8 @@ mod tests {
     fn continue_root_definition_with_activities(
         project_id: uuid::Uuid,
         activity_keys: &[&str],
-    ) -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    ) -> WorkflowGraph {
+        WorkflowGraph::new(
             project_id,
             "agent_flow",
             "Agent flow",
@@ -1009,7 +1009,7 @@ mod tests {
                     key: (*key).to_string(),
                     description: (*key).to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: format!("wf_{key}"),
+                        procedure_key: format!("wf_{key}"),
                         session_policy: AgentSessionPolicy::ContinueRoot,
                     }),
                     input_ports: vec![],

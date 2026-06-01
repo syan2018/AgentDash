@@ -195,7 +195,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                     activity_title: Some(step_title),
                     activity_status,
                     node_type,
-                    procedure_key: workflow.active_workflow_key.clone(),
+                    procedure_key: workflow.active_procedure_key.clone(),
                     transition_policy: Some(transition_policy.to_string()),
                     primary_workflow_id: workflow.primary_workflow.as_ref().map(|w| w.id),
                     primary_workflow_name: workflow

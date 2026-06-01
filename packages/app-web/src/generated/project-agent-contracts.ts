@@ -3,18 +3,18 @@
 
 import type { JsonValue } from "./common-contracts";
 
-export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, default_workflow_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
+export type CreateProjectAgentRequest = { name: string, agent_type: string, config?: JsonValue, default_lifecycle_key?: string, default_procedure_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, };
 
-export type OpenProjectAgentSessionResult = { created: boolean, session_id: string, binding_id: string, agent: ProjectAgentSummary, };
+export type OpenProjectAgentSessionResult = { created: boolean, session_id: string, run_ref: string, agent: ProjectAgentSummary, };
 
 export type ProjectAgent = { id: string, project_id: string, name: string, agent_type: string, config: JsonValue, default_lifecycle_key?: string, is_default_for_story: boolean, is_default_for_task: boolean, knowledge_enabled: boolean, created_at: string, updated_at: string, };
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentSession = { binding_id: string, session_id: string, session_title?: string, last_activity?: number, };
+export type ProjectAgentSession = { run_ref: string, session_id: string, session_title?: string, last_activity?: number, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, session?: ProjectAgentSession, };
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, default_workflow_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };
+export type UpdateProjectAgentRequest = { name?: string, agent_type?: string, config?: JsonValue, default_lifecycle_key?: string, default_procedure_key?: string, is_default_for_story?: boolean, is_default_for_task?: boolean, knowledge_enabled?: boolean, };

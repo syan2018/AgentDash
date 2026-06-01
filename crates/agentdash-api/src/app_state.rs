@@ -231,9 +231,9 @@ impl AppState {
                 state_change_repo: state_change_repo_port.clone(),
                 story_repo: story_repo_port.clone(),
                 lifecycle_subject_association_repo: repos.lifecycle_subject_association_repo.clone(),
-                workflow_definition_repo: repos.workflow_definition_repo.clone(),
-                activity_lifecycle_definition_repo: repos
-                    .activity_lifecycle_definition_repo
+                agent_procedure_repo: repos.agent_procedure_repo.clone(),
+                workflow_graph_repo: repos
+                    .workflow_graph_repo
                     .clone(),
                 lifecycle_run_repo: repos.lifecycle_run_repo.clone(),
             };

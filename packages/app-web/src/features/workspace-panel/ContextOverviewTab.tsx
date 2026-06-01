@@ -236,9 +236,9 @@ function WorkflowContextCard({
             Run · {RUN_STATUS_LABEL[activeRun.status] ?? activeRun.status}
           </span>
         )}
-        {activeWorkflow?.workflow_key && (
+        {activeWorkflow?.procedure_key && (
           <span className="rounded-[8px] border border-border bg-secondary/50 px-2 py-1 text-[11px] text-muted-foreground">
-            Workflow · {activeWorkflow.workflow_key}
+            Workflow · {activeWorkflow.procedure_key}
           </span>
         )}
         {activeAttempt && (

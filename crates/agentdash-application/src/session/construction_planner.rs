@@ -190,8 +190,8 @@ impl SessionConstructionPlanner {
             || (resolved_config.is_none() && default_agent_type.is_some());
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
             repos.activity_execution_claim_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
@@ -228,8 +228,8 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
-                workflow_def: repos.workflow_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.workflow_graph_repo.as_ref(),
+                workflow_def: repos.agent_procedure_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Story {
                 project_id: story.project_id,
@@ -332,8 +332,8 @@ impl SessionConstructionPlanner {
             .is_some_and(|c| c.is_cloud_native());
         let active_workflow = resolve_active_workflow_projection_for_session(
             &session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
             repos.activity_execution_claim_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
@@ -393,8 +393,8 @@ impl SessionConstructionPlanner {
         let workflow_tool = crate::capability::resolve_session_workflow_context(
             crate::capability::SessionWorkflowRepos {
                 project_agent: repos.project_agent_repo.as_ref(),
-                activity_lifecycle_def: repos.activity_lifecycle_definition_repo.as_ref(),
-                workflow_def: repos.workflow_definition_repo.as_ref(),
+                activity_lifecycle_def: repos.workflow_graph_repo.as_ref(),
+                workflow_def: repos.agent_procedure_repo.as_ref(),
             },
             crate::capability::SessionWorkflowOwner::Project {
                 project_id: project.id,

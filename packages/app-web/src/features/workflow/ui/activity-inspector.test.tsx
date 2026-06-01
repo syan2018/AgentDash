@@ -19,7 +19,7 @@ function makeActivity(
   return {
     key: "implement",
     description: "实现该需求",
-    executor: { kind: "agent", workflow_key: "demo.implement", session_policy: "spawn_child" },
+    executor: { kind: "agent", procedure_key: "demo.implement", session_policy: "spawn_child" },
     output_ports: [{ key: "done", description: "完成", gate_strategy: "existence" }],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityInputArtifact,
-    ActivityLifecycleDefinition, ActivityLifecycleRunState, ActivityOutputArtifact,
+    WorkflowGraph, ActivityLifecycleRunState, ActivityOutputArtifact,
     ActivityPortValue, ActivityRunStatus, ActivityTransition, ExecutorRunRef, TransitionCondition,
 };
 
@@ -109,7 +109,7 @@ pub struct LifecycleEngine;
 
 impl LifecycleEngine {
     pub fn initialize(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         graph_instance_id: uuid::Uuid,
     ) -> Result<ActivityLifecycleRunState, LifecycleEngineError> {
         if !definition
@@ -157,7 +157,7 @@ impl LifecycleEngine {
     }
 
     pub fn apply_event(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         event: ActivityEvent,
     ) -> Result<(), LifecycleEngineError> {
@@ -256,7 +256,7 @@ impl LifecycleEngine {
 }
 
 fn complete_attempt(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     activity_key: &str,
     attempt: u32,
@@ -337,7 +337,7 @@ fn validate_completion_policy(
 }
 
 fn advance_successors(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     completed_activity_key: &str,
 ) -> Result<(), LifecycleEngineError> {
@@ -377,7 +377,7 @@ fn advance_successors(
 }
 
 fn create_ready_attempt(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
     activity_key: &str,
     incoming: &[&ActivityTransition],
@@ -468,7 +468,7 @@ fn bind_transition_artifacts(
 }
 
 fn transition_condition_matches(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &ActivityLifecycleRunState,
     transition: &ActivityTransition,
 ) -> bool {
@@ -583,7 +583,7 @@ fn expect_status(
 }
 
 fn derive_run_status(
-    definition: &ActivityLifecycleDefinition,
+    definition: &WorkflowGraph,
     state: &mut ActivityLifecycleRunState,
 ) {
     if state.attempts.iter().any(|attempt| {
@@ -668,8 +668,8 @@ mod tests {
         }
     }
 
-    fn approval_definition() -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn approval_definition() -> WorkflowGraph {
+        WorkflowGraph::new(
             Uuid::new_v4(),
             "approval_flow",
             "Approval flow",
@@ -682,7 +682,7 @@ mod tests {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_plan".to_string(),
+                        procedure_key: "wf_plan".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
@@ -732,7 +732,7 @@ mod tests {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_implement".to_string(),
+                        procedure_key: "wf_implement".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
@@ -801,8 +801,8 @@ mod tests {
         .expect("definition")
     }
 
-    fn artifact_condition_definition() -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn artifact_condition_definition() -> WorkflowGraph {
+        WorkflowGraph::new(
             Uuid::new_v4(),
             "artifact_condition",
             "Artifact condition",
@@ -815,7 +815,7 @@ mod tests {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_plan".to_string(),
+                        procedure_key: "wf_plan".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![],
@@ -830,7 +830,7 @@ mod tests {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_implement".to_string(),
+                        procedure_key: "wf_implement".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
@@ -869,7 +869,7 @@ mod tests {
     }
 
     fn start_attempt(
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         activity_key: &str,
         attempt: u32,

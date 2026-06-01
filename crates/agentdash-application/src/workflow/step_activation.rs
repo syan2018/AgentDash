@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, MountDirective, ToolCapabilityDirective, WorkflowDefinition,
+    ActivityDefinition, MountDirective, ToolCapabilityDirective, AgentProcedure,
 };
 use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::SharedHookSessionRuntime;
@@ -45,11 +45,11 @@ pub struct StepActivationInput<'a> {
     /// Session 的能力作用域（包含 entity ID，用于 MCP scope 注入）。
     pub owner_ctx: CapabilityScopeCtx,
     /// 当前激活的 activity 定义;提供 output/input ports、key、description。
-    /// node_type / workflow_key 由 executor 推导,激活计算本身不需要。
+    /// node_type / procedure_key 由 executor 推导,激活计算本身不需要。
     pub active_activity: &'a ActivityDefinition,
     /// step 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
-    pub workflow: Option<&'a WorkflowDefinition>,
+    pub workflow: Option<&'a AgentProcedure>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
     pub run_id: Uuid,
     /// lifecycle key,lifecycle mount 路径的一部分。
@@ -397,7 +397,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, CapabilityConfig,
-        MountDirective, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
+        MountDirective, WorkflowBindingKind, WorkflowContract, AgentProcedure,
         WorkflowDefinitionSource,
     };
 
@@ -408,7 +408,7 @@ mod tests {
             key: "implement".to_string(),
             description: "实现并记录结果".to_string(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: "wf_impl".to_string(),
+                procedure_key: "wf_impl".to_string(),
                 session_policy: Default::default(),
             }),
             input_ports: vec![],
@@ -419,7 +419,7 @@ mod tests {
         }
     }
 
-    fn sample_workflow(directives: Vec<ToolCapabilityDirective>) -> WorkflowDefinition {
+    fn sample_workflow(directives: Vec<ToolCapabilityDirective>) -> AgentProcedure {
         let contract = WorkflowContract {
             capability_config: CapabilityConfig {
                 tool_directives: directives,
@@ -427,7 +427,7 @@ mod tests {
             },
             ..WorkflowContract::default()
         };
-        WorkflowDefinition::new(
+        AgentProcedure::new(
             Uuid::new_v4(),
             "wf_impl",
             "Workflow Implement",
@@ -626,7 +626,7 @@ mod tests {
             },
             ..WorkflowContract::default()
         };
-        let workflow = WorkflowDefinition::new(
+        let workflow = AgentProcedure::new(
             Uuid::new_v4(),
             "wf_impl",
             "Workflow Implement",
@@ -780,7 +780,7 @@ mod tests {
             key: "b".to_string(),
             description: String::new(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: "wf_impl".to_string(),
+                procedure_key: "wf_impl".to_string(),
                 session_policy: Default::default(),
             }),
             input_ports: vec![agentdash_domain::workflow::InputPortDefinition {

@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityExecutionClaim, ActivityExecutionClaimRepository,
-    ActivityExecutionClaimStatus, ActivityLifecycleDefinition, AgentAssignment,
+    ActivityExecutionClaimStatus, WorkflowGraph, AgentAssignment,
     AgentAssignmentRepository, ExecutorRunRef,
 };
 use uuid::Uuid;
@@ -71,7 +71,7 @@ impl ActivityExecutorStartResult {
 pub trait ActivityExecutorLauncher: Send + Sync {
     async fn start(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
     ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError>;
@@ -97,7 +97,7 @@ where
     pub async fn claim_ready_attempts(
         &self,
         run_id: Uuid,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
     ) -> Result<Vec<ActivityExecutionClaim>, WorkflowApplicationError> {
         let ready_attempts = state
@@ -145,7 +145,7 @@ where
     pub async fn launch_ready_attempts<L>(
         &self,
         run_id: Uuid,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         launcher: &L,
     ) -> Result<Vec<ActivityExecutorLaunchOutcome>, WorkflowApplicationError>
@@ -212,7 +212,7 @@ where
 
     pub async fn record_executor_started(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
         executor_run_ref: ExecutorRunRef,
@@ -237,7 +237,7 @@ where
 
     pub async fn record_executor_start_failed(
         &self,
-        definition: &ActivityLifecycleDefinition,
+        definition: &WorkflowGraph,
         state: &mut ActivityLifecycleRunState,
         claim: &ActivityExecutionClaim,
         error: impl Into<String>,
@@ -397,7 +397,7 @@ mod tests {
     impl ActivityExecutorLauncher for FakeLauncher {
         async fn start(
             &self,
-            _definition: &ActivityLifecycleDefinition,
+            _definition: &WorkflowGraph,
             _state: &ActivityLifecycleRunState,
             _claim: &ActivityExecutionClaim,
         ) -> Result<ActivityExecutorStartResult, ActivityExecutorStartError> {
@@ -522,8 +522,8 @@ mod tests {
         }
     }
 
-    fn definition() -> ActivityLifecycleDefinition {
-        ActivityLifecycleDefinition::new(
+    fn definition() -> WorkflowGraph {
+        WorkflowGraph::new(
             Uuid::new_v4(),
             "claim_flow",
             "Claim flow",
@@ -536,7 +536,7 @@ mod tests {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_plan".to_string(),
+                        procedure_key: "wf_plan".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![],
@@ -554,7 +554,7 @@ mod tests {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
                     executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        workflow_key: "wf_implement".to_string(),
+                        procedure_key: "wf_implement".to_string(),
                         session_policy: AgentSessionPolicy::SpawnChild,
                     }),
                     input_ports: vec![input("approved_plan")],

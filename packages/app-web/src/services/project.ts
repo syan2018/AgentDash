@@ -49,7 +49,7 @@ function mapProjectAgentSummary(raw: Record<string, unknown>): ProjectAgentSumma
     source: String(raw.source ?? ""),
     session: rawSession
       ? {
-          binding_id: requireStringField(rawSession, "binding_id"),
+          run_ref: requireStringField(rawSession, "run_ref"),
           session_id: String(rawSession.session_id ?? ""),
           session_title: rawSession.session_title != null ? String(rawSession.session_title) : null,
           last_activity: rawSession.last_activity != null ? Number(rawSession.last_activity) : null,
@@ -67,7 +67,7 @@ function mapOpenProjectAgentSessionResult(
   return {
     created: Boolean(raw.created),
     session_id: String(raw.session_id ?? ""),
-    binding_id: requireStringField(raw, "binding_id"),
+    run_ref: requireStringField(raw, "run_ref"),
     agent: mapProjectAgentSummary(rawAgent),
   };
 }
@@ -79,7 +79,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo
       : null;
 
   return {
-    binding_id: requireStringField(raw, "binding_id"),
+    run_ref: requireStringField(raw, "run_ref"),
     session_id: String(raw.session_id ?? ""),
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
@@ -91,7 +91,7 @@ function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo
 
 function mapProjectAgentSession(raw: Record<string, unknown>): ProjectAgentSession {
   return {
-    binding_id: requireStringField(raw, "binding_id"),
+    run_ref: requireStringField(raw, "run_ref"),
     session_id: String(raw.session_id ?? ""),
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
@@ -157,7 +157,7 @@ export interface CreateProjectAgentPayload {
   agent_type: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  default_workflow_key?: string;
+  default_procedure_key?: string;
   is_default_for_story?: boolean;
   is_default_for_task?: boolean;
 }
@@ -167,7 +167,7 @@ export interface UpdateProjectAgentPayload {
   agent_type?: string;
   config?: Record<string, unknown>;
   default_lifecycle_key?: string;
-  default_workflow_key?: string;
+  default_procedure_key?: string;
   is_default_for_story?: boolean;
   is_default_for_task?: boolean;
   knowledge_enabled?: boolean;
@@ -237,9 +237,9 @@ export async function fetchProjectAgentSessions(
 
 export async function fetchProjectSessionInfo(
   projectId: string,
-  bindingId: string,
+  sessionId: string,
 ): Promise<ProjectSessionInfo> {
-  const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${bindingId}`);
+  const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${sessionId}`);
   return mapProjectSessionInfo(raw);
 }
 

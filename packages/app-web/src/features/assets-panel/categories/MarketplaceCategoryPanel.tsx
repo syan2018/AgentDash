@@ -114,8 +114,8 @@ export function MarketplaceCategoryPanel() {
       ...sourceStatus.mcp_presets,
       ...sourceStatus.skill_assets,
       ...sourceStatus.vfs_mounts,
-      ...sourceStatus.workflow_definitions,
-      ...sourceStatus.activity_lifecycle_definitions,
+      ...sourceStatus.agent_procedures,
+      ...sourceStatus.workflow_graphs,
       ...sourceStatus.extension_installations,
     ];
     for (const item of allItems) {

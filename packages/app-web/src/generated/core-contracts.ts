@@ -93,7 +93,6 @@ export type TaskResponse = { id: string, project_id: string, story_id: string, w
 
 export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed";
 
-export type UnboundBindingResponse = { unbound: boolean, binding_id: string, };
 
 export type UpdatedIdResponse = { updated: string, };
 

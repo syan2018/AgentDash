@@ -30,7 +30,7 @@ pub struct SubmitHumanDecisionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateWorkflowDefinitionRequest {
+pub struct CreateAgentProcedureRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
@@ -41,7 +41,7 @@ pub struct CreateWorkflowDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateWorkflowDefinitionRequest {
+pub struct UpdateAgentProcedureRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
@@ -49,7 +49,7 @@ pub struct UpdateWorkflowDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ValidateWorkflowDefinitionRequest {
+pub struct ValidateAgentProcedureRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
@@ -60,7 +60,7 @@ pub struct ValidateWorkflowDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CreateActivityLifecycleDefinitionRequest {
+pub struct CreateWorkflowGraphRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,
@@ -74,7 +74,7 @@ pub struct CreateActivityLifecycleDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateActivityLifecycleDefinitionRequest {
+pub struct UpdateWorkflowGraphRequest {
     pub name: Option<String>,
     pub description: Option<String>,
     pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
@@ -84,7 +84,7 @@ pub struct UpdateActivityLifecycleDefinitionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ValidateActivityLifecycleDefinitionRequest {
+pub struct ValidateWorkflowGraphRequest {
     pub project_id: String,
     pub key: String,
     pub name: String,

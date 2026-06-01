@@ -2,16 +2,16 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
-    ActivityJoinPolicy, ActivityLifecycleDefinition, ActivityLifecycleDefinitionRepository,
+    ActivityJoinPolicy, WorkflowGraph, WorkflowGraphRepository,
     AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, LifecycleRun,
-    LifecycleRunRepository, WorkflowBindingKind, WorkflowContract, WorkflowDefinition,
-    WorkflowDefinitionRepository, WorkflowDefinitionSource,
+    LifecycleRunRepository, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+    AgentProcedureRepository, WorkflowDefinitionSource,
 };
 
 use super::{LifecycleEngine, WorkflowApplicationError};
 
 pub const FREEFORM_LIFECYCLE_KEY: &str = "builtin.freeform_session";
-pub const FREEFORM_AGENT_WORKFLOW_KEY: &str = "builtin.freeform_agent";
+pub const FREEFORM_AGENT_PROCEDURE_KEY: &str = "builtin.freeform_agent";
 pub const FREEFORM_ACTIVITY_KEY: &str = "main_conversation";
 pub const FREEFORM_SESSION_LABEL: &str = "freeform";
 
@@ -23,8 +23,8 @@ pub struct FreeformLifecycleService<'a, W: ?Sized, A: ?Sized, R: ?Sized> {
 
 impl<'a, W: ?Sized, A: ?Sized, R: ?Sized> FreeformLifecycleService<'a, W, A, R>
 where
-    W: WorkflowDefinitionRepository,
-    A: ActivityLifecycleDefinitionRepository,
+    W: AgentProcedureRepository,
+    A: WorkflowGraphRepository,
     R: LifecycleRunRepository,
 {
     pub fn new(workflow_repo: &'a W, activity_lifecycle_repo: &'a A, run_repo: &'a R) -> Self {
@@ -38,10 +38,10 @@ where
     pub async fn ensure_definition(
         &self,
         project_id: Uuid,
-    ) -> Result<ActivityLifecycleDefinition, WorkflowApplicationError> {
+    ) -> Result<WorkflowGraph, WorkflowApplicationError> {
         if self
             .workflow_repo
-            .get_by_project_and_key(project_id, FREEFORM_AGENT_WORKFLOW_KEY)
+            .get_by_project_and_key(project_id, FREEFORM_AGENT_PROCEDURE_KEY)
             .await?
             .is_none()
         {
@@ -79,10 +79,10 @@ where
 
 pub fn build_freeform_workflow(
     project_id: Uuid,
-) -> Result<WorkflowDefinition, WorkflowApplicationError> {
-    WorkflowDefinition::new(
+) -> Result<AgentProcedure, WorkflowApplicationError> {
+    AgentProcedure::new(
         project_id,
-        FREEFORM_AGENT_WORKFLOW_KEY,
+        FREEFORM_AGENT_PROCEDURE_KEY,
         "Freeform Agent",
         "普通自由会话的默认 Agent contract。",
         vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story],
@@ -94,8 +94,8 @@ pub fn build_freeform_workflow(
 
 pub fn build_freeform_lifecycle(
     project_id: Uuid,
-) -> Result<ActivityLifecycleDefinition, WorkflowApplicationError> {
-    ActivityLifecycleDefinition::new(
+) -> Result<WorkflowGraph, WorkflowApplicationError> {
+    WorkflowGraph::new(
         project_id,
         FREEFORM_LIFECYCLE_KEY,
         "Freeform Session",
@@ -107,7 +107,7 @@ pub fn build_freeform_lifecycle(
             key: FREEFORM_ACTIVITY_KEY.to_string(),
             description: "普通自由会话主对话。".to_string(),
             executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                workflow_key: FREEFORM_AGENT_WORKFLOW_KEY.to_string(),
+                procedure_key: FREEFORM_AGENT_PROCEDURE_KEY.to_string(),
                 session_policy: AgentSessionPolicy::ContinueRoot,
             }),
             input_ports: Vec::new(),
@@ -134,17 +134,17 @@ mod tests {
 
     #[derive(Default)]
     struct InMemoryWorkflowRepo {
-        items: Mutex<Vec<WorkflowDefinition>>,
+        items: Mutex<Vec<AgentProcedure>>,
     }
 
     #[async_trait::async_trait]
-    impl WorkflowDefinitionRepository for InMemoryWorkflowRepo {
-        async fn create(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
+    impl AgentProcedureRepository for InMemoryWorkflowRepo {
+        async fn create(&self, workflow: &AgentProcedure) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(workflow.clone());
             Ok(())
         }
 
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_id(&self, id: Uuid) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -154,7 +154,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn get_by_key(&self, key: &str) -> Result<Option<WorkflowDefinition>, DomainError> {
+        async fn get_by_key(&self, key: &str) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -168,7 +168,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<WorkflowDefinition>, DomainError> {
+        ) -> Result<Option<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -178,14 +178,14 @@ mod tests {
                 .cloned())
         }
 
-        async fn list_all(&self) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        async fn list_all(&self) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self.items.lock().unwrap().clone())
         }
 
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -199,7 +199,7 @@ mod tests {
         async fn list_by_binding_kind(
             &self,
             binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<WorkflowDefinition>, DomainError> {
+        ) -> Result<Vec<AgentProcedure>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -210,7 +210,7 @@ mod tests {
                 .collect())
         }
 
-        async fn update(&self, workflow: &WorkflowDefinition) -> Result<(), DomainError> {
+        async fn update(&self, workflow: &AgentProcedure) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|item| item.id == workflow.id) {
                 *existing = workflow.clone();
@@ -226,12 +226,12 @@ mod tests {
 
     #[derive(Default)]
     struct InMemoryActivityLifecycleRepo {
-        items: Mutex<Vec<ActivityLifecycleDefinition>>,
+        items: Mutex<Vec<WorkflowGraph>>,
     }
 
     #[async_trait::async_trait]
-    impl ActivityLifecycleDefinitionRepository for InMemoryActivityLifecycleRepo {
-        async fn create(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+    impl WorkflowGraphRepository for InMemoryActivityLifecycleRepo {
+        async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             self.items.lock().unwrap().push(lifecycle.clone());
             Ok(())
         }
@@ -239,7 +239,7 @@ mod tests {
         async fn get_by_id(
             &self,
             id: Uuid,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -253,7 +253,7 @@ mod tests {
             &self,
             project_id: Uuid,
             key: &str,
-        ) -> Result<Option<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Option<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -266,7 +266,7 @@ mod tests {
         async fn list_by_project(
             &self,
             project_id: Uuid,
-        ) -> Result<Vec<ActivityLifecycleDefinition>, DomainError> {
+        ) -> Result<Vec<WorkflowGraph>, DomainError> {
             Ok(self
                 .items
                 .lock()
@@ -277,7 +277,7 @@ mod tests {
                 .collect())
         }
 
-        async fn update(&self, lifecycle: &ActivityLifecycleDefinition) -> Result<(), DomainError> {
+        async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|item| item.id == lifecycle.id) {
                 *existing = lifecycle.clone();
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(state.attempts[0].activity_key, FREEFORM_ACTIVITY_KEY);
         assert_eq!(
             workflow_repo.items.lock().unwrap()[0].key,
-            FREEFORM_AGENT_WORKFLOW_KEY
+            FREEFORM_AGENT_PROCEDURE_KEY
         );
         let lifecycle = &lifecycle_repo.items.lock().unwrap()[0];
         assert_eq!(lifecycle.key, FREEFORM_LIFECYCLE_KEY);

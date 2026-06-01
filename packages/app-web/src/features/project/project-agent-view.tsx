@@ -118,7 +118,7 @@ function SessionHistoryPanel({
           {!isLoading && sessions.length === 0 && <p className="text-[11px] text-muted-foreground">暂无历史会话</p>}
           {sessions.map((s) => (
             <button
-              key={s.binding_id}
+              key={s.run_ref}
               type="button"
               onClick={() => handleNavigate(s.session_id)}
               className="flex w-full items-center justify-between rounded-[8px] border border-border bg-secondary/30 px-2.5 py-1.5 text-left transition-colors hover:bg-secondary"
@@ -153,7 +153,7 @@ function CreateAgentDialog({
 
   const [form, setForm] = useState<PresetFormState>(() => presetToForm({ name: "", agent_type: "PI_AGENT", config: {} }));
   const [selectedLifecycleKey, setSelectedLifecycleKey] = useState("");
-  const [selectedWorkflowKey, setSelectedWorkflowKey] = useState("");
+  const [selectedProcedureKey, setSelectedProcedureKey] = useState("");
   const [bindMode, setBindMode] = useState<"lifecycle" | "workflow" | "none">("none");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -173,8 +173,8 @@ function CreateAgentDialog({
       };
       if (bindMode === "lifecycle" && selectedLifecycleKey) {
         projectAgentPayload.default_lifecycle_key = selectedLifecycleKey;
-      } else if (bindMode === "workflow" && selectedWorkflowKey) {
-        projectAgentPayload.default_workflow_key = selectedWorkflowKey;
+      } else if (bindMode === "workflow" && selectedProcedureKey) {
+        projectAgentPayload.default_procedure_key = selectedProcedureKey;
       }
       await createProjectAgent(projectId, projectAgentPayload);
       await fetchProjectAgents(projectId);
@@ -246,8 +246,8 @@ function CreateAgentDialog({
 
               {bindMode === "workflow" && (
                 <select
-                  value={selectedWorkflowKey}
-                  onChange={(e) => setSelectedWorkflowKey(e.target.value)}
+                  value={selectedProcedureKey}
+                  onChange={(e) => setSelectedProcedureKey(e.target.value)}
                   className="mt-2 w-full rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
                 >
                   <option value="">选择 Workflow…</option>

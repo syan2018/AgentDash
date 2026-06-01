@@ -178,7 +178,10 @@ pub async fn build_task_session_context(
     })
 }
 
-/// 通过 task 的 session binding 反查是否存在活跃 lifecycle run 投影。
+/// 通过 task 关联的 run → agent → frame 查找活跃 lifecycle workflow projection。
+///
+/// 链路: RunLink(Task) → LifecycleRun → LifecycleAgent → AgentFrame → runtime session
+///      → resolve_active_workflow_projection_for_session
 ///
 /// 只读视图辅助函数；失败或缺失均返回 None，绝不抛错。
 async fn find_active_workflow_via_task_sessions(
@@ -201,13 +204,29 @@ async fn find_active_workflow_via_task_sessions(
             .await
             .ok()
             .flatten();
-        let Some(session_id) = run.as_ref().and_then(|r| r.session_id.as_deref()) else {
-            continue;
-        };
+        let Some(run) = run else { continue };
+        let session_id = run
+            .activity_state
+            .as_ref()
+            .and_then(|state| {
+                state.attempts.iter().find_map(|attempt| {
+                    attempt.executor_run.as_ref().and_then(|exec_ref| {
+                        if let agentdash_domain::workflow::ExecutorRunRef::AgentSession {
+                            session_id,
+                        } = exec_ref
+                        {
+                            Some(session_id.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            });
+        let Some(session_id) = session_id else { continue };
         if let Ok(Some(projection)) = resolve_active_workflow_projection_for_session(
             session_id,
-            repos.workflow_definition_repo.as_ref(),
-            repos.activity_lifecycle_definition_repo.as_ref(),
+            repos.agent_procedure_repo.as_ref(),
+            repos.workflow_graph_repo.as_ref(),
             repos.activity_execution_claim_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )

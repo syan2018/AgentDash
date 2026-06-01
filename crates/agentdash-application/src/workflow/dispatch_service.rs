@@ -549,7 +549,7 @@ impl<'a> LifecycleDispatchService<'a> {
         source: &ExecutionSource,
     ) -> Result<LifecycleSubjectAssociation, WorkflowApplicationError> {
         let role = association_role_from_source(source);
-        let assoc = if subject_ref.kind == "task" {
+        let assoc = if matches!(subject_ref.kind.as_str(), "task" | "story") {
             LifecycleSubjectAssociation::new_agent_scoped(run_id, agent_id, subject_ref, role, None)
         } else {
             LifecycleSubjectAssociation::new_run_scoped(run_id, subject_ref, role, None)
@@ -1346,6 +1346,23 @@ mod tests {
         }
     }
 
+    fn new_story_root_intent(project_id: Uuid, story_id: Uuid) -> AgentLaunchIntent {
+        AgentLaunchIntent {
+            project_id,
+            source: ExecutionSource::User,
+            subject_ref: Some(SubjectRef::new("story", story_id)),
+            parent_run_id: None,
+            parent_agent_id: None,
+            workflow_graph_ref: freeform_graph_ref(project_id),
+            agent_procedure_ref: None,
+            run_policy: RunPolicy::CreateLinkedRun,
+            agent_policy: AgentPolicy::Create,
+            context_policy: ContextPolicy::Isolated,
+            capability_policy: CapabilityPolicy::Baseline,
+            runtime_policy: RuntimePolicy::CreateRuntimeSession,
+        }
+    }
+
     fn new_task_execution_intent(project_id: Uuid, task_id: Uuid) -> SubjectExecutionIntent {
         SubjectExecutionIntent {
             project_id,
@@ -1443,6 +1460,50 @@ mod tests {
         assert!(assignments.is_empty());
         assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
         assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
+        assert!(result.runtime_session_ref.is_some());
+    }
+
+    #[tokio::test]
+    async fn story_root_launch_creates_agent_scoped_story_association() {
+        let project_id = Uuid::new_v4();
+        let story_id = Uuid::new_v4();
+        let run_repo = InMemoryRunRepo::default();
+        let workflow_repo = InMemoryWorkflowGraphRepo::default();
+        let gi_repo = InMemoryGraphInstanceRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let assignment_repo = InMemoryAssignmentRepo::default();
+        let assoc_repo = InMemoryAssociationRepo::default();
+        let gate_repo = InMemoryGateRepo::default();
+        let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        seed_freeform_graph(&workflow_repo, project_id);
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &gi_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        );
+
+        let result = service
+            .launch_agent(&new_story_root_intent(project_id, story_id))
+            .await
+            .expect("story launch dispatch");
+
+        let associations = assoc_repo.items.lock().unwrap().clone();
+        assert_eq!(associations.len(), 1);
+        assert_eq!(associations[0].subject_kind, "story");
+        assert_eq!(associations[0].subject_id, story_id);
+        assert_eq!(associations[0].anchor_run_id, result.run_ref);
+        assert_eq!(associations[0].anchor_agent_id, Some(result.agent_ref));
+        assert!(associations[0].is_agent_scoped());
+        assert!(assignment_repo.items.lock().unwrap().is_empty());
         assert!(result.runtime_session_ref.is_some());
     }
 

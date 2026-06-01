@@ -76,31 +76,35 @@
 - [x] 拆清 `AgentLaunchIntent`、`SubjectExecutionIntent`、`LifecycleRunStartIntent`。
 - [x] `ExecutionDispatchResult` 改为 discriminated result，避免全 optional refs。
 - [x] Subject execution 必须返回 assignment ref 或 pending assignment ref。
-- [ ] ProjectAgent open、Task start、Companion dispatch、Routine fire、manual run、Story root/freeform 都通过统一 dispatch 分类进入。
-  - ProjectAgent open、Task start/continue、Companion sub dispatch、Routine fire、manual run 已进入 typed dispatch；Story root/freeform 写侧 launch 尚未关闭。
+- [x] ProjectAgent open、Task start、Companion dispatch、Routine fire、manual run、Story root/freeform 都通过统一 dispatch 分类进入。
+  - ProjectAgent open、Task start/continue、Companion sub dispatch、Routine fire、manual run 已进入 typed dispatch；Story root/freeform 通过 `POST /stories/{id}/launch` 委派 `StoryLifecycleLaunchService` 构造 `AgentLaunchIntent(subject_ref=story)`，由 `LifecycleDispatchService::launch_agent` 创建 root run / agent / frame / runtime surface 与 Story subject association。
 - [x] 修复 `WorkflowGraphRef::ByKey`，将 graph resolution 移出 dispatch 的临时 helper。
 
 ### Gate
 
 - [x] 类型层面不再依赖一个全 optional `ExecutionDispatchResult` 表达所有 intent；不同 result variant 有明确 required refs。
 - [x] `WorkflowGraphRef::ByKey` 解析失败有测试，并返回错误而不是生成随机 graph/lifecycle id。
-- [ ] API route 检查证明 ProjectAgent、Task、Companion、Routine、manual run、Story root/freeform 都进入 typed dispatch。
+- [x] API route 检查证明 ProjectAgent、Task、Companion、Routine、manual run、Story root/freeform 都进入 typed dispatch。
 - [x] Subject execution 测试证明返回 assignment 或 pending assignment ref，且 SubjectRef 能追溯到 ActivityAttemptState。
 
 ### 落地记录
 
-2026-06-02 的 Phase 3 slice 已关闭 dispatch taxonomy 的核心语义 gate，但整阶段仍因 Story root/freeform 写侧入口未迁入 dispatch 保持 partial：
+2026-06-02 的 Phase 3 slice 已关闭 dispatch taxonomy gate：
 
 - `ExecutionIntent` / `ExecutionDispatchResult` 已是 discriminated taxonomy；`AgentLaunchDispatchResult` 不再携带 required `assignment_ref`，ProjectAgent launch response 也不再把 agent surface launch 伪装成 ActivityAttempt assignment。
 - `LifecycleDispatchService` 通过 `bind_entry_assignment` 显式区分 pure agent launch 与会绑定 ActivityAttempt 的 subject / interaction execution；`AgentLaunchIntent` 只创建 run / graph instance / agent / frame / runtime surface，`SubjectExecutionIntent` 与 `InteractionDispatchIntent` 才创建 entry assignment。
 - dispatch 创建或复用 `WorkflowGraphInstance` 时会初始化 `ActivityLifecycleRunState` 并同步 run projection；`SubjectExecutionDispatchResult.assignment_ref` 对应的 assignment 现在有同一 `graph_instance_id + activity_key + attempt` 的 ActivityAttemptState。
 - runtime terminal resolver 对没有 `graph_instance_id + activity_key` scope 的 AgentFrame 返回 `Ok(None)`，把纯 agent surface runtime 视为非 Activity runtime；有 activity scope 但缺 assignment 仍返回结构化 error。
 - `WorkflowGraphResolver` 已作为 dispatch 前置边界解析 `ById` / `ByKey`，missing key 测试证明不会创建随机 run / graph / assignment。
+- `StoryLifecycleLaunchService` 是 Story root/freeform 写入口的 application boundary；API route 只做权限与 DTO 映射，Story service 不直接创建 `LifecycleRun`、`LifecycleAgent`、`AgentFrame` 或 `RuntimeSession`。
+- Story root launch 通过 `AgentLaunchIntent { subject_ref: SubjectRef("story", story_id), workflow_graph_ref: project_agent.default_lifecycle_key | builtin.freeform_session }` 进入 `LifecycleDispatchService::launch_agent`；dispatch 创建 agent-scoped Story association，runtime construction provider 只消费该 association 并 compose `OwnerScope::Story` frame。
 
 验证记录：
 
 - `cargo test -p agentdash-domain workflow::dispatch --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo test -p agentdash-application story::lifecycle_launch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service::tests::story_root_launch_creates_agent_scoped_story_association --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::session_association --lib -- --format terse`
 - `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
 - `cargo check -p agentdash-domain -p agentdash-application -p agentdash-api -p agentdash-contracts`
@@ -182,7 +186,7 @@
 
 ## Phase 5: 收束业务入口与 interaction/gate
 
-- [ ] Story root/freeform launch 进入 dispatch，创建 Story subject association。
+- [x] Story root/freeform launch 进入 dispatch，创建 Story subject association。
 - [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
 - [x] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
 - [x] Task view status vocabulary 区分 Cancelled 与 Failed；取消投影不再伪装成失败业务状态。
@@ -202,6 +206,7 @@
   - [x] Parent result return gate：`companion_respond` 从 child runtime session 解析 child frame，只 resolve child-owned open `LifecycleGate.correlation_id`，parent/child runtime event 由 `CompanionGateNotificationDelivery` 产生。
   - [x] Parent request gate：`companion_request(target=parent)` 创建 parent-frame-owned `LifecycleGate`，`request_id = gate_id`；`companion_respond` 先 resolve parent gate，再清理 hook pending action delivery/cache。
 - [x] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
+- [x] Story root/freeform launch route 与测试证明 Story command 只提交 dispatch intent；Story subject association、root LifecycleAgent、AgentFrame 与 runtime surface 由 dispatch 创建，runtime construction 只消费 frame/association 组成 Story owner surface。
 - [ ] Permission query 测试证明 frame/run/subject 是主查询入口，session 只作为审计 provenance filter。
 
 ### 落地记录
@@ -274,7 +279,7 @@
 - `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
 - `cargo check -p agentdash-api`
 
-2026-06-02 的 Phase 5 Companion parent request gate slice 已关闭 P1-20 的剩余 gate/channel 缺口；Phase 5 整体仍因 Story root/freeform、Task execution preference 与 Permission provenance 保持 partial：
+2026-06-02 的 Phase 5 Companion parent request gate slice 已关闭 P1-20 的剩余 gate/channel 缺口；Phase 5 整体仍因 Task execution preference 与 Permission provenance 保持 partial：
 
 - `CompanionGateControlService::open_parent_request` 成为 parent request owner boundary：从 child runtime delivery ref 解析 child frame 与 lineage，再创建 parent-frame-owned `LifecycleGate(gate_kind=companion_parent_request)`；`request_id` 与 hook pending action id 均使用 `gate_id`。
 - `CompanionGateControlService::resolve_parent_request` 先按 `gate_id` 读取 gate，再校验当前 parent runtime delivery ref 所属 frame 与 gate owner frame 一致；错误 frame 的 delivery session 会被拒绝。
@@ -286,6 +291,21 @@
 
 - `cargo test -p agentdash-application companion::gate_control --lib -- --format terse`
 - `cargo test -p agentdash-application companion::tools --lib -- --format terse`
+
+2026-06-02 的 Phase 5 Story root/freeform launch slice 已关闭 P0-06：
+
+- `StoryLifecycleLaunchService` 拥有 Story root launch command boundary；它加载 Story、解析 project 内 `is_default_for_story=true` 的 ProjectAgent，并把 default lifecycle key 或 built-in freeform key 编成 `AgentLaunchIntent`。
+- `POST /stories/{id}/launch` 只负责 Story 权限校验与 generated contract DTO 映射，不在 route 内拼装 lifecycle run/session。
+- `LifecycleDispatchService` 对 `subject_ref.kind == "story"` 创建 agent-scoped `LifecycleSubjectAssociation`，让 Story root association 与 root `LifecycleAgent` 明确绑定。
+- `SessionConstructionProvider` 在 runtime launch construction 中识别 Story association 后使用 `OwnerScope::Story` compose frame；provider 不创建 Story run，也不补写 Story association。
+- 当前 Story root launch policy 是显式 create-root。若后续需要 singleton/resume 语义，应由 Story root resolver 给出 `parent_run_id + parent_agent_id`，而不是让 dispatch 隐式按 subject 反查。
+
+验证记录：
+
+- `cargo test -p agentdash-application story::lifecycle_launch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service::tests::story_root_launch_creates_agent_scoped_story_association --lib -- --format terse`
+- `cargo check -p agentdash-api`
+- `cargo run -p agentdash-contracts --bin generate_contracts_ts -- --check`
 
 ## Phase 6: 建立稳定 Read Models
 

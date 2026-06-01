@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    AgentBindingInput, CreateStoryInput, StoryMutationInput, TaskMutationInput,
-    apply_task_mutation, build_agent_binding, build_task, create_story_record, delete_story_record,
+    AgentBindingInput, CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
+    StoryLifecycleLaunchService, StoryMutationInput, TaskMutationInput, apply_task_mutation,
+    build_agent_binding, build_task, create_story_record, delete_story_record,
     list_project_stories, update_story_record,
 };
 use axum::Json;
@@ -10,6 +11,10 @@ use axum::extract::{Path, Query, State};
 use uuid::Uuid;
 
 use agentdash_contracts::core::DeletedIdResponse;
+use agentdash_contracts::workflow::{
+    AgentFrameRefDto, LifecycleAgentRefDto, LifecycleRunRefDto, RuntimeSessionRefDto,
+    StoryLaunchResult, SubjectRefDto,
+};
 use agentdash_domain::story::ChangeKind;
 
 use crate::app_state::AppState;
@@ -54,6 +59,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
                 .put(update_story)
                 .delete(delete_story),
         )
+        .route("/stories/{id}/launch", axum::routing::post(launch_story))
         .route(
             "/stories/{id}/tasks",
             axum::routing::get(list_tasks).post(create_task),
@@ -228,6 +234,31 @@ pub async fn delete_story(
     delete_story_record(&state.repos, &story).await?;
 
     Ok(Json(DeletedIdResponse { deleted: id }))
+}
+
+pub async fn launch_story(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(id): Path<String>,
+) -> Result<Json<StoryLaunchResult>, ApiError> {
+    let story_id =
+        Uuid::parse_str(&id).map_err(|_| ApiError::BadRequest("无效的 Story ID".into()))?;
+    load_story_and_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        story_id,
+        ProjectPermission::Edit,
+    )
+    .await?;
+
+    let service = StoryLifecycleLaunchService {
+        repos: state.repos.clone(),
+    };
+    let result = service
+        .launch_story(StoryLifecycleLaunchCommand { story_id })
+        .await?;
+
+    Ok(Json(story_launch_result_to_dto(result)))
 }
 
 pub async fn list_tasks(
@@ -503,6 +534,40 @@ pub async fn delete_task(
         .await?;
 
     Ok(Json(DeletedIdResponse { deleted: id }))
+}
+
+fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunchResult {
+    StoryLaunchResult {
+        created: true,
+        story_id: result.story_id.to_string(),
+        project_agent_id: result.project_agent_id.to_string(),
+        run_ref: LifecycleRunRefDto {
+            run_id: result.run_ref.to_string(),
+        },
+        agent_ref: LifecycleAgentRefDto {
+            run_id: result.run_ref.to_string(),
+            agent_id: result.agent_ref.to_string(),
+        },
+        frame_ref: AgentFrameRefDto {
+            agent_id: result.agent_ref.to_string(),
+            frame_id: result.frame_ref.to_string(),
+            revision: None,
+        },
+        runtime_session_ref: result.runtime_session_ref.map(|runtime_session_id| {
+            RuntimeSessionRefDto {
+                runtime_session_id: runtime_session_id.to_string(),
+            }
+        }),
+        trace_ref: result
+            .trace_ref
+            .map(|runtime_session_id| RuntimeSessionRefDto {
+                runtime_session_id: runtime_session_id.to_string(),
+            }),
+        subject_ref: SubjectRefDto {
+            kind: result.subject_ref.kind,
+            id: result.subject_ref.id.to_string(),
+        },
+    }
 }
 
 fn normalize_optional_string(value: Option<String>) -> Option<String> {

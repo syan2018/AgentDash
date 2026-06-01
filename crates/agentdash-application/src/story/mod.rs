@@ -1,6 +1,11 @@
 pub mod context_builder;
+pub mod lifecycle_launch;
 pub mod management;
 
+pub use lifecycle_launch::{
+    StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult, StoryLifecycleLaunchService,
+    build_story_root_launch_intent, resolve_story_root_project_agent,
+};
 pub use management::{
     AgentBindingInput, CreateStoryInput, StoryMutationInput, TaskMutationInput,
     apply_story_mutation, apply_task_mutation, build_agent_binding, build_story, build_task,

@@ -107,6 +107,8 @@ export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDt
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
+export type StoryLaunchResult = { created: boolean, story_id: string, project_agent_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, trace_ref?: RuntimeSessionRefDto, subject_ref: SubjectRefDto, };
+
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: LifecycleAgentView, latest_attempt?: ActivityAttemptView, artifacts: JsonValue, };
 
 export type SubjectRefDto = { kind: string, id: string, };

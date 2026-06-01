@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use agentdash_application::session::construction_planner::RuntimeContextInspectionPlanner;
 use agentdash_application::session::types::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
     resolve_session_prompt_lifecycle,
@@ -28,6 +29,7 @@ use agentdash_application::workflow::runtime_launch::RuntimeLaunchRequest;
 use agentdash_domain::workflow::{
     AgentFrame, AgentProcedureRef, LifecycleAgent, LifecycleRun, RuntimeSessionSelectionPolicy,
 };
+use agentdash_domain::{agent::ProjectAgent, project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -140,6 +142,16 @@ impl SessionConstructionProvider for AppStateSessionConstructionProvider {
                 .await;
         }
 
+        if let Some(story_id) = self
+            .resolve_story_association(run.id, agent.id)
+            .await
+            .map_err(connector_internal)?
+        {
+            return self
+                .compose_story_frame(&frame, agent, run, story_id, &input)
+                .await;
+        }
+
         if frame.graph_instance_id.is_some() && frame.activity_key.is_some() {
             return self
                 .compose_lifecycle_node_frame(&frame, agent, run, &input)
@@ -224,6 +236,112 @@ impl AppStateSessionConstructionProvider {
         Ok(associations
             .iter()
             .any(|assoc| assoc.subject_kind == "task"))
+    }
+
+    async fn resolve_story_association(
+        &self,
+        run_id: uuid::Uuid,
+        agent_id: uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, agentdash_domain::DomainError> {
+        let associations = self
+            .state
+            .repos
+            .lifecycle_subject_association_repo
+            .list_by_anchor(run_id, Some(agent_id))
+            .await?;
+        Ok(associations
+            .iter()
+            .find(|assoc| assoc.subject_kind == "story")
+            .map(|assoc| assoc.subject_id))
+    }
+
+    async fn compose_story_frame(
+        &self,
+        frame: &AgentFrame,
+        mut agent: LifecycleAgent,
+        run: LifecycleRun,
+        story_id: uuid::Uuid,
+        input: &SessionConstructionProviderInput,
+    ) -> Result<RuntimeLaunchRequest, ConnectorError> {
+        let story = self.load_story_for_run(story_id, &run).await?;
+        let project = self.load_project_for_story(&story).await?;
+        let workspace = self.resolve_story_owner_workspace(&story, &project).await?;
+        let project_agent = self.resolve_story_project_agent(&agent, project.id).await?;
+        let agent_context = RuntimeContextInspectionPlanner::build_project_agent_context(
+            &self.state.repos,
+            &project_agent,
+        )
+        .await
+        .map_err(connector_internal)?;
+        let executor_config = merge_user_executor_config(
+            input.command.user_input().executor_config.clone(),
+            &agent_context.executor_config,
+        );
+        let lifecycle =
+            owner_prompt_lifecycle(self.prompt_lifecycle(Some(&executor_config), input));
+        let user_prompt_blocks = required_prompt_blocks(input.command.user_input())?;
+        let builder = frame_builder_from_existing(
+            frame,
+            input.session_id.as_str(),
+            input.session_id.as_str(),
+        )?;
+        agent.project_agent_id = Some(project_agent.id);
+
+        let (builder, extras) = self
+            .assembler()
+            .compose_owner_bootstrap_to_frame(
+                builder,
+                OwnerBootstrapSpec {
+                    owner: OwnerScope::Story {
+                        story: &story,
+                        project: &project,
+                        workspace: workspace.as_ref(),
+                    },
+                    executor_config,
+                    user_prompt_blocks,
+                    agent_mcp: AgentLevelMcp {
+                        preset_mcp_servers: agent_context.preset_mcp_servers.clone(),
+                    },
+                    agent_tool_directives: agent_context
+                        .preset_config
+                        .capability_directives
+                        .clone()
+                        .unwrap_or_default(),
+                    agent_skill_asset_keys: agent_context
+                        .preset_config
+                        .skill_asset_keys
+                        .clone()
+                        .unwrap_or_default(),
+                    agent_vfs_access_grants: agent_context
+                        .preset_config
+                        .vfs_access_grants
+                        .clone()
+                        .unwrap_or_default(),
+                    request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
+                    existing_vfs: RuntimeLaunchRequest::from_frame(
+                        frame,
+                        runtime_session_policy(input.session_id.as_str()),
+                    )
+                    .typed_vfs,
+                    visible_canvas_mount_ids: input.session_meta.visible_canvas_mount_ids.clone(),
+                    active_workflow: None,
+                    lifecycle,
+                    audit_session_key: Some(input.session_id.clone()),
+                    caller_agent_id: Some(project_agent.id),
+                },
+            )
+            .await
+            .map_err(ConnectorError::InvalidConfig)?;
+
+        self.persist_composed_frame(
+            builder,
+            &mut agent,
+            extras,
+            &input.command,
+            input.session_id.as_str(),
+            None,
+        )
+        .await
     }
 
     async fn compose_project_agent_frame(
@@ -553,6 +671,92 @@ impl AppStateSessionConstructionProvider {
             hook_binding,
         )
         .await
+    }
+
+    async fn load_story_for_run(
+        &self,
+        story_id: uuid::Uuid,
+        run: &LifecycleRun,
+    ) -> Result<Story, ConnectorError> {
+        let story = self
+            .state
+            .repos
+            .story_repo
+            .get_by_id(story_id)
+            .await
+            .map_err(connector_internal)?
+            .ok_or_else(|| ConnectorError::InvalidConfig(format!("Story {story_id} 不存在")))?;
+        if story.project_id != run.project_id {
+            return Err(ConnectorError::InvalidConfig(format!(
+                "Story {story_id} 不属于 LifecycleRun {} 的 Project {}",
+                run.id, run.project_id
+            )));
+        }
+        Ok(story)
+    }
+
+    async fn load_project_for_story(&self, story: &Story) -> Result<Project, ConnectorError> {
+        self.state
+            .repos
+            .project_repo
+            .get_by_id(story.project_id)
+            .await
+            .map_err(connector_internal)?
+            .ok_or_else(|| {
+                ConnectorError::InvalidConfig(format!("Project {} 不存在", story.project_id))
+            })
+    }
+
+    async fn resolve_story_owner_workspace(
+        &self,
+        story: &Story,
+        project: &Project,
+    ) -> Result<Option<Workspace>, ConnectorError> {
+        if let Some(workspace_id) = story.default_workspace_id {
+            return self
+                .state
+                .repos
+                .workspace_repo
+                .get_by_id(workspace_id)
+                .await
+                .map_err(connector_internal)?
+                .ok_or_else(|| {
+                    ConnectorError::InvalidConfig(format!(
+                        "Story 默认 Workspace {workspace_id} 不存在"
+                    ))
+                })
+                .map(Some);
+        }
+
+        RuntimeContextInspectionPlanner::resolve_project_workspace(&self.state.repos, project)
+            .await
+            .map_err(connector_internal)
+    }
+
+    async fn resolve_story_project_agent(
+        &self,
+        agent: &LifecycleAgent,
+        project_id: uuid::Uuid,
+    ) -> Result<ProjectAgent, ConnectorError> {
+        if let Some(project_agent_id) = agent.project_agent_id {
+            return self
+                .state
+                .repos
+                .project_agent_repo
+                .get_by_project_and_id(project_id, project_agent_id)
+                .await
+                .map_err(connector_internal)?
+                .ok_or_else(|| {
+                    ConnectorError::InvalidConfig(format!("ProjectAgent {project_agent_id} 不存在"))
+                });
+        }
+
+        agentdash_application::story::resolve_story_root_project_agent(
+            &self.state.repos,
+            project_id,
+        )
+        .await
+        .map_err(connector_internal)
     }
 
     async fn compose_companion_frame(

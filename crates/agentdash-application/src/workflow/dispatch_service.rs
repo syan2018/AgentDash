@@ -462,6 +462,12 @@ impl<'a> LifecycleDispatchService<'a> {
                 })?;
                 Ok(run)
             }
+            (RunPolicy::ReuseExisting, None) => Err(WorkflowApplicationError::BadRequest(
+                "RunPolicy::ReuseExisting 需要 parent_run_id".to_string(),
+            )),
+            (RunPolicy::AppendGraph, None) => Err(WorkflowApplicationError::BadRequest(
+                "RunPolicy::AppendGraph 需要 parent_run_id".to_string(),
+            )),
             // 创建新 run
             _ => {
                 let run = create_lifecycle_run(plan.project_id, workflow_graph.id);
@@ -561,6 +567,9 @@ impl<'a> LifecycleDispatchService<'a> {
     ) -> Result<LifecycleAgent, WorkflowApplicationError> {
         match plan.agent_policy {
             AgentPolicy::Reuse | AgentPolicy::Resume => {
+                if let Some(agent_id) = plan.parent_agent_id {
+                    return self.resolve_explicit_reuse_agent(run, plan, agent_id).await;
+                }
                 let agents = self.agent_repo.list_by_run(run.id).await?;
                 if let Some(existing) = agents.into_iter().find(|a| a.status == "active") {
                     return Ok(existing);
@@ -571,6 +580,36 @@ impl<'a> LifecycleDispatchService<'a> {
                 Ok(self.create_agent(run, plan).await?)
             }
         }
+    }
+
+    async fn resolve_explicit_reuse_agent(
+        &self,
+        run: &LifecycleRun,
+        plan: &DispatchPlan,
+        agent_id: Uuid,
+    ) -> Result<LifecycleAgent, WorkflowApplicationError> {
+        let agent = self.agent_repo.get(agent_id).await?.ok_or_else(|| {
+            WorkflowApplicationError::BadRequest(format!("parent_agent_id {agent_id} 不存在"))
+        })?;
+        if agent.run_id != run.id {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "parent_agent_id {} 属于 run {}，不能复用到 run {}",
+                agent.id, agent.run_id, run.id
+            )));
+        }
+        if agent.project_id != plan.project_id {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "parent_agent_id {} 属于 project {}，不能复用到 project {}",
+                agent.id, agent.project_id, plan.project_id
+            )));
+        }
+        if agent.status != "active" {
+            return Err(WorkflowApplicationError::Conflict(format!(
+                "parent_agent_id {} 当前不是 active",
+                agent.id
+            )));
+        }
+        Ok(agent)
     }
 
     async fn create_agent(
@@ -1687,6 +1726,105 @@ mod tests {
         assert_eq!(frames[0].activity_key.as_deref(), Some("custom_main"));
         assert_eq!(assignments[0].activity_key, "custom_main");
         assert_eq!(assignments[0].graph_instance_id, existing_instance.id);
+    }
+
+    #[tokio::test]
+    async fn reuse_existing_with_parent_agent_id_resumes_explicit_agent() {
+        let project_id = Uuid::new_v4();
+        let run_repo = InMemoryRunRepo::default();
+        let workflow_repo = InMemoryWorkflowGraphRepo::default();
+        let gi_repo = InMemoryGraphInstanceRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let assignment_repo = InMemoryAssignmentRepo::default();
+        let assoc_repo = InMemoryAssociationRepo::default();
+        let gate_repo = InMemoryGateRepo::default();
+        let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        let workflow_graph = seed_freeform_graph(&workflow_repo, project_id);
+        let existing_run = create_lifecycle_run(project_id, workflow_graph.id);
+        let existing_instance = WorkflowGraphInstance::new_root(existing_run.id, workflow_graph.id);
+        let first_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
+        let target_agent = LifecycleAgent::new_root(existing_run.id, project_id, "routine");
+        run_repo.items.lock().unwrap().push(existing_run.clone());
+        gi_repo.items.lock().unwrap().push(existing_instance);
+        agent_repo.items.lock().unwrap().push(first_agent.clone());
+        agent_repo.items.lock().unwrap().push(target_agent.clone());
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &gi_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        );
+
+        let mut intent = new_task_execution_intent(project_id, Uuid::new_v4());
+        intent.parent_run_id = Some(existing_run.id);
+        intent.parent_agent_id = Some(target_agent.id);
+        intent.run_policy = RunPolicy::ReuseExisting;
+        intent.agent_policy = AgentPolicy::Resume;
+
+        let result = service.execute_subject(&intent).await.expect("dispatch");
+
+        assert_eq!(result.agent_ref, target_agent.id);
+        let agents = agent_repo.items.lock().unwrap().clone();
+        let updated_target = agents
+            .iter()
+            .find(|agent| agent.id == target_agent.id)
+            .expect("target agent");
+        assert_eq!(updated_target.current_frame_id, Some(result.frame_ref));
+        let first = agents
+            .iter()
+            .find(|agent| agent.id == first_agent.id)
+            .expect("first agent");
+        assert_eq!(first.current_frame_id, None);
+    }
+
+    #[tokio::test]
+    async fn reuse_existing_without_parent_run_id_is_rejected() {
+        let project_id = Uuid::new_v4();
+        let run_repo = InMemoryRunRepo::default();
+        let workflow_repo = InMemoryWorkflowGraphRepo::default();
+        let gi_repo = InMemoryGraphInstanceRepo::default();
+        let agent_repo = InMemoryAgentRepo::default();
+        let frame_repo = InMemoryFrameRepo::default();
+        let assignment_repo = InMemoryAssignmentRepo::default();
+        let assoc_repo = InMemoryAssociationRepo::default();
+        let gate_repo = InMemoryGateRepo::default();
+        let lineage_repo = InMemoryLineageRepo::default();
+        let runtime_session_creator = InMemoryRuntimeSessionCreator::default();
+        seed_freeform_graph(&workflow_repo, project_id);
+        let service = make_service(
+            &run_repo,
+            &workflow_repo,
+            &gi_repo,
+            &agent_repo,
+            &frame_repo,
+            &assignment_repo,
+            &assoc_repo,
+            &gate_repo,
+            &lineage_repo,
+            &runtime_session_creator,
+        );
+
+        let mut intent = new_task_execution_intent(project_id, Uuid::new_v4());
+        intent.run_policy = RunPolicy::ReuseExisting;
+        intent.agent_policy = AgentPolicy::Resume;
+
+        let err = service
+            .execute_subject(&intent)
+            .await
+            .expect_err("reuse requires parent run");
+
+        assert!(matches!(err, WorkflowApplicationError::BadRequest(_)));
+        assert!(run_repo.items.lock().unwrap().is_empty());
+        assert!(gi_repo.items.lock().unwrap().is_empty());
+        assert!(agent_repo.items.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

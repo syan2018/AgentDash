@@ -624,6 +624,23 @@ Routine reuse 应按 routine/entity/source subject 找 agent，而不是依赖 p
 
 Routine strategy 只转换为 resolver policy，不直接传 parent_run_id。
 
+### 落地记录
+
+2026-06-02 已完成 Routine Reuse anchor lookup 收口：
+
+- `LifecycleAgentReuseResolver` 成为 Routine Reuse / PerEntity 的 application-layer 查询封装，输入 `Routine + RoutineExecution`，输出可复用的 `run_id + agent_id + frame_id + assignment_id` 或明确的无 target / conflict。
+- resolver 使用 `RoutineExecution.dispatch_refs` 作为历史 dispatch evidence，并校验对应 `LifecycleRun` project、`LifecycleAgent` run/project/active 状态、`AgentFrame` owner、`AgentAssignment` agent/frame bridge，以及 `SubjectRef(kind=routine_execution)` 的 `LifecycleSubjectAssociation`。
+- `DispatchStrategy::Reuse` 没有有效 anchor 时返回 conflict，不再通过 `RunPolicy::ReuseExisting` 缺 `parent_run_id` 的路径创建新 run。
+- `DispatchStrategy::PerEntity` 必须解析非空 `entity_key`；已有同 entity target 时复用 resolver 输出的 run + agent，首次 entity 触发则显式创建新的 per-entity lifecycle anchor。
+- `LifecycleDispatchService` 对 explicit `parent_agent_id` 执行严格校验，同一 run 多 active agent 时只复用指定 agent；底层 `RunPolicy::ReuseExisting` / `AppendGraph` 缺 `parent_run_id` 会拒绝。
+
+验证记录：
+
+- `cargo test -p agentdash-application routine::reuse_resolver --lib -- --format terse`
+- `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
 ## P1-22 Permission source runtime session 边界需明确
 
 ### 原始问题

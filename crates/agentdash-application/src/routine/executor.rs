@@ -4,7 +4,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use agentdash_domain::project::Project;
-use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution};
+use agentdash_domain::routine::{Routine, RoutineDispatchRefs, RoutineExecution};
 use agentdash_domain::workflow::SubjectExecutionDispatchResult;
 use agentdash_domain::workspace::Workspace;
 
@@ -14,6 +14,7 @@ use crate::workflow::{LifecycleDispatchService, WorkflowApplicationError};
 use crate::workspace::BackendAvailability;
 
 use super::dispatch::build_routine_execution_intent_with_reuse;
+use super::reuse_resolver::LifecycleAgentReuseResolver;
 use super::template::render_prompt_template;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,10 +222,16 @@ impl RoutineExecutor {
         prompt: &str,
         execution: &mut RoutineExecution,
     ) -> Result<(), ApplicationError> {
-        // PerEntity: 解析 entity_key 并查找可复用的 dispatch_run_id
-        let reuse_run_id = self.resolve_reuse_run_id(routine, execution).await?;
+        let reuse_resolution = LifecycleAgentReuseResolver::from_repositories(&self.repos)
+            .resolve(routine, execution)
+            .await?;
+        execution.entity_key = reuse_resolution.entity_key.clone();
 
-        let intent = build_routine_execution_intent_with_reuse(routine, execution, reuse_run_id);
+        let intent = build_routine_execution_intent_with_reuse(
+            routine,
+            execution,
+            reuse_resolution.target.as_ref(),
+        );
 
         let dispatch_service = LifecycleDispatchService::new(
             self.repos.lifecycle_run_repo.as_ref(),
@@ -242,9 +249,7 @@ impl RoutineExecutor {
         let result: SubjectExecutionDispatchResult = dispatch_service
             .execute_subject(&intent)
             .await
-            .map_err(|e: WorkflowApplicationError| {
-                ApplicationError::Internal(format!("Routine dispatch 失败: {e}"))
-            })?;
+            .map_err(map_routine_dispatch_error)?;
 
         let refs = RoutineDispatchRefs {
             run_id: result.run_ref,
@@ -265,51 +270,6 @@ impl RoutineExecutor {
         );
 
         Ok(())
-    }
-
-    /// PerEntity 策略：从最近的同 entity_key 的 execution 中提取可复用的 run_id。
-    async fn resolve_reuse_run_id(
-        &self,
-        routine: &Routine,
-        execution: &mut RoutineExecution,
-    ) -> Result<Option<Uuid>, ApplicationError> {
-        let DispatchStrategy::PerEntity { entity_key_path } = &routine.dispatch_strategy else {
-            return Ok(None);
-        };
-
-        let entity_key = execution
-            .trigger_payload
-            .as_ref()
-            .and_then(|payload| resolve_json_path(payload, entity_key_path.as_str()))
-            .map(json_value_to_key_string);
-
-        if let Some(ref key) = entity_key {
-            execution.entity_key = Some(key.clone());
-        }
-
-        if let Some(ref key) = entity_key
-            && let Some(existing) = self
-                .repos
-                .routine_execution_repo
-                .find_latest_by_entity_key(routine.id, key)
-                .await
-                .map_err(ApplicationError::from)?
-            && let Some(refs) = &existing.dispatch_refs
-        {
-            // 验证目标 run 仍然存在
-            if self
-                .repos
-                .lifecycle_run_repo
-                .get_by_id(refs.run_id)
-                .await
-                .map_err(|e| ApplicationError::Internal(format!("查询 LifecycleRun 失败: {e}")))?
-                .is_some()
-            {
-                return Ok(Some(refs.run_id));
-            }
-        }
-
-        Ok(None)
     }
 
     async fn load_agent_context(
@@ -411,23 +371,21 @@ async fn check_workspace_dispatch_admission(
     )))
 }
 
-fn json_value_to_key_string(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(value) => value.trim().to_string(),
-        _ => value.to_string(),
+fn map_routine_dispatch_error(error: WorkflowApplicationError) -> ApplicationError {
+    match error {
+        WorkflowApplicationError::BadRequest(message) => {
+            ApplicationError::BadRequest(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::NotFound(message) => {
+            ApplicationError::NotFound(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::Conflict(message) => {
+            ApplicationError::Conflict(format!("Routine dispatch 失败: {message}"))
+        }
+        WorkflowApplicationError::Internal(message) => {
+            ApplicationError::Internal(format!("Routine dispatch 失败: {message}"))
+        }
     }
-}
-
-/// 从 JSON value 中按点分路径取值（如 `"pull_request.number"`）
-fn resolve_json_path<'a>(
-    value: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
-    let mut current = value;
-    for segment in path.split('.') {
-        current = current.get(segment)?;
-    }
-    Some(current)
 }
 
 #[cfg(test)]
@@ -437,7 +395,6 @@ mod tests {
         WorkspaceBinding, WorkspaceIdentityKind, WorkspaceResolutionPolicy,
     };
     use async_trait::async_trait;
-    use serde_json::json;
 
     struct MockAvailability {
         online_backend_ids: Vec<String>,
@@ -474,20 +431,6 @@ mod tests {
             "/workspace".to_string(),
             serde_json::json!({ "binding_labels": {} }),
         )
-    }
-
-    #[test]
-    fn test_resolve_json_path() {
-        let data = json!({"a": {"b": {"c": 42}}});
-        assert_eq!(resolve_json_path(&data, "a.b.c"), Some(&json!(42)));
-        assert_eq!(resolve_json_path(&data, "a.b"), Some(&json!({"c": 42})));
-        assert_eq!(resolve_json_path(&data, "x.y"), None);
-    }
-
-    #[test]
-    fn json_value_to_key_string_prefers_raw_string() {
-        assert_eq!(json_value_to_key_string(&json!(" PR-123 ")), "PR-123");
-        assert_eq!(json_value_to_key_string(&json!(42)), "42");
     }
 
     #[tokio::test]

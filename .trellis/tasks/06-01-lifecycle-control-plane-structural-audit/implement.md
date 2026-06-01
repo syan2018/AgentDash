@@ -133,15 +133,33 @@
 - [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
 - [ ] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
 - [ ] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
-- [ ] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
+- [x] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
 - [ ] Permission 明确 source runtime session 只是 provenance，effect owner 是 frame。
 
 ### Gate
 
 - [ ] Task start/continue/cancel 测试证明 command target 是 `SubjectRef` / assignment / gate，而不是 raw RuntimeSession。
 - [ ] Companion wait/resume 测试证明 durable `LifecycleGate` 是 truth，runtime notification 只是 delivery。
-- [ ] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
+- [x] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
 - [ ] Permission query 测试证明 frame/run/subject 是主查询入口，session 只作为审计 provenance filter。
+
+### 落地记录
+
+2026-06-02 的 Phase 5 Routine reuse slice 已关闭 Routine gate，但 Phase 5 整体仍因 Task cancel、Companion 分层和 Permission provenance 保持 partial：
+
+- 新增 `LifecycleAgentReuseResolver` 作为 Routine Reuse / PerEntity 的唯一查询封装；它按 routine execution 历史、entity key、dispatch refs、LifecycleRun、LifecycleAgent、AgentFrame、AgentAssignment 与 `LifecycleSubjectAssociation` 校验复用 anchor。
+- `DispatchStrategy::Reuse` 在没有可复用 active lifecycle agent anchor 时返回 `ApplicationError::Conflict`，不再让 `RunPolicy::ReuseExisting` 缺 `parent_run_id` 时静默创建新 run。
+- `DispatchStrategy::PerEntity` 必须从 payload 路径解析非空 `entity_key`；已有 entity target 时复用同一 `run_id + agent_id`，首次 entity 触发则显式走 `CreateLinkedRun + Create` 创建新的 per-entity anchor。
+- `SubjectExecutionIntent` 现在从 resolver target 显式填入 `parent_run_id + parent_agent_id`；`LifecycleDispatchService` 在 `Reuse` / `Resume` 收到 `parent_agent_id` 时校验 agent 属于目标 run/project 且 active，同一 run 多 active agent 时只复用指定 agent。
+- `RunPolicy::ReuseExisting` / `AppendGraph` 缺 `parent_run_id` 会直接 bad request，底层 dispatch policy 不再用“没有 anchor 就创建新 run”兜底。
+
+验证记录：
+
+- `cargo test -p agentdash-application routine::reuse_resolver --lib -- --format terse`
+- `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo fmt --all --check`
+- `cargo check -p agentdash-application`
 
 ## Phase 6: 建立稳定 Read Models
 

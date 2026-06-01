@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineExecution};
 use agentdash_domain::workflow::{
     AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
@@ -8,18 +6,20 @@ use agentdash_domain::workflow::{
 
 use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
 
+use super::reuse_resolver::RoutineDispatchReuseTarget;
+
 /// DispatchStrategy → dispatch policy 映射。
 ///
 /// | DispatchStrategy | run_policy        | agent_policy |
 /// |------------------|-------------------|--------------|
 /// | Fresh            | CreateLinkedRun   | Create       |
 /// | Reuse            | ReuseExisting     | Resume       |
-/// | PerEntity        | ReuseExisting     | Resume/Create|
+/// | PerEntity        | CreateLinkedRun   | Create       |
 fn map_dispatch_strategy(strategy: &DispatchStrategy) -> (RunPolicy, AgentPolicy) {
     match strategy {
         DispatchStrategy::Fresh => (RunPolicy::CreateLinkedRun, AgentPolicy::Create),
         DispatchStrategy::Reuse => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
-        DispatchStrategy::PerEntity { .. } => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
+        DispatchStrategy::PerEntity { .. } => (RunPolicy::CreateLinkedRun, AgentPolicy::Create),
     }
 }
 
@@ -52,19 +52,21 @@ pub fn build_routine_execution_intent(
     }
 }
 
-/// 为 PerEntity 策略提供 entity_key 感知的 intent 构造。
+/// 为 Reuse / PerEntity 策略提供 resolver target 感知的 intent 构造。
 ///
-/// 当 entity_key 已解析且存在关联的 run_id 时，使用 ReuseExisting + parent_run_id
-/// 在同一个 LifecycleRun 内追加执行。
+/// 当 resolver 已找到稳定 run + agent anchor 时，使用 ReuseExisting + parent refs
+/// 在同一个 LifecycleRun / LifecycleAgent 上追加执行。PerEntity 首次触发没有 target 时，
+/// 这是新的 per-entity dispatch anchor，应创建新的 run + agent。
 pub fn build_routine_execution_intent_with_reuse(
     routine: &Routine,
     execution: &RoutineExecution,
-    reuse_run_id: Option<Uuid>,
+    reuse_target: Option<&RoutineDispatchReuseTarget>,
 ) -> SubjectExecutionIntent {
     let mut intent = build_routine_execution_intent(routine, execution);
 
-    if let Some(run_id) = reuse_run_id {
-        intent.parent_run_id = Some(run_id);
+    if let Some(target) = reuse_target {
+        intent.parent_run_id = Some(target.run_id);
+        intent.parent_agent_id = Some(target.agent_id);
         intent.run_policy = RunPolicy::ReuseExisting;
         intent.agent_policy = AgentPolicy::Resume;
     }
@@ -76,6 +78,7 @@ pub fn build_routine_execution_intent_with_reuse(
 mod tests {
     use super::*;
     use agentdash_domain::routine::{DispatchStrategy, RoutineTriggerConfig};
+    use uuid::Uuid;
 
     fn test_routine(strategy: DispatchStrategy) -> Routine {
         Routine::new(
@@ -121,10 +124,32 @@ mod tests {
         });
         let execution = RoutineExecution::new(routine.id, "github:issues.opened");
         let run_id = Uuid::new_v4();
-        let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(run_id));
+        let agent_id = Uuid::new_v4();
+        let target = RoutineDispatchReuseTarget {
+            run_id,
+            agent_id,
+            frame_id: Uuid::new_v4(),
+            assignment_id: Uuid::new_v4(),
+        };
+        let intent = build_routine_execution_intent_with_reuse(&routine, &execution, Some(&target));
 
         assert_eq!(intent.run_policy, RunPolicy::ReuseExisting);
         assert_eq!(intent.agent_policy, AgentPolicy::Resume);
         assert_eq!(intent.parent_run_id, Some(run_id));
+        assert_eq!(intent.parent_agent_id, Some(agent_id));
+    }
+
+    #[test]
+    fn per_entity_without_reuse_target_creates_new_anchor() {
+        let routine = test_routine(DispatchStrategy::PerEntity {
+            entity_key_path: "issue.id".to_string(),
+        });
+        let execution = RoutineExecution::new(routine.id, "github:issues.opened");
+        let intent = build_routine_execution_intent_with_reuse(&routine, &execution, None);
+
+        assert_eq!(intent.run_policy, RunPolicy::CreateLinkedRun);
+        assert_eq!(intent.agent_policy, AgentPolicy::Create);
+        assert_eq!(intent.parent_run_id, None);
+        assert_eq!(intent.parent_agent_id, None);
     }
 }

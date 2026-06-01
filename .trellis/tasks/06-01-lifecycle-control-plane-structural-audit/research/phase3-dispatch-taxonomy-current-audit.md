@@ -128,5 +128,20 @@
 
 - Story root/freeform 写侧 launch 未发现统一 dispatch 入口。
 - Task execution start/continue response 仍未进入 generated contracts，前端仍丢弃 route response 后重新 fetch task。
-- Routine reuse 仍缺少稳定 `LifecycleAgentReuseResolver` / subject association anchor。
 - Companion parent/human wait/resume 仍需在 Phase 5 继续拆分 durable gate truth 与 runtime notification delivery。
+
+## Post-Fix Update: 2026-06-02 Routine Reuse
+
+Routine reuse 已在后续 Phase 5 slice 中关闭：
+
+- 新增 `LifecycleAgentReuseResolver`，按 routine execution 历史、entity key、dispatch refs、LifecycleRun、LifecycleAgent、AgentFrame、AgentAssignment 与 `LifecycleSubjectAssociation` 校验可复用 anchor。
+- `DispatchStrategy::Reuse` 无有效 anchor 时返回 conflict，不再让 `RunPolicy::ReuseExisting` 缺 `parent_run_id` 时创建新 run。
+- `DispatchStrategy::PerEntity` 首次 entity 触发显式使用 `CreateLinkedRun + Create` 创建 per-entity anchor；已有 target 时显式传入 `parent_run_id + parent_agent_id`。
+- `LifecycleDispatchService` 现在校验 explicit `parent_agent_id`，并拒绝缺 `parent_run_id` 的 `ReuseExisting` / `AppendGraph`。
+
+已验证：
+
+- `cargo test -p agentdash-application routine::reuse_resolver --lib -- --format terse`
+- `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo check -p agentdash-application`

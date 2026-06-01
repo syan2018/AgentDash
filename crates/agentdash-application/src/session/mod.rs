@@ -62,7 +62,8 @@ pub use assembler::{
     CompanionWorkflowSpec, LifecycleNodeSpec, OwnerBootstrapSpec, OwnerPromptLifecycle, OwnerScope,
     SessionRequestAssembler, StoryStepPhase, StoryStepSpec, compose_companion_prompt,
     compose_companion_with_workflow_prompt, compose_lifecycle_node_prompt,
-    compose_lifecycle_node_prompt_with_audit, extract_agent_mcp_entries, load_available_presets,
+    compose_lifecycle_node_prompt_with_audit, compose_lifecycle_node_to_frame_with_audit,
+    extract_agent_mcp_entries, load_available_presets,
 };
 pub use branching::{
     SessionBranchingService, SessionForkRequest, SessionForkResult, SessionLineageView,
@@ -76,12 +77,14 @@ pub use capability_projection::{
 pub use capability_service::SessionCapabilityService;
 pub use capability_state::{
     CapabilityDimensionModule, CapabilityDimensionRegistry, CapabilityStateDelta,
-    CompanionCapabilityDimensionModule, McpCapabilityDimensionModule, NamedEntityDelta,
-    RuntimeCapabilityProjectionContext, RuntimeCapabilityReplay, RuntimeCapabilityReplayContext,
-    RuntimeContextTransition, SetDelta, ToolCapabilityDimensionModule,
-    VfsCapabilityDimensionModule, VfsSurfaceDelta, apply_runtime_capability_transition,
+    CompanionCapabilityDimensionModule, FrameCapabilitySurfaces, McpCapabilityDimensionModule,
+    NamedEntityDelta, RuntimeCapabilityProjectionContext, RuntimeCapabilityReplay,
+    RuntimeCapabilityReplayContext, RuntimeContextTransition, SetDelta,
+    ToolCapabilityDimensionModule, VfsCapabilityDimensionModule, VfsSurfaceDelta,
+    apply_runtime_capability_transition, capability_state_to_frame_surfaces,
     compose_vfs_with_overlay_and_directives, compute_capability_state_delta, merge_vfs_overlay,
-    replay_runtime_capability_transition, replay_runtime_capability_transitions,
+    project_capability_state_from_frame, replay_runtime_capability_transition,
+    replay_runtime_capability_transitions,
 };
 pub use construction_provider::{
     CompanionLaunchSource, CompanionLaunchWorkflowSource, RoutineLaunchSource,
@@ -96,7 +99,7 @@ pub use effects_service::SessionEffectsService;
 pub use eventing::SessionEventingService;
 pub use hook_delegate::HookRuntimeDelegate;
 pub use hook_events::build_hook_trace_envelope;
-pub use hook_runtime::HookSessionRuntime;
+pub use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 pub use hooks_service::SessionHookService;
 pub use hub_support::TurnTerminalKind;
 pub use launch::{LaunchCommand, LaunchCommandOutcome, LaunchSource, SessionLaunchService};

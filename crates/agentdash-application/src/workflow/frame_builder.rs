@@ -4,7 +4,7 @@
 //! ## 设计定位
 //!
 //! - **唯一事实源**：capability / context / VFS / MCP surface 只从 builder 写入
-//!   frame revision，不再由 SessionConstructionPlan、HookSessionRuntime、live
+//!   frame revision，不再由 SessionConstructionPlan、AgentFrameHookRuntime、live
 //!   session maps 等并行事实源决定。
 //! - **不可变快照**：`build()` 产出新 revision，旧 revision 保持不变，
 //!   revision 序列天然提供 provenance。
@@ -13,7 +13,10 @@
 
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentProcedureRef};
 use agentdash_domain::DomainError;
+use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};
 use uuid::Uuid;
+
+use crate::session::capability_state::capability_state_to_frame_surfaces;
 
 /// AgentFrame 的 builder，收束所有 runtime surface 输入为单次 revision。
 ///
@@ -26,6 +29,7 @@ pub struct AgentFrameBuilder {
     capability_surface: Option<serde_json::Value>,
     vfs_surface: Option<serde_json::Value>,
     mcp_surface: Option<serde_json::Value>,
+    execution_profile: Option<serde_json::Value>,
     runtime_session_refs: Vec<Uuid>,
     graph_instance_id: Option<Uuid>,
     activity_key: Option<String>,
@@ -42,6 +46,7 @@ impl AgentFrameBuilder {
             capability_surface: None,
             vfs_surface: None,
             mcp_surface: None,
+            execution_profile: None,
             runtime_session_refs: Vec::new(),
             graph_instance_id: None,
             activity_key: None,
@@ -72,6 +77,52 @@ impl AgentFrameBuilder {
 
     pub fn with_mcp(mut self, mcp_surface: serde_json::Value) -> Self {
         self.mcp_surface = Some(mcp_surface);
+        self
+    }
+
+    /// 从 `CapabilityState` 一次性填充 capability / VFS / MCP 三个 surface 列。
+    ///
+    /// 内部调用 `capability_state_to_frame_surfaces` 拆分，保证写入与
+    /// `project_capability_state_from_frame` 读取完全对称。
+    pub fn with_capability_state(mut self, state: &CapabilityState) -> Self {
+        let surfaces = capability_state_to_frame_surfaces(state);
+        self.capability_surface = surfaces.effective_capability_json;
+        self.vfs_surface = surfaces.vfs_surface_json;
+        self.mcp_surface = surfaces.mcp_surface_json;
+        self
+    }
+
+    /// 从结构化 `Vfs` 填充 vfs_surface（独立于 CapabilityState 维度）。
+    ///
+    /// 仅当 compose 逻辑独立产出 VFS（而非从 CapabilityState 中拆分）时使用。
+    /// 若通过 `with_capability_state` 设置，VFS 会被自动提取。
+    pub fn with_vfs_typed(mut self, vfs: &Vfs) -> Self {
+        self.vfs_surface = serde_json::to_value(vfs).ok();
+        self
+    }
+
+    /// 从结构化 `Vec<SessionMcpServer>` 填充 mcp_surface。
+    pub fn with_mcp_servers(mut self, servers: &[SessionMcpServer]) -> Self {
+        if servers.is_empty() {
+            self.mcp_surface = None;
+        } else {
+            self.mcp_surface = serde_json::to_value(servers).ok();
+        }
+        self
+    }
+
+    /// 从结构化 `AgentConfig` 填充 execution_profile surface。
+    ///
+    /// execution profile 记录每个 frame revision 使用的执行器配置，
+    /// RuntimeLaunchRequest.from_frame() 会投影此字段用于 connector 启动。
+    pub fn with_execution_profile(mut self, config: &AgentConfig) -> Self {
+        self.execution_profile = serde_json::to_value(config).ok();
+        self
+    }
+
+    /// 从已有 JSON 值填充 execution_profile（用于 frame revision carry-forward）。
+    pub fn with_execution_profile_raw(mut self, profile: serde_json::Value) -> Self {
+        self.execution_profile = Some(profile);
         self
     }
 
@@ -133,6 +184,7 @@ impl AgentFrameBuilder {
         frame.vfs_surface_json = self.vfs_surface.clone();
         frame.mcp_surface_json = self.mcp_surface.clone();
         frame.runtime_session_refs_json = session_refs_json;
+        frame.execution_profile_json = self.execution_profile.clone();
         frame.created_by_id = self.created_by_id.clone();
 
         repo.create(&frame).await?;

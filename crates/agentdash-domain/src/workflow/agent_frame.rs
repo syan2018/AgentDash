@@ -27,6 +27,8 @@ pub struct AgentFrame {
     pub mcp_surface_json: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_session_refs_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_profile_json: Option<serde_json::Value>,
     pub created_by_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_id: Option<String>,
@@ -47,6 +49,7 @@ impl AgentFrame {
             vfs_surface_json: None,
             mcp_surface_json: None,
             runtime_session_refs_json: runtime_session_refs,
+            execution_profile_json: None,
             created_by_kind: "backfill".to_string(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -70,6 +73,7 @@ impl AgentFrame {
             vfs_surface_json: None,
             mcp_surface_json: None,
             runtime_session_refs_json: None,
+            execution_profile_json: None,
             created_by_kind: created_by_kind.into(),
             created_by_id: None,
             created_at: Utc::now(),

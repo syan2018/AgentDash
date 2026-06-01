@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::common::{MountLink, Vfs};
-use agentdash_domain::workflow::{MountDirective, ToolCapabilityDirective};
+use agentdash_domain::workflow::{AgentFrame, MountDirective, ToolCapabilityDirective};
 use agentdash_spi::SessionMcpServer;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -23,6 +23,75 @@ use super::types::{
     RuntimeCapabilityTransition, SetCompanionAgentRosterEffect, SetMcpServerSetEffect,
     SetToolAccessEffect,
 };
+
+// ── AgentFrame ↔ CapabilityState 投影 ─────────────────────────────
+
+/// AgentFrame revision 拆解后的 capability surface JSON 三元组。
+///
+/// 对应 `AgentFrame` 的三个 JSON 列；`AgentFrameBuilder` 在写入时
+/// 使用此结构统一填充，避免调用方手动拆分维度。
+#[derive(Debug, Clone)]
+pub struct FrameCapabilitySurfaces {
+    pub effective_capability_json: Option<serde_json::Value>,
+    pub vfs_surface_json: Option<serde_json::Value>,
+    pub mcp_surface_json: Option<serde_json::Value>,
+}
+
+/// 从 `AgentFrame` revision 投影出只读 `CapabilityState`。
+///
+/// 投影顺序：
+/// 1. `effective_capability_json` 反序列化为完整 `CapabilityState`
+/// 2. `vfs_surface_json` 如存在，覆盖 `state.vfs.active`
+/// 3. `mcp_surface_json` 如存在，覆盖 `state.tool.mcp_servers`
+///
+/// 第 2/3 步使用独立列覆盖，以支持 frame 级别对单一维度的精确更新。
+pub fn project_capability_state_from_frame(frame: &AgentFrame) -> CapabilityState {
+    let mut state: CapabilityState = frame
+        .effective_capability_json
+        .as_ref()
+        .and_then(|json| serde_json::from_value(json.clone()).ok())
+        .unwrap_or_default();
+
+    if let Some(vfs) = frame
+        .vfs_surface_json
+        .as_ref()
+        .and_then(|json| serde_json::from_value::<Vfs>(json.clone()).ok())
+    {
+        state.vfs.active = Some(vfs);
+    }
+
+    if let Some(servers) = frame
+        .mcp_surface_json
+        .as_ref()
+        .and_then(|json| serde_json::from_value::<Vec<SessionMcpServer>>(json.clone()).ok())
+    {
+        state.tool.mcp_servers = servers;
+    }
+
+    state
+}
+
+/// 将 `CapabilityState` 拆分为 frame 的三个 JSON surface 列。
+///
+/// 这是 `project_capability_state_from_frame` 的逆操作：
+/// - `effective_capability_json`: 完整 `CapabilityState` 序列化
+/// - `vfs_surface_json`: `state.vfs.active` 单独提取
+/// - `mcp_surface_json`: `state.tool.mcp_servers` 单独提取
+pub fn capability_state_to_frame_surfaces(state: &CapabilityState) -> FrameCapabilitySurfaces {
+    FrameCapabilitySurfaces {
+        effective_capability_json: serde_json::to_value(state).ok(),
+        vfs_surface_json: state
+            .vfs
+            .active
+            .as_ref()
+            .and_then(|vfs| serde_json::to_value(vfs).ok()),
+        mcp_surface_json: if state.tool.mcp_servers.is_empty() {
+            None
+        } else {
+            serde_json::to_value(&state.tool.mcp_servers).ok()
+        },
+    }
+}
 
 /// 一次 workflow/runtime 上下文切换的结构化描述。
 ///
@@ -151,6 +220,10 @@ impl<'a> RuntimeContextTransition<'a> {
     }
 }
 
+/// 纯函数：将单次 transition diff 应用到 base state，返回新 state。
+///
+/// 调用方应将返回值写入 AgentFrame revision（通过 `AgentFrameBuilder::with_capability_state`），
+/// 而非直接存入 session 内存。内存中的 `CapabilityState` 仅作为 frame 投影缓存。
 pub fn apply_runtime_capability_transition(
     base_state: &CapabilityState,
     transition: &RuntimeCapabilityTransition,
@@ -175,6 +248,14 @@ pub struct RuntimeCapabilityReplayContext {
 #[derive(Debug, Default)]
 pub struct RuntimeCapabilityProjectionContext;
 
+/// Capability 维度模块——将结构化 diff（`RuntimeCapabilityEffectRecord`）
+/// 应用到 `CapabilityState` 投影上。
+///
+/// 所有维度共享同一个"只读投影 + diff 应用"语义：
+/// - diff 由 workflow/hook 产出为 `RuntimeCapabilityEffectRecord`
+/// - `replay_effect` 将 diff 应用到 state 副本（调用方预先 clone）
+/// - 应用后的新 state 由调用方通过 `AgentFrameBuilder::with_capability_state`
+///   写入 AgentFrame revision，CapabilityState 始终是 frame 的投影缓存
 pub trait CapabilityDimensionModule {
     fn key(&self) -> &'static str;
 
@@ -190,6 +271,11 @@ pub trait CapabilityDimensionModule {
 
     fn validate_effect(&self, record: &RuntimeCapabilityEffectRecord) -> Result<(), String>;
 
+    /// 将单条 effect diff 应用到可变 state 上。
+    ///
+    /// **调用者约束**：调用方应在 clone 的 state 副本上调用此方法，
+    /// 将结果写入 AgentFrame revision（通过 `AgentFrameBuilder`），
+    /// 不要将可变引用暴露给 session 的长期状态。
     fn replay_effect(
         &self,
         state: &mut CapabilityState,
@@ -609,6 +695,9 @@ fn decode_effect_payload<T: DeserializeOwned>(
     })
 }
 
+/// 纯函数：将单次 transition diff 应用到 base state 副本，返回完整 replay 结果。
+///
+/// 不修改 base_state；内部 clone 后应用 effects。
 pub fn replay_runtime_capability_transition(
     base_state: &CapabilityState,
     transition: &RuntimeCapabilityTransition,
@@ -628,6 +717,9 @@ pub fn replay_runtime_capability_transition(
     })
 }
 
+/// 纯函数：将多条 pending transitions 依次应用到 base state 副本。
+///
+/// 调用方将最终 `capability_state` 写入 AgentFrame revision 作为权威存储。
 pub fn replay_runtime_capability_transitions(
     base_state: &CapabilityState,
     transitions: &[PendingCapabilityStateTransition],
@@ -731,6 +823,79 @@ mod tests {
     use super::*;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::CapabilityState;
+
+    // ── AgentFrame 投影 round-trip 测试 ──────────────────────────────
+
+    #[test]
+    fn project_from_empty_frame_returns_default_state() {
+        let frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        let state = project_capability_state_from_frame(&frame);
+        assert_eq!(state, CapabilityState::default());
+    }
+
+    #[test]
+    fn project_round_trip_preserves_capability_state() {
+        let mut state = CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
+        state.vfs.active = Some(Vfs {
+            mounts: vec![mount("workspace", "relay_fs")],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        });
+        state.tool.mcp_servers = vec![agentdash_spi::SessionMcpServer {
+            name: "test-server".to_string(),
+            transport: agentdash_spi::McpTransportConfig::Http {
+                url: "http://localhost:3000".to_string(),
+                headers: vec![],
+            },
+            uses_relay: false,
+        }];
+        state.companion.agents = vec![agentdash_spi::context::capability::CompanionAgentEntry {
+            name: "helper".to_string(),
+            executor: "codex".to_string(),
+            display_name: "Helper".to_string(),
+        }];
+
+        let surfaces = capability_state_to_frame_surfaces(&state);
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        frame.effective_capability_json = surfaces.effective_capability_json;
+        frame.vfs_surface_json = surfaces.vfs_surface_json;
+        frame.mcp_surface_json = surfaces.mcp_surface_json;
+
+        let projected = project_capability_state_from_frame(&frame);
+        assert_eq!(projected.tool.enabled_clusters, state.tool.enabled_clusters);
+        assert_eq!(projected.vfs.active, state.vfs.active);
+        assert_eq!(projected.tool.mcp_servers.len(), 1);
+        assert_eq!(projected.tool.mcp_servers[0].name, "test-server");
+        assert_eq!(projected.companion.agents.len(), 1);
+        assert_eq!(projected.companion.agents[0].name, "helper");
+    }
+
+    #[test]
+    fn vfs_surface_json_overrides_embedded_vfs() {
+        let base = CapabilityState::default();
+        let surfaces = capability_state_to_frame_surfaces(&base);
+
+        let override_vfs = Vfs {
+            mounts: vec![mount("override", "inline_fs")],
+            default_mount_id: Some("override".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+
+        let mut frame = AgentFrame::new_initial(Uuid::new_v4(), None);
+        frame.effective_capability_json = surfaces.effective_capability_json;
+        frame.vfs_surface_json = serde_json::to_value(&override_vfs).ok();
+
+        let projected = project_capability_state_from_frame(&frame);
+        assert_eq!(
+            projected.vfs.active.as_ref().and_then(|v| v.default_mount_id.as_deref()),
+            Some("override"),
+            "vfs_surface_json 应覆盖 effective_capability_json 中嵌入的 VFS"
+        );
+    }
 
     fn mount(id: &str, provider: &str) -> Mount {
         Mount {

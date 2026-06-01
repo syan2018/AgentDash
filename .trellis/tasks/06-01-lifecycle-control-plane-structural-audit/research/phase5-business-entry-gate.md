@@ -99,7 +99,7 @@
 
 **过度耦合判断**
 
-- start/continue 与 active assignment cancel 的业务控制面已经切到 SubjectExecution；剩余风险是 open gate cancellation 尚未进入同一 command transaction，Task projection 也尚未区分 Cancelled/Failed。
+- start/continue 与 active assignment cancel 的业务控制面已经切到 SubjectExecution；Task projection 已区分 Cancelled/Failed，剩余风险是 open gate cancellation 尚未进入同一 command transaction。
 - `TurnDispatcher::deliver_runtime_cancel` 已把 runtime cancel 收束为 delivery seam；route/service 仍需要在后续 contract 中显式表达 Task subject、Assignment、Gate、Frame 的 command result。
 - `agent_binding` 仍在 Task spec、DTO、context builder、frontend contract 中作为 executor preference 参与读取，且 start/continue request 的 `executor_config` 当前未生效，形成 “contract 看起来可指定执行器，实际 dispatch 不用它” 的漂移。
 - `context_builder` 的 `/tasks/{id}/session` read-only 路径仍保留 session trace lookup。`find_active_workflow_via_task_sessions` 在 `crates/agentdash-application/src/task/context_builder.rs:181` 从 task association 到 agent/frame，再读 `first_runtime_session_id` 去解析 workflow projection。这是 trace adapter 可接受，但不能继续扩展为 command truth。
@@ -123,7 +123,7 @@
 
 - active assignment cancel command boundary 已落地：`SubjectExecutionControlService` 以 `SubjectRef("task", task_id)` 解析 association/agent/assignment/frame，写 `ActivityCancelled`，abandon claim，release assignment，并产出 `RuntimeCancelDeliveryCommand`。
 - `TurnDispatcher` 已从 `cancel_session(&str)` 收束为 `deliver_runtime_cancel(RuntimeCancelDeliveryCommand)`；Task service 不再把 raw RuntimeSession 作为 cancel command target。
-- 当前剩余风险从 “cancel 是 session command” 转为两个更窄的问题：open `LifecycleGate` 尚未纳入 `CancelSubjectExecutionCommand` transaction；Task view 仍把 `ActivityAttemptStatus::Cancelled` 投影成 `TaskStatus::Failed`。
+- 当前剩余风险从 “cancel 是 session command” 转为更窄的问题：open `LifecycleGate` 尚未纳入 `CancelSubjectExecutionCommand` transaction。
 
 ### 3. Companion wait/resume/gate
 
@@ -236,7 +236,7 @@
 **过度耦合判断**
 
 - P0-06 的 Story 缺写侧入口，风险是后续 UI 或 API 为了快而直接复制 `project_agents.rs` 的 route-local launch。
-- P1-19 的 active assignment cancel 已进入 SubjectExecution control boundary；剩余风险是 open gate cancellation 尚未进入同一 transaction，且 Task projection 仍合并 Cancelled/Failed。
+- P1-19 的 active assignment cancel 已进入 SubjectExecution control boundary，Task projection 已区分 Cancelled/Failed；剩余风险是 open gate cancellation 尚未进入同一 transaction。
 - P1-20 的 Companion gate 只有部分路径是 durable truth，风险是 parent/human resume 的 truth 分裂在 hook runtime pending actions 和 session event。
 - P1-21 的 Routine reuse 依赖 parent_run_id 或 routine_execution history，风险是 Reuse 策略静默不复用，PerEntity 复用 stale run。
 - P1-22 的 Permission 已完成主要查询迁移，但 source session 仍被写入 effect frame runtime refs，风险是 provenance 与 effect owner 混合。
@@ -244,7 +244,7 @@
 **推荐封装**
 
 - Story：`StoryRootLaunchService` 或通用 `SubjectLaunchService`，封装 Story subject association + root LifecycleAgent 创建/复用。
-- Task：`SubjectExecutionService::{start, continue, cancel}`，active assignment cancel 已以 SubjectRef/assignment/frame 为 truth；下一步把 open gate cancellation 与 TaskExecution projection vocabulary 纳入同一封装。
+- Task：`SubjectExecutionService::{start, continue, cancel}`，active assignment cancel 已以 SubjectRef/assignment/frame 为 truth，TaskExecution projection vocabulary 已落地；下一步把 open gate cancellation 纳入同一封装。
 - Companion：`InteractionGateService` + `GateDeliveryAdapter`，gate 是 wait/resume truth，session/hook runtime 是通知与 trace。
 - Routine：`LifecycleAgentReuseResolver`，以 routine/entity/subject association 查 active owner。
 - Permission：`PermissionGrantService` 保持 frame/run 查询；source runtime session 只作为 grant audit provenance，不进入 AgentFrame runtime refs。

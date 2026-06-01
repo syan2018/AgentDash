@@ -34,6 +34,8 @@ const normalizeTaskStatus = (value: string): Task["status"] => {
       return "completed";
     case "failed":
       return "failed";
+    case "cancelled":
+      return "cancelled";
     default:
       throw new Error(`未知 Task 状态: ${value}`);
   }

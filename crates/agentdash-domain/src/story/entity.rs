@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::value_objects::{StoryContext, StoryPriority, StoryStatus, StoryType};
-use crate::task::{Task, TaskSpecMut};
+use crate::task::{Task, TaskExecutionProjection, TaskSpecMut};
 use crate::workflow::ActivityAttemptStatus;
 
 /// Story — 用户价值单元
@@ -148,7 +148,8 @@ impl Story {
         attempt_status: ActivityAttemptStatus,
     ) -> Option<bool> {
         let task = self.tasks.iter_mut().find(|t| t.id == task_id)?;
-        let changed = task.apply_projection(attempt_status);
+        let changed =
+            task.apply_projection(TaskExecutionProjection::from_attempt_status(attempt_status));
         if changed {
             self.updated_at = Utc::now();
         }
@@ -336,14 +337,14 @@ mod tests {
             TaskStatus::Failed
         );
 
-        // Cancelled → Failed
+        // Cancelled → Cancelled
         story.force_set_task_status(task_id, TaskStatus::Running);
         story
             .apply_task_projection(task_id, ActivityAttemptStatus::Cancelled)
             .expect("task exists");
         assert_eq!(
             *story.find_task(task_id).unwrap().status(),
-            TaskStatus::Failed
+            TaskStatus::Cancelled
         );
     }
 

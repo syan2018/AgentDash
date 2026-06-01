@@ -181,7 +181,7 @@
 - [ ] Story root/freeform launch 进入 dispatch，创建 Story subject association。
 - [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
 - [x] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
-- [ ] Task view status vocabulary 区分 Cancelled 与 Failed；取消投影不再伪装成失败业务状态。
+- [x] Task view status vocabulary 区分 Cancelled 与 Failed；取消投影不再伪装成失败业务状态。
 - [ ] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
 - [x] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
 - [ ] Permission 明确 source runtime session 只是 provenance，effect owner 是 frame。
@@ -231,6 +231,21 @@
 - `pnpm --filter app-web run typecheck`
 - `cargo fmt --all --check`
 - `git diff --check`
+
+2026-06-02 的 Phase 5 Task projection vocabulary slice 已关闭 P1-19A；Phase 5 整体仍因 Task wait/gate cancellation、Companion 分层和 Permission provenance 保持 partial：
+
+- `TaskStatus` 新增 `Cancelled`，`TaskExecutionProjection` 成为 workflow attempt outcome 到 Task view status 的封装；`Task` entity 不再直接消费 workflow attempt enum。
+- `ActivityAttemptStatus::Cancelled` 投影到 `TaskStatus::Cancelled`，不再合并为 `Failed`；terminal cancel 判断同步把 Task `Cancelled` 视为终态。
+- `agentdash-contracts` 与 generated `core-contracts.ts` 已包含 Task `cancelled` union；前端 mapper、Task badge、Story task review label 与 Task execution panel action guard 同步识别 cancelled。
+- MCP Task status 更新说明包含 `cancelled`，避免工具侧 schema 落后于 domain 词表。
+
+验证记录：
+
+- `cargo test -p agentdash-domain story::entity --lib -- --format terse`
+- `cargo test -p agentdash-application task::view_projector --lib -- --format terse`
+- `cargo check -p agentdash-api`
+- `pnpm --filter app-web run typecheck`
+- `pnpm run contracts:check`
 
 ## Phase 6: 建立稳定 Read Models
 

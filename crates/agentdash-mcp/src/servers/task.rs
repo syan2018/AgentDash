@@ -23,7 +23,7 @@ use agentdash_spi::platform::auth::AuthIdentity;
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct UpdateTaskStatusParams {
     #[schemars(
-        description = "目标状态：pending / assigned / running / awaiting_verification / completed / failed"
+        description = "目标状态：pending / assigned / running / awaiting_verification / completed / failed / cancelled"
     )]
     pub status: String,
     #[schemars(description = "状态变更原因说明")]

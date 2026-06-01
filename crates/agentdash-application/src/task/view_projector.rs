@@ -812,6 +812,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn projects_task_from_cancelled_step_to_cancelled() {
+        let project = Project::new("P".into(), "".into());
+        let project_id = project.id;
+
+        let mut story = Story::new(project_id, "S".into(), "".into());
+        let task = Task::new(project_id, story.id, "T".into(), String::new());
+        let task_id = task.id;
+        story.add_task(task);
+        story.force_set_task_status(task_id, TaskStatus::Running);
+
+        let lifecycle_id = Uuid::new_v4();
+        let (run, graph_instance) = make_run_with_activity_status(
+            project_id,
+            lifecycle_id,
+            "sess-boot-cancelled",
+            "only",
+            ActivityAttemptStatus::Cancelled,
+        );
+        let assoc = association_for_task(run.id, task_id);
+
+        let project_repo: Arc<dyn ProjectRepository> = Arc::new(InMemoryProjectRepo {
+            projects: Mutex::new(vec![project]),
+        });
+        let story_repo: Arc<dyn StoryRepository> = Arc::new(InMemoryStoryRepo {
+            stories: Mutex::new(vec![story]),
+        });
+        let state_change_repo: Arc<dyn StateChangeRepository> = Arc::new(InMemoryStateChangeRepo {
+            changes: Mutex::new(Vec::new()),
+        });
+        let association_repo: Arc<dyn LifecycleSubjectAssociationRepository> =
+            Arc::new(InMemorySubjectAssociationRepo {
+                associations: Mutex::new(vec![assoc]),
+            });
+        let lifecycle_run_repo: Arc<dyn LifecycleRunRepository> =
+            Arc::new(InMemoryLifecycleRunRepo {
+                runs: Mutex::new(vec![run]),
+            });
+        let workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository> =
+            Arc::new(InMemoryWorkflowGraphInstanceRepo {
+                instances: Mutex::new(vec![graph_instance]),
+            });
+
+        project_task_views_on_boot(
+            &project_repo,
+            &state_change_repo,
+            &story_repo,
+            &association_repo,
+            &lifecycle_run_repo,
+            &workflow_graph_instance_repo,
+        )
+        .await
+        .expect("reconcile ok");
+
+        let after = story_repo.find_by_task_id(task_id).await.unwrap().unwrap();
+        assert_eq!(
+            *after.find_task(task_id).unwrap().status(),
+            TaskStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
     async fn orphan_running_task_without_active_run_falls_back_to_failed() {
         let project = Project::new("P".into(), "".into());
         let project_id = project.id;

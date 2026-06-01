@@ -953,6 +953,7 @@ pub enum TaskStatus {
     AwaitingVerification,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl From<agentdash_domain::task::TaskStatus> for TaskStatus {
@@ -964,6 +965,7 @@ impl From<agentdash_domain::task::TaskStatus> for TaskStatus {
             agentdash_domain::task::TaskStatus::AwaitingVerification => Self::AwaitingVerification,
             agentdash_domain::task::TaskStatus::Completed => Self::Completed,
             agentdash_domain::task::TaskStatus::Failed => Self::Failed,
+            agentdash_domain::task::TaskStatus::Cancelled => Self::Cancelled,
         }
     }
 }

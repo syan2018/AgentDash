@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::context_source::ContextSourceRef;
+use crate::workflow::ActivityAttemptStatus;
 
 /// Task 状态枚举
-/// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed
+/// 生命周期: Pending → Assigned → Running → AwaitingVerification → Completed/Failed/Cancelled
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -15,6 +16,7 @@ pub enum TaskStatus {
     AwaitingVerification,
     Completed,
     Failed,
+    Cancelled,
 }
 
 impl std::str::FromStr for TaskStatus {
@@ -28,8 +30,32 @@ impl std::str::FromStr for TaskStatus {
             "awaiting_verification" => Ok(Self::AwaitingVerification),
             "completed" => Ok(Self::Completed),
             "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
             other => Err(format!("Unknown task status: {other}")),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskExecutionProjection {
+    pub status: TaskStatus,
+}
+
+impl TaskExecutionProjection {
+    /// 将 workflow attempt 状态翻译成 Task 自己的 execution projection。
+    ///
+    /// `Completed` 会先进入 `AwaitingVerification`，因为 Task 的业务完成态仍由
+    /// hook / verification 决策；`Cancelled` 独立于 `Failed`，表示执行被停止。
+    pub fn from_attempt_status(attempt_status: ActivityAttemptStatus) -> Self {
+        let status = match attempt_status {
+            ActivityAttemptStatus::Pending => TaskStatus::Pending,
+            ActivityAttemptStatus::Ready | ActivityAttemptStatus::Claiming => TaskStatus::Assigned,
+            ActivityAttemptStatus::Running => TaskStatus::Running,
+            ActivityAttemptStatus::Completed => TaskStatus::AwaitingVerification,
+            ActivityAttemptStatus::Failed => TaskStatus::Failed,
+            ActivityAttemptStatus::Cancelled => TaskStatus::Cancelled,
+        };
+        Self { status }
     }
 }
 

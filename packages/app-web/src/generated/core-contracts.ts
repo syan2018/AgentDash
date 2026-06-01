@@ -91,7 +91,7 @@ export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "o
 
 export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, title: string, description: string, status: TaskStatus, agent_binding: AgentBinding, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
 
-export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed";
+export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed" | "cancelled";
 
 export type UpdatedIdResponse = { updated: string, };
 

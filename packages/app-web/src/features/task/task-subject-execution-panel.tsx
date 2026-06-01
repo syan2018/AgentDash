@@ -171,7 +171,8 @@ export function TaskSubjectExecutionPanel({ task, onTaskUpdated }: TaskSubjectEx
   );
 
   const canStart = task.status === "pending" || task.status === "assigned" || !view?.current_agent;
-  const canContinue = Boolean(view?.current_agent) && task.status !== "completed" && task.status !== "failed";
+  const canContinue =
+    Boolean(view?.current_agent) && task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled";
   const canCancel = task.status === "running";
 
   return (

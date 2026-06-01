@@ -662,7 +662,7 @@ RuntimeSession cancel 只能是该 command 的 delivery step。
 - `workflow::subject_execution_control` 测试证明 Task cancel 只用 `SubjectRef` 输入即可解析 assignment/frame 并选择 explicit runtime delivery ref。
 - `workflow::engine` 测试证明 running attempt cancel 会落到 graph cancelled 状态，terminal attempt 不能再次 cancel。
 
-### P1-19A 后续暴露问题：Task cancel projection vocabulary
+### P1-19A 后续暴露问题：Task cancel projection vocabulary（已关闭）
 
 ### 原始问题
 
@@ -684,6 +684,15 @@ Task cancel command 已能写入 `ActivityAttemptStatus::Cancelled`，但 Task v
 - `TaskStatus` 若继续作为用户工作项状态，应加入 `Cancelled`；若业务状态与执行状态需要并存，则 Task view 应显式拆为 `task.status` 与 `task.execution.status`，由 read model builder 组合。
 
 最小可验收 gate：cancel 后 Task projection、Story state change、API response 与 frontend status union 都能区分 `cancelled` 与 `failed`，并有测试覆盖 `ActivityAttemptStatus::Cancelled -> Task cancelled projection`。
+
+### 当前落地状态
+
+2026-06-02 的 projection vocabulary slice 已关闭该问题：
+
+- `TaskExecutionProjection` 负责把 workflow attempt outcome 翻译成 Task view status，`Task` entity 不再直接接收 workflow attempt enum。
+- `TaskStatus` 新增 `Cancelled`，`ActivityAttemptStatus::Cancelled` 投影到 `TaskStatus::Cancelled`。
+- Contract/generated TS、frontend mapper、Task badge、Story task review label、Task execution panel action guard 与 MCP task status schema 都识别 `cancelled`。
+- `cargo test -p agentdash-domain story::entity --lib -- --format terse` 与 `cargo test -p agentdash-application task::view_projector --lib -- --format terse` 覆盖 cancelled projection；`pnpm run contracts:check` 覆盖 generated union drift。
 
 ### P1-19B 后续暴露问题：Task wait/gate cancellation
 

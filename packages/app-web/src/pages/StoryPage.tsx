@@ -65,6 +65,8 @@ function taskReviewLabel(status: Task["status"]): { label: string; className: st
       return { label: "通过", className: "text-success" };
     case "failed":
       return { label: "未通过", className: "text-destructive" };
+    case "cancelled":
+      return { label: "已取消", className: "text-warning" };
     case "running":
       return { label: "执行中", className: "text-primary" };
     case "assigned":

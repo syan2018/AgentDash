@@ -256,6 +256,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 Some(ToolCluster::Collaboration),
             ) {
                 tools.push(Arc::new(CompanionRespondTool::new(
+                    self.repos.clone(),
                     self.session_services_handle.clone(),
                     context,
                 )));

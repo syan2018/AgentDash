@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 55
-- **Last Active**: 2026-05-29
+- **Total Sessions**: 56
+- **Last Active**: 2026-06-01
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~999 | Active |
+| `journal-2.md` | ~1034 | Active |
 | `journal-1.md` | ~1892 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 56 | 2026-06-01 | Lifecycle 控制面旧模型硬切清场 | `08690e1d`, `b308caa4`, `876a063d` | `codex/refactor-lifecycle-control-plane` |
 | 55 | 2026-05-29 | Routine mount 与跨轮次上下文实现 | `b40a9728` | `main` |
 | 54 | 2026-05-28 | VFS 搜索默认忽略策略收束 | `ba10dd67` | `main` |
 | 53 | 2026-05-27 | Extension SDK 开发体验落地 | `ec9d8b96` | `codex/extension-sdk` |

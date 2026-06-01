@@ -997,3 +997,38 @@ Activity 模型成为前端唯一对外契约：后端 LifecycleRun.step_states 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 56: Lifecycle 控制面旧模型硬切清场
+
+**Date**: 2026-06-01
+**Task**: Lifecycle 控制面旧模型硬切清场
+**Branch**: `codex/refactor-lifecycle-control-plane`
+
+### Summary
+
+创建并执行 lifecycle 控制面 hard cutover 任务，删除 run-link/session-first 公共面，接通 generated refs/views、subject execution、runtime trace，并完成 baseline/migration 与验证收口。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08690e1d` | (see git log) |
+| `b308caa4` | (see git log) |
+| `876a063d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

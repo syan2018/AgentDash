@@ -1,6 +1,7 @@
 mod agent_assignment;
 mod agent_frame;
 mod agent_lineage;
+pub mod dispatch;
 mod entity;
 mod lifecycle_agent;
 mod lifecycle_gate;
@@ -12,6 +13,11 @@ mod value_objects;
 mod workflow_graph_instance;
 
 pub use agent_assignment::AgentAssignment;
+pub use dispatch::{
+    AgentPolicy, AgentProcedureRef, CapabilityPolicy, ContextPolicy, ExecutionDispatchResult,
+    ExecutionIntent, ExecutionSource, GatePolicy, RuntimePolicy, RunPolicy, SubjectExecutionRef,
+    WorkflowGraphRef,
+};
 pub use agent_frame::AgentFrame;
 pub use agent_lineage::AgentLineage;
 pub use entity::{

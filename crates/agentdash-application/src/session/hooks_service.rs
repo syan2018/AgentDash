@@ -8,6 +8,7 @@ use agentdash_spi::hooks::{
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
+use super::types::AgentFrameRuntimeTarget;
 use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 
 #[derive(Clone)]
@@ -28,8 +29,39 @@ impl SessionHookService {
         self.hub.ensure_hook_runtime(session_id, turn_id).await
     }
 
+    pub(crate) async fn ensure_hook_runtime_for_target(
+        &self,
+        target: &AgentFrameRuntimeTarget,
+        turn_id: Option<&str>,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let Some(runtime) = self
+            .hub
+            .ensure_hook_runtime(&target.delivery_runtime_session_id, turn_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        validate_hook_runtime_target(runtime.as_ref(), target)?;
+        Ok(Some(runtime))
+    }
+
     pub async fn get_hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
         self.hub.get_hook_runtime(session_id).await
+    }
+
+    pub(crate) async fn get_hook_runtime_for_target(
+        &self,
+        target: &AgentFrameRuntimeTarget,
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+        let Some(runtime) = self
+            .hub
+            .get_hook_runtime(&target.delivery_runtime_session_id)
+            .await
+        else {
+            return Ok(None);
+        };
+        validate_hook_runtime_target(runtime.as_ref(), target)?;
+        Ok(Some(runtime))
     }
 
     pub async fn reload_hook_runtime(
@@ -139,6 +171,26 @@ impl SessionHookService {
             .emit_session_hook_trigger(hook_runtime, input)
             .await
     }
+}
+
+fn validate_hook_runtime_target(
+    hook_runtime: &dyn HookRuntimeAccess,
+    target: &AgentFrameRuntimeTarget,
+) -> Result<(), ConnectorError> {
+    let control_target = hook_runtime.control_target();
+    if hook_runtime.session_id() == target.delivery_runtime_session_id
+        && control_target.frame_id == target.frame_id
+    {
+        return Ok(());
+    }
+
+    Err(ConnectorError::Runtime(format!(
+        "Hook runtime target mismatch: runtime session `{}` / frame `{}` cannot apply to delivery RuntimeSession `{}` / frame `{}`",
+        hook_runtime.session_id(),
+        control_target.frame_id,
+        target.delivery_runtime_session_id,
+        target.frame_id
+    )))
 }
 
 fn enrich_hook_snapshot_runtime_metadata(

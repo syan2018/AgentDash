@@ -350,8 +350,11 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
 
+        let target = session_capability
+            .resolve_runtime_session_target(root_runtime_session_id)
+            .await?;
         if let Some(hook_runtime) = session_hooks
-            .ensure_hook_runtime(root_runtime_session_id, None)
+            .ensure_hook_runtime_for_target(&target, None)
             .await
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
@@ -388,9 +391,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             )
             .await
             .map_err(|error| error.to_string())?;
-            let target = session_capability
-                .resolve_runtime_session_target(root_runtime_session_id)
-                .await?;
             let base_surface = session_capability
                 .get_current_capability_state(&target.delivery_runtime_session_id)
                 .await;

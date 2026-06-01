@@ -601,7 +601,18 @@ async fn sync_canvas_mount_capability_state_for_runtime_delivery(
         return Ok(());
     };
 
-    let Some(hook_runtime) = session_services.hooks.get_hook_runtime(session_id).await else {
+    let target = session_services
+        .capability
+        .resolve_runtime_session_target(session_id)
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
+
+    let Some(hook_runtime) = session_services
+        .hooks
+        .get_hook_runtime_for_target(&target)
+        .await
+        .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+    else {
         tracing::debug!(
             session_id = %session_id,
             canvas_id = %canvas.mount_id,
@@ -610,11 +621,6 @@ async fn sync_canvas_mount_capability_state_for_runtime_delivery(
         return Ok(());
     };
 
-    let target = session_services
-        .capability
-        .resolve_runtime_session_target(session_id)
-        .await
-        .map_err(AgentToolError::ExecutionFailed)?;
     sync_canvas_mount_capability_state(vfs, session_services, target, before_state, hook_runtime)
         .await
 }

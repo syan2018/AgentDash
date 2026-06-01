@@ -3,7 +3,7 @@
   "name": "routine-run-source-migration",
   "title": "Routine Run Source 迁移",
   "description": "将 RoutineExecution 改为 dispatch/source truth，并从 lifecycle/agent projection 派生运行结果。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

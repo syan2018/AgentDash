@@ -52,6 +52,15 @@ impl From<Routine> for RoutineResponse {
     }
 }
 
+/// Dispatch 锚点引用
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DispatchRefsResponse {
+    pub run_id: String,
+    pub agent_id: String,
+    pub frame_id: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RoutineExecutionResponse {
@@ -60,7 +69,8 @@ pub struct RoutineExecutionResponse {
     pub trigger_source: String,
     pub trigger_payload: Option<serde_json::Value>,
     pub resolved_prompt: Option<String>,
-    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatch_refs: Option<DispatchRefsResponse>,
     pub status: String,
     pub started_at: String,
     pub completed_at: Option<String>,
@@ -76,7 +86,11 @@ impl From<RoutineExecution> for RoutineExecutionResponse {
             trigger_source: e.trigger_source,
             trigger_payload: e.trigger_payload,
             resolved_prompt: e.resolved_prompt,
-            session_id: e.session_id,
+            dispatch_refs: e.dispatch_refs.map(|r| DispatchRefsResponse {
+                run_id: r.run_id.to_string(),
+                agent_id: r.agent_id.to_string(),
+                frame_id: r.frame_id.to_string(),
+            }),
             status: format!("{:?}", e.status).to_lowercase(),
             started_at: e.started_at.to_rfc3339(),
             completed_at: e.completed_at.map(|t| t.to_rfc3339()),

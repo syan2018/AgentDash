@@ -3,7 +3,7 @@
   "name": "companion-gate-lineage-migration",
   "title": "Companion Gate Lineage 迁移",
   "description": "将 companion wait/adoption/lineage 迁到 durable LifecycleGate、LifecycleAgent、AgentFrame 与 AgentLineage。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

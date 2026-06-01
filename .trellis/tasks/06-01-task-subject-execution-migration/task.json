@@ -3,7 +3,7 @@
   "name": "task-subject-execution-migration",
   "title": "Task Subject Execution 迁移",
   "description": "将 Task execution 迁到 SubjectRef(kind=Task) dispatch，并把 Task 运行状态改为 subject/agent/attempt projection。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

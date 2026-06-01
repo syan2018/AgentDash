@@ -95,6 +95,14 @@ pub enum SessionStrategy {
     },
 }
 
+/// Dispatch 结果引用——记录 LifecycleRun / LifecycleAgent / AgentFrame 的稳定锚点。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutineDispatchRefs {
+    pub run_id: Uuid,
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+}
+
 /// 每次触发产生的执行记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutineExecution {
@@ -106,15 +114,16 @@ pub struct RoutineExecution {
     pub trigger_payload: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_prompt: Option<String>,
+    /// Dispatch 目标锚点——dispatch 成功后记录 run/agent/frame refs
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    pub dispatch_refs: Option<RoutineDispatchRefs>,
     pub status: RoutineExecutionStatus,
     pub started_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// PerEntity session affinity key
+    /// PerEntity dispatch affinity key
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entity_key: Option<String>,
 }
@@ -127,7 +136,7 @@ impl RoutineExecution {
             trigger_source: trigger_source.into(),
             trigger_payload: None,
             resolved_prompt: None,
-            session_id: None,
+            dispatch_refs: None,
             status: RoutineExecutionStatus::Pending,
             started_at: Utc::now(),
             completed_at: None,
@@ -136,15 +145,12 @@ impl RoutineExecution {
         }
     }
 
-    pub fn mark_running(&mut self, session_id: impl Into<String>, resolved_prompt: String) {
-        self.session_id = Some(session_id.into());
+    /// Intent 已提交至 LifecycleDispatchService，记录 dispatch 锚点。
+    /// `Dispatched` 表示"已成功派发到控制面"，真正 terminal 从 LifecycleRun/Agent projection 派生。
+    pub fn mark_dispatched(&mut self, refs: RoutineDispatchRefs, resolved_prompt: String) {
+        self.dispatch_refs = Some(refs);
         self.resolved_prompt = Some(resolved_prompt);
-        self.status = RoutineExecutionStatus::Running;
-    }
-
-    pub fn mark_completed(&mut self) {
-        self.status = RoutineExecutionStatus::Completed;
-        self.completed_at = Some(Utc::now());
+        self.status = RoutineExecutionStatus::Dispatched;
     }
 
     pub fn mark_failed(&mut self, error: impl Into<String>) {
@@ -165,8 +171,9 @@ impl RoutineExecution {
 pub enum RoutineExecutionStatus {
     #[default]
     Pending,
-    Running,
-    Completed,
+    /// Intent 已成功提交到 LifecycleDispatchService，Agent 正在执行。
+    /// 真正的 terminal status 从 LifecycleRun / LifecycleAgent projection 派生。
+    Dispatched,
     Failed,
     /// Agent 仍在运行时跳过重入
     Skipped,

@@ -1,3 +1,4 @@
+pub mod dispatch;
 mod executor;
 pub mod template;
 

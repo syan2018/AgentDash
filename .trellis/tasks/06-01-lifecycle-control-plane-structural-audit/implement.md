@@ -150,7 +150,7 @@
 - `expose_canvas_to_session` 只调用 `sync_canvas_mount_capability_state_for_runtime_delivery` adapter；该 adapter 在确认存在 base capability state 与 hook runtime 后，把 delivery runtime session 解析为 `AgentFrameRuntimeTarget`。
 - `sync_canvas_mount_capability_state` 改为接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime，再调用 `apply_live_vfs_capability_state`；canvas apply helper 不再知道 `resolve_runtime_session_frame_id`。
 - Static check 中 `resolve_runtime_session_frame_id(` 在 application src 只剩 `SessionCapabilityService` 与 hub adapter 定义/调用。
-- 该 slice 仍不关闭完整 Phase 4 gate，因为 canvas 仍需通过 session 取得 hook runtime，ContinueRoot policy 与 companion parent notification 仍未迁成 frame/assignment target。
+- 该 slice 仍不关闭完整 Phase 4 gate，因为 hook SPI/session facade、ContinueRoot policy 与 companion parent notification 仍未迁成 frame/assignment target。
 
 2026-06-02 的 hook runtime target-aware caller slice 已关闭 workflow/canvas capability caller 直接使用 session-first hook getter 的缺口：
 
@@ -158,6 +158,13 @@
 - `AgentActivityExecutor` 先解析 `AgentFrameRuntimeTarget`，再通过 target-aware ensure 获取 hook runtime；ContinueRoot live apply 不再裸调 `ensure_hook_runtime(root_runtime_session_id)`。
 - canvas capability sync 先解析 target，再通过 `get_hook_runtime_for_target` 获取 hook runtime；不再裸调 `get_hook_runtime(session_id)`。
 - 该 slice 仍不关闭 Hook gate，因为 snapshot load / refresh / evaluate 的 SPI/session facade、hub lazy rebuild 与 companion parent hook evaluation 仍存在 session-shaped入口。
+
+2026-06-02 的 ContinueRoot target resolution slice 已关闭 start/apply 内部反复分发 root runtime session 的缺口，但不关闭 `AgentReusePolicy + RuntimeSessionPolicy` 主项：
+
+- `AgentActivitySessionPort::resolve_continue_root_runtime_target` 成为 ContinueRoot 从 root runtime session adapter 到 `AgentFrameRuntimeTarget` 的封装边界。
+- `start_continue_root` 先解析 `root_target`，后续 executor config、assignment、runtime context apply 与返回的 delivery ref 都使用 target 的 `delivery_runtime_session_id`。
+- `apply_continue_root_activity` 改为接收 `AgentFrameRuntimeTarget`，live/pending 两支不再自行解析 root runtime session。
+- 该 slice 仍不关闭主项，因为 `AgentActivityLaunchContext` 仍以 `root_runtime_session_id` 作为 policy 输入，尚未由 lifecycle agent/frame reuse policy 与 runtime session selection policy 共同表达。
 
 验证记录：
 

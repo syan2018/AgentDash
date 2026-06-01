@@ -22,11 +22,11 @@ use crate::session::capability_state::{
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
 use crate::session::hub::PendingRuntimeContextTransitionInput;
-use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::session::{
-    LaunchCommand, SessionCapabilityService, SessionCoreService, SessionHookService,
-    SessionLaunchService, UserPromptInput,
+    AgentFrameRuntimeTarget, LaunchCommand, SessionCapabilityService, SessionCoreService,
+    SessionHookService, SessionLaunchService, UserPromptInput,
 };
+use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
 use crate::workflow::step_activation::apply_to_frame_runtime_target;
 use crate::workflow::{
     AgentFrameBuilder, RuntimeSessionCreationRequest, activate_step_with_platform,
@@ -94,13 +94,19 @@ pub trait AgentActivitySessionPort: Send + Sync {
     ) -> Result<String, String> {
         Err("Agent activity runtime session port 未接入".to_string())
     }
+    async fn resolve_continue_root_runtime_target(
+        &self,
+        _root_runtime_session_id: &str,
+    ) -> Result<AgentFrameRuntimeTarget, String> {
+        Err("ContinueRoot runtime target resolver 未接入".to_string())
+    }
     async fn apply_continue_root_activity(
         &self,
         _definition: &WorkflowGraph,
         _activity: &ActivityDefinition,
         _claim: &ActivityExecutionClaim,
         _procedure_key: &str,
-        _root_runtime_session_id: &str,
+        _target: &AgentFrameRuntimeTarget,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -313,13 +319,26 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         Ok(runtime_session_id)
     }
 
+    async fn resolve_continue_root_runtime_target(
+        &self,
+        root_runtime_session_id: &str,
+    ) -> Result<AgentFrameRuntimeTarget, String> {
+        let session_capability = self
+            .session_capability
+            .as_ref()
+            .ok_or_else(|| "ContinueRoot 缺少 session capability service".to_string())?;
+        session_capability
+            .resolve_runtime_session_target(root_runtime_session_id)
+            .await
+    }
+
     async fn apply_continue_root_activity(
         &self,
         definition: &WorkflowGraph,
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
         procedure_key: &str,
-        root_runtime_session_id: &str,
+        target: &AgentFrameRuntimeTarget,
     ) -> Result<(), String> {
         let session_hooks = self
             .session_hooks
@@ -350,11 +369,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
 
-        let target = session_capability
-            .resolve_runtime_session_target(root_runtime_session_id)
-            .await?;
         if let Some(hook_runtime) = session_hooks
-            .ensure_hook_runtime_for_target(&target, None)
+            .ensure_hook_runtime_for_target(target, None)
             .await
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
@@ -364,7 +380,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 definition.project_id,
             );
             let runtime_mcp_servers = session_capability
-                .get_runtime_mcp_servers(root_runtime_session_id)
+                .get_runtime_mcp_servers(&target.delivery_runtime_session_id)
                 .await;
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
@@ -398,7 +414,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 &activation,
                 &hook_runtime,
                 session_capability,
-                target,
+                target.clone(),
                 base_surface,
                 None,
                 &activity.key,
@@ -412,7 +428,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 project_id: definition.project_id,
             };
             let base_surface = session_capability
-                .get_latest_capability_state(root_runtime_session_id)
+                .get_latest_capability_state(&target.delivery_runtime_session_id)
                 .await;
             let agent_mcp_servers = base_surface
                 .as_ref()
@@ -476,13 +492,10 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             }
             let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
             CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
-            let target = session_capability
-                .resolve_runtime_session_target(root_runtime_session_id)
-                .await?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
                     target_frame_id: target.frame_id,
-                    delivery_runtime_session_id: target.delivery_runtime_session_id,
+                    delivery_runtime_session_id: target.delivery_runtime_session_id.clone(),
                     turn_id: None,
                     frame_transition_id: format!(
                         "activity-{}-{}-{}",
@@ -689,9 +702,14 @@ where
             ));
         }
 
+        let root_target = self
+            .port
+            .resolve_continue_root_runtime_target(&self.context.root_runtime_session_id)
+            .await
+            .map_err(ActivityExecutorStartError::retryable)?;
         let executor_config = self
             .port
-            .get_executor_config(&self.context.root_runtime_session_id)
+            .get_executor_config(&root_target.delivery_runtime_session_id)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         let assignment = self
@@ -700,25 +718,19 @@ where
                 definition,
                 activity,
                 claim,
-                Some(&self.context.root_runtime_session_id),
+                Some(&root_target.delivery_runtime_session_id),
                 executor_config.as_ref(),
             )
             .await
             .map_err(ActivityExecutorStartError::terminal)?;
 
         self.port
-            .apply_continue_root_activity(
-                definition,
-                activity,
-                claim,
-                procedure_key,
-                &self.context.root_runtime_session_id,
-            )
+            .apply_continue_root_activity(definition, activity, claim, procedure_key, &root_target)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         Ok(
             ActivityExecutorStartResult::started(ExecutorRunRef::RuntimeSession {
-                session_id: self.context.root_runtime_session_id.clone(),
+                session_id: root_target.delivery_runtime_session_id,
             })
             .with_assignment(assignment.assignment),
         )
@@ -1053,13 +1065,23 @@ mod tests {
             Ok(runtime_session_id)
         }
 
+        async fn resolve_continue_root_runtime_target(
+            &self,
+            root_runtime_session_id: &str,
+        ) -> Result<AgentFrameRuntimeTarget, String> {
+            Ok(AgentFrameRuntimeTarget {
+                frame_id: uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000f0").unwrap(),
+                delivery_runtime_session_id: root_runtime_session_id.to_string(),
+            })
+        }
+
         async fn apply_continue_root_activity(
             &self,
             _definition: &WorkflowGraph,
             _activity: &ActivityDefinition,
             claim: &ActivityExecutionClaim,
             _procedure_key: &str,
-            _root_runtime_session_id: &str,
+            _target: &AgentFrameRuntimeTarget,
         ) -> Result<(), String> {
             self.continue_root_applies
                 .lock()

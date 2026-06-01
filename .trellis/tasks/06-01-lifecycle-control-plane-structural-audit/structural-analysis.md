@@ -449,6 +449,20 @@ ContinueRoot 的本质应该是“复用某个 LifecycleAgent 继续承接 Activ
 
 `ContinueRoot` 不再直接存在为 executor policy，而是这两组 policy 的组合。
 
+### 落地记录
+
+2026-06-02 的 ContinueRoot target resolution slice 先把 application 内部 start/apply 边界改为 target-first：
+
+- `AgentActivitySessionPort::resolve_continue_root_runtime_target` 新增为 ContinueRoot root runtime adapter 到 `AgentFrameRuntimeTarget` 的解析边界。
+- `start_continue_root` 先解析 `root_target`，再用 `root_target.delivery_runtime_session_id` 获取 executor config、创建 assignment、调用 apply 与返回 delivery ref。
+- `apply_continue_root_activity` 接收 `AgentFrameRuntimeTarget`，live 与 pending runtime context transition 不再各自从 root runtime session 解析 target。
+
+该 slice 仍不关闭 P1-10 gate，因为：
+
+- `AgentActivityLaunchContext` 仍以 `root_runtime_session_id` 作为 ContinueRoot policy 输入。
+- root agent/frame reuse 还没有独立的 `AgentReusePolicy` / lifecycle agent selection 封装；runtime delivery 也还没有用 `RuntimeSessionSelectionPolicy` 在 ContinueRoot 入口显式表达。
+- freeform lifecycle seed 仍声明 `AgentSessionPolicy::ContinueRoot`，尚未转为 lifecycle-level policy composition。
+
 ## P1-11 多 RuntimeSession ref selection 不清
 
 ### 原始问题

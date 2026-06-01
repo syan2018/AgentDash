@@ -14,33 +14,39 @@ use uuid::Uuid;
 
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::task::TaskStatus;
-use agentdash_domain::workflow::{LifecycleRunLinkRepository, LifecycleRunRepository};
+use agentdash_domain::workflow::{
+    AgentFrameRepository, LifecycleAgentRepository, LifecycleSubjectAssociationRepository,
+    SubjectRef,
+};
 
 use crate::session::SessionRuntimeService;
 
 /// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
 ///
-/// 当业务状态进入终态时，触发关联 session 的 cancel 指令。
-/// 不做反向 projection（projection 方向见 [`crate::task::view_projector`]）。
+/// 当业务状态进入终态时，通过 lifecycle association → agent → frame → runtime session
+/// 路径查找并 cancel 关联 session。
 pub struct TerminalCancelCoordinator {
     session_runtime: SessionRuntimeService,
     story_repo: Arc<dyn StoryRepository>,
-    lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
-    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+    agent_repo: Arc<dyn LifecycleAgentRepository>,
+    frame_repo: Arc<dyn AgentFrameRepository>,
 }
 
 impl TerminalCancelCoordinator {
     pub fn new(
         session_runtime: SessionRuntimeService,
         story_repo: Arc<dyn StoryRepository>,
-        lifecycle_run_link_repo: Arc<dyn LifecycleRunLinkRepository>,
-        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
+        agent_repo: Arc<dyn LifecycleAgentRepository>,
+        frame_repo: Arc<dyn AgentFrameRepository>,
     ) -> Self {
         Self {
             session_runtime,
             story_repo,
-            lifecycle_run_link_repo,
-            lifecycle_run_repo,
+            association_repo,
+            agent_repo,
+            frame_repo,
         }
     }
 
@@ -50,15 +56,9 @@ impl TerminalCancelCoordinator {
             return;
         }
 
-        let session_id = match crate::task::find_task_execution_session_id(
-            self.lifecycle_run_link_repo.as_ref(),
-            self.lifecycle_run_repo.as_ref(),
-            task_id,
-        )
-        .await
-        {
-            Ok(Some(sid)) => sid,
-            _ => return,
+        let session_id = match self.resolve_task_runtime_session(task_id).await {
+            Some(sid) => sid,
+            None => return,
         };
 
         if let Err(err) = self.session_runtime.cancel(&session_id).await {
@@ -108,15 +108,9 @@ impl TerminalCancelCoordinator {
             if task.status() != &TaskStatus::Running {
                 continue;
             }
-            let session_id = match crate::task::find_task_execution_session_id(
-                self.lifecycle_run_link_repo.as_ref(),
-                self.lifecycle_run_repo.as_ref(),
-                task.id,
-            )
-            .await
-            {
-                Ok(Some(sid)) => sid,
-                _ => continue,
+            let session_id = match self.resolve_task_runtime_session(task.id).await {
+                Some(sid) => sid,
+                None => continue,
             };
             if let Err(err) = self.session_runtime.cancel(&session_id).await {
                 tracing::warn!(
@@ -138,6 +132,31 @@ impl TerminalCancelCoordinator {
                 "终态取消协调器：Story 进入终态，已级联取消关联 session"
             );
         }
+    }
+
+    /// 通过 LifecycleSubjectAssociation → agent → frame 路径解析 task 的 runtime session。
+    async fn resolve_task_runtime_session(&self, task_id: Uuid) -> Option<String> {
+        let subject = SubjectRef::new("task", task_id);
+        let associations = self.association_repo.list_by_subject(&subject).await.ok()?;
+        let assoc = associations.first()?;
+
+        let agents = self
+            .agent_repo
+            .list_by_run(assoc.anchor_run_id)
+            .await
+            .ok()?;
+        let active_agent = agents.into_iter().find(|a| a.status == "active")?;
+
+        let frame = self
+            .frame_repo
+            .get_current(active_agent.id)
+            .await
+            .ok()
+            .flatten()?;
+
+        let refs_json = frame.runtime_session_refs_json.as_ref()?;
+        let arr = refs_json.as_array()?;
+        arr.first().and_then(|v| v.as_str()).map(|s| s.to_string())
     }
 }
 

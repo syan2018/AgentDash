@@ -12,10 +12,9 @@ use crate::{
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
     dto::{
         ContinueTaskRequest, ContinueTaskResponse, StartTaskRequest, StartTaskResponse,
-        TaskResponse, TaskSessionResponse,
+        TaskExecutionViewResponse,
     },
     rpc::ApiError,
-    session_construction::build_session_context_plan,
 };
 
 pub async fn start_task(
@@ -47,10 +46,11 @@ pub async fn start_task(
 
     Ok(Json(StartTaskResponse {
         task_id: result.task_id,
-        session_id: result.session_id,
-        turn_id: result.turn_id,
+        run_ref: result.run_ref,
+        agent_ref: result.agent_ref,
+        frame_ref: result.frame_ref,
+        trace_ref: result.trace_ref,
         status: result.status,
-        context_sources: result.context_sources,
     }))
 }
 
@@ -59,7 +59,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route("/tasks/{id}/start", axum::routing::post(start_task))
         .route("/tasks/{id}/continue", axum::routing::post(continue_task))
         .route("/tasks/{id}/cancel", axum::routing::post(cancel_task))
-        .route("/tasks/{id}/session", axum::routing::get(get_task_session))
+        .route(
+            "/tasks/{id}/execution",
+            axum::routing::get(get_task_execution_view),
+        )
 }
 
 pub async fn continue_task(
@@ -91,10 +94,11 @@ pub async fn continue_task(
 
     Ok(Json(ContinueTaskResponse {
         task_id: result.task_id,
-        session_id: result.session_id,
-        turn_id: result.turn_id,
+        run_ref: result.run_ref,
+        agent_ref: result.agent_ref,
+        frame_ref: result.frame_ref,
+        trace_ref: result.trace_ref,
         status: result.status,
-        context_sources: result.context_sources,
     }))
 }
 
@@ -102,7 +106,7 @@ pub async fn cancel_task(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<TaskResponse>, ApiError> {
+) -> Result<Json<crate::dto::TaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
     load_task_story_project_with_permission(
         state.as_ref(),
@@ -117,56 +121,37 @@ pub async fn cancel_task(
         .cancel_task(task_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(TaskResponse::from(task)))
+    Ok(Json(crate::dto::TaskResponse::from(task)))
 }
 
-pub async fn get_task_session(
+pub async fn get_task_execution_view(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<TaskSessionResponse>, ApiError> {
+) -> Result<Json<TaskExecutionViewResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
-    let (task, _, _) = load_task_story_project_with_permission(
+    load_task_story_project_with_permission(
         state.as_ref(),
         &current_user,
         task_id,
         ProjectPermission::View,
     )
     .await?;
-    let result = state
+    let view = state
         .services
         .story_step_activation_service
-        .get_task_session(task_id)
+        .get_task_execution_view(task_id)
         .await
         .map_err(ApiError::from)?;
-    let context_projection = if let Some(session_id) = result.session_id.as_ref() {
-        build_session_context_plan(&state, &current_user, session_id)
-            .await?
-            .map(|plan| plan.context_projection)
-    } else {
-        None
-    };
 
-    let resolved_vfs = context_projection
-        .as_ref()
-        .and_then(|projection| projection.vfs.clone());
-    let runtime_surface = context_projection
-        .as_ref()
-        .and_then(|projection| projection.runtime_surface.clone());
-    let context_snapshot = context_projection.and_then(|projection| projection.context_snapshot);
-
-    Ok(Json(TaskSessionResponse {
-        task_id: result.task_id,
-        workspace_id: task.workspace_id,
-        session_id: result.session_id,
-        task_status: result.task_status,
-        session_execution_status: result.session_execution_status,
-        agent_binding: result.agent_binding,
-        session_title: result.session_title,
-        last_activity: result.last_activity,
-        vfs: resolved_vfs,
-        runtime_surface,
-        context_snapshot,
+    Ok(Json(TaskExecutionViewResponse {
+        task_id: view.task_id,
+        execution_status: view.execution_status,
+        agent_ref: view.agent_ref,
+        run_ref: view.run_ref,
+        frame_ref: view.frame_ref,
+        trace_ref: view.trace_ref,
+        task_status: view.task_status,
     }))
 }
 

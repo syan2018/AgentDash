@@ -32,30 +32,31 @@ pub struct TaskExecutionCommand {
     pub identity: Option<agentdash_spi::platform::auth::AuthIdentity>,
 }
 
+/// Task execution dispatch 结果。
+///
+/// session_id 不再作为业务主键，改为 lifecycle 控制面锚点引用。
 #[derive(Debug, Clone)]
 pub struct TaskExecutionResult {
     pub task_id: Uuid,
-    /// AgentDash 内部 execution session id（Task child session）。
-    pub session_id: String,
-    pub turn_id: String,
+    pub run_ref: Uuid,
+    pub agent_ref: Uuid,
+    pub frame_ref: Uuid,
+    /// 运行时 session trace 引用（optional，仅用于调试/追踪）
+    pub trace_ref: Option<Uuid>,
     pub status: TaskStatus,
-    pub context_sources: Vec<String>,
 }
 
+/// Task 执行视图（替代原 TaskSessionResult）。
+///
+/// 所有字段从 lifecycle facts 投影得到，附带 source refs。
 #[derive(Debug, Clone)]
-pub struct SessionOverview {
-    pub title: String,
-    pub updated_at: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct TaskSessionResult {
+pub struct TaskExecutionView {
     pub task_id: Uuid,
-    /// AgentDash 内部 execution session id（通过 SessionBinding 解析）。
-    pub session_id: Option<String>,
+    pub execution_status: Option<String>,
+    pub agent_ref: Option<Uuid>,
+    pub run_ref: Option<Uuid>,
+    pub frame_ref: Option<Uuid>,
+    pub trace_ref: Option<Uuid>,
     pub task_status: TaskStatus,
-    pub session_execution_status: Option<String>,
-    pub agent_binding: agentdash_domain::task::AgentBinding,
-    pub session_title: Option<String>,
-    pub last_activity: Option<i64>,
 }
+

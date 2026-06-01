@@ -259,8 +259,9 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
-                repos.lifecycle_run_link_repo.clone(),
-                repos.lifecycle_run_repo.clone(),
+                repos.lifecycle_subject_association_repo.clone(),
+                repos.lifecycle_agent_repo.clone(),
+                repos.agent_frame_repo.clone(),
             ),
         );
 
@@ -274,10 +275,6 @@ impl AppState {
 
         let story_step_activation_service = Arc::new(StoryStepActivationService {
             repos: repos.clone(),
-            session_core: session_core.clone(),
-            session_eventing: session_eventing.clone(),
-            session_launch: session_launch.clone(),
-            backend_availability: backend_registry.clone(),
             dispatcher: dispatcher.clone(),
             lock_map: lock_map.clone(),
         });

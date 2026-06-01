@@ -17,8 +17,8 @@ pub struct Routine {
     pub project_agent_id: Uuid,
     /// 触发器配置（按类型存储不同字段）
     pub trigger_config: RoutineTriggerConfig,
-    /// Session 生命周期策略
-    pub session_strategy: SessionStrategy,
+    /// Dispatch 生命周期策略
+    pub dispatch_strategy: DispatchStrategy,
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -33,7 +33,7 @@ impl Routine {
         prompt_template: impl Into<String>,
         project_agent_id: Uuid,
         trigger_config: RoutineTriggerConfig,
-        session_strategy: SessionStrategy,
+        dispatch_strategy: DispatchStrategy,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -43,7 +43,7 @@ impl Routine {
             prompt_template: prompt_template.into(),
             project_agent_id,
             trigger_config,
-            session_strategy,
+            dispatch_strategy,
             enabled: true,
             created_at: now,
             updated_at: now,
@@ -79,16 +79,16 @@ pub enum RoutineTriggerConfig {
     },
 }
 
-/// Session 生命周期策略
+/// Dispatch 生命周期策略
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
-pub enum SessionStrategy {
-    /// 每次触发新建独立 session
+pub enum DispatchStrategy {
+    /// 每次触发新建独立 dispatch 目标
     #[default]
     Fresh,
-    /// 复用 Project Agent 现有 session（follow-up prompt）
+    /// 复用 Project Agent 现有 dispatch 目标
     Reuse,
-    /// 按外部实体分配 session（如 per-PR、per-Issue）
+    /// 按外部实体分配 dispatch 目标（如 per-PR、per-Issue）
     PerEntity {
         /// payload 中用于提取 entity key 的 JSON path
         entity_key_path: String,

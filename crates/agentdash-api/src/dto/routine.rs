@@ -27,7 +27,7 @@ pub struct RoutineResponse {
     pub prompt_template: String,
     pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
-    pub session_strategy: serde_json::Value,
+    pub dispatch_strategy: serde_json::Value,
     pub enabled: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -43,7 +43,7 @@ impl From<Routine> for RoutineResponse {
             prompt_template: r.prompt_template,
             project_agent_id: r.project_agent_id.to_string(),
             trigger_config: serde_json::to_value(&r.trigger_config).unwrap_or_default(),
-            session_strategy: serde_json::to_value(&r.session_strategy).unwrap_or_default(),
+            dispatch_strategy: serde_json::to_value(&r.dispatch_strategy).unwrap_or_default(),
             enabled: r.enabled,
             created_at: r.created_at.to_rfc3339(),
             updated_at: r.updated_at.to_rfc3339(),
@@ -107,7 +107,7 @@ pub struct CreateRoutineRequest {
     pub project_agent_id: String,
     pub trigger_config: serde_json::Value,
     #[serde(default)]
-    pub session_strategy: Option<serde_json::Value>,
+    pub dispatch_strategy: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,7 +116,7 @@ pub struct UpdateRoutineRequest {
     pub prompt_template: Option<String>,
     pub project_agent_id: Option<String>,
     pub trigger_config: Option<serde_json::Value>,
-    pub session_strategy: Option<serde_json::Value>,
+    pub dispatch_strategy: Option<serde_json::Value>,
     pub enabled: Option<bool>,
 }
 

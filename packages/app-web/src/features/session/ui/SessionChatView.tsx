@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSessionFeed } from "../model";
 import { extractPlatformEventType } from "../model/platformEvent";
-import { promptSession, type ExecutorConfig } from "../../../services/executor";
+import type { ExecutorConfig } from "../../../services/executor";
 import {
   useExecutorDiscovery,
   useExecutorConfig,
@@ -20,10 +20,9 @@ import {
 import type { ExecutorConfigSource } from "../../executor-selector/model/types";
 import {
   useFileReference,
-  buildPromptBlocks,
   type RichInputRef,
 } from "../../file-reference";
-import { batchReadFiles, type FileEntry } from "../../../services/filePicker";
+import type { FileEntry } from "../../../services/filePicker";
 import {
   fetchSessionExecutionState,
 } from "../../../services/session";
@@ -56,8 +55,6 @@ const ACTION_RUNNING_RELEASE_DELAY_MS = 300;
 export function SessionChatView({
   sessionId,
   workspaceId,
-  onCreateSession,
-  onSessionIdChange,
   onMessageSent,
   onTurnEnd,
   onSystemEvent,
@@ -373,30 +370,7 @@ export function SessionChatView({
         // customSend 全接管：session 创建 + 消息发送一体处理
         await customSendRef.current(sessionId, trimmed, executorConfig);
       } else {
-        // 默认流程：onCreateSession → promptSession
-        let sid = sessionId;
-        if (!sid) {
-          if (!onCreateSession) { setSendError("当前无法创建新会话"); return; }
-          const title = trimmed.slice(0, 30) + (trimmed.length > 30 ? "…" : "");
-          sid = await onCreateSession(title);
-          onSessionIdChange?.(sid);
-        }
-
-        if (fileRef.references.length > 0) {
-          if (!workspaceId) {
-            throw new Error("当前会话没有可用的工作空间，无法附加文件引用");
-          }
-          const paths = fileRef.references.map((r) => r.relPath);
-          const batchResult = await batchReadFiles(workspaceId, paths);
-          const blocks = buildPromptBlocks(trimmed, batchResult.files);
-          await promptSession(sid, { promptBlocks: blocks, executorConfig });
-          fileRef.clearReferences();
-        } else {
-          await promptSession(sid, {
-            promptBlocks: buildPromptBlocks(trimmed, []),
-            executorConfig,
-          });
-        }
+        throw new Error("Runtime trace 页面不再支持直接发送 prompt；请从 Run、Subject 或 Agent 入口派发执行。");
       }
 
       execConfig.recordUsage();
@@ -410,7 +384,7 @@ export function SessionChatView({
     } finally {
       setIsSending(false);
     }
-  }, [isSending, sessionId, executorConfig, execConfig, onCreateSession, onSessionIdChange, onMessageSent, fileRef, clearInput, refreshExecutionState, workspaceId]);
+  }, [isSending, sessionId, executorConfig, execConfig, onMessageSent, clearInput, refreshExecutionState]);
 
   const handleCancel = useCallback(async () => {
     if (!hasSession || !sessionId) return;

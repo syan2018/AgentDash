@@ -1,4 +1,4 @@
-import type { RoutineTriggerType, RoutineSessionMode, ProjectAgent, Routine } from "../../types";
+import type { RoutineTriggerType, RoutineDispatchMode, ProjectAgent, Routine } from "../../types";
 import type { RoutineFormState } from "./form-state";
 import { CronScheduleSelector } from "./cron-schedule-selector";
 import { useState } from "react";
@@ -156,10 +156,10 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
           </summary>
           <div className="mt-2 space-y-3 px-2 pb-1">
             <div>
-              <label className="text-[11px] font-medium text-muted-foreground">Session 策略</label>
+              <label className="text-[11px] font-medium text-muted-foreground">Dispatch 策略</label>
               <select
-                value={form.session_mode}
-                onChange={(e) => patchForm({ session_mode: e.target.value as RoutineSessionMode })}
+                value={form.dispatch_mode}
+                onChange={(e) => patchForm({ dispatch_mode: e.target.value as RoutineDispatchMode })}
                 className="agentdash-form-select mt-1"
               >
                 <option value="fresh">每次新建 (Fresh)</option>
@@ -169,7 +169,7 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
                 )}
               </select>
             </div>
-            {form.session_mode === "per_entity" && (
+            {form.dispatch_mode === "per_entity" && (
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Entity Key Path</label>
                 <input
@@ -179,7 +179,7 @@ export function RoutineDialogSidebar({ form, patchForm, projectAgents, mode, edi
                   className="agentdash-form-input mt-1 font-mono text-xs"
                 />
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  从 trigger payload 中按此 JSON 路径提取 entity key，相同 key 复用同一 session
+                  从 trigger payload 中按此 JSON 路径提取 entity key，相同 key 复用同一 dispatch 目标
                 </p>
               </div>
             )}

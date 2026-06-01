@@ -351,7 +351,7 @@ export interface InventoryRefreshResult {
 // ─── Routine ─────────────────────────────────────────────
 
 export type RoutineTriggerType = "scheduled" | "webhook" | "plugin";
-export type RoutineSessionMode = "fresh" | "reuse" | "per_entity";
+export type RoutineDispatchMode = "fresh" | "reuse" | "per_entity";
 export type RoutineExecutionStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 export interface RoutineTriggerConfig {
@@ -367,8 +367,8 @@ export interface RoutineTriggerConfig {
   provider_config?: Record<string, unknown>;
 }
 
-export interface RoutineSessionStrategy {
-  mode: RoutineSessionMode;
+export interface RoutineDispatchStrategy {
+  mode: RoutineDispatchMode;
   entity_key_path?: string;
 }
 
@@ -379,7 +379,7 @@ export interface Routine {
   prompt_template: string;
   project_agent_id: string;
   trigger_config: RoutineTriggerConfig;
-  session_strategy: RoutineSessionStrategy;
+  dispatch_strategy: RoutineDispatchStrategy;
   enabled: boolean;
   created_at: string;
   updated_at: string;
@@ -396,12 +396,18 @@ export interface RoutineExecution {
   trigger_source: string;
   trigger_payload: Record<string, unknown> | null;
   resolved_prompt: string | null;
-  session_id: string | null;
+  dispatch_refs?: RoutineDispatchRefs | null;
   status: RoutineExecutionStatus;
   started_at: string;
   completed_at: string | null;
   error: string | null;
   entity_key: string | null;
+}
+
+export interface RoutineDispatchRefs {
+  run_id: string;
+  agent_id: string;
+  frame_id: string;
 }
 
 export interface RegenerateTokenResponse {

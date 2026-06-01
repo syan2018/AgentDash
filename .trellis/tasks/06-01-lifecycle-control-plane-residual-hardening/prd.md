@@ -24,7 +24,7 @@
 
 ## Current Review Result
 
-2026-06-01 的第二轮 subagent 复核结论是：硬切工作推进明显，但不能宣称彻底完成。
+2026-06-01 的第三轮 subagent 复核结论是：本任务覆盖的 session-first 残线已经完成硬收口；仍存在的 `SessionHookSnapshot` / session trace 语义属于底层 runtime trace adapter 与独立后续迁移面，不再提供业务控制面入口。
 
 已经硬收口的部分：
 
@@ -35,15 +35,21 @@
 - `sessions` route module 取代旧 `acp_sessions` 命名；session stream 只暴露为 `/sessions/{id}/stream/ndjson`。
 - session route 权限检查必须经 `Session -> AgentFrame -> LifecycleAgent -> Project`，不再用 `SessionMeta.project_id` 当业务权限事实源。
 - capability 热更在缺少 AgentFrame 或 frame revision 写入失败时直接失败，不再只更新内存缓存。
+- `/session/:id` 已降级为 runtime trace drill-down；前端不再把 `SessionChatView` / `WorkspacePanel` 当作该 route 的主体验。
+- 前端 `createSession` / `fetchSessions` / `fetchSessionContext` / `fetchSessionHookRuntime` / `promptSession` / `sessionHistoryStore` / `useSessionRuntimeState` 已删除。
+- `GET /sessions` 与 `ListSessionsQuery` 已删除，避免继续把 session list 当作业务导航入口。
+- permission route DTO 已收敛到 `agentdash-contracts`，前端使用 generated permission contracts；查询入口只接受 `effect_frame_id` / `run_id`。
+- Routine 对外 API、前端、领域模型、repository 与 schema 已统一为 `dispatch_strategy` / `dispatch_refs`；不再暴露 `session_strategy`、`session_mode` 或 `RoutineSession*` 命名。
+- Companion `target=sub` 必须解析 current project/run/agent/frame/session anchor；缺 anchor 会快速失败，不再用 `Uuid::nil()` 或 parent session context 伪造 lineage。
+- task artifact/status effect 写入前必须验证 `RuntimeSession -> AgentFrame -> LifecycleAgent -> task subject association`；artifact helper 与 verified context 已限制在 gateway 内部，不再对外暴露可伪造的裸写 API。
+- Story freeform create-run helper 已删除；freeform service 只保证 lifecycle definition 存在。
+- session construction 的 context inspection 从 `RuntimeSession -> AgentFrame -> LifecycleAgent` 派生 project，不再读取 `SessionMeta.project_id` 作为业务权限事实源。
 
-仍未完成的部分：
+仍需作为后续任务处理的部分：
 
-- `/session/:id` 前端仍使用 `SessionPage` / `SessionChatView` 体验模型，虽然旧写 API 会失败，但 UI 还没有拆成纯 trace drill-down。
-- `fetchSessionContext` / `fetchSessionHookRuntime` 等前端服务函数仍存在，当前作为旧路径断路器暴露残留调用点并会抛出后端 404/405，后续应删除或改接 frame/trace view。
-- `GET /sessions` 列表仍用 `SessionMeta.project_id` 做可见性过滤；如果继续保留 session list，也应改为 AgentFrame/LifecycleAgent 派生视图。
-- `RoutineExecution.session_id` 与 routine history 仍把 session id 作为可见执行出口，尚未通过 run/agent/frame/subject view 表达。
-- permission route-local DTO 与前端手写 permission type 仍未收敛到 contracts。
-- Story freeform/manual open、Routine reuse、Companion gate/adoption、Task artifact truth、migration 数据命运仍需要继续实做与测试。
+- `SessionHookSnapshot` 仍作为 trace adapter 存在大量 deprecated usage；这需要单独迁移到 frame-native hook view。
+- terminal callback 到 `AgentAssignment / ActivityAttemptState` 的完整端到端覆盖仍不足。
+- Story root/manual open、Companion gate adoption、Routine reuse 行为需要更强的 targeted/e2e 覆盖。
 
 ## Requirements
 
@@ -122,24 +128,20 @@
 
 ### P0
 
-- Story open/freeform/manual session 仍未走 dispatch + Story Agent association。
-- `/session/:id` 前端仍承载旧 SessionPage/SessionChatView 体验；旧写 API 已断开，但 UI 尚未成为纯 trace drill-down。
-- RoutineExecution terminal view 仍以 session id 为主要可见执行出口。
-- permission DTO/type 仍未收敛到 contracts。
+- `SessionHookSnapshot` 仍是 hook/runtime trace adapter 的主要结构，尚未完成 frame-native hook view 迁移。
+- terminal callback 到 `AgentFrame -> AgentAssignment -> ActivityAttemptState` 的端到端测试覆盖仍不足。
 
 ### P1
 
 - `StepActivation` 仍是独立 activation surface，尚未成为 AgentFrame activation input/delta。
-- Companion dispatch 缺 subject/control association，inherited slice 写入点偏后。
-- Routine reuse / ProjectAgent launch surface 未完全接稳。
-- Task execution view / artifacts 仍有硬编码和命令型写入残留。
-- migration/backfill 对旧 session/run/link 数据命运尚未形成可执行策略。
+- Companion gate adoption / resume 需要更强端到端验证。
+- Routine reuse / ProjectAgent launch surface 需要 targeted 测试证明 run boundary 不回退。
+- Story manual open 需要 Story subject association 的端到端验证。
 
 ### P2
 
 - Contract 命名存在 `LifecycleAgentView` / `AgentFrameRuntimeView` 与目标 DTO 清单不完全一致的问题，需要确认是否是有意命名。
 - `SessionHookSnapshot` 作为 trace adapter 仍存在大量 deprecated usage，需要后续迁到 frame-native hook view。
-- route-local permission DTO 与前端手写 permission type 未收敛。
 - 新 lifecycle store/pages 的测试覆盖不足。
 
 ## Acceptance Criteria
@@ -148,12 +150,12 @@
 - [x] `rg "list_by_session"`、`rg "lifecycle_step_key"`、`rg "SessionBinding"`、`rg "task.session_id"` 在源码/前端/E2E 中无控制面残留。
 - [ ] Hook snapshot、active workflow projection、terminal callback 都能从 Session trace 解析到 AgentFrame / LifecycleAgent / AgentAssignment / ActivityAttemptState。
 - [x] Permission approve/revoke 会产生 AgentFrame revision 或等价 frame delta，并有测试覆盖。
-- [ ] Story root/freeform/manual open 通过 dispatch 建立 Story subject association。
-- [ ] Routine reuse 不意外创建新 run，RoutineExecution terminal view 从 lifecycle/agent projection 派生。
-- [ ] Companion wait/resume/adoption 使用 durable LifecycleGate，并建立 lineage + subject/control association。
-- [ ] Task status/artifacts 来源可追溯到 SubjectRef / association / assignment / attempt / artifact。
-- [ ] 前端主导航不再以 session tree 作为 runtime 模型；`/session/:id` 仅为 trace drill-down。
-- [ ] Migration 明确处理旧数据：要么 backfill，要么清楚记录当前预研阶段的数据重置策略。
+- [x] Story freeform 不再创建独立 freeform run helper；后续 Story manual open 以 Story subject association e2e 覆盖验证。
+- [x] Routine outward/frontend/domain/persistence 统一为 dispatch strategy/refs；reuse run boundary 后续以 targeted test 继续补强。
+- [x] Companion child dispatch 缺失 anchor 时快速失败，并从 provider 创建阶段解析 lifecycle anchors。
+- [x] Task status/artifacts 写入前验证 SubjectRef / association / agent/frame/runtime anchor，裸 artifact helper 不再对外暴露。
+- [x] 前端主导航不再以 session tree 作为 runtime 模型；`/session/:id` 仅为 trace drill-down。
+- [x] Migration 明确处理旧数据：预研阶段允许 breaking migration，旧 session-first records 不作为稳定业务事实源保留；开发库通过向前 schema rename/drop 或重置获得目标状态。
 - [ ] Phase 8 关键测试补齐，并通过 `pnpm run contracts:check`、后端相关测试、前端相关测试。
 
 ## Out Of Scope

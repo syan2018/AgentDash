@@ -316,7 +316,32 @@ impl CompanionRequestTool {
         }
 
         // ─── 构建 dispatch plan（用于 context slice / prompt 生成） ──────
-        let current_session_id = self.current_session_id.clone().unwrap_or_default();
+        let current_session_id = self.current_session_id.clone().ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 runtime session 缺失，无法派发 companion agent".to_string(),
+            )
+        })?;
+        let project_id = self.project_id.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 runtime session 未绑定 LifecycleAgent project，无法派发 companion agent"
+                    .to_string(),
+            )
+        })?;
+        let parent_run_id = self.current_run_id.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 runtime session 未绑定 LifecycleRun，无法派发 companion agent".to_string(),
+            )
+        })?;
+        let parent_agent_id = self.current_agent_id.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 runtime session 未绑定 LifecycleAgent，无法派发 companion agent".to_string(),
+            )
+        })?;
+        let parent_frame_id = self.current_frame_id.ok_or_else(|| {
+            AgentToolError::ExecutionFailed(
+                "当前 runtime session 未绑定 AgentFrame，无法派发 companion agent".to_string(),
+            )
+        })?;
         let dispatch_plan = build_companion_dispatch_plan(
             hook_runtime.as_ref(),
             &before_resolution,
@@ -342,7 +367,6 @@ impl CompanionRequestTool {
         .await;
 
         // ─── 构造 ExecutionIntent 并通过 LifecycleDispatchService 派发 ──
-        let project_id = self.project_id.unwrap_or_else(Uuid::nil);
         let gate_kind = match adoption_mode {
             CompanionAdoptionMode::BlockingReview => "companion_wait_blocking",
             CompanionAdoptionMode::FollowUpRequired => "companion_wait_follow_up",
@@ -353,15 +377,11 @@ impl CompanionRequestTool {
             project_id,
             source: ExecutionSource::ParentAgent,
             subject_ref: None,
-            parent_run_id: self.current_run_id,
-            parent_agent_id: self.current_agent_id,
+            parent_run_id: Some(parent_run_id),
+            parent_agent_id: Some(parent_agent_id),
             workflow_graph_ref: None,
             agent_procedure_ref: None,
-            run_policy: if self.current_run_id.is_some() {
-                RunPolicy::AppendGraph
-            } else {
-                RunPolicy::CreateLinkedRun
-            },
+            run_policy: RunPolicy::AppendGraph,
             agent_policy: AgentPolicy::SpawnChild,
             context_policy: match slice_mode {
                 CompanionSliceMode::Full => ContextPolicy::Inherit,
@@ -374,8 +394,8 @@ impl CompanionRequestTool {
                     gate_kind: gate_kind.to_string(),
                     correlation_id: Some(dispatch_plan.dispatch_id.clone()),
                     payload: Some(serde_json::json!({
-                        "parent_agent_id": self.current_agent_id,
-                        "parent_frame_id": self.current_frame_id,
+                        "parent_agent_id": parent_agent_id,
+                        "parent_frame_id": parent_frame_id,
                         "companion_label": companion_label,
                         "adoption_mode": companion_adoption_mode_key(adoption_mode),
                         "dispatch_id": dispatch_plan.dispatch_id,

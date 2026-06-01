@@ -1,23 +1,23 @@
 use uuid::Uuid;
 
-use agentdash_domain::routine::{Routine, RoutineExecution, SessionStrategy};
+use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineExecution};
 use agentdash_domain::workflow::{
     AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionIntent, ExecutionSource, RunPolicy,
     RuntimePolicy, SubjectRef,
 };
 
-/// SessionStrategy → dispatch policy 映射。
+/// DispatchStrategy → dispatch policy 映射。
 ///
-/// | SessionStrategy | run_policy        | agent_policy |
-/// |-----------------|-------------------|--------------|
-/// | Fresh           | CreateLinkedRun   | Create       |
-/// | Reuse           | ReuseExisting     | Resume       |
-/// | PerEntity       | ReuseExisting     | Resume/Create|
-fn map_session_strategy(strategy: &SessionStrategy) -> (RunPolicy, AgentPolicy) {
+/// | DispatchStrategy | run_policy        | agent_policy |
+/// |------------------|-------------------|--------------|
+/// | Fresh            | CreateLinkedRun   | Create       |
+/// | Reuse            | ReuseExisting     | Resume       |
+/// | PerEntity        | ReuseExisting     | Resume/Create|
+fn map_dispatch_strategy(strategy: &DispatchStrategy) -> (RunPolicy, AgentPolicy) {
     match strategy {
-        SessionStrategy::Fresh => (RunPolicy::CreateLinkedRun, AgentPolicy::Create),
-        SessionStrategy::Reuse => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
-        SessionStrategy::PerEntity { .. } => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
+        DispatchStrategy::Fresh => (RunPolicy::CreateLinkedRun, AgentPolicy::Create),
+        DispatchStrategy::Reuse => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
+        DispatchStrategy::PerEntity { .. } => (RunPolicy::ReuseExisting, AgentPolicy::Resume),
     }
 }
 
@@ -29,7 +29,7 @@ pub fn build_routine_execution_intent(
     routine: &Routine,
     execution: &RoutineExecution,
 ) -> ExecutionIntent {
-    let (run_policy, agent_policy) = map_session_strategy(&routine.session_strategy);
+    let (run_policy, agent_policy) = map_dispatch_strategy(&routine.dispatch_strategy);
 
     ExecutionIntent {
         project_id: routine.project_id,
@@ -71,9 +71,9 @@ pub fn build_routine_execution_intent_with_reuse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::routine::{RoutineTriggerConfig, SessionStrategy};
+    use agentdash_domain::routine::{DispatchStrategy, RoutineTriggerConfig};
 
-    fn test_routine(strategy: SessionStrategy) -> Routine {
+    fn test_routine(strategy: DispatchStrategy) -> Routine {
         Routine::new(
             Uuid::new_v4(),
             "test-routine",
@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn fresh_strategy_maps_to_create_linked_run() {
-        let routine = test_routine(SessionStrategy::Fresh);
+        let routine = test_routine(DispatchStrategy::Fresh);
         let execution = RoutineExecution::new(routine.id, "scheduled");
         let intent = build_routine_execution_intent(&routine, &execution);
 
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn reuse_strategy_maps_to_reuse_existing() {
-        let routine = test_routine(SessionStrategy::Reuse);
+        let routine = test_routine(DispatchStrategy::Reuse);
         let execution = RoutineExecution::new(routine.id, "webhook");
         let intent = build_routine_execution_intent(&routine, &execution);
 
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn per_entity_with_reuse_run_id_overrides_policy() {
-        let routine = test_routine(SessionStrategy::PerEntity {
+        let routine = test_routine(DispatchStrategy::PerEntity {
             entity_key_path: "issue.id".to_string(),
         });
         let execution = RoutineExecution::new(routine.id, "github:issues.opened");

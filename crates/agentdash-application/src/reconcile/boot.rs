@@ -116,7 +116,6 @@ async fn run_freeform_lifecycle_reconcile(deps: &BootReconcileDeps) -> PhaseRepo
     let service = FreeformLifecycleService::new(
         deps.agent_procedure_repo.as_ref(),
         deps.workflow_graph_repo.as_ref(),
-        deps.lifecycle_run_repo.as_ref(),
     );
     let reconciled = 0;
     let errors = Vec::new();

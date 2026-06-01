@@ -3,34 +3,31 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
-    AgentSessionPolicy, ArtifactAliasPolicy, DefinitionSource, LifecycleRun,
-    LifecycleRunRepository, WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
+    AgentSessionPolicy, ArtifactAliasPolicy, DefinitionSource, WorkflowContract, WorkflowGraph,
+    WorkflowGraphRepository,
 };
 
-use super::{LifecycleEngine, WorkflowApplicationError};
+use super::WorkflowApplicationError;
 
 pub const FREEFORM_LIFECYCLE_KEY: &str = "builtin.freeform_session";
 pub const FREEFORM_AGENT_PROCEDURE_KEY: &str = "builtin.freeform_agent";
 pub const FREEFORM_ACTIVITY_KEY: &str = "main_conversation";
 pub const FREEFORM_SESSION_LABEL: &str = "freeform";
 
-pub struct FreeformLifecycleService<'a, W: ?Sized, A: ?Sized, R: ?Sized> {
+pub struct FreeformLifecycleService<'a, W: ?Sized, A: ?Sized> {
     workflow_repo: &'a W,
     activity_lifecycle_repo: &'a A,
-    run_repo: &'a R,
 }
 
-impl<'a, W: ?Sized, A: ?Sized, R: ?Sized> FreeformLifecycleService<'a, W, A, R>
+impl<'a, W: ?Sized, A: ?Sized> FreeformLifecycleService<'a, W, A>
 where
     W: AgentProcedureRepository,
     A: WorkflowGraphRepository,
-    R: LifecycleRunRepository,
 {
-    pub fn new(workflow_repo: &'a W, activity_lifecycle_repo: &'a A, run_repo: &'a R) -> Self {
+    pub fn new(workflow_repo: &'a W, activity_lifecycle_repo: &'a A) -> Self {
         Self {
             workflow_repo,
             activity_lifecycle_repo,
-            run_repo,
         }
     }
 
@@ -59,20 +56,6 @@ where
         let definition = build_freeform_lifecycle(project_id)?;
         self.activity_lifecycle_repo.create(&definition).await?;
         Ok(definition)
-    }
-
-    pub async fn create_freeform_run(
-        &self,
-        project_id: Uuid,
-    ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        let definition = self.ensure_definition(project_id).await?;
-        let graph_instance_id = uuid::Uuid::new_v4();
-        let state = LifecycleEngine::initialize(&definition, graph_instance_id)
-            .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let run = LifecycleRun::new_activity(project_id, definition.id, state)
-            .map_err(WorkflowApplicationError::BadRequest)?;
-        self.run_repo.create(&run).await?;
-        Ok(run)
     }
 }
 
@@ -271,107 +254,22 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
-    struct InMemoryRunRepo {
-        items: Mutex<Vec<LifecycleRun>>,
-    }
-
-    #[async_trait::async_trait]
-    impl LifecycleRunRepository for InMemoryRunRepo {
-        async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            self.items.lock().unwrap().push(run.clone());
-            Ok(())
-        }
-
-        async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|item| item.id == id)
-                .cloned())
-        }
-
-        async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|r| ids.contains(&r.id))
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_project(
-            &self,
-            project_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_lifecycle(
-            &self,
-            lifecycle_id: Uuid,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.lifecycle_id == lifecycle_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-            let mut items = self.items.lock().unwrap();
-            if let Some(existing) = items.iter_mut().find(|item| item.id == run.id) {
-                *existing = run.clone();
-            }
-            Ok(())
-        }
-
-        async fn delete(&self, id: Uuid) -> Result<(), DomainError> {
-            self.items.lock().unwrap().retain(|item| item.id != id);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
-    async fn create_freeform_run_creates_open_ended_attempt() {
+    async fn ensure_definition_creates_open_ended_freeform_graph() {
         let workflow_repo = InMemoryWorkflowRepo::default();
         let lifecycle_repo = InMemoryActivityLifecycleRepo::default();
-        let run_repo = InMemoryRunRepo::default();
-        let service = FreeformLifecycleService::new(&workflow_repo, &lifecycle_repo, &run_repo);
+        let service = FreeformLifecycleService::new(&workflow_repo, &lifecycle_repo);
         let project_id = Uuid::new_v4();
 
-        let run = service
-            .create_freeform_run(project_id)
+        let lifecycle = service
+            .ensure_definition(project_id)
             .await
-            .expect("freeform run");
+            .expect("freeform definition");
 
-        assert_eq!(run.project_id, project_id);
-        let state = run.activity_state.expect("activity state");
-        assert_eq!(
-            state.status,
-            agentdash_domain::workflow::ActivityRunStatus::Ready
-        );
-        assert_eq!(state.attempts.len(), 1);
-        assert_eq!(state.attempts[0].activity_key, FREEFORM_ACTIVITY_KEY);
         assert_eq!(
             workflow_repo.items.lock().unwrap()[0].key,
             FREEFORM_AGENT_PROCEDURE_KEY
         );
-        let lifecycle = &lifecycle_repo.items.lock().unwrap()[0];
         assert_eq!(lifecycle.key, FREEFORM_LIFECYCLE_KEY);
         assert!(matches!(
             lifecycle.activities[0].completion_policy,

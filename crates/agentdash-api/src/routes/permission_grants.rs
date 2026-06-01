@@ -4,36 +4,54 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_application::permission::PermissionGrantService;
+use agentdash_contracts::permission::{
+    ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
+    PermissionGrantStatusDto,
+};
 use agentdash_domain::permission::PermissionGrant;
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
 // ── DTOs ──
 
-#[derive(Serialize)]
-pub struct PermissionGrantDto {
-    pub id: String,
-    pub run_id: String,
-    pub effect_frame_id: Option<String>,
-    pub source_runtime_session_id: String,
-    pub requested_paths: Vec<String>,
-    pub reason: String,
-    pub grant_scope: String,
-    pub expires_at: Option<String>,
-    pub scope_escalation_intent: Option<serde_json::Value>,
-    pub status: String,
-    pub policy_decision: Option<serde_json::Value>,
-    pub approved_by: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+fn grant_scope_to_dto(scope: agentdash_domain::permission::GrantScope) -> PermissionGrantScopeDto {
+    match scope {
+        agentdash_domain::permission::GrantScope::Turn => PermissionGrantScopeDto::Turn,
+        agentdash_domain::permission::GrantScope::Session => PermissionGrantScopeDto::Session,
+        agentdash_domain::permission::GrantScope::WorkflowStep => {
+            PermissionGrantScopeDto::WorkflowStep
+        }
+    }
 }
 
-fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantDto {
-    PermissionGrantDto {
+fn grant_status_to_dto(
+    status: agentdash_domain::permission::GrantStatus,
+) -> PermissionGrantStatusDto {
+    match status {
+        agentdash_domain::permission::GrantStatus::Created => PermissionGrantStatusDto::Created,
+        agentdash_domain::permission::GrantStatus::PendingPolicy => {
+            PermissionGrantStatusDto::PendingPolicy
+        }
+        agentdash_domain::permission::GrantStatus::PendingUserApproval => {
+            PermissionGrantStatusDto::PendingUserApproval
+        }
+        agentdash_domain::permission::GrantStatus::Approved => PermissionGrantStatusDto::Approved,
+        agentdash_domain::permission::GrantStatus::Rejected => PermissionGrantStatusDto::Rejected,
+        agentdash_domain::permission::GrantStatus::Applied => PermissionGrantStatusDto::Applied,
+        agentdash_domain::permission::GrantStatus::Failed => PermissionGrantStatusDto::Failed,
+        agentdash_domain::permission::GrantStatus::Expired => PermissionGrantStatusDto::Expired,
+        agentdash_domain::permission::GrantStatus::Revoked => PermissionGrantStatusDto::Revoked,
+        agentdash_domain::permission::GrantStatus::ScopeEscalated => {
+            PermissionGrantStatusDto::ScopeEscalated
+        }
+    }
+}
+
+fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantResponse {
+    PermissionGrantResponse {
         id: grant.id.to_string(),
         run_id: grant.run_id.to_string(),
         effect_frame_id: grant.effect_frame_id.map(|id| id.to_string()),
@@ -44,13 +62,13 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantDto {
             .map(|p| p.to_qualified_string())
             .collect(),
         reason: grant.reason.clone(),
-        grant_scope: grant.grant_scope.as_str().to_string(),
+        grant_scope: grant_scope_to_dto(grant.grant_scope),
         expires_at: grant.expires_at.map(|t| t.to_rfc3339()),
         scope_escalation_intent: grant
             .scope_escalation_intent
             .as_ref()
             .and_then(|v| serde_json::to_value(v).ok()),
-        status: grant.status.as_str().to_string(),
+        status: grant_status_to_dto(grant.status),
         policy_decision: grant
             .policy_decision
             .as_ref()
@@ -81,22 +99,15 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 // ── Query params ──
 
-#[derive(Deserialize)]
-pub struct ListGrantsQuery {
-    pub effect_frame_id: Option<String>,
-    pub run_id: Option<String>,
-    pub status: Option<String>,
-}
-
 // ── Handlers ──
 
 /// GET /permission-grants
 pub async fn list_grants(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
-    Query(query): Query<ListGrantsQuery>,
-) -> Result<Json<Vec<PermissionGrantDto>>, ApiError> {
-    let grants = if let Some(frame_id) = &query.effect_frame_id {
+    Query(query): Query<ListPermissionGrantsQuery>,
+) -> Result<Json<Vec<PermissionGrantResponse>>, ApiError> {
+    let mut grants = if let Some(frame_id) = &query.effect_frame_id {
         let frame_uuid: Uuid = frame_id
             .parse()
             .map_err(|_| ApiError::BadRequest(format!("invalid effect_frame_id: {frame_id}")))?;
@@ -120,6 +131,10 @@ pub async fn list_grants(
         ));
     };
 
+    if let Some(status) = query.status {
+        grants.retain(|grant| grant_status_to_dto(grant.status) == status);
+    }
+
     Ok(Json(grants.iter().map(grant_to_dto).collect()))
 }
 
@@ -128,7 +143,7 @@ pub async fn get_grant(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantDto>, ApiError> {
+) -> Result<Json<PermissionGrantResponse>, ApiError> {
     let id: Uuid = grant_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
@@ -148,7 +163,7 @@ pub async fn approve_grant(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantDto>, ApiError> {
+) -> Result<Json<PermissionGrantResponse>, ApiError> {
     let id: Uuid = grant_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
@@ -168,7 +183,7 @@ pub async fn reject_grant(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantDto>, ApiError> {
+) -> Result<Json<PermissionGrantResponse>, ApiError> {
     let id: Uuid = grant_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
@@ -188,7 +203,7 @@ pub async fn revoke_grant(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Path(grant_id): Path<String>,
-) -> Result<Json<PermissionGrantDto>, ApiError> {
+) -> Result<Json<PermissionGrantResponse>, ApiError> {
     let id: Uuid = grant_id
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;

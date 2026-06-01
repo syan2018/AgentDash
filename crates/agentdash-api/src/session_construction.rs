@@ -17,6 +17,23 @@ pub(crate) async fn build_session_context_plan(
     current_user: &AuthIdentity,
     session_id: &str,
 ) -> Result<Option<RuntimeContextInspectionPlan>, ApiError> {
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .find_by_runtime_session(session_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("runtime_session 未附着到 AgentFrame: {session_id}"))
+        })?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(frame.agent_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
+
     let session_meta = state
         .services
         .session_core
@@ -25,16 +42,14 @@ pub(crate) async fn build_session_context_plan(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Session `{session_id}` 不存在")))?;
 
-    let project_id = session_meta
-        .project_id
-        .as_deref()
-        .and_then(|id| uuid::Uuid::parse_str(id).ok());
+    let project_id = Some(agent.project_id);
 
     let owner = ResolvedSessionOwner {
         owner_type: CapabilityScope::Project,
         project_id,
         trace: OwnerResolutionTrace {
-            selected_reason: "context_query: meta.project_id".to_string(),
+            selected_reason: "context_query: runtime_session.agent_frame.lifecycle_agent"
+                .to_string(),
         },
     };
 

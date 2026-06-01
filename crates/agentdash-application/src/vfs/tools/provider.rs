@@ -241,12 +241,14 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                 "companion_request",
                 Some(ToolCluster::Collaboration),
             ) {
-                tools.push(Arc::new(CompanionRequestTool::new(
+                let mut companion_request_tool = CompanionRequestTool::new(
                     self.repos.project_agent_repo.clone(),
                     self.repos.clone(),
                     self.session_services_handle.clone(),
                     context,
-                )));
+                );
+                companion_request_tool.resolve_lifecycle_anchors().await;
+                tools.push(Arc::new(companion_request_tool));
             }
             if flow.is_capability_tool_enabled(
                 CAP_COLLABORATION,

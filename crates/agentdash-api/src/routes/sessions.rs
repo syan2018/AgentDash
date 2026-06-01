@@ -28,9 +28,9 @@ use agentdash_contracts::session::{
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, ListSessionsQuery,
-    NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
-    SessionExecutionStateResponse, UpdateSessionMetaRequest,
+    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery,
+    RejectToolApprovalRequest, SessionEventsQuery, SessionExecutionStateResponse,
+    UpdateSessionMetaRequest,
 };
 
 /// Session trace 权限检查 — 必须先解析到 AgentFrame，再通过 LifecycleAgent 所属项目确认权限。
@@ -62,51 +62,8 @@ pub async fn ensure_session_permission(
 
 const RUNTIME_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
-pub async fn list_sessions(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Query(query): Query<ListSessionsQuery>,
-) -> Result<Json<Vec<SessionMeta>>, ApiError> {
-    let sessions = state.services.session_core.list_sessions().await?;
-    let filter_project_id = query
-        .project_id
-        .as_deref()
-        .map(|raw| {
-            uuid::Uuid::parse_str(raw)
-                .map_err(|_| ApiError::BadRequest(format!("无效的 project_id: {raw}")))
-        })
-        .transpose()?;
-
-    let mut visible = Vec::new();
-    for session in sessions {
-        let Some(project_id) = session
-            .project_id
-            .as_deref()
-            .and_then(|raw| uuid::Uuid::parse_str(raw).ok())
-        else {
-            continue;
-        };
-        if let Some(filter_pid) = filter_project_id
-            && project_id != filter_pid
-        {
-            continue;
-        }
-        load_project_with_permission(
-            state.as_ref(),
-            &current_user,
-            project_id,
-            ProjectPermission::View,
-        )
-        .await?;
-        visible.push(session);
-    }
-
-    Ok(Json(visible))
-}
-
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
-        .route("/sessions", axum::routing::get(list_sessions))
         .route(
             "/sessions/{id}",
             axum::routing::get(get_session).delete(delete_session),

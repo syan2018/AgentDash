@@ -19,10 +19,10 @@ export interface SessionChatViewProps {
 
   // ─── 会话生命周期 ────────────────────────────────────
 
-  /** 无 session 时用户发送第一条消息，由父组件创建会话并返回新 ID */
+  /** @deprecated RuntimeSession 不再提供默认创建入口；业务执行必须从 lifecycle 入口派发。 */
   onCreateSession?: (title: string) => Promise<string>;
 
-  /** session ID 变更后回调（创建新 session 时触发） */
+  /** @deprecated RuntimeSession 不再由聊天 UI 创建或切换。 */
   onSessionIdChange?: (id: string) => void;
 
   /** 消息发送成功后回调（父组件可刷新列表等） */
@@ -52,8 +52,7 @@ export interface SessionChatViewProps {
   // ─── 自定义发送流程 ──────────────────────────────────
 
   /**
-   * 全接管发送流程 — 替换默认 onCreateSession + promptSession 链路。
-   * sessionId 为 null 时代表首次发送（可在此创建会话）。
+   * 全接管发送流程。
    * prompt 可为空（如 Task 无额外指令直接执行）。
    * 返回后 SessionChatView 自动清空输入。
    */

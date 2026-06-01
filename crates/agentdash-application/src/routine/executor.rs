@@ -4,7 +4,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use agentdash_domain::project::Project;
-use agentdash_domain::routine::{Routine, RoutineDispatchRefs, RoutineExecution, SessionStrategy};
+use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineDispatchRefs, RoutineExecution};
 use agentdash_domain::workflow::ExecutionDispatchResult;
 use agentdash_domain::workspace::Workspace;
 
@@ -39,7 +39,7 @@ impl RoutineAdmissionError {
 /// 1. 从 Routine 表加载 Routine 定义
 /// 2. 渲染 prompt 模板（Tera 插值）
 /// 3. 解析绑定的 Project Agent 配置
-/// 4. 构造 ExecutionIntent（SessionStrategy → dispatch policy 映射）
+/// 4. 构造 ExecutionIntent（DispatchStrategy → dispatch policy 映射）
 /// 5. 调用 LifecycleDispatchService::dispatch() 创建 run/agent/frame
 /// 6. 记录 RoutineExecution dispatch refs
 pub struct RoutineExecutor {
@@ -271,7 +271,7 @@ impl RoutineExecutor {
         routine: &Routine,
         execution: &mut RoutineExecution,
     ) -> Result<Option<Uuid>, ApplicationError> {
-        let SessionStrategy::PerEntity { entity_key_path } = &routine.session_strategy else {
+        let DispatchStrategy::PerEntity { entity_key_path } = &routine.dispatch_strategy else {
             return Ok(None);
         };
 

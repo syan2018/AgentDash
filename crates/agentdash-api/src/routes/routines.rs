@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_contracts::core::{DeletedFlagResponse, PendingExecutionResponse};
-use agentdash_domain::routine::{Routine, RoutineTriggerConfig, SessionStrategy};
+use agentdash_domain::routine::{DispatchStrategy, Routine, RoutineTriggerConfig};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -116,10 +116,10 @@ pub async fn create_routine(
         other => other,
     };
 
-    let session_strategy: SessionStrategy = match req.session_strategy {
+    let dispatch_strategy: DispatchStrategy = match req.dispatch_strategy {
         Some(v) => serde_json::from_value(v)
-            .map_err(|e| ApiError::BadRequest(format!("session_strategy 格式错误: {e}")))?,
-        None => SessionStrategy::default(),
+            .map_err(|e| ApiError::BadRequest(format!("dispatch_strategy 格式错误: {e}")))?,
+        None => DispatchStrategy::default(),
     };
 
     let routine = Routine::new(
@@ -128,7 +128,7 @@ pub async fn create_routine(
         req.prompt_template,
         project_agent_id,
         trigger_config,
-        session_strategy,
+        dispatch_strategy,
     );
 
     state.repos.routine_repo.create(&routine).await?;
@@ -182,9 +182,9 @@ pub async fn update_routine(
         routine.trigger_config = serde_json::from_value(tc)
             .map_err(|e| ApiError::BadRequest(format!("trigger_config 格式错误: {e}")))?;
     }
-    if let Some(ss) = req.session_strategy {
-        routine.session_strategy = serde_json::from_value(ss)
-            .map_err(|e| ApiError::BadRequest(format!("session_strategy 格式错误: {e}")))?;
+    if let Some(ss) = req.dispatch_strategy {
+        routine.dispatch_strategy = serde_json::from_value(ss)
+            .map_err(|e| ApiError::BadRequest(format!("dispatch_strategy 格式错误: {e}")))?;
     }
     if let Some(enabled) = req.enabled {
         routine.enabled = enabled;

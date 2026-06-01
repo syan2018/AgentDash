@@ -55,6 +55,10 @@ use agentdash_contracts::mcp_preset::{
     CloneMcpPresetRequest, CreateMcpPresetRequest, DeleteMcpPresetResponse, ListMcpPresetQuery,
     McpPresetResponse, ProbeMcpPresetResponse, UpdateMcpPresetRequest,
 };
+use agentdash_contracts::permission::{
+    ListPermissionGrantsQuery, PermissionGrantResponse, PermissionGrantScopeDto,
+    PermissionGrantStatusDto,
+};
 use agentdash_contracts::project_agent::{
     CreateProjectAgentRequest, ProjectAgent, ProjectAgentExecutor, ProjectAgentLaunchResult,
     ProjectAgentSummary, UpdateProjectAgentRequest,
@@ -243,6 +247,18 @@ fn main() {
             export_all::<CodexOAuthFlowStatusDto>(dir);
             export_all::<StartCodexOAuthResponse>(dir);
             export_all::<CodexOAuthStatusResponse>(dir);
+        },
+    );
+
+    write_domain(
+        &generated_dir.join("permission-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<PermissionGrantScopeDto>(dir);
+            export_all::<PermissionGrantStatusDto>(dir);
+            export_all::<ListPermissionGrantsQuery>(dir);
+            export_all::<PermissionGrantResponse>(dir);
         },
     );
 

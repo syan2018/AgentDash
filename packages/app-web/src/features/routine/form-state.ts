@@ -1,4 +1,4 @@
-import type { Routine, RoutineTriggerType, RoutineSessionMode } from "../../types";
+import type { Routine, RoutineTriggerType, RoutineDispatchMode } from "../../types";
 
 export interface RoutineFormState {
   name: string;
@@ -8,7 +8,7 @@ export interface RoutineFormState {
   cron_expression: string;
   provider_key: string;
   provider_config_json: string;
-  session_mode: RoutineSessionMode;
+  dispatch_mode: RoutineDispatchMode;
   entity_key_path: string;
 }
 
@@ -20,7 +20,7 @@ export const INITIAL_FORM: RoutineFormState = {
   cron_expression: "0 9 * * *",
   provider_key: "",
   provider_config_json: "{}",
-  session_mode: "fresh",
+  dispatch_mode: "fresh",
   entity_key_path: "",
 };
 
@@ -35,8 +35,8 @@ export function routineToForm(r: Routine): RoutineFormState {
     provider_config_json: r.trigger_config.provider_config
       ? JSON.stringify(r.trigger_config.provider_config, null, 2)
       : "{}",
-    session_mode: r.session_strategy.mode,
-    entity_key_path: r.session_strategy.entity_key_path ?? "",
+    dispatch_mode: r.dispatch_strategy.mode,
+    entity_key_path: r.dispatch_strategy.entity_key_path ?? "",
   };
 }
 
@@ -45,7 +45,7 @@ export function formToPayload(form: RoutineFormState): {
   prompt_template: string;
   project_agent_id: string;
   trigger_config: Record<string, unknown>;
-  session_strategy: Record<string, unknown>;
+  dispatch_strategy: Record<string, unknown>;
 } {
   let trigger_config: Record<string, unknown>;
   switch (form.trigger_type) {
@@ -64,9 +64,9 @@ export function formToPayload(form: RoutineFormState): {
       break;
   }
 
-  const session_strategy: Record<string, unknown> = { mode: form.session_mode };
-  if (form.session_mode === "per_entity" && form.entity_key_path.trim()) {
-    session_strategy.entity_key_path = form.entity_key_path.trim();
+  const dispatch_strategy: Record<string, unknown> = { mode: form.dispatch_mode };
+  if (form.dispatch_mode === "per_entity" && form.entity_key_path.trim()) {
+    dispatch_strategy.entity_key_path = form.entity_key_path.trim();
   }
 
   return {
@@ -74,7 +74,7 @@ export function formToPayload(form: RoutineFormState): {
     prompt_template: form.prompt_template,
     project_agent_id: form.project_agent_id,
     trigger_config,
-    session_strategy,
+    dispatch_strategy,
   };
 }
 
@@ -84,6 +84,6 @@ export function validateForm(form: RoutineFormState): string | null {
   if (!form.project_agent_id) return "请选择执行 Agent";
   if (form.trigger_type === "scheduled" && !form.cron_expression.trim()) return "请配置定时表达式";
   if (form.trigger_type === "plugin" && !form.provider_key.trim()) return "请输入 provider_key";
-  if (form.session_mode === "per_entity" && !form.entity_key_path.trim()) return "Per-Entity 模式需要指定 entity_key_path";
+  if (form.dispatch_mode === "per_entity" && !form.entity_key_path.trim()) return "Per-Entity 模式需要指定 entity_key_path";
   return null;
 }

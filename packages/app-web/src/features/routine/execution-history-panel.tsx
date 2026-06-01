@@ -45,14 +45,28 @@ export function ExecutionHistoryContent({ routineId }: { routineId: string }) {
           {exec.error && (
             <p className="mt-2 rounded-[6px] bg-destructive/5 px-2 py-1 text-xs text-destructive">{exec.error}</p>
           )}
-          {exec.session_id && (
-            <button
-              type="button"
-              onClick={() => navigate(`/session/${exec.session_id}`)}
-              className="mt-2 text-xs text-primary underline hover:no-underline"
-            >
-              查看 Session
-            </button>
+          {exec.dispatch_refs && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => navigate(`/run/${exec.dispatch_refs!.run_id}`)}
+                className="text-xs text-primary underline hover:no-underline"
+              >
+                查看 Run
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/agent/${exec.dispatch_refs!.agent_id}`, {
+                  state: {
+                    run_id: exec.dispatch_refs!.run_id,
+                    frame_id: exec.dispatch_refs!.frame_id,
+                  },
+                })}
+                className="text-xs text-primary underline hover:no-underline"
+              >
+                查看 Agent
+              </button>
+            </div>
           )}
         </div>
       ))}

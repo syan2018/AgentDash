@@ -11,12 +11,6 @@ pub struct SessionEventsQuery {
     pub limit: Option<u32>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ListSessionsQuery {
-    pub project_id: Option<String>,
-    pub exclude_bound: Option<bool>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionExecutionStateResponse {

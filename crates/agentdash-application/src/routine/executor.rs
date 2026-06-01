@@ -228,9 +228,11 @@ impl RoutineExecutor {
 
         let dispatch_service = LifecycleDispatchService::new(
             self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_repo.as_ref(),
             self.repos.workflow_graph_instance_repo.as_ref(),
             self.repos.lifecycle_agent_repo.as_ref(),
             self.repos.agent_frame_repo.as_ref(),
+            self.repos.agent_assignment_repo.as_ref(),
             self.repos.lifecycle_subject_association_repo.as_ref(),
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),

@@ -172,9 +172,11 @@ pub async fn launch_project_agent(
 
     let dispatch_service = LifecycleDispatchService::new(
         state.repos.lifecycle_run_repo.as_ref(),
+        state.repos.workflow_graph_repo.as_ref(),
         state.repos.workflow_graph_instance_repo.as_ref(),
         state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.agent_frame_repo.as_ref(),
+        state.repos.agent_assignment_repo.as_ref(),
         state.repos.lifecycle_subject_association_repo.as_ref(),
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),

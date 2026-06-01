@@ -4,9 +4,7 @@ use agentdash_application::session::context::SessionContextSnapshot;
 
 #[derive(Debug, Serialize)]
 pub struct ProjectSessionDetailResponse {
-    pub binding_id: String,
     pub session_id: String,
-    pub label: String,
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -24,9 +22,8 @@ pub struct ProjectSessionEntry {
     pub session_title: Option<String>,
     pub last_activity: Option<i64>,
     pub execution_status: String,
-    pub owner_type: String,
-    pub owner_id: String,
-    pub owner_title: Option<String>,
+    pub project_id: String,
+    pub project_title: Option<String>,
     pub story_id: Option<String>,
     pub story_title: Option<String>,
     pub agent_key: Option<String>,

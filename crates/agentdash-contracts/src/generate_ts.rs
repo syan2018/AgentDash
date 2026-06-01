@@ -12,7 +12,7 @@ use agentdash_contracts::core::{
     ProjectSubjectGrantResponse, ProjectSubjectType, ProjectVisibility, RevokeProjectGrantResponse,
     RevokedIdResponse, RuntimeHealthStatus, SchedulingConfig, SessionComposition, SessionRequiredContextBlock,
     StoryContext, StoryPriority, StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus,
-    UnboundBindingResponse, UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
+    UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse,
     WorkspaceBindingStatus, WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse,
     WorkspaceStatus,
 };
@@ -144,7 +144,6 @@ fn main() {
             export_all::<DeletedFlagResponse>(dir);
             export_all::<UpdatedIdResponse>(dir);
             export_all::<RevokedIdResponse>(dir);
-            export_all::<UnboundBindingResponse>(dir);
             export_all::<PendingExecutionResponse>(dir);
             export_all::<BackendType>(dir);
             export_all::<BackendVisibility>(dir);

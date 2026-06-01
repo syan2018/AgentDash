@@ -361,7 +361,6 @@ mod tests {
         async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| ids.contains(&r.id)).cloned().collect()) }
         async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| r.project_id == project_id).cloned().collect()) }
         async fn list_by_lifecycle(&self, lifecycle_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| r.lifecycle_id == lifecycle_id).cloned().collect()) }
-        async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError> { Ok(self.runs.lock().unwrap().iter().filter(|r| r.session_id.as_deref() == Some(session_id)).cloned().collect()) }
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> { let mut guard = self.runs.lock().unwrap(); if let Some(existing) = guard.iter_mut().find(|r| r.id == run.id) { *existing = run.clone(); } Ok(()) }
         async fn delete(&self, id: Uuid) -> Result<(), DomainError> { self.runs.lock().unwrap().retain(|r| r.id != id); Ok(()) }
     }

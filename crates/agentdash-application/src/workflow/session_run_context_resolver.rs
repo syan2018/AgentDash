@@ -1,18 +1,19 @@
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    LifecycleRun, LifecycleRunLink, LifecycleRunLinkRepository, LifecycleRunRepository,
-    RunLinkRole, RunLinkSubjectKind,
+    AgentFrameRepository, LifecycleAgentRepository, LifecycleRun, LifecycleRunLink,
+    LifecycleRunLinkRepository, LifecycleRunRepository, RunLinkRole, RunLinkSubjectKind,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::hooks::SessionRunContext;
 use uuid::Uuid;
 
 use crate::ApplicationError;
-use crate::workflow::select_active_run;
 
 pub struct SessionRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_run_link_repo: &'a dyn LifecycleRunLinkRepository,
+    agent_frame_repo: &'a dyn AgentFrameRepository,
+    lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
     story_repo: &'a dyn StoryRepository,
 }
 
@@ -20,25 +21,46 @@ impl<'a> SessionRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_run_link_repo: &'a dyn LifecycleRunLinkRepository,
+        agent_frame_repo: &'a dyn AgentFrameRepository,
+        lifecycle_agent_repo: &'a dyn LifecycleAgentRepository,
         story_repo: &'a dyn StoryRepository,
     ) -> Self {
         Self {
             lifecycle_run_repo,
             lifecycle_run_link_repo,
+            agent_frame_repo,
+            lifecycle_agent_repo,
             story_repo,
         }
     }
 
+    /// RuntimeSession → AgentFrame → LifecycleAgent → LifecycleRun → RunLinks → context
     pub async fn resolve_for_session(
         &self,
         session_id: &str,
     ) -> Result<Option<SessionRunContext>, ApplicationError> {
-        let runs = self
-            .lifecycle_run_repo
-            .list_by_session(session_id)
+        let Some(frame) = self
+            .agent_frame_repo
+            .find_by_runtime_session(session_id)
             .await
-            .map_err(ApplicationError::from)?;
-        let Some(run) = choose_session_run(runs) else {
+            .map_err(ApplicationError::from)?
+        else {
+            return Ok(None);
+        };
+        let Some(agent) = self
+            .lifecycle_agent_repo
+            .get(frame.agent_id)
+            .await
+            .map_err(ApplicationError::from)?
+        else {
+            return Ok(None);
+        };
+        let Some(run) = self
+            .lifecycle_run_repo
+            .get_by_id(agent.run_id)
+            .await
+            .map_err(ApplicationError::from)?
+        else {
             return Ok(None);
         };
         self.resolve_for_run(&run).await.map(Some)
@@ -78,10 +100,6 @@ pub async fn build_session_run_context(
         task_title: None,
         scope: CapabilityScope::Project,
     })
-}
-
-fn choose_session_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
-    select_active_run(runs.clone()).or_else(|| runs.into_iter().max_by_key(|run| run.updated_at))
 }
 
 fn select_link(

@@ -19,7 +19,6 @@ pub struct ListWorkflowsQuery {
 pub struct StartWorkflowRunRequest {
     pub lifecycle_id: Option<String>,
     pub lifecycle_key: Option<String>,
-    pub session_id: String,
     pub project_id: String,
 }
 

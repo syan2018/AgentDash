@@ -228,23 +228,6 @@ pub async fn open_project_agent_session(
         ApiError::Internal(format!("Lifecycle dispatch 失败: {err}"))
     })?;
 
-    // 绑定 runtime session 到 LifecycleRun（legacy bridge，B7 移除）
-    if let Some(mut run) = state
-        .repos
-        .lifecycle_run_repo
-        .get_by_id(dispatch_result.run_ref)
-        .await
-        .map_err(ApiError::from)?
-    {
-        run.bind_runtime_session(meta.id.clone());
-        state
-            .repos
-            .lifecycle_run_repo
-            .update(&run)
-            .await
-            .map_err(ApiError::from)?;
-    }
-
     let session = Some(ProjectAgentSession {
         binding_id: dispatch_result.run_ref.to_string(),
         session_id: meta.id.clone(),
@@ -686,7 +669,6 @@ async fn auto_start_lifecycle_run(
         project_id,
         lifecycle_id: None,
         lifecycle_key: Some(lifecycle_key.to_string()),
-        session_id: session_id.to_string(),
     };
 
     let run = service

@@ -24,12 +24,6 @@ pub struct RevokedIdResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
-pub struct UnboundBindingResponse {
-    pub unbound: bool,
-    pub binding_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct PendingExecutionResponse {
     pub execution_id: String,
     pub status: String,

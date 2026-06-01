@@ -112,10 +112,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_lifecycle_run),
         )
         .route(
-            "/lifecycle-runs/by-session/{session_id}",
-            axum::routing::get(list_lifecycle_runs_by_session),
-        )
-        .route(
             "/lifecycle-runs/{id}/activities/{activity_key}/attempts/{attempt}/human-decision",
             axum::routing::post(submit_human_decision),
         )
@@ -354,7 +350,6 @@ pub async fn start_lifecycle_run(
             project_id,
             lifecycle_id: parse_optional_uuid(req.lifecycle_id.as_deref(), "lifecycle_id")?,
             lifecycle_key: req.lifecycle_key.and_then(normalize_string),
-            session_id: req.session_id,
         })
         .await?;
     let launcher = AgentActivityExecutorLauncher::new(
@@ -401,32 +396,6 @@ pub async fn get_lifecycle_run(
     )
     .await?;
     Ok(Json(run))
-}
-
-/// 按 session_id 查询关联的 lifecycle runs。
-pub async fn list_lifecycle_runs_by_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<Vec<LifecycleRun>>, ApiError> {
-    let runs = state
-        .repos
-        .lifecycle_run_repo
-        .list_by_session(&session_id)
-        .await?;
-    let mut checked_projects = HashSet::new();
-    for run in &runs {
-        if checked_projects.insert(run.project_id) {
-            load_project_with_permission(
-                state.as_ref(),
-                &current_user,
-                run.project_id,
-                ProjectPermission::View,
-            )
-            .await?;
-        }
-    }
-    Ok(Json(runs))
 }
 
 pub async fn submit_human_decision(

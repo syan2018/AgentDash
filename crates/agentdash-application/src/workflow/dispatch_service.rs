@@ -455,12 +455,6 @@ mod tests {
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(vec![])
         }
-        async fn list_by_session(
-            &self,
-            _session_id: &str,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(vec![])
-        }
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|r| r.id == run.id) {

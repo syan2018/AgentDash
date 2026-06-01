@@ -24,7 +24,6 @@ pub struct StartActivityLifecycleRunCommand {
     pub project_id: Uuid,
     pub lifecycle_id: Option<Uuid>,
     pub lifecycle_key: Option<String>,
-    pub session_id: String,
 }
 
 impl<'a, D: ?Sized, R: ?Sized, C: ?Sized> ActivityLifecycleRunService<'a, D, R, C>
@@ -55,28 +54,12 @@ where
         cmd: StartActivityLifecycleRunCommand,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
         let definition = self.resolve_definition(&cmd).await?;
-        let existing_runs = self.run_repo.list_by_session(&cmd.session_id).await?;
-        let conflicting_run = existing_runs.iter().find(|run| {
-            matches!(
-                run.status,
-                LifecycleRunStatus::Ready
-                    | LifecycleRunStatus::Running
-                    | LifecycleRunStatus::Blocked
-            )
-        });
-        if let Some(conflicting) = conflicting_run {
-            return Err(WorkflowApplicationError::Conflict(format!(
-                "session {} 已存在进行中的 lifecycle run（lifecycle_id={}）",
-                cmd.session_id, conflicting.lifecycle_id
-            )));
-        }
 
         let graph_instance_id = uuid::Uuid::new_v4();
         let state = LifecycleEngine::initialize(&definition, graph_instance_id)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let run =
-            LifecycleRun::new_activity(cmd.project_id, definition.id, Some(cmd.session_id), state)
-                .map_err(WorkflowApplicationError::BadRequest)?;
+        let run = LifecycleRun::new_activity(cmd.project_id, definition.id, state)
+            .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
         Ok(run)
     }
@@ -304,16 +287,6 @@ mod tests {
                 .unwrap_or_default())
         }
 
-        async fn list_by_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            let run = self.run.lock().unwrap().clone();
-            Ok((run.session_id.as_deref() == Some(session_id))
-                .then_some(vec![run])
-                .unwrap_or_default())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             *self.run.lock().unwrap() = run.clone();
             Ok(())
@@ -401,13 +374,7 @@ mod tests {
         let definition = definition(project_id);
         let state =
             LifecycleEngine::initialize(&definition, uuid::Uuid::new_v4()).expect("state");
-        let run = LifecycleRun::new_activity(
-            project_id,
-            definition.id,
-            Some("sess-activity".to_string()),
-            state,
-        )
-        .expect("run");
+        let run = LifecycleRun::new_activity(project_id, definition.id, state).expect("run");
         let run_id = run.id;
         let definition_repo = DefinitionRepo { definition };
         let run_repo = RunRepo {

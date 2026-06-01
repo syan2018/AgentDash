@@ -203,11 +203,6 @@ pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
     pub lifecycle_id: Uuid,
-    /// 仅表示当前 run 关联的 runtime session（用于 event log、debug replay 等）。
-    /// 业务归属（如 Story、RoutineExecution）通过 `LifecycleRunLink` 显式关联层表达，
-    /// 不再由此字段推断。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
     pub status: LifecycleRunStatus,
     /// 当前所有可执行（Ready/Running）的 node key 集合。
     /// 线性 lifecycle 中此集合只有 0 或 1 个元素。
@@ -232,7 +227,6 @@ impl LifecycleRun {
     pub fn new_activity(
         project_id: Uuid,
         lifecycle_id: Uuid,
-        session_id: Option<String>,
         activity_state: ActivityLifecycleRunState,
     ) -> Result<Self, String> {
         if activity_state.attempts.is_empty() {
@@ -245,7 +239,6 @@ impl LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
             lifecycle_id,
-            session_id,
             status,
             active_node_keys,
             execution_log: Vec::new(),
@@ -254,12 +247,6 @@ impl LifecycleRun {
             updated_at: now,
             last_activity_at: now,
         })
-    }
-
-    /// 绑定 runtime session（attempt 开始执行时调用）。
-    pub fn bind_runtime_session(&mut self, session_id: String) {
-        self.session_id = Some(session_id);
-        self.updated_at = Utc::now();
     }
 
     pub fn replace_activity_state(&mut self, activity_state: ActivityLifecycleRunState) {

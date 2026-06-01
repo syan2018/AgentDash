@@ -16,8 +16,7 @@ pub struct SessionEventsQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct ListSessionsQuery {
-    pub owner_type: Option<String>,
-    pub owner_id: Option<String>,
+    pub project_id: Option<String>,
     pub exclude_bound: Option<bool>,
 }
 
@@ -36,21 +35,6 @@ pub struct SessionExecutionStateResponse {
     pub turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionBindingOwnerResponse {
-    pub id: String,
-    pub session_id: String,
-    pub owner_type: String,
-    pub owner_id: String,
-    pub label: String,
-    pub created_at: String,
-    pub owner_title: Option<String>,
-    pub project_id: String,
-    pub story_id: Option<String>,
-    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

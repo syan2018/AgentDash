@@ -67,18 +67,14 @@ pub async fn list_sessions(
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<SessionMeta>>, ApiError> {
     let sessions = state.services.session_core.list_sessions().await?;
-    let owner_project_id = match (&query.owner_type, &query.owner_id) {
-        (Some(owner_type), Some(owner_id)) if owner_type == "project" => Some(
-            uuid::Uuid::parse_str(owner_id)
-                .map_err(|_| ApiError::BadRequest(format!("无效的 owner_id: {owner_id}")))?,
-        ),
-        (Some(owner_type), _) => {
-            return Err(ApiError::BadRequest(format!(
-                "Session 列表仅支持 owner_type=project，收到: {owner_type}"
-            )));
-        }
-        _ => None,
-    };
+    let filter_project_id = query
+        .project_id
+        .as_deref()
+        .map(|raw| {
+            uuid::Uuid::parse_str(raw)
+                .map_err(|_| ApiError::BadRequest(format!("无效的 project_id: {raw}")))
+        })
+        .transpose()?;
 
     let mut visible = Vec::new();
     for session in sessions {
@@ -89,8 +85,8 @@ pub async fn list_sessions(
         else {
             continue;
         };
-        if let Some(owner_project_id) = owner_project_id
-            && project_id != owner_project_id
+        if let Some(filter_pid) = filter_project_id
+            && project_id != filter_pid
         {
             continue;
         }
@@ -204,25 +200,7 @@ pub async fn create_session(
         .session_core
         .mark_owner_bootstrap_pending(&meta.id)
         .await?;
-    ensure_freeform_lifecycle_run(state.as_ref(), project.id, &meta.id).await?;
     Ok(Json(meta))
-}
-
-pub(crate) async fn ensure_freeform_lifecycle_run(
-    state: &AppState,
-    project_id: uuid::Uuid,
-    session_id: &str,
-) -> Result<(), ApiError> {
-    let service = agentdash_application::workflow::FreeformLifecycleService::new(
-        state.repos.workflow_definition_repo.as_ref(),
-        state.repos.activity_lifecycle_definition_repo.as_ref(),
-        state.repos.lifecycle_run_repo.as_ref(),
-    );
-    service
-        .ensure_run_for_session(project_id, session_id)
-        .await
-        .map(|_| ())
-        .map_err(ApiError::from)
 }
 
 pub async fn get_session(

@@ -886,19 +886,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .runs
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|run| run.session_id.as_deref() == Some(session_id))
-                .cloned()
-                .collect())
-        }
 
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut guard = self.runs.lock().unwrap();

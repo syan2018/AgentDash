@@ -55,9 +55,7 @@ pub async fn get_project_session(
         .map(|plan| plan.context_projection);
 
     Ok(Json(ProjectSessionDetailResponse {
-        binding_id: session_id.clone(),
         session_id,
-        label: agentdash_application::workflow::FREEFORM_SESSION_LABEL.to_string(),
         session_title: Some(meta.title),
         last_activity: Some(meta.updated_at),
         vfs: context_projection
@@ -124,9 +122,8 @@ pub async fn list_project_sessions(
                 session_title: Some(session.title),
                 last_activity: Some(session.updated_at),
                 execution_status: execution_status.to_string(),
-                owner_type: "project".to_string(),
-                owner_id: project_uuid.to_string(),
-                owner_title: Some(project.name.clone()),
+                project_id: project_uuid.to_string(),
+                project_title: Some(project.name.clone()),
                 story_id: None,
                 story_title: None,
                 agent_key: None,

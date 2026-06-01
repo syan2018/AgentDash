@@ -3,7 +3,7 @@
   "name": "session-first-api-demotion",
   "title": "Session First API Demotion",
   "description": "删除或降级 session-first API、DTO、repository 主路径，收尾 binding、step、single-graph 遗留语义。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

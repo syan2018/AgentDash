@@ -62,32 +62,16 @@ where
         Ok(definition)
     }
 
-    pub async fn ensure_run_for_session(
+    pub async fn create_freeform_run(
         &self,
         project_id: Uuid,
-        session_id: &str,
     ) -> Result<LifecycleRun, WorkflowApplicationError> {
-        if let Some(existing) = self
-            .run_repo
-            .list_by_session(session_id)
-            .await?
-            .into_iter()
-            .find(|run| run.activity_state.is_some())
-        {
-            return Ok(existing);
-        }
-
         let definition = self.ensure_definition(project_id).await?;
         let graph_instance_id = uuid::Uuid::new_v4();
         let state = LifecycleEngine::initialize(&definition, graph_instance_id)
             .map_err(|error| WorkflowApplicationError::BadRequest(error.to_string()))?;
-        let run = LifecycleRun::new_activity(
-            project_id,
-            definition.id,
-            Some(session_id.to_string()),
-            state,
-        )
-        .map_err(WorkflowApplicationError::BadRequest)?;
+        let run = LifecycleRun::new_activity(project_id, definition.id, state)
+            .map_err(WorkflowApplicationError::BadRequest)?;
         self.run_repo.create(&run).await?;
         Ok(run)
     }
@@ -368,20 +352,6 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Vec<LifecycleRun>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.session_id.as_deref() == Some(session_id))
-                .cloned()
-                .collect())
-        }
-
         async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
             let mut items = self.items.lock().unwrap();
             if let Some(existing) = items.iter_mut().find(|item| item.id == run.id) {
@@ -397,7 +367,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_run_for_session_creates_open_ended_freeform_attempt() {
+    async fn create_freeform_run_creates_open_ended_attempt() {
         let workflow_repo = InMemoryWorkflowRepo::default();
         let lifecycle_repo = InMemoryActivityLifecycleRepo::default();
         let run_repo = InMemoryRunRepo::default();
@@ -405,12 +375,11 @@ mod tests {
         let project_id = Uuid::new_v4();
 
         let run = service
-            .ensure_run_for_session(project_id, "sess-freeform")
+            .create_freeform_run(project_id)
             .await
             .expect("freeform run");
 
         assert_eq!(run.project_id, project_id);
-        assert_eq!(run.session_id.as_deref(), Some("sess-freeform"));
         let state = run.activity_state.expect("activity state");
         assert_eq!(
             state.status,
@@ -428,26 +397,5 @@ mod tests {
             lifecycle.activities[0].completion_policy,
             ActivityCompletionPolicy::OpenEnded
         ));
-    }
-
-    #[tokio::test]
-    async fn ensure_run_for_session_reuses_existing_activity_run() {
-        let workflow_repo = InMemoryWorkflowRepo::default();
-        let lifecycle_repo = InMemoryActivityLifecycleRepo::default();
-        let run_repo = InMemoryRunRepo::default();
-        let service = FreeformLifecycleService::new(&workflow_repo, &lifecycle_repo, &run_repo);
-        let project_id = Uuid::new_v4();
-
-        let first = service
-            .ensure_run_for_session(project_id, "sess-freeform")
-            .await
-            .expect("first run");
-        let second = service
-            .ensure_run_for_session(project_id, "sess-freeform")
-            .await
-            .expect("second run");
-
-        assert_eq!(first.id, second.id);
-        assert_eq!(run_repo.items.lock().unwrap().len(), 1);
     }
 }

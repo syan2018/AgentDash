@@ -110,8 +110,6 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
     -> Result<Vec<LifecycleRun>, DomainError>;
-    /// Runtime/debug 用途：按 session 反查 run。业务查询应通过 LifecycleRunLink。
-    async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
 }

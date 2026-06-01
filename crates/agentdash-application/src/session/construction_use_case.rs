@@ -36,7 +36,7 @@ use crate::session::{
 use crate::skill_asset::SkillAssetService;
 use crate::task::gateway::resolve_effective_task_workspace;
 use crate::workflow::resolve_active_workflow_projection_for_session;
-use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, SessionRunContextResolver, select_active_run};
+use crate::workflow::{LIFECYCLE_NODE_LABEL_PREFIX, SessionRunContextResolver};
 use agentdash_domain::routine::ROUTINE_MEMORY_SKILL_NAME;
 use agentdash_domain::{project::Project, story::Story, workspace::Workspace};
 use agentdash_spi::CapabilityScope;
@@ -210,6 +210,8 @@ async fn resolve_session_scope(
     let resolver = SessionRunContextResolver::new(
         state.repos.lifecycle_run_repo.as_ref(),
         state.repos.lifecycle_run_link_repo.as_ref(),
+        state.repos.agent_frame_repo.as_ref(),
+        state.repos.lifecycle_agent_repo.as_ref(),
         state.repos.story_repo.as_ref(),
     );
     Ok(resolver
@@ -726,15 +728,38 @@ async fn build_lifecycle_node_prompt_request(
     plan: SessionConstructionPlan,
     lifecycle_kind: SessionPromptLifecycle,
 ) -> Result<SessionConstructionPlan, ApplicationError> {
-    let runs = state
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .find_by_runtime_session(session_id)
+        .await
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::BadRequest(format!(
+                "Lifecycle node session {session_id} 无关联 AgentFrame"
+            ))
+        })?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(frame.agent_id)
+        .await
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::NotFound(format!(
+                "LifecycleAgent {} 不存在",
+                frame.agent_id
+            ))
+        })?;
+    let run = state
         .repos
         .lifecycle_run_repo
-        .list_by_session(session_id)
+        .get_by_id(agent.run_id)
         .await
-        .map_err(ApplicationError::from)?;
-    let run = select_active_run(runs).ok_or_else(|| {
-        ApplicationError::BadRequest(format!("Lifecycle node session {session_id} 无活跃 run"))
-    })?;
+        .map_err(ApplicationError::from)?
+        .ok_or_else(|| {
+            ApplicationError::BadRequest(format!("Lifecycle node session {session_id} 无活跃 run"))
+        })?;
     let lifecycle = state
         .repos
         .activity_lifecycle_definition_repo

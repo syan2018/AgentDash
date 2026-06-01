@@ -25,7 +25,6 @@ pub mod shared_library;
 pub mod skill_assets;
 pub mod stories;
 pub mod story_runs;
-pub mod story_sessions;
 pub mod task_execution;
 pub mod terminals;
 pub mod vfs;
@@ -78,7 +77,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(backend_access::router())
         .merge(stories::router())
         .merge(story_runs::router())
-        .merge(story_sessions::router())
         .merge(task_execution::router())
         .merge(workflows::router())
         .merge(backends::router())

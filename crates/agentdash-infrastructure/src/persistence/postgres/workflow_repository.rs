@@ -35,8 +35,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const ACTIVITY_LC_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,lifecycle_id,session_id,status,execution_log,activity_state,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,session_id,status,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,lifecycle_id,status,execution_log,activity_state,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,status,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -558,12 +558,11 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
 impl LifecycleRunRepository for PostgresWorkflowRepository {
     async fn create(&self, run: &LifecycleRun) -> Result<(), DomainError> {
         sqlx::query(&format!(
-            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"
+            "INSERT INTO lifecycle_runs ({RUN_INSERT_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
         .bind(run.lifecycle_id.to_string())
-        .bind(&run.session_id)
         .bind(serde_json::to_string(&run.status)?)
         .bind("{}")
         .bind(serde_json::to_string(&run.execution_log)?)
@@ -647,22 +646,9 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .collect()
     }
 
-    async fn list_by_session(&self, session_id: &str) -> Result<Vec<LifecycleRun>, DomainError> {
-        sqlx::query_as::<_, LifecycleRunRow>(&format!(
-            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE session_id = $1 ORDER BY created_at DESC"
-        ))
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(TryInto::try_into)
-        .collect()
-    }
-
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,session_id=$3,status=$4,execution_log=$5,activity_state=$6,updated_at=$7,last_activity_at=$8 WHERE id=$9")
-            .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string()).bind(&run.session_id)
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,status=$3,execution_log=$4,activity_state=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
+            .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.execution_log)?)
             .bind(serialize_activity_state(&run.activity_state)?)
@@ -812,7 +798,6 @@ struct LifecycleRunRow {
     id: String,
     project_id: String,
     lifecycle_id: String,
-    session_id: Option<String>,
     status: String,
     execution_log: String,
     activity_state: Option<String>,
@@ -850,7 +835,6 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
             lifecycle_id: parse_uuid(&row.lifecycle_id, "lifecycle_definition")?,
-            session_id: row.session_id.filter(|s| !s.is_empty()),
             status: serde_json::from_str(&row.status)?,
             active_node_keys,
             execution_log: parse_json_column(&row.execution_log, "lifecycle_runs.execution_log")?,

@@ -148,7 +148,7 @@ describe("SessionPage hook runtime cards", () => {
     expect(html).toContain("Demo Lifecycle / Task / Check");
     expect(html).toContain("builtin:global");
     expect(html).toContain("workflow:demo_lifecycle:check");
-    expect(html).toContain("step: check");
+    expect(html).toContain("activity: check");
     expect(html).toContain("workflow: demo_lifecycle_check");
   });
 

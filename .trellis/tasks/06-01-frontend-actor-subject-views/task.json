@@ -3,7 +3,7 @@
   "name": "frontend-actor-subject-views",
   "title": "Frontend Actor Subject Views",
   "description": "将前端主视图从 session tree 迁到 lifecycle run、subject execution、agent/frame 与 runtime trace views。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

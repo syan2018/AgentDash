@@ -1,5 +1,10 @@
 /**
- * Session 分组工具
+ * Session 分组工具（已降级为 Runtime Trace 辅助）
+ *
+ * @deprecated 业务导航已迁移至 lifecycle-first 视图体系（LifecycleRunView /
+ * SubjectExecutionView / LifecycleAgentView），不再以 session 作为业务控制面主轴。
+ * 此模块仅保留用于 runtime trace 页面的向后兼容展示。
+ * 新代码应使用 lifecycleStore 的 run/subject/agent 索引。
  *
  * 将扁平的 ProjectSessionEntry 列表按以下层级组织：
  *

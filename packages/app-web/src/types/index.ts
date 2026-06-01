@@ -434,3 +434,4 @@ export * from "./skill-asset";
 export * from "./extension-runtime";
 export * from "./shared-library";
 export * from "./acp";
+export * from "./lifecycle-views";

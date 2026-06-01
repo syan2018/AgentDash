@@ -146,7 +146,10 @@ function BootstrapErrorState({
   );
 }
 
-// ─── /session/:sessionId 路由包装器 ───────────────────
+// ─── /session/:sessionId → RuntimeTraceView 路由包装器 ──
+//
+// 此路由已降级为 Runtime Trace 入口，不再作为业务 lifecycle 主视图。
+// 业务导航通过 /run/:id、/subject/:kind/:id、/agent/:id 进入。
 
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();

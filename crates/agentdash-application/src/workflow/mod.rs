@@ -3,6 +3,7 @@ pub mod agent_executor;
 mod catalog;
 mod completion;
 mod definition;
+pub mod dispatch_service;
 pub mod engine;
 mod error;
 pub mod execution_log;
@@ -28,6 +29,7 @@ pub use agentdash_domain::workflow::{
     ActivityRunStatus, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
+pub use dispatch_service::LifecycleDispatchService;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};
 pub use definition::{
     BuiltinLifecycleTemplate, BuiltinWorkflowBundle, BuiltinWorkflowTemplate,

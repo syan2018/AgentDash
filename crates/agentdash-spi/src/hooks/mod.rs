@@ -459,10 +459,10 @@ impl HookPendingAction {
     }
 }
 
-/// Hook Session 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
-/// 具体实现（`HookSessionRuntime`）位于 application 层。
+/// Hook 运行时的接口 — 用于 executor/connector 层通过 trait object 访问。
+/// 具体实现（`AgentFrameHookRuntime`）位于 application 层。
 #[async_trait]
-pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
+pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn session_id(&self) -> &str;
     fn snapshot(&self) -> SessionHookSnapshot;
     fn diagnostics(&self) -> Vec<HookDiagnosticEntry>;
@@ -532,7 +532,7 @@ pub trait HookSessionRuntimeAccess: Send + Sync + std::fmt::Debug {
     }
 }
 
-pub type SharedHookSessionRuntime = Arc<dyn HookSessionRuntimeAccess>;
+pub type SharedHookRuntime = Arc<dyn HookRuntimeAccess>;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -682,13 +682,13 @@ pub struct HookResolution {
     pub approval_request: Option<HookApprovalRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
-    /// Step advancement signal. When set, `HookSessionRuntime::evaluate`
+    /// Step advancement signal. When set, `AgentFrameHookRuntime::evaluate`
     /// delegates to `provider.advance_workflow_step()` in a post-evaluate
     /// step and updates `completion.advanced` accordingly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_advance: Option<HookStepAdvanceRequest>,
     /// Execution log entries collected during this evaluation cycle.
-    /// Flushed to `LifecycleRun.execution_log` by `HookSessionRuntime`
+    /// Flushed to `LifecycleRun.execution_log` by `AgentFrameHookRuntime`
     /// post-evaluate, via `provider.append_execution_log()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_execution_log: Vec<PendingExecutionLogEntry>,
@@ -727,7 +727,7 @@ pub struct HookEffect {
 }
 
 /// Agent loop 的实时 token 统计。
-/// 由 HookSessionRuntime 维护，自动注入到每次 hook 评估的 query 中。
+/// 由 AgentFrameHookRuntime 维护，自动注入到每次 hook 评估的 query 中。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct ContextTokenStats {
@@ -791,7 +791,7 @@ pub struct HookCompletionStatus {
 
 /// Request payload for the post-evaluate step advancement bridge.
 /// Produced by `evaluate_hook` when completion conditions are met, consumed by
-/// `HookSessionRuntime::evaluate` which delegates to
+/// `AgentFrameHookRuntime::evaluate` which delegates to
 /// `ExecutionHookProvider::advance_workflow_step`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -865,7 +865,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
 
-    /// Execute the actual step advancement. Called by `HookSessionRuntime`
+    /// Execute the actual step advancement. Called by `AgentFrameHookRuntime`
     /// post-evaluate when the resolution carries a `pending_advance` signal.
     async fn advance_workflow_step(
         &self,
@@ -876,7 +876,7 @@ pub trait ExecutionHookProvider: Send + Sync {
     }
 
     /// Batch-flush execution log entries to `LifecycleRun.execution_log`.
-    /// Called by `HookSessionRuntime` post-evaluate when the resolution
+    /// Called by `AgentFrameHookRuntime` post-evaluate when the resolution
     /// carries non-empty `pending_execution_log`.
     async fn append_execution_log(
         &self,

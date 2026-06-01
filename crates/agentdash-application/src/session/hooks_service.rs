@@ -1,13 +1,13 @@
-use std::path::Path;
+﻿use std::path::Path;
 use std::sync::Arc;
 
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookSessionRuntimeAccess, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SharedHookSessionRuntime,
+    HookRuntimeAccess, SessionHookRefreshQuery, SessionHookSnapshot,
+    SessionHookSnapshotQuery, SharedHookRuntime,
 };
 
-use super::hook_runtime::HookSessionRuntime;
+use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
 
 #[derive(Clone)]
@@ -20,37 +20,37 @@ impl SessionHookService {
         Self { hub }
     }
 
-    pub async fn ensure_hook_session_runtime(
+    pub async fn ensure_hook_runtime(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         self.hub
-            .ensure_hook_session_runtime(session_id, turn_id)
+            .ensure_hook_runtime(session_id, turn_id)
             .await
     }
 
-    pub async fn get_hook_session_runtime(
+    pub async fn get_hook_runtime(
         &self,
         session_id: &str,
-    ) -> Option<SharedHookSessionRuntime> {
-        self.hub.get_hook_session_runtime(session_id).await
+    ) -> Option<SharedHookRuntime> {
+        self.hub.get_hook_runtime(session_id).await
     }
 
-    pub async fn reload_session_hook_runtime(
+    pub async fn reload_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
         executor: &str,
         permission_policy: Option<&str>,
         working_directory: &Path,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         let Some(provider) = self.hub.hook_provider.as_ref() else {
             self.hub
                 .runtime_registry
                 .with_runtime_mut(session_id, |runtime| {
                     if let Some(runtime) = runtime {
-                        runtime.hook_session = None;
+                        runtime.hook_runtime = None;
                     }
                 })
                 .await;
@@ -75,7 +75,7 @@ impl SessionHookService {
             working_directory,
         );
 
-        let runtime = Arc::new(HookSessionRuntime::new(
+        let runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
             session_id.to_string(),
             provider.clone(),
             snapshot,
@@ -85,7 +85,7 @@ impl SessionHookService {
             .runtime_registry
             .with_runtime_mut(session_id, |session_runtime| {
                 if let Some(session_runtime) = session_runtime {
-                    session_runtime.hook_session = Some(runtime.clone());
+                    session_runtime.hook_runtime = Some(runtime.clone());
                 }
             })
             .await;
@@ -93,23 +93,23 @@ impl SessionHookService {
         Ok(Some(runtime))
     }
 
-    pub(crate) async fn resolve_hook_session(
+    pub(crate) async fn resolve_hook_runtime(
         &self,
         session_id: &str,
         turn_id: &str,
         executor_config: &agentdash_domain::common::AgentConfig,
         working_directory: &Path,
         is_owner_bootstrap: bool,
-    ) -> Result<Option<SharedHookSessionRuntime>, ConnectorError> {
+    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         let existing = self
             .hub
             .runtime_registry
-            .hook_session_runtime(session_id)
+            .hook_runtime(session_id)
             .await;
 
         if is_owner_bootstrap || existing.is_none() {
             return self
-                .reload_session_hook_runtime(
+                .reload_hook_runtime(
                     session_id,
                     turn_id,
                     executor_config.executor.as_str(),
@@ -133,11 +133,11 @@ impl SessionHookService {
 
     pub(crate) async fn emit_session_hook_trigger(
         &self,
-        hook_session: &dyn HookSessionRuntimeAccess,
+        hook_runtime: &dyn HookRuntimeAccess,
         input: &HookTriggerInput<'_>,
     ) -> HookTriggerDispatchResult {
         self.hub
-            .emit_session_hook_trigger(hook_session, input)
+            .emit_session_hook_trigger(hook_runtime, input)
             .await
     }
 }

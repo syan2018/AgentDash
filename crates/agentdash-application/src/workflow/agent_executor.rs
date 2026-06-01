@@ -1,4 +1,4 @@
-use agentdash_domain::workflow::{
+﻿use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     WorkflowGraph, ActivityPortValue, AgentSessionPolicy, ExecutorRunRef,
     FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
@@ -226,12 +226,12 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
 
-        if let Some(hook_session) = session_hooks
-            .ensure_hook_session_runtime(root_session_id, None)
+        if let Some(hook_runtime) = session_hooks
+            .ensure_hook_runtime(root_session_id, None)
             .await
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
-            let snapshot = hook_session.snapshot();
+            let snapshot = hook_runtime.snapshot();
             let owner_ctx = scope_from_run_context_or_project(
                 snapshot.run_context.as_ref(),
                 definition.project_id,
@@ -265,7 +265,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .map_err(|error| error.to_string())?;
             apply_to_running_session(
                 &activation,
-                &hook_session,
+                &hook_runtime,
                 session_capability,
                 None,
                 &activity.key,

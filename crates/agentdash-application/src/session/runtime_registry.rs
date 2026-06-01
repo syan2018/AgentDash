@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use super::hub_support::{SessionRuntime, build_session_runtime};
 use super::persistence::PersistedSessionEvent;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 
 #[derive(Clone)]
 pub(super) struct SessionRuntimeRegistry {
@@ -90,27 +90,27 @@ impl SessionRuntimeRegistry {
             .unwrap_or((false, None))
     }
 
-    pub async fn hook_session_runtime(&self, session_id: &str) -> Option<SharedHookSessionRuntime> {
+    pub async fn hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
         let runtimes = self.runtimes.lock().await;
         runtimes
             .get(session_id)
-            .and_then(|runtime| runtime.hook_session.clone())
+            .and_then(|runtime| runtime.hook_runtime.clone())
     }
 
-    pub async fn set_hook_session_if_absent(
+    pub async fn set_hook_runtime_if_absent(
         &self,
         session_id: &str,
-        hook_session: SharedHookSessionRuntime,
-    ) -> Option<SharedHookSessionRuntime> {
+        hook_runtime: SharedHookRuntime,
+    ) -> Option<SharedHookRuntime> {
         let mut runtimes = self.runtimes.lock().await;
         let runtime = runtimes.entry(session_id.to_string()).or_insert_with(|| {
             let (tx, _rx) = broadcast::channel(1024);
             build_session_runtime(tx)
         });
-        if runtime.hook_session.is_none() {
-            runtime.hook_session = Some(hook_session);
+        if runtime.hook_runtime.is_none() {
+            runtime.hook_runtime = Some(hook_runtime);
         }
-        runtime.hook_session.clone()
+        runtime.hook_runtime.clone()
     }
 
     pub async fn increment_auto_resume_if_allowed(&self, session_id: &str, max: u32) -> bool {

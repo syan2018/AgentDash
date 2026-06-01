@@ -1,4 +1,4 @@
-//! Workflow runtime context transition 的统一应用入口。
+﻿//! Workflow runtime context transition 的统一应用入口。
 //!
 //! 这里刻意放在 Hub 层：transition 应用需要同时触碰 live connector、SessionRuntime、
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use agentdash_agent_types::DynAgentTool;
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookInjection, RuntimeEventSource, SetDelta,
-    SharedHookSessionRuntime,
+    SharedHookRuntime,
 };
 use uuid::Uuid;
 
@@ -92,7 +92,7 @@ pub(crate) fn build_initial_capability_state_frame(
 impl SessionRuntimeInner {
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
-        hook_session: &SharedHookSessionRuntime,
+        hook_runtime: &SharedHookRuntime,
         input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         let state_changed = input.before_state.as_ref() != Some(&input.after_state);
@@ -109,7 +109,7 @@ impl SessionRuntimeInner {
             .await
             .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
 
-        let delta = hook_session.update_capabilities(input.capability_keys.clone());
+        let delta = hook_runtime.update_capabilities(input.capability_keys.clone());
         let notification_delta = delta.clone().unwrap_or_else(|| input.key_delta.clone());
 
         let injections = self
@@ -124,7 +124,7 @@ impl SessionRuntimeInner {
         self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
             .await
             .map_err(|error| format!("Phase node runtime context notice 持久化失败: {error}"))?;
-        let _ = context_frame::enqueue_context_frame(hook_session, &notice);
+        let _ = context_frame::enqueue_context_frame(hook_runtime, &notice);
 
         // assignment_context 作为独立 frame 一职一责地发出，不再和能力/工具 delta 混装。
         if let Some(workflow_frame) = build_workflow_assignment_context_frame(
@@ -135,7 +135,7 @@ impl SessionRuntimeInner {
             self.emit_context_frame(&input.session_id, input.turn_id.as_deref(), &workflow_frame)
                 .await
                 .map_err(|error| format!("Phase node mission context frame 持久化失败: {error}"))?;
-            let _ = context_frame::enqueue_context_frame(hook_session, &workflow_frame);
+            let _ = context_frame::enqueue_context_frame(hook_runtime, &workflow_frame);
         }
 
         Ok(RuntimeContextTransitionOutcome {
@@ -219,7 +219,7 @@ impl SessionRuntimeInner {
         &self,
         session_id: &str,
         _turn_id: &str,
-        hook_session: Option<&SharedHookSessionRuntime>,
+        hook_runtime: Option<&SharedHookRuntime>,
         before_state: CapabilityState,
         final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
@@ -230,10 +230,10 @@ impl SessionRuntimeInner {
             return application;
         }
 
-        if let Some(hook_session) = hook_session
+        if let Some(hook_runtime) = hook_runtime
             && let Some(last_transition) = transitions.last()
         {
-            let _ = hook_session.update_capabilities(last_transition.capability_keys.clone());
+            let _ = hook_runtime.update_capabilities(last_transition.capability_keys.clone());
         }
 
         let mut pending_event_before_state = before_state;
@@ -304,8 +304,8 @@ impl SessionRuntimeInner {
             let _ = self
                 .emit_context_frame(&input.session_id, input.turn_id.as_deref(), &notice)
                 .await;
-            if let Some(hook_session) = self.get_hook_session_runtime(&input.session_id).await {
-                let _ = context_frame::enqueue_context_frame(&hook_session, &notice);
+            if let Some(hook_runtime) = self.get_hook_runtime(&input.session_id).await {
+                let _ = context_frame::enqueue_context_frame(&hook_runtime, &notice);
             }
         }
     }

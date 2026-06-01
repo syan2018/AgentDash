@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use crate::session::companion_wait::CompanionWaitRegistry;
 use crate::session::{
@@ -132,7 +132,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
         let identity = context.session.identity.clone();
         let session_id = context
             .turn
-            .hook_session
+            .hook_runtime
             .as_ref()
             .map(|session| session.session_id().to_string())
             .unwrap_or_else(|| context.session.turn_id.clone());
@@ -288,7 +288,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
                         self.session_services_handle.clone(),
                         context
                             .turn
-                            .hook_session
+                            .hook_runtime
                             .as_ref()
                             .map(|session| session.session_id().to_string()),
                     )));
@@ -306,7 +306,7 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 
                 if let Some(session_id) = context
                     .turn
-                    .hook_session
+                    .hook_runtime
                     .as_ref()
                     .map(|session| session.session_id().to_string())
                 {
@@ -335,8 +335,8 @@ impl RuntimeToolProvider for RelayRuntimeToolProvider {
 }
 
 fn project_id_from_context(context: &ExecutionContext) -> Option<Uuid> {
-    if let Some(hook_session) = context.turn.hook_session.as_ref() {
-        let snapshot = hook_session.snapshot();
+    if let Some(hook_runtime) = context.turn.hook_runtime.as_ref() {
+        let snapshot = hook_runtime.snapshot();
 
         if let Some(run_context) = &snapshot.run_context {
             return Some(run_context.project_id);

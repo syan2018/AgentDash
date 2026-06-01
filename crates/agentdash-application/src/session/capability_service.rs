@@ -1,4 +1,4 @@
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+﻿use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
@@ -77,7 +77,7 @@ impl SessionCapabilityService {
 
     pub(crate) async fn apply_live_runtime_context_transition(
         &self,
-        hook_session: &agentdash_spi::hooks::SharedHookSessionRuntime,
+        hook_runtime: &agentdash_spi::hooks::SharedHookRuntime,
         mut input: LiveRuntimeContextTransitionInput,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
         self.derive_skill_baseline_for_transition_state(
@@ -86,13 +86,13 @@ impl SessionCapabilityService {
         )
         .await;
         self.hub
-            .apply_live_runtime_context_transition(hook_session, input)
+            .apply_live_runtime_context_transition(hook_runtime, input)
             .await
     }
 
     pub(crate) async fn apply_live_vfs_capability_state(
         &self,
-        hook_session: &SharedHookSessionRuntime,
+        hook_runtime: &SharedHookRuntime,
         session_id: &str,
         before_state: CapabilityState,
         active_vfs: Vfs,
@@ -103,7 +103,7 @@ impl SessionCapabilityService {
         after_state.vfs.active = Some(active_vfs);
         let capability_keys = after_state.capability_keys();
         self.apply_live_runtime_context_transition(
-            hook_session,
+            hook_runtime,
             LiveRuntimeContextTransitionInput {
                 session_id: session_id.to_string(),
                 turn_id: None,
@@ -155,7 +155,7 @@ impl SessionCapabilityService {
         &self,
         session_id: &str,
         turn_id: &str,
-        hook_session: Option<&agentdash_spi::hooks::SharedHookSessionRuntime>,
+        hook_runtime: Option<&agentdash_spi::hooks::SharedHookRuntime>,
         before_state: CapabilityState,
         final_capability_state: &CapabilityState,
         transitions: &[PendingCapabilityStateTransition],
@@ -165,7 +165,7 @@ impl SessionCapabilityService {
             .apply_pending_runtime_context_transitions_on_turn(
                 session_id,
                 turn_id,
-                hook_session,
+                hook_runtime,
                 before_state,
                 final_capability_state,
                 transitions,

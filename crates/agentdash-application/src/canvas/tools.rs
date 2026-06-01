@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use agentdash_agent_protocol::{
     BackboneEnvelope, BackboneEvent, PlatformEvent, SourceInfo, TraceInfo,
@@ -594,9 +594,9 @@ async fn sync_canvas_mount_capability_state(
         return Ok(());
     };
 
-    let Some(hook_session) = session_services
+    let Some(hook_runtime) = session_services
         .hooks
-        .get_hook_session_runtime(session_id)
+        .get_hook_runtime(session_id)
         .await
     else {
         tracing::debug!(
@@ -611,7 +611,7 @@ async fn sync_canvas_mount_capability_state(
     session_services
         .capability
         .apply_live_vfs_capability_state(
-            &hook_session,
+            &hook_runtime,
             session_id,
             before_state,
             active_vfs,
@@ -1088,7 +1088,7 @@ mod tests {
             .await
             .expect("prompt 应能启动");
         hub.hook_service()
-            .reload_session_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
+            .reload_hook_runtime(&session.id, &turn_id, "PI_AGENT", None, base.path())
             .await
             .expect("hook runtime 应能刷新");
 

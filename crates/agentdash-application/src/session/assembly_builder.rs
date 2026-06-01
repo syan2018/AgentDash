@@ -360,3 +360,53 @@ pub(super) fn slice_companion_bundle(
         .retain(|fragment| keep_slot(fragment.slot.as_str()));
     sliced
 }
+
+/// 将 `SessionAssemblyBuilder` 投影到 `AgentFrameBuilder`，同时提取 launch 数据。
+///
+/// 替代 `apply_session_assembly`（合入 SessionConstructionPlan）的新路径。
+/// frame builder 接收 surface 数据（capability/VFS/MCP），
+/// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
+pub(super) fn project_assembly_to_frame(
+    mut frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    prepared: SessionAssemblyBuilder,
+) -> (crate::workflow::frame_builder::AgentFrameBuilder, AssemblyLaunchExtras) {
+    if let Some(ref state) = prepared.capability_state {
+        frame_builder = frame_builder.with_capability_state(state);
+    }
+    if let Some(ref vfs) = prepared.vfs {
+        frame_builder = frame_builder.with_vfs_typed(vfs);
+    }
+    if !prepared.mcp_servers.is_empty() {
+        frame_builder = frame_builder.with_mcp_servers(&prepared.mcp_servers);
+    }
+    if let Some(ref config) = prepared.executor_config {
+        frame_builder = frame_builder.with_execution_profile(config);
+    }
+
+    let extras = AssemblyLaunchExtras {
+        context_bundle: prepared.context_bundle,
+        prompt_blocks: prepared.prompt_blocks,
+        executor_config: prepared.executor_config,
+        mcp_servers: prepared.mcp_servers,
+        vfs: prepared.vfs,
+        capability_state: prepared.capability_state,
+        environment_variables: prepared.env,
+        workspace_defaults: prepared.workspace_defaults,
+    };
+
+    (frame_builder, extras)
+}
+
+/// `project_assembly_to_frame` 的 launch-only 输出。
+///
+/// 这些数据不写入 AgentFrame，而是传递给 RuntimeLaunchRequest 或 launch pipeline。
+pub(super) struct AssemblyLaunchExtras {
+    pub context_bundle: Option<SessionContextBundle>,
+    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub executor_config: Option<AgentConfig>,
+    pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
+    pub vfs: Option<Vfs>,
+    pub capability_state: Option<CapabilityState>,
+    pub environment_variables: HashMap<String, String>,
+    pub workspace_defaults: Option<Workspace>,
+}

@@ -1,4 +1,4 @@
-//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+﻿//! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -919,7 +919,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .expect("create");
     let _rx = hub.ensure_session(&session.id).await;
     hub.hook_service()
-        .reload_session_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
+        .reload_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
 
@@ -961,8 +961,8 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
 
     let active_vfs = canvas_skill_vfs();
     let skills = vec![canvas_skill_entry()];
-    let hook_session = hub
-        .get_hook_session_runtime(&session.id)
+    let hook_runtime = hub
+        .get_hook_runtime(&session.id)
         .await
         .expect("hook runtime should exist");
     let mut after_state = before_state.clone();
@@ -972,7 +972,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
     let outcome = hub
         .capability_service()
         .apply_live_runtime_context_transition(
-            &hook_session,
+            &hook_runtime,
             LiveRuntimeContextTransitionInput {
                 session_id: session.id.clone(),
                 turn_id: None,
@@ -1313,7 +1313,7 @@ impl AgentConnector for SessionStartAwareConnector {
         _prompt: &PromptPayload,
         context: agentdash_spi::ExecutionContext,
     ) -> Result<agentdash_spi::ExecutionStream, ConnectorError> {
-        let seen = context.turn.hook_session.as_ref().is_some_and(|runtime| {
+        let seen = context.turn.hook_runtime.as_ref().is_some_and(|runtime| {
             runtime
                 .trace()
                 .iter()
@@ -1501,7 +1501,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
     let _rx = hub.ensure_session(&session.id).await;
 
     hub.hook_service()
-        .reload_session_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
+        .reload_hook_runtime(&session.id, "turn-cap", "PI_AGENT", None, base.path())
         .await
         .expect("hook runtime should load");
     let bundle_session_uuid = uuid::Uuid::new_v4();
@@ -1527,13 +1527,13 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
         })
         .await;
 
-    let hook_session = hub
-        .get_hook_session_runtime(&session.id)
+    let hook_runtime = hub
+        .get_hook_runtime(&session.id)
         .await
         .expect("hook runtime should remain available");
-    let mut snapshot = hook_session.snapshot();
+    let mut snapshot = hook_runtime.snapshot();
     snapshot.injections = vec![injection.clone()];
-    hook_session.replace_snapshot(snapshot);
+    hook_runtime.replace_snapshot(snapshot);
 
     let result = hub
         .collect_runtime_context_update_injections(&session.id)
@@ -1554,7 +1554,7 @@ async fn runtime_context_update_injections_are_recorded_without_direct_notificat
     );
     drop(captured);
 
-    let trace = hook_session.trace();
+    let trace = hook_runtime.trace();
     assert!(
         trace.is_empty(),
         "runtime context update 不是 HookTrace trigger，不应写 trace"

@@ -783,6 +783,29 @@ impl<'a> SessionRequestAssembler<'a> {
             .map(|prepared| apply_session_assembly(plan, prepared))
     }
 
+    /// owner_bootstrap 的 frame builder 路径。
+    ///
+    /// 返回 `(AgentFrameBuilder, AssemblyLaunchExtras)`：
+    /// - frame builder 携带所有 surface 数据，调用方 `.build()` 持久化
+    /// - extras 包含 context bundle / prompt / executor config 等 launch 数据
+    pub async fn compose_owner_bootstrap_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: OwnerBootstrapSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let prepared = self.compose_owner_bootstrap(spec).await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder,
+            prepared,
+        ))
+    }
+
     fn resolve_story_step_executor_config(
         spec: &StoryStepSpec<'_>,
     ) -> Result<(Option<AgentConfig>, Option<String>), TaskExecutionError> {
@@ -1105,6 +1128,38 @@ impl<'a> SessionRequestAssembler<'a> {
         })
     }
 
+    /// story_step 的 frame builder 路径。
+    pub async fn compose_story_step_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: StoryStepSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+            Option<crate::session::post_turn_handler::TerminalHookEffectBinding>,
+        ),
+        TaskExecutionError,
+    > {
+        let task_id = spec.task.id;
+        let backend_id = resolve_task_backend_id(self.repos, self.availability, spec.task).await?;
+        let prepared = self.compose_story_step(spec).await?;
+        let (fb, extras) =
+            crate::session::assembly_builder::project_assembly_to_frame(frame_builder, prepared);
+        let hook_binding = Some(TerminalHookEffectBinding {
+            handler: serde_json::json!({
+                "kind": "task",
+                "task_id": task_id,
+                "backend_id": backend_id,
+            }),
+            supported_effect_kinds: TaskHookEffectExecutor::SUPPORTED_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string())
+                .collect(),
+        });
+        Ok((fb, extras, hook_binding))
+    }
+
     pub async fn compose_lifecycle_node_prompt(
         &self,
         plan: SessionConstructionPlan,
@@ -1180,6 +1235,98 @@ impl<'a> SessionRequestAssembler<'a> {
         .await
     }
 
+    /// lifecycle_node 的 frame builder 路径。
+    pub async fn compose_lifecycle_node_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: LifecycleNodeSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let prepared = compose_lifecycle_node_with_audit(
+            self.repos,
+            self.platform_config,
+            spec,
+            self.audit_bus.clone(),
+            None,
+        )
+        .await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder, prepared,
+        ))
+    }
+
+    /// companion 的 frame builder 路径。
+    pub async fn compose_companion_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: CompanionParentSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let parent_facts = self
+            .resolve_companion_parent_facts(spec.parent_session_id)
+            .await?;
+        let prepared = compose_companion(CompanionSpec {
+            parent_vfs: parent_facts.parent_vfs.as_ref(),
+            parent_mcp_servers: &parent_facts.parent_mcp_servers,
+            parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+            slice_mode: spec.slice_mode,
+            companion_executor_config: spec.companion_executor_config,
+            dispatch_prompt: spec.dispatch_prompt,
+        });
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder, prepared,
+        ))
+    }
+
+    /// companion + workflow 的 frame builder 路径。
+    pub async fn compose_companion_with_workflow_to_frame(
+        &self,
+        frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+        spec: CompanionParentWorkflowSpec<'_>,
+    ) -> Result<
+        (
+            crate::workflow::frame_builder::AgentFrameBuilder,
+            crate::session::assembly_builder::AssemblyLaunchExtras,
+        ),
+        String,
+    > {
+        let parent_facts = self
+            .resolve_companion_parent_facts(spec.companion.parent_session_id)
+            .await?;
+        let prepared = compose_companion_with_workflow(
+            self.repos,
+            self.platform_config,
+            CompanionWorkflowSpec {
+                companion: CompanionSpec {
+                    parent_vfs: parent_facts.parent_vfs.as_ref(),
+                    parent_mcp_servers: &parent_facts.parent_mcp_servers,
+                    parent_context_bundle: parent_facts.parent_context_bundle.as_ref(),
+                    slice_mode: spec.companion.slice_mode,
+                    companion_executor_config: spec.companion.companion_executor_config,
+                    dispatch_prompt: spec.companion.dispatch_prompt,
+                },
+                run: spec.run,
+                lifecycle: spec.lifecycle,
+                activity: spec.activity,
+                workflow: spec.workflow,
+            },
+        )
+        .await?;
+        Ok(crate::session::assembly_builder::project_assembly_to_frame(
+            frame_builder, prepared,
+        ))
+    }
+
     async fn resolve_companion_parent_facts(
         &self,
         parent_session_id: &str,
@@ -1223,6 +1370,29 @@ pub async fn compose_lifecycle_node_prompt_with_audit(
     compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
         .await
         .map(|prepared| apply_session_assembly(plan, prepared))
+}
+
+/// `compose_lifecycle_node_prompt_with_audit` 的 frame builder 路径。
+pub async fn compose_lifecycle_node_to_frame_with_audit(
+    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    repos: &RepositorySet,
+    platform_config: &PlatformConfig,
+    spec: LifecycleNodeSpec<'_>,
+    audit_bus: Option<SharedContextAuditBus>,
+    audit_session_key: Option<&str>,
+) -> Result<
+    (
+        crate::workflow::frame_builder::AgentFrameBuilder,
+        crate::session::assembly_builder::AssemblyLaunchExtras,
+    ),
+    String,
+> {
+    let prepared =
+        compose_lifecycle_node_with_audit(repos, platform_config, spec, audit_bus, audit_session_key)
+            .await?;
+    Ok(crate::session::assembly_builder::project_assembly_to_frame(
+        frame_builder, prepared,
+    ))
 }
 
 async fn compose_lifecycle_node_with_audit(

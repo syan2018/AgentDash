@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
@@ -405,8 +405,9 @@ fn seed_snapshot_injections_for_trigger(
 mod tests {
     use std::sync::Arc;
 
-    use crate::session::{HookRuntimeDelegate, HookSessionRuntime};
-    use agentdash_spi::hooks::HookSessionRuntimeAccess;
+    use crate::session::HookRuntimeDelegate;
+    use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
+    use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{HookEvaluationQuery, HookResolution, SessionHookSnapshot};
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
@@ -509,13 +510,13 @@ mod tests {
     #[tokio::test]
     async fn runtime_delegate_before_tool_rewrite_records_trace() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let hook_session = Arc::new(HookSessionRuntime::new(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
             snapshot.session_id.clone(),
             Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,
         ));
         let delegate = HookRuntimeDelegate::new_with_mount_root(
-            hook_session.clone(),
+            hook_runtime.clone(),
             Some("/tmp/test-workspace".to_string()),
         );
 
@@ -560,7 +561,7 @@ mod tests {
         }
 
         let runtime: agentdash_spi::hooks::HookSessionRuntimeSnapshot =
-            hook_session.runtime_snapshot();
+            hook_runtime.runtime_snapshot();
         assert_eq!(runtime.trace.len(), 1);
         assert_eq!(runtime.trace[0].trigger, HookTraceTrigger::BeforeTool);
         assert_eq!(runtime.trace[0].decision, "rewrite");

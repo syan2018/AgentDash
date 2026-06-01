@@ -1,4 +1,4 @@
-use tokio::sync::{broadcast, mpsc};
+﻿use tokio::sync::{broadcast, mpsc};
 use tokio::task::AbortHandle;
 
 use super::hub_support::{SessionProfile, TurnExecution, TurnState, TurnTerminalKind};
@@ -90,7 +90,7 @@ impl TurnSupervisor {
                         Self::abort_stream_adapter(turn);
                     }
                     runtime.turn_state = TurnState::Idle;
-                    runtime.hook_session = None;
+                    runtime.hook_runtime = None;
                 }
             })
             .await;

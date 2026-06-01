@@ -285,6 +285,7 @@ struct FrameRow {
     vfs_surface_json: Option<String>,
     mcp_surface_json: Option<String>,
     runtime_session_refs_json: Option<String>,
+    execution_profile_json: Option<String>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -314,6 +315,7 @@ impl TryFrom<FrameRow> for AgentFrame {
             vfs_surface_json: parse_opt_json(row.vfs_surface_json, "vfs_surface_json")?,
             mcp_surface_json: parse_opt_json(row.mcp_surface_json, "mcp_surface_json")?,
             runtime_session_refs_json: parse_opt_json(row.runtime_session_refs_json, "runtime_session_refs_json")?,
+            execution_profile_json: parse_opt_json(row.execution_profile_json, "execution_profile_json")?,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -337,8 +339,9 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"INSERT INTO agent_frames
                 (id, agent_id, revision, procedure_id, graph_instance_id, activity_key,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
-                 runtime_session_refs_json, created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)"#,
+                 runtime_session_refs_json, execution_profile_json,
+                 created_by_kind, created_by_id, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -351,6 +354,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(opt_json_str(&frame.vfs_surface_json)?)
         .bind(opt_json_str(&frame.mcp_surface_json)?)
         .bind(opt_json_str(&frame.runtime_session_refs_json)?)
+        .bind(opt_json_str(&frame.execution_profile_json)?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -364,7 +368,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,created_by_kind,created_by_id,created_at
+                      runtime_session_refs_json,execution_profile_json,
+                      created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC LIMIT 1"#,
         )
         .bind(agent_id.to_string())
@@ -379,7 +384,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,created_by_kind,created_by_id,created_at
+                      runtime_session_refs_json,execution_profile_json,
+                      created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
         )
         .bind(agent_id.to_string())
@@ -400,7 +406,8 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         sqlx::query_as::<_, FrameRow>(
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
-                      runtime_session_refs_json,created_by_kind,created_by_id,created_at
+                      runtime_session_refs_json,execution_profile_json,
+                      created_by_kind,created_by_id,created_at
                FROM agent_frames
                WHERE runtime_session_refs_json::jsonb @> to_jsonb($1::text)
                ORDER BY created_at DESC LIMIT 1"#,

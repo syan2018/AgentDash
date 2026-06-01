@@ -15,7 +15,7 @@ use super::SessionRuntimeInner;
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
-use agentdash_spi::hooks::{ContextFrame, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{ContextFrame, SharedHookRuntime};
 #[cfg(test)]
 use agentdash_spi::session_persistence::SessionStoreResult;
 
@@ -49,11 +49,11 @@ impl SessionRuntimeInner {
         let _ = self.eventing_service().ensure_session(session_id).await;
     }
 
-    pub async fn get_hook_session_runtime(
+    pub async fn get_hook_runtime(
         &self,
         session_id: &str,
-    ) -> Option<SharedHookSessionRuntime> {
-        self.runtime_registry.hook_session_runtime(session_id).await
+    ) -> Option<SharedHookRuntime> {
+        self.runtime_registry.hook_runtime(session_id).await
     }
 
     pub(crate) async fn emit_context_frame(

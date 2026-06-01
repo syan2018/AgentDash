@@ -182,12 +182,17 @@ fn merge_companion_candidates(contributions: &[ContextContributions]) -> Vec<Com
 }
 
 /// Resolver 输出 = CapabilityState（唯一运行态能力容器）。
+///
+/// Resolver 产出的 state 应通过 `AgentFrameBuilder::with_capability_state` 写入
+/// AgentFrame revision，成为 capability surface 的唯一权威存储。
+/// 运行时读取应从 frame 投影（`project_capability_state_from_frame`）。
 pub type CapabilityResolverOutput = CapabilityState;
 
 /// 统一工具能力解析器。
 ///
 /// 无状态、纯函数式 — session 上下文通过 `CapabilityResolverInput` 传入，
 /// 基础设施配置通过 `&PlatformConfig` 传入。
+/// 输出应写入 AgentFrame revision 后再被 session 消费。
 pub struct CapabilityResolver;
 
 impl CapabilityResolver {

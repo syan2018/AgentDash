@@ -1,4 +1,4 @@
-//! `activate_step` — 单 step 激活的唯一计算入口。
+﻿//! `activate_step` — 单 step 激活的唯一计算入口。
 //!
 //! 把分散在 `plan_builder` / `session_runtime_inputs` / `turn_context` /
 //! `orchestrator` / `advance_node` 五处的"查 workflow → 算 capabilities →
@@ -22,7 +22,7 @@ use agentdash_domain::workflow::{
     ActivityDefinition, MountDirective, ToolCapabilityDirective, AgentProcedure,
 };
 use agentdash_spi::CapabilityScopeCtx;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{CapabilityState, SetDelta, Vfs};
 use uuid::Uuid;
 
@@ -282,7 +282,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// runtime context update 事件。
 pub(crate) async fn apply_to_running_session(
     activation: &StepActivation,
-    hook_session: &SharedHookSessionRuntime,
+    hook_runtime: &SharedHookRuntime,
     session_capability: &SessionCapabilityService,
     turn_id: Option<&str>,
     phase_node_key: &str,
@@ -290,19 +290,19 @@ pub(crate) async fn apply_to_running_session(
     lifecycle_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
     let base_surface = session_capability
-        .get_current_capability_state(hook_session.session_id())
+        .get_current_capability_state(hook_runtime.session_id())
         .await;
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
     let key_delta = SetDelta::compute(
-        &hook_session.current_capabilities(),
+        &hook_runtime.current_capabilities(),
         &activation.capability_keys,
     );
 
     session_capability
         .apply_live_runtime_context_transition(
-            hook_session,
+            hook_runtime,
             LiveRuntimeContextTransitionInput {
-                session_id: hook_session.session_id().to_string(),
+                session_id: hook_runtime.session_id().to_string(),
                 turn_id: turn_id.map(ToString::to_string),
                 phase_node: phase_node_key.to_string(),
                 run_id,

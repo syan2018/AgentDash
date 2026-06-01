@@ -1,14 +1,15 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::path::PathBuf;
 
 use agentdash_agent_types::DynAgentRuntimeDelegate;
 use agentdash_domain::common::AgentConfig;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{
     CapabilityState, ContextFragment, DiscoveredGuideline, ExecutionBackendPlacement,
     ExecutionContext, ExecutionSessionFrame, ExecutionTurnFrame, RestoredSessionState,
-    SessionMcpServer,
+    SessionContextBundle, SessionMcpServer,
 };
+use agentdash_spi::hooks::ContextFrame;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
 use crate::session::construction::SessionConstructionPlan;
@@ -110,7 +111,8 @@ pub struct LaunchPlan {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,
     pub discovered_guidelines: Vec<DiscoveredGuideline>,
-    pub construction: SessionConstructionPlan,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
     pub lifecycle: LifecycleLaunchPlan,
     pub restore: RestoreLaunchPlan,
     pub hooks: HookLaunchPlan,
@@ -138,7 +140,7 @@ pub struct LaunchPlanInput {
     pub pending_capability_transitions: Vec<PendingCapabilityStateTransition>,
     pub base_capability_state: CapabilityState,
     pub environment_variables: HashMap<String, String>,
-    pub hook_session: Option<SharedHookSessionRuntime>,
+    pub hook_runtime: Option<SharedHookRuntime>,
     pub capability_state: CapabilityState,
     pub runtime_delegate: Option<DynAgentRuntimeDelegate>,
     pub restored_session_state: Option<RestoredSessionState>,
@@ -270,18 +272,21 @@ impl LaunchPlan {
             identity,
         };
         let turn = ExecutionTurnFrame {
-            hook_session: input.hook_session,
+            hook_runtime: input.hook_runtime,
             capability_state: input.capability_state,
             runtime_delegate: input.runtime_delegate,
             restored_session_state: input.restored_session_state,
             context_frames: Vec::new(),
             assembled_tools: Vec::new(),
         };
+        let context_bundle = input.construction.context.bundle.clone();
+        let continuation_context_frame = input.construction.context.continuation_context_frame.clone();
         Self {
             resolved_payload: input.resolved_payload,
             title_hint,
             discovered_guidelines: input.construction.projections.discovered_guidelines.clone(),
-            construction: input.construction,
+            context_bundle,
+            continuation_context_frame,
             lifecycle,
             restore,
             hooks,
@@ -407,7 +412,7 @@ mod tests {
             ],
             base_capability_state: CapabilityState::default(),
             environment_variables: HashMap::from([("A".to_string(), "B".to_string())]),
-            hook_session: None,
+            hook_runtime: None,
             capability_state: CapabilityState::default(),
             runtime_delegate: None,
             restored_session_state: None,
@@ -453,7 +458,7 @@ mod tests {
         );
         assert!(execution.summary.has_vfs);
         assert!(!execution.summary.restored_executor_state);
-        assert_eq!(execution.construction.session_id.as_str(), "sess-launch");
+        assert_eq!(execution.summary.session_id.as_str(), "sess-launch");
         assert_eq!(
             execution
                 .runtime_commands

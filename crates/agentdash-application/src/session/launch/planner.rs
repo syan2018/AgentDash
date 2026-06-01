@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use agentdash_domain::backend::BackendExecutionLease;
 use agentdash_spi::{ConnectorError, RestoredSessionState, Vfs};
@@ -119,10 +119,10 @@ impl<'a> LaunchPlanner<'a> {
                 HookSnapshotReloadTrigger::None
             };
         let is_owner_bootstrap = hook_snapshot_reload == HookSnapshotReloadTrigger::Reload;
-        let hook_session = match self
+        let hook_runtime = match self
             .deps
             .hooks
-            .resolve_hook_session(
+            .resolve_hook_runtime(
                 input.session_id,
                 input.turn_id,
                 &executor_config,
@@ -135,7 +135,7 @@ impl<'a> LaunchPlanner<'a> {
             Err(error) => return Err(error),
         };
 
-        let hook_snapshot_contribution = hook_session.as_ref().map(|hs| {
+        let hook_snapshot_contribution = hook_runtime.as_ref().map(|hs| {
             let snapshot = hs.snapshot();
             let contribution: crate::context::Contribution = (&snapshot).into();
             contribution.fragments
@@ -153,7 +153,7 @@ impl<'a> LaunchPlanner<'a> {
             .unwrap_or_default();
 
         let context_audit_bus = self.deps.current_context_audit_bus().await;
-        let runtime_delegate = hook_session.as_ref().map(|hs| {
+        let runtime_delegate = hook_runtime.as_ref().map(|hs| {
             let injection_sink: DynRuntimeHookInjectionSink =
                 Arc::new(SessionRuntimeHookInjectionSink::new(
                     self.deps.runtime_registry.clone(),
@@ -248,7 +248,7 @@ impl<'a> LaunchPlanner<'a> {
             pending_capability_transitions,
             base_capability_state,
             environment_variables: prompt_input.env.clone(),
-            hook_session: hook_session.clone(),
+            hook_runtime: hook_runtime.clone(),
             capability_state: capability_state.clone(),
             runtime_delegate,
             restored_session_state,

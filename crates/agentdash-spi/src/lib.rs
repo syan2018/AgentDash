@@ -74,11 +74,11 @@ pub use hooks::{
     ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
     HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery, HookEvaluationTrigger,
     HookInjection, HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus,
-    HookResolution, HookSessionRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
+    HookResolution, HookRuntimeAccess, HookSessionRuntimeSnapshot, HookStepAdvanceRequest,
     HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
     RuntimeContextFragmentEntry, RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry,
     RuntimeToolSchemaEntry, SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
-    SessionRunContext, SessionSnapshotMetadata, SharedHookSessionRuntime, action_type,
+    SessionRunContext, SessionSnapshotMetadata, SharedHookRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

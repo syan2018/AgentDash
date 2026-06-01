@@ -1,4 +1,4 @@
-use std::convert::Infallible;
+﻿use std::convert::Infallible;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -225,7 +225,7 @@ pub async fn get_session_hook_runtime(
     let runtime = state
         .services
         .session_hooks
-        .ensure_hook_session_runtime(&session_id, None)
+        .ensure_hook_runtime(&session_id, None)
         .await
         .map_err(ApiError::from)?
         .ok_or_else(|| {

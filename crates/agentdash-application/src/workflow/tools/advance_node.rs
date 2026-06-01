@@ -1,4 +1,4 @@
-use crate::platform_config::SharedPlatformConfig;
+﻿use crate::platform_config::SharedPlatformConfig;
 use crate::vfs::tools::SessionToolServices;
 use crate::workflow::{
     AdvanceCurrentActivityInput, AdvanceCurrentNodeStatus, LifecycleNodeAdvanceOutcome,
@@ -26,7 +26,7 @@ pub struct CompleteLifecycleNodeTool {
     repos: crate::repository_set::RepositorySet,
     session_services: Option<SessionToolServices>,
     current_turn_id: String,
-    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
     platform_config: SharedPlatformConfig,
     function_runner: Arc<dyn FunctionRunner>,
 }
@@ -65,7 +65,7 @@ impl CompleteLifecycleNodeTool {
             repos,
             session_services,
             current_turn_id: context.session.turn_id.clone(),
-            hook_session: context.turn.hook_session.clone(),
+            hook_runtime: context.turn.hook_runtime.clone(),
             platform_config,
             function_runner,
         }
@@ -98,7 +98,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
         let params: CompleteLifecycleNodeParams = serde_json::from_value(args)
             .map_err(|e| AgentToolError::InvalidArguments(format!("参数解析失败: {e}")))?;
 
-        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
+        let hook_runtime = self.hook_runtime.as_ref().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "当前 session 没有 hook runtime，无法推进 lifecycle node".to_string(),
             )
@@ -122,10 +122,10 @@ impl AgentTool for CompleteLifecycleNodeTool {
             StepOutcome::Completed => LifecycleNodeAdvanceOutcome::Completed,
             StepOutcome::Failed => LifecycleNodeAdvanceOutcome::Failed,
         };
-        let snapshot = hook_session.snapshot();
+        let snapshot = hook_runtime.snapshot();
         let result = orchestrator
             .advance_current_activity(AdvanceCurrentActivityInput {
-                hook_session: hook_session.clone(),
+                hook_runtime: hook_runtime.clone(),
                 turn_id: self.current_turn_id.clone(),
                 session_id: snapshot.session_id.clone(),
                 outcome,

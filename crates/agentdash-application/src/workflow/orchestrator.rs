@@ -1,4 +1,4 @@
-//! LifecycleOrchestrator — Activity runtime event bridge
+﻿//! LifecycleOrchestrator — Activity runtime event bridge
 //!
 //! 职责：把 Activity executor 子 session 的 terminal 事件与
 //! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
@@ -16,7 +16,7 @@ use agentdash_domain::workflow::{
     WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
-use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookRuntime};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -54,7 +54,7 @@ pub enum LifecycleNodeAdvanceOutcome {
 
 #[derive(Debug, Clone)]
 pub struct AdvanceCurrentActivityInput {
-    pub hook_session: SharedHookSessionRuntime,
+    pub hook_runtime: SharedHookRuntime,
     pub turn_id: String,
     pub session_id: String,
     pub outcome: LifecycleNodeAdvanceOutcome,
@@ -262,7 +262,7 @@ impl LifecycleOrchestrator {
             .apply_event(association.run.id, event)
             .await
             .map_err(|error| format!("推进 activity lifecycle run 失败: {error}"))?;
-        self.refresh_hook_snapshot(&input.hook_session, &input.turn_id)
+        self.refresh_hook_snapshot(&input.hook_runtime, &input.turn_id)
             .await?;
 
         let orchestration_warning = if input.outcome == LifecycleNodeAdvanceOutcome::Completed {
@@ -339,11 +339,11 @@ impl LifecycleOrchestrator {
 
     async fn refresh_hook_snapshot(
         &self,
-        hook_session: &SharedHookSessionRuntime,
+        hook_runtime: &SharedHookRuntime,
         turn_id: &str,
     ) -> Result<(), String> {
         self.refresh_hook_snapshot_for_turn(
-            hook_session,
+            hook_runtime,
             Some(turn_id),
             "tool:complete_lifecycle_node",
         )
@@ -352,13 +352,13 @@ impl LifecycleOrchestrator {
 
     async fn refresh_hook_snapshot_for_turn(
         &self,
-        hook_session: &SharedHookSessionRuntime,
+        hook_runtime: &SharedHookRuntime,
         turn_id: Option<&str>,
         reason: &'static str,
     ) -> Result<(), String> {
-        hook_session
+        hook_runtime
             .refresh(SessionHookRefreshQuery {
-                session_id: hook_session.session_id().to_string(),
+                session_id: hook_runtime.session_id().to_string(),
                 turn_id: turn_id.map(ToString::to_string),
                 reason: Some(reason.to_string()),
             })

@@ -1,6 +1,6 @@
-use agentdash_spi::hooks::{
+﻿use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookTurnStartNotice, RuntimeEventSource,
-    SharedHookSessionRuntime,
+    SharedHookRuntime,
 };
 
 pub(crate) trait ContextFramePayload {
@@ -46,13 +46,13 @@ pub(crate) fn build_context_frame(payload: &impl ContextFramePayload) -> Context
 }
 
 pub(crate) fn enqueue_context_frame(
-    hook_session: &SharedHookSessionRuntime,
+    hook_runtime: &SharedHookRuntime,
     frame: &ContextFrame,
 ) -> bool {
     if frame.rendered_text.trim().is_empty() {
         return false;
     }
-    hook_session.enqueue_turn_start_notice(HookTurnStartNotice {
+    hook_runtime.enqueue_turn_start_notice(HookTurnStartNotice {
         id: frame.id.clone(),
         created_at_ms: frame.created_at_ms,
         source: frame.source.clone(),

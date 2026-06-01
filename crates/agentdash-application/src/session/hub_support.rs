@@ -6,7 +6,7 @@ use agentdash_spi::{CapabilityState, ContextFragment, ExecutionSessionFrame};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookSessionRuntime};
+use agentdash_spi::hooks::{HookResolution, HookTrigger, SharedHookRuntime};
 
 use super::persistence::PersistedSessionEvent;
 use super::types::{SessionExecutionState, SessionMeta};
@@ -148,7 +148,7 @@ pub(super) fn build_session_runtime(
 ) -> SessionRuntime {
     SessionRuntime {
         tx,
-        hook_session: None,
+        hook_runtime: None,
         turn_state: TurnState::Idle,
         session_profile: None,
         hook_auto_resume_count: 0,
@@ -158,8 +158,10 @@ pub(super) fn build_session_runtime(
 
 /// Session 的内禀运行时配置——Init 时确立，跨 turn 持续生效。
 ///
-/// 持有完整的 `CapabilityState`（含 VFS、MCP、companion 所有维度），
-/// 是 session 存续期间能力状态的唯一缓存。Continue 直接复用，Rehydrate 重建后覆盖。
+/// `capability_state` 是 AgentFrame revision 的内存投影缓存，
+/// 避免每次访问都反序列化 frame JSON。权威数据源始终是 AgentFrame；
+/// 写入通过 `AgentFrameBuilder::with_capability_state` → frame revision，
+/// 然后同步更新此缓存。
 #[derive(Clone)]
 pub(super) struct SessionProfile {
     pub capability_state: CapabilityState,
@@ -207,7 +209,7 @@ impl TurnState {
 pub(super) struct SessionRuntime {
     pub tx: broadcast::Sender<PersistedSessionEvent>,
     /// Session 级 hook runtime（跨 turn 共享）。
-    pub hook_session: Option<SharedHookSessionRuntime>,
+    pub hook_runtime: Option<SharedHookRuntime>,
     /// Turn 状态机：Idle → Claimed → Active → Idle。
     pub turn_state: TurnState,
     /// Session 的内禀运行时配置；Init 时写入，Continue 时复用。
@@ -228,8 +230,9 @@ pub(super) struct TurnExecution {
     /// mcp_servers / vfs / identity）。放在这里的动机是 MCP 热更新路径需要
     /// 拿到 turn 生效的 session frame 重建工具集。
     pub session_frame: ExecutionSessionFrame,
-    /// Turn 级 capability 集合（per-prompt 下发）。
-    /// 保留在这里方便 MCP 热更新时直接重建 `ExecutionTurnFrame.capability_state`。
+    /// Turn 级 capability 投影缓存（AgentFrame 的内存视图）。
+    /// 权威数据源是 AgentFrame revision；此字段由 `replace_current_capability_state`
+    /// 在写入 frame revision 后同步更新。
     pub capability_state: CapabilityState,
     /// 运行期 Hook 注入的增量片段（审计路径）。
     pub runtime_injection_fragments: Vec<ContextFragment>,

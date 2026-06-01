@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use crate::session::build_hook_trace_envelope;
 use agentdash_agent_protocol::{
@@ -81,7 +81,7 @@ pub struct CompanionRequestTool {
     current_turn_id: String,
     current_executor_config: AgentConfig,
     vfs: Option<Vfs>,
-    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
     /// Lifecycle anchor: agent_id of the parent (current) agent.
     current_agent_id: Option<Uuid>,
     /// Lifecycle anchor: frame_id of the current agent frame.
@@ -105,13 +105,13 @@ impl CompanionRequestTool {
             session_services_handle,
             current_session_id: context
                 .turn
-                .hook_session
+                .hook_runtime
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.session.turn_id.clone(),
             current_executor_config: context.session.executor_config.clone(),
             vfs: context.session.vfs.clone(),
-            hook_session: context.turn.hook_session.clone(),
+            hook_runtime: context.turn.hook_runtime.clone(),
             current_agent_id: None,
             current_frame_id: None,
             current_run_id: None,
@@ -240,7 +240,7 @@ impl CompanionRequestTool {
             ));
         }
 
-        let hook_session = self.hook_session.as_ref().ok_or_else(|| {
+        let hook_runtime = self.hook_runtime.as_ref().ok_or_else(|| {
             AgentToolError::ExecutionFailed(
                 "当前缺少 hook runtime，无法生成 companion request 上下文".to_string(),
             )
@@ -274,7 +274,7 @@ impl CompanionRequestTool {
             .map(|v| v as usize);
 
         let _companion_executor_config = if let Some(key) = agent_key {
-            self.resolve_companion_agent_config(hook_session.as_ref(), key)
+            self.resolve_companion_agent_config(hook_runtime.as_ref(), key)
                 .await?
         } else {
             self.current_executor_config.clone()
@@ -282,7 +282,7 @@ impl CompanionRequestTool {
 
         // ─── Hook: before_subagent_dispatch ─────────────────────────────
         let before_resolution = evaluate_subagent_hook(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             HookTrigger::BeforeSubagentDispatch,
             Some(self.current_turn_id.clone()),
             &companion_label,
@@ -303,7 +303,7 @@ impl CompanionRequestTool {
 
         if let Some(reason) = before_resolution.block_reason.clone() {
             record_subagent_trace(
-                hook_session.as_ref(),
+                hook_runtime.as_ref(),
                 Some(&session_services),
                 Some(self.current_turn_id.as_str()),
                 HookTrigger::BeforeSubagentDispatch,
@@ -318,7 +318,7 @@ impl CompanionRequestTool {
         // ─── 构建 dispatch plan（用于 context slice / prompt 生成） ──────
         let current_session_id = self.current_session_id.clone().unwrap_or_default();
         let dispatch_plan = build_companion_dispatch_plan(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             &before_resolution,
             &CompanionDispatchConfig {
                 parent_session_id: &current_session_id,
@@ -331,7 +331,7 @@ impl CompanionRequestTool {
             },
         );
         record_subagent_trace(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             Some(&session_services),
             Some(self.current_turn_id.as_str()),
             HookTrigger::BeforeSubagentDispatch,
@@ -404,7 +404,7 @@ impl CompanionRequestTool {
 
         // ─── Hook: after_subagent_dispatch ──────────────────────────────
         let after_resolution = evaluate_subagent_hook(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             HookTrigger::AfterSubagentDispatch,
             Some(self.current_turn_id.clone()),
             &companion_label,
@@ -419,7 +419,7 @@ impl CompanionRequestTool {
         )
         .await?;
         record_subagent_trace(
-            hook_session.as_ref(),
+            hook_runtime.as_ref(),
             Some(&session_services),
             Some(self.current_turn_id.as_str()),
             HookTrigger::AfterSubagentDispatch,
@@ -631,14 +631,14 @@ impl CompanionRequestTool {
             "wait": wait,
         });
 
-        if let Some(parent_hook_session) = session_services
+        if let Some(parent_hook_runtime) = session_services
             .hooks
-            .ensure_hook_session_runtime(&parent_session_id, None)
+            .ensure_hook_runtime(&parent_session_id, None)
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
         {
             let resolution = evaluate_subagent_hook(
-                parent_hook_session.as_ref(),
+                parent_hook_runtime.as_ref(),
                 HookTrigger::CompanionResult,
                 None,
                 &companion_label,
@@ -651,10 +651,10 @@ impl CompanionRequestTool {
                 &review_payload,
                 &resolution,
             ) {
-                parent_hook_session.enqueue_pending_action(action);
+                parent_hook_runtime.enqueue_pending_action(action);
             }
             record_subagent_trace(
-                parent_hook_session.as_ref(),
+                parent_hook_runtime.as_ref(),
                 Some(&session_services),
                 None,
                 HookTrigger::CompanionResult,
@@ -873,10 +873,10 @@ impl CompanionRequestTool {
 
     async fn resolve_companion_agent_config(
         &self,
-        hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+        hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
         agent_name: &str,
     ) -> Result<AgentConfig, AgentToolError> {
-        let snapshot = hook_session.snapshot();
+        let snapshot = hook_runtime.snapshot();
         let project_id = snapshot
             .run_context
             .as_ref()
@@ -928,7 +928,7 @@ pub struct CompanionRespondTool {
     session_services_handle: SharedSessionToolServicesHandle,
     current_session_id: Option<String>,
     current_turn_id: String,
-    hook_session: Option<agentdash_spi::hooks::SharedHookSessionRuntime>,
+    hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
 }
 
 impl CompanionRespondTool {
@@ -942,11 +942,11 @@ impl CompanionRespondTool {
             session_services_handle,
             current_session_id: context
                 .turn
-                .hook_session
+                .hook_runtime
                 .as_ref()
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.session.turn_id.clone(),
-            hook_session: context.turn.hook_session.clone(),
+            hook_runtime: context.turn.hook_runtime.clone(),
         }
     }
 }
@@ -1100,13 +1100,13 @@ impl CompanionRespondTool {
         current_session_id: &str,
         payload: &serde_json::Value,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        let hook_session = match &self.hook_session {
+        let hook_runtime = match &self.hook_runtime {
             Some(session) => session,
             None => return Ok(None),
         };
 
         // 检查是否存在匹配的 pending action
-        if !hook_session
+        if !hook_runtime
             .pending_actions()
             .iter()
             .any(|a| a.id == request_id)
@@ -1133,7 +1133,7 @@ impl CompanionRespondTool {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
 
-        let action = hook_session
+        let action = hook_runtime
             .resolve_pending_action(
                 request_id,
                 resolution_kind,
@@ -1470,21 +1470,21 @@ fn hook_action_resolution_key(kind: HookPendingActionResolutionKind) -> &'static
 }
 
 async fn evaluate_subagent_hook(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
     trigger: HookTrigger,
     turn_id: Option<String>,
     subagent_type: &str,
     payload: Option<serde_json::Value>,
 ) -> Result<agentdash_spi::HookResolution, AgentToolError> {
-    let resolution = hook_session
+    let resolution = hook_runtime
         .evaluate(HookEvaluationQuery {
-            session_id: hook_session.session_id().to_string(),
+            session_id: hook_runtime.session_id().to_string(),
             trigger,
             turn_id: turn_id.clone(),
             tool_name: None,
             tool_call_id: None,
             subagent_type: Some(subagent_type.to_string()),
-            snapshot: Some(hook_session.snapshot()),
+            snapshot: Some(hook_runtime.snapshot()),
             payload,
             token_stats: None,
         })
@@ -1492,9 +1492,9 @@ async fn evaluate_subagent_hook(
         .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
 
     if resolution.refresh_snapshot {
-        hook_session
+        hook_runtime
             .refresh(SessionHookRefreshQuery {
-                session_id: hook_session.session_id().to_string(),
+                session_id: hook_runtime.session_id().to_string(),
                 turn_id,
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
@@ -1506,7 +1506,7 @@ async fn evaluate_subagent_hook(
 }
 
 async fn record_subagent_trace(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
     session_services: Option<&SessionToolServices>,
     turn_id: Option<&str>,
     trigger: HookTrigger,
@@ -1518,9 +1518,9 @@ async fn record_subagent_trace(
         return;
     };
     let trace = HookTraceEntry {
-        sequence: hook_session.next_trace_sequence(),
+        sequence: hook_runtime.next_trace_sequence(),
         timestamp_ms: chrono::Utc::now().timestamp_millis(),
-        revision: hook_session.revision(),
+        revision: hook_runtime.revision(),
         trigger: trace_trigger,
         decision: decision.to_string(),
         tool_name: None,
@@ -1533,13 +1533,13 @@ async fn record_subagent_trace(
         diagnostics: resolution.diagnostics.clone(),
         injections: resolution.injections.clone(),
     };
-    hook_session.append_trace(trace.clone());
+    hook_runtime.append_trace(trace.clone());
 
     // Only inject notification when the session has NO active connector.
     // Active connectors already receive traces via trace_broadcast → hook_trace_rx,
     // so inject_notification would cause duplicate event cards.
     if let (Some(session_services), Some(turn_id)) = (session_services, turn_id) {
-        let session_id = hook_session.session_id();
+        let session_id = hook_runtime.session_id();
         let has_live = session_services
             .core
             .has_live_executor_session(session_id)
@@ -1720,13 +1720,13 @@ struct CompanionDispatchConfig<'a> {
 }
 
 fn build_companion_dispatch_plan(
-    hook_session: &dyn agentdash_spi::hooks::HookSessionRuntimeAccess,
+    hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
     resolution: &agentdash_spi::HookResolution,
     config: &CompanionDispatchConfig<'_>,
 ) -> CompanionDispatchPlan {
     let dispatch_id = format!("dispatch-{}", uuid::Uuid::new_v4().simple());
     let slice = build_companion_dispatch_slice(
-        &hook_session.snapshot(),
+        &hook_runtime.snapshot(),
         resolution,
         config.slice_mode,
         config.max_fragments.unwrap_or(3),

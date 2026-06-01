@@ -1,4 +1,4 @@
-//! SessionTurnProcessor — per-turn 事件处理器。
+﻿//! SessionTurnProcessor — per-turn 事件处理器。
 //!
 //! 统一 cloud-native 和 relay 两条路径的 notification 处理逻辑。
 //! 所有 turn 生命周期内的 notification（无论来自 connector stream 还是 relay 注入）
@@ -8,7 +8,7 @@ use agentdash_agent_protocol::BackboneEnvelope;
 use tokio::sync::mpsc;
 
 use agentdash_agent_protocol::SourceInfo;
-use agentdash_spi::hooks::SharedHookSessionRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 
 use super::effects_service::SessionEffectsService;
 use super::eventing::SessionEventingService;
@@ -33,7 +33,7 @@ pub struct SessionTurnProcessorConfig {
     pub session_id: String,
     pub turn_id: String,
     pub source: SourceInfo,
-    pub hook_session: Option<SharedHookSessionRuntime>,
+    pub hook_runtime: Option<SharedHookRuntime>,
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
@@ -82,7 +82,7 @@ impl SessionTurnProcessor {
             session_id,
             turn_id,
             source,
-            hook_session,
+            hook_runtime,
             post_turn_handler,
         } = config;
 
@@ -161,7 +161,7 @@ impl SessionTurnProcessor {
             terminal_kind,
             terminal_message: terminal_message.clone(),
             source,
-            hook_session,
+            hook_runtime,
             post_turn_handler,
         };
 
@@ -197,7 +197,7 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_agent_protocol::SourceInfo;
-    use agentdash_spi::hooks::{HookEffect, HookSessionRuntimeAccess};
+    use agentdash_spi::hooks::{HookEffect, HookRuntimeAccess};
     use agentdash_spi::{
         AgentConfig, AgentConnector, CapabilityState, ConnectorCapabilities, ConnectorError,
         ConnectorType, ExecutionContext, ExecutionSessionFrame, ExecutionStream, PromptPayload,
@@ -289,7 +289,7 @@ mod tests {
                 connector_type: "unit".to_string(),
                 executor_id: None,
             },
-            hook_session: None,
+            hook_runtime: None,
             post_turn_handler: None,
         };
         let (tx, rx) = mpsc::unbounded_channel();
@@ -358,7 +358,7 @@ mod tests {
     impl TerminalHookTriggerPort for NoopHookTrigger {
         async fn emit_terminal_hook_trigger(
             &self,
-            _hook_session: &dyn HookSessionRuntimeAccess,
+            _hook_runtime: &dyn HookRuntimeAccess,
             _input: TerminalHookTriggerRequest<'_>,
         ) -> Vec<HookEffect> {
             Vec::new()

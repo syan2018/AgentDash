@@ -1,4 +1,4 @@
-use agentdash_spi::ConnectorError;
+﻿use agentdash_spi::ConnectorError;
 
 use super::commit::CommittedTurn;
 use super::deps::StreamIngestionDeps;
@@ -33,7 +33,7 @@ impl StreamIngestionAttacher {
                 session_id: session_id.clone(),
                 turn_id: turn_id.clone(),
                 source: prepared.source.clone(),
-                hook_session: prepared.hook_session,
+                hook_runtime: prepared.hook_runtime,
                 post_turn_handler: prepared.post_turn_handler,
             },
         );

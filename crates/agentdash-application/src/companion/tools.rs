@@ -734,21 +734,37 @@ impl CompanionRequestTool {
             .unwrap_or_default();
 
         if wait {
-            // 工具不返回 → agent loop 卡在这个 tool call → session 挂起
-            // respond_companion_request 找到 sender 发回来 → 工具返回 → session 恢复
+            // 创建 durable LifecycleGate 代替 in-memory channel
+            let gate_meta = serde_json::json!({
+                "session_id": current_session_id,
+                "turn_id": self.current_turn_id,
+                "request_type": payload_type,
+            });
+            let run_id = self.current_run_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("缺少 lifecycle run_id，无法创建等待 gate".to_string())
+            })?;
+            let agent_id = self.current_agent_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("缺少 agent_id，无法创建等待 gate".to_string())
+            })?;
+            let gate = agentdash_domain::workflow::LifecycleGate::open(
+                run_id,
+                Some(agent_id),
+                None,
+                "companion_wait",
+                &request_id,
+                Some(gate_meta),
+            );
+            let gate_id = gate.id;
+            self.repos
+                .lifecycle_gate_repo
+                .create(&gate)
+                .await
+                .map_err(|e| AgentToolError::ExecutionFailed(format!("创建等待 gate 失败: {e}")))?;
+            let request_id = gate_id.to_string();
+
             let session_services = self.session_services_handle.get().await.ok_or_else(|| {
                 AgentToolError::ExecutionFailed("Session services 尚未初始化".to_string())
             })?;
-            let request_type = (!payload_type.is_empty()).then(|| payload_type.to_string());
-            let rx = session_services
-                .companion_wait_registry
-                .register(
-                    &current_session_id,
-                    &request_id,
-                    &self.current_turn_id,
-                    request_type,
-                )
-                .await;
 
             let notification = build_companion_event_notification(
                 &current_session_id,
@@ -770,27 +786,49 @@ impl CompanionRequestTool {
                 .inject_notification(&current_session_id, notification)
                 .await
             {
-                session_services
-                    .companion_wait_registry
-                    .remove(&request_id)
-                    .await;
                 return Err(AgentToolError::ExecutionFailed(format!(
                     "发送用户协作请求失败: {error}"
                 )));
             }
 
-            let response_payload = tokio::select! {
-                _ = cancel.cancelled() => {
-                    session_services.companion_wait_registry.remove(&request_id).await;
+            // 轮询 gate 直到被 resolve 或取消
+            let poll_interval = std::time::Duration::from_millis(500);
+            let timeout = std::time::Duration::from_secs(300);
+            let deadline = tokio::time::Instant::now() + timeout;
+            let response_payload = loop {
+                if cancel.is_cancelled() {
                     return Err(AgentToolError::ExecutionFailed(
                         "等待用户回应时被取消".to_string(),
                     ));
                 }
-                result = rx => {
-                    result.unwrap_or_else(|_| serde_json::json!({
+
+                let g = self.repos
+                    .lifecycle_gate_repo
+                    .get(gate_id)
+                    .await
+                    .map_err(|e| AgentToolError::ExecutionFailed(format!("查询 gate 失败: {e}")))?
+                    .ok_or_else(|| AgentToolError::ExecutionFailed("gate 不存在".to_string()))?;
+
+                if !g.is_open() {
+                    break g.payload_json.unwrap_or(serde_json::json!({
                         "status": "error",
-                        "summary": "用户回应通道已断开"
-                    }))
+                        "summary": "gate 已关闭但无 payload"
+                    }));
+                }
+
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(AgentToolError::ExecutionFailed(
+                        "等待用户回应超时".to_string(),
+                    ));
+                }
+
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        return Err(AgentToolError::ExecutionFailed(
+                            "等待用户回应时被取消".to_string(),
+                        ));
+                    }
+                    _ = tokio::time::sleep(poll_interval) => {}
                 }
             };
 

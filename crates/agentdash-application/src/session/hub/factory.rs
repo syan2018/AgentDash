@@ -8,7 +8,6 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use tokio::sync::Mutex;
 
-use super::super::companion_wait::CompanionWaitRegistry;
 use super::super::construction_provider::SharedSessionConstructionProvider;
 use super::super::persistence::{SessionPersistence, SessionStoreSet};
 use super::super::runtime_registry::SessionRuntimeRegistry;
@@ -49,10 +48,14 @@ impl SessionRuntimeInner {
     }
 
     pub fn control_service(&self) -> super::super::control::SessionControlService {
+        let gate_repo = self
+            .lifecycle_gate_repo
+            .clone()
+            .expect("SessionRuntimeInner: lifecycle_gate_repo 未注入");
         super::super::control::SessionControlService::new(
             self.stores.clone(),
             self.eventing_service(),
-            self.companion_wait_registry.clone(),
+            gate_repo,
             self.connector.clone(),
         )
     }
@@ -106,7 +109,6 @@ impl SessionRuntimeInner {
             persistence,
             vfs_service: None,
             extra_skill_dirs: Vec::new(),
-            companion_wait_registry: CompanionWaitRegistry::default(),
             terminal_callback: Arc::new(tokio::sync::RwLock::new(None)),
             hook_effect_handler_registry: Arc::new(tokio::sync::RwLock::new(None)),
             session_construction_provider: Arc::new(tokio::sync::RwLock::new(None)),
@@ -118,6 +120,7 @@ impl SessionRuntimeInner {
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
             agent_frame_repo: None,
+            lifecycle_gate_repo: None,
         }
     }
 
@@ -154,6 +157,15 @@ impl SessionRuntimeInner {
     ) -> Self {
         self.backend_execution_transport = Some(transport);
         self.backend_execution_lease_repo = Some(lease_repo);
+        self
+    }
+
+    /// 注入 LifecycleGate 仓储（用于 companion_wait durable 等待）
+    pub fn with_lifecycle_gate_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>,
+    ) -> Self {
+        self.lifecycle_gate_repo = Some(repo);
         self
     }
 

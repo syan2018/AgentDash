@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use agentdash_domain::workflow::LifecycleGateRepository;
 use agentdash_spi::ConnectorError;
 
-use super::companion_wait::CompanionWaitRegistry;
 use super::eventing::SessionEventingService;
 use super::persistence::SessionStoreSet;
 use crate::companion::{
@@ -13,7 +13,7 @@ use crate::companion::{
 pub struct SessionControlService {
     stores: SessionStoreSet,
     eventing: SessionEventingService,
-    companion_wait_registry: CompanionWaitRegistry,
+    lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     connector: Arc<dyn agentdash_spi::AgentConnector>,
 }
 
@@ -21,13 +21,13 @@ impl SessionControlService {
     pub(super) fn new(
         stores: SessionStoreSet,
         eventing: SessionEventingService,
-        companion_wait_registry: CompanionWaitRegistry,
+        lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
         connector: Arc<dyn agentdash_spi::AgentConnector>,
     ) -> Self {
         Self {
             stores,
             eventing,
-            companion_wait_registry,
+            lifecycle_gate_repo,
             connector,
         }
     }
@@ -72,20 +72,52 @@ impl SessionControlService {
         if let Some(error) = payload_types::payload_object_error(&payload) {
             return Err(ConnectorError::Runtime(error));
         }
-        let wait_request_type = self
-            .companion_wait_registry
-            .request_type(session_id, request_id)
-            .await;
+
+        // 从 LifecycleGate 获取请求元数据（request_type / turn_id）
+        let gate_id = uuid::Uuid::parse_str(request_id).ok();
+        let gate = if let Some(gid) = gate_id {
+            self.lifecycle_gate_repo
+                .get(gid)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
+        let gate_meta: Option<serde_json::Value> = gate
+            .as_ref()
+            .and_then(|g| g.payload_json.clone());
+        let wait_request_type = gate_meta
+            .as_ref()
+            .and_then(|m| m.get("request_type"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
         let registry = PayloadTypeRegistry::with_builtins();
         if let Some(error) = registry.validate_response(&payload, wait_request_type.as_deref()) {
             return Err(ConnectorError::Runtime(error));
         }
 
-        let resolved = self
-            .companion_wait_registry
-            .resolve(session_id, request_id, payload.clone())
-            .await;
+        // Resolve gate（如果存在且仍处于 open 状态）
+        let gate_resolved = if let (Some(gid), Some(mut g)) = (gate_id, gate) {
+            if g.is_open() {
+                g.payload_json = Some(payload.clone());
+                g.resolve("companion_respond");
+                let _ = self.lifecycle_gate_repo.update(&g).await;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
+        let gate_turn_id = gate_meta
+            .as_ref()
+            .and_then(|m| m.get("turn_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let fallback_turn_id = self
             .stores
             .meta
@@ -93,22 +125,15 @@ impl SessionControlService {
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?
             .and_then(|meta| meta.last_turn_id);
-        let turn_id = resolved
-            .as_ref()
-            .map(|result| result.turn_id.as_str())
-            .or(fallback_turn_id.as_deref());
-
-        let request_type = resolved
-            .as_ref()
-            .and_then(|result| result.request_type.as_deref());
+        let turn_id = gate_turn_id.as_deref().or(fallback_turn_id.as_deref());
 
         let notification = build_companion_human_response_notification(
             session_id,
             turn_id,
             request_id,
             &payload,
-            request_type,
-            resolved.is_some(),
+            wait_request_type.as_deref(),
+            gate_resolved,
         );
         let _ = self
             .eventing

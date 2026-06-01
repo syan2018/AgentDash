@@ -14,7 +14,6 @@
 
 use std::{path::PathBuf, sync::Arc};
 
-use super::companion_wait::CompanionWaitRegistry;
 use super::construction_provider::SharedSessionConstructionProvider;
 use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
@@ -50,7 +49,6 @@ pub struct SessionRuntimeInner {
     pub(super) persistence: Arc<dyn SessionPersistence>,
     pub(crate) vfs_service: Option<Arc<crate::vfs::VfsService>>,
     pub(super) extra_skill_dirs: Vec<PathBuf>,
-    pub companion_wait_registry: CompanionWaitRegistry,
     pub(super) terminal_callback:
         Arc<tokio::sync::RwLock<Option<super::post_turn_handler::DynSessionTerminalCallback>>>,
     pub(super) hook_effect_handler_registry: Arc<
@@ -82,4 +80,6 @@ pub struct SessionRuntimeInner {
     /// 当 capability state 变更时通过 AgentFrameBuilder 写入新 revision，
     /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    /// LifecycleGate 仓储，用于 companion_wait durable 等待。
+    pub(super) lifecycle_gate_repo: Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,
 }

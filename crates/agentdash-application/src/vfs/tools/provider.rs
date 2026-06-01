@@ -1,6 +1,5 @@
 ﻿use std::sync::Arc;
 
-use crate::session::companion_wait::CompanionWaitRegistry;
 use crate::session::{
     SessionCapabilityService, SessionControlService, SessionCoreService, SessionEventingService,
     SessionHookService, SessionLaunchService,
@@ -94,7 +93,6 @@ pub struct SessionToolServices {
     pub launch: SessionLaunchService,
     pub hooks: SessionHookService,
     pub capability: SessionCapabilityService,
-    pub companion_wait_registry: CompanionWaitRegistry,
 }
 
 #[derive(Clone, Default)]

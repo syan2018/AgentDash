@@ -11,6 +11,7 @@ pub mod frame_builder;
 pub mod frame_hook_runtime;
 pub mod freeform;
 pub mod lifecycle;
+pub mod lifecycle_gate_service;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;
@@ -34,6 +35,7 @@ pub use agentdash_domain::workflow::{
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use dispatch_service::LifecycleDispatchService;
 pub use frame_builder::AgentFrameBuilder;
+pub use lifecycle_gate_service::LifecycleGateService;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use runtime_launch::RuntimeLaunchRequest;
 pub use completion::{session_terminal_state_tag, session_terminal_summary};

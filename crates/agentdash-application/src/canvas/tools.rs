@@ -571,12 +571,18 @@ async fn expose_canvas_to_session(
             })
             .await
             .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
-        sync_canvas_mount_capability_state(vfs, &session_services, session_id, canvas).await?;
+        sync_canvas_mount_capability_state_for_runtime_delivery(
+            vfs,
+            &session_services,
+            session_id,
+            canvas,
+        )
+        .await?;
     }
     Ok(())
 }
 
-async fn sync_canvas_mount_capability_state(
+async fn sync_canvas_mount_capability_state_for_runtime_delivery(
     vfs: &SharedRuntimeVfs,
     session_services: &crate::vfs::tools::SessionToolServices,
     session_id: &str,
@@ -604,20 +610,28 @@ async fn sync_canvas_mount_capability_state(
         return Ok(());
     };
 
-    let active_vfs = vfs.snapshot().await;
-    let target_frame_id = session_services
+    let target = session_services
         .capability
-        .resolve_runtime_session_frame_id(session_id)
+        .resolve_runtime_session_target(session_id)
         .await
         .map_err(AgentToolError::ExecutionFailed)?;
+    sync_canvas_mount_capability_state(vfs, session_services, target, before_state, hook_runtime)
+        .await
+}
+
+async fn sync_canvas_mount_capability_state(
+    vfs: &SharedRuntimeVfs,
+    session_services: &crate::vfs::tools::SessionToolServices,
+    target: AgentFrameRuntimeTarget,
+    before_state: crate::session::CapabilityState,
+    hook_runtime: agentdash_spi::hooks::SharedHookRuntime,
+) -> Result<(), AgentToolError> {
+    let active_vfs = vfs.snapshot().await;
     session_services
         .capability
         .apply_live_vfs_capability_state(
             &hook_runtime,
-            AgentFrameRuntimeTarget {
-                frame_id: target_frame_id,
-                delivery_runtime_session_id: session_id.to_string(),
-            },
+            target,
             before_state,
             active_vfs,
             "canvas",

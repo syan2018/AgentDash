@@ -335,11 +335,22 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - `StepActivation::apply_to_frame_runtime_target` 要求调用方显式传入 `AgentFrameRuntimeTarget` 与 base capability surface，函数内部不再调用 `resolve_runtime_session_frame_id` 或自行读取 current capability state。
 - `AgentActivityExecutor` 的 live 与 pending runtime context transition 统一传递 `target_frame_id + delivery_runtime_session_id`，StepActivation applier 只做 activation surface 归一化与 transition apply。
 
-该 slice 仍不关闭 P1-08 gate，因为：
+该 slice 当时仍不关闭 P1-08 gate，因为：
 
-- canvas capability sync 仍从 raw `session_id` 调用 `resolve_runtime_session_frame_id` 并读取 current capability state。
+- canvas capability sync 当时仍从 raw `session_id` 调用 `resolve_runtime_session_frame_id` 并读取 current capability state。
 - ContinueRoot 仍以 `root_runtime_session_id` 作为 policy 输入，再解析出 `AgentFrameRuntimeTarget`；这只是把 lookup 集中到 adapter，并没有拆开 agent/frame reuse policy 与 runtime delivery policy。
 - companion parent notification / hook control 仍以 parent session 作为入口，尚未迁到 parent frame/assignment target。
+
+2026-06-02 的 canvas capability sync slice 补齐了 canvas 侧 direct lookup 缺口：
+
+- `sync_canvas_mount_capability_state_for_runtime_delivery` 明确是 runtime delivery adapter：它先确认当前 delivery runtime 有 base capability state 与 hook runtime，再解析 `AgentFrameRuntimeTarget`。
+- `sync_canvas_mount_capability_state` 改为接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime；真正的 canvas capability apply helper 不再直接解析 `session_id -> frame_id`。
+- `rg -n "resolve_runtime_session_frame_id\(" crates/agentdash-application/src -g "*.rs"` 只剩 `SessionCapabilityService` 与 hub adapter 内部命中。
+
+该 slice 仍不关闭 P1-08 gate，因为：
+
+- canvas adapter 仍通过 session 取得 hook runtime；这属于 hook control service 尚未 frame-first 的同一剩余问题。
+- ContinueRoot 仍用 root runtime session 表达 policy，companion parent notification / hook control 仍以 parent session 为入口。
 
 验证记录：
 
@@ -350,6 +361,7 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - `cargo test -p agentdash-application session::hub::tests --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
+- `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
 - `rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \{|ensure_hook_runtime\(|get_hook_runtime\(|resolve_runtime_session_frame_id\(" crates/agentdash-application/src` 仍命中 session service / hub dispatch / canvas / companion / orchestrator 等入口，因此 static gate 保持未通过。
 
 ## P1-09 `StepActivation` 没收束进 AgentFrameBuilder

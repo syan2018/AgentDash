@@ -123,7 +123,7 @@
 - [ ] Static gate：`rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \\{|ensure_hook_runtime\\(|get_hook_runtime\\(|resolve_runtime_session_frame_id\\(" crates/agentdash-application/src` 只允许命中 runtime adapter、tests 或显式 provenance/trace sink。
 - [ ] Hook gate：测试证明 hook snapshot load / refresh / evaluate 可从 `frame_id + assignment_id` 执行，不需要 raw runtime session id 作为 owner。
 - [ ] Capability gate：PhaseNode 与 canvas live update 测试直接传入 `AgentFrameRuntimeTarget`，workflow/canvas control logic 不调用 `resolve_runtime_session_frame_id`。
-  - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`，但 canvas 仍直接 `resolve_runtime_session_frame_id`，ContinueRoot 仍从 root runtime session 解析 delivery target，因此 gate 未关闭。
+  - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`；canvas capability sync 已拆出 runtime-delivery adapter 与 target-first apply helper，不再直接调用 `resolve_runtime_session_frame_id`。gate 仍未关闭，因为 hook runtime 获取、ContinueRoot policy 与 companion notification 入口还没有统一迁到 frame/assignment target。
 - [ ] Companion gate：companion parent result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace payload。
 - [ ] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
 - [x] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
@@ -143,13 +143,21 @@
 - `SessionCapabilityService::resolve_runtime_session_target` 成为 runtime adapter 到 `AgentFrameRuntimeTarget` 的解析入口；workflow 调用点不再直接拿 `target_frame_id` 字符串。
 - `StepActivation::apply_to_frame_runtime_target` 改为接收 `AgentFrameRuntimeTarget` 与调用方提供的 base capability surface，只负责把 activation 归一化成目标 surface 并执行 runtime context transition。
 - `AgentActivityExecutor` 的 live 与 pending transition 均传递显式 `target_frame_id + delivery_runtime_session_id`，不再让 StepActivation applier 自行反查 frame。
-- 该 slice 不关闭 capability gate，因为 canvas live update 仍可从 raw session id 解析 frame，ContinueRoot 仍以 `root_runtime_session_id` 同时表达 reuse policy 与 delivery target，companion parent notification 也尚未迁入 frame/assignment target。
+- 该 slice 不关闭 capability gate，因为 canvas live update 当时仍可从 raw session id 解析 frame，ContinueRoot 仍以 `root_runtime_session_id` 同时表达 reuse policy 与 delivery target，companion parent notification 也尚未迁入 frame/assignment target。
+
+2026-06-02 的 canvas capability sync slice 已关闭 canvas 直接 frame lookup 缺口：
+
+- `expose_canvas_to_session` 只调用 `sync_canvas_mount_capability_state_for_runtime_delivery` adapter；该 adapter 在确认存在 base capability state 与 hook runtime 后，把 delivery runtime session 解析为 `AgentFrameRuntimeTarget`。
+- `sync_canvas_mount_capability_state` 改为接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime，再调用 `apply_live_vfs_capability_state`；canvas apply helper 不再知道 `resolve_runtime_session_frame_id`。
+- Static check 中 `resolve_runtime_session_frame_id(` 在 application src 只剩 `SessionCapabilityService` 与 hub adapter 定义/调用。
+- 该 slice 仍不关闭完整 Phase 4 gate，因为 canvas 仍需通过 session 取得 hook runtime，ContinueRoot policy 与 companion parent notification 仍未迁成 frame/assignment target。
 
 验证记录：
 
 - `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
+- `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
 - `cargo check -p agentdash-application`
 - `cargo fmt --all --check`
 - `git diff --check`

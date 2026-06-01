@@ -117,6 +117,7 @@ impl SessionRuntimeInner {
             mcp_relay_provider: None,
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
+            agent_frame_repo: None,
         }
     }
 
@@ -153,6 +154,15 @@ impl SessionRuntimeInner {
     ) -> Self {
         self.backend_execution_transport = Some(transport);
         self.backend_execution_lease_repo = Some(lease_repo);
+        self
+    }
+
+    /// 注入 AgentFrame 仓储（用于 capability state 变更时写入 frame revision）
+    pub fn with_agent_frame_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::AgentFrameRepository>,
+    ) -> Self {
+        self.agent_frame_repo = Some(repo);
         self
     }
 

@@ -1,10 +1,10 @@
-//! `SessionRuntimeInner` 装配对象与尚待下沉的 session 内部实现。
+﻿//! `SessionRuntimeInner` 装配对象与尚待下沉的 session 内部实现。
 //!
 //! 按能力服务拆分后的剩余范围：
 //! - [`facade`]：测试入口与少量 session 内部 helper。
 //! - [`factory`]：构造与注入（`new_with_hooks_and_persistence` + `with_*` / `set_*`）。
 //! - [`tool_builder`]：runtime tool + 直连/relay MCP 工具发现 + `replace_current_capability_state`。
-//! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_session_runtime` /
+//! - [`hook_dispatch`]：`emit_session_hook_trigger` / `ensure_hook_runtime` /
 //!   `collect_runtime_context_update_injections` / `schedule_hook_auto_resume`。
 //! - [`runtime_context_transition`]：workflow phase/runtime context transition 的 live
 //!   apply、pending 入队与 next-turn 应用。
@@ -20,6 +20,7 @@ use super::persistence::{SessionPersistence, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
 use super::turn_supervisor::TurnSupervisor;
 use crate::context::SharedContextAuditBus;
+use agentdash_domain::workflow::AgentFrameRepository;
 use agentdash_spi::AgentConnector;
 use agentdash_spi::hooks::ExecutionHookProvider;
 
@@ -77,4 +78,8 @@ pub struct SessionRuntimeInner {
         Option<Arc<dyn agentdash_application_ports::backend_transport::RelayPromptTransport>>,
     pub(super) backend_execution_lease_repo:
         Option<Arc<dyn agentdash_domain::backend::BackendExecutionLeaseRepository>>,
+    /// AgentFrame revision 持久化仓储。
+    /// 当 capability state 变更时通过 AgentFrameBuilder 写入新 revision，
+    /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
+    pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
 }

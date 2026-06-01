@@ -130,7 +130,8 @@ pub(crate) async fn build_session_runtime(
     .with_extra_skill_dirs(extra_skill_dirs.clone())
     .with_runtime_tool_provider(runtime_tool_provider)
     .with_mcp_relay_provider(mcp_relay_provider)
-    .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone());
+    .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
+    .with_agent_frame_repo(repos.agent_frame_repo.clone());
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =
             session_runtime_builder.with_system_prompt_config(base_sp, user_prefs);

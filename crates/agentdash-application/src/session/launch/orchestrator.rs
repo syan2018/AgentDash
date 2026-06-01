@@ -7,6 +7,7 @@ use crate::session::launch::{
 };
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
+use crate::workflow::AgentFrameBuilder;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -281,6 +282,47 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        // === 初始 capability state 写入 AgentFrame revision ===
+        if let Some(ref frame_repo) = deps.agent_frame_repo {
+            let initial_cap_state = &launch_plan.context.turn.capability_state;
+            match frame_repo.find_by_runtime_session(session_id).await {
+                Ok(Some(current_frame)) => {
+                    let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
+                        .with_capability_state(initial_cap_state)
+                        .with_created_by("session_launch", Some(session_id.to_string()));
+                    if let Some(ctx) = current_frame.context_slice_json {
+                        builder = builder.with_context(ctx);
+                    }
+                    if let Some(profile) = current_frame.execution_profile_json {
+                        builder = builder.with_execution_profile_raw(profile);
+                    }
+                    match builder.build(frame_repo.as_ref()).await {
+                        Ok(frame) => {
+                            tracing::debug!(
+                                session_id,
+                                agent_id = %frame.agent_id,
+                                revision = frame.revision,
+                                "初始 capability state 已写入 AgentFrame"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                session_id,
+                                "初始 AgentFrame revision 写入失败: {error}"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        session_id,
+                        "查找 session 关联的 AgentFrame 失败: {error}"
+                    );
+                }
+            }
+        }
+
         let backend_execution = launch_plan.backend_execution.clone();
         let prepared = match TurnPreparer::new(deps.preparation())
             .prepare(TurnPreparationInput {

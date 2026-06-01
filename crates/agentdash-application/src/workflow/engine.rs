@@ -649,7 +649,7 @@ mod tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransitionKind, AgentActivityExecutorSpec,
         AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, OutputPortDefinition, WorkflowBindingKind,
+        HumanApprovalExecutorSpec, OutputPortDefinition,
         WorkflowDefinitionSource,
     };
 
@@ -674,7 +674,7 @@ mod tests {
             "approval_flow",
             "Approval flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![
@@ -807,7 +807,7 @@ mod tests {
             "artifact_condition",
             "Artifact condition",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![
@@ -889,7 +889,7 @@ mod tests {
             ActivityEvent::ExecutorStarted {
                 activity_key: activity_key.to_string(),
                 attempt,
-                executor_run: ExecutorRunRef::AgentSession {
+                executor_run: ExecutorRunRef::RuntimeSession {
                     session_id: format!("{activity_key}-{attempt}"),
                 },
             },

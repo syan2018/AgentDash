@@ -19,9 +19,8 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, WorkflowGraph, ActivityTransition,
     ActivityTransitionKind, ArtifactBinding, InputPortDefinition, OutputPortDefinition,
-    ValidationSeverity, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+    ValidationSeverity, WorkflowContract, AgentProcedure,
     WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    workflow_binding_kinds_cover,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -51,10 +50,6 @@ pub struct UpsertWorkflowParams {
     pub name: String,
     #[schemars(description = "描述")]
     pub description: String,
-    #[schemars(
-        description = "可挂载类型列表: project / story，如 [\"story\"] 或 [\"project\", \"story\"]"
-    )]
-    pub binding_kinds: Vec<String>,
     #[schemars(description = "行为契约")]
     pub contract: WorkflowContractInput,
 }
@@ -103,10 +98,6 @@ pub struct UpsertLifecycleParams {
     pub name: String,
     #[schemars(description = "描述")]
     pub description: String,
-    #[schemars(
-        description = "可挂载类型列表: project / story，如 [\"story\"] 或 [\"project\", \"story\"]"
-    )]
-    pub binding_kinds: Vec<String>,
     #[schemars(description = "入口 Activity key")]
     pub entry_activity_key: String,
     #[schemars(description = "Activity 定义列表")]
@@ -216,71 +207,12 @@ impl WorkflowMcpServer {
             updated.version = existing.version + 1;
             updated.created_at = existing.created_at;
             updated.updated_at = chrono::Utc::now();
-            self.validate_workflow_binding_references(&updated).await?;
             repo.update(&updated).await.map_err(McpError::from)?;
             return Ok(updated);
         }
 
         repo.create(&definition).await.map_err(McpError::from)?;
         Ok(definition)
-    }
-
-    async fn validate_workflow_binding_references(
-        &self,
-        definition: &AgentProcedure,
-    ) -> Result<(), McpError> {
-        let lifecycles = self
-            .services
-            .workflow_graph_repo
-            .list_by_project(self.project_id)
-            .await
-            .map_err(McpError::from)?;
-        let conflicts = lifecycles
-            .into_iter()
-            .filter_map(|lifecycle| {
-                let referencing_activities = lifecycle
-                    .activities
-                    .iter()
-                    .filter_map(|activity| match &activity.executor {
-                        ActivityExecutorSpec::Agent(agent)
-                            if agent.procedure_key == definition.key.as_str() =>
-                        {
-                            Some(activity.key.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                if referencing_activities.is_empty()
-                    || workflow_binding_kinds_cover(
-                        &lifecycle.binding_kinds,
-                        &definition.binding_kinds,
-                    )
-                {
-                    None
-                } else {
-                    Some(format!(
-                        "{}({}) 需要 {:?}",
-                        lifecycle.key,
-                        referencing_activities.join(","),
-                        lifecycle.binding_kinds
-                    ))
-                }
-            })
-            .collect::<Vec<_>>();
-
-        if conflicts.is_empty() {
-            Ok(())
-        } else {
-            Err(McpError::invalid_param(
-                "binding_kinds",
-                format!(
-                    "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 activity lifecycle：{}",
-                    definition.key,
-                    definition.binding_kinds,
-                    conflicts.join("; ")
-                ),
-            ))
-        }
     }
 
     /// Upsert activity lifecycle：先做完整校验（域层 + workflow 引用），再持久化。
@@ -301,18 +233,7 @@ impl WorkflowMcpServer {
                 .get_by_project_and_key(lifecycle.project_id, &agent.procedure_key)
                 .await
             {
-                Ok(Some(wf)) => {
-                    if !workflow_binding_kinds_cover(&lifecycle.binding_kinds, &wf.binding_kinds) {
-                        issues.push(agentdash_domain::workflow::ValidationIssue::error(
-                            "binding_kind_mismatch",
-                            format!(
-                                "activity `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
-                                activity.key, agent.procedure_key, wf.binding_kinds, lifecycle.binding_kinds
-                            ),
-                            format!("activities[{idx}].executor.procedure_key"),
-                        ));
-                    }
-                }
+                Ok(Some(_wf)) => {}
                 Ok(None) => {
                     issues.push(agentdash_domain::workflow::ValidationIssue::error(
                         "workflow_not_found",
@@ -365,33 +286,6 @@ impl WorkflowMcpServer {
 }
 
 // ─── 辅助转换 ─────────────────────────────────────────────────
-
-fn parse_binding_kind(raw: &str) -> Result<WorkflowBindingKind, McpError> {
-    match raw {
-        "project" => Ok(WorkflowBindingKind::Project),
-        "story" => Ok(WorkflowBindingKind::Story),
-        // Model C 收敛（2026-04-27）：task binding kind 已废弃。Task 不再作为
-        // 独立 aggregate，task 级 lifecycle 统一归到 Story binding。
-        "task" => Err(McpError::invalid_param(
-            "binding_kind",
-            "binding_kind=\"task\" 已废弃，请改用 \"story\"（Task 级 lifecycle 现统一由 Story-bound lifecycle 承载）",
-        )),
-        other => Err(McpError::invalid_param(
-            "binding_kind",
-            format!("不支持的绑定类型: {other}，可选值: project / story"),
-        )),
-    }
-}
-
-fn parse_binding_kinds(raw: &[String]) -> Result<Vec<WorkflowBindingKind>, McpError> {
-    if raw.is_empty() {
-        return Err(McpError::invalid_param(
-            "binding_kinds",
-            "binding_kinds 至少需要一个挂载类型",
-        ));
-    }
-    raw.iter().map(|s| parse_binding_kind(s)).collect()
-}
 
 fn parse_hook_trigger(raw: &str) -> Result<WorkflowHookTrigger, McpError> {
     match raw {
@@ -569,14 +463,12 @@ impl WorkflowMcpServer {
                 "key": w.key,
                 "name": w.name,
                 "description": w.description,
-                "binding_kinds": w.binding_kinds,
                 "source": w.source,
             })).collect::<Vec<_>>(),
             "lifecycles": lifecycles.iter().map(|l| serde_json::json!({
                 "key": l.key,
                 "name": l.name,
                 "description": l.description,
-                "binding_kinds": l.binding_kinds,
                 "source": l.source,
                 "entry_activity_key": l.entry_activity_key,
                 "activity_count": l.activities.len(),
@@ -645,7 +537,6 @@ impl WorkflowMcpServer {
         Parameters(params): Parameters<UpsertWorkflowParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
-        let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let contract = build_contract(&params.contract)?;
 
         let definition = AgentProcedure::new(
@@ -653,7 +544,6 @@ impl WorkflowMcpServer {
             params.key,
             params.name,
             params.description,
-            binding_kinds,
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )
@@ -675,7 +565,6 @@ impl WorkflowMcpServer {
         Parameters(params): Parameters<UpsertLifecycleParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         self.require_project(McpProjectPermission::Edit).await?;
-        let binding_kinds = parse_binding_kinds(&params.binding_kinds)?;
         let activities = build_activities(&params.activities)?;
         let transitions = build_transitions(params.transitions.as_deref().unwrap_or_default())?;
 
@@ -684,7 +573,6 @@ impl WorkflowMcpServer {
             params.key,
             params.name,
             params.description,
-            binding_kinds,
             WorkflowDefinitionSource::UserAuthored,
             params.entry_activity_key,
             activities,
@@ -730,7 +618,6 @@ impl ServerHandler for WorkflowMcpServer {
 ## 注意事项
 
 - agent executor 的 procedure_key 必须先创建再引用，lifecycle 中引用不存在的 workflow 会被拒绝
-- binding_kinds 可设置为一个或多个挂载类型（project / story），后续可编辑
 - hook_rules 支持 preset（预设名引用）和 script（Rhai 脚本）两种模式
 - 所有写操作都会即时校验，失败会返回详细错误信息供修正"#,
                 project_id = self.project_id,

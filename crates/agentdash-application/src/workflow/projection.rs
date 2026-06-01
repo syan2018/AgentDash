@@ -141,7 +141,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         WorkflowGraph, ActivityLifecycleRunState, ActivityRunStatus,
-        AgentActivityExecutorSpec, OutputPortDefinition, WorkflowBindingKind, WorkflowContract,
+        AgentActivityExecutorSpec, OutputPortDefinition, WorkflowContract,
         AgentProcedure, WorkflowDefinitionSource, WorkflowInjectionSpec,
     };
     use uuid::Uuid;
@@ -159,7 +159,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         "trellis_dev_task_implement",
         "Trellis Dev Workflow / Implement",
         "workflow desc",
-        vec![WorkflowBindingKind::Story],
+
         WorkflowDefinitionSource::BuiltinSeed,
         contract,
     )
@@ -187,7 +187,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
         "trellis_dev_task",
         "Trellis Dev Lifecycle",
         "lifecycle desc",
-        vec![WorkflowBindingKind::Story],
+
         WorkflowDefinitionSource::BuiltinSeed,
         "implement",
         vec![active_activity.clone()],

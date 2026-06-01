@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, ValidationIssue, WorkflowBindingKind, WorkflowContract,
+    ActivityDefinition, ActivityTransition, ValidationIssue, WorkflowContract,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,6 @@ pub struct WorkflowValidationResponse {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListWorkflowsQuery {
     pub project_id: Option<String>,
-    pub binding_kind: Option<WorkflowBindingKind>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +35,6 @@ pub struct CreateAgentProcedureRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub contract: WorkflowContract,
 }
 
@@ -44,7 +42,6 @@ pub struct CreateAgentProcedureRequest {
 pub struct UpdateAgentProcedureRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
     pub contract: Option<WorkflowContract>,
 }
 
@@ -55,7 +52,6 @@ pub struct ValidateAgentProcedureRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub contract: WorkflowContract,
 }
 
@@ -66,7 +62,6 @@ pub struct CreateWorkflowGraphRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_activity_key: String,
     pub activities: Vec<ActivityDefinition>,
     #[serde(default)]
@@ -77,7 +72,6 @@ pub struct CreateWorkflowGraphRequest {
 pub struct UpdateWorkflowGraphRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub binding_kinds: Option<Vec<WorkflowBindingKind>>,
     pub entry_activity_key: Option<String>,
     pub activities: Option<Vec<ActivityDefinition>>,
     pub transitions: Option<Vec<ActivityTransition>>,
@@ -90,7 +84,6 @@ pub struct ValidateWorkflowGraphRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub entry_activity_key: String,
     pub activities: Vec<ActivityDefinition>,
     #[serde(default)]

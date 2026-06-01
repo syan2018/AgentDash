@@ -1,5 +1,4 @@
 mod activity_def;
-mod binding;
 mod capability;
 mod contract;
 mod hook_rule;
@@ -16,9 +15,6 @@ pub use activity_def::{
     AgentSessionPolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
     HumanApprovalExecutorSpec, TransitionCondition,
-};
-pub use binding::{
-    WorkflowBindingKind, normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
@@ -377,42 +373,6 @@ mod tests {
         assert_eq!(value["kind"], "agent");
         assert_eq!(value["procedure_key"], "workflow.plan");
         assert_eq!(value["session_policy"], "spawn_child");
-    }
-
-    #[test]
-    fn workflow_binding_kind_from_owner_type_uses_binding_scope() {
-        assert_eq!(
-            WorkflowBindingKind::from_owner_type(" story "),
-            Some(WorkflowBindingKind::Story)
-        );
-        assert_eq!(
-            WorkflowBindingKind::from_binding_scope("project"),
-            Some(WorkflowBindingKind::Project)
-        );
-        // Model C 收敛：binding_kind 不再接受 "task"
-        assert_eq!(WorkflowBindingKind::from_owner_type("task"), None);
-        assert_eq!(WorkflowBindingKind::from_owner_type("session"), None);
-    }
-
-    #[test]
-    fn workflow_binding_scope_conversions_stay_consistent() {
-        assert_eq!(
-            normalize_workflow_binding_kinds(vec![
-                WorkflowBindingKind::Story,
-                WorkflowBindingKind::Project,
-                WorkflowBindingKind::Story,
-            ])
-            .unwrap(),
-            vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story]
-        );
-        assert!(workflow_binding_kinds_cover(
-            &[WorkflowBindingKind::Story],
-            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story]
-        ));
-        assert!(!workflow_binding_kinds_cover(
-            &[WorkflowBindingKind::Project, WorkflowBindingKind::Story],
-            &[WorkflowBindingKind::Story]
-        ));
     }
 
     #[test]

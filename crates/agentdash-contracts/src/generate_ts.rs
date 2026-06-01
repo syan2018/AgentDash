@@ -97,7 +97,7 @@ use agentdash_contracts::workflow::{
     DeleteAgentProcedureResponse, EffectiveSessionContract, HookPresetResponse,
     HookPresetsResponse, LifecycleExecutionEntry, LifecycleRunLinkDto, LifecycleRunStatus,
     RegisterHookPresetResponse, RunLinksResponse, StoryRunOverviewDto, StoryRunsResponse,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowBindingKind, WorkflowContract,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowContract,
     WorkflowDefinitionSource,
 };
 use ts_rs::TS;
@@ -263,7 +263,6 @@ fn main() {
             export_all::<StoryRunsResponse>(dir);
             export_all::<RunLinksResponse>(dir);
             export_all::<AttachRunLinkRequest>(dir);
-            export_all::<WorkflowBindingKind>(dir);
             export_all::<WorkflowDefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);

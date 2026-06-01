@@ -5,7 +5,7 @@ use agentdash_domain::shared_library::InstalledAssetSource;
 use agentdash_domain::workflow::{
     ActivityExecutionClaim, ActivityExecutionClaimRepository, ActivityExecutionClaimStatus,
     AgentProcedure, AgentProcedureRepository, ExecutorRunRef,
-    LifecycleRun, LifecycleRunRepository, WorkflowBindingKind, WorkflowGraph,
+    LifecycleRun, LifecycleRunRepository, WorkflowGraph,
     WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
     WorkflowTemplateInstallResult,
 };
@@ -33,8 +33,8 @@ impl PostgresWorkflowRepository {
     }
 }
 
-const WF_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const WG_COLS: &str = "id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
+const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
+const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const RUN_COLS: &str = "id,project_id,lifecycle_id,status,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,status,record_artifacts,execution_log,activity_state,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
@@ -42,10 +42,9 @@ const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_ke
 #[async_trait::async_trait]
 impl AgentProcedureRepository for PostgresWorkflowRepository {
     async fn create(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
-        sqlx::query(&format!("INSERT INTO agent_procedures ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"))
+        sqlx::query(&format!("INSERT INTO agent_procedures ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"))
             .bind(procedure.id.to_string()).bind(procedure.project_id.to_string())
             .bind(&procedure.key).bind(&procedure.name).bind(&procedure.description)
-            .bind(serde_json::to_string(&procedure.binding_kinds)?)
             .bind(serde_json::to_string(&procedure.source)?)
             .bind(procedure.version).bind(serde_json::to_string(&procedure.contract)?)
             .bind(installed_library_asset_id(&procedure.installed_source))
@@ -120,20 +119,10 @@ impl AgentProcedureRepository for PostgresWorkflowRepository {
             .into_iter().map(TryInto::try_into).collect()
     }
 
-    async fn list_by_binding_kind(
-        &self,
-        binding_kind: WorkflowBindingKind,
-    ) -> Result<Vec<AgentProcedure>, DomainError> {
-        sqlx::query_as::<_, AgentProcedureRow>(&format!("SELECT {WF_COLS} FROM agent_procedures WHERE binding_kinds::jsonb ? $1 ORDER BY created_at DESC"))
-            .bind(binding_kind.binding_scope_key()).fetch_all(&self.pool).await.map_err(db_err)?
-            .into_iter().map(TryInto::try_into).collect()
-    }
-
     async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE agent_procedures SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,library_asset_id=$9,source_ref=$10,source_version=$11,source_digest=$12,installed_at=$13,updated_at=$14 WHERE id=$15")
+        let result = sqlx::query("UPDATE agent_procedures SET project_id=$1,key=$2,name=$3,description=$4,source=$5,version=$6,contract=$7,library_asset_id=$8,source_ref=$9,source_version=$10,source_digest=$11,installed_at=$12,updated_at=$13 WHERE id=$14")
             .bind(procedure.project_id.to_string())
             .bind(&procedure.key).bind(&procedure.name).bind(&procedure.description)
-            .bind(serde_json::to_string(&procedure.binding_kinds)?)
             .bind(serde_json::to_string(&procedure.source)?)
             .bind(procedure.version).bind(serde_json::to_string(&procedure.contract)?)
             .bind(installed_library_asset_id(&procedure.installed_source))
@@ -159,15 +148,14 @@ impl AgentProcedureRepository for PostgresWorkflowRepository {
 #[async_trait::async_trait]
 impl WorkflowGraphRepository for PostgresWorkflowRepository {
     async fn create(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-        sqlx::query(
-            "INSERT INTO workflow_graphs (id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
-        )
+        sqlx::query(&format!(
+            "INSERT INTO workflow_graphs ({WG_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"
+        ))
         .bind(lifecycle.id.to_string())
         .bind(lifecycle.project_id.to_string())
         .bind(&lifecycle.key)
         .bind(&lifecycle.name)
         .bind(&lifecycle.description)
-        .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
         .bind(serde_json::to_string(&lifecycle.source)?)
         .bind(lifecycle.version)
         .bind(&lifecycle.entry_activity_key)
@@ -235,12 +223,11 @@ impl WorkflowGraphRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, lifecycle: &WorkflowGraph) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE workflow_graphs SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_activity_key=$8,activities=$9,transitions=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
+        let result = sqlx::query("UPDATE workflow_graphs SET project_id=$1,key=$2,name=$3,description=$4,source=$5,version=$6,entry_activity_key=$7,activities=$8,transitions=$9,library_asset_id=$10,source_ref=$11,source_version=$12,source_digest=$13,installed_at=$14,updated_at=$15 WHERE id=$16")
             .bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key)
             .bind(&lifecycle.name)
             .bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version)
             .bind(&lifecycle.entry_activity_key)
@@ -318,12 +305,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 procedure.version = existing.version + 1;
                 procedure.created_at = existing.created_at;
                 procedure.updated_at = chrono::Utc::now();
-                sqlx::query("UPDATE agent_procedures SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,contract=$8,library_asset_id=$9,source_ref=$10,source_version=$11,source_digest=$12,installed_at=$13,updated_at=$14 WHERE id=$15")
+                sqlx::query("UPDATE agent_procedures SET project_id=$1,key=$2,name=$3,description=$4,source=$5,version=$6,contract=$7,library_asset_id=$8,source_ref=$9,source_version=$10,source_digest=$11,installed_at=$12,updated_at=$13 WHERE id=$14")
                     .bind(procedure.project_id.to_string())
                     .bind(&procedure.key)
                     .bind(&procedure.name)
                     .bind(&procedure.description)
-                    .bind(serde_json::to_string(&procedure.binding_kinds)?)
                     .bind(serde_json::to_string(&procedure.source)?)
                     .bind(procedure.version)
                     .bind(serde_json::to_string(&procedure.contract)?)
@@ -338,13 +324,12 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                     .await
                     .map_err(db_err)?;
             } else {
-                sqlx::query(&format!("INSERT INTO agent_procedures ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"))
+                sqlx::query(&format!("INSERT INTO agent_procedures ({WF_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"))
                     .bind(procedure.id.to_string())
                     .bind(procedure.project_id.to_string())
                     .bind(&procedure.key)
                     .bind(&procedure.name)
                     .bind(&procedure.description)
-                    .bind(serde_json::to_string(&procedure.binding_kinds)?)
                     .bind(serde_json::to_string(&procedure.source)?)
                     .bind(procedure.version)
                     .bind(serde_json::to_string(&procedure.contract)?)
@@ -383,12 +368,11 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
             lifecycle.version = existing.version + 1;
             lifecycle.created_at = existing.created_at;
             lifecycle.updated_at = chrono::Utc::now();
-            sqlx::query("UPDATE workflow_graphs SET project_id=$1,key=$2,name=$3,description=$4,binding_kinds=$5,source=$6,version=$7,entry_activity_key=$8,activities=$9,transitions=$10,library_asset_id=$11,source_ref=$12,source_version=$13,source_digest=$14,installed_at=$15,updated_at=$16 WHERE id=$17")
+            sqlx::query("UPDATE workflow_graphs SET project_id=$1,key=$2,name=$3,description=$4,source=$5,version=$6,entry_activity_key=$7,activities=$8,transitions=$9,library_asset_id=$10,source_ref=$11,source_version=$12,source_digest=$13,installed_at=$14,updated_at=$15 WHERE id=$16")
                 .bind(lifecycle.project_id.to_string())
                 .bind(&lifecycle.key)
                 .bind(&lifecycle.name)
                 .bind(&lifecycle.description)
-                .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
                 .bind(serde_json::to_string(&lifecycle.source)?)
                 .bind(lifecycle.version)
                 .bind(&lifecycle.entry_activity_key)
@@ -405,15 +389,14 @@ impl WorkflowTemplateInstallRepository for PostgresWorkflowRepository {
                 .await
                 .map_err(db_err)?;
         } else {
-            sqlx::query(
-                "INSERT INTO workflow_graphs (id,project_id,key,name,description,binding_kinds,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)",
-            )
+            sqlx::query(&format!(
+                "INSERT INTO workflow_graphs ({WG_COLS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"
+            ))
             .bind(lifecycle.id.to_string())
             .bind(lifecycle.project_id.to_string())
             .bind(&lifecycle.key)
             .bind(&lifecycle.name)
             .bind(&lifecycle.description)
-            .bind(serde_json::to_string(&lifecycle.binding_kinds)?)
             .bind(serde_json::to_string(&lifecycle.source)?)
             .bind(lifecycle.version)
             .bind(&lifecycle.entry_activity_key)
@@ -542,7 +525,7 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
             "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims \
              WHERE status = 'running' \
-             AND executor_run_ref::jsonb -> 'AgentSession' ->> 'session_id' = $1 \
+             AND executor_run_ref::jsonb -> 'RuntimeSession' ->> 'session_id' = $1 \
              ORDER BY updated_at DESC LIMIT 1"
         ))
         .bind(session_id)
@@ -698,7 +681,6 @@ struct AgentProcedureRow {
     key: String,
     name: String,
     description: String,
-    binding_kinds: String,
     source: String,
     version: i32,
     contract: String,
@@ -720,10 +702,6 @@ impl TryFrom<AgentProcedureRow> for AgentProcedure {
             key: row.key,
             name: row.name,
             description: row.description,
-            binding_kinds: parse_json_column(
-                &row.binding_kinds,
-                "agent_procedures.binding_kinds",
-            )?,
             source: serde_json::from_str(&row.source)?,
             installed_source: parse_installed_source(
                 row.library_asset_id,
@@ -747,7 +725,6 @@ struct WorkflowGraphRow {
     key: String,
     name: String,
     description: String,
-    binding_kinds: String,
     source: String,
     version: i32,
     entry_activity_key: String,
@@ -771,10 +748,6 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
             key: row.key,
             name: row.name,
             description: row.description,
-            binding_kinds: parse_json_column(
-                &row.binding_kinds,
-                "workflow_graphs.binding_kinds",
-            )?,
             source: serde_json::from_str(&row.source)?,
             installed_source: parse_installed_source(
                 row.library_asset_id,
@@ -1014,7 +987,7 @@ mod workflow_claim_tests {
             status: "running".to_string(),
             idempotency_key: format!("{run_id}:{graph_instance_id}:plan:2"),
             executor_run_ref: Some(
-                serde_json::to_string(&ExecutorRunRef::AgentSession {
+                serde_json::to_string(&ExecutorRunRef::RuntimeSession {
                     session_id: "child-session".to_string(),
                 })
                 .expect("executor run json"),
@@ -1034,7 +1007,7 @@ mod workflow_claim_tests {
         assert!(claim.status.is_active());
         assert_eq!(
             claim.executor_run_ref,
-            Some(ExecutorRunRef::AgentSession {
+            Some(ExecutorRunRef::RuntimeSession {
                 session_id: "child-session".to_string()
             })
         );
@@ -1046,7 +1019,6 @@ mod workflow_claim_tests {
             key,
             format!("Procedure {digest}"),
             "",
-            vec![WorkflowBindingKind::Project],
             agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
             WorkflowContract::default(),
         )
@@ -1071,7 +1043,6 @@ mod workflow_claim_tests {
             key,
             format!("Lifecycle {digest}"),
             "",
-            vec![WorkflowBindingKind::Project],
             agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {

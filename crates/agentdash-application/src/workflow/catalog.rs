@@ -3,7 +3,6 @@ use chrono::Utc;
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, WorkflowGraph, WorkflowGraphRepository,
     ValidationIssue, ValidationSeverity, AgentProcedure, AgentProcedureRepository,
-    workflow_binding_kinds_cover,
 };
 
 use super::definition::BuiltinWorkflowBundle;
@@ -103,17 +102,6 @@ where
                 ));
                 continue;
             };
-
-            if !workflow_binding_kinds_cover(&lifecycle.binding_kinds, &workflow.binding_kinds) {
-                issues.push(ValidationIssue::error(
-                    "activity_workflow_binding_kind_mismatch",
-                    format!(
-                        "activity `{}` 引用的 workflow `{}` binding_kinds={:?}，未覆盖 lifecycle {:?}",
-                        activity.key, workflow.key, workflow.binding_kinds, lifecycle.binding_kinds
-                    ),
-                    format!("activities[{activity_index}].executor.procedure_key"),
-                ));
-            }
         }
         Ok(issues)
     }
@@ -203,7 +191,7 @@ mod tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         WorkflowGraphRepository, ActivityTransition, AgentActivityExecutorSpec,
         AgentSessionPolicy, ContextStrategy, GateStrategy, InputPortDefinition,
-        OutputPortDefinition, WorkflowBindingKind, WorkflowContract, WorkflowDefinitionSource,
+        OutputPortDefinition, WorkflowContract, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -282,20 +270,6 @@ mod tests {
                 .expect("workflow repo lock")
                 .values()
                 .filter(|item| item.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_binding_kind(
-            &self,
-            binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .expect("workflow repo lock")
-                .values()
-                .filter(|item| item.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }
@@ -428,7 +402,6 @@ mod tests {
             key,
             format!("workflow {key}"),
             "desc",
-            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )
@@ -444,7 +417,6 @@ mod tests {
             "activity_lc",
             "Activity lifecycle",
             "desc",
-            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {

@@ -259,7 +259,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, WorkflowGraph,
         WorkflowGraphRepository, AgentActivityExecutorSpec, AgentSessionPolicy,
-        ToolCapabilityDirective, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+        ToolCapabilityDirective, WorkflowContract, AgentProcedure,
         AgentProcedureRepository, WorkflowDefinitionSource,
     };
 
@@ -470,19 +470,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn list_by_binding_kind(
-            &self,
-            binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<AgentProcedure>, DomainError> {
-            Ok(self
-                .defs
-                .lock()
-                .await
-                .iter()
-                .filter(|d| d.binding_kinds.contains(&binding_kind))
-                .cloned()
-                .collect())
-        }
+
         async fn update(&self, def: &AgentProcedure) -> Result<(), DomainError> {
             let mut lock = self.defs.lock().await;
             if let Some(existing) = lock.iter_mut().find(|d| d.id == def.id) {
@@ -538,7 +526,7 @@ mod tests {
             "builtin_workflow_admin",
             "Workflow Admin",
             "",
-            vec![WorkflowBindingKind::Project],
+
             WorkflowDefinitionSource::BuiltinSeed,
             "plan",
             vec![plan],
@@ -560,7 +548,7 @@ mod tests {
             ENTRY_procedure_key,
             "Workflow Admin / Plan",
             "",
-            vec![WorkflowBindingKind::Project],
+
             WorkflowDefinitionSource::BuiltinSeed,
             contract,
         )
@@ -992,7 +980,7 @@ mod tests {
             "sample",
             "Sample",
             "",
-            vec![WorkflowBindingKind::Project],
+
             WorkflowDefinitionSource::UserAuthored,
             contract,
         )

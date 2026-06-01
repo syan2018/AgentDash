@@ -514,7 +514,6 @@ fn workflow_template_bundle(
         key: lifecycle.key.clone(),
         name: lifecycle.name.clone(),
         description: lifecycle.description.clone(),
-        binding_kinds: lifecycle.binding_kinds.clone(),
         workflows: procedures
             .into_iter()
             .map(|p| BuiltinWorkflowTemplate {

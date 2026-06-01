@@ -28,13 +28,6 @@ pub struct ValidationIssue {
     pub severity: ValidationSeverity,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowBindingKind {
-    Project,
-    Story,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct WorkflowContextBinding {
     pub locator: String,
@@ -474,7 +467,7 @@ pub enum ActivityRunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecutorRunRef {
-    AgentSession { session_id: String },
+    RuntimeSession { session_id: String },
     FunctionRun { run_id: String },
     HumanDecision { decision_id: String },
 }

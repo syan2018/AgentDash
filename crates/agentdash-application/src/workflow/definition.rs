@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, WorkflowGraph, ActivityTransition, WorkflowBindingKind,
+    ActivityDefinition, WorkflowGraph, ActivityTransition,
     WorkflowContract, AgentProcedure, WorkflowDefinitionSource,
 };
 
@@ -15,7 +15,6 @@ pub struct BuiltinWorkflowTemplateBundle {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     #[serde(default)]
     pub workflows: Vec<BuiltinWorkflowTemplate>,
     pub graph: BuiltinLifecycleTemplate,
@@ -58,7 +57,6 @@ impl BuiltinWorkflowTemplateBundle {
                     template.key.clone(),
                     template.name.clone(),
                     template.description.clone(),
-                    self.binding_kinds.clone(),
                     WorkflowDefinitionSource::BuiltinSeed,
                     template.contract.clone(),
                 )
@@ -70,7 +68,6 @@ impl BuiltinWorkflowTemplateBundle {
             self.graph.key.clone(),
             self.graph.name.clone(),
             self.graph.description.clone(),
-            self.binding_kinds.clone(),
             WorkflowDefinitionSource::BuiltinSeed,
             self.graph.entry_activity_key.clone(),
             self.graph.activities.clone(),
@@ -144,11 +141,6 @@ mod tests {
             .expect("build bundle");
 
         assert_eq!(bundle.graph.key, TRELLIS_DAG_TASK_TEMPLATE_KEY);
-        // Model C 收敛：trellis_dag_task 的挂载类型从 "task" 迁移到 "story"
-        assert_eq!(
-            bundle.graph.binding_kinds,
-            vec![WorkflowBindingKind::Story]
-        );
     }
 
     #[test]
@@ -158,11 +150,6 @@ mod tests {
                 .expect("build builtin_workflow_admin bundle");
 
         assert_eq!(bundle.graph.key, BUILTIN_WORKFLOW_ADMIN_TEMPLATE_KEY);
-        assert_eq!(
-            bundle.graph.binding_kinds,
-            vec![WorkflowBindingKind::Project],
-            "workflow_management 仅在 Project 级 session 可见，lifecycle 必须绑定到 Project"
-        );
         assert_eq!(bundle.procedures.len(), 2);
         assert_eq!(bundle.graph.activities.len(), 2);
         assert_eq!(bundle.graph.entry_activity_key, "plan");

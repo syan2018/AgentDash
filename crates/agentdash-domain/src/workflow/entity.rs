@@ -8,8 +8,8 @@ use super::validation::{validate_workflow_graph, validate_agent_procedure};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
-    LifecycleRunStatus, ValidationIssue, WorkflowBindingKind, WorkflowContract,
-    WorkflowDefinitionSource, normalize_workflow_binding_kinds,
+    LifecycleRunStatus, ValidationIssue, WorkflowContract,
+    WorkflowDefinitionSource,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +19,6 @@ pub struct AgentProcedure {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
@@ -35,13 +34,11 @@ impl AgentProcedure {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kinds: Vec<WorkflowBindingKind>,
         source: WorkflowDefinitionSource,
         contract: WorkflowContract,
     ) -> Result<Self, String> {
         let key = key.into();
         let name = name.into();
-        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
         validate_agent_procedure(&key, &name, &contract)?;
 
         let now = Utc::now();
@@ -51,7 +48,6 @@ impl AgentProcedure {
             key,
             name,
             description: description.into(),
-            binding_kinds,
             source,
             installed_source: None,
             version: 1,
@@ -80,7 +76,6 @@ pub struct WorkflowGraph {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub binding_kinds: Vec<WorkflowBindingKind>,
     pub source: WorkflowDefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
@@ -143,7 +138,6 @@ impl WorkflowGraph {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        binding_kinds: Vec<WorkflowBindingKind>,
         source: WorkflowDefinitionSource,
         entry_activity_key: impl Into<String>,
         activities: Vec<ActivityDefinition>,
@@ -152,7 +146,6 @@ impl WorkflowGraph {
         let key = key.into();
         let name = name.into();
         let entry_activity_key = entry_activity_key.into();
-        let binding_kinds = normalize_workflow_binding_kinds(binding_kinds)?;
         validate_workflow_graph(
             &key,
             &name,
@@ -168,7 +161,6 @@ impl WorkflowGraph {
             key,
             name,
             description: description.into(),
-            binding_kinds,
             source,
             installed_source: None,
             version: 1,
@@ -343,7 +335,6 @@ mod tests {
             "wf_primary",
             "Primary",
             "desc",
-            vec![WorkflowBindingKind::Story],
             WorkflowDefinitionSource::BuiltinSeed,
             contract(),
         )

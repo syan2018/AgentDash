@@ -9,7 +9,6 @@ use super::entity::{
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
-use super::value_objects::WorkflowBindingKind;
 use super::workflow_graph_instance::WorkflowGraphInstance;
 use crate::common::error::DomainError;
 
@@ -27,10 +26,6 @@ pub trait AgentProcedureRepository: Send + Sync {
     async fn list_by_project(
         &self,
         project_id: Uuid,
-    ) -> Result<Vec<AgentProcedure>, DomainError>;
-    async fn list_by_binding_kind(
-        &self,
-        binding_kind: WorkflowBindingKind,
     ) -> Result<Vec<AgentProcedure>, DomainError>;
     async fn update(&self, procedure: &AgentProcedure) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;

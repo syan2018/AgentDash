@@ -50,8 +50,8 @@ pub use value_objects::{
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
     MountDirective, OutputPortDefinition, StandaloneFulfillment, ToolCapabilityDirective,
     ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState, TransitionCondition,
-    ValidationIssue, ValidationSeverity, WorkflowBindingKind, WorkflowContextBinding,
+    ValidationIssue, ValidationSeverity, WorkflowContextBinding,
     WorkflowContract, WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger,
-    WorkflowInjectionSpec, WorkflowSessionTerminalState, normalize_workflow_binding_kinds,
-    reduce_tool_capability_directives, workflow_binding_kinds_cover,
+    WorkflowInjectionSpec, WorkflowSessionTerminalState,
+    reduce_tool_capability_directives,
 };

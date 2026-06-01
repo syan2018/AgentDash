@@ -4,7 +4,7 @@ use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, WorkflowGraph, WorkflowGraphRepository,
     AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, LifecycleRun,
-    LifecycleRunRepository, WorkflowBindingKind, WorkflowContract, AgentProcedure,
+    LifecycleRunRepository, WorkflowContract, AgentProcedure,
     AgentProcedureRepository, WorkflowDefinitionSource,
 };
 
@@ -85,7 +85,6 @@ pub fn build_freeform_workflow(
         FREEFORM_AGENT_PROCEDURE_KEY,
         "Freeform Agent",
         "普通自由会话的默认 Agent contract。",
-        vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story],
         WorkflowDefinitionSource::BuiltinSeed,
         WorkflowContract::default(),
     )
@@ -100,7 +99,6 @@ pub fn build_freeform_lifecycle(
         FREEFORM_LIFECYCLE_KEY,
         "Freeform Session",
         "普通自由会话的无外围约束过程。",
-        vec![WorkflowBindingKind::Project, WorkflowBindingKind::Story],
         WorkflowDefinitionSource::BuiltinSeed,
         FREEFORM_ACTIVITY_KEY,
         vec![ActivityDefinition {
@@ -192,20 +190,6 @@ mod tests {
                 .unwrap()
                 .iter()
                 .filter(|item| item.project_id == project_id)
-                .cloned()
-                .collect())
-        }
-
-        async fn list_by_binding_kind(
-            &self,
-            binding_kind: WorkflowBindingKind,
-        ) -> Result<Vec<AgentProcedure>, DomainError> {
-            Ok(self
-                .items
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|item| item.binding_kinds.contains(&binding_kind))
                 .cloned()
                 .collect())
         }

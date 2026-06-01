@@ -4,7 +4,7 @@
 
 ## Role
 
-Permission System 统一管理 Agent 在运行时对 capability scope 的权限事实。它取代了原来由 `SessionBinding` / `SessionOwnerType` 承载的隐式权限语义，提供显式的、可审计的、策略驱动的 capability 授予链路。
+Permission System 统一管理 Agent 在运行时对 capability scope 的权限事实。授权 source 可以带 runtime session/turn/tool provenance；授权 effect 必须落到 `AgentFrame` revision 或 run/agent control scope association，提供显式的、可审计的、策略驱动的 capability 授予链路。
 
 ## Invariants
 
@@ -39,7 +39,7 @@ crates/agentdash-api/src/routes/permission_grants.rs
 
 - Permission Grant 作为独立聚合根存在于 `agentdash-domain::permission`，不隶属于 workflow 或 session 模块。
 - Policy 评估不依赖 repository（纯函数），数据加载由 service 层负责传入。
-- Scope Escalation 通过创建 `LifecycleRunLink(ControlScope)` 实现，复用 workflow 模块的关联层。
+- Scope Escalation 通过创建 `LifecycleSubjectAssociation(role=ControlScope)` 实现，复用 workflow 模块的关联层。
 - TTL 过期当前由 `expire_overdue()` 提供 batch 清理接口，未来可加入后台 scheduler。
 
 ## Contract Appendices

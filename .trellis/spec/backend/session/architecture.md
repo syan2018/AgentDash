@@ -2,11 +2,11 @@
 
 ## Role
 
-Session 子系统把来源请求转换为可执行 turn，维护 session event、runtime projection、connector input 和终态副作用。它的职责是让所有 session 启动、续跑、context 查询和 runtime transition 走同一条可审计主线。
+Session 子系统把来源请求转换为可执行 turn，维护 runtime event、runtime projection、connector input 和终态副作用。目标语义上，当前 `Session` 是 `RuntimeSession`：它只拥有 turn / tool / event / resume / debug / projection / trace lineage，不拥有业务归属、permission scope、Lifecycle progress 或 Agent effective surface。
 
 ## Invariants
 
-- Session 启动主线是：
+- 当前启动主线仍是：
 
 ```text
 LaunchCommand
@@ -26,6 +26,9 @@ LaunchCommand
 - `CommittedTurn` 表达 user/start/context/capability/meta/runtime-command/title 等 accepted 后事实已提交。
 - `AttachedTurn` 表达 stream 已接入 `SessionTurnProcessor` 与 stream adapter supervision。
 - `ExecutionContext` 是 connector-facing projection，不是 application 层事实源。
+- 目标控制面中，`AgentFrame` 是 capability / context / VFS / MCP / runtime refs 的事实源；`SessionConstructionPlan` 与 `LaunchPlan` 将降为 frame builder / runtime adapter 的内部结构。
+- `RuntimeSession` 只能作为 delivery / trace substrate。业务 command path 必须从 `ExecutionIntent`、`SubjectRef`、run/agent/frame refs 或 graph instance refs 开始。
+- 通过 runtime session 反查业务上下文时，只允许走 `RuntimeSession -> AgentFrame -> LifecycleAgent -> LifecycleRun -> LifecycleSubjectAssociation`。
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
 - terminal fact 先持久化为事件，业务副作用进入 durable outbox；副作用失败不回滚 terminal event。
 - pending runtime command 保存可 replay transition records，不保存完整 `CapabilityState` projection。

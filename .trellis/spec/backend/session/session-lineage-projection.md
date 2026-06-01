@@ -2,7 +2,7 @@
 
 ## Scope
 
-Session lineage projection applies to AgentDash-owned cross-session fork and rollback flows. It records how independently resumable sessions relate to each other; owner binding, workflow ownership and external connector private state stay in their own stores.
+Session lineage projection applies to AgentDash-owned cross-session fork and rollback flows. It records how independently resumable runtime traces relate to each other; lifecycle subject association、agent lineage and external connector private state stay in their own stores.
 
 ## Durable Stores
 
@@ -32,12 +32,12 @@ The HTTP surface is exposed through ACP session routes:
 - `GET /sessions/{id}/lineage`
 - `POST /sessions/{id}/projection/rollback`
 
-DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Project session list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from direct `session_lineage` parent edges first, with companion context as the narrow companion fallback. Frontend project session grouping preserves `parent_relation_kind` so fork, rollback branch, spawned agent and companion edges remain distinguishable in list and shortcut surfaces.
+DTOs live in `agentdash-contracts::session` and are generated to `packages/app-web/src/generated/session-contracts.ts`. Runtime trace list entries include `parent_session_id` and `parent_relation_kind`; the API derives these from direct `session_lineage` parent edges. Product control trees use `AgentLineage` and subject / agent views; session lineage stays a trace/debug projection.
 
 Session detail surfaces lineage through the same generated DTO. The chat view branch panel reads `GET /sessions/{id}/lineage` and displays parent source, relation status, fork point and direct children beside the model context projection view.
 
-`POST /sessions/{id}/fork` always creates `SessionLineageRelationKind::Fork`. Other relation kinds remain facts of the lineage model, but each has its own business owner: companion, spawned-agent and rollback-branch semantics need dedicated services because they imply different lifecycle policy, visibility and restore behavior from an ordinary user fork.
+`POST /sessions/{id}/fork` always creates `SessionLineageRelationKind::Fork`. Other relation kinds remain trace facts of the lineage model; companion, spawned-agent and rollback-branch semantics are owned by lifecycle / agent services because they imply different lifecycle policy, visibility and restore behavior from an ordinary user fork.
 
 ## Ownership Boundary
 
-`session_lineage` explains branch topology and restore provenance. Business visibility and project/story/task ownership remain in `session_bindings`. API fork routes copy the parent owner bindings to the child after the runtime branch commit so the new session is immediately visible under the same owner surface.
+`session_lineage` explains runtime branch topology and restore provenance. Business visibility is projected through `LifecycleSubjectAssociation` and `AgentLineage`; runtime fork routes return trace refs, while product surfaces decide visibility through subject / agent / run views.

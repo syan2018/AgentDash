@@ -43,7 +43,7 @@ pub struct OrchestrationResult {
 #[derive(Debug)]
 pub struct ActivatedNode {
     pub node_key: String,
-    pub session_id: String,
+    pub runtime_session_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,7 +56,7 @@ pub enum LifecycleNodeAdvanceOutcome {
 pub struct AdvanceCurrentActivityInput {
     pub hook_runtime: SharedHookRuntime,
     pub turn_id: String,
-    pub session_id: String,
+    pub runtime_session_id: String,
     pub outcome: LifecycleNodeAdvanceOutcome,
     pub summary: Option<String>,
 }
@@ -182,13 +182,13 @@ impl LifecycleOrchestrator {
         input: AdvanceCurrentActivityInput,
     ) -> Result<AdvanceCurrentNodeResult, String> {
         let Some(association) = resolve_activity_session_association(
-            &input.session_id,
+            &input.runtime_session_id,
             self.repos.activity_execution_claim_repo.as_ref(),
             self.repos.lifecycle_run_repo.as_ref(),
         )
         .await?
         else {
-            return Err("当前 session 没有关联 lifecycle activity attempt".to_string());
+            return Err("当前 runtime session 没有关联 lifecycle activity attempt".to_string());
         };
 
         let definition = self
@@ -302,7 +302,7 @@ impl LifecycleOrchestrator {
             AgentActivityLaunchContext {
                 project_id: run.project_id,
                 lifecycle_key: String::new(),
-                root_session_id: String::new(),
+                root_runtime_session_id: String::new(),
             },
             AgentActivityRuntimePort::new(
                 self.session_core.clone(),
@@ -327,9 +327,9 @@ impl LifecycleOrchestrator {
                     return None;
                 }
                 match outcome.claim.executor_run_ref {
-                    Some(ExecutorRunRef::AgentSession { session_id }) => Some(ActivatedNode {
+                    Some(ExecutorRunRef::RuntimeSession { session_id }) => Some(ActivatedNode {
                         node_key: outcome.claim.activity_key,
-                        session_id,
+                        runtime_session_id: session_id,
                     }),
                     _ => None,
                 }

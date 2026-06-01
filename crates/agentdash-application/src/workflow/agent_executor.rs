@@ -36,7 +36,7 @@ use crate::workflow::{
 pub struct AgentActivityLaunchContext {
     pub project_id: uuid::Uuid,
     pub lifecycle_key: String,
-    pub root_session_id: String,
+    pub root_runtime_session_id: String,
 }
 
 pub struct AgentActivityExecutorLauncher<P> {
@@ -52,17 +52,23 @@ impl<P> AgentActivityExecutorLauncher<P> {
 
 #[async_trait::async_trait]
 pub trait AgentActivitySessionPort: Send + Sync {
-    async fn create_session(&self, title: &str) -> Result<String, String>;
-    async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String>;
+    async fn launch_runtime_session(&self, title: &str) -> Result<String, String>;
+    async fn get_executor_config(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<AgentConfig>, String>;
     async fn set_executor_config(
         &self,
-        session_id: &str,
+        runtime_session_id: &str,
         executor_config: AgentConfig,
     ) -> Result<(), String>;
-    async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> Result<(), String>;
+    async fn mark_owner_bootstrap_pending(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<(), String>;
     async fn launch_workflow_prompt(
         &self,
-        session_id: &str,
+        runtime_session_id: &str,
         executor_config: Option<AgentConfig>,
     ) -> Result<(), String>;
     async fn apply_continue_root_activity(
@@ -71,7 +77,7 @@ pub trait AgentActivitySessionPort: Send + Sync {
         _activity: &ActivityDefinition,
         _claim: &ActivityExecutionClaim,
         _procedure_key: &str,
-        _root_session_id: &str,
+        _root_runtime_session_id: &str,
     ) -> Result<(), String> {
         Ok(())
     }
@@ -137,29 +143,32 @@ impl AgentActivityRuntimePort {
 
 #[async_trait::async_trait]
 impl AgentActivitySessionPort for AgentActivityRuntimePort {
-    async fn create_session(&self, title: &str) -> Result<String, String> {
+    async fn launch_runtime_session(&self, title: &str) -> Result<String, String> {
         self.session_core
             .create_session(title)
             .await
             .map(|meta| meta.id)
-            .map_err(|error| format!("创建 activity child session 失败: {error}"))
+            .map_err(|error| format!("创建 activity runtime session 失败: {error}"))
     }
 
-    async fn get_executor_config(&self, session_id: &str) -> Result<Option<AgentConfig>, String> {
+    async fn get_executor_config(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<AgentConfig>, String> {
         self.session_core
-            .get_session_meta(session_id)
+            .get_session_meta(runtime_session_id)
             .await
-            .map_err(|error| format!("读取 root session meta 失败: {error}"))
+            .map_err(|error| format!("读取 runtime session meta 失败: {error}"))
             .map(|meta| meta.and_then(|meta| meta.executor_config))
     }
 
     async fn set_executor_config(
         &self,
-        session_id: &str,
+        runtime_session_id: &str,
         executor_config: AgentConfig,
     ) -> Result<(), String> {
         self.session_core
-            .update_session_meta(session_id, move |meta| {
+            .update_session_meta(runtime_session_id, move |meta| {
                 meta.executor_config = Some(executor_config.clone());
             })
             .await
@@ -167,26 +176,29 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         Ok(())
     }
 
-    async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> Result<(), String> {
+    async fn mark_owner_bootstrap_pending(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<(), String> {
         self.session_core
-            .mark_owner_bootstrap_pending(session_id)
+            .mark_owner_bootstrap_pending(runtime_session_id)
             .await
             .map_err(|error| format!("标记 owner bootstrap pending 失败: {error}"))
     }
 
     async fn launch_workflow_prompt(
         &self,
-        session_id: &str,
+        runtime_session_id: &str,
         executor_config: Option<AgentConfig>,
     ) -> Result<(), String> {
         let mut user_input = UserPromptInput::from_text("");
         user_input.executor_config = executor_config;
         let command = LaunchCommand::workflow_orchestrator_input(user_input);
         self.session_launch
-            .launch_command(session_id, command)
+            .launch_command(runtime_session_id, command)
             .await
             .map(|_| ())
-            .map_err(|error| format!("启动 activity child session prompt 失败: {error}"))
+            .map_err(|error| format!("启动 activity runtime session prompt 失败: {error}"))
     }
 
     async fn apply_continue_root_activity(
@@ -195,7 +207,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
         procedure_key: &str,
-        root_session_id: &str,
+        root_runtime_session_id: &str,
     ) -> Result<(), String> {
         let session_hooks = self
             .session_hooks
@@ -227,7 +239,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .collect::<std::collections::BTreeSet<_>>();
 
         if let Some(hook_runtime) = session_hooks
-            .ensure_hook_runtime(root_session_id, None)
+            .ensure_hook_runtime(root_runtime_session_id, None)
             .await
             .map_err(|error| format!("加载 root hook runtime 失败: {error}"))?
         {
@@ -237,7 +249,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 definition.project_id,
             );
             let runtime_mcp_servers = session_capability
-                .get_runtime_mcp_servers(root_session_id)
+                .get_runtime_mcp_servers(root_runtime_session_id)
                 .await;
             let mut activation = activate_step_with_platform(
                 &crate::workflow::StepActivationInput {
@@ -279,7 +291,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 project_id: definition.project_id,
             };
             let base_surface = session_capability
-                .get_latest_capability_state(root_session_id)
+                .get_latest_capability_state(root_runtime_session_id)
                 .await;
             let agent_mcp_servers = base_surface
                 .as_ref()
@@ -344,7 +356,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
-                    session_id: root_session_id.to_string(),
+                    session_id: root_runtime_session_id.to_string(),
                     turn_id: None,
                     transition_id: format!(
                         "activity-{}-{}-{}",
@@ -454,35 +466,37 @@ where
             "[{}] {}#{}",
             definition.key, claim.activity_key, claim.attempt
         );
-        let session_id = self
+        let runtime_session_id = self
             .port
-            .create_session(&title)
+            .launch_runtime_session(&title)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
 
         let executor_config = self
             .port
-            .get_executor_config(&self.context.root_session_id)
+            .get_executor_config(&self.context.root_runtime_session_id)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         if let Some(executor_config) = executor_config.clone() {
             self.port
-                .set_executor_config(&session_id, executor_config)
+                .set_executor_config(&runtime_session_id, executor_config)
                 .await
                 .map_err(ActivityExecutorStartError::retryable)?;
         }
 
         self.port
-            .mark_owner_bootstrap_pending(&session_id)
+            .mark_owner_bootstrap_pending(&runtime_session_id)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         self.port
-            .launch_workflow_prompt(&session_id, executor_config)
+            .launch_workflow_prompt(&runtime_session_id, executor_config)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
 
         Ok(ActivityExecutorStartResult::started(
-            ExecutorRunRef::AgentSession { session_id },
+            ExecutorRunRef::RuntimeSession {
+                session_id: runtime_session_id,
+            },
         ))
     }
 
@@ -519,13 +533,13 @@ where
                 activity,
                 claim,
                 procedure_key,
-                &self.context.root_session_id,
+                &self.context.root_runtime_session_id,
             )
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         Ok(ActivityExecutorStartResult::started(
-            ExecutorRunRef::AgentSession {
-                session_id: self.context.root_session_id.clone(),
+            ExecutorRunRef::RuntimeSession {
+                session_id: self.context.root_runtime_session_id.clone(),
             },
         ))
     }
@@ -759,7 +773,7 @@ mod tests {
         ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
         ApiRequestExecutorSpec, BashExecExecutorSpec, FunctionActivityExecutorSpec,
         HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
-        TransitionCondition, WorkflowBindingKind, WorkflowDefinitionSource,
+        TransitionCondition, WorkflowDefinitionSource,
     };
 
     use super::*;
@@ -779,40 +793,47 @@ mod tests {
 
     #[async_trait::async_trait]
     impl AgentActivitySessionPort for FakePort {
-        async fn create_session(&self, title: &str) -> Result<String, String> {
-            let session_id = format!("child-{}", self.sessions.lock().unwrap().len() + 1);
+        async fn launch_runtime_session(&self, title: &str) -> Result<String, String> {
+            let runtime_session_id =
+                format!("child-{}", self.sessions.lock().unwrap().len() + 1);
             self.sessions.lock().unwrap().push(title.to_string());
-            Ok(session_id)
+            Ok(runtime_session_id)
         }
 
         async fn get_executor_config(
             &self,
-            _session_id: &str,
+            _runtime_session_id: &str,
         ) -> Result<Option<AgentConfig>, String> {
             Ok(None)
         }
 
         async fn set_executor_config(
             &self,
-            _session_id: &str,
+            _runtime_session_id: &str,
             _executor_config: AgentConfig,
         ) -> Result<(), String> {
             Ok(())
         }
 
-        async fn mark_owner_bootstrap_pending(&self, _session_id: &str) -> Result<(), String> {
+        async fn mark_owner_bootstrap_pending(
+            &self,
+            _runtime_session_id: &str,
+        ) -> Result<(), String> {
             Ok(())
         }
 
         async fn launch_workflow_prompt(
             &self,
-            session_id: &str,
+            runtime_session_id: &str,
             _executor_config: Option<AgentConfig>,
         ) -> Result<(), String> {
             if let Some(error) = self.launch_error.lock().unwrap().clone() {
                 return Err(error);
             }
-            self.launches.lock().unwrap().push(session_id.to_string());
+            self.launches
+                .lock()
+                .unwrap()
+                .push(runtime_session_id.to_string());
             Ok(())
         }
 
@@ -822,7 +843,7 @@ mod tests {
             _activity: &ActivityDefinition,
             claim: &ActivityExecutionClaim,
             _procedure_key: &str,
-            _root_session_id: &str,
+            _root_runtime_session_id: &str,
         ) -> Result<(), String> {
             self.continue_root_applies
                 .lock()
@@ -860,7 +881,7 @@ mod tests {
             "agent_flow",
             "Agent flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {
@@ -893,7 +914,7 @@ mod tests {
             "approval_flow",
             "Approval flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "approval",
             vec![ActivityDefinition {
@@ -927,7 +948,7 @@ mod tests {
             "function_flow",
             "Function flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "collect",
             vec![ActivityDefinition {
@@ -1000,7 +1021,7 @@ mod tests {
             "agent_flow",
             "Agent flow",
             "",
-            vec![WorkflowBindingKind::Story],
+
             WorkflowDefinitionSource::UserAuthored,
             "plan",
             activity_keys
@@ -1061,7 +1082,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "agent_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             port,
         );
@@ -1087,7 +1108,7 @@ mod tests {
 
         assert_eq!(
             start_result.executor_run,
-            ExecutorRunRef::AgentSession {
+            ExecutorRunRef::RuntimeSession {
                 session_id: "child-1".to_string()
             }
         );
@@ -1109,7 +1130,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "agent_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             port,
         );
@@ -1139,7 +1160,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "agent_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             port,
         );
@@ -1159,7 +1180,7 @@ mod tests {
 
         assert_eq!(
             start_result.executor_run,
-            ExecutorRunRef::AgentSession {
+            ExecutorRunRef::RuntimeSession {
                 session_id: "root-session".to_string()
             }
         );
@@ -1182,7 +1203,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "agent_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             port,
         );
@@ -1192,7 +1213,7 @@ mod tests {
             activity_key: "review".to_string(),
             attempt: 1,
             status: ActivityAttemptStatus::Running,
-            executor_run: Some(ExecutorRunRef::AgentSession {
+            executor_run: Some(ExecutorRunRef::RuntimeSession {
                 session_id: "root-session".to_string(),
             }),
             started_at: Some(chrono::Utc::now()),
@@ -1231,7 +1252,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "approval_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             FakePort::default(),
         );
@@ -1265,7 +1286,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "function_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             FakePort::default(),
         );
@@ -1315,7 +1336,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "function_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             FakePort::default(),
         );
@@ -1361,7 +1382,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "function_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             FakePort::default(),
         );
@@ -1397,7 +1418,7 @@ mod tests {
             AgentActivityLaunchContext {
                 project_id,
                 lifecycle_key: "function_flow".to_string(),
-                root_session_id: "root-session".to_string(),
+                root_runtime_session_id: "root-session".to_string(),
             },
             FakePort::default(),
         );

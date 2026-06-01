@@ -127,7 +127,7 @@ impl AgentTool for CompleteLifecycleNodeTool {
             .advance_current_activity(AdvanceCurrentActivityInput {
                 hook_runtime: hook_runtime.clone(),
                 turn_id: self.current_turn_id.clone(),
-                session_id: snapshot.session_id.clone(),
+                runtime_session_id: snapshot.session_id.clone(),
                 outcome,
                 summary: params.summary.clone(),
             })

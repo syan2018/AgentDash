@@ -23,7 +23,6 @@ use agentdash_contracts::workflow::{
 use agentdash_domain::workflow::{
     ActivityExecutorSpec, WorkflowGraph, LifecycleRun, ValidationIssue,
     ValidationSeverity, AgentProcedure, WorkflowDefinitionSource,
-    normalize_workflow_binding_kinds, workflow_binding_kinds_cover,
 };
 
 use crate::app_state::AppState;
@@ -51,14 +50,11 @@ pub async fn list_workflows(
         ProjectPermission::View,
     )
     .await?;
-    let mut definitions = state
+    let definitions = state
         .repos
         .agent_procedure_repo
         .list_by_project(project_id)
         .await?;
-    if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
-    }
     Ok(Json(definitions))
 }
 
@@ -130,14 +126,11 @@ pub async fn list_activity_lifecycles(
         ProjectPermission::View,
     )
     .await?;
-    let mut definitions = state
+    let definitions = state
         .repos
         .workflow_graph_repo
         .list_by_project(project_id)
         .await?;
-    if let Some(binding_kind) = query.binding_kind {
-        definitions.retain(|definition| definition.binding_kinds.contains(&binding_kind));
-    }
     Ok(Json(definitions))
 }
 
@@ -159,7 +152,6 @@ pub async fn create_workflow_graph(
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
@@ -224,10 +216,6 @@ pub async fn update_workflow_graph(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(binding_kinds) = req.binding_kinds {
-        definition.binding_kinds =
-            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
-    }
     if let Some(entry_activity_key) = req.entry_activity_key {
         definition.entry_activity_key = entry_activity_key;
     }
@@ -265,7 +253,6 @@ pub async fn validate_workflow_graph(
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
@@ -356,7 +343,7 @@ pub async fn start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: String::new(),
-            root_session_id: String::new(),
+            root_runtime_session_id: String::new(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
@@ -435,7 +422,7 @@ pub async fn submit_human_decision(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: String::new(),
-            root_session_id: String::new(),
+            root_runtime_session_id: String::new(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
@@ -477,7 +464,6 @@ pub async fn create_agent_procedure(
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     )
@@ -534,10 +520,6 @@ pub async fn update_agent_procedure(
     if let Some(description) = req.description {
         definition.description = description;
     }
-    if let Some(binding_kinds) = req.binding_kinds {
-        definition.binding_kinds =
-            normalize_workflow_binding_kinds(binding_kinds).map_err(ApiError::BadRequest)?;
-    }
     if let Some(contract) = req.contract {
         definition.contract = contract;
     }
@@ -578,7 +560,6 @@ pub async fn validate_agent_procedure(
         req.key,
         req.name,
         req.description,
-        req.binding_kinds,
         WorkflowDefinitionSource::UserAuthored,
         req.contract,
     ) {
@@ -714,47 +695,10 @@ async fn upsert_agent_procedure(
 }
 
 async fn validate_workflow_graph_references(
-    state: &AppState,
-    definition: &AgentProcedure,
+    _state: &AppState,
+    _definition: &AgentProcedure,
 ) -> Result<Vec<ValidationIssue>, ApiError> {
-    let lifecycles = state
-        .repos
-        .workflow_graph_repo
-        .list_by_project(definition.project_id)
-        .await?;
-    let issues = lifecycles
-        .into_iter()
-        .filter_map(|lifecycle| {
-            let referencing_activities = lifecycle
-                .activities
-                .iter()
-                .filter_map(|activity| match &activity.executor {
-                    ActivityExecutorSpec::Agent(agent) if agent.procedure_key == definition.key => {
-                        Some(activity.key.as_str())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            if referencing_activities.is_empty()
-                || workflow_binding_kinds_cover(&lifecycle.binding_kinds, &definition.binding_kinds)
-            {
-                None
-            } else {
-                Some(ValidationIssue::error(
-                    "activity_workflow_binding_kind_mismatch",
-                    format!(
-                        "workflow `{}` 的 binding_kinds={:?} 未覆盖引用它的 activity lifecycle `{}` {:?}",
-                        definition.key,
-                        definition.binding_kinds,
-                        lifecycle.key,
-                        lifecycle.binding_kinds
-                    ),
-                    format!("activity_lifecycles.{}", referencing_activities.join(",")),
-                ))
-            }
-        })
-        .collect::<Vec<_>>();
-    Ok(issues)
+    Ok(Vec::new())
 }
 
 fn parse_uuid(raw: &str, field: &str) -> Result<Uuid, ApiError> {

@@ -608,7 +608,6 @@ async fn resolve_lifecycle_key_for_project_agent(
                 key: auto_key.clone(),
                 name: format!("Auto: {wk}"),
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
-                binding_kinds: workflow.binding_kinds.clone(),
                 source: WorkflowDefinitionSource::UserAuthored,
                 installed_source: None,
                 version: 1,
@@ -680,7 +679,7 @@ async fn auto_start_lifecycle_run(
         AgentActivityLaunchContext {
             project_id: run.project_id,
             lifecycle_key: lifecycle_key.to_string(),
-            root_session_id: session_id.to_string(),
+            root_runtime_session_id: session_id.to_string(),
         },
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),

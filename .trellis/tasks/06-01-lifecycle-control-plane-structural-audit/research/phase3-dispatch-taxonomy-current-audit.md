@@ -68,7 +68,7 @@
 | Story root/freeform launch 未进入 dispatch | yes | Story route 只有 GET projection，见 `crates/agentdash-api/src/routes/story_runs.rs:30`；`SubjectRef::new("story")` 只用于查询，见 `story_runs.rs:57` 和 `story_runs.rs:79`；Freeform 只 ensure definition，见 `crates/agentdash-application/src/workflow/freeform.rs:34`。 | Story 是业务 aggregate root；没有 root launch policy 时，Task/Routine/Companion 的 parent lifecycle context 会继续依赖 ProjectAgent 或 ad hoc freeform run。 |
 | Task execution result 仍 route-local，前端丢弃 dispatch response | yes | API DTO 在 `crates/agentdash-api/src/dto/task_execution.rs:7`；前端 `await api.post(...); return fetchTask(taskId)` 在 `packages/app-web/src/services/story.ts:350`。 | 这是跨层 contract 边界未封装，不只是旧 DTO 文件残留。后端 dispatch result 没有成为前端可依赖的 subject execution command result。 |
 | Routine `Reuse` 缺少稳定 anchor | yes | `DispatchStrategy::Reuse` 映射 `RunPolicy::ReuseExisting`，但 `parent_run_id` 默认 None，见 `crates/agentdash-application/src/routine/dispatch.rs:18` 和 `dispatch.rs:40`；`resolve_or_create_run` 在没有 parent_run_id 时创建新 run，见 `crates/agentdash-application/src/workflow/dispatch_service.rs:435`。 | Reuse 语义仍耦合到 caller 是否提前找到 run id；缺少 LifecycleAgentReuseResolver / subject association anchor。 |
-| Companion wait 部分接入 gate，但 parent/human 仍 session delivery-first | yes | sub wait 用 `InteractionDispatchIntent`，见 `crates/agentdash-application/src/companion/tools.rs:408`；human wait 自行创建 `LifecycleGate` 并注入 session notification，见 `tools.rs:790` 和 `tools.rs:824`；parent path 注入 notification / pending action，见 `tools.rs:701` 和 `tools.rs:721`。 | 这是 interaction/gate truth 和 runtime delivery 混合；Phase 3 的 sub dispatch 入口有进展，但 wait/resume 事实源仍分裂，属于 Phase 5 继续收束点。 |
+| Companion wait 部分接入 gate，但 parent/human 原始路径仍 session delivery-first | yes | sub wait 用 `InteractionDispatchIntent`，见 `crates/agentdash-application/src/companion/tools.rs:408`；原始扫描时 human wait 自行创建 `LifecycleGate` 并注入 session notification，parent path 注入 notification / pending action。后续 Phase 5 slice 已将 human respond 与 parent result return 收束到 `CompanionGateControlService`，但 parent request pending action / hook evaluation 仍由 parent hook runtime/session 承载。 | 这是 interaction/gate truth 和 runtime delivery 混合；Phase 3 的 sub dispatch 入口有进展，Phase 5 已关闭 human respond 与 parent result return，剩余 wait/resume 分裂点在 parent request owner。 |
 
 ### Special Judgment: `AgentLaunchIntent` and `assignment_ref`
 
@@ -128,7 +128,7 @@
 
 - Story root/freeform 写侧 launch 未发现统一 dispatch 入口。
 - Task execution start/continue response 仍未进入 generated contracts，前端仍丢弃 route response 后重新 fetch task。
-- Companion parent/human wait/resume 仍需在 Phase 5 继续拆分 durable gate truth 与 runtime notification delivery。
+- Companion parent request 仍需在 Phase 5 继续拆分 durable gate truth 与 runtime notification delivery；human respond 与 parent result return 已在后续 slice 迁入 gate-first boundary。
 
 ## Post-Fix Update: 2026-06-02 Routine Reuse
 

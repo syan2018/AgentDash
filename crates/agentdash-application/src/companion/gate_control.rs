@@ -1,0 +1,822 @@
+use std::sync::Arc;
+
+use agentdash_domain::workflow::{
+    AgentFrameRepository, AgentLineageRepository, LifecycleGateRepository,
+    RuntimeSessionSelectionPolicy,
+};
+use async_trait::async_trait;
+use uuid::Uuid;
+
+use super::{
+    PayloadTypeRegistry, build_companion_event_notification,
+    build_companion_human_response_notification, payload_types,
+};
+use crate::{ApplicationError, session::SessionEventingService};
+
+#[derive(Debug, Clone)]
+pub struct RespondCompanionGateCommand {
+    pub gate_id: Uuid,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionGateRespondResult {
+    pub gate_id: Uuid,
+    pub request_id: String,
+    pub delivery_runtime_session_id: Option<String>,
+    pub gate_resolved: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompleteCompanionChildResultCommand {
+    pub request_id: String,
+    pub child_runtime_session_id: String,
+    pub resolved_turn_id: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionChildResultCompleteResult {
+    pub gate_id: Uuid,
+    pub parent_agent_id: Uuid,
+    pub parent_delivery_runtime_session_id: Option<String>,
+    pub child_delivery_runtime_session_id: Option<String>,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionGateResponseNotification {
+    pub delivery_runtime_session_id: String,
+    pub turn_id: Option<String>,
+    pub request_id: String,
+    pub payload: serde_json::Value,
+    pub request_type: Option<String>,
+    pub gate_resolved: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompanionGateEventNotification {
+    pub delivery_runtime_session_id: String,
+    pub turn_id: String,
+    pub event_type: String,
+    pub message: String,
+    pub payload: serde_json::Value,
+}
+
+#[async_trait]
+pub trait CompanionGateNotificationDelivery: Send + Sync {
+    async fn deliver_human_response(
+        &self,
+        notification: CompanionGateResponseNotification,
+    ) -> Result<(), ApplicationError>;
+
+    async fn deliver_companion_event(
+        &self,
+        notification: CompanionGateEventNotification,
+    ) -> Result<(), ApplicationError>;
+}
+
+#[derive(Clone)]
+pub struct SessionEventingCompanionGateDelivery {
+    eventing: SessionEventingService,
+}
+
+#[derive(Clone, Default)]
+pub struct NoopCompanionGateDelivery;
+
+impl SessionEventingCompanionGateDelivery {
+    pub fn new(eventing: SessionEventingService) -> Self {
+        Self { eventing }
+    }
+}
+
+#[async_trait]
+impl CompanionGateNotificationDelivery for NoopCompanionGateDelivery {
+    async fn deliver_human_response(
+        &self,
+        _notification: CompanionGateResponseNotification,
+    ) -> Result<(), ApplicationError> {
+        Ok(())
+    }
+
+    async fn deliver_companion_event(
+        &self,
+        _notification: CompanionGateEventNotification,
+    ) -> Result<(), ApplicationError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl CompanionGateNotificationDelivery for SessionEventingCompanionGateDelivery {
+    async fn deliver_human_response(
+        &self,
+        notification: CompanionGateResponseNotification,
+    ) -> Result<(), ApplicationError> {
+        let envelope = build_companion_human_response_notification(
+            &notification.delivery_runtime_session_id,
+            notification.turn_id.as_deref(),
+            &notification.request_id,
+            &notification.payload,
+            notification.request_type.as_deref(),
+            notification.gate_resolved,
+        );
+        self.eventing
+            .inject_notification(&notification.delivery_runtime_session_id, envelope)
+            .await
+            .map_err(ApplicationError::from)
+    }
+
+    async fn deliver_companion_event(
+        &self,
+        notification: CompanionGateEventNotification,
+    ) -> Result<(), ApplicationError> {
+        let envelope = build_companion_event_notification(
+            &notification.delivery_runtime_session_id,
+            &notification.turn_id,
+            &notification.event_type,
+            notification.message,
+            notification.payload,
+        );
+        self.eventing
+            .inject_notification(&notification.delivery_runtime_session_id, envelope)
+            .await
+            .map_err(ApplicationError::from)
+    }
+}
+
+pub struct CompanionGateControlService {
+    gate_repo: Arc<dyn LifecycleGateRepository>,
+    frame_repo: Arc<dyn AgentFrameRepository>,
+    lineage_repo: Arc<dyn AgentLineageRepository>,
+    delivery: Arc<dyn CompanionGateNotificationDelivery>,
+}
+
+impl CompanionGateControlService {
+    pub fn new(
+        gate_repo: Arc<dyn LifecycleGateRepository>,
+        frame_repo: Arc<dyn AgentFrameRepository>,
+        lineage_repo: Arc<dyn AgentLineageRepository>,
+        delivery: Arc<dyn CompanionGateNotificationDelivery>,
+    ) -> Self {
+        Self {
+            gate_repo,
+            frame_repo,
+            lineage_repo,
+            delivery,
+        }
+    }
+
+    pub fn with_session_eventing(
+        gate_repo: Arc<dyn LifecycleGateRepository>,
+        frame_repo: Arc<dyn AgentFrameRepository>,
+        lineage_repo: Arc<dyn AgentLineageRepository>,
+        eventing: SessionEventingService,
+    ) -> Self {
+        Self::new(
+            gate_repo,
+            frame_repo,
+            lineage_repo,
+            Arc::new(SessionEventingCompanionGateDelivery::new(eventing)),
+        )
+    }
+
+    pub async fn respond(
+        &self,
+        command: RespondCompanionGateCommand,
+    ) -> Result<CompanionGateRespondResult, ApplicationError> {
+        if let Some(error) = payload_types::payload_object_error(&command.payload) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+
+        let mut gate = self.gate_repo.get(command.gate_id).await?.ok_or_else(|| {
+            ApplicationError::NotFound(format!("gate 不存在: {}", command.gate_id))
+        })?;
+
+        if !gate.is_open() {
+            return Err(ApplicationError::Conflict(format!(
+                "gate 已关闭: {}",
+                command.gate_id
+            )));
+        }
+
+        let gate_meta = gate.payload_json.clone();
+        let request_type = gate_meta
+            .as_ref()
+            .and_then(|metadata| metadata.get("request_type"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let turn_id = gate_meta
+            .as_ref()
+            .and_then(|metadata| metadata.get("turn_id"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+
+        let registry = PayloadTypeRegistry::with_builtins();
+        if let Some(error) = registry.validate_response(&command.payload, request_type.as_deref()) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+
+        let delivery_runtime_session_id = self.resolve_delivery_runtime_session_id(&gate).await?;
+        let request_id = gate.id.to_string();
+
+        gate.payload_json = Some(command.payload.clone());
+        gate.resolve("companion_respond");
+        self.gate_repo.update(&gate).await?;
+
+        if let Some(delivery_runtime_session_id) = delivery_runtime_session_id.clone() {
+            let notification = CompanionGateResponseNotification {
+                delivery_runtime_session_id,
+                turn_id,
+                request_id: request_id.clone(),
+                payload: command.payload,
+                request_type,
+                gate_resolved: true,
+            };
+            if let Err(error) = self.delivery.deliver_human_response(notification).await {
+                tracing::warn!(error = %error, gate_id = %gate.id, "companion gate resolved but runtime notification delivery failed");
+            }
+        }
+
+        Ok(CompanionGateRespondResult {
+            gate_id: gate.id,
+            request_id,
+            delivery_runtime_session_id,
+            gate_resolved: true,
+        })
+    }
+
+    pub async fn complete_child_result_to_parent(
+        &self,
+        command: CompleteCompanionChildResultCommand,
+    ) -> Result<Option<CompanionChildResultCompleteResult>, ApplicationError> {
+        if let Some(error) = payload_types::payload_object_error(&command.payload) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+        let registry = PayloadTypeRegistry::with_builtins();
+        if let Some(error) = registry.validate_response(&command.payload, None) {
+            return Err(ApplicationError::BadRequest(error));
+        }
+
+        let child_frame = match self
+            .frame_repo
+            .find_by_runtime_session(&command.child_runtime_session_id)
+            .await?
+        {
+            Some(frame) => frame,
+            None => return Ok(None),
+        };
+        let lineage = match self.lineage_repo.find_parent(child_frame.agent_id).await? {
+            Some(lineage) => lineage,
+            None => return Ok(None),
+        };
+        let parent_agent_id = match lineage.parent_agent_id {
+            Some(agent_id) => agent_id,
+            None => return Ok(None),
+        };
+
+        let mut gate = match self
+            .gate_repo
+            .list_open_for_agent(child_frame.agent_id)
+            .await?
+            .into_iter()
+            .find(|gate| gate.correlation_id == command.request_id)
+        {
+            Some(gate) => gate,
+            None => return Ok(None),
+        };
+
+        let resolved_turn_id = command.resolved_turn_id.clone();
+        let child_runtime_session_id = command.child_runtime_session_id.clone();
+        let summary = command
+            .payload
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let status = normalize_companion_result_status(
+            command
+                .payload
+                .get("status")
+                .and_then(serde_json::Value::as_str),
+        )?;
+        let resolution_payload = serde_json::json!({
+            "status": status,
+            "summary": summary,
+            "findings": command.payload.get("findings"),
+            "follow_ups": command.payload.get("follow_ups"),
+            "artifact_refs": command.payload.get("artifact_refs"),
+            "child_agent_id": child_frame.agent_id.to_string(),
+            "resolved_turn_id": resolved_turn_id,
+        });
+
+        gate.payload_json = Some(resolution_payload.clone());
+        gate.resolve(format!("child_agent:{}", child_frame.agent_id));
+        self.gate_repo.update(&gate).await?;
+
+        let parent_delivery_runtime_session_id = self
+            .frame_repo
+            .get_current(parent_agent_id)
+            .await?
+            .and_then(|frame| {
+                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+            });
+        let child_delivery_runtime_session_id =
+            child_frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                runtime_session_id: child_runtime_session_id,
+            });
+
+        if let Some(session_id) = parent_delivery_runtime_session_id.clone() {
+            let notification = CompanionGateEventNotification {
+                delivery_runtime_session_id: session_id,
+                turn_id: resolved_turn_id.clone(),
+                event_type: "companion_result_available".to_string(),
+                message: "Companion child agent 已回传结果 (gate resolved)".to_string(),
+                payload: resolution_payload.clone(),
+            };
+            if let Err(error) = self.delivery.deliver_companion_event(notification).await {
+                tracing::warn!(error = %error, gate_id = %gate.id, parent_agent_id = %parent_agent_id, "companion gate resolved but parent result notification delivery failed");
+            }
+        }
+
+        if let Some(session_id) = child_delivery_runtime_session_id.clone() {
+            let notification = CompanionGateEventNotification {
+                delivery_runtime_session_id: session_id,
+                turn_id: resolved_turn_id.clone(),
+                event_type: "companion_result_returned".to_string(),
+                message: "已通过 LifecycleGate 回传结果到 parent agent".to_string(),
+                payload: resolution_payload.clone(),
+            };
+            if let Err(error) = self.delivery.deliver_companion_event(notification).await {
+                tracing::warn!(error = %error, gate_id = %gate.id, child_agent_id = %child_frame.agent_id, "companion gate resolved but child result notification delivery failed");
+            }
+        }
+
+        Ok(Some(CompanionChildResultCompleteResult {
+            gate_id: gate.id,
+            parent_agent_id,
+            parent_delivery_runtime_session_id,
+            child_delivery_runtime_session_id,
+            payload: resolution_payload,
+        }))
+    }
+
+    async fn resolve_delivery_runtime_session_id(
+        &self,
+        gate: &agentdash_domain::workflow::LifecycleGate,
+    ) -> Result<Option<String>, ApplicationError> {
+        let frame = if let Some(frame_id) = gate.frame_id {
+            self.frame_repo.get(frame_id).await?.ok_or_else(|| {
+                ApplicationError::NotFound(format!("gate frame 不存在: {frame_id}"))
+            })?
+        } else if let Some(agent_id) = gate.agent_id {
+            self.frame_repo
+                .get_current(agent_id)
+                .await?
+                .ok_or_else(|| {
+                    ApplicationError::NotFound(format!("gate agent 没有当前 frame: {agent_id}"))
+                })?
+        } else {
+            return Err(ApplicationError::Conflict(format!(
+                "gate 缺少 agent/frame owner: {}",
+                gate.id
+            )));
+        };
+
+        if let Some(agent_id) = gate.agent_id
+            && frame.agent_id != agent_id
+        {
+            return Err(ApplicationError::Conflict(format!(
+                "gate frame {} 不属于 gate agent {}",
+                frame.id, agent_id
+            )));
+        }
+
+        Ok(frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached))
+    }
+}
+
+fn normalize_companion_result_status(
+    status: Option<&str>,
+) -> Result<&'static str, ApplicationError> {
+    match status.unwrap_or("completed").trim() {
+        "" => Ok("completed"),
+        "completed" => Ok("completed"),
+        "blocked" => Ok("blocked"),
+        "needs_follow_up" => Ok("needs_follow_up"),
+        other => Err(ApplicationError::BadRequest(format!(
+            "payload.status 不支持 `{other}`，应为 completed/blocked/needs_follow_up"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
+
+    use agentdash_domain::{
+        DomainError,
+        workflow::{AgentFrame, AgentLineage, LifecycleGate},
+    };
+
+    use super::*;
+
+    #[derive(Default)]
+    struct MemoryGateRepo {
+        gates: Mutex<HashMap<Uuid, LifecycleGate>>,
+    }
+
+    #[async_trait]
+    impl LifecycleGateRepository for MemoryGateRepo {
+        async fn create(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            self.gates.lock().unwrap().insert(gate.id, gate.clone());
+            Ok(())
+        }
+
+        async fn get(&self, id: Uuid) -> Result<Option<LifecycleGate>, DomainError> {
+            Ok(self.gates.lock().unwrap().get(&id).cloned())
+        }
+
+        async fn list_open_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<LifecycleGate>, DomainError> {
+            Ok(self
+                .gates
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|gate| gate.agent_id == Some(agent_id) && gate.is_open())
+                .cloned()
+                .collect())
+        }
+
+        async fn update(&self, gate: &LifecycleGate) -> Result<(), DomainError> {
+            self.gates.lock().unwrap().insert(gate.id, gate.clone());
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryFrameRepo {
+        frames: Mutex<HashMap<Uuid, AgentFrame>>,
+    }
+
+    #[async_trait]
+    impl AgentFrameRepository for MemoryFrameRepo {
+        async fn create(&self, frame: &AgentFrame) -> Result<(), DomainError> {
+            self.frames.lock().unwrap().insert(frame.id, frame.clone());
+            Ok(())
+        }
+
+        async fn get(&self, frame_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self.frames.lock().unwrap().get(&frame_id).cloned())
+        }
+
+        async fn get_current(&self, agent_id: Uuid) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .unwrap()
+                .values()
+                .find(|frame| frame.agent_id == agent_id)
+                .cloned())
+        }
+
+        async fn list_by_agent(&self, agent_id: Uuid) -> Result<Vec<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|frame| frame.agent_id == agent_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn attach_runtime_session_ref(
+            &self,
+            frame_id: Uuid,
+            runtime_session_id: &str,
+        ) -> Result<(), DomainError> {
+            if let Some(frame) = self.frames.lock().unwrap().get_mut(&frame_id) {
+                frame.attach_runtime_session_ref(runtime_session_id);
+            }
+            Ok(())
+        }
+
+        async fn find_by_runtime_session(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<AgentFrame>, DomainError> {
+            Ok(self
+                .frames
+                .lock()
+                .unwrap()
+                .values()
+                .find(|frame| {
+                    frame
+                        .runtime_session_ids()
+                        .iter()
+                        .any(|session_id| session_id == runtime_session_id)
+                })
+                .cloned())
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryLineageRepo {
+        lineages: Mutex<Vec<AgentLineage>>,
+    }
+
+    #[async_trait]
+    impl AgentLineageRepository for MemoryLineageRepo {
+        async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError> {
+            self.lineages.lock().unwrap().push(lineage.clone());
+            Ok(())
+        }
+
+        async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError> {
+            Ok(self
+                .lineages
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|lineage| lineage.parent_agent_id == Some(agent_id))
+                .cloned()
+                .collect())
+        }
+
+        async fn find_parent(
+            &self,
+            child_agent_id: Uuid,
+        ) -> Result<Option<AgentLineage>, DomainError> {
+            Ok(self
+                .lineages
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|lineage| lineage.child_agent_id == child_agent_id)
+                .cloned())
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingDelivery {
+        response_notifications: Mutex<Vec<CompanionGateResponseNotification>>,
+        event_notifications: Mutex<Vec<CompanionGateEventNotification>>,
+    }
+
+    #[async_trait]
+    impl CompanionGateNotificationDelivery for CapturingDelivery {
+        async fn deliver_human_response(
+            &self,
+            notification: CompanionGateResponseNotification,
+        ) -> Result<(), ApplicationError> {
+            self.response_notifications
+                .lock()
+                .unwrap()
+                .push(notification);
+            Ok(())
+        }
+
+        async fn deliver_companion_event(
+            &self,
+            notification: CompanionGateEventNotification,
+        ) -> Result<(), ApplicationError> {
+            self.event_notifications.lock().unwrap().push(notification);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn respond_resolves_gate_and_delivers_by_frame_runtime_ref() {
+        let agent_id = Uuid::new_v4();
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
+        frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["session-old", "session-latest"]);
+        let frame_id = frame.id;
+        let gate = LifecycleGate::open(
+            Uuid::new_v4(),
+            Some(agent_id),
+            Some(frame_id),
+            "companion_wait",
+            "human-request",
+            Some(serde_json::json!({
+                "turn_id": "turn-1",
+                "request_type": "decision"
+            })),
+        );
+        let gate_id = gate.id;
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo.create(&frame).await.expect("seed frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service = CompanionGateControlService::new(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+        );
+
+        let result = service
+            .respond(RespondCompanionGateCommand {
+                gate_id,
+                payload: serde_json::json!({
+                    "type": "decision",
+                    "status": "approved",
+                    "choice": "YES",
+                    "summary": "YES"
+                }),
+            })
+            .await
+            .expect("respond");
+
+        assert!(result.gate_resolved);
+        assert_eq!(
+            result.delivery_runtime_session_id.as_deref(),
+            Some("session-latest")
+        );
+        let stored = gate_repo
+            .get(gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert!(!stored.is_open());
+        assert_eq!(stored.resolved_by.as_deref(), Some("companion_respond"));
+
+        let notifications = delivery.response_notifications.lock().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(
+            notifications[0].delivery_runtime_session_id,
+            "session-latest"
+        );
+        assert_eq!(notifications[0].turn_id.as_deref(), Some("turn-1"));
+        assert_eq!(notifications[0].request_id, gate_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn respond_rejects_already_closed_gate() {
+        let agent_id = Uuid::new_v4();
+        let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
+        frame.runtime_session_refs_json = AgentFrame::runtime_session_refs_json(["session-1"]);
+        let mut gate = LifecycleGate::open(
+            Uuid::new_v4(),
+            Some(agent_id),
+            Some(frame.id),
+            "companion_wait",
+            "human-request",
+            Some(serde_json::json!({ "request_type": "decision" })),
+        );
+        gate.resolve("previous");
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo.create(&frame).await.expect("seed frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service =
+            CompanionGateControlService::new(gate_repo, frame_repo, lineage_repo, delivery.clone());
+
+        let error = service
+            .respond(RespondCompanionGateCommand {
+                gate_id: gate.id,
+                payload: serde_json::json!({ "type": "decision", "status": "approved" }),
+            })
+            .await
+            .expect_err("closed gate should be rejected");
+
+        assert!(matches!(error, ApplicationError::Conflict(_)));
+        assert!(delivery.response_notifications.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn complete_child_result_resolves_child_owned_gate_and_delivers_events() {
+        let run_id = Uuid::new_v4();
+        let parent_agent_id = Uuid::new_v4();
+        let child_agent_id = Uuid::new_v4();
+
+        let mut parent_frame = AgentFrame::new_revision(parent_agent_id, 1, "parent");
+        parent_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["parent-session"]);
+        let mut child_frame = AgentFrame::new_revision(child_agent_id, 1, "child");
+        child_frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["child-session"]);
+
+        let gate = LifecycleGate::open(
+            run_id,
+            Some(child_agent_id),
+            Some(child_frame.id),
+            "companion_wait_follow_up",
+            "dispatch-1",
+            Some(serde_json::json!({
+                "parent_agent_id": parent_agent_id,
+                "dispatch_id": "dispatch-1",
+            })),
+        );
+        let gate_id = gate.id;
+        let lineage = AgentLineage::new(
+            run_id,
+            Some(parent_agent_id),
+            child_agent_id,
+            "companion",
+            Some(child_frame.id),
+            None,
+        );
+
+        let gate_repo = Arc::new(MemoryGateRepo::default());
+        gate_repo.create(&gate).await.expect("seed gate");
+        let frame_repo = Arc::new(MemoryFrameRepo::default());
+        frame_repo
+            .create(&parent_frame)
+            .await
+            .expect("seed parent frame");
+        frame_repo
+            .create(&child_frame)
+            .await
+            .expect("seed child frame");
+        let lineage_repo = Arc::new(MemoryLineageRepo::default());
+        lineage_repo.create(&lineage).await.expect("seed lineage");
+        let delivery = Arc::new(CapturingDelivery::default());
+        let service = CompanionGateControlService::new(
+            gate_repo.clone(),
+            frame_repo,
+            lineage_repo,
+            delivery.clone(),
+        );
+
+        let result = service
+            .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
+                request_id: "dispatch-1".to_string(),
+                child_runtime_session_id: "child-session".to_string(),
+                resolved_turn_id: "turn-child-1".to_string(),
+                payload: serde_json::json!({
+                    "status": "completed",
+                    "summary": "review complete",
+                    "findings": ["looks good"],
+                    "follow_ups": [],
+                    "artifact_refs": [],
+                }),
+            })
+            .await
+            .expect("complete child result")
+            .expect("matched gate");
+
+        assert_eq!(result.gate_id, gate_id);
+        assert_eq!(result.parent_agent_id, parent_agent_id);
+        assert_eq!(
+            result.parent_delivery_runtime_session_id.as_deref(),
+            Some("parent-session")
+        );
+        assert_eq!(
+            result.child_delivery_runtime_session_id.as_deref(),
+            Some("child-session")
+        );
+
+        let stored = gate_repo
+            .get(gate_id)
+            .await
+            .expect("load gate")
+            .expect("gate exists");
+        assert!(!stored.is_open());
+        let expected_resolved_by = format!("child_agent:{child_agent_id}");
+        assert_eq!(
+            stored.resolved_by.as_deref(),
+            Some(expected_resolved_by.as_str())
+        );
+        assert_eq!(
+            stored
+                .payload_json
+                .as_ref()
+                .and_then(|payload| payload.get("status"))
+                .and_then(serde_json::Value::as_str),
+            Some("completed")
+        );
+
+        let event_notifications = delivery.event_notifications.lock().unwrap();
+        assert_eq!(event_notifications.len(), 2);
+        assert_eq!(
+            event_notifications[0].event_type,
+            "companion_result_available"
+        );
+        assert_eq!(
+            event_notifications[0].delivery_runtime_session_id,
+            "parent-session"
+        );
+        assert_eq!(
+            event_notifications[1].event_type,
+            "companion_result_returned"
+        );
+        assert_eq!(
+            event_notifications[1].delivery_runtime_session_id,
+            "child-session"
+        );
+    }
+}

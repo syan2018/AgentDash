@@ -26,8 +26,8 @@
 - [ ] P1-18 Task 仍保留 `agent_binding` 作为 spec / execution preference，并参与 executor config 决策。
 - [ ] P1-19 Task cancel 仍通过 current frame 找 runtime session 后调用 `cancel_session`，取消语义没有明确落在 Agent / Gate / Assignment。
 - [ ] P1-19A Task cancel 的 lifecycle 状态已经需要投影到 Task view，但 Task 业务状态词表仍把 Cancelled 合并为 Failed，取消与失败语义仍耦合。
-- [ ] P1-19B Task cancel active assignment path 已可关闭，但 SubjectExecutionControlService 尚未纳入 open LifecycleGate cancel/resolution；如果 Task execution 进入 wait/gate，cancel truth 仍缺少 gate owner。
-- [ ] P1-20 Companion sub dispatch 已接入 dispatch / gate，但 parent notification、human wait 和轮询仍依赖 runtime session notification / hook runtime。
+- [ ] P1-19B Task cancel active assignment path 已可关闭；进一步扫描确认当前 Task execution 不创建也不等待 `LifecycleGate`，因此 “Task gate cancellation” 暂无真实 owner，若未来引入 Subject wait gate 必须先建立 subject gate owner/index。
+- [ ] P1-20 Companion sub dispatch 已接入 dispatch / gate；human request/respond 与 child parent-result return 已有 durable gate-first 路径，但 parent request pending action、parent hook evaluation 和部分通知投递仍依赖 runtime session notification / hook runtime。
 - [ ] P1-21 Routine `Reuse` 策略名义上映射为 agent reuse，但缺少 anchor lookup；无 parent_run_id 时仍会新建 run。
 - [ ] P1-22 PermissionGrant 已有 run provenance + effect frame anchor，但仍携带 source runtime session；需要明确 provenance 与 effect owner 的边界，避免 session 再次成为 permission 查询根。
 - [ ] P2-23 shared-library 仍接受 `entry_step_key / steps / edges` legacy template normalization，和预研阶段硬切目标冲突。

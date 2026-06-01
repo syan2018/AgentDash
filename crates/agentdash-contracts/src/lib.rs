@@ -1,3 +1,4 @@
+pub mod companion;
 pub mod core;
 pub mod extension_management;
 pub mod extension_package;

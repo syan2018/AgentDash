@@ -2,6 +2,7 @@ pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
 pub mod canvases;
+pub mod companion_gates;
 pub mod discovered_options;
 pub mod discovery;
 pub mod extension_package_artifacts;
@@ -70,6 +71,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(project_agents::router())
         .merge(routines::router())
         .merge(canvases::router())
+        .merge(companion_gates::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())
         .merge(workspaces::router())

@@ -183,7 +183,7 @@ function isHighPriorityHookEvent(
 
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
-export function SessionSystemEventCard({ event, sessionId }: SessionSystemEventCardProps) {
+export function SessionSystemEventCard({ event }: SessionSystemEventCardProps) {
   if (event.type !== "platform") return null;
 
   const eventType = extractPlatformEventType(event) ?? "system";
@@ -192,7 +192,7 @@ export function SessionSystemEventCard({ event, sessionId }: SessionSystemEventC
 
   // ── companion_human_request → 交互卡片 ──
   if (eventType === "companion_human_request") {
-    return <SessionCompanionRequestCard event={event} sessionId={sessionId} />;
+    return <SessionCompanionRequestCard event={event} />;
   }
 
   if (eventType === "context_frame" && eventData) {

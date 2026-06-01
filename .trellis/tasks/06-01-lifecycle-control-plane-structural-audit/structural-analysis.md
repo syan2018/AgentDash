@@ -306,7 +306,7 @@ Hook runtime 已经是 `AgentFrameHookRuntime`，但入口仍是 `session_id -> 
 Phase 4 hook/capability follow-up 调研进一步确认：
 
 - 真正的 control coupling 集中在 SPI 与 application hook 边界：`ExecutionHookProvider`、`SessionHookSnapshotQuery`、`SessionHookRefreshQuery`、`HookEvaluationQuery` 仍以 top-level `session_id` 表达 snapshot / refresh / evaluate。
-- `SessionHookService`、hub hook dispatch lazy rebuild、workflow orchestrator refresh、PhaseNode activation、canvas capability sync、companion parent notification 仍把 session 当成控制命令入口，再反查 frame/hook runtime。
+- `SessionHookService`、hub hook dispatch lazy rebuild、workflow orchestrator refresh、PhaseNode activation、canvas capability sync、companion parent request notification / hook control 仍把 session 当成控制命令入口，再反查 frame/hook runtime。
 - `AgentFrameRuntimeTarget`、`delivery_runtime_session_id`、`RuntimeDeliveryCommand`、`AgentFrameRepository::find_by_runtime_session` 已经可以作为正确的 delivery/provenance 边界保留；问题不是删除所有 `session_id`，而是禁止 control command 以 raw session 为 owner。
 
 后续最小封装应拆成：
@@ -339,7 +339,7 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 
 - canvas capability sync 当时仍从 raw `session_id` 调用 `resolve_runtime_session_frame_id` 并读取 current capability state。
 - ContinueRoot 仍以 `root_runtime_session_id` 作为 policy 输入，再解析出 `AgentFrameRuntimeTarget`；这只是把 lookup 集中到 adapter，并没有拆开 agent/frame reuse policy 与 runtime delivery policy。
-- companion parent notification / hook control 仍以 parent session 作为入口，尚未迁到 parent frame/assignment target。
+- companion parent request notification / hook control 仍以 parent session 作为入口，尚未迁到 parent frame/assignment target。
 
 2026-06-02 的 canvas capability sync slice 补齐了 canvas 侧 direct lookup 缺口：
 
@@ -350,7 +350,7 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 该 slice 仍不关闭 P1-08 gate，因为：
 
 - canvas adapter 仍通过 session 取得 hook runtime；这属于 hook control service 尚未 frame-first 的同一剩余问题。
-- ContinueRoot 仍用 root runtime session 表达 policy，companion parent notification / hook control 仍以 parent session 为入口。
+- ContinueRoot 仍用 root runtime session 表达 policy，companion parent request notification / hook control 仍以 parent session 为入口。
 
 2026-06-02 的 hook runtime target-aware caller slice 补齐了 workflow/canvas capability caller 的 hook target 校验：
 
@@ -361,7 +361,7 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 该 slice 仍不关闭 P1-08 gate，因为：
 
 - `SessionHookService::ensure_hook_runtime`、hub lazy rebuild、provider session snapshot entry 与 rule-engine `HookEvaluationQuery` 仍是 session-shaped adapter。
-- companion parent result hook evaluation 仍以 parent session 为入口，尚未迁到 parent frame/assignment target。
+- companion parent request hook evaluation 仍以 parent session 为入口，尚未迁到 parent frame/assignment target。
 
 验证记录：
 
@@ -694,34 +694,33 @@ Task cancel command 已能写入 `ActivityAttemptStatus::Cancelled`，但 Task v
 - Contract/generated TS、frontend mapper、Task badge、Story task review label、Task execution panel action guard 与 MCP task status schema 都识别 `cancelled`。
 - `cargo test -p agentdash-domain story::entity --lib -- --format terse` 与 `cargo test -p agentdash-application task::view_projector --lib -- --format terse` 覆盖 cancelled projection；`pnpm run contracts:check` 覆盖 generated union drift。
 
-### P1-19B 后续暴露问题：Task wait/gate cancellation
+### P1-19B 后续暴露问题：Task wait/gate cancellation scope
 
 ### 原始问题
 
-当前 `SubjectExecutionControlService` 解析的是 active subject association、agent、assignment 与 frame；它没有注入 `LifecycleGateRepository`，也没有处理 subject execution 当前处于 wait/gate 时的 open gate truth。
+扫描时担心：`SubjectExecutionControlService` 只解析 active subject association、agent、assignment 与 frame，没有注入 `LifecycleGateRepository`；如果 Task execution 进入 wait/gate，cancel truth 可能不关闭 open gate truth。
 
 ### 结构性分析
 
-Task cancel 不能只覆盖 running assignment。Subject execution 的控制状态可能落在 assignment、claim、attempt，也可能落在 durable gate；如果 cancel command 不知道 gate owner，未来任何 wait path 都会把 cancellation 拆成两条事实链：workflow attempt cancelled 与 gate 仍 open。
+后续 targeted audit 证明当前 Task start/continue 只构造 `SubjectExecutionIntent`，该 intent 在 dispatch taxonomy 中 `gate_policy = None`；只有 `InteractionDispatchIntent` 会创建 `LifecycleGate`。Task cancel 当前真实事务边界是 subject association、active agent、assignment、frame、claim、graph attempt 与 runtime cancel delivery，不存在 Task-specific open gate owner。
 
-系统性问题：**SubjectExecution control boundary 尚未把 execution wait/gate 纳入同一个 cancellation transaction**。
+因此当前不应把 `LifecycleGateRepository` 硬塞进 `SubjectExecutionControlService`。真正的系统性问题不是 Task cancel 漏了一条现存 gate，而是 **Subject wait gate 还没有一等 owner/index**；未来若让 Task/Subject execution 等待 gate，必须先建 `SubjectExecutionGateTarget` 或等价索引，再把 cancel/gate closure 纳入同一事务。
 
 ### 解决方案
 
-扩展 `SubjectExecutionControlService` 的 target resolver：
+当前解决方案是把 P1-19B 从实现项改为 scope gate：
 
-- 解析 subject execution 的 active `LifecycleGate`（按 run/agent/frame/correlation 或专门的 subject gate index）。
-- `CancelSubjectExecutionCommand` 在写 `ActivityCancelled` 时同步 close/cancel gate，并记录 cancellation reason / actor。
-- Runtime notification 只作为 `GateCancelDeliveryCommand` 或 `RuntimeCancelDeliveryCommand` 的 delivery adapter。
-- gate wait path 与 companion gate path 共用 `LifecycleGate` truth，但通过 `SubjectExecutionControlTarget` 明确 owner 是 task subject / companion channel / parent interaction。
+- 当前 Task cancel 不依赖 gate；保持 `SubjectExecutionControlService` 的 owner 为 subject association / agent / assignment / frame / claim / attempt。
+- P1-20 承接当前真实 gate owner：Companion/Interaction gate。
+- 未来新增 Task/Subject wait gate 时，先实现 subject gate owner/index，再扩展 `CancelSubjectExecutionCommand` 同事务关闭 gate、取消 attempt、释放 claim/assignment。
 
-最小可验收 gate：构造一个 open gate 的 subject execution，cancel 后 graph attempt 为 `Cancelled`、gate 非 open、assignment/claim 不再 active，runtime notification 只从 delivery command 产生。
+最小可验收 gate：代码审计证明 Task start/continue/cancel path 不创建、不等待 `LifecycleGate`；`SubjectExecutionControlService` 不应因不存在的 Task gate 引入 gate repo 依赖。未来若出现 Task gate owner，必须新增对应测试：cancel 后 graph attempt 为 `Cancelled`、gate 非 open、assignment/claim 不再 active，runtime notification 只从 delivery command 产生。
 
 ## P1-20 Companion gate 未完全成为交互面 owner
 
 ### 原始问题
 
-Companion dispatch 已使用 dispatch/gate，但 parent notification、human wait、轮询仍依赖 session notification / hook runtime。
+原始扫描时，Companion dispatch 已使用 dispatch/gate，但 parent notification、human wait、轮询仍依赖 session notification / hook runtime。后续 human respond 与 parent result return 已迁到 gate-first，剩余风险集中在 parent request / hook control。
 
 ### 结构性分析
 
@@ -738,6 +737,22 @@ Companion 是交互通道，Gate 是 durable wait/resume fact，RuntimeSession n
 - `GateDeliveryAdapter`: 把 gate state 投递到 runtime session notification。
 
 工具和 UI 查询 gate/channel，不直接轮询 session notification 作为 truth。
+
+### 当前落地状态
+
+2026-06-02 的 companion human gate slice 已关闭 human request/respond 的 session-first 缺口：
+
+- `CompanionGateControlService` 先 resolve durable `LifecycleGate`，再通过 `CompanionGateNotificationDelivery` 注入 runtime notification；notification delivery 失败不会回滚 gate truth。
+- `companion_request(target=human)` 的 wait 与 non-wait 请求都创建 frame-owned gate，并在通知 payload 中暴露 `gate_id`。
+- API 从 `/sessions/{id}/companion-requests/{request_id}/respond` 迁到 `/companion-gates/{gate_id}/respond`；前端 `SessionCompanionRequestCard` 用 `gate_id` 调用 service，不再把 `sessionId` 当业务主键。
+
+2026-06-02 的 companion parent-result slice 进一步关闭 child return path 的 session-first 缺口：
+
+- `CompanionRespondTool::try_complete_to_parent` 不再直接查 lineage / gate 并注入 parent session notification，而是委派 `CompanionGateControlService::complete_child_result_to_parent`。
+- parent result return 按 child runtime session 找 child frame，再按 child agent 的 open `LifecycleGate.correlation_id` resolve gate；这与 `InteractionDispatchIntent` 创建 child-owned gate 的事实源一致。
+- `CompanionGateNotificationDelivery` 扩展为 parent/child runtime event delivery adapter；parent/child session notification 只是 gate resolved 之后的投递副作用。
+- `companion::gate_control` 单测证明 child-owned gate 被 resolve，parent/child runtime event 均由 delivery adapter 产生。
+- 完整 P1-20 仍未关闭，因为 parent request 的 pending action、hook evaluation 与 initial review notification 仍由 parent hook runtime/session 承载；这条路径还缺 `CompanionChannel` / gate owner 封装来表达“parent 正在等待谁、谁能恢复”。
 
 ## P1-21 Routine Reuse 策略无 anchor lookup
 

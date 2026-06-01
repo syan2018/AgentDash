@@ -152,14 +152,6 @@ pub struct RejectToolCallResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct CompanionRespondResponse {
-    pub responded: bool,
-    pub session_id: String,
-    pub request_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionProjectionSourceRangeResponse {
     #[ts(type = "number")]

@@ -15,14 +15,14 @@ import { respondCompanionRequest } from "../../../services/executor";
 
 export interface SessionCompanionRequestCardProps {
   event: BackboneEvent;
-  sessionId?: string;
 }
 
-export function SessionCompanionRequestCard({ event, sessionId }: SessionCompanionRequestCardProps) {
+export function SessionCompanionRequestCard({ event }: SessionCompanionRequestCardProps) {
   const data = extractPlatformEventData(event);
   const payload = isRecord(data?.payload) ? data.payload : null;
 
   const requestId = typeof data?.request_id === "string" ? data.request_id : null;
+  const gateId = stringField(data, "gate_id") ?? requestId;
   const payloadType = stringField(data, "payload_type") ?? stringField(payload, "type");
   const uiHint = stringField(data, "ui_hint");
   const prompt = stringField(data, "prompt") ?? stringField(payload, "prompt") ?? "Agent 请求你回应";
@@ -38,11 +38,11 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
   const [error, setError] = useState<string | null>(null);
 
   const submitPayload = async (responsePayload: Record<string, unknown>, label: string) => {
-    if (!sessionId || !requestId || isSubmitting) return;
+    if (!gateId || isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
     try {
-      await respondCompanionRequest(sessionId, requestId, responsePayload);
+      await respondCompanionRequest(gateId, responsePayload);
       setResponded(label);
     } catch (err) {
       setError(err instanceof Error ? err.message : "回应失败");
@@ -184,6 +184,7 @@ export function SessionCompanionRequestCard({ event, sessionId }: SessionCompani
       bodyExtra={bodyExtra}
       debugChips={[
         ...(requestId ? [`request: ${requestId.slice(0, 12)}`] : []),
+        ...(gateId && gateId !== requestId ? [`gate: ${gateId.slice(0, 12)}`] : []),
         ...(payloadType ? [`payload: ${payloadType}`] : []),
       ]}
     />

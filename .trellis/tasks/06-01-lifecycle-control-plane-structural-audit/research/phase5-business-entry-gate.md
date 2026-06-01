@@ -160,6 +160,12 @@
 - 前端测试建议：`pnpm --filter app-web test SessionCompanionRequestCard`，断言响应调用 gate-first service，不再需要 session id 作为业务主键。
 - 必须改的最小代码切片：`companion/tools.rs` parent/human wait path、`workflow/lifecycle_gate_service.rs` gate facade、`session/control.rs` 或新 gate control service、`routes/sessions.rs` 中 companion respond route、`executor.ts` 与 `SessionCompanionRequestCard`。
 
+**后续 slice 更新（2026-06-02）**
+
+- human request/respond 已迁到 gate-first：`CompanionGateControlService::respond` 以 `gate_id` 为命令入口，先 resolve `LifecycleGate`，再由 `CompanionGateNotificationDelivery` 注入 runtime notification。API 与前端改为 `/companion-gates/{gate_id}/respond`。
+- parent result return 已迁到同一 gate boundary：`CompanionRespondTool::try_complete_to_parent` 只提交 `CompleteCompanionChildResultCommand`，由 service 根据 child runtime session 解析 child frame、按 child-owned open gate 的 `correlation_id` resolve gate，再投递 parent/child runtime event。
+- 当前剩余风险收窄为 parent request 发起侧：pending action、hook evaluation 与 initial review notification 仍由 parent hook runtime/session 表达，尚未成为 `CompanionChannel` / gate owner 的 durable request truth。
+
 ### 4. Routine Reuse
 
 **原始现象**
@@ -237,7 +243,7 @@
 
 - P0-06 的 Story 缺写侧入口，风险是后续 UI 或 API 为了快而直接复制 `project_agents.rs` 的 route-local launch。
 - P1-19 的 active assignment cancel 已进入 SubjectExecution control boundary，Task projection 已区分 Cancelled/Failed；剩余风险是 open gate cancellation 尚未进入同一 transaction。
-- P1-20 的 Companion gate 只有部分路径是 durable truth，风险是 parent/human resume 的 truth 分裂在 hook runtime pending actions 和 session event。
+- P1-20 的 human respond 与 parent result return 已迁到 durable gate truth；剩余风险集中在 parent request 发起侧，pending action / hook evaluation 仍分裂在 hook runtime 和 session event。
 - P1-21 的 Routine reuse 依赖 parent_run_id 或 routine_execution history，风险是 Reuse 策略静默不复用，PerEntity 复用 stale run。
 - P1-22 的 Permission 已完成主要查询迁移，但 source session 仍被写入 effect frame runtime refs，风险是 provenance 与 effect owner 混合。
 

@@ -48,16 +48,7 @@ impl SessionRuntimeInner {
     }
 
     pub fn control_service(&self) -> super::super::control::SessionControlService {
-        let gate_repo = self
-            .lifecycle_gate_repo
-            .clone()
-            .expect("SessionRuntimeInner: lifecycle_gate_repo 未注入");
-        super::super::control::SessionControlService::new(
-            self.stores.clone(),
-            self.eventing_service(),
-            gate_repo,
-            self.connector.clone(),
-        )
+        super::super::control::SessionControlService::new(self.connector.clone())
     }
 
     pub fn launch_service(&self) -> super::super::launch::SessionLaunchService {

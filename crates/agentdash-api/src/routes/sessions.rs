@@ -18,19 +18,17 @@ use agentdash_application::session::{
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
-    CreateSessionForkRequest, DeleteSessionResponse, RejectToolCallResponse,
-    RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
-    SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
-    SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
-    SessionProjectionViewResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
+    DeleteSessionResponse, RejectToolCallResponse, RollbackSessionProjectionRequest,
+    SessionCommandStateResponse, SessionEventResponse, SessionEventsPageResponse,
+    SessionForkChildSessionResponse, SessionForkResponse, SessionLineageViewResponse,
+    SessionNdjsonEnvelope, SessionProjectionRollbackResponse, SessionProjectionViewResponse,
 };
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery,
-    RejectToolApprovalRequest, SessionEventsQuery, SessionExecutionStateResponse,
-    UpdateSessionMetaRequest,
+    ContextAuditEventDto, ContextAuditQuery, NdjsonStreamQuery, RejectToolApprovalRequest,
+    SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
 /// Session trace 权限检查 — 必须先解析到 AgentFrame，再通过 LifecycleAgent 所属项目确认权限。
@@ -105,10 +103,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
         .route(
             "/sessions/{id}/tool-approvals/{tool_call_id}/reject",
             axum::routing::post(reject_tool_call),
-        )
-        .route(
-            "/sessions/{id}/companion-requests/{request_id}/respond",
-            axum::routing::post(respond_companion_request),
         )
         .route(
             "/sessions/{id}/stream/ndjson",
@@ -632,33 +626,6 @@ pub async fn reject_tool_call(
         rejected: true,
         session_id,
         tool_call_id,
-    }))
-}
-
-pub async fn respond_companion_request(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path((session_id, request_id)): Path<(String, String)>,
-    Json(req): Json<CompanionRespondRequest>,
-) -> Result<Json<CompanionRespondResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    state
-        .services
-        .session_control
-        .respond_companion_request(&session_id, &request_id, req.payload)
-        .await
-        .map_err(ApiError::from)?;
-
-    Ok(Json(CompanionRespondResponse {
-        responded: true,
-        session_id,
-        request_id,
     }))
 }
 

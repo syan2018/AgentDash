@@ -123,7 +123,7 @@ P1-10 未关闭。当前系统已经有初版 `AgentPolicy` / `RuntimePolicy`，
 - API session construction 对 direct runtime session 使用 `Specific`，见 `crates/agentdash-api/src/bootstrap/session_construction_provider.rs:706` 到 `:731`。这是当前最接近“adapter callback 指定 trace”的正确形态。
 - Task cancel 后续已迁到 `CancelSubjectExecutionCommand`；`LatestAttached` 只作为 `RuntimeCancelDeliveryCommand` 的 explicit delivery selection policy。
 - Task context builder 用 `LatestAttached` 解析 session projection，见 `crates/agentdash-application/src/task/context_builder.rs:232` 到 `:238`。
-- Companion parent notification 用 `LatestAttached`，见 `crates/agentdash-application/src/companion/tools.rs:658` 到 `:668` 与 `:1367` 到 `:1377`。
+- Companion parent request initial notification 仍用 parent frame `LatestAttached` delivery；后续 parent result return 已迁入 `CompanionGateControlService`，由 delivery adapter 选择 parent/child runtime session。
 - Permission test 仍用 `LaunchPrimary` 验证 runtime ref carry-forward，见 `crates/agentdash-application/src/permission/service.rs:696` 到 `:704`。
 
 ### Remaining implicit / first selection

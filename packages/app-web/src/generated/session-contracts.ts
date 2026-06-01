@@ -8,8 +8,6 @@ export type ApproveToolCallResponse = { approved: boolean, sessionId: string, to
 
 export type CancelSessionResponse = { cancelled: boolean, sessionId: string, state: SessionCommandStateResponse, };
 
-export type CompanionRespondResponse = { responded: boolean, sessionId: string, requestId: string, };
-
 export type CreateSessionForkRequest = { title?: string, fork_point_ref?: SessionMessageRefDto, fork_point_compaction_id?: string, metadata_json?: JsonValue, };
 
 export type DeleteSessionResponse = { deleted: boolean, sessionId: string, };

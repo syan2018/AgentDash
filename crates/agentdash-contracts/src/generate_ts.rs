@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
+use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 use agentdash_contracts::core::{
     AgentBinding, AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
     BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
@@ -64,8 +65,8 @@ use agentdash_contracts::project_agent::{
     ProjectAgentSummary, UpdateProjectAgentRequest,
 };
 use agentdash_contracts::session::{
-    ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
-    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    ApproveToolCallResponse, CancelSessionResponse, CreateSessionForkRequest,
+    DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
     RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageRecordResponse, SessionLineageRelationKindDto, SessionLineageStatusDto,
@@ -191,6 +192,16 @@ fn main() {
     );
 
     write_domain(
+        &generated_dir.join("companion-contracts.ts"),
+        &[],
+        check,
+        |dir| {
+            export_all::<CompanionGateRespondRequest>(dir);
+            export_all::<CompanionGateRespondResponse>(dir);
+        },
+    );
+
+    write_domain(
         &generated_dir.join("session-contracts.ts"),
         &["import type { BackboneEnvelope } from \"./backbone-protocol\";"],
         check,
@@ -204,7 +215,6 @@ fn main() {
             export_all::<CancelSessionResponse>(dir);
             export_all::<ApproveToolCallResponse>(dir);
             export_all::<RejectToolCallResponse>(dir);
-            export_all::<CompanionRespondResponse>(dir);
             export_all::<SessionProjectionSourceRangeResponse>(dir);
             export_all::<SessionProjectionMessageRefResponse>(dir);
             export_all::<SessionProjectionSegmentProvenanceResponse>(dir);

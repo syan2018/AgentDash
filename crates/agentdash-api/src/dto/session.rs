@@ -36,11 +36,6 @@ pub struct RejectToolApprovalRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CompanionRespondRequest {
-    pub payload: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ContextAuditQuery {
     pub since_ms: Option<u64>,
     pub scope: Option<String>,

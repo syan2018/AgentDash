@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use super::{
+    CompanionGateControlService, CompleteCompanionChildResultCommand, NoopCompanionGateDelivery,
+    SessionEventingCompanionGateDelivery, build_companion_event_notification,
+};
 use crate::vfs::tools::{SessionToolServices, SharedSessionToolServicesHandle};
 use crate::workflow::dispatch_service::LifecycleDispatchService;
 use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
@@ -801,10 +805,13 @@ impl CompanionRequestTool {
             let agent_id = self.current_agent_id.ok_or_else(|| {
                 AgentToolError::ExecutionFailed("缺少 agent_id，无法创建等待 gate".to_string())
             })?;
+            let frame_id = self.current_frame_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed("缺少 frame_id，无法创建等待 gate".to_string())
+            })?;
             let gate = agentdash_domain::workflow::LifecycleGate::open(
                 run_id,
                 Some(agent_id),
-                None,
+                Some(frame_id),
                 "companion_wait",
                 &request_id,
                 Some(gate_meta),
@@ -828,6 +835,7 @@ impl CompanionRequestTool {
                 prompt.to_string(),
                 serde_json::json!({
                     "request_id": request_id,
+                    "gate_id": request_id,
                     "prompt": prompt,
                     "options": options,
                     "wait": true,
@@ -901,6 +909,44 @@ impl CompanionRequestTool {
                 })),
             })
         } else {
+            let gate_meta = serde_json::json!({
+                "session_id": current_session_id,
+                "turn_id": self.current_turn_id,
+                "request_type": payload_type,
+            });
+            let run_id = self.current_run_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "缺少 lifecycle run_id，无法创建非阻塞请求 gate".to_string(),
+                )
+            })?;
+            let agent_id = self.current_agent_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "缺少 agent_id，无法创建非阻塞请求 gate".to_string(),
+                )
+            })?;
+            let frame_id = self.current_frame_id.ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "缺少 frame_id，无法创建非阻塞请求 gate".to_string(),
+                )
+            })?;
+            let gate = agentdash_domain::workflow::LifecycleGate::open(
+                run_id,
+                Some(agent_id),
+                Some(frame_id),
+                "companion_human_request",
+                &request_id,
+                Some(gate_meta),
+            );
+            let gate_id = gate.id;
+            self.repos
+                .lifecycle_gate_repo
+                .create(&gate)
+                .await
+                .map_err(|e| {
+                    AgentToolError::ExecutionFailed(format!("创建非阻塞请求 gate 失败: {e}"))
+                })?;
+            let request_id = gate_id.to_string();
+
             if let Some(session_services) = self.session_services_handle.get().await {
                 let notification = build_companion_event_notification(
                     &current_session_id,
@@ -909,6 +955,7 @@ impl CompanionRequestTool {
                     prompt.to_string(),
                     serde_json::json!({
                         "request_id": request_id,
+                        "gate_id": request_id,
                         "prompt": prompt,
                         "options": options,
                         "wait": false,
@@ -1093,7 +1140,7 @@ impl AgentTool for CompanionRespondTool {
 
         // 两个独立副作用，不互斥：
         // 1. resolve 当前 session 的 pending action（hook runtime → 解锁 before_stop gate）
-        // 2. 回传结果给父 session（companion context → companion_result 运行期事件）
+        // 2. 通过 child-owned LifecycleGate 回传结果给 parent agent
         // 哪些命中由上下文决定，可以同时命中多个。
 
         let resolved_action = self
@@ -1149,7 +1196,7 @@ impl AgentTool for CompanionRespondTool {
 }
 
 impl CompanionRespondTool {
-    /// 查找当前 child agent 的 parent 持有的 open gate correlation_id。
+    /// 查找当前 child agent 自己持有的 open interaction gate correlation_id。
     async fn current_companion_dispatch_id(
         &self,
         current_session_id: &str,
@@ -1163,23 +1210,10 @@ impl CompanionRespondTool {
             Ok(Some(frame)) => frame,
             _ => return Ok(None),
         };
-        let lineage = match self
-            .repos
-            .agent_lineage_repo
-            .find_parent(child_frame.agent_id)
-            .await
-        {
-            Ok(Some(l)) => l,
-            _ => return Ok(None),
-        };
-        let parent_agent_id = match lineage.parent_agent_id {
-            Some(id) => id,
-            None => return Ok(None),
-        };
         let gates = self
             .repos
             .lifecycle_gate_repo
-            .list_open_for_agent(parent_agent_id)
+            .list_open_for_agent(child_frame.agent_id)
             .await
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
         Ok(gates.into_iter().next().map(|g| g.correlation_id))
@@ -1270,145 +1304,62 @@ impl CompanionRespondTool {
         }))
     }
 
-    /// 路径 3：通过 resolve LifecycleGate 回传结果给父 agent。
+    /// 路径 3：通过 child-owned LifecycleGate 回传结果给父 agent。
     ///
-    /// 查找 request_id 对应的 open gate（correlation_id 匹配），
-    /// resolve gate 并将 payload 写入 gate resolved payload，
-    /// 从而唤醒父 agent 的 poll_gate_until_resolved 循环。
+    /// Tool 只把当前 runtime session 投影成 command；gate 查找、resolve 与
+    /// runtime notification delivery 统一交给 `CompanionGateControlService`。
     async fn try_complete_to_parent(
         &self,
         request_id: &str,
         current_session_id: &str,
         payload: &serde_json::Value,
     ) -> Result<Option<AgentToolResult>, AgentToolError> {
-        // 通过当前 session 反查 child agent 的 lifecycle anchor
-        let child_frame = match self
-            .repos
-            .agent_frame_repo
-            .find_by_runtime_session(current_session_id)
+        let delivery = self
+            .session_services_handle
+            .get()
             .await
-        {
-            Ok(Some(frame)) => frame,
-            _ => return Ok(None),
-        };
-
-        // 从 AgentLineage 找到 parent agent
-        let lineage = match self
-            .repos
-            .agent_lineage_repo
-            .find_parent(child_frame.agent_id)
+            .map(|services| {
+                Arc::new(SessionEventingCompanionGateDelivery::new(services.eventing))
+                    as Arc<dyn super::gate_control::CompanionGateNotificationDelivery>
+            })
+            .unwrap_or_else(|| Arc::new(NoopCompanionGateDelivery));
+        let service = CompanionGateControlService::new(
+            self.repos.lifecycle_gate_repo.clone(),
+            self.repos.agent_frame_repo.clone(),
+            self.repos.agent_lineage_repo.clone(),
+            delivery,
+        );
+        let Some(result) = service
+            .complete_child_result_to_parent(CompleteCompanionChildResultCommand {
+                request_id: request_id.to_string(),
+                child_runtime_session_id: current_session_id.to_string(),
+                resolved_turn_id: self.current_turn_id.clone(),
+                payload: payload.clone(),
+            })
             .await
-        {
-            Ok(Some(l)) => l,
-            _ => return Ok(None),
+            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?
+        else {
+            return Ok(None);
         };
-
-        let parent_agent_id = match lineage.parent_agent_id {
-            Some(id) => id,
-            None => return Ok(None),
-        };
-
-        // 查找 parent agent 的 open gates 中匹配 correlation_id == request_id 的那个
-        let gates = self
-            .repos
-            .lifecycle_gate_repo
-            .list_open_for_agent(parent_agent_id)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(format!("gate 查询失败: {e}")))?;
-
-        let mut target_gate = None;
-        for gate in gates {
-            if gate.correlation_id == request_id {
-                target_gate = Some(gate);
-                break;
-            }
-        }
-        let mut gate = match target_gate {
-            Some(g) => g,
-            None => return Ok(None),
-        };
-
-        // Validate response payload
-        let registry = super::payload_types::PayloadTypeRegistry::with_builtins();
-        if let Some(error) = registry.validate_response(payload, None) {
-            return Err(AgentToolError::InvalidArguments(error));
-        }
-
-        let summary = payload
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        let status =
-            normalize_companion_result_status(payload.get("status").and_then(|v| v.as_str()))?;
-
-        // Resolve gate with result payload
-        let resolution_payload = serde_json::json!({
-            "status": status,
-            "summary": summary,
-            "findings": payload.get("findings"),
-            "follow_ups": payload.get("follow_ups"),
-            "artifact_refs": payload.get("artifact_refs"),
-            "child_agent_id": child_frame.agent_id.to_string(),
-            "resolved_turn_id": self.current_turn_id,
-        });
-        gate.payload_json = Some(resolution_payload.clone());
-        gate.resolve(format!("child_agent:{}", child_frame.agent_id));
-        self.repos
-            .lifecycle_gate_repo
-            .update(&gate)
-            .await
-            .map_err(|e| AgentToolError::ExecutionFailed(format!("gate resolve 失败: {e}")))?;
-
-        // Emit notification to parent session (if resolvable)
-        if let Some(session_services) = self.session_services_handle.get().await {
-            if let Ok(Some(parent_frame)) = self
-                .repos
-                .agent_frame_repo
-                .get_current(parent_agent_id)
-                .await
-            {
-                let parent_session_ref = parent_frame
-                    .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached);
-                if let Some(ref parent_sid) = parent_session_ref {
-                    let parent_notification = build_companion_event_notification(
-                        parent_sid,
-                        &self.current_turn_id,
-                        "companion_result_available",
-                        "Companion child agent 已回传结果 (gate resolved)".to_string(),
-                        resolution_payload.clone(),
-                    );
-                    let _ = session_services
-                        .eventing
-                        .inject_notification(parent_sid, parent_notification)
-                        .await;
-                }
-            }
-
-            let child_notification = build_companion_event_notification(
-                current_session_id,
-                &self.current_turn_id,
-                "companion_result_returned",
-                "已通过 LifecycleGate 回传结果到 parent agent".to_string(),
-                resolution_payload.clone(),
-            );
-            let _ = session_services
-                .eventing
-                .inject_notification(current_session_id, child_notification)
-                .await;
-        }
+        let status = result
+            .payload
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
 
         Ok(Some(AgentToolResult {
             content: vec![ContentPart::text(format!(
                 "已回应 companion 请求（resolve LifecycleGate）。\n- gate_id: {}\n- parent_agent_id: {}\n- status: {}",
-                gate.id, parent_agent_id, status
+                result.gate_id, result.parent_agent_id, status
             ))],
             is_error: false,
             details: Some(serde_json::json!({
                 "mode": "resolve_gate",
-                "gate_id": gate.id.to_string(),
-                "parent_agent_id": parent_agent_id.to_string(),
-                "payload": resolution_payload,
+                "gate_id": result.gate_id.to_string(),
+                "parent_agent_id": result.parent_agent_id.to_string(),
+                "parent_delivery_runtime_session_id": result.parent_delivery_runtime_session_id,
+                "child_delivery_runtime_session_id": result.child_delivery_runtime_session_id,
+                "payload": result.payload,
             })),
         }))
     }
@@ -2027,57 +1978,6 @@ fn build_companion_owner_summary(snapshot: &agentdash_spi::SessionHookSnapshot) 
     Some(format!("## 当前归属\n{}", lines.join("\n")))
 }
 
-fn build_companion_event_notification(
-    session_id: &str,
-    turn_id: &str,
-    event_type: &str,
-    message: String,
-    data: serde_json::Value,
-) -> BackboneEnvelope {
-    let source = SourceInfo {
-        connector_id: "agentdash-companion".to_string(),
-        connector_type: "runtime_tool".to_string(),
-        executor_id: None,
-    };
-
-    BackboneEnvelope::new(
-        BackboneEvent::Platform(PlatformEvent::SessionMetaUpdate {
-            key: event_type.to_string(),
-            value: serde_json::json!({
-                "message": message,
-                "data": data,
-            }),
-        }),
-        session_id,
-        source,
-    )
-    .with_trace(TraceInfo {
-        turn_id: Some(turn_id.to_string()),
-        entry_index: None,
-    })
-}
-
-fn normalize_companion_result_status(status: Option<&str>) -> Result<&str, AgentToolError> {
-    match status.unwrap_or("completed").trim() {
-        "" => Ok("completed"),
-        "completed" => Ok("completed"),
-        "blocked" => Ok("blocked"),
-        "needs_follow_up" => Ok("needs_follow_up"),
-        other => Err(AgentToolError::InvalidArguments(format!(
-            "status 仅支持 completed / blocked / needs_follow_up，收到 `{other}`"
-        ))),
-    }
-}
-
-fn companion_slice_mode_key(mode: CompanionSliceMode) -> &'static str {
-    match mode {
-        CompanionSliceMode::Compact => "compact",
-        CompanionSliceMode::Full => "full",
-        CompanionSliceMode::WorkflowOnly => "workflow_only",
-        CompanionSliceMode::ConstraintsOnly => "constraints_only",
-    }
-}
-
 fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
     match mode {
         CompanionAdoptionMode::Suggestion => at::SUGGESTION,
@@ -2136,8 +2036,8 @@ fn companion_project_id_for_owner(
 #[cfg(test)]
 mod companion_tests {
     use super::{
-        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionRespondTool,
-        CompanionSliceMode, build_companion_dispatch_prompt, build_companion_dispatch_slice,
+        CompanionAdoptionMode, CompanionDispatchPlan, CompanionDispatchSlice, CompanionSliceMode,
+        build_companion_dispatch_prompt, build_companion_dispatch_slice,
         build_companion_execution_slice, build_platform_capability_grant_payload,
         companion_owner_candidates,
     };

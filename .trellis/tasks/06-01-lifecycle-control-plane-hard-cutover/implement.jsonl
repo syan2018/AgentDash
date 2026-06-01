@@ -1,0 +1,10 @@
+{"path":".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/semantic-inventory.md","reason":"Original lifecycle / workflow / agent / runtime semantic model."}
+{"path":".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/abstraction-boundary-and-coupling-review.md","reason":"Boundary rules for avoiding pass-through abstractions and preserving fact ownership."}
+{"path":".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md","reason":"Original phased refactor target; this hard-cut task closes remaining gaps."}
+{"path":".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/module-gap-analysis.md","reason":"Known repeated fact clusters and migration owners."}
+{"path":"crates/agentdash-application/src/workflow/dispatch_service.rs","reason":"RuntimePolicy, ExecutionDispatchResult, frame/ref ownership gaps."}
+{"path":"crates/agentdash-application/src/workflow/scheduler.rs","reason":"AgentAssignment creation and nil UUID placeholder risk."}
+{"path":"crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs","reason":"ActivityExecutionClaim executor_run_ref query must match tagged RuntimeSession JSON."}
+{"path":"crates/agentdash-infrastructure/migrations","reason":"Clean baseline and lifecycle_gates / run-link hard cleanup."}
+{"path":"crates/agentdash-contracts/src","reason":"Target DTO generation and old public contract deletion."}
+{"path":"packages/app-web/src","reason":"Frontend runtime model cutover from session tree to lifecycle views."}

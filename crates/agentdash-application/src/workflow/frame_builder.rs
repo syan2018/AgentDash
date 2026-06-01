@@ -12,10 +12,53 @@
 
 use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentProcedureRef};
-use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};
+use agentdash_spi::{AgentConfig, CapabilityState, SessionContextBundle, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
-use crate::session::capability_state::capability_state_to_frame_surfaces;
+use crate::session::capability_state::{
+    capability_state_to_frame_surfaces, compose_vfs_with_overlay_and_directives,
+};
+
+use super::step_activation::StepActivation;
+
+pub(crate) struct AgentFrameSurfaceInput<'a> {
+    pub capability_state: Option<&'a CapabilityState>,
+    pub vfs: Option<&'a Vfs>,
+    pub mcp_servers: &'a [SessionMcpServer],
+    pub execution_profile: Option<&'a AgentConfig>,
+    pub context_bundle: Option<&'a SessionContextBundle>,
+}
+
+pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
+    pub activation: &'a StepActivation,
+    pub base_vfs: Option<&'a Vfs>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentFrameActivationSurface {
+    pub capability_state: CapabilityState,
+    pub vfs: Vfs,
+    pub mcp_servers: Vec<SessionMcpServer>,
+}
+
+pub(crate) fn build_lifecycle_activation_surface(
+    input: AgentFrameActivationSurfaceInput<'_>,
+) -> AgentFrameActivationSurface {
+    let vfs = compose_vfs_with_overlay_and_directives(
+        input.base_vfs,
+        &input.activation.lifecycle_vfs,
+        &input.activation.mount_directives,
+    );
+    let mut capability_state = input.activation.capability_state.clone();
+    capability_state.tool.mcp_servers = input.activation.mcp_servers.clone();
+    capability_state.vfs.active = Some(vfs.clone());
+
+    AgentFrameActivationSurface {
+        capability_state,
+        vfs,
+        mcp_servers: input.activation.mcp_servers.clone(),
+    }
+}
 
 /// AgentFrame 的 builder，收束所有 runtime surface 输入为单次 revision。
 ///
@@ -125,6 +168,35 @@ impl AgentFrameBuilder {
         self
     }
 
+    pub fn with_context_bundle_summary(mut self, bundle: &SessionContextBundle) -> Self {
+        self.context_slice = Some(serde_json::json!({
+            "bundle_id": bundle.bundle_id,
+            "session_id": bundle.session_id,
+            "phase_tag": bundle.phase_tag,
+            "fragment_count": bundle.bootstrap_fragments.len(),
+        }));
+        self
+    }
+
+    pub(crate) fn with_surface_input(mut self, input: AgentFrameSurfaceInput<'_>) -> Self {
+        if let Some(state) = input.capability_state {
+            self = self.with_capability_state(state);
+        }
+        if let Some(vfs) = input.vfs {
+            self = self.with_vfs_typed(vfs);
+        }
+        if !input.mcp_servers.is_empty() {
+            self = self.with_mcp_servers(input.mcp_servers);
+        }
+        if let Some(config) = input.execution_profile {
+            self = self.with_execution_profile(config);
+        }
+        if let Some(bundle) = input.context_bundle {
+            self = self.with_context_bundle_summary(bundle);
+        }
+        self
+    }
+
     pub fn with_runtime_session(mut self, session_id: impl Into<String>) -> Self {
         self.runtime_session_refs.push(session_id.into());
         self
@@ -226,12 +298,29 @@ impl AgentFrameBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agentdash_domain::workflow::RUNTIME_SESSION_REF_KIND;
-    use std::sync::Mutex;
+    use agentdash_domain::common::{Mount, MountCapability};
+    use agentdash_domain::workflow::{
+        MountDirective, RUNTIME_SESSION_REF_KIND, ToolCapabilityDirective,
+    };
+    use agentdash_spi::{McpTransportConfig, ToolCluster};
+    use std::{collections::BTreeSet, sync::Mutex};
 
     #[derive(Default)]
     struct InMemoryFrameRepo {
         items: Mutex<Vec<AgentFrame>>,
+    }
+
+    fn mount(id: &str, provider: &str) -> Mount {
+        Mount {
+            id: id.to_string(),
+            provider: provider.to_string(),
+            backend_id: "backend-a".to_string(),
+            root_ref: format!("{provider}://{id}"),
+            capabilities: vec![MountCapability::Read, MountCapability::List],
+            default_write: false,
+            display_name: id.to_string(),
+            metadata: serde_json::Value::Null,
+        }
     }
 
     #[async_trait::async_trait]
@@ -410,5 +499,110 @@ mod tests {
             .expect("build");
 
         assert_eq!(frame.procedure_id, Some(proc_id));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_activation_surface_outputs_single_coherent_frame_revision() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+        let proc_id = Uuid::new_v4();
+        let graph_instance_id = Uuid::new_v4();
+        let activation = StepActivation {
+            capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
+            mcp_servers: vec![SessionMcpServer {
+                name: "workflow-tools".to_string(),
+                transport: McpTransportConfig::Http {
+                    url: "http://localhost/mcp".to_string(),
+                    headers: Vec::new(),
+                },
+                uses_relay: false,
+            }],
+            tool_directives: vec![ToolCapabilityDirective::add_simple("file_read")],
+            capability_keys: BTreeSet::from(["file_read".to_string()]),
+            kickoff_prompt: Default::default(),
+            lifecycle_mount: mount("lifecycle", "lifecycle_vfs"),
+            lifecycle_vfs: Vfs {
+                mounts: vec![mount("lifecycle", "lifecycle_vfs")],
+                default_mount_id: None,
+                source_project_id: None,
+                source_story_id: None,
+                links: Vec::new(),
+            },
+            mount_directives: Vec::<MountDirective>::new(),
+        };
+        let base_vfs = Vfs {
+            mounts: vec![mount("workspace", "relay_fs")],
+            default_mount_id: Some("workspace".to_string()),
+            source_project_id: None,
+            source_story_id: None,
+            links: Vec::new(),
+        };
+        let context_bundle = SessionContextBundle::new(Uuid::new_v4(), "lifecycle_node");
+        let executor_config = AgentConfig::new("PI_AGENT");
+        let surface = build_lifecycle_activation_surface(AgentFrameActivationSurfaceInput {
+            activation: &activation,
+            base_vfs: Some(&base_vfs),
+        });
+
+        let frame = AgentFrameBuilder::new(agent_id)
+            .with_graph_instance(graph_instance_id, "implement")
+            .with_procedure(AgentProcedureRef::ById(proc_id))
+            .with_runtime_session("runtime-1")
+            .with_surface_input(AgentFrameSurfaceInput {
+                capability_state: Some(&surface.capability_state),
+                vfs: Some(&surface.vfs),
+                mcp_servers: &surface.mcp_servers,
+                execution_profile: Some(&executor_config),
+                context_bundle: Some(&context_bundle),
+            })
+            .build(&repo)
+            .await
+            .expect("frame");
+
+        assert_eq!(frame.procedure_id, Some(proc_id));
+        assert_eq!(frame.graph_instance_id, Some(graph_instance_id));
+        assert_eq!(frame.activity_key.as_deref(), Some("implement"));
+        assert_eq!(frame.runtime_session_ids(), vec!["runtime-1".to_string()]);
+        assert_eq!(
+            frame
+                .execution_profile_json
+                .as_ref()
+                .and_then(|value| value.get("executor"))
+                .and_then(serde_json::Value::as_str),
+            Some("PI_AGENT")
+        );
+        assert_eq!(
+            frame
+                .context_slice_json
+                .as_ref()
+                .and_then(|value| value.get("phase_tag"))
+                .and_then(serde_json::Value::as_str),
+            Some("lifecycle_node")
+        );
+
+        let vfs_mount_ids = frame
+            .vfs_surface_json
+            .as_ref()
+            .and_then(|value| value.get("mounts"))
+            .and_then(serde_json::Value::as_array)
+            .expect("vfs mounts")
+            .iter()
+            .filter_map(|mount| mount.get("id").and_then(serde_json::Value::as_str))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(vfs_mount_ids, BTreeSet::from(["workspace", "lifecycle"]));
+
+        let mcp_names = frame
+            .mcp_surface_json
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("mcp surface")
+            .iter()
+            .filter_map(|server| server.get("name").and_then(serde_json::Value::as_str))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(mcp_names, BTreeSet::from(["workflow-tools"]));
+        assert!(
+            frame.effective_capability_json.is_some(),
+            "capability surface should be written by the same frame revision"
+        );
     }
 }

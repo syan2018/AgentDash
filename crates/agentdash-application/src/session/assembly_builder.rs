@@ -313,13 +313,15 @@ impl SessionAssemblyBuilder {
         activation: &crate::workflow::StepActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
-        self.vfs = Some(compose_vfs_with_overlay_and_directives(
-            self.vfs.as_ref(),
-            &activation.lifecycle_vfs,
-            &activation.mount_directives,
-        ));
-        self.capability_state = Some(activation.capability_state.clone());
-        self.mcp_servers = activation.mcp_servers.clone();
+        let surface = crate::workflow::frame_builder::build_lifecycle_activation_surface(
+            crate::workflow::frame_builder::AgentFrameActivationSurfaceInput {
+                activation,
+                base_vfs: self.vfs.as_ref(),
+            },
+        );
+        self.vfs = Some(surface.vfs);
+        self.capability_state = Some(surface.capability_state);
+        self.mcp_servers = surface.mcp_servers;
         self.prompt_blocks = Some(vec![serde_json::json!({
             "type": "text",
             "text": "请执行当前 lifecycle 节点。",
@@ -375,32 +377,20 @@ pub(super) fn slice_companion_bundle(
 /// frame builder 接收 surface 数据（capability/VFS/MCP），
 /// 返回的 launch extras 包含 context bundle / prompt / executor config 等 launch-only 数据。
 pub(super) fn project_assembly_to_frame(
-    mut frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
+    frame_builder: crate::workflow::frame_builder::AgentFrameBuilder,
     prepared: SessionAssemblyBuilder,
 ) -> (
     crate::workflow::frame_builder::AgentFrameBuilder,
     AssemblyLaunchExtras,
 ) {
-    if let Some(ref state) = prepared.capability_state {
-        frame_builder = frame_builder.with_capability_state(state);
-    }
-    if let Some(ref vfs) = prepared.vfs {
-        frame_builder = frame_builder.with_vfs_typed(vfs);
-    }
-    if !prepared.mcp_servers.is_empty() {
-        frame_builder = frame_builder.with_mcp_servers(&prepared.mcp_servers);
-    }
-    if let Some(ref config) = prepared.executor_config {
-        frame_builder = frame_builder.with_execution_profile(config);
-    }
-    if let Some(ref bundle) = prepared.context_bundle {
-        frame_builder = frame_builder.with_context(serde_json::json!({
-            "bundle_id": bundle.bundle_id,
-            "session_id": bundle.session_id,
-            "phase_tag": bundle.phase_tag,
-            "fragment_count": bundle.bootstrap_fragments.len(),
-        }));
-    }
+    let frame_builder =
+        frame_builder.with_surface_input(crate::workflow::frame_builder::AgentFrameSurfaceInput {
+            capability_state: prepared.capability_state.as_ref(),
+            vfs: prepared.vfs.as_ref(),
+            mcp_servers: &prepared.mcp_servers,
+            execution_profile: prepared.executor_config.as_ref(),
+            context_bundle: prepared.context_bundle.as_ref(),
+        });
     let extras = AssemblyLaunchExtras {
         context_bundle: prepared.context_bundle,
         prompt_blocks: prepared.prompt_blocks,

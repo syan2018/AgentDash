@@ -58,7 +58,7 @@
 | --- | --- | --- | --- |
 | Phase 4: AgentFrame transition 与 RuntimeDeliveryCommand 分离 | pass | `AgentFrameRuntimeTarget` 显式包含 `frame_id` 与 `delivery_runtime_session_id`（`crates/agentdash-application/src/session/types.rs:58`），`RuntimeDeliveryCommand` 只记录 delivery target frame/transition（`crates/agentdash-spi/src/session_persistence.rs:426`），live transition 同时写 frame transition 与 runtime delivery outbox（`crates/agentdash-application/src/session/hub/runtime_context_transition.rs:195`）。 | 否。核心数据模型已把 frame effect 与 runtime delivery 拆开。 |
 | Phase 4: StepActivation 纳入 AgentFrame surface owner / AgentFrameBuilder | fail | `StepActivationInput`/`StepActivation` 仍是 workflow 层独立 DTO（`crates/agentdash-application/src/workflow/step_activation.rs:44`, `crates/agentdash-application/src/workflow/step_activation.rs:91`），assembler 直接消费 activation（`crates/agentdash-application/src/session/assembler.rs:1377`, `crates/agentdash-application/src/session/assembler.rs:1600`），companion skill projection 直接改 `activation.lifecycle_vfs`（`crates/agentdash-application/src/companion/skill_projection.rs:9`, `crates/agentdash-application/src/companion/skill_projection.rs:50`）。 | 是。procedure/context/capability/VFS/MCP/runtime refs 的同源装配还不是一个封装内的 frame surface 阶段，StepActivation 仍可被多个上层 owner 拼装。 |
-| Phase 4: AgentFrameBuilder 覆盖 StepActivation 同源 surface 测试 | partial | builder 已覆盖 capability/context、revision、runtime refs、carry-forward 与 procedure ref 等局部测试（`crates/agentdash-application/src/workflow/frame_builder.rs:292`, `crates/agentdash-application/src/workflow/frame_builder.rs:312`, `crates/agentdash-application/src/workflow/frame_builder.rs:332`, `crates/agentdash-application/src/workflow/frame_builder.rs:354`, `crates/agentdash-application/src/workflow/frame_builder.rs:400`），但没有覆盖一次 activation 输入同时产出 procedure/context/capability/VFS/MCP/runtime refs 的同源 transition。 | 部分是。测试缺口本身不是模型耦合，但缺少同源 surface 断言会继续允许 StepActivation 外散。 |
+| Phase 4: AgentFrameBuilder 覆盖 StepActivation 同源 surface 测试 | pass | `AgentFrameBuilder` 通过 `AgentFrameSurfaceInput` 统一吸收 capability/VFS/MCP/context/execution profile surface，`build_lifecycle_activation_surface` 负责 lifecycle activation surface 归一化；`lifecycle_activation_surface_outputs_single_coherent_frame_revision` 覆盖一次 activation surface 同时产出 procedure/context/capability/VFS/MCP/runtime refs/activity scope。 | 否。测试 gate 已闭合；剩余耦合在 StepActivation live apply、companion projection 与 ContinueRoot 入口，不在同源 frame revision 断言本身。 |
 | Phase 4: hook snapshot/refresh/evaluate 以 AgentFrame target 为 primary target | partial | SPI 已有 `HookControlTarget` 与 `RuntimeAdapterProvenance`（`crates/agentdash-spi/src/hooks/mod.rs:542`, `crates/agentdash-spi/src/hooks/mod.rs:552`），frame query 已存在（`crates/agentdash-spi/src/hooks/mod.rs:576`），`FrameHookRuntime` 会把 session-shaped query 转成 frame target（`crates/agentdash-application/src/workflow/frame_hook_runtime.rs:155`, `crates/agentdash-application/src/workflow/frame_hook_runtime.rs:272`, `crates/agentdash-application/src/workflow/frame_hook_runtime.rs:316`）。但 SPI/session facade 仍保留 `SessionHookSnapshotQuery`/`SessionHookRefreshQuery`/`HookEvaluationQuery`（`crates/agentdash-spi/src/hooks/mod.rs:612`, `crates/agentdash-spi/src/hooks/mod.rs:718`），production provider 的 frame evaluate 仍回落到 session-shaped `HookEvaluationQuery`（`crates/agentdash-application/src/hooks/provider.rs:281`），hub 入口仍 `ensure_hook_runtime(session_id)`（`crates/agentdash-application/src/session/hub/hook_dispatch.rs:178`）。 | 是。hook control target 已建好，但调用入口仍把 runtime session 当作寻找 hook truth 的主键。 |
 | Phase 4: capability live update 以 AgentFrame target 为 primary target | partial | core primitive `replace_current_capability_state(AgentFrameRuntimeTarget, state)` 会校验 delivery session 属于 target frame 并写 AgentFrame revision（`crates/agentdash-application/src/session/hub/tool_builder.rs:101`, `crates/agentdash-application/src/session/hub/tool_builder.rs:118`, `crates/agentdash-application/src/session/hub/tool_builder.rs:154`）。但 StepActivation live apply 从 `hook_runtime.session_id()` 解析 frame 与 capability state（`crates/agentdash-application/src/workflow/step_activation.rs:289`, `crates/agentdash-application/src/workflow/step_activation.rs:303`），canvas 同步也从 raw `session_id` 获取 cap state/hook runtime/frame（`crates/agentdash-application/src/canvas/tools.rs:585`, `crates/agentdash-application/src/canvas/tools.rs:607`）。 | 是。封装的写入目标已正确，但上层仍用 runtime session 反推 frame/capability target。 |
 | Phase 4: RuntimeSession 多引用选择策略 | pass | domain 暴露 `RuntimeSessionSelectionPolicy::{Specific, LaunchPrimary, LatestAttached}`（`crates/agentdash-domain/src/workflow/agent_frame.rs:8`），`select_runtime_session_id` 必须显式传 policy（`crates/agentdash-domain/src/workflow/agent_frame.rs:135`），runtime launch 也从 frame + policy 选择 runtime（`crates/agentdash-application/src/workflow/runtime_launch.rs:1`, `crates/agentdash-application/src/workflow/runtime_launch.rs:89`）。 | 否。选择入口已从“随手拿第一个 session”转为显式策略；剩余风险是 `LatestAttached` 仍是顺序策略，不是业务 owner。 |
@@ -187,7 +187,7 @@
 ## Caveats / Not Found
 
 - `python ./.trellis/scripts/task.py current --source` 返回当前无 active task；本次按用户显式给出的 task path 写入 research 文档。
-- 未找到 `LifecycleAgentReuseResolver` 或等价命名封装。
+- 修复前未找到 `LifecycleAgentReuseResolver` 或等价命名封装；后续 post-fix update 已记录 Routine reuse slice。
 - 未找到 Story root launch 的写路径；当前 `story_runs` API 是 `SubjectExecutionView` 读取投影。
 - 本审计未运行测试，也未修改任何代码/规格文件；结论来自静态阅读与 targeted search。
 
@@ -205,4 +205,18 @@
 - `cargo test -p agentdash-application routine::reuse_resolver --lib -- --format terse`
 - `cargo test -p agentdash-application routine::dispatch --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo check -p agentdash-application`
+
+## Post-Fix Update: 2026-06-02 AgentFrame Surface Projection
+
+本文件前文记录的是修复前静态审计结果；随后已完成 AgentFrameBuilder 同源 surface gate：
+
+- `AgentFrameSurfaceInput` 已新增为 assembly -> AgentFrame revision 的投影边界，session assembly 不再逐列拼写 capability/VFS/MCP/context/execution profile surface。
+- `build_lifecycle_activation_surface` 已新增为 lifecycle activation -> frame surface 的归一化 stage，集中合并 base VFS、activation lifecycle VFS、mount directives、MCP servers 与 capability state。
+- `lifecycle_activation_surface_outputs_single_coherent_frame_revision` 证明一次 activation surface 能在同一 AgentFrame revision 中同时写入 procedure、context、capability、VFS/MCP、runtime refs 与 graph activity scope。
+- 因此表格中的「Phase 4: AgentFrameBuilder 覆盖 StepActivation 同源 surface 测试」已从 partial 更新为 pass；「Phase 4: StepActivation 纳入 AgentFrame surface owner / AgentFrameBuilder」仍保持 fail/partial，因为 live apply、companion projection 与 ContinueRoot 仍未完全收口。
+
+已验证：
+
+- `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
 - `cargo check -p agentdash-application`

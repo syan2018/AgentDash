@@ -117,7 +117,7 @@
 
 ### Gate
 
-- [ ] `AgentFrameBuilder` 测试覆盖 procedure、context、capability、VFS/MCP、runtime refs 的同源 frame revision 输出。
+- [x] `AgentFrameBuilder` 测试覆盖 procedure、context、capability、VFS/MCP、runtime refs 的同源 frame revision 输出。
 - [x] Runtime command 表或接口只表达 delivery；frame transition 有独立事实源或明确 repository。
 - [ ] Hook/capability control command 的 primary target 是 agent/frame/assignment，只有 runtime adapter 接收 raw session id。
 - [ ] Static gate：`rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \\{|ensure_hook_runtime\\(|get_hook_runtime\\(|resolve_runtime_session_frame_id\\(" crates/agentdash-application/src` 只允许命中 runtime adapter、tests 或显式 provenance/trace sink。
@@ -126,6 +126,21 @@
 - [ ] Companion gate：companion parent result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace payload。
 - [ ] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
 - [x] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
+
+### 落地记录
+
+2026-06-02 的 AgentFrame surface slice 已关闭同源 frame revision 输出 gate，但 Phase 4 整体仍因 Hook/capability target、`session_id` provenance 与 ContinueRoot policy split 保持 partial：
+
+- `AgentFrameBuilder` 新增 `AgentFrameSurfaceInput`，由 frame builder 模块统一吸收 capability state、VFS、MCP servers、execution profile 与 context bundle summary；`SessionAssemblyBuilder::project_assembly_to_frame` 不再逐列拼写 AgentFrame surface。
+- `build_lifecycle_activation_surface` 成为 lifecycle `StepActivation` → frame surface 的封装边界，负责把 base VFS、activation lifecycle VFS、mount directives、MCP servers 与 capability state 归一化成同一份 frame-owned surface。
+- `SessionAssemblyBuilder::apply_lifecycle_activation` 只消费该 frame-owned surface，避免在 session assembly 层复制 capability/VFS/MCP 归一化规则。
+- `workflow::frame_builder` 单测新增同源 revision gate，证明同一次 activation surface 能在同一 AgentFrame revision 中同时落下 procedure、context、capability、VFS/MCP、runtime refs 与 graph activity scope。
+- 该 slice 不关闭「将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段」主项，因为 `StepActivation::apply_to_running_session`、companion skill projection 和 ContinueRoot 仍在 builder 外部消费 activation。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
+- `cargo check -p agentdash-application`
 
 ## Phase 5: 收束业务入口与 interaction/gate
 

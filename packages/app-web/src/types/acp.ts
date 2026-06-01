@@ -134,7 +134,6 @@ export interface ProjectSessionEntry {
   session_title: string | null;
   last_activity: number | null;
   execution_status: "idle" | "running" | "completed" | "failed" | "interrupted";
-  owner_type: "project" | "story" | "task";
   owner_id: string;
   owner_title: string | null;
   story_id: string | null;

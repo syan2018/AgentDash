@@ -63,8 +63,6 @@ export function AgentTabView() {
     refetchInterval: hasSelectedSession ? SESSION_LIST_POLL_INTERVAL : undefined,
   });
 
-  const runsBySessionId = useWorkflowStore((s) => s.runsBySessionId);
-  const fetchRunsBySession = useWorkflowStore((s) => s.fetchRunsBySession);
   const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
   const fetchDefinitions = useWorkflowStore((s) => s.fetchDefinitions);
@@ -75,19 +73,7 @@ export function AgentTabView() {
     ? (agentsByProjectId[currentProjectId] ?? [])
     : [];
 
-  // 通过当前选中的 session（或首个 session）查找活跃 lifecycle run
-  const primarySessionId = (selectedSession.projectId === currentProjectId
-    ? selectedSession.sessionId
-    : null) ?? sessions[0]?.session_id ?? null;
-  const sessionRuns = primarySessionId
-    ? (runsBySessionId[primarySessionId] ?? [])
-    : [];
-  const activeRun = sessionRuns.find(
-    (r) => r.status === "ready" || r.status === "running" || r.status === "blocked",
-  );
-  const activeLifecycleName = activeRun
-    ? (lifecycleDefinitions.find((l) => l.id === activeRun.lifecycle_id)?.name ?? activeRun.lifecycle_id)
-    : null;
+  const activeLifecycleName: string | null = null;
 
   const selectedSessionId = selectedSession.projectId === currentProjectId
     ? selectedSession.sessionId
@@ -110,11 +96,6 @@ export function AgentTabView() {
     void fetchLifecycles({ projectId: currentProjectId });
     void fetchDefinitions({ projectId: currentProjectId });
   }, [currentProjectId, fetchProjectAgents, fetchLifecycles, fetchDefinitions]);
-
-  // session 关联的 lifecycle runs（session 就绪后加载）
-  useEffect(() => {
-    if (primarySessionId) void fetchRunsBySession(primarySessionId);
-  }, [primarySessionId, fetchRunsBySession]);
 
   // ─── companion 事件驱动 + 周期轮询：保持 session 列表实时 ──────
 

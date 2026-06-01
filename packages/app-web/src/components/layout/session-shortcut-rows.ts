@@ -1,5 +1,10 @@
 import type { ProjectSessionEntry } from "../../types";
-import { normalizeParentRelationKind } from "../../features/agent/session-relations";
+
+function normalizeParentRelationKind(
+  relationKind: ProjectSessionEntry["parent_relation_kind"] | undefined,
+): NonNullable<ProjectSessionEntry["parent_relation_kind"]> {
+  return relationKind ?? "companion";
+}
 
 export interface SessionShortcutRow {
   session: ProjectSessionEntry;

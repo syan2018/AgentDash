@@ -8,9 +8,8 @@ import type {
 import { useWorkflowStore } from "../../stores/workflowStore";
 import { SessionList } from "../session";
 import { ATTEMPT_STATUS_LABEL } from "./shared-labels";
-import { submitHumanDecision } from "../../services/workflow";
+import { submitHumanDecision, fetchWorkflowRunsBySession } from "../../services/workflow";
 
-const EMPTY_RUNS: WorkflowRun[] = [];
 const POLL_INTERVAL = 5000;
 
 // ─── 状态映射 ───────────────────────────────────────────
@@ -287,19 +286,21 @@ export interface LifecycleSessionViewProps {
 
 export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
   const lifecycleDefinitions = useWorkflowStore((s) => s.lifecycleDefinitions);
-  const runs = useWorkflowStore(
-    (s) => s.runsBySessionId[sessionId] ?? EMPTY_RUNS,
-  );
-  const fetchRunsBySession = useWorkflowStore((s) => s.fetchRunsBySession);
   const fetchLifecycles = useWorkflowStore((s) => s.fetchLifecycles);
+  const [runs, setRuns] = useState<WorkflowRun[]>([]);
+
+  const loadRuns = useCallback(async () => {
+    try {
+      const result = await fetchWorkflowRunsBySession(sessionId);
+      setRuns(result);
+    } catch { /* ignore */ }
+  }, [sessionId]);
 
   useEffect(() => {
-    void fetchRunsBySession(sessionId);
-    const interval = setInterval(() => {
-      void fetchRunsBySession(sessionId);
-    }, POLL_INTERVAL);
+    void loadRuns();
+    const interval = setInterval(() => void loadRuns(), POLL_INTERVAL);
     return () => clearInterval(interval);
-  }, [fetchRunsBySession, sessionId]);
+  }, [loadRuns]);
 
   const activeRun = useMemo(
     () =>
@@ -382,7 +383,7 @@ export function LifecycleSessionView({ sessionId }: LifecycleSessionViewProps) {
             attempt={attempt}
             activityDef={findActivityDef(attempt.activity_key)}
             isActive={activeNodeKeys.has(attempt.activity_key)}
-            onDecisionSubmitted={() => void fetchRunsBySession(sessionId)}
+            onDecisionSubmitted={() => void loadRuns()}
           />
         ))}
       </div>

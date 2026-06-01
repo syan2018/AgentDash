@@ -2,7 +2,7 @@
  * Lifecycle 归一化 Store
  *
  * 以 run / graph_instance / subject / agent / frame 为索引主键，
- * 替代原有 runsBySessionId 的 session-first 索引模式。
+ * 完整替代原有 runsBySessionId 的 session-first 索引模式。
  *
  * SubjectExecution 使用 `subject_kind:subject_id` 复合 key 索引。
  */
@@ -18,6 +18,11 @@ import type {
   RuntimeSessionTraceView,
 } from "../types";
 import { subjectExecutionKey } from "../types";
+import {
+  fetchLifecycleRun,
+  fetchSubjectExecution,
+  fetchAgentFrameRuntime,
+} from "../services/lifecycle";
 
 // ─── State Shape ─────────────────────────────────────────
 
@@ -44,11 +49,22 @@ interface LifecycleState {
 
   // ── bulk import（从 LifecycleRunView 展开子实体） ──
   ingestRun: (run: LifecycleRunView) => void;
+
+  // ── API actions ──
+  fetchAndIngestRun: (runId: string) => Promise<LifecycleRunView | null>;
+  fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
+  fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
+
+  // ── derived views ──
+  /** 按 subject association 聚合：返回指定 subject 关联的所有 run */
+  runsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
+  /** 返回指定 run 下的所有 agent */
+  agentsByRun: (runId: string) => LifecycleAgentView[];
 }
 
 // ─── Store ───────────────────────────────────────────────
 
-export const useLifecycleStore = create<LifecycleState>((set) => ({
+export const useLifecycleStore = create<LifecycleState>((set, get) => ({
   runs: new Map(),
   graphInstances: new Map(),
   agents: new Map(),
@@ -125,4 +141,62 @@ export const useLifecycleStore = create<LifecycleState>((set) => ({
         agents: nextAgents,
       };
     }),
+
+  // ── API actions ──
+
+  fetchAndIngestRun: async (runId) => {
+    set({ isLoading: true, error: null });
+    try {
+      const run = await fetchLifecycleRun(runId);
+      get().ingestRun(run);
+      set({ isLoading: false });
+      return run;
+    } catch (e) {
+      set({ error: (e as Error).message, isLoading: false });
+      return null;
+    }
+  },
+
+  fetchSubjectExecution: async (subjectKind, subjectId) => {
+    try {
+      const view = await fetchSubjectExecution(subjectKind, subjectId);
+      get().setSubjectExecution(view);
+      return view;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  fetchFrame: async (frameId) => {
+    try {
+      const frame = await fetchAgentFrameRuntime(frameId);
+      get().setFrame(frame);
+      return frame;
+    } catch (e) {
+      set({ error: (e as Error).message });
+      return null;
+    }
+  },
+
+  // ── derived views ──
+
+  runsBySubject: (subjectKind, subjectId) => {
+    const result: LifecycleRunView[] = [];
+    for (const run of get().runs.values()) {
+      const hasSubject = run.subject_associations.some(
+        (sa) => sa.subject_kind === subjectKind && sa.subject_id === subjectId,
+      );
+      if (hasSubject) result.push(run);
+    }
+    return result;
+  },
+
+  agentsByRun: (runId) => {
+    const result: LifecycleAgentView[] = [];
+    for (const agent of get().agents.values()) {
+      if (agent.run_id === runId) result.push(agent);
+    }
+    return result;
+  },
 }));

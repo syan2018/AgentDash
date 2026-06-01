@@ -47,15 +47,15 @@ export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
-export type DeleteWorkflowGraphResponse = { deleted: boolean, };
+export type DeleteAgentProcedureResponse = { deleted: boolean, };
 
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
 
-export type DeleteAgentProcedureResponse = { deleted: boolean, };
+export type DeleteWorkflowGraphResponse = { deleted: boolean, };
 
 export type EffectiveSessionContract = { lifecycle_key?: string, active_activity_key?: string, injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, };
 
-export type ExecutorRunRef = { "kind": "agent_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
+export type ExecutorRunRef = { "kind": "runtime_session", session_id: string, } | { "kind": "function_run", run_id: string, } | { "kind": "human_decision", decision_id: string, };
 
 export type FunctionActivityExecutorSpec = { "type": "api_request" } & ApiRequestExecutorSpec | { "type": "bash_exec" } & BashExecExecutorSpec;
 
@@ -87,7 +87,7 @@ export type RunLinksResponse = { run_id: string, links: Array<LifecycleRunLinkDt
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
-export type StoryRunOverviewDto = { id: string, lifecycle_id: string, status: LifecycleRunStatus, session_id?: string, created_at: string, updated_at: string, last_activity_at: string, links: Array<LifecycleRunLinkDto>, };
+export type StoryRunOverviewDto = { id: string, lifecycle_id: string, status: LifecycleRunStatus, created_at: string, updated_at: string, last_activity_at: string, links: Array<LifecycleRunLinkDto>, };
 
 export type StoryRunsResponse = { story_id: string, runs: Array<StoryRunOverviewDto>, };
 
@@ -102,8 +102,6 @@ export type ValidateHookScriptResponse = { valid: boolean, errors?: Array<string
 export type ValidationIssue = { code: string, message: string, field_path: string, severity: ValidationSeverity, };
 
 export type ValidationSeverity = "error" | "warning";
-
-export type WorkflowBindingKind = "project" | "story";
 
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string, };
 

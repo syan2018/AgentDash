@@ -89,10 +89,9 @@ export type StoryStatus = "created" | "context_ready" | "decomposed" | "executin
 
 export type StoryType = "feature" | "bugfix" | "refactor" | "docs" | "test" | "other";
 
-export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, lifecycle_step_key: string | null, title: string, description: string, status: TaskStatus, agent_binding: AgentBinding, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
+export type TaskResponse = { id: string, project_id: string, story_id: string, workspace_id: string | null, title: string, description: string, status: TaskStatus, agent_binding: AgentBinding, artifacts: Array<Artifact>, created_at: string, updated_at: string, };
 
 export type TaskStatus = "pending" | "assigned" | "running" | "awaiting_verification" | "completed" | "failed";
-
 
 export type UpdatedIdResponse = { updated: string, };
 

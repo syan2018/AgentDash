@@ -267,16 +267,6 @@ function normalizeProjectSessionEntryStatus(
   }
 }
 
-function normalizeOwnerType(value: unknown): ProjectSessionEntry["owner_type"] {
-  switch (value) {
-    case "project":
-    case "story":
-    case "task":
-      return value;
-    default:
-      throw new Error(`未知的项目会话 owner_type: ${String(value ?? "")}`);
-  }
-}
 
 function normalizeParentRelationKind(value: unknown): ProjectSessionEntry["parent_relation_kind"] {
   if (value == null) return null;
@@ -296,7 +286,6 @@ function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEnt
     session_title: raw.session_title != null ? String(raw.session_title) : null,
     last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
     execution_status: normalizeProjectSessionEntryStatus(raw.execution_status),
-    owner_type: normalizeOwnerType(raw.owner_type),
     owner_id: requireStringField(raw, "owner_id"),
     owner_title: raw.owner_title != null ? String(raw.owner_title) : null,
     story_id: raw.story_id != null ? String(raw.story_id) : null,

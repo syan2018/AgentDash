@@ -11,7 +11,6 @@ import type {
   HookRulePreset,
   WorkflowContract,
   AgentProcedure,
-  WorkflowRun,
   WorkflowTargetKind,
   WorkflowValidationResult,
 } from "../types";
@@ -22,10 +21,8 @@ import {
   deleteAgentProcedure,
   fetchWorkflowGraphs,
   fetchAgentProcedures,
-  fetchWorkflowRunsBySession,
   fetchHookPresets,
   getWorkflowGraph,
-  startWorkflowRun,
   updateWorkflowGraph,
   updateAgentProcedure,
   validateWorkflowGraph,
@@ -328,19 +325,6 @@ function upsert<T extends { id: string }>(list: T[], next: T): T[] {
   return [next, ...list];
 }
 
-function upsertRun(
-  runsBySessionId: Record<string, WorkflowRun[]>,
-  run: WorkflowRun,
-): Record<string, WorkflowRun[]> {
-  const key = run.session_id;
-  const existing = runsBySessionId[key] ?? [];
-  const nextRuns = existing.some((item) => item.id === run.id)
-    ? existing.map((item) => (item.id === run.id ? run : item))
-    : [run, ...existing];
-  nextRuns.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-  return { ...runsBySessionId, [key]: nextRuns };
-}
-
 function rewriteTransitionConditionActivity(
   condition: ActivityTransition["condition"],
   oldKey: string,
@@ -363,7 +347,6 @@ function rewriteTransitionConditionActivity(
 interface WorkflowState {
   definitions: AgentProcedure[];
   lifecycleDefinitions: WorkflowGraph[];
-  runsBySessionId: Record<string, WorkflowRun[]>;
   hookPresets: HookRulePreset[];
   isLoading: boolean;
   error: string | null;
@@ -374,13 +357,6 @@ interface WorkflowState {
   fetchHookPresets: () => Promise<HookRulePreset[]>;
   fetchDefinitions: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<AgentProcedure[]>;
   fetchLifecycles: (opts?: { projectId?: string; targetKind?: WorkflowTargetKind }) => Promise<WorkflowGraph[]>;
-  fetchRunsBySession: (sessionId: string) => Promise<WorkflowRun[]>;
-  startRun: (input: {
-    lifecycle_id?: string;
-    lifecycle_key?: string;
-    session_id: string;
-    project_id: string;
-  }) => Promise<WorkflowRun | null>;
 
   removeDefinition: (id: string) => Promise<boolean>;
   removeLifecycle: (id: string) => Promise<boolean>;
@@ -424,7 +400,6 @@ interface WorkflowState {
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   definitions: [],
   lifecycleDefinitions: [],
-  runsBySessionId: {},
   hookPresets: [],
   isLoading: false,
   error: null,
@@ -475,31 +450,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     } catch (error) {
       set({ error: (error as Error).message });
       return [];
-    }
-  },
-
-  fetchRunsBySession: async (sessionId) => {
-    try {
-      const runs = await fetchWorkflowRunsBySession(sessionId);
-      set((state) => ({
-        runsBySessionId: { ...state.runsBySessionId, [sessionId]: runs },
-      }));
-      return runs;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return [];
-    }
-  },
-
-  startRun: async (input) => {
-    set({ error: null });
-    try {
-      const run = await startWorkflowRun(input);
-      set((state) => ({ runsBySessionId: upsertRun(state.runsBySessionId, run) }));
-      return run;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      return null;
     }
   },
 

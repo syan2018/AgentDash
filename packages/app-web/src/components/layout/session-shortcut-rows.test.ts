@@ -8,7 +8,6 @@ function makeSession(overrides: Partial<ProjectSessionEntry> = {}): ProjectSessi
     session_title: "Session",
     last_activity: 0,
     execution_status: "idle",
-    owner_type: "project",
     owner_id: "p-1",
     owner_title: "Project",
     story_id: null,

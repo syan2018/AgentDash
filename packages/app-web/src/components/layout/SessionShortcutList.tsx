@@ -6,8 +6,19 @@ import {
   buildSessionShortcutRows,
   type SessionShortcutRow,
 } from "./session-shortcut-rows";
-import { sessionParentRelationLabel } from "../../features/agent/session-relations";
 import { formatRelativeTime } from "../../lib/format";
+
+function sessionParentRelationLabel(
+  relationKind: ProjectSessionEntry["parent_relation_kind"] | undefined,
+): string {
+  switch (relationKind ?? "companion") {
+    case "fork": return "fork";
+    case "rollback_branch": return "rollback";
+    case "spawned_agent": return "subagent";
+    case "companion": return "companion";
+  }
+  return "companion";
+}
 
 // ─── Session 快捷列表（容器高度自适应 + 末尾 ...） ──────────
 
@@ -25,15 +36,12 @@ function getShortcutAgentLabel(session: ProjectSessionEntry): string | null {
 }
 
 function getShortcutOwnerLabel(session: ProjectSessionEntry): string | null {
-  if (session.owner_type === "story") {
-    return session.owner_title?.trim() ? `Story · ${session.owner_title.trim()}` : "Story";
-  }
-  if (session.owner_type === "task") {
-    const taskTitle = session.owner_title?.trim() || "Task";
+  if (session.story_id && session.owner_title?.trim()) {
     const storyTitle = session.story_title?.trim();
-    return storyTitle ? `Task · ${storyTitle} / ${taskTitle}` : `Task · ${taskTitle}`;
+    const ownerTitle = session.owner_title.trim();
+    return storyTitle ? `${storyTitle} / ${ownerTitle}` : ownerTitle;
   }
-  return null;
+  return session.owner_title?.trim() ?? null;
 }
 
 function getShortcutIndentClass(depth: number): string {

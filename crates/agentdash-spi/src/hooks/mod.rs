@@ -78,6 +78,7 @@ pub struct HookDiagnosticEntry {
     pub message: String,
 }
 
+#[deprecated(note = "迁移到 AgentFrameHookRuntime；session-indexed snapshot 仅保留 trace adapter 语义")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionHookSnapshot {

@@ -85,6 +85,7 @@ pub struct TerminalEffectPlan {
     pub post_turn_handler: Option<DynPostTurnHandler>,
 }
 
+#[deprecated(note = "迁移到 RuntimeLaunchRequest；connector 输入由 frame projection 产出")]
 #[derive(Debug, Clone)]
 pub struct ConnectorInputPlan {
     pub working_directory: PathBuf,
@@ -104,6 +105,7 @@ pub struct LaunchPlanTraceEntry {
     pub source: String,
 }
 
+#[deprecated(note = "迁移到 RuntimeLaunchRequest；新 launch 路径从 AgentFrame → RuntimeLaunchRequest")]
 pub struct LaunchPlan {
     pub resolved_payload: ResolvedPromptPayload,
     pub title_hint: String,

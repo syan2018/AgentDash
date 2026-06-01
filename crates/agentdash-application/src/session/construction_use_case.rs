@@ -77,6 +77,7 @@ pub enum SessionConstructionProjectionMode {
     Inspect,
 }
 
+#[deprecated(note = "迁移到 AgentFrameBuilder；新 launch 路径从 AgentFrame 投影")]
 pub async fn build_session_construction_for_launch(
     state: &SessionConstructionUseCaseDeps<'_>,
     session_id: &str,
@@ -218,6 +219,7 @@ async fn resolve_session_scope(
         .unwrap_or(CapabilityScope::Project))
 }
 
+#[deprecated(note = "迁移到 AgentFrameBuilder；surface projection 由 frame builder 统一产出")]
 pub async fn finalize_session_construction_projection(
     state: &SessionConstructionUseCaseDeps<'_>,
     mut plan: SessionConstructionPlan,

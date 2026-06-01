@@ -15,6 +15,7 @@ use tokio::sync::broadcast;
 
 const TRACE_BROADCAST_CAPACITY: usize = 128;
 
+#[deprecated(note = "迁移到 AgentFrameHookRuntime；hook 应从 frame/agent 读取 surface")]
 pub struct HookSessionRuntime {
     session_id: String,
     provider: Arc<dyn ExecutionHookProvider>,

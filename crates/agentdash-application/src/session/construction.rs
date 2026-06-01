@@ -63,6 +63,7 @@ impl ResolvedSessionOwner {
 }
 use crate::vfs::ResolvedVfsSurface;
 
+#[deprecated(note = "迁移到 AgentFrameBuilder；新代码路径不应直接消费此结构")]
 #[derive(Debug, Clone)]
 pub struct SessionConstructionPlan {
     pub session_id: String,
@@ -144,6 +145,7 @@ pub struct ConstructionProjections {
     pub extension_runtime: Option<ExtensionRuntimeProjection>,
 }
 
+#[deprecated(note = "迁移到 AgentFrameBuilder；frame revision 提供 provenance")]
 #[derive(Debug, Clone, Default)]
 pub struct ConstructionResolutionPlan {
     pub vfs_source: Option<String>,

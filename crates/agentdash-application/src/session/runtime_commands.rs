@@ -1,4 +1,7 @@
-pub use agentdash_spi::session_persistence::{RuntimeCommandRecord, RuntimeCommandStatus};
+pub use agentdash_spi::session_persistence::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+    RuntimeDeliveryCommandKind,
+};
 
 #[cfg(test)]
 mod tests {

@@ -111,33 +111,36 @@ Outbox 状态为 `pending / running / succeeded / failed / dead-letter`。effect
 | `SessionMetaStore` | session meta CRUD 与投影字段合并写回 |
 | `SessionEventStore` | append/read/list session events |
 | `SessionTerminalEffectStore` | terminal effect outbox 写入、状态迁移和查询 |
-| `SessionRuntimeCommandStore` | runtime command request upsert、requested 查询、applied/failed 状态迁移 |
+| `SessionRuntimeCommandStore` | runtime delivery command request upsert、requested 查询、applied/failed 状态迁移 |
 
 `SessionPersistence` 可以作为装配层组合接口存在；runtime、effects、pending 的业务逻辑
 依赖对应 store 边界。
 
 ## Pending Runtime Commands
 
-Runtime context / capability transition 的事实源是 runtime command store：
+Runtime context / capability transition 的事实源是 `AgentFrameTransitionRecord` / `agent_frame_transitions`；runtime command store 是 delivery outbox：
 
 ```text
 requested -> applied
 requested -> failed
 ```
 
-下一轮 prompt 只从 command store 查询 requested commands；connector accepted 后写
+下一轮 prompt 从 delivery outbox 查询 requested commands，并通过关联的 frame transition records 还原 transition apply plan；connector accepted 后写
 applied。若 applied 状态提交失败，必须立刻尝试把同一批 command 标记为 `failed`，
 清理 turn，并让本次 launch 返回错误；不能继续启动 processor，也不能保留 `requested`
 等待下一轮静默重复应用。旧 `pending` 状态不再作为 runtime command 事实名使用；
 数据库迁移会把既有 runtime command 行更新为 `requested`。
 
-runtime command payload 保存 `RuntimeCapabilityTransition` records。payload 不保存完整
-`CapabilityState`，也不保存 `ToolDimension` / `CompanionDimension` replacement；
-tool、MCP、companion、VFS 与 mount directive 分别作为 dimension effect records replay 到
-construction base projection，再由 capability projection normalizer 生成闭包状态。多个
-requested runtime command 必须按 store 返回顺序 fold replay。
+`RuntimeDeliveryCommand` payload 保存 delivery kind、`frame_transition_id` 与 target
+frame reference；`AgentFrameTransitionRecord` 保存 `RuntimeCapabilityTransition`
+records。payload 不保存完整 `CapabilityState`，也不保存 `ToolDimension` /
+`CompanionDimension` replacement；tool、MCP、companion、VFS 与 mount directive 分别作为
+dimension effect records replay 到 construction base projection，再由 capability
+projection normalizer 生成闭包状态。多个 requested runtime command 必须按 store 返回顺序
+fold replay。
 
 runtime transition 的生产入口由各 dimension module 生成 records，并在写入 store 前调用
-`CapabilityDimensionRegistry::validate_transition`。mount directive 同时保留为
-`dimension=vfs / declaration_type=mount_operation` declaration 与
+`CapabilityDimensionRegistry::validate_transition`。delivery outbox 写入时必须校验
+delivery 的 `frame_transition_id` / `target_frame_id` 与 frame transition fact 一致。mount
+directive 同时保留为 `dimension=vfs / declaration_type=mount_operation` declaration 与
 `apply_mount_operations` effect，使审计来源与可 replay effect 分离但保持同源。

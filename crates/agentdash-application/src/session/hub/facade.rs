@@ -6,11 +6,12 @@
 use std::io;
 
 #[cfg(test)]
-#[cfg(test)]
 use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
-use super::super::types::*;
+#[cfg(test)]
+use super::super::types::{SessionExecutionState, SessionMeta};
+use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
 use crate::workflow::runtime_launch::{LaunchResolutionTrace, RuntimeLaunchRequest};
@@ -66,14 +67,19 @@ impl SessionRuntimeInner {
             .await
     }
 
-    pub(crate) async fn enqueue_pending_capability_state_transition(
+    pub(crate) async fn enqueue_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> io::Result<()> {
         self.stores
             .runtime_commands
-            .upsert_runtime_command_request(session_id, transition)
+            .upsert_runtime_delivery_command(
+                delivery_runtime_session_id,
+                delivery,
+                frame_transition,
+            )
             .await?;
         Ok(())
     }

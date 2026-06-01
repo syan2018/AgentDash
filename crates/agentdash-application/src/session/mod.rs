@@ -116,7 +116,10 @@ pub use post_turn_handler::{
 };
 pub use prompt_vfs::local_workspace_vfs;
 pub use runtime_builder::SessionRuntimeBuilder;
-pub use runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
+pub use runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+    RuntimeDeliveryCommandKind,
+};
 pub use runtime_control::SessionRuntimeService;
 pub use runtime_services::SessionRuntimeServices;
 pub use terminal_effects::{

@@ -110,7 +110,7 @@ pub async fn finalize_session_construction_projection(
     let requested_transitions = facts
         .requested_runtime_commands
         .iter()
-        .map(|command| command.transition.clone())
+        .map(|command| command.pending_capability_state_transition())
         .collect::<Vec<_>>();
     let replay = if requested_transitions.is_empty() {
         None

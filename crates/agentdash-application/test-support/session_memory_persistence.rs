@@ -13,7 +13,9 @@ use super::persistence::{
     SessionProjectionSegmentRecord, SessionProjectionStore, SessionRuntimeCommandStore,
     SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
 };
-use super::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
+use super::runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus, RuntimeDeliveryCommand,
+};
 use super::terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
 };
@@ -307,21 +309,23 @@ impl SessionTerminalEffectStore for MemorySessionPersistence {
 
 #[async_trait::async_trait]
 impl SessionRuntimeCommandStore for MemorySessionPersistence {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord> {
         let mut guard = self.inner.lock().await;
-        if !guard.metas.contains_key(session_id) {
+        validate_runtime_delivery_command(&delivery, &frame_transition)?;
+        if !guard.metas.contains_key(delivery_runtime_session_id) {
             return Err(SessionStoreError::NotFound(format!(
-                "session {session_id} 不存在"
+                "session {delivery_runtime_session_id} 不存在"
             )));
         }
         let now = chrono::Utc::now().timestamp_millis();
         for command in guard.runtime_commands.iter_mut().filter(|command| {
-            command.session_id == session_id
-                && command.phase_node == transition.phase_node
+            command.session_id == delivery_runtime_session_id
+                && command.phase_node == frame_transition.phase_node
                 && command.status == RuntimeCommandStatus::Requested
         }) {
             command.status = RuntimeCommandStatus::Failed;
@@ -331,11 +335,12 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         }
         let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
-            session_id: session_id.to_string(),
-            transition_id: transition.id.clone(),
-            phase_node: transition.phase_node.clone(),
+            session_id: delivery_runtime_session_id.to_string(),
+            frame_transition_id: frame_transition.id.clone(),
+            phase_node: frame_transition.phase_node.clone(),
             status: RuntimeCommandStatus::Requested,
-            transition,
+            delivery,
+            frame_transition,
             created_at_ms: now,
             updated_at_ms: now,
             applied_at_ms: None,
@@ -399,6 +404,25 @@ impl SessionRuntimeCommandStore for MemorySessionPersistence {
         records.truncate(limit);
         Ok(records)
     }
+}
+
+fn validate_runtime_delivery_command(
+    delivery: &RuntimeDeliveryCommand,
+    frame_transition: &AgentFrameTransitionRecord,
+) -> SessionStoreResult<()> {
+    if delivery.frame_transition_id != frame_transition.id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery frame_transition_id {} 与 frame transition {} 不一致",
+            delivery.frame_transition_id, frame_transition.id
+        )));
+    }
+    if delivery.target_frame_id != frame_transition.target_frame_id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery target_frame_id {} 与 frame transition target {} 不一致",
+            delivery.target_frame_id, frame_transition.target_frame_id
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -1247,22 +1271,40 @@ mod tests {
             .await
             .expect("应能创建 session");
 
-        let transition = |id: &str| PendingCapabilityStateTransition {
-            id: id.to_string(),
-            run_id: uuid::Uuid::new_v4(),
-            lifecycle_key: "dev".to_string(),
-            phase_node: "review".to_string(),
-            capability_keys: std::collections::BTreeSet::new(),
-            transition: RuntimeCapabilityTransition::default(),
-            created_at: 1,
-            source_turn_id: None,
+        let target_frame_id = uuid::Uuid::new_v4();
+        let delivery_input = |id: &str| {
+            let frame_transition = AgentFrameTransitionRecord::from_pending(
+                target_frame_id,
+                PendingCapabilityStateTransition {
+                    id: id.to_string(),
+                    run_id: uuid::Uuid::new_v4(),
+                    lifecycle_key: "dev".to_string(),
+                    phase_node: "review".to_string(),
+                    capability_keys: std::collections::BTreeSet::new(),
+                    transition: RuntimeCapabilityTransition::default(),
+                    created_at: 1,
+                    source_turn_id: None,
+                },
+            );
+            let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+            (delivery, frame_transition)
         };
+        let (first_delivery, first_transition) = delivery_input("cmd-1");
         let first = persistence
-            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-1"))
+            .upsert_runtime_delivery_command(
+                "sess-runtime-command",
+                first_delivery,
+                first_transition,
+            )
             .await
             .expect("应能写入第一条 command");
+        let (second_delivery, second_transition) = delivery_input("cmd-2");
         let second = persistence
-            .upsert_runtime_command_request("sess-runtime-command", transition("cmd-2"))
+            .upsert_runtime_delivery_command(
+                "sess-runtime-command",
+                second_delivery,
+                second_transition,
+            )
             .await
             .expect("应能写入第二条 command");
 
@@ -1283,10 +1325,15 @@ mod tests {
             failed[0].last_error.as_deref(),
             Some("superseded_by_new_requested_command")
         );
-        let payload = serde_json::to_value(&pending[0].transition)
-            .expect("runtime command transition should serialize");
-        assert!(payload.get("transition").is_some());
+        let payload = serde_json::to_value(&pending[0].delivery)
+            .expect("runtime delivery command should serialize");
+        assert!(payload.get("frame_transition_id").is_some());
+        assert!(payload.get("transition").is_none());
         assert!(payload.get("state").is_none());
+        assert_eq!(
+            pending[0].frame_transition.transition,
+            RuntimeCapabilityTransition::default()
+        );
 
         persistence
             .mark_runtime_commands_applied(&[second.id])
@@ -1297,7 +1344,7 @@ mod tests {
             .await
             .expect("应能查询 applied command");
         assert_eq!(applied.len(), 1);
-        assert_eq!(applied[0].transition_id, "cmd-2");
+        assert_eq!(applied[0].frame_transition_id, "cmd-2");
     }
 
     #[tokio::test]

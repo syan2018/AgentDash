@@ -20,9 +20,9 @@ use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
 use crate::session::types::AgentFrameRuntimeTarget;
 use crate::session::{
-    CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
-    RuntimeCapabilityTransition, RuntimeContextTransition, apply_runtime_capability_transition,
-    compute_capability_state_delta,
+    AgentFrameTransitionRecord, CapabilityState, CapabilityStateDelta,
+    PendingCapabilityStateTransition, RuntimeCapabilityTransition, RuntimeContextTransition,
+    RuntimeDeliveryCommand, apply_runtime_capability_transition, compute_capability_state_delta,
 };
 
 #[derive(Debug, Clone)]
@@ -50,9 +50,10 @@ pub(crate) struct RuntimeContextTransitionOutcome {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PendingRuntimeContextTransitionInput {
+    pub target_frame_id: Uuid,
     pub session_id: String,
     pub turn_id: Option<String>,
-    pub transition_id: String,
+    pub frame_transition_id: String,
     pub phase_node: String,
     pub run_id: Uuid,
     pub lifecycle_key: String,
@@ -172,7 +173,7 @@ impl SessionRuntimeInner {
             steering_capability_delta: None,
         };
         let Some(pending_transition) = transition.to_pending_capability_state_transition(
-            input.transition_id,
+            input.frame_transition_id,
             input.transition,
             input.source_turn_id,
             input.created_at,
@@ -183,11 +184,14 @@ impl SessionRuntimeInner {
             ));
         };
 
-        self.enqueue_pending_capability_state_transition(&input.session_id, pending_transition)
+        let frame_transition =
+            AgentFrameTransitionRecord::from_pending(input.target_frame_id, pending_transition);
+        let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+        self.enqueue_runtime_delivery_command(&input.session_id, delivery, frame_transition)
             .await
             .map_err(|error| {
                 format!(
-                    "PhaseNode `{}` 能力状态 pending transition 写入失败: {error}",
+                    "PhaseNode `{}` 能力状态 pending transition delivery 写入失败: {error}",
                     input.phase_node
                 )
             })?;
@@ -257,7 +261,7 @@ impl SessionRuntimeInner {
                     Err(error) => {
                         tracing::warn!(
                             session_id,
-                            transition_id = %pending.id,
+                            frame_transition_id = %pending.id,
                             "pending runtime capability transition replay failed before event emission: {error}"
                         );
                         pending_event_before_state.clone()

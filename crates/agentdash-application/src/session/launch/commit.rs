@@ -194,8 +194,10 @@ async fn commit_runtime_commands_applied(
 mod tests {
     use super::*;
     use crate::session::persistence::{SessionStoreError, SessionStoreResult};
-    use crate::session::runtime_commands::{RuntimeCommandRecord, RuntimeCommandStatus};
-    use crate::session::types::PendingCapabilityStateTransition;
+    use crate::session::runtime_commands::{
+        AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeCommandStatus,
+        RuntimeDeliveryCommand,
+    };
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
@@ -223,10 +225,11 @@ mod tests {
 
     #[async_trait]
     impl SessionRuntimeCommandStore for FailingApplyRuntimeCommandStore {
-        async fn upsert_runtime_command_request(
+        async fn upsert_runtime_delivery_command(
             &self,
-            _session_id: &str,
-            _transition: PendingCapabilityStateTransition,
+            _delivery_runtime_session_id: &str,
+            _delivery: RuntimeDeliveryCommand,
+            _frame_transition: AgentFrameTransitionRecord,
         ) -> SessionStoreResult<RuntimeCommandRecord> {
             Err(SessionStoreError::Internal("not used".to_string()))
         }

@@ -11,7 +11,9 @@ use super::hub::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextApplication,
     PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
 };
-use super::runtime_commands::RuntimeCommandRecord;
+use super::runtime_commands::{
+    AgentFrameTransitionRecord, RuntimeCommandRecord, RuntimeDeliveryCommand,
+};
 use super::types::{AgentFrameRuntimeTarget, CapabilityState, PendingCapabilityStateTransition};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
@@ -61,13 +63,18 @@ impl SessionCapabilityService {
             .map_err(Into::into)
     }
 
-    pub async fn enqueue_pending_capability_state_transition(
+    pub async fn enqueue_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> std::io::Result<()> {
         self.hub
-            .enqueue_pending_capability_state_transition(session_id, transition)
+            .enqueue_runtime_delivery_command(
+                delivery_runtime_session_id,
+                delivery,
+                frame_transition,
+            )
             .await
     }
 

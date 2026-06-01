@@ -1,15 +1,13 @@
 use agentdash_agent_protocol::BackboneEnvelope;
 use agentdash_spi::session_persistence::{
-    CompactionProjectionCommitResult, NewCompactionProjectionCommit, PersistedSessionEvent,
-    RuntimeCommandRecord, RuntimeCommandStatus, SessionCompactionRecord, SessionCompactionStore,
-    SessionEventBacklog, SessionEventPage, SessionEventStore, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionLineageStore, SessionMeta,
-    SessionMetaStore, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionProjectionStore, SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult,
-    SessionTerminalEffectStore, TerminalEffectRecord, TerminalEffectStatus,
-};
-use agentdash_spi::session_persistence::{
-    NewTerminalEffectRecord, PendingCapabilityStateTransition,
+    AgentFrameTransitionRecord, CompactionProjectionCommitResult, NewCompactionProjectionCommit,
+    NewTerminalEffectRecord, PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStore, SessionEventBacklog,
+    SessionEventPage, SessionEventStore, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionLineageStore, SessionMeta, SessionMetaStore,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,
+    SessionRuntimeCommandStore, SessionStoreError, SessionStoreResult, SessionTerminalEffectStore,
+    TerminalEffectRecord, TerminalEffectStatus,
 };
 use sqlx::{PgPool, Row};
 
@@ -42,6 +40,7 @@ impl PostgresSessionRepository {
                 "session_projection_heads",
                 "session_projection_segments",
                 "session_terminal_effects",
+                "agent_frame_transitions",
                 "session_runtime_commands",
             ],
         )
@@ -135,6 +134,25 @@ impl PostgresSessionRepository {
             .map(|meta| meta.last_event_seq)
             .ok_or_else(|| SessionStoreError::NotFound(format!("session {session_id} 不存在")))
     }
+}
+
+fn validate_runtime_delivery_command(
+    delivery: &RuntimeDeliveryCommand,
+    frame_transition: &AgentFrameTransitionRecord,
+) -> SessionStoreResult<()> {
+    if delivery.frame_transition_id != frame_transition.id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery frame_transition_id {} 与 frame transition {} 不一致",
+            delivery.frame_transition_id, frame_transition.id
+        )));
+    }
+    if delivery.target_frame_id != frame_transition.target_frame_id {
+        return Err(SessionStoreError::InvalidInput(format!(
+            "runtime delivery target_frame_id {} 与 frame transition target {} 不一致",
+            delivery.target_frame_id, frame_transition.target_frame_id
+        )));
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -689,11 +707,13 @@ impl SessionTerminalEffectStore for PostgresSessionRepository {
 
 #[async_trait::async_trait]
 impl SessionRuntimeCommandStore for PostgresSessionRepository {
-    async fn upsert_runtime_command_request(
+    async fn upsert_runtime_delivery_command(
         &self,
-        session_id: &str,
-        transition: PendingCapabilityStateTransition,
+        delivery_runtime_session_id: &str,
+        delivery: RuntimeDeliveryCommand,
+        frame_transition: AgentFrameTransitionRecord,
     ) -> SessionStoreResult<RuntimeCommandRecord> {
+        validate_runtime_delivery_command(&delivery, &frame_transition)?;
         let mut tx = self
             .pool
             .begin()
@@ -714,39 +734,77 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         .bind(now)
         .bind(now)
         .bind("superseded_by_new_requested_command")
-        .bind(session_id)
-        .bind(&transition.phase_node)
+        .bind(delivery_runtime_session_id)
+        .bind(&frame_transition.phase_node)
         .bind(RuntimeCommandStatus::Requested.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(sqlx_to_session_store_error)?;
+
+        let capability_keys_json = json_string(
+            &frame_transition.capability_keys,
+            "agent_frame_transitions.capability_keys_json",
+        )?;
+        let transition_json = json_string(
+            &frame_transition.transition,
+            "agent_frame_transitions.transition_json",
+        )?;
+        sqlx::query(
+            r#"
+            INSERT INTO agent_frame_transitions (
+                id, target_frame_id, run_id, lifecycle_key, phase_node,
+                capability_keys_json, transition_json, source_turn_id, created_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT(id) DO UPDATE SET
+                target_frame_id = excluded.target_frame_id,
+                run_id = excluded.run_id,
+                lifecycle_key = excluded.lifecycle_key,
+                phase_node = excluded.phase_node,
+                capability_keys_json = excluded.capability_keys_json,
+                transition_json = excluded.transition_json,
+                source_turn_id = excluded.source_turn_id,
+                created_at_ms = excluded.created_at_ms
+            "#,
+        )
+        .bind(&frame_transition.id)
+        .bind(frame_transition.target_frame_id.to_string())
+        .bind(frame_transition.run_id.to_string())
+        .bind(&frame_transition.lifecycle_key)
+        .bind(&frame_transition.phase_node)
+        .bind(capability_keys_json)
+        .bind(transition_json)
+        .bind(&frame_transition.source_turn_id)
+        .bind(frame_transition.created_at_ms)
         .execute(&mut *tx)
         .await
         .map_err(sqlx_to_session_store_error)?;
 
         let record = RuntimeCommandRecord {
             id: uuid::Uuid::new_v4(),
-            session_id: session_id.to_string(),
-            transition_id: transition.id.clone(),
-            phase_node: transition.phase_node.clone(),
+            session_id: delivery_runtime_session_id.to_string(),
+            frame_transition_id: frame_transition.id.clone(),
+            phase_node: frame_transition.phase_node.clone(),
             status: RuntimeCommandStatus::Requested,
-            transition,
+            delivery,
+            frame_transition,
             created_at_ms: now,
             updated_at_ms: now,
             applied_at_ms: None,
             failed_at_ms: None,
             last_error: None,
         };
-        let payload_json =
-            json_string(&record.transition, "session_runtime_commands.payload_json")?;
+        let payload_json = json_string(&record.delivery, "session_runtime_commands.payload_json")?;
         sqlx::query(
             r#"
             INSERT INTO session_runtime_commands (
-                id, session_id, transition_id, phase_node, status, payload_json,
+                id, session_id, frame_transition_id, phase_node, status, payload_json,
                 created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(record.id.to_string())
         .bind(&record.session_id)
-        .bind(&record.transition_id)
+        .bind(&record.frame_transition_id)
         .bind(&record.phase_node)
         .bind(record.status.as_str())
         .bind(payload_json)
@@ -768,11 +826,21 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
     ) -> SessionStoreResult<Vec<RuntimeCommandRecord>> {
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, transition_id, phase_node, status, payload_json,
-                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
-            FROM session_runtime_commands
-            WHERE session_id = $1 AND status = $2
-            ORDER BY created_at_ms ASC
+            SELECT c.id, c.session_id, c.frame_transition_id, c.phase_node, c.status, c.payload_json,
+                   c.created_at_ms, c.updated_at_ms, c.applied_at_ms, c.failed_at_ms, c.last_error,
+                   t.id AS frame_transition_record_id,
+                   t.target_frame_id AS frame_transition_target_frame_id,
+                   t.run_id AS frame_transition_run_id,
+                   t.lifecycle_key AS frame_transition_lifecycle_key,
+                   t.phase_node AS frame_transition_phase_node,
+                   t.capability_keys_json AS frame_transition_capability_keys_json,
+                   t.transition_json AS frame_transition_transition_json,
+                   t.source_turn_id AS frame_transition_source_turn_id,
+                   t.created_at_ms AS frame_transition_created_at_ms
+            FROM session_runtime_commands c
+            JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
+            WHERE c.session_id = $1 AND c.status = $2
+            ORDER BY c.created_at_ms ASC
             "#,
         )
         .bind(session_id)
@@ -812,11 +880,21 @@ impl SessionRuntimeCommandStore for PostgresSessionRepository {
         let limit = i64::from(limit.max(1));
         let rows = sqlx::query(
             r#"
-            SELECT id, session_id, transition_id, phase_node, status, payload_json,
-                   created_at_ms, updated_at_ms, applied_at_ms, failed_at_ms, last_error
-            FROM session_runtime_commands
-            WHERE status = ANY($1)
-            ORDER BY updated_at_ms ASC, created_at_ms ASC
+            SELECT c.id, c.session_id, c.frame_transition_id, c.phase_node, c.status, c.payload_json,
+                   c.created_at_ms, c.updated_at_ms, c.applied_at_ms, c.failed_at_ms, c.last_error,
+                   t.id AS frame_transition_record_id,
+                   t.target_frame_id AS frame_transition_target_frame_id,
+                   t.run_id AS frame_transition_run_id,
+                   t.lifecycle_key AS frame_transition_lifecycle_key,
+                   t.phase_node AS frame_transition_phase_node,
+                   t.capability_keys_json AS frame_transition_capability_keys_json,
+                   t.transition_json AS frame_transition_transition_json,
+                   t.source_turn_id AS frame_transition_source_turn_id,
+                   t.created_at_ms AS frame_transition_created_at_ms
+            FROM session_runtime_commands c
+            JOIN agent_frame_transitions t ON t.id = c.frame_transition_id
+            WHERE c.status = ANY($1)
+            ORDER BY c.updated_at_ms ASC, c.created_at_ms ASC
             LIMIT $2
             "#,
         )

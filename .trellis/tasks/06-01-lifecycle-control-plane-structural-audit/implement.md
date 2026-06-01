@@ -55,7 +55,7 @@
 ## Phase 4: 收束 AgentFrame 作为 runtime surface owner
 
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
-- [ ] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
+- [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
@@ -64,7 +64,7 @@
 ### Gate
 
 - [ ] `AgentFrameBuilder` 测试覆盖 procedure、context、capability、VFS/MCP、runtime refs 的同源 frame revision 输出。
-- [ ] Runtime command 表或接口只表达 delivery；frame transition 有独立事实源或明确 repository。
+- [x] Runtime command 表或接口只表达 delivery；frame transition 有独立事实源或明确 repository。
 - [ ] Hook/capability control command 的 primary target 是 agent/frame/assignment，只有 runtime adapter 接收 raw session id。
 - [ ] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
 

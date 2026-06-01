@@ -7,12 +7,13 @@ use agentdash_agent_protocol::{
     AgentDashThreadItem, BackboneEnvelope, BackboneEvent, PlatformEvent,
 };
 use agentdash_spi::session_persistence::{
-    ExecutionStatus, NewCompactionProjectionCommit, PendingCapabilityStateTransition,
-    PersistedSessionEvent, RuntimeCommandRecord, RuntimeCommandStatus, SessionBootstrapState,
-    SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
-    SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
-    SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
-    TerminalEffectStatus, TerminalEffectType, TitleSource,
+    AgentFrameTransitionRecord, ExecutionStatus, NewCompactionProjectionCommit,
+    PersistedSessionEvent, RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
+    RuntimeDeliveryCommand, SessionBootstrapState, SessionCompactionRecord,
+    SessionCompactionStatus, SessionLineageRecord, SessionLineageRelationKind,
+    SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
+    SessionStoreError, SessionStoreResult, TerminalEffectRecord, TerminalEffectStatus,
+    TerminalEffectType, TitleSource,
 };
 use sqlx::Row;
 
@@ -172,23 +173,82 @@ where
     let id = uuid::Uuid::parse_str(&id_raw)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
     let payload_json = row.get::<String, _>("payload_json");
-    let transition = serde_json::from_str::<PendingCapabilityStateTransition>(&payload_json)
+    let delivery = serde_json::from_str::<RuntimeDeliveryCommand>(&payload_json)
         .map_err(|error| SessionStoreError::InvalidData(error.to_string()))?;
+    let frame_transition = agent_frame_transition_from_row(row)?;
+    let frame_transition_id = row.get::<String, _>("frame_transition_id");
+    if delivery.frame_transition_id != frame_transition_id
+        || frame_transition.id != frame_transition_id
+        || delivery.target_frame_id != frame_transition.target_frame_id
+    {
+        return Err(SessionStoreError::InvalidData(format!(
+            "session_runtime_commands {} delivery 与 agent_frame_transitions {} 不一致",
+            id, frame_transition.id
+        )));
+    }
     Ok(RuntimeCommandRecord {
         id,
         session_id: row.get::<String, _>("session_id"),
-        transition_id: row.get::<String, _>("transition_id"),
+        frame_transition_id,
         phase_node: row.get::<String, _>("phase_node"),
         status: parse_runtime_command_status(
             row.get::<String, _>("status"),
             "session_runtime_commands.status",
         )?,
-        transition,
+        delivery,
+        frame_transition,
         created_at_ms: row.get::<i64, _>("created_at_ms"),
         updated_at_ms: row.get::<i64, _>("updated_at_ms"),
         applied_at_ms: row.get::<Option<i64>, _>("applied_at_ms"),
         failed_at_ms: row.get::<Option<i64>, _>("failed_at_ms"),
         last_error: row.get::<Option<String>, _>("last_error"),
+    })
+}
+
+fn agent_frame_transition_from_row<R>(row: &R) -> SessionStoreResult<AgentFrameTransitionRecord>
+where
+    R: Row,
+    for<'a> String: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> i64: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+{
+    let target_frame_id_raw = row.get::<String, _>("frame_transition_target_frame_id");
+    let target_frame_id = uuid::Uuid::parse_str(&target_frame_id_raw).map_err(|error| {
+        SessionStoreError::InvalidData(format!(
+            "agent_frame_transitions.target_frame_id 不是 UUID: {error}"
+        ))
+    })?;
+    let run_id_raw = row.get::<String, _>("frame_transition_run_id");
+    let run_id = uuid::Uuid::parse_str(&run_id_raw).map_err(|error| {
+        SessionStoreError::InvalidData(format!("agent_frame_transitions.run_id 不是 UUID: {error}"))
+    })?;
+    let capability_keys_json = row.get::<String, _>("frame_transition_capability_keys_json");
+    let capability_keys = serde_json::from_str::<std::collections::BTreeSet<String>>(
+        &capability_keys_json,
+    )
+    .map_err(|error| {
+        SessionStoreError::InvalidData(format!(
+            "解析 agent_frame_transitions.capability_keys_json 失败: {error}"
+        ))
+    })?;
+    let transition_json = row.get::<String, _>("frame_transition_transition_json");
+    let transition = serde_json::from_str::<RuntimeCapabilityTransition>(&transition_json)
+        .map_err(|error| {
+            SessionStoreError::InvalidData(format!(
+                "解析 agent_frame_transitions.transition_json 失败: {error}"
+            ))
+        })?;
+    Ok(AgentFrameTransitionRecord {
+        id: row.get::<String, _>("frame_transition_record_id"),
+        target_frame_id,
+        run_id,
+        lifecycle_key: row.get::<String, _>("frame_transition_lifecycle_key"),
+        phase_node: row.get::<String, _>("frame_transition_phase_node"),
+        capability_keys,
+        transition,
+        created_at_ms: row.get::<i64, _>("frame_transition_created_at_ms"),
+        source_turn_id: row.get::<Option<String>, _>("frame_transition_source_turn_id"),
     })
 }
 

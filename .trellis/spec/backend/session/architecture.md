@@ -31,7 +31,7 @@ LaunchCommand
 - 通过 runtime session 反查业务上下文时，只允许走 `RuntimeSession -> AgentFrame -> LifecycleAgent -> LifecycleRun -> LifecycleSubjectAssociation`。
 - runtime map、active turn、connector live session 是三个不同问题，不能用一个状态互相推断。
 - terminal fact 先持久化为事件，业务副作用进入 durable outbox；副作用失败不回滚 terminal event。
-- pending runtime command 保存可 replay transition records，不保存完整 `CapabilityState` projection。
+- pending runtime delivery command 只保存投递指令；`AgentFrameTransitionRecord` 保存可 replay 的 frame surface transition records，不保存完整 `CapabilityState` projection。
 
 ## Current Baseline
 
@@ -51,7 +51,7 @@ LaunchCommand
 ## Local Decisions
 
 - Construction 阶段一次性产出 launch-ready final facts，原因是 context query、inspector、audit 和 connector launch 必须观察同一份事实。
-- runtime command replay 从 construction base projection 开始，原因是 pending transition、context query 和 next-turn launch 必须共享相同闭包逻辑。
+- runtime delivery replay 从 construction base projection 开始，并从 `AgentFrameTransitionRecord` 投影出 capability transition，原因是 pending transition、context query 和 next-turn launch 必须共享相同闭包逻辑。
 - terminal effect 使用 outbox，原因是业务副作用需要跨进程恢复，且不应影响 terminal event 的事实性。
 - 会话标题由 `TitleSource` 管控：用户手动标题优先，其次接受具备来源标题能力的 connector 通过 typed Backbone event 提供的标题；无来源标题能力时才从首条用户消息本地派生 `auto` 标题。原因是标题属于会话列表元信息，业务层不应绑定 provider 私有实现，也不应为标题额外消耗模型执行能力。
 - 上下文压缩采用 Codex-aligned lifecycle 加 AgentDash-owned projection store。原因是 compact 在产品上是可观察 lifecycle，在恢复上是模型上下文 checkpoint；二者分层后，timeline、ContextFrame、agent input、branch restore 可以共享 durable facts 但消费不同 projection。

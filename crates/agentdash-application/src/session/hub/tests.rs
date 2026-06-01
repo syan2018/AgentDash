@@ -35,7 +35,6 @@ use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::super::MemorySessionPersistence;
-use super::super::RuntimeCommandStatus;
 use super::super::construction::{ConstructionResolutionPlan, RuntimeContextInspectionPlan};
 use super::super::hook_messages as msg;
 use super::super::hub_support::{
@@ -46,6 +45,7 @@ use super::super::types::{
     EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
     SessionBootstrapState, SessionExecutionState, UserPromptInput,
 };
+use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
 use super::{
     LiveRuntimeContextTransitionInput, PendingRuntimeContextTransitionInput, SessionRuntimeInner,
 };
@@ -1263,9 +1263,10 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
 
     hub.capability_service()
         .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
+            target_frame_id: uuid::Uuid::new_v4(),
             session_id: session.id.clone(),
             turn_id: None,
-            transition_id: "transition-skill-vfs".to_string(),
+            frame_transition_id: "transition-skill-vfs".to_string(),
             phase_node: "review".to_string(),
             run_id: uuid::Uuid::new_v4(),
             lifecycle_key: "dev".to_string(),
@@ -1286,13 +1287,15 @@ async fn pending_runtime_context_transition_derives_skill_dimension_from_active_
         .expect("runtime commands should load");
     let command = commands
         .iter()
-        .find(|command| command.transition_id == "transition-skill-vfs")
+        .find(|command| command.frame_transition_id == "transition-skill-vfs")
         .expect("pending transition should exist");
-    let payload = serde_json::to_value(&command.transition).expect("transition serializes");
+    let payload = serde_json::to_value(&command.delivery).expect("delivery serializes");
+    assert!(payload.get("frame_transition_id").is_some());
+    assert!(payload.get("transition").is_none());
     assert!(payload.get("state").is_none());
     assert_eq!(
         command
-            .transition
+            .frame_transition
             .transition
             .effects
             .iter()
@@ -1381,8 +1384,8 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
     target_flow.tool.mcp_servers = vec![target_mcp];
     target_flow.vfs.active = Some(pending_vfs);
 
-    hub.enqueue_pending_capability_state_transition(
-        &session.id,
+    let frame_transition = AgentFrameTransitionRecord::from_pending(
+        uuid::Uuid::new_v4(),
         PendingCapabilityStateTransition {
             id: "transition-1".to_string(),
             run_id: uuid::Uuid::new_v4(),
@@ -1393,9 +1396,11 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
             created_at: 1,
             source_turn_id: None,
         },
-    )
-    .await
-    .expect("enqueue pending transition");
+    );
+    let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+    hub.enqueue_runtime_delivery_command(&session.id, delivery, frame_transition)
+        .await
+        .expect("enqueue pending transition");
 
     hub.start_prompt(&session.id, simple_prompt_request("hello"))
         .await
@@ -1419,7 +1424,7 @@ async fn pending_capability_state_transition_applies_on_next_prompt_and_clears_m
         .await
         .expect("runtime commands should load");
     assert_eq!(applied_commands.len(), 1);
-    assert_eq!(applied_commands[0].transition_id, "transition-1");
+    assert_eq!(applied_commands[0].frame_transition_id, "transition-1");
 
     let events = hub
         .persistence
@@ -2904,8 +2909,8 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
     hub.mark_owner_bootstrap_pending(&session.id)
         .await
         .expect("should mark pending");
-    hub.enqueue_pending_capability_state_transition(
-        &session.id,
+    let frame_transition = AgentFrameTransitionRecord::from_pending(
+        uuid::Uuid::new_v4(),
         PendingCapabilityStateTransition {
             id: "transition-fail".to_string(),
             run_id: uuid::Uuid::new_v4(),
@@ -2916,9 +2921,11 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
             created_at: 1,
             source_turn_id: None,
         },
-    )
-    .await
-    .expect("enqueue pending transition");
+    );
+    let delivery = RuntimeDeliveryCommand::pending_runtime_context(&frame_transition);
+    hub.enqueue_runtime_delivery_command(&session.id, delivery, frame_transition)
+        .await
+        .expect("enqueue pending transition");
 
     let error = hub
         .start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
@@ -2939,7 +2946,7 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
         .await
         .expect("runtime commands should load");
     assert_eq!(requested_commands.len(), 1);
-    assert_eq!(requested_commands[0].transition_id, "transition-fail");
+    assert_eq!(requested_commands[0].frame_transition_id, "transition-fail");
 }
 
 #[tokio::test]

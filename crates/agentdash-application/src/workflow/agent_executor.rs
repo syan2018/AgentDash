@@ -468,11 +468,15 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             }
             let transition = RuntimeCapabilityTransition::from_records(declarations, effects);
             CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
+            let target_frame_id = session_capability
+                .resolve_runtime_session_frame_id(root_runtime_session_id)
+                .await?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
+                    target_frame_id,
                     session_id: root_runtime_session_id.to_string(),
                     turn_id: None,
-                    transition_id: format!(
+                    frame_transition_id: format!(
                         "activity-{}-{}-{}",
                         activity.key,
                         claim.attempt,

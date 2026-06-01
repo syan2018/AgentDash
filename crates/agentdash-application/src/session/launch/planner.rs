@@ -82,7 +82,7 @@ impl<'a> LaunchPlanner<'a> {
         let pending_capability_transitions = input
             .requested_runtime_commands
             .iter()
-            .map(|command| command.transition.clone())
+            .map(|command| command.pending_capability_state_transition())
             .collect::<Vec<_>>();
         let default_mount_root = req
             .typed_vfs

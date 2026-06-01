@@ -1,5 +1,4 @@
 use crate::backend_execution_placement::ExecutionPlacementPlan;
-use crate::session::construction::SessionConstructionPlan;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::launch::{
     ConnectorStarter, LaunchCommand, LaunchCommandOutcome, LaunchPlanner, LaunchPlannerInput,
@@ -8,6 +7,7 @@ use crate::session::launch::{
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
 use crate::workflow::AgentFrameBuilder;
+use crate::workflow::runtime_launch::RuntimeLaunchRequest;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -82,8 +82,8 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let construction = match provider
-            .build_construction(SessionConstructionProviderInput {
+        let launch_request = match provider
+            .build_frame_construction(SessionConstructionProviderInput {
                 session_id: sid.clone(),
                 command: command.clone(),
                 session_meta: session_meta.clone(),
@@ -92,7 +92,7 @@ impl SessionLaunchOrchestrator {
             })
             .await
         {
-            Ok(construction) => construction,
+            Ok(req) => req,
             Err(error) => {
                 self.deps
                     .turn_supervisor
@@ -101,9 +101,8 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let context_sources = construction
-            .context
-            .bundle
+        let context_sources = launch_request
+            .context_bundle
             .as_ref()
             .map(|bundle| {
                 bundle
@@ -121,7 +120,7 @@ impl SessionLaunchOrchestrator {
         };
         let context_sources = facts.context_sources.clone();
         let turn_id = self
-            .launch_with_construction(session_id, &command, construction, facts)
+            .launch_with_request(session_id, &command, launch_request, facts)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -130,15 +129,15 @@ impl SessionLaunchOrchestrator {
     }
 
     #[cfg(test)]
-    pub(crate) async fn launch_with_construction_for_test(
+    pub(crate) async fn launch_with_request_for_test(
         &self,
         session_id: &str,
-        construction: SessionConstructionPlan,
+        launch_request: RuntimeLaunchRequest,
     ) -> Result<String, ConnectorError> {
         let user_input = UserPromptInput {
-            prompt_blocks: construction.prompt.prompt_blocks.clone(),
-            env: construction.prompt.environment_variables.clone(),
-            executor_config: construction.execution_profile.executor_config.clone(),
+            prompt_blocks: launch_request.prompt_blocks.clone(),
+            env: launch_request.environment_variables.clone(),
+            executor_config: launch_request.executor_config.clone(),
             backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
@@ -167,8 +166,8 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let construction =
-            Self::finalize_construction_for_test(construction, &requested_runtime_commands);
+        let launch_request =
+            Self::finalize_request_for_test(launch_request, &requested_runtime_commands);
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -176,24 +175,25 @@ impl SessionLaunchOrchestrator {
             requested_runtime_commands,
             context_sources: Vec::new(),
         };
-        self.launch_with_construction(session_id, &command, construction, facts)
+        self.launch_with_request(session_id, &command, launch_request, facts)
             .await
     }
 
     #[cfg(test)]
-    fn finalize_construction_for_test(
-        mut construction: SessionConstructionPlan,
+    fn finalize_request_for_test(
+        mut req: RuntimeLaunchRequest,
         requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
-    ) -> SessionConstructionPlan {
-        let mut base_capability_state = construction
-            .projections
-            .capability_state
+    ) -> RuntimeLaunchRequest {
+        use crate::workflow::runtime_launch::LaunchResolutionTrace;
+
+        let mut base_capability_state = req
+            .typed_capability_state
             .clone()
             .unwrap_or_default();
-        if let Some(vfs) = construction.surface.vfs.clone() {
-            base_capability_state.vfs.active = Some(vfs);
+        if let Some(ref vfs) = req.typed_vfs {
+            base_capability_state.vfs.active = Some(vfs.clone());
         }
-        base_capability_state.tool.mcp_servers = construction.projections.mcp_servers.clone();
+        base_capability_state.tool.mcp_servers = req.typed_mcp_servers.clone();
 
         let requested_transitions = requested_runtime_commands
             .iter()
@@ -212,46 +212,46 @@ impl SessionLaunchOrchestrator {
             .as_ref()
             .map(|replay| replay.capability_state.clone())
             .unwrap_or_else(|| base_capability_state.clone());
-        if let Some(base_vfs) = construction.surface.vfs.clone() {
+        if let Some(base_vfs) = req.typed_vfs.clone() {
             let effective_vfs = replay
                 .as_ref()
                 .and_then(|replay| replay.effective_vfs.clone())
                 .unwrap_or(base_vfs);
-            construction.workspace.working_directory = effective_vfs
+            req.working_directory = effective_vfs
                 .default_mount()
                 .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
                 .filter(|path| !path.as_os_str().is_empty())
-                .or(construction.workspace.working_directory);
-            final_capability_state.vfs.active = Some(effective_vfs);
-            construction.projections.capability_state = Some(final_capability_state.clone());
-            construction.sync_vfs_projection_from_capability();
+                .or(req.working_directory);
+            final_capability_state.vfs.active = Some(effective_vfs.clone());
+            req.typed_vfs = Some(effective_vfs);
         }
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| construction.projections.mcp_servers.clone());
-        construction.projections.mcp_servers = effective_mcp_servers.clone();
+            .unwrap_or_else(|| req.typed_mcp_servers.clone());
+        req.typed_mcp_servers = effective_mcp_servers.clone();
         final_capability_state.tool.mcp_servers = effective_mcp_servers;
-        construction.projections.capability_state = Some(final_capability_state);
-        construction.resolution.runtime_base_capability_state = Some(base_capability_state);
+        req.typed_capability_state = Some(final_capability_state);
+        req.base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {
-            construction.resolution.pending_overlay_applied = false;
+            req.resolution_trace.pending_overlay_applied = false;
         } else {
-            construction.resolution.vfs_source = Some("test.pending_runtime_command".to_string());
-            construction.resolution.mcp_source = Some("test.pending_runtime_command".to_string());
-            construction.resolution.capability_source =
-                Some("test.pending_runtime_command".to_string());
-            construction.resolution.pending_overlay_applied = true;
+            req.resolution_trace = LaunchResolutionTrace {
+                vfs_source: Some("test.pending_runtime_command".to_string()),
+                mcp_source: Some("test.pending_runtime_command".to_string()),
+                capability_source: Some("test.pending_runtime_command".to_string()),
+                pending_overlay_applied: true,
+            };
         }
-        construction
+        req
     }
 
-    /// 已完成 construction plan 准备后的内部 stage runner。生产入口只能从 `launch` 进入。
-    async fn launch_with_construction(
+    /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。
+    async fn launch_with_request(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-        construction: SessionConstructionPlan,
+        launch_request: RuntimeLaunchRequest,
         facts: LaunchRuntimeFacts,
     ) -> Result<String, ConnectorError> {
         let LaunchRuntimeFacts {
@@ -272,7 +272,7 @@ impl SessionLaunchOrchestrator {
                 had_existing_runtime,
                 session_meta: &session_meta,
                 requested_runtime_commands,
-                construction,
+                launch_request,
             })
             .await
         {

@@ -12,13 +12,13 @@ use agentdash_spi::{
 use agentdash_spi::hooks::ContextFrame;
 
 use crate::backend_execution_placement::ExecutionPlacementPlan;
-use crate::session::construction::SessionConstructionPlan;
 use crate::session::post_turn_handler::DynPostTurnHandler;
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
     SessionPromptLifecycle,
 };
+use crate::workflow::runtime_launch::RuntimeLaunchRequest;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchFollowUpSource {
     Explicit,
@@ -127,7 +127,7 @@ pub struct LaunchPlan {
 
 pub struct LaunchPlanInput {
     pub resolved_payload: ResolvedPromptPayload,
-    pub construction: SessionConstructionPlan,
+    pub launch_request: RuntimeLaunchRequest,
     pub session_id: String,
     pub turn_id: String,
     pub lifecycle: SessionPromptLifecycle,
@@ -151,22 +151,18 @@ pub struct LaunchPlanInput {
 impl LaunchPlan {
     pub fn build(input: LaunchPlanInput) -> Self {
         let working_directory = input
-            .construction
-            .workspace
+            .launch_request
             .working_directory
             .clone()
-            .expect("SessionConstructionPlan.workspace.working_directory 必须在 launch 前解析");
+            .expect("RuntimeLaunchRequest.working_directory 必须在 launch 前解析");
         let executor_config = input
-            .construction
-            .execution_profile
+            .launch_request
             .executor_config
             .clone()
-            .expect(
-                "SessionConstructionPlan.execution_profile.executor_config 必须在 launch 前解析",
-            );
-        let mcp_servers = input.construction.projections.mcp_servers.clone();
-        let vfs = input.construction.surface.vfs.clone();
-        let identity = input.construction.identity.identity.clone();
+            .expect("RuntimeLaunchRequest.executor_config 必须在 launch 前解析");
+        let mcp_servers = input.launch_request.typed_mcp_servers.clone();
+        let vfs = input.launch_request.typed_vfs.clone();
+        let identity = input.launch_request.identity.clone();
         let title_hint = input
             .resolved_payload
             .text_prompt
@@ -189,10 +185,10 @@ impl LaunchPlan {
             follow_up_session_id: input.follow_up_session_id,
             follow_up_source: input.follow_up_source,
             pending_transition_count,
-            vfs_source: input.construction.resolution.vfs_source.clone(),
-            pending_vfs_overlay_applied: input.construction.resolution.pending_overlay_applied,
-            mcp_source: input.construction.resolution.mcp_source.clone(),
-            capability_source: input.construction.resolution.capability_source.clone(),
+            vfs_source: input.launch_request.resolution_trace.vfs_source.clone(),
+            pending_vfs_overlay_applied: input.launch_request.resolution_trace.pending_overlay_applied,
+            mcp_source: input.launch_request.resolution_trace.mcp_source.clone(),
+            capability_source: input.launch_request.resolution_trace.capability_source.clone(),
             working_directory: working_directory.clone(),
             has_vfs: vfs.is_some(),
             backend_execution_backend_id: input
@@ -239,7 +235,7 @@ impl LaunchPlan {
             entries: vec![
                 LaunchPlanTraceEntry {
                     stage: "construction",
-                    source: "SessionConstructionPlan".to_string(),
+                    source: "RuntimeLaunchRequest".to_string(),
                 },
                 LaunchPlanTraceEntry {
                     stage: "runtime_command",
@@ -279,12 +275,12 @@ impl LaunchPlan {
             context_frames: Vec::new(),
             assembled_tools: Vec::new(),
         };
-        let context_bundle = input.construction.context.bundle.clone();
-        let continuation_context_frame = input.construction.context.continuation_context_frame.clone();
+        let context_bundle = input.launch_request.context_bundle.clone();
+        let continuation_context_frame = input.launch_request.continuation_context_frame.clone();
         Self {
             resolved_payload: input.resolved_payload,
             title_hint,
-            discovered_guidelines: input.construction.projections.discovered_guidelines.clone(),
+            discovered_guidelines: input.launch_request.discovered_guidelines.clone(),
             context_bundle,
             continuation_context_frame,
             lifecycle,

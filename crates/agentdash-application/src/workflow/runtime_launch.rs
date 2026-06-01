@@ -29,10 +29,20 @@ use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, SessionContextBundle,
     SessionMcpServer, Vfs,
 };
+use agentdash_spi::hooks::ContextFrame;
 use uuid::Uuid;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
+
+/// Launch 过程中 resolution 来源的 trace 数据（仅用于诊断/可观测性）。
+#[derive(Debug, Clone, Default)]
+pub struct LaunchResolutionTrace {
+    pub vfs_source: Option<String>,
+    pub mcp_source: Option<String>,
+    pub capability_source: Option<String>,
+    pub pending_overlay_applied: bool,
+}
 
 /// 从 AgentFrame 投影出的 runtime adapter 请求。
 ///
@@ -68,6 +78,11 @@ pub struct RuntimeLaunchRequest {
     pub typed_capability_state: Option<CapabilityState>,
     pub typed_vfs: Option<Vfs>,
     pub typed_mcp_servers: Vec<SessionMcpServer>,
+
+    // ── launch pipeline 所需附加字段 ──
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub base_capability_state: Option<CapabilityState>,
+    pub resolution_trace: LaunchResolutionTrace,
 }
 
 impl RuntimeLaunchRequest {
@@ -149,7 +164,28 @@ impl RuntimeLaunchRequest {
             typed_capability_state,
             typed_vfs,
             typed_mcp_servers,
+            continuation_context_frame: None,
+            base_capability_state: None,
+            resolution_trace: LaunchResolutionTrace::default(),
         }
+    }
+
+    /// 设置 continuation context frame（跨 turn 延续上下文）。
+    pub fn with_continuation_context(mut self, frame: Option<ContextFrame>) -> Self {
+        self.continuation_context_frame = frame;
+        self
+    }
+
+    /// 设置 base capability state（用于 pending transition replay）。
+    pub fn with_base_capability_state(mut self, state: Option<CapabilityState>) -> Self {
+        self.base_capability_state = state;
+        self
+    }
+
+    /// 设置 resolution trace（诊断用途）。
+    pub fn with_resolution_trace(mut self, trace: LaunchResolutionTrace) -> Self {
+        self.resolution_trace = trace;
+        self
     }
 
     /// 设置用户 prompt blocks 和环境变量。

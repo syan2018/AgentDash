@@ -70,35 +70,24 @@ pub struct SessionConstructionProviderInput {
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
 }
 
-/// 用于把 source command 构建成与主通道一致的 construction plan。
+/// Session launch 的 construction provider 契约。
+///
+/// 实现方负责从 session 元数据推断 owner / workspace / capability / context 等
+/// 运行时字段，产出 `RuntimeLaunchRequest` 驱动 connector 启动。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
-    /// 依据 session 的 owner binding / workspace / agent preset / workflow 等信息，
-    /// 补齐后端注入字段（mcp_servers / vfs / capability_state / context_bundle 等）。
-    async fn build_construction(
-        &self,
-        input: SessionConstructionProviderInput,
-    ) -> Result<SessionConstructionPlan, ConnectorError>;
-
-    /// frame builder 路径：产出 RuntimeLaunchRequest 替代 SessionConstructionPlan。
-    ///
-    /// 新实现应覆盖此方法；默认实现通过旧 `build_construction` 桥接，
-    /// 在 SessionConstructionPlan 完全删除后此默认实现一并移除。
+    /// 产出 RuntimeLaunchRequest —— session launch 的唯一输入。
     async fn build_frame_construction(
         &self,
         input: SessionConstructionProviderInput,
-    ) -> Result<RuntimeLaunchRequest, ConnectorError> {
-        let plan = self.build_construction(input).await?;
-        Ok(runtime_launch_request_from_construction_plan(&plan))
-    }
+    ) -> Result<RuntimeLaunchRequest, ConnectorError>;
 }
 
-/// 从 `SessionConstructionPlan` 桥接到 `RuntimeLaunchRequest`（过渡期兼容层）。
-fn runtime_launch_request_from_construction_plan(
+/// 从 `SessionConstructionPlan` 投影到 `RuntimeLaunchRequest`。
+pub fn runtime_launch_request_from_construction_plan(
     plan: &SessionConstructionPlan,
 ) -> RuntimeLaunchRequest {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
     let typed_capability_state = plan.projections.capability_state.clone();
     let typed_vfs = plan.active_vfs().cloned();
@@ -146,6 +135,14 @@ fn runtime_launch_request_from_construction_plan(
         typed_capability_state,
         typed_vfs,
         typed_mcp_servers,
+        continuation_context_frame: plan.context.continuation_context_frame.clone(),
+        base_capability_state: plan.resolution.runtime_base_capability_state.clone(),
+        resolution_trace: LaunchResolutionTrace {
+            vfs_source: plan.resolution.vfs_source.clone(),
+            mcp_source: plan.resolution.mcp_source.clone(),
+            capability_source: plan.resolution.capability_source.clone(),
+            pending_overlay_applied: plan.resolution.pending_overlay_applied,
+        },
     }
 }
 

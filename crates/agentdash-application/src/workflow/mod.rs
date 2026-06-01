@@ -26,8 +26,9 @@ pub mod tools;
 
 pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
 pub use agent_executor::{
-    AgentActivityExecutorLauncher, AgentActivityLaunchContext, AgentActivityRuntimePort,
-    AgentActivitySessionPort,
+    AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
+    AgentActivityRuntimePort, AgentActivitySessionPort, AgentReusePolicy,
+    ContinueRootExecutionPolicy, RuntimeSessionDeliveryPolicy,
 };
 pub use agentdash_domain::workflow::{
     ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,

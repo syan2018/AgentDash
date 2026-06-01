@@ -114,9 +114,10 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade、hub lazy rebuild 与 ContinueRoot policy 入口迁到 target-first service。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade、hub lazy rebuild，以及 workflow definition 层的 ContinueRoot policy vocabulary 迁出 session-shaped enum。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
+  - Application executor boundary 已引入 `ContinueRootExecutionPolicy { AgentReusePolicy, RuntimeSessionDeliveryPolicy }`，并用 `AgentActivityAssignmentTarget::ReuseFrame(AgentFrameRuntimeTarget)` 复用 root frame/agent；主项仍未关闭，因为 workflow definition/freeform 仍声明 `AgentSessionPolicy::ContinueRoot`，还没有把 policy composition 提升为 definition-level contract。
 - [x] 明确多 RuntimeSession selection policy。
 
 ### Gate
@@ -127,7 +128,7 @@
 - [ ] Static gate：`rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \\{|ensure_hook_runtime\\(|get_hook_runtime\\(|resolve_runtime_session_frame_id\\(" crates/agentdash-application/src` 只允许命中 runtime adapter、tests 或显式 provenance/trace sink。
 - [ ] Hook gate：测试证明 hook snapshot load / refresh / evaluate 可从 `frame_id + assignment_id` 执行，不需要 raw runtime session id 作为 owner。
 - [ ] Capability gate：PhaseNode 与 canvas live update 测试直接传入 `AgentFrameRuntimeTarget`，workflow/canvas control logic 不调用 `resolve_runtime_session_frame_id`。
-  - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`；canvas capability sync 已拆出 runtime-delivery adapter 与 target-first apply helper，不再直接调用 `resolve_runtime_session_frame_id`；workflow/canvas 获取 hook runtime 时会校验 hook runtime target 与 `AgentFrameRuntimeTarget` 一致。gate 仍未关闭，因为 companion notification、hook SPI/session facade 与 ContinueRoot policy 入口还没有统一迁到 frame/assignment target。
+  - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`；canvas capability sync 已拆出 runtime-delivery adapter 与 target-first apply helper，不再直接调用 `resolve_runtime_session_frame_id`；workflow/canvas 获取 hook runtime 时会校验 hook runtime target 与 `AgentFrameRuntimeTarget` 一致。gate 仍未关闭，因为 hook SPI/session facade 与 hub lazy rebuild 仍存在 session-shaped owner 入口。
 - [x] Companion gate：companion parent request / result notification 以 parent frame/assignment 为 target，parent runtime session 只进入 trace/delivery payload。
   - [x] Parent result return 已由 `CompanionGateControlService` resolve gate 后交给 delivery adapter 投递。
   - [x] Parent request initial notification 由 `CompanionGateControlService::open_parent_request` 打开 parent-frame-owned `LifecycleGate` 后交给 delivery adapter；hook evaluation 通过 `ensure_hook_runtime_for_target(AgentFrameRuntimeTarget)` 进入 parent frame target。
@@ -172,6 +173,13 @@
 - `apply_continue_root_activity` 改为接收 `AgentFrameRuntimeTarget`，live/pending 两支不再自行解析 root runtime session。
 - 该 slice 仍不关闭主项，因为 `AgentActivityLaunchContext` 仍以 `root_runtime_session_id` 作为 policy 输入，尚未由 lifecycle agent/frame reuse policy 与 runtime session selection policy 共同表达。
 
+2026-06-02 的 ContinueRoot policy split slice 已把 activity executor boundary 从 root runtime session 输入改为显式 policy composition：
+
+- `AgentActivityLaunchContext` 不再携带 `root_runtime_session_id`；普通 agent activity 只保留 `source_runtime_session_ref` 作为 executor config / trace provenance，ContinueRoot 入口携带 `ContinueRootExecutionPolicy`。
+- `ContinueRootExecutionPolicy { agent_reuse_policy, runtime_session_policy }` 将 `AgentReusePolicy::ContinueCurrentAgent` 与 `RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession` 分开表达；runtime session 只负责 delivery target，agent/frame 复用由 reuse policy 与 `AgentFrameRuntimeTarget` 承接。
+- `create_agent_activity_assignment` 改为接收 `AgentActivityAssignmentTarget`；`SpawnChild` 使用 `CreateNewAgent` 创建新 agent/frame/runtime session，`ContinueRoot` 使用 `ReuseFrame(AgentFrameRuntimeTarget)` 绑定已有 root frame/agent，并校验 run、project、active agent 与 delivery runtime ref。
+- 该 slice 仍不关闭主项，因为 domain workflow definition/freeform 仍用 `AgentSessionPolicy::ContinueRoot` 声明 executor policy；下一步需要把 definition-level contract 改成 agent reuse policy 与 runtime delivery policy 的组合，而不是在 executor boundary 翻译旧枚举。
+
 验证记录：
 
 - `cargo test -p agentdash-application workflow::frame_builder --lib -- --format terse`
@@ -181,6 +189,7 @@
 - `cargo test -p agentdash-application companion::gate_control --lib -- --format terse`
 - `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 - `cargo check -p agentdash-application`
+- `cargo check -p agentdash-api`
 - `cargo fmt --all --check`
 - `git diff --check`
 

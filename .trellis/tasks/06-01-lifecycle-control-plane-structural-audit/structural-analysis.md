@@ -475,6 +475,14 @@ ContinueRoot 的本质应该是“复用某个 LifecycleAgent 继续承接 Activ
 - root agent/frame reuse 还没有独立的 `AgentReusePolicy` / lifecycle agent selection 封装；runtime delivery 也还没有用 `RuntimeSessionSelectionPolicy` 在 ContinueRoot 入口显式表达。
 - freeform lifecycle seed 仍声明 `AgentSessionPolicy::ContinueRoot`，尚未转为 lifecycle-level policy composition。
 
+2026-06-02 的 ContinueRoot policy split slice 继续关闭 executor boundary 内的 policy 混同：
+
+- `AgentActivityLaunchContext` 不再携带 `root_runtime_session_id`；runtime session ref 被降为 `source_runtime_session_ref` 或 `RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession`，只表达 provenance / delivery。
+- `ContinueRootExecutionPolicy` 显式拆出 `AgentReusePolicy::ContinueCurrentAgent` 与 `RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession`；`start_continue_root` 先解析 `AgentFrameRuntimeTarget`，再以 `AgentActivityAssignmentTarget::ReuseFrame` 绑定已有 root frame/agent。
+- assignment 创建边界不再用 root runtime session 决定是否创建新 agent/frame；`SpawnChild` 是 `CreateNewAgent`，`ContinueRoot` 是 `ReuseFrame(target)`，并校验 target agent 的 run、project、active 状态与 delivery runtime ref。
+
+该 slice 关闭了 “root runtime session 同时表达 agent reuse 与 delivery target” 的 application executor 缺口，但仍不关闭 P1-10 主 gate：definition/freeform 层仍以 `AgentSessionPolicy::ContinueRoot` 作为 policy vocabulary，下一步要把 workflow definition contract 自身升级为 agent reuse policy + runtime delivery policy，而不是仅在 executor boundary 翻译旧枚举。
+
 ## P1-11 多 RuntimeSession ref selection 不清
 
 ### 原始问题

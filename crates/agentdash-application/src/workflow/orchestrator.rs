@@ -333,11 +333,7 @@ impl LifecycleOrchestrator {
             self.repos.activity_execution_claim_repo.as_ref(),
         );
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id: run.project_id,
-                lifecycle_key: String::new(),
-                root_runtime_session_id: String::new(),
-            },
+            AgentActivityLaunchContext::detached(run.project_id, String::new()),
             AgentActivityRuntimePort::new(
                 self.session_core.clone(),
                 self.session_launch.clone(),

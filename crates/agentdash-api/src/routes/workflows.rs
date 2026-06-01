@@ -348,11 +348,7 @@ pub async fn start_lifecycle_run(
             ))
         })?;
     let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext {
-            project_id: run.project_id,
-            lifecycle_key: String::new(),
-            root_runtime_session_id: String::new(),
-        },
+        AgentActivityLaunchContext::detached(run.project_id, String::new()),
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),
@@ -441,11 +437,7 @@ pub async fn submit_human_decision(
         .await?;
     let run = update.run;
     let launcher = AgentActivityExecutorLauncher::new(
-        AgentActivityLaunchContext {
-            project_id: run.project_id,
-            lifecycle_key: String::new(),
-            root_runtime_session_id: String::new(),
-        },
+        AgentActivityLaunchContext::detached(run.project_id, String::new()),
         AgentActivityRuntimePort::new(
             state.services.session_core.clone(),
             state.services.session_launch.clone(),

@@ -2,7 +2,7 @@ use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
     ActivityPortValue, AgentAssignment, AgentFrame, AgentProcedureRef, AgentSessionPolicy,
     ExecutionSource, ExecutorRunRef, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    LifecycleAgent, WorkflowGraph,
+    LifecycleAgent, RuntimeSessionSelectionPolicy, WorkflowGraph,
 };
 use agentdash_spi::CapabilityScope;
 use std::sync::Arc;
@@ -37,7 +37,70 @@ use crate::workflow::{
 pub struct AgentActivityLaunchContext {
     pub project_id: uuid::Uuid,
     pub lifecycle_key: String,
-    pub root_runtime_session_id: String,
+    pub source_runtime_session_ref: Option<String>,
+    pub continue_root_policy: Option<ContinueRootExecutionPolicy>,
+}
+
+impl AgentActivityLaunchContext {
+    pub fn detached(project_id: uuid::Uuid, lifecycle_key: impl Into<String>) -> Self {
+        Self {
+            project_id,
+            lifecycle_key: lifecycle_key.into(),
+            source_runtime_session_ref: None,
+            continue_root_policy: None,
+        }
+    }
+
+    pub fn with_runtime_trace(
+        project_id: uuid::Uuid,
+        lifecycle_key: impl Into<String>,
+        runtime_session_id: impl Into<String>,
+    ) -> Self {
+        let runtime_session_id = runtime_session_id.into();
+        Self {
+            project_id,
+            lifecycle_key: lifecycle_key.into(),
+            source_runtime_session_ref: Some(runtime_session_id.clone()),
+            continue_root_policy: Some(ContinueRootExecutionPolicy::deliver_to_active_trace(
+                runtime_session_id,
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinueRootExecutionPolicy {
+    pub agent_reuse_policy: AgentReusePolicy,
+    pub runtime_session_policy: RuntimeSessionDeliveryPolicy,
+}
+
+impl ContinueRootExecutionPolicy {
+    pub fn deliver_to_active_trace(runtime_session_id: impl Into<String>) -> Self {
+        Self {
+            agent_reuse_policy: AgentReusePolicy::ContinueCurrentAgent,
+            runtime_session_policy: RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession {
+                runtime_session_id: runtime_session_id.into(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentReusePolicy {
+    CreateActivityAgent,
+    ContinueCurrentAgent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeSessionDeliveryPolicy {
+    CreateNew,
+    DeliverToRuntimeSession { runtime_session_id: String },
+}
+
+#[derive(Debug, Clone)]
+pub enum AgentActivityAssignmentTarget {
+    CreateNewAgent,
+    ReuseFrame(AgentFrameRuntimeTarget),
 }
 
 pub struct AgentActivityExecutorLauncher<P> {
@@ -79,7 +142,7 @@ pub trait AgentActivitySessionPort: Send + Sync {
         _definition: &WorkflowGraph,
         _activity: &ActivityDefinition,
         _claim: &ActivityExecutionClaim,
-        _runtime_session_id: Option<&str>,
+        _assignment_target: AgentActivityAssignmentTarget,
         _executor_config: Option<&AgentConfig>,
     ) -> Result<AgentActivityAssignmentContext, String> {
         Err("Agent assignment port 未接入".to_string())
@@ -96,7 +159,7 @@ pub trait AgentActivitySessionPort: Send + Sync {
     }
     async fn resolve_continue_root_runtime_target(
         &self,
-        _root_runtime_session_id: &str,
+        _runtime_session_policy: &RuntimeSessionDeliveryPolicy,
     ) -> Result<AgentFrameRuntimeTarget, String> {
         Err("ContinueRoot runtime target resolver 未接入".to_string())
     }
@@ -168,6 +231,73 @@ impl AgentActivityRuntimePort {
         self.platform_config = Some(platform_config);
         self
     }
+
+    async fn create_agent_activity_assignment_for_existing_frame(
+        &self,
+        definition: &WorkflowGraph,
+        claim: &ActivityExecutionClaim,
+        target: AgentFrameRuntimeTarget,
+    ) -> Result<AgentActivityAssignmentContext, String> {
+        let frame = self
+            .repos
+            .agent_frame_repo
+            .get(target.frame_id)
+            .await
+            .map_err(|error| format!("加载 ContinueRoot target frame 失败: {error}"))?
+            .ok_or_else(|| format!("ContinueRoot target frame 不存在: {}", target.frame_id))?;
+        if frame
+            .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                runtime_session_id: target.delivery_runtime_session_id.clone(),
+            })
+            .is_none()
+        {
+            return Err(format!(
+                "ContinueRoot target frame {} 未绑定 delivery RuntimeSession {}",
+                target.frame_id, target.delivery_runtime_session_id
+            ));
+        }
+
+        let agent = self
+            .repos
+            .lifecycle_agent_repo
+            .get(frame.agent_id)
+            .await
+            .map_err(|error| format!("加载 ContinueRoot target agent 失败: {error}"))?
+            .ok_or_else(|| format!("ContinueRoot target agent 不存在: {}", frame.agent_id))?;
+        if agent.run_id != claim.run_id {
+            return Err(format!(
+                "ContinueRoot target agent {} 属于 run {}，不能承接 run {}",
+                agent.id, agent.run_id, claim.run_id
+            ));
+        }
+        if agent.project_id != definition.project_id {
+            return Err(format!(
+                "ContinueRoot target agent {} 属于 project {}，不能承接 project {}",
+                agent.id, agent.project_id, definition.project_id
+            ));
+        }
+        if agent.status != "active" {
+            return Err(format!(
+                "ContinueRoot target agent {} 当前不是 active",
+                agent.id
+            ));
+        }
+
+        let assignment = AgentAssignment::new(
+            claim.run_id,
+            claim.graph_instance_id,
+            claim.activity_key.clone(),
+            claim.attempt as i32,
+            frame.agent_id,
+            frame.id,
+        );
+        self.repos
+            .agent_assignment_repo
+            .create(&assignment)
+            .await
+            .map_err(|error| format!("创建 ContinueRoot AgentAssignment 失败: {error}"))?;
+        Ok(AgentActivityAssignmentContext { assignment, frame })
+    }
 }
 
 #[async_trait::async_trait]
@@ -224,12 +354,19 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
         definition: &WorkflowGraph,
         activity: &ActivityDefinition,
         claim: &ActivityExecutionClaim,
-        runtime_session_id: Option<&str>,
+        assignment_target: AgentActivityAssignmentTarget,
         executor_config: Option<&AgentConfig>,
     ) -> Result<AgentActivityAssignmentContext, String> {
         let ActivityExecutorSpec::Agent(spec) = &activity.executor else {
             return Err(format!("activity {} 不是 Agent executor", activity.key));
         };
+
+        if let AgentActivityAssignmentTarget::ReuseFrame(target) = assignment_target {
+            return self
+                .create_agent_activity_assignment_for_existing_frame(definition, claim, target)
+                .await;
+        }
+
         let procedure = self
             .repos
             .agent_procedure_repo
@@ -253,9 +390,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .with_graph_instance(claim.graph_instance_id, claim.activity_key.clone())
             .with_procedure(AgentProcedureRef::ById(procedure.id))
             .with_created_by("activity_executor", Some(claim.claim_id.to_string()));
-        if let Some(runtime_session_id) = runtime_session_id {
-            builder = builder.with_runtime_session(runtime_session_id.to_string());
-        }
         if let Some(executor_config) = executor_config {
             builder = builder.with_execution_profile(executor_config);
         }
@@ -321,14 +455,19 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
 
     async fn resolve_continue_root_runtime_target(
         &self,
-        root_runtime_session_id: &str,
+        runtime_session_policy: &RuntimeSessionDeliveryPolicy,
     ) -> Result<AgentFrameRuntimeTarget, String> {
+        let RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession { runtime_session_id } =
+            runtime_session_policy
+        else {
+            return Err("ContinueRoot 需要明确的 runtime delivery policy".to_string());
+        };
         let session_capability = self
             .session_capability
             .as_ref()
             .ok_or_else(|| "ContinueRoot 缺少 session capability service".to_string())?;
         session_capability
-            .resolve_runtime_session_target(root_runtime_session_id)
+            .resolve_runtime_session_target(runtime_session_id)
             .await
     }
 
@@ -608,21 +747,22 @@ where
             "[{}] {}#{}",
             definition.key, claim.activity_key, claim.attempt
         );
-        let executor_config = if self.context.root_runtime_session_id.trim().is_empty() {
-            None
-        } else {
-            self.port
-                .get_executor_config(&self.context.root_runtime_session_id)
-                .await
-                .map_err(ActivityExecutorStartError::retryable)?
-        };
+        let executor_config =
+            if let Some(source_runtime_session_ref) = &self.context.source_runtime_session_ref {
+                self.port
+                    .get_executor_config(source_runtime_session_ref)
+                    .await
+                    .map_err(ActivityExecutorStartError::retryable)?
+            } else {
+                None
+            };
         let assignment_context = self
             .port
             .create_agent_activity_assignment(
                 definition,
                 activity,
                 claim,
-                None,
+                AgentActivityAssignmentTarget::CreateNewAgent,
                 executor_config.as_ref(),
             )
             .await
@@ -696,15 +836,20 @@ where
             ));
         }
 
-        if self.context.root_runtime_session_id.trim().is_empty() {
+        let continue_root_policy = self.context.continue_root_policy.as_ref().ok_or_else(|| {
+            ActivityExecutorStartError::terminal(
+                "ContinueRoot 缺少 AgentReusePolicy + RuntimeSessionPolicy",
+            )
+        })?;
+        if continue_root_policy.agent_reuse_policy != AgentReusePolicy::ContinueCurrentAgent {
             return Err(ActivityExecutorStartError::terminal(
-                "ContinueRoot 缺少 root runtime session",
+                "ContinueRoot 需要 AgentReusePolicy::ContinueCurrentAgent",
             ));
         }
 
         let root_target = self
             .port
-            .resolve_continue_root_runtime_target(&self.context.root_runtime_session_id)
+            .resolve_continue_root_runtime_target(&continue_root_policy.runtime_session_policy)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
         let executor_config = self
@@ -718,7 +863,7 @@ where
                 definition,
                 activity,
                 claim,
-                Some(&root_target.delivery_runtime_session_id),
+                AgentActivityAssignmentTarget::ReuseFrame(root_target.clone()),
                 executor_config.as_ref(),
             )
             .await
@@ -1028,13 +1173,27 @@ mod tests {
             _definition: &WorkflowGraph,
             _activity: &ActivityDefinition,
             claim: &ActivityExecutionClaim,
-            runtime_session_id: Option<&str>,
+            assignment_target: AgentActivityAssignmentTarget,
             _executor_config: Option<&AgentConfig>,
         ) -> Result<AgentActivityAssignmentContext, String> {
-            let agent_id = uuid::Uuid::new_v4();
-            let runtime_refs =
-                runtime_session_id.and_then(|id| AgentFrame::runtime_session_refs_json([id]));
-            let mut frame = AgentFrame::new_initial(agent_id, runtime_refs);
+            let (agent_id, mut frame) = match assignment_target {
+                AgentActivityAssignmentTarget::CreateNewAgent => {
+                    let agent_id = uuid::Uuid::new_v4();
+                    (agent_id, AgentFrame::new_initial(agent_id, None))
+                }
+                AgentActivityAssignmentTarget::ReuseFrame(target) => {
+                    let agent_id =
+                        uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000a1").unwrap();
+                    let mut frame = AgentFrame::new_initial(
+                        agent_id,
+                        AgentFrame::runtime_session_refs_json([target
+                            .delivery_runtime_session_id
+                            .as_str()]),
+                    );
+                    frame.id = target.frame_id;
+                    (agent_id, frame)
+                }
+            };
             frame.graph_instance_id = Some(claim.graph_instance_id);
             frame.activity_key = Some(claim.activity_key.clone());
             let assignment = AgentAssignment::new(
@@ -1067,11 +1226,16 @@ mod tests {
 
         async fn resolve_continue_root_runtime_target(
             &self,
-            root_runtime_session_id: &str,
+            runtime_session_policy: &RuntimeSessionDeliveryPolicy,
         ) -> Result<AgentFrameRuntimeTarget, String> {
+            let RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession { runtime_session_id } =
+                runtime_session_policy
+            else {
+                return Err("expected runtime delivery session".to_string());
+            };
             Ok(AgentFrameRuntimeTarget {
                 frame_id: uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000f0").unwrap(),
-                delivery_runtime_session_id: root_runtime_session_id.to_string(),
+                delivery_runtime_session_id: runtime_session_id.to_string(),
             })
         }
 
@@ -1313,11 +1477,11 @@ mod tests {
         let project_id = uuid::Uuid::new_v4();
         let port = FakePort::default();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
+            AgentActivityLaunchContext::with_runtime_trace(
                 project_id,
-                lifecycle_key: "agent_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+                "agent_flow",
+                "root-session",
+            ),
             port,
         );
         let definition = definition(project_id);
@@ -1361,11 +1525,11 @@ mod tests {
             ..Default::default()
         };
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
+            AgentActivityLaunchContext::with_runtime_trace(
                 project_id,
-                lifecycle_key: "agent_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+                "agent_flow",
+                "root-session",
+            ),
             port,
         );
         let definition = definition(project_id);
@@ -1391,11 +1555,11 @@ mod tests {
         let project_id = uuid::Uuid::new_v4();
         let port = FakePort::default();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
+            AgentActivityLaunchContext::with_runtime_trace(
                 project_id,
-                lifecycle_key: "agent_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+                "agent_flow",
+                "root-session",
+            ),
             port,
         );
         let definition = continue_root_definition(project_id);
@@ -1427,6 +1591,12 @@ mod tests {
                 .as_slice(),
             &["plan#1".to_string()]
         );
+        let assignments = launcher.port.assignments.lock().unwrap();
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(
+            assignments[0].frame_id,
+            uuid::Uuid::parse_str("00000000-0000-0000-0000-0000000000f0").unwrap()
+        );
     }
 
     #[tokio::test]
@@ -1434,11 +1604,11 @@ mod tests {
         let project_id = uuid::Uuid::new_v4();
         let port = FakePort::default();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
+            AgentActivityLaunchContext::with_runtime_trace(
                 project_id,
-                lifecycle_key: "agent_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+                "agent_flow",
+                "root-session",
+            ),
             port,
         );
         let definition = continue_root_definition_with_activities(project_id, &["plan", "review"]);
@@ -1483,11 +1653,7 @@ mod tests {
     async fn human_approval_returns_pending_decision_ref() {
         let project_id = uuid::Uuid::new_v4();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id,
-                lifecycle_key: "approval_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+            AgentActivityLaunchContext::detached(project_id, "approval_flow"),
             FakePort::default(),
         );
         let definition = human_approval_definition(project_id);
@@ -1517,11 +1683,7 @@ mod tests {
     async fn function_bash_success_returns_completed_event() {
         let project_id = uuid::Uuid::new_v4();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id,
-                lifecycle_key: "function_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+            AgentActivityLaunchContext::detached(project_id, "function_flow"),
             FakePort::default(),
         );
         let definition = function_definition(project_id, bash_spec("echo hello"));
@@ -1567,11 +1729,7 @@ mod tests {
     async fn function_bash_failure_returns_failed_event() {
         let project_id = uuid::Uuid::new_v4();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id,
-                lifecycle_key: "function_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+            AgentActivityLaunchContext::detached(project_id, "function_flow"),
             FakePort::default(),
         );
         let definition = function_definition(project_id, bash_spec("exit 7"));
@@ -1613,11 +1771,7 @@ mod tests {
         .await;
         let project_id = uuid::Uuid::new_v4();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id,
-                lifecycle_key: "function_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+            AgentActivityLaunchContext::detached(project_id, "function_flow"),
             FakePort::default(),
         );
         let definition = function_definition(project_id, api_spec(url));
@@ -1649,11 +1803,7 @@ mod tests {
                 .await;
         let project_id = uuid::Uuid::new_v4();
         let launcher = AgentActivityExecutorLauncher::new(
-            AgentActivityLaunchContext {
-                project_id,
-                lifecycle_key: "function_flow".to_string(),
-                root_runtime_session_id: "root-session".to_string(),
-            },
+            AgentActivityLaunchContext::detached(project_id, "function_flow"),
             FakePort::default(),
         );
         let definition = function_definition(project_id, api_spec(url));

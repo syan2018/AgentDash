@@ -54,6 +54,7 @@ use crate::session::capability_state::{
     CompanionCapabilityDimensionModule, McpCapabilityDimensionModule,
     ToolCapabilityDimensionModule, VfsCapabilityDimensionModule,
 };
+use crate::session::types::AgentFrameRuntimeTarget;
 use crate::vfs::{
     ExecRequest, ExecResult, ListOptions, ListResult, MountError, MountOperationContext,
     MountProvider, MountProviderRegistry, ReadResult, RuntimeFileEntry, SearchQuery, SearchResult,
@@ -995,7 +996,7 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
         .create_session("capability-surface")
         .await
         .expect("create");
-    attach_test_frame(&hub, &session.id).await;
+    let frame = attach_test_frame(&hub, &session.id).await;
 
     let initial_flow =
         agentdash_spi::CapabilityState::from_clusters([agentdash_spi::ToolCluster::Read]);
@@ -1045,9 +1046,15 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     target_state.tool.mcp_servers = vec![target_mcp.clone()];
     target_state.vfs.active = Some(target_vfs.clone());
 
-    hub.replace_current_capability_state(&session.id, target_state.clone())
-        .await
-        .expect("replace capability state");
+    hub.replace_current_capability_state(
+        AgentFrameRuntimeTarget {
+            frame_id: frame.id,
+            delivery_runtime_session_id: session.id.clone(),
+        },
+        target_state.clone(),
+    )
+    .await
+    .expect("replace capability state");
 
     let (turn, profile) = hub
         .runtime_registry
@@ -1064,6 +1071,38 @@ async fn replace_current_capability_state_updates_active_turn_capability_state()
     assert_eq!(turn.session_frame.mcp_servers, vec![target_mcp]);
     assert_eq!(turn.session_frame.vfs, Some(target_vfs));
     assert_eq!(profile.capability_state, turn.capability_state);
+}
+
+#[tokio::test]
+async fn replace_current_capability_state_requires_matching_frame_target() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let hub = test_hub(base.path().to_path_buf(), Arc::new(PendingConnector), None);
+    let session = hub
+        .create_session("capability-surface")
+        .await
+        .expect("create");
+    let frame = attach_test_frame(&hub, "another-session").await;
+
+    let error = match hub
+        .replace_current_capability_state(
+            AgentFrameRuntimeTarget {
+                frame_id: frame.id,
+                delivery_runtime_session_id: session.id.clone(),
+            },
+            CapabilityState::default(),
+        )
+        .await
+    {
+        Ok(_) => panic!("mismatched frame/session target should fail"),
+        Err(error) => error,
+    };
+
+    match error {
+        ConnectorError::Runtime(message) => {
+            assert!(message.contains("未绑定 delivery RuntimeSession"));
+        }
+        other => panic!("expected runtime error, got {other}"),
+    }
 }
 
 #[tokio::test]
@@ -1084,7 +1123,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .create_session("canvas-skill-capability")
         .await
         .expect("create");
-    attach_test_frame(&hub, &session.id).await;
+    let frame = attach_test_frame(&hub, &session.id).await;
     let _rx = hub.ensure_session(&session.id).await;
     hub.hook_service()
         .reload_hook_runtime(&session.id, "turn-canvas", "PI_AGENT", None, base.path())
@@ -1142,6 +1181,7 @@ async fn live_runtime_context_transition_derives_skill_dimension_from_active_vfs
         .apply_live_runtime_context_transition(
             &hook_runtime,
             LiveRuntimeContextTransitionInput {
+                target_frame_id: frame.id,
                 session_id: session.id.clone(),
                 turn_id: None,
                 phase_node: "canvas".to_string(),

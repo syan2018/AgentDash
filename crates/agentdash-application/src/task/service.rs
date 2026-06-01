@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
-    SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
+    RuntimeSessionSelectionPolicy, SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -214,7 +214,9 @@ impl StoryStepActivationService {
             .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
 
         if let Some(frame) = frame {
-            if let Some(session_id) = frame.first_runtime_session_id() {
+            if let Some(session_id) =
+                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+            {
                 self.dispatcher.cancel_session(&session_id).await?;
             }
         }

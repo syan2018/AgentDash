@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::canvas::{build_canvas, upsert_canvas_binding};
+use crate::session::AgentFrameRuntimeTarget;
 use crate::vfs::build_canvas_mount_id;
 use crate::vfs::tools::SharedSessionToolServicesHandle;
 use crate::vfs::tools::fs::SharedRuntimeVfs;
@@ -604,11 +605,19 @@ async fn sync_canvas_mount_capability_state(
     };
 
     let active_vfs = vfs.snapshot().await;
+    let target_frame_id = session_services
+        .capability
+        .resolve_runtime_session_frame_id(session_id)
+        .await
+        .map_err(AgentToolError::ExecutionFailed)?;
     session_services
         .capability
         .apply_live_vfs_capability_state(
             &hook_runtime,
-            session_id,
+            AgentFrameRuntimeTarget {
+                frame_id: target_frame_id,
+                delivery_runtime_session_id: session_id.to_string(),
+            },
             before_state,
             active_vfs,
             "canvas",

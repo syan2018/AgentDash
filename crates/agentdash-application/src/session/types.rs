@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use agentdash_agent_protocol::ContentBlock;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 pub use agentdash_spi::CapabilityState;
 use agentdash_spi::PromptPayload;
@@ -53,6 +54,16 @@ pub const CAPABILITY_DIMENSION_VFS: &str = "vfs";
 
 pub const DECLARATION_TYPE_CAPABILITY_DIRECTIVE: &str = "capability_directive";
 pub const DECLARATION_TYPE_MOUNT_OPERATION: &str = "mount_operation";
+
+/// AgentFrame runtime transition 的主目标。
+///
+/// `frame_id` 表达要更新的 effective runtime surface；`delivery_runtime_session_id`
+/// 用于同步 live connector / runtime registry。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentFrameRuntimeTarget {
+    pub frame_id: Uuid,
+    pub delivery_runtime_session_id: String,
+}
 
 /// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。
 ///

@@ -25,7 +25,9 @@ use agentdash_application::session::{
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
 use agentdash_application::workflow::AgentFrameBuilder;
 use agentdash_application::workflow::runtime_launch::RuntimeLaunchRequest;
-use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef, LifecycleAgent, LifecycleRun};
+use agentdash_domain::workflow::{
+    AgentFrame, AgentProcedureRef, LifecycleAgent, LifecycleRun, RuntimeSessionSelectionPolicy,
+};
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
@@ -88,7 +90,10 @@ impl SessionConstructionProvider for AppStateSessionConstructionProvider {
                 ))
             })?;
 
-        let direct_request = RuntimeLaunchRequest::from_frame(&frame);
+        let direct_request = RuntimeLaunchRequest::from_frame(
+            &frame,
+            runtime_session_policy(input.session_id.as_str()),
+        );
         let direct_lifecycle =
             self.prompt_lifecycle(direct_request.executor_config.as_ref(), &input);
         if matches!(direct_lifecycle, SessionPromptLifecycle::Plain)
@@ -131,13 +136,13 @@ impl SessionConstructionProvider for AppStateSessionConstructionProvider {
 
         if let Some(companion) = input.command.companion_hint() {
             return self
-                .compose_companion_frame(&frame, agent, companion, &input.command)
+                .compose_companion_frame(&frame, agent, companion, &input)
                 .await;
         }
 
         if frame.graph_instance_id.is_some() && frame.activity_key.is_some() {
             return self
-                .compose_lifecycle_node_frame(&frame, agent, run, &input.command)
+                .compose_lifecycle_node_frame(&frame, agent, run, &input)
                 .await;
         }
 
@@ -275,7 +280,11 @@ impl AppStateSessionConstructionProvider {
         let lifecycle =
             owner_prompt_lifecycle(self.prompt_lifecycle(Some(&executor_config), input));
         let user_prompt_blocks = required_prompt_blocks(input.command.user_input())?;
-        let builder = frame_builder_from_existing(frame, input.session_id.as_str())?;
+        let builder = frame_builder_from_existing(
+            frame,
+            input.session_id.as_str(),
+            input.session_id.as_str(),
+        )?;
         let (builder, extras) = self
             .assembler()
             .compose_owner_bootstrap_to_frame(
@@ -309,7 +318,11 @@ impl AppStateSessionConstructionProvider {
                         .clone()
                         .unwrap_or_default(),
                     request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
-                    existing_vfs: RuntimeLaunchRequest::from_frame(frame).typed_vfs,
+                    existing_vfs: RuntimeLaunchRequest::from_frame(
+                        frame,
+                        runtime_session_policy(input.session_id.as_str()),
+                    )
+                    .typed_vfs,
                     visible_canvas_mount_ids: input.session_meta.visible_canvas_mount_ids.clone(),
                     active_workflow: None,
                     lifecycle,
@@ -320,8 +333,15 @@ impl AppStateSessionConstructionProvider {
             .await
             .map_err(ConnectorError::InvalidConfig)?;
 
-        self.persist_composed_frame(builder, &mut agent, extras, &input.command, None)
-            .await
+        self.persist_composed_frame(
+            builder,
+            &mut agent,
+            extras,
+            &input.command,
+            input.session_id.as_str(),
+            None,
+        )
+        .await
     }
 
     async fn compose_lifecycle_node_frame(
@@ -329,8 +349,9 @@ impl AppStateSessionConstructionProvider {
         frame: &AgentFrame,
         mut agent: LifecycleAgent,
         run: LifecycleRun,
-        command: &LaunchCommand,
+        input: &SessionConstructionProviderInput,
     ) -> Result<RuntimeLaunchRequest, ConnectorError> {
+        let command = &input.command;
         let graph_instance_id = frame.graph_instance_id.ok_or_else(|| {
             ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 graph_instance_id", frame.id))
         })?;
@@ -383,12 +404,16 @@ impl AppStateSessionConstructionProvider {
                 .map_err(connector_internal)?,
             _ => None,
         };
-        let inherited_executor_config = command
-            .user_input()
-            .executor_config
-            .clone()
-            .or_else(|| RuntimeLaunchRequest::from_frame(frame).executor_config);
-        let builder = frame_builder_from_existing(frame, command.reason_tag())?;
+        let inherited_executor_config =
+            command.user_input().executor_config.clone().or_else(|| {
+                RuntimeLaunchRequest::from_frame(
+                    frame,
+                    runtime_session_policy(input.session_id.as_str()),
+                )
+                .executor_config
+            });
+        let builder =
+            frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
         let (builder, extras) =
             agentdash_application::session::compose_lifecycle_node_to_frame_with_audit(
                 builder,
@@ -403,13 +428,20 @@ impl AppStateSessionConstructionProvider {
                     inherited_executor_config,
                 },
                 Some(self.state.services.audit_bus.clone()),
-                frame.first_runtime_session_id().as_deref(),
+                Some(input.session_id.as_str()),
             )
             .await
             .map_err(ConnectorError::InvalidConfig)?;
 
-        self.persist_composed_frame(builder, &mut agent, extras, command, None)
-            .await
+        self.persist_composed_frame(
+            builder,
+            &mut agent,
+            extras,
+            command,
+            input.session_id.as_str(),
+            None,
+        )
+        .await
     }
 
     async fn compose_task_frame(
@@ -481,7 +513,11 @@ impl AppStateSessionConstructionProvider {
             .executor_config
             .clone()
             .or_else(|| input.session_meta.executor_config.clone());
-        let builder = frame_builder_from_existing(frame, input.session_id.as_str())?;
+        let builder = frame_builder_from_existing(
+            frame,
+            input.session_id.as_str(),
+            input.session_id.as_str(),
+        )?;
         let (builder, extras, hook_binding) = self
             .assembler()
             .compose_story_step_to_frame(
@@ -508,8 +544,15 @@ impl AppStateSessionConstructionProvider {
             .await
             .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?;
 
-        self.persist_composed_frame(builder, &mut agent, extras, &input.command, hook_binding)
-            .await
+        self.persist_composed_frame(
+            builder,
+            &mut agent,
+            extras,
+            &input.command,
+            input.session_id.as_str(),
+            hook_binding,
+        )
+        .await
     }
 
     async fn compose_companion_frame(
@@ -517,9 +560,11 @@ impl AppStateSessionConstructionProvider {
         frame: &AgentFrame,
         mut agent: LifecycleAgent,
         companion: CompanionLaunchSource,
-        command: &LaunchCommand,
+        input: &SessionConstructionProviderInput,
     ) -> Result<RuntimeLaunchRequest, ConnectorError> {
-        let builder = frame_builder_from_existing(frame, command.reason_tag())?;
+        let command = &input.command;
+        let builder =
+            frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
         let (builder, extras) = if let Some(workflow) = companion.workflow {
             self.assembler()
                 .compose_companion_with_workflow_to_frame(
@@ -554,8 +599,15 @@ impl AppStateSessionConstructionProvider {
         }
         .map_err(ConnectorError::InvalidConfig)?;
 
-        self.persist_composed_frame(builder, &mut agent, extras, command, None)
-            .await
+        self.persist_composed_frame(
+            builder,
+            &mut agent,
+            extras,
+            command,
+            input.session_id.as_str(),
+            None,
+        )
+        .await
     }
 
     async fn persist_composed_frame(
@@ -564,6 +616,7 @@ impl AppStateSessionConstructionProvider {
         agent: &mut LifecycleAgent,
         extras: AssemblyLaunchExtras,
         command: &LaunchCommand,
+        runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
     ) -> Result<RuntimeLaunchRequest, ConnectorError> {
         let frame = builder
@@ -577,7 +630,8 @@ impl AppStateSessionConstructionProvider {
             .update(agent)
             .await
             .map_err(connector_internal)?;
-        let request = RuntimeLaunchRequest::from_frame(&frame);
+        let request =
+            RuntimeLaunchRequest::from_frame(&frame, runtime_session_policy(runtime_session_id));
         Ok(apply_command_and_extras(
             request,
             Some(extras),
@@ -645,11 +699,17 @@ fn required_prompt_blocks(
 
 fn frame_builder_from_existing(
     frame: &AgentFrame,
+    runtime_session_id: &str,
     created_by_id: &str,
 ) -> Result<AgentFrameBuilder, ConnectorError> {
-    let runtime_session_id = frame.first_runtime_session_id().ok_or_else(|| {
-        ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 runtime_session ref", frame.id))
-    })?;
+    let runtime_session_id = frame
+        .select_runtime_session_id(runtime_session_policy(runtime_session_id))
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "AgentFrame {} 缺少 runtime_session ref",
+                frame.id
+            ))
+        })?;
     let mut builder = AgentFrameBuilder::new(frame.agent_id)
         .with_runtime_session(runtime_session_id)
         .with_created_by("session_launch", Some(created_by_id.to_string()));
@@ -665,6 +725,12 @@ fn frame_builder_from_existing(
         builder = builder.with_execution_profile_raw(profile);
     }
     Ok(builder)
+}
+
+fn runtime_session_policy(runtime_session_id: &str) -> RuntimeSessionSelectionPolicy {
+    RuntimeSessionSelectionPolicy::Specific {
+        runtime_session_id: runtime_session_id.to_string(),
+    }
 }
 
 fn apply_command_and_extras(

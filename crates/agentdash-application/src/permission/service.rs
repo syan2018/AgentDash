@@ -458,7 +458,7 @@ mod tests {
     use agentdash_domain::permission::{
         GrantStatus, PermissionGrantRepository, PolicyDecision, PolicyOutcome,
     };
-    use agentdash_domain::workflow::AgentFrameRepository;
+    use agentdash_domain::workflow::{AgentFrameRepository, RuntimeSessionSelectionPolicy};
     use agentdash_spi::ToolCluster;
     use tokio::sync::Mutex;
 
@@ -697,7 +697,9 @@ mod tests {
         );
         assert!(state.tool.enabled_clusters.contains(&ToolCluster::Write));
         assert_eq!(
-            current.first_runtime_session_id().as_deref(),
+            current
+                .select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
+                .as_deref(),
             Some("runtime-session-1")
         );
     }

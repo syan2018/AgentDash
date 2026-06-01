@@ -13,11 +13,13 @@
 //! 不在本 PR 改接口层级。
 
 use agentdash_agent_types::DynAgentTool;
+use agentdash_domain::workflow::RuntimeSessionSelectionPolicy;
 use agentdash_executor::mcp::DiscoveredMcpTool;
 use agentdash_spi::{ConnectorError, ExecutionContext, SessionMcpServer};
+use uuid::Uuid;
 
 use super::SessionRuntimeInner;
-use crate::session::types::CapabilityState;
+use crate::session::types::{AgentFrameRuntimeTarget, CapabilityState};
 use crate::workflow::AgentFrameBuilder;
 
 impl SessionRuntimeInner {
@@ -67,23 +69,20 @@ impl SessionRuntimeInner {
             .await
     }
 
-    /// 替换运行中 session 的能力状态并同步 connector。
+    /// Runtime adapter 边界使用的 lookup：把 delivery RuntimeSession 解析为当前 AgentFrame。
     ///
-    /// 写入路径：AgentFrame revision（持久化权威） → 内存 cache → connector 同步。
-    /// 当 `agent_frame_repo` 可用时，先通过 `AgentFrameBuilder` 生成新 revision，
-    /// 再从该 revision 投影出 `CapabilityState` 更新内存缓存。
-    pub(crate) async fn replace_current_capability_state(
+    /// 后续 command 必须携带 `AgentFrameRuntimeTarget`，不能把 raw session id
+    /// 继续作为 frame revision 写入目标。
+    pub(crate) async fn resolve_runtime_session_frame_id(
         &self,
         session_id: &str,
-        mut state: CapabilityState,
-    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
-        // === Phase 1: AgentFrame revision 持久化 ===
+    ) -> Result<Uuid, ConnectorError> {
         let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
             ConnectorError::Runtime(format!(
-                "session `{session_id}` 无 AgentFrame repository，无法热更新能力状态"
+                "session `{session_id}` 无 AgentFrame repository，无法解析 runtime surface target"
             ))
         })?;
-        let current_frame = frame_repo
+        let frame = frame_repo
             .find_by_runtime_session(session_id)
             .await
             .map_err(|error| {
@@ -93,12 +92,71 @@ impl SessionRuntimeInner {
             })?
             .ok_or_else(|| {
                 ConnectorError::Runtime(format!(
-                    "session `{session_id}` 未关联 AgentFrame，拒绝热更新能力状态"
+                    "session `{session_id}` 未关联 AgentFrame，无法解析 runtime surface target"
                 ))
             })?;
-        let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
+        Ok(frame.id)
+    }
+
+    /// 替换运行中 session 的能力状态并同步 connector。
+    ///
+    /// 写入路径：AgentFrame revision（持久化权威） → 内存 cache → connector 同步。
+    /// 当 `agent_frame_repo` 可用时，先通过 `AgentFrameBuilder` 生成新 revision，
+    /// 再从该 revision 投影出 `CapabilityState` 更新内存缓存。
+    pub(crate) async fn replace_current_capability_state(
+        &self,
+        target: AgentFrameRuntimeTarget,
+        mut state: CapabilityState,
+    ) -> Result<Vec<DynAgentTool>, ConnectorError> {
+        let session_id = target.delivery_runtime_session_id.as_str();
+        // === Phase 1: AgentFrame revision 持久化 ===
+        let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 AgentFrame repository，无法热更新能力状态"
+            ))
+        })?;
+        let target_frame = frame_repo
+            .get(target.frame_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 AgentFrame `{}` 失败，无法热更新能力状态: {error}",
+                    target.frame_id
+                ))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "AgentFrame `{}` 不存在，拒绝热更新能力状态",
+                    target.frame_id
+                ))
+            })?;
+        let selected_session =
+            target_frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                runtime_session_id: target.delivery_runtime_session_id.clone(),
+            });
+        if selected_session.is_none() {
+            return Err(ConnectorError::Runtime(format!(
+                "AgentFrame `{}` 未绑定 delivery RuntimeSession `{session_id}`，拒绝热更新能力状态",
+                target.frame_id
+            )));
+        }
+        let current_frame = frame_repo
+            .get_current(target_frame.agent_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 Agent `{}` 当前 AgentFrame 失败，无法热更新能力状态: {error}",
+                    target_frame.agent_id
+                ))
+            })?
+            .unwrap_or_else(|| target_frame.clone());
+        let mut builder = AgentFrameBuilder::new(target_frame.agent_id)
             .with_capability_state(&state)
-            .with_created_by("runtime_context_transition", Some(session_id.to_string()));
+            .with_runtime_session(session_id.to_string())
+            .with_created_by(
+                "runtime_context_transition",
+                Some(target.frame_id.to_string()),
+            );
         if let Some(ctx) = current_frame.context_slice_json {
             builder = builder.with_context(ctx);
         }
@@ -112,6 +170,7 @@ impl SessionRuntimeInner {
         })?;
         tracing::debug!(
             session_id,
+            target_frame_id = %target.frame_id,
             agent_id = %new_frame.agent_id,
             revision = new_frame.revision,
             "AgentFrame capability revision 已写入"

@@ -295,8 +295,12 @@ pub(crate) async fn apply_to_running_session(
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
+    let session_id = hook_runtime.session_id();
+    let target_frame_id = session_capability
+        .resolve_runtime_session_frame_id(session_id)
+        .await?;
     let base_surface = session_capability
-        .get_current_capability_state(hook_runtime.session_id())
+        .get_current_capability_state(session_id)
         .await;
     let target_surface = build_capability_state_for_activation(activation, base_surface.as_ref());
     let key_delta = SetDelta::compute(
@@ -308,7 +312,8 @@ pub(crate) async fn apply_to_running_session(
         .apply_live_runtime_context_transition(
             hook_runtime,
             LiveRuntimeContextTransitionInput {
-                session_id: hook_runtime.session_id().to_string(),
+                target_frame_id,
+                session_id: session_id.to_string(),
                 turn_id: turn_id.map(ToString::to_string),
                 phase_node: phase_node_key.to_string(),
                 run_id,

@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! AgentFrame revision
-//!   → RuntimeLaunchRequest::from_frame()
+//!   → RuntimeLaunchRequest::from_frame(..., RuntimeSessionSelectionPolicy)
 //!   → connector ExecutionContext
 //!   → RuntimeSession events
 //! ```
@@ -15,12 +15,12 @@
 //!
 //! `RuntimeLaunchRequest` 同时承载 surface 投影和 connector 启动所需的执行器配置。
 //! compose 函数先通过 `AgentFrameBuilder.build()` 持久化 frame revision，
-//! 随后由 `RuntimeLaunchRequest::from_frame()` 投影 connector 输入。
+//! 随后由 `RuntimeLaunchRequest::from_frame(...)` 投影 connector 输入。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef};
+use agentdash_domain::workflow::{AgentFrame, AgentProcedureRef, RuntimeSessionSelectionPolicy};
 use agentdash_spi::hooks::ContextFrame;
 use agentdash_spi::{
     AgentConfig, AuthIdentity, CapabilityState, DiscoveredGuideline, SessionContextBundle,
@@ -86,8 +86,8 @@ impl RuntimeLaunchRequest {
     ///
     /// JSON 字段 fallback 到 `serde_json::Value::Null`，
     /// connector 侧按需做 nullable 检查。
-    pub fn from_frame(frame: &AgentFrame) -> Self {
-        let runtime_session_id = frame.first_runtime_session_id();
+    pub fn from_frame(frame: &AgentFrame, runtime_policy: RuntimeSessionSelectionPolicy) -> Self {
+        let runtime_session_id = frame.select_runtime_session_id(runtime_policy);
 
         let procedure_ref = frame.procedure_id.map(AgentProcedureRef::ById);
 
@@ -254,7 +254,8 @@ mod tests {
         frame.runtime_session_refs_json =
             AgentFrame::runtime_session_refs_json([session_id.to_string()]);
 
-        let request = RuntimeLaunchRequest::from_frame(&frame);
+        let request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
 
         assert_eq!(request.agent_id, agent_id);
         assert_eq!(request.frame_id, frame.id);
@@ -284,7 +285,8 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let frame = AgentFrame::new_initial(agent_id, None);
 
-        let request = RuntimeLaunchRequest::from_frame(&frame);
+        let request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
 
         assert_eq!(request.agent_id, agent_id);
         assert_eq!(request.frame_revision, 1);
@@ -304,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn from_frame_picks_first_session_ref() {
+    fn from_frame_uses_explicit_runtime_session_policy() {
         let agent_id = Uuid::new_v4();
         let s1 = Uuid::new_v4();
         let s2 = Uuid::new_v4();
@@ -312,8 +314,12 @@ mod tests {
         frame.runtime_session_refs_json =
             AgentFrame::runtime_session_refs_json([s1.to_string(), s2.to_string()]);
 
-        let request = RuntimeLaunchRequest::from_frame(&frame);
-        assert_eq!(request.runtime_session_id, Some(s1.to_string()));
+        let primary_request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
+        let latest_request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LatestAttached);
+        assert_eq!(primary_request.runtime_session_id, Some(s1.to_string()));
+        assert_eq!(latest_request.runtime_session_id, Some(s2.to_string()));
     }
 
     #[test]
@@ -323,7 +329,8 @@ mod tests {
         let mut frame = AgentFrame::new_revision(agent_id, 1, "test");
         frame.execution_profile_json = serde_json::to_value(&config).ok();
 
-        let request = RuntimeLaunchRequest::from_frame(&frame);
+        let request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary);
         assert_eq!(
             request
                 .executor_config
@@ -338,14 +345,15 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let frame = AgentFrame::new_revision(agent_id, 1, "test");
 
-        let request = RuntimeLaunchRequest::from_frame(&frame)
-            .with_executor_config(AgentConfig::new("PI_AGENT"))
-            .with_working_directory(PathBuf::from("/workspace"))
-            .with_prompt(
-                Some(vec![serde_json::json!({"type": "text", "text": "hello"})]),
-                HashMap::from([("A".to_string(), "B".to_string())]),
-            )
-            .with_discovered_guidelines(vec![]);
+        let request =
+            RuntimeLaunchRequest::from_frame(&frame, RuntimeSessionSelectionPolicy::LaunchPrimary)
+                .with_executor_config(AgentConfig::new("PI_AGENT"))
+                .with_working_directory(PathBuf::from("/workspace"))
+                .with_prompt(
+                    Some(vec![serde_json::json!({"type": "text", "text": "hello"})]),
+                    HashMap::from([("A".to_string(), "B".to_string())]),
+                )
+                .with_discovered_guidelines(vec![]);
 
         assert_eq!(request.executor_config.unwrap().executor, "PI_AGENT");
         assert_eq!(request.working_directory, Some(PathBuf::from("/workspace")));

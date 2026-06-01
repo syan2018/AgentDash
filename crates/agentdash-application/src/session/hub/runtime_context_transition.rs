@@ -1,4 +1,4 @@
-﻿//! Workflow runtime context transition 的统一应用入口。
+//! Workflow runtime context transition 的统一应用入口。
 //!
 //! 这里刻意放在 Hub 层：transition 应用需要同时触碰 live connector、SessionRuntime、
 //! persistence event、Hook runtime 与 Bundle sink。调用方只描述“目标上下文是什么”，
@@ -18,6 +18,7 @@ use super::super::context_frame::{self, ContextFramePayload};
 use super::super::dimension::{self, DimensionDelta};
 use super::SessionRuntimeInner;
 use crate::hooks::hook_injection_to_fragment;
+use crate::session::types::AgentFrameRuntimeTarget;
 use crate::session::{
     CapabilityState, CapabilityStateDelta, PendingCapabilityStateTransition,
     RuntimeCapabilityTransition, RuntimeContextTransition, apply_runtime_capability_transition,
@@ -26,6 +27,7 @@ use crate::session::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct LiveRuntimeContextTransitionInput {
+    pub target_frame_id: Uuid,
     pub session_id: String,
     pub turn_id: Option<String>,
     pub phase_node: String,
@@ -105,7 +107,13 @@ impl SessionRuntimeInner {
         }
 
         let tools = self
-            .replace_current_capability_state(&input.session_id, input.after_state.clone())
+            .replace_current_capability_state(
+                AgentFrameRuntimeTarget {
+                    frame_id: input.target_frame_id,
+                    delivery_runtime_session_id: input.session_id.clone(),
+                },
+                input.after_state.clone(),
+            )
             .await
             .map_err(|error| format!("Phase node 能力状态热更新失败: {error}"))?;
 
@@ -531,6 +539,7 @@ mod tests {
     #[test]
     fn live_context_frame_includes_tool_schema_delta_only() {
         let input = LiveRuntimeContextTransitionInput {
+            target_frame_id: Uuid::new_v4(),
             session_id: "session-1".to_string(),
             turn_id: Some("turn-1".to_string()),
             phase_node: "apply".to_string(),

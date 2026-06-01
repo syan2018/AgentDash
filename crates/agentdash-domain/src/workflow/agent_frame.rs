@@ -5,6 +5,20 @@ use uuid::Uuid;
 
 pub const RUNTIME_SESSION_REF_KIND: &str = "runtime_session";
 
+/// RuntimeSession refs are delivery/provenance refs attached to an AgentFrame.
+/// Callers must name their selection policy instead of silently taking the
+/// first stored ref.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSessionSelectionPolicy {
+    /// The runtime session currently handled by the runtime adapter.
+    Specific { runtime_session_id: String },
+    /// The first runtime session attached to the frame lineage.
+    LaunchPrimary,
+    /// The latest runtime session attached to the frame lineage.
+    LatestAttached,
+}
+
 /// AgentFrame revision row — effective runtime surface snapshot。
 ///
 /// 每次 capability/context/VFS/MCP surface 变更产生新 revision。
@@ -118,8 +132,18 @@ impl AgentFrame {
             .collect()
     }
 
-    pub fn first_runtime_session_id(&self) -> Option<String> {
-        self.runtime_session_ids().into_iter().next()
+    pub fn select_runtime_session_id(
+        &self,
+        policy: RuntimeSessionSelectionPolicy,
+    ) -> Option<String> {
+        let ids = self.runtime_session_ids();
+        match policy {
+            RuntimeSessionSelectionPolicy::Specific { runtime_session_id } => {
+                ids.into_iter().find(|id| id == &runtime_session_id)
+            }
+            RuntimeSessionSelectionPolicy::LaunchPrimary => ids.into_iter().next(),
+            RuntimeSessionSelectionPolicy::LatestAttached => ids.into_iter().next_back(),
+        }
     }
 
     pub fn attach_runtime_session_ref(&mut self, session_id: impl AsRef<str>) {
@@ -139,5 +163,45 @@ impl AgentFrame {
             Some(Value::Array(refs)) => refs.push(next_ref),
             _ => self.runtime_session_refs_json = Some(Value::Array(vec![next_ref])),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_session_selection_requires_explicit_policy() {
+        let mut frame = AgentFrame::new_revision(Uuid::new_v4(), 1, "test");
+        frame.runtime_session_refs_json =
+            AgentFrame::runtime_session_refs_json(["session-1", "session-2"]);
+
+        assert_eq!(
+            frame
+                .select_runtime_session_id(RuntimeSessionSelectionPolicy::LaunchPrimary)
+                .as_deref(),
+            Some("session-1")
+        );
+        assert_eq!(
+            frame
+                .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+                .as_deref(),
+            Some("session-2")
+        );
+        assert_eq!(
+            frame
+                .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                    runtime_session_id: "session-2".to_string(),
+                })
+                .as_deref(),
+            Some("session-2")
+        );
+        assert!(
+            frame
+                .select_runtime_session_id(RuntimeSessionSelectionPolicy::Specific {
+                    runtime_session_id: "missing".to_string(),
+                })
+                .is_none()
+        );
     }
 }

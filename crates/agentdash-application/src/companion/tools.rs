@@ -7,7 +7,8 @@ use agentdash_agent_protocol::{
 use agentdash_domain::agent::ProjectAgentRepository;
 use agentdash_domain::workflow::{
     AgentLaunchIntent, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, GatePolicy,
-    InteractionDispatchIntent, RunPolicy, RuntimePolicy, WorkflowGraphRef,
+    InteractionDispatchIntent, RunPolicy, RuntimePolicy, RuntimeSessionSelectionPolicy,
+    WorkflowGraphRef,
 };
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
@@ -658,9 +659,13 @@ impl CompanionRequestTool {
             .ok_or_else(|| {
                 AgentToolError::ExecutionFailed("parent agent 没有活跃的 frame".to_string())
             })?;
-        let parent_session_id = parent_frame.first_runtime_session_id().ok_or_else(|| {
-            AgentToolError::ExecutionFailed("parent frame 没有关联的 runtime session".to_string())
-        })?;
+        let parent_session_id = parent_frame
+            .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
+            .ok_or_else(|| {
+                AgentToolError::ExecutionFailed(
+                    "parent frame 没有关联的 runtime session".to_string(),
+                )
+            })?;
 
         let request_id = format!("review-{}", Uuid::new_v4().simple());
         let companion_label = format!("child:{}", child_frame.agent_id);
@@ -1363,7 +1368,8 @@ impl CompanionRespondTool {
                 .get_current(parent_agent_id)
                 .await
             {
-                let parent_session_ref = parent_frame.first_runtime_session_id();
+                let parent_session_ref = parent_frame
+                    .select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached);
                 if let Some(ref parent_sid) = parent_session_ref {
                     let parent_notification = build_companion_event_notification(
                         parent_sid,

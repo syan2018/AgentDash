@@ -12,7 +12,7 @@ mod value_objects;
 mod workflow_graph_instance;
 
 pub use agent_assignment::AgentAssignment;
-pub use agent_frame::{AgentFrame, RUNTIME_SESSION_REF_KIND};
+pub use agent_frame::{AgentFrame, RUNTIME_SESSION_REF_KIND, RuntimeSessionSelectionPolicy};
 pub use agent_lineage::AgentLineage;
 pub use dispatch::{
     AgentLaunchDispatchResult, AgentLaunchIntent, AgentPolicy, AgentProcedureRef, CapabilityPolicy,

@@ -12,7 +12,7 @@ use super::hub::{
     PendingRuntimeContextTransitionInput, RuntimeContextTransitionOutcome,
 };
 use super::runtime_commands::RuntimeCommandRecord;
-use super::types::{CapabilityState, PendingCapabilityStateTransition};
+use super::types::{AgentFrameRuntimeTarget, CapabilityState, PendingCapabilityStateTransition};
 use crate::runtime_gateway::{
     McpCallToolInput, RuntimeMcpToolDescriptor, RuntimeSessionMcpAccess, RuntimeSessionMcpError,
 };
@@ -37,6 +37,16 @@ impl SessionCapabilityService {
 
     pub async fn get_latest_capability_state(&self, session_id: &str) -> Option<CapabilityState> {
         self.hub.get_latest_capability_state(session_id).await
+    }
+
+    pub(crate) async fn resolve_runtime_session_frame_id(
+        &self,
+        session_id: &str,
+    ) -> Result<uuid::Uuid, String> {
+        self.hub
+            .resolve_runtime_session_frame_id(session_id)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     pub async fn list_requested_runtime_commands(
@@ -93,19 +103,27 @@ impl SessionCapabilityService {
     pub(crate) async fn apply_live_vfs_capability_state(
         &self,
         hook_runtime: &SharedHookRuntime,
-        session_id: &str,
+        target: AgentFrameRuntimeTarget,
         before_state: CapabilityState,
         active_vfs: Vfs,
         phase_node: &str,
         apply_mode: &'static str,
     ) -> Result<RuntimeContextTransitionOutcome, String> {
+        let session_id = target.delivery_runtime_session_id.clone();
+        if hook_runtime.session_id() != session_id {
+            return Err(format!(
+                "Hook runtime session `{}` 与 delivery RuntimeSession `{session_id}` 不一致，拒绝热更新能力状态",
+                hook_runtime.session_id()
+            ));
+        }
         let mut after_state = before_state.clone();
         after_state.vfs.active = Some(active_vfs);
         let capability_keys = after_state.capability_keys();
         self.apply_live_runtime_context_transition(
             hook_runtime,
             LiveRuntimeContextTransitionInput {
-                session_id: session_id.to_string(),
+                target_frame_id: target.frame_id,
+                session_id,
                 turn_id: None,
                 phase_node: phase_node.to_string(),
                 run_id: None,

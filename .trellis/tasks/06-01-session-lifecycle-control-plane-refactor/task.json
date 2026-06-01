@@ -1,0 +1,42 @@
+{
+  "id": "session-lifecycle-control-plane-refactor",
+  "name": "session-lifecycle-control-plane-refactor",
+  "title": "Session Lifecycle 控制面重构主线",
+  "description": "以 LifecycleRun、WorkflowGraphInstance、LifecycleAgent、AgentFrame、LifecycleSubjectAssociation 为目标事实源，迁出 Session-first / Binding / Step / single-graph 遗留结构。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": "cross-layer-refactor",
+  "package": null,
+  "priority": "P0",
+  "creator": "claude-agent",
+  "assignee": "claude-agent",
+  "createdAt": "2026-06-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "codex/refactor-lifecycle-control-plane",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-01-session-lifecycle-spec-convergence",
+    "06-01-session-lifecycle-target-anchors-schema",
+    "06-01-lifecycle-dispatch-service",
+    "06-01-agent-frame-construction-migration",
+    "06-01-workflow-agent-assignment-migration",
+    "06-01-task-subject-execution-migration",
+    "06-01-companion-gate-lineage-migration",
+    "06-01-routine-run-source-migration",
+    "06-01-frontend-actor-subject-views",
+    "06-01-session-first-api-demotion"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md",
+    ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/semantic-inventory.md",
+    ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/lifecycle-entity-association-map.md",
+    ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/agent-operation-predicates.md"
+  ],
+  "notes": "正式执行主任务。上游讨论任务：06-01-lifecycle-control-plane-concept-alignment。",
+  "meta": {}
+}

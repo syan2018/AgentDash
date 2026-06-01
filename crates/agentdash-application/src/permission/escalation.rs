@@ -43,7 +43,7 @@ impl ScopeEscalationCoordinator {
 
     /// 尝试执行 scope escalation。
     ///
-    /// - `session_id`: 当前 session
+    /// - `effect_frame_id`: 当前 agent frame
     /// - `created_subject_kind`: 刚刚创建的对象类型（如 Story）
     /// - `created_subject_id`: 刚刚创建的对象 ID
     ///
@@ -53,13 +53,13 @@ impl ScopeEscalationCoordinator {
     /// 3. 返回 escalation 结果（包含 unlocked_paths）
     pub async fn try_escalate(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
         created_subject_kind: RunLinkSubjectKind,
         created_subject_id: Uuid,
     ) -> Result<Option<EscalationResult>, String> {
         let grant = self
             .grant_repo
-            .find_active_escalation_grant(session_id, created_subject_kind.as_str())
+            .find_active_escalation_grant(effect_frame_id, created_subject_kind.as_str())
             .await
             .map_err(|e| format!("find escalation grant: {e}"))?;
 

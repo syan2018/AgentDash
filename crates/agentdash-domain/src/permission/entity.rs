@@ -18,8 +18,10 @@ pub struct PermissionGrant {
     pub id: Uuid,
     /// 来源 LifecycleRun
     pub run_id: Uuid,
-    /// 来源 session
-    pub session_id: String,
+    /// 生效目标：关联的 AgentFrame（主查询锚点）
+    pub effect_frame_id: Option<Uuid>,
+    /// 来源 runtime session（审计追溯用，不再作为主查询路径）
+    pub source_runtime_session_id: String,
     /// 触发该申请的 turn（审计追溯用）
     pub source_turn_id: Option<String>,
     /// 触发该申请的 tool call（审计追溯用）
@@ -48,7 +50,7 @@ impl PermissionGrant {
     /// 创建新的权限申请。初始状态为 Created。
     pub fn new(
         run_id: Uuid,
-        session_id: impl Into<String>,
+        source_runtime_session_id: impl Into<String>,
         requested_paths: Vec<ToolCapabilityPath>,
         reason: impl Into<String>,
         grant_scope: GrantScope,
@@ -60,7 +62,8 @@ impl PermissionGrant {
         Self {
             id: Uuid::new_v4(),
             run_id,
-            session_id: session_id.into(),
+            effect_frame_id: None,
+            source_runtime_session_id: source_runtime_session_id.into(),
             source_turn_id: None,
             source_tool_call_id: None,
             requested_paths,
@@ -79,6 +82,11 @@ impl PermissionGrant {
     pub fn with_source(mut self, turn_id: Option<String>, tool_call_id: Option<String>) -> Self {
         self.source_turn_id = turn_id;
         self.source_tool_call_id = tool_call_id;
+        self
+    }
+
+    pub fn with_effect_frame(mut self, frame_id: Uuid) -> Self {
+        self.effect_frame_id = Some(frame_id);
         self
     }
 

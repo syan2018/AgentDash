@@ -18,7 +18,8 @@ use super::policy::PermissionPolicyService;
 #[derive(Debug, Clone)]
 pub struct GrantRequest {
     pub run_id: Uuid,
-    pub session_id: String,
+    pub effect_frame_id: Option<Uuid>,
+    pub source_runtime_session_id: String,
     pub source_turn_id: Option<String>,
     pub source_tool_call_id: Option<String>,
     pub requested_paths: Vec<ToolCapabilityPath>,
@@ -63,13 +64,17 @@ impl PermissionGrantService {
     ) -> Result<GrantRequestResult, String> {
         let mut grant = PermissionGrant::new(
             req.run_id,
-            req.session_id,
+            req.source_runtime_session_id,
             req.requested_paths.clone(),
             req.reason,
             req.grant_scope,
             req.ttl_seconds,
         )
         .with_source(req.source_turn_id, req.source_tool_call_id);
+
+        if let Some(frame_id) = req.effect_frame_id {
+            grant = grant.with_effect_frame(frame_id);
+        }
 
         if let Some(intent) = req.scope_escalation_intent {
             grant = grant.with_escalation_intent(intent);
@@ -187,25 +192,25 @@ impl PermissionGrantService {
         Ok(grant)
     }
 
-    /// 查询 session 下活跃 grants。
-    pub async fn list_active_by_session(
+    /// 查询 effect_frame_id 下活跃 grants。
+    pub async fn list_active_by_frame(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
     ) -> Result<Vec<PermissionGrant>, String> {
         self.repo
-            .list_active_by_session(session_id)
+            .list_active_by_frame(effect_frame_id)
             .await
-            .map_err(|e| format!("list_active_by_session failed: {e}"))
+            .map_err(|e| format!("list_active_by_frame failed: {e}"))
     }
 
     /// 查询是否有匹配的 scope escalation grant（用于 post-action hook）。
     pub async fn find_active_escalation_grant(
         &self,
-        session_id: &str,
+        effect_frame_id: Uuid,
         target_subject_kind: &str,
     ) -> Result<Option<PermissionGrant>, String> {
         self.repo
-            .find_active_escalation_grant(session_id, target_subject_kind)
+            .find_active_escalation_grant(effect_frame_id, target_subject_kind)
             .await
             .map_err(|e| format!("find_active_escalation_grant failed: {e}"))
     }

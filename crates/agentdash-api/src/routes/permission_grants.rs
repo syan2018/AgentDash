@@ -17,7 +17,8 @@ use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 pub struct PermissionGrantDto {
     pub id: String,
     pub run_id: String,
-    pub session_id: String,
+    pub effect_frame_id: Option<String>,
+    pub source_runtime_session_id: String,
     pub requested_paths: Vec<String>,
     pub reason: String,
     pub grant_scope: String,
@@ -34,7 +35,8 @@ fn grant_to_dto(grant: &PermissionGrant) -> PermissionGrantDto {
     PermissionGrantDto {
         id: grant.id.to_string(),
         run_id: grant.run_id.to_string(),
-        session_id: grant.session_id.clone(),
+        effect_frame_id: grant.effect_frame_id.map(|id| id.to_string()),
+        source_runtime_session_id: grant.source_runtime_session_id.clone(),
         requested_paths: grant
             .requested_paths
             .iter()
@@ -80,7 +82,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 #[derive(Deserialize)]
 pub struct ListGrantsQuery {
-    pub session_id: Option<String>,
+    pub effect_frame_id: Option<String>,
     pub run_id: Option<String>,
     pub status: Option<String>,
 }
@@ -93,24 +95,15 @@ pub async fn list_grants(
     CurrentUser(_current_user): CurrentUser,
     Query(query): Query<ListGrantsQuery>,
 ) -> Result<Json<Vec<PermissionGrantDto>>, ApiError> {
-    let grants = if let Some(session_id) = &query.session_id {
-        match query.status.as_deref() {
-            Some("active") | None => {
-                state
-                    .repos
-                    .permission_grant_repo
-                    .list_active_by_session(session_id)
-                    .await?
-            }
-            Some(_status) => {
-                // For specific non-active status, use active listing (extensible later)
-                state
-                    .repos
-                    .permission_grant_repo
-                    .list_active_by_session(session_id)
-                    .await?
-            }
-        }
+    let grants = if let Some(frame_id) = &query.effect_frame_id {
+        let frame_uuid: Uuid = frame_id
+            .parse()
+            .map_err(|_| ApiError::BadRequest(format!("invalid effect_frame_id: {frame_id}")))?;
+        state
+            .repos
+            .permission_grant_repo
+            .list_active_by_frame(frame_uuid)
+            .await?
     } else if let Some(run_id) = &query.run_id {
         let run_uuid: Uuid = run_id
             .parse()
@@ -122,7 +115,7 @@ pub async fn list_grants(
             .await?
     } else {
         return Err(ApiError::BadRequest(
-            "session_id or run_id query param required".to_string(),
+            "effect_frame_id or run_id query param required".to_string(),
         ));
     };
 

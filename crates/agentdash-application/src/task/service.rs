@@ -3,8 +3,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource, RunPolicy, RuntimePolicy,
-    RuntimeSessionSelectionPolicy, SubjectExecutionIntent, SubjectRef, WorkflowGraphRef,
+    ActivityAttemptStatus, AgentPolicy, CapabilityPolicy, ContextPolicy, ExecutionSource,
+    RunPolicy, RuntimePolicy, RuntimeSessionSelectionPolicy, SubjectExecutionIntent, SubjectRef,
+    WorkflowGraphRef,
 };
 
 use crate::repository_set::RepositorySet;
@@ -12,9 +13,13 @@ use crate::task::lock::TaskLockMap;
 use crate::workflow::WorkflowApplicationError;
 use crate::workflow::dispatch_service::LifecycleDispatchService;
 use crate::workflow::freeform::FREEFORM_LIFECYCLE_KEY;
+use crate::workflow::{
+    CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionControlService,
+};
 
 use super::execution::*;
 use super::gateway::get_task as gw_get_task;
+use super::view_projector::project_task_view_from_attempt_status;
 
 /// 基础设施回调 — 仅封装 Application 层无法直接完成的操作
 ///
@@ -22,8 +27,11 @@ use super::gateway::get_task as gw_get_task;
 /// 由 API/Host 层提供具体实现。
 #[async_trait::async_trait]
 pub trait TurnDispatcher: Send + Sync {
-    /// 取消会话执行（自动路由到本地 Hub 或远程中继）
-    async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError>;
+    /// 投递 runtime cancel command（自动路由到本地 Hub 或远程中继）。
+    async fn deliver_runtime_cancel(
+        &self,
+        command: RuntimeCancelDeliveryCommand,
+    ) -> Result<(), TaskExecutionError>;
 }
 
 /// Story step activation service — 通过 ExecutionIntent dispatch 编排 Task execution。
@@ -62,7 +70,7 @@ impl StoryStepActivationService {
     pub async fn cancel_task(
         &self,
         task_id: Uuid,
-    ) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
+    ) -> Result<TaskExecutionCancelResult, TaskExecutionError> {
         self.lock_map
             .with_lock(task_id, || async { self.cancel_task_inner(task_id).await })
             .await
@@ -195,33 +203,60 @@ impl StoryStepActivationService {
     async fn cancel_task_inner(
         &self,
         task_id: Uuid,
-    ) -> Result<agentdash_domain::task::Task, TaskExecutionError> {
+    ) -> Result<TaskExecutionCancelResult, TaskExecutionError> {
         let task = gw_get_task(&self.repos, task_id).await?;
-
-        let refs = self
-            .resolve_task_execution_refs(task.id)
-            .await?
-            .ok_or_else(|| {
-                TaskExecutionError::UnprocessableEntity("Task 尚未启动，无法取消执行".into())
-            })?;
-
-        // 通过 agent 当前 frame 查找 runtime session refs 执行 cancel
-        let frame = self
-            .repos
-            .agent_frame_repo
-            .get_current(refs.agent_id)
+        let subject_ref = SubjectRef::new("task", task.id);
+        let control = self.subject_execution_control_service();
+        let cancel_result = control
+            .cancel_subject_execution(CancelSubjectExecutionCommand {
+                subject_ref: subject_ref.clone(),
+                runtime_selection_policy: RuntimeSessionSelectionPolicy::LatestAttached,
+                reason: Some("task_cancel_requested".to_string()),
+            })
             .await
-            .map_err(|e| TaskExecutionError::Internal(e.to_string()))?;
+            .map_err(map_workflow_error)?;
 
-        if let Some(frame) = frame {
-            if let Some(session_id) =
-                frame.select_runtime_session_id(RuntimeSessionSelectionPolicy::LatestAttached)
-            {
-                self.dispatcher.cancel_session(&session_id).await?;
-            }
+        if let Some(command) = cancel_result.runtime_delivery.clone() {
+            self.dispatcher.deliver_runtime_cancel(command).await?;
         }
 
-        Ok(task)
+        let projected_task = project_task_view_from_attempt_status(
+            &self.repos,
+            task.id,
+            ActivityAttemptStatus::Cancelled,
+            "task_cancel_requested",
+            serde_json::json!({
+                "run_ref": cancel_result.run_ref,
+                "graph_instance_ref": cancel_result.graph_instance_ref,
+                "agent_ref": cancel_result.agent_ref,
+                "frame_ref": cancel_result.frame_ref,
+                "assignment_ref": cancel_result.assignment_ref,
+                "activity_key": cancel_result.activity_key,
+                "attempt": cancel_result.attempt,
+                "runtime_delivery_ref": cancel_result
+                    .runtime_delivery
+                    .as_ref()
+                    .map(|command| command.runtime_session_id.clone()),
+            }),
+        )
+        .await
+        .map_err(|error| TaskExecutionError::Internal(error.to_string()))?;
+
+        Ok(TaskExecutionCancelResult {
+            task: projected_task,
+            run_ref: cancel_result.run_ref,
+            graph_instance_ref: cancel_result.graph_instance_ref,
+            agent_ref: cancel_result.agent_ref,
+            frame_ref: cancel_result.frame_ref,
+            assignment_ref: cancel_result.assignment_ref,
+            subject_execution_ref: agentdash_domain::workflow::SubjectExecutionRef {
+                subject_ref,
+                association_id: cancel_result.association_ref,
+            },
+            runtime_delivery_ref: cancel_result
+                .runtime_delivery
+                .map(|command| command.runtime_session_id),
+        })
     }
 
     // ─── private helpers ──────────────────────────────────────
@@ -299,6 +334,19 @@ impl StoryStepActivationService {
             .execute_subject(intent)
             .await
             .map_err(map_workflow_error)
+    }
+
+    fn subject_execution_control_service(&self) -> SubjectExecutionControlService<'_> {
+        SubjectExecutionControlService::new(
+            self.repos.workflow_graph_repo.as_ref(),
+            self.repos.lifecycle_run_repo.as_ref(),
+            self.repos.workflow_graph_instance_repo.as_ref(),
+            self.repos.activity_execution_claim_repo.as_ref(),
+            self.repos.lifecycle_subject_association_repo.as_ref(),
+            self.repos.lifecycle_agent_repo.as_ref(),
+            self.repos.agent_frame_repo.as_ref(),
+            self.repos.agent_assignment_repo.as_ref(),
+        )
     }
 }
 

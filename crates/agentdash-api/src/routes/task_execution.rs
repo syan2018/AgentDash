@@ -11,8 +11,8 @@ use crate::{
     app_state::AppState,
     auth::{CurrentUser, ProjectPermission, load_task_story_project_with_permission},
     dto::{
-        ContinueTaskRequest, ContinueTaskResponse, StartTaskRequest, StartTaskResponse,
-        TaskExecutionViewResponse,
+        CancelTaskResponse, ContinueTaskRequest, ContinueTaskResponse, StartTaskRequest,
+        StartTaskResponse, TaskExecutionViewResponse,
     },
     rpc::ApiError,
 };
@@ -110,7 +110,7 @@ pub async fn cancel_task(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(id): Path<String>,
-) -> Result<Json<crate::dto::TaskResponse>, ApiError> {
+) -> Result<Json<CancelTaskResponse>, ApiError> {
     let task_id = parse_task_id(&id)?;
     load_task_story_project_with_permission(
         state.as_ref(),
@@ -119,13 +119,22 @@ pub async fn cancel_task(
         ProjectPermission::Edit,
     )
     .await?;
-    let task = state
+    let result = state
         .services
         .story_step_activation_service
         .cancel_task(task_id)
         .await
         .map_err(ApiError::from)?;
-    Ok(Json(crate::dto::TaskResponse::from(task)))
+    Ok(Json(CancelTaskResponse {
+        task: crate::dto::TaskResponse::from(result.task),
+        run_ref: result.run_ref,
+        graph_instance_ref: result.graph_instance_ref,
+        agent_ref: result.agent_ref,
+        frame_ref: result.frame_ref,
+        assignment_ref: result.assignment_ref,
+        subject_execution_ref: result.subject_execution_ref.association_id,
+        runtime_delivery_ref: result.runtime_delivery_ref,
+    }))
 }
 
 pub async fn get_task_execution_view(

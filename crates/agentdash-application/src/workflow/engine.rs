@@ -37,6 +37,11 @@ pub enum ActivityEvent {
         attempt: u32,
         error: String,
     },
+    ActivityCancelled {
+        activity_key: String,
+        attempt: u32,
+        reason: Option<String>,
+    },
     HumanDecisionSubmitted {
         activity_key: String,
         attempt: u32,
@@ -229,6 +234,18 @@ impl LifecycleEngine {
                 attempt_state.status = ActivityAttemptStatus::Failed;
                 attempt_state.completed_at = Some(now);
                 attempt_state.summary = Some(error);
+            }
+            ActivityEvent::ActivityCancelled {
+                activity_key,
+                attempt,
+                reason,
+            } => {
+                let attempt_state = find_attempt_mut(state, &activity_key, attempt)?;
+                expect_cancellable_status(attempt_state)?;
+                let now = Utc::now();
+                attempt_state.status = ActivityAttemptStatus::Cancelled;
+                attempt_state.completed_at = Some(now);
+                attempt_state.summary = reason;
             }
             ActivityEvent::HumanDecisionSubmitted {
                 activity_key,
@@ -582,6 +599,26 @@ fn expect_status(
     }
 }
 
+fn expect_cancellable_status(
+    attempt_state: &ActivityAttemptState,
+) -> Result<(), LifecycleEngineError> {
+    if matches!(
+        attempt_state.status,
+        ActivityAttemptStatus::Ready
+            | ActivityAttemptStatus::Claiming
+            | ActivityAttemptStatus::Running
+    ) {
+        Ok(())
+    } else {
+        Err(LifecycleEngineError::InvalidAttemptStatus {
+            activity_key: attempt_state.activity_key.clone(),
+            attempt: attempt_state.attempt,
+            expected: "ready/claiming/running attempt",
+            actual: attempt_state.status,
+        })
+    }
+}
+
 fn derive_run_status(definition: &WorkflowGraph, state: &mut ActivityLifecycleRunState) {
     if state.attempts.iter().any(|attempt| {
         matches!(
@@ -606,6 +643,14 @@ fn derive_run_status(definition: &WorkflowGraph, state: &mut ActivityLifecycleRu
         .any(|attempt| attempt.status == ActivityAttemptStatus::Failed)
     {
         state.status = ActivityRunStatus::Failed;
+        return;
+    }
+    if state
+        .attempts
+        .iter()
+        .any(|attempt| attempt.status == ActivityAttemptStatus::Cancelled)
+    {
+        state.status = ActivityRunStatus::Cancelled;
         return;
     }
     if state
@@ -889,6 +934,71 @@ mod tests {
             },
         )
         .expect("start");
+    }
+
+    #[test]
+    fn cancelling_running_attempt_marks_graph_cancelled() {
+        let definition = approval_definition();
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+
+        start_attempt(&definition, &mut state, "plan", 1);
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityCancelled {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                reason: Some("user requested cancel".to_string()),
+            },
+        )
+        .expect("cancel");
+
+        let attempt = state
+            .attempts
+            .iter()
+            .find(|attempt| attempt.activity_key == "plan" && attempt.attempt == 1)
+            .expect("plan attempt");
+        assert_eq!(attempt.status, ActivityAttemptStatus::Cancelled);
+        assert_eq!(attempt.summary.as_deref(), Some("user requested cancel"));
+        assert_eq!(state.status, ActivityRunStatus::Cancelled);
+    }
+
+    #[test]
+    fn cancelling_terminal_attempt_is_rejected() {
+        let definition = approval_definition();
+        let mut state =
+            LifecycleEngine::initialize(&definition, test_graph_instance_id()).expect("init");
+
+        start_attempt(&definition, &mut state, "plan", 1);
+        LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityFailed {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                error: "failed".to_string(),
+            },
+        )
+        .expect("fail");
+
+        let error = LifecycleEngine::apply_event(
+            &definition,
+            &mut state,
+            ActivityEvent::ActivityCancelled {
+                activity_key: "plan".to_string(),
+                attempt: 1,
+                reason: None,
+            },
+        )
+        .expect_err("terminal attempt cannot be cancelled");
+        assert!(matches!(
+            error,
+            LifecycleEngineError::InvalidAttemptStatus {
+                actual: ActivityAttemptStatus::Failed,
+                ..
+            }
+        ));
     }
 
     #[test]

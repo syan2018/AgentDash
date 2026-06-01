@@ -19,10 +19,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::json;
+use uuid::Uuid;
 
+use crate::repository_set::RepositorySet;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::{ChangeKind, StateChangeRepository, StoryRepository};
-use agentdash_domain::task::TaskStatus;
+use agentdash_domain::task::{Task, TaskStatus};
 use agentdash_domain::workflow::{
     ActivityAttemptState, LifecycleRunRepository, LifecycleRunStatus,
     LifecycleSubjectAssociationRepository, WorkflowGraphInstance, WorkflowGraphInstanceRepository,
@@ -32,6 +34,61 @@ use agentdash_domain::workflow::{
 pub enum TaskViewProjectionError {
     #[error(transparent)]
     Domain(#[from] agentdash_domain::DomainError),
+    #[error("Task {0} 不存在")]
+    TaskNotFound(Uuid),
+}
+
+/// 将一个明确的 ActivityAttempt 状态投影到 Task view。
+///
+/// 入口用于 runtime command 已经推进 WorkflowGraphInstance 后的同步投影；Task
+/// status 仍然只消费 lifecycle attempt 状态，不成为 cancel/start/continue 的事实源。
+pub async fn project_task_view_from_attempt_status(
+    repos: &RepositorySet,
+    task_id: Uuid,
+    attempt_status: agentdash_domain::workflow::ActivityAttemptStatus,
+    reason: &str,
+    context: serde_json::Value,
+) -> Result<Task, TaskViewProjectionError> {
+    let mut story = repos
+        .story_repo
+        .find_by_task_id(task_id)
+        .await?
+        .ok_or(TaskViewProjectionError::TaskNotFound(task_id))?;
+    let previous_status = story.find_task(task_id).map(|task| task.status().clone());
+    let changed = story
+        .apply_task_projection(task_id, attempt_status)
+        .ok_or(TaskViewProjectionError::TaskNotFound(task_id))?;
+    let task = story
+        .find_task(task_id)
+        .cloned()
+        .ok_or(TaskViewProjectionError::TaskNotFound(task_id))?;
+
+    if changed {
+        let project_id = story.project_id;
+        let story_id = story.id;
+        let next_status = task.status().clone();
+        repos.story_repo.update(&story).await?;
+        repos
+            .state_change_repo
+            .append_change(
+                project_id,
+                task_id,
+                ChangeKind::TaskStatusChanged,
+                json!({
+                    "reason": reason,
+                    "task_id": task_id,
+                    "story_id": story_id,
+                    "attempt_status": attempt_status,
+                    "from": previous_status,
+                    "to": next_status,
+                    "context": context,
+                }),
+                None,
+            )
+            .await?;
+    }
+
+    Ok(task)
 }
 
 /// 启动期 Task view 投影入口。

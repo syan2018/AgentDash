@@ -121,7 +121,7 @@ P1-10 未关闭。当前系统已经有初版 `AgentPolicy` / `RuntimePolicy`，
 ### Current call-site policy usage
 
 - API session construction 对 direct runtime session 使用 `Specific`，见 `crates/agentdash-api/src/bootstrap/session_construction_provider.rs:706` 到 `:731`。这是当前最接近“adapter callback 指定 trace”的正确形态。
-- Task cancel 使用 `LatestAttached` 后直接 cancel session，见 `crates/agentdash-application/src/task/service.rs:216` 到 `:220`。
+- Task cancel 后续已迁到 `CancelSubjectExecutionCommand`；`LatestAttached` 只作为 `RuntimeCancelDeliveryCommand` 的 explicit delivery selection policy。
 - Task context builder 用 `LatestAttached` 解析 session projection，见 `crates/agentdash-application/src/task/context_builder.rs:232` 到 `:238`。
 - Companion parent notification 用 `LatestAttached`，见 `crates/agentdash-application/src/companion/tools.rs:658` 到 `:668` 与 `:1367` 到 `:1377`。
 - Permission test 仍用 `LaunchPrimary` 验证 runtime ref carry-forward，见 `crates/agentdash-application/src/permission/service.rs:696` 到 `:704`。
@@ -132,12 +132,12 @@ P1-10 未关闭。当前系统已经有初版 `AgentPolicy` / `RuntimePolicy`，
 - `LatestAttached` 是 named last：implementation 是 `ids.into_iter().next_back()`，见 `agent_frame.rs:145`。它同样依赖 refs array order。
 - `AgentFrameBuilder` carry-forward runtime refs，并 append 新 refs，见 `crates/agentdash-application/src/workflow/frame_builder.rs:355` 到 `:381`；array order 因此继续承载业务含义。
 - `find_by_runtime_session` 对同一 RuntimeSession 命中的多 frame 使用 `ORDER BY created_at DESC LIMIT 1`，见 `crates/agentdash-infrastructure/src/persistence/postgres/lifecycle_anchor_repository.rs:473` 到 `:486`。ContinueRoot / shared root session 场景下，这仍是隐式“最新 frame”选择。
-- `reconcile/terminal_cancel` 仍直接读取 `runtime_session_refs_json` array 并 `arr.first()`，见 `crates/agentdash-application/src/reconcile/terminal_cancel.rs:137` 到 `:159`。这是明确绕过 `RuntimeSessionSelectionPolicy` 的 remaining call site。
+- `reconcile/terminal_cancel` 后续已迁到 `SubjectExecutionControlService::prepare_runtime_cancel_delivery`，不再手写读取 `runtime_session_refs_json` array。
 - 一些 view builder 里有 `agents.first()` fallback，见 `crates/agentdash-api/src/routes/lifecycle_views.rs:610` 到 `:615` 与 `crates/agentdash-api/src/routes/story_runs.rs:410` 到 `:415`；这不是 RuntimeSession ref selection，但会影响“哪个 agent/frame 的 runtime refs 被展示”的上游选择。
 
 ### Judgment
 
-P1-11 已部分关闭：`RuntimeLaunchRequest::from_frame` 不再默认取 first，主要 call site 也开始显式传 policy。但 policy 语义还很薄，`LaunchPrimary` / `LatestAttached` 仍依赖 refs array order，且 `terminal_cancel` 存在 raw `arr.first()` 绕过 policy。`implement.md` 标记的“多 RuntimeSession selection policy”可视为基础 gate 已完成，不应视为最终 selection policy 完成。
+P1-11 已部分关闭：`RuntimeLaunchRequest::from_frame` 不再默认取 first，主要 call site 也开始显式传 policy。后续 slice 已移除 `terminal_cancel` 的 raw array first 旁路。但 policy 语义还很薄，`LaunchPrimary` / `LatestAttached` 仍依赖 refs array order。`implement.md` 标记的“多 RuntimeSession selection policy”可视为基础 gate 已完成，不应视为最终 selection policy 完成。
 
 ## Suggested Minimal Encapsulation Batch
 
@@ -159,7 +159,7 @@ P1-11 已部分关闭：`RuntimeLaunchRequest::from_frame` 不再默认取 first
 
 - 将 `RuntimeSessionSelectionPolicy` 扩展为业务语义更强的 variants：`SpecificTrace`、`ActiveTurnOwner`、`LatestWritable`、`ResumeLatestTrace`、`CreateNewIfNone`。
 - 限制 `LaunchPrimary` 为 migration/test 或明确 root launch provenance；常规 delivery / cancel / notification 使用 `LatestWritable` 或 `ActiveTurnOwner`。
-- 将 `terminal_cancel` 的 raw array first 改为 shared selection helper；view builder 的 agent fallback 另设 `LifecycleAgentSelectionPolicy`，避免 agent selection 与 runtime ref selection 混在一起。
+- `terminal_cancel` 已改为 shared subject execution delivery resolver；view builder 的 agent fallback 另设 `LifecycleAgentSelectionPolicy`，避免 agent selection 与 runtime ref selection 混在一起。
 - 对 `find_by_runtime_session(... ORDER BY created_at DESC LIMIT 1)` 加 resolver 边界说明：只允许 runtime adapter trace-to-frame lookup 使用；业务 command 不调用它来选择 frame owner。
 
 ## Acceptance Gates
@@ -193,5 +193,5 @@ P1-11 已部分关闭：`RuntimeLaunchRequest::from_frame` 不再默认取 first
 - 未修改代码，未运行测试。
 - 未发现目标命名的 `AgentReusePolicy` / `RuntimeSessionPolicy` 类型；当前只有 `AgentPolicy` / `RuntimePolicy`，且 `RuntimePolicy::ContinueCurrent(Uuid)` 仍以 RuntimeSession id 表达。
 - transition/delivery split 当前已落地到 type、migration、repository join 和 memory tests；这部分不再按旧调研结论处理。
-- 多 RuntimeSession selection 已有显式 enum 和测试，但仍有 raw `arr.first()` 与 order-based policy；因此只能算基础 selection gate，不能算完整 selection policy。
+- 多 RuntimeSession selection 已有显式 enum 和测试，后续也移除了 `terminal_cancel` 的 raw first 旁路；剩余问题是 `LaunchPrimary` / `LatestAttached` 仍是 order-based policy，因此只能算基础 selection gate，不能算完整 selection policy。
 - `apply_to_running_session` 当前 live path 会通过 `AgentFrameRuntimeTarget` 写 AgentFrame revision；风险点不是“完全绕过 frame 写入”，而是 workflow executor 仍绕过 builder-owned resolution stage，以 RuntimeSession delivery 为主语直接应用 activation。

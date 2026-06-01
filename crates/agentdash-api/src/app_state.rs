@@ -260,9 +260,14 @@ impl AppState {
             agentdash_application::reconcile::terminal_cancel::TerminalCancelCoordinator::new(
                 session_runtime.clone(),
                 story_repo_port.clone(),
+                repos.workflow_graph_repo.clone(),
+                repos.lifecycle_run_repo.clone(),
+                repos.workflow_graph_instance_repo.clone(),
+                repos.activity_execution_claim_repo.clone(),
                 repos.lifecycle_subject_association_repo.clone(),
                 repos.lifecycle_agent_repo.clone(),
                 repos.agent_frame_repo.clone(),
+                repos.agent_assignment_repo.clone(),
             ),
         );
 

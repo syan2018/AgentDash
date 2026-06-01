@@ -180,14 +180,16 @@
 
 - [ ] Story root/freeform launch 进入 dispatch，创建 Story subject association。
 - [ ] Task execution command 使用 SubjectExecution contract，Task 只保留 business spec；执行偏好迁到 dispatch policy 或 SubjectExecutionPreference。
-- [ ] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
+- [x] Task cancel 改为 CancelSubjectExecutionCommand，runtime cancel 只是 delivery。
+- [ ] Task view status vocabulary 区分 Cancelled 与 Failed；取消投影不再伪装成失败业务状态。
 - [ ] CompanionChannel / LifecycleGate / RuntimeNotification 分层。
 - [x] Routine Reuse 通过 LifecycleAgentReuseResolver 查询，不借 parent_run_id 兜底。
 - [ ] Permission 明确 source runtime session 只是 provenance，effect owner 是 frame。
 
 ### Gate
 
-- [ ] Task start/continue/cancel 测试证明 command target 是 `SubjectRef` / assignment / gate，而不是 raw RuntimeSession。
+- [x] Task start/continue/cancel 的 active execution path 测试证明 command target 是 `SubjectRef` / assignment / frame，而不是 raw RuntimeSession。
+- [ ] Task wait/gate cancellation 测试证明 open `LifecycleGate` 与 runtime notification 的收束关系；若 Task execution 会等待 gate，cancel 必须关闭 gate truth。
 - [ ] Companion wait/resume 测试证明 durable `LifecycleGate` 是 truth，runtime notification 只是 delivery。
 - [x] Routine reuse 测试证明按 routine/entity/subject association 复用 agent，而不是无 parent_run_id 时新建 run。
 - [ ] Permission query 测试证明 frame/run/subject 是主查询入口，session 只作为审计 provenance filter。
@@ -209,6 +211,26 @@
 - `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
 - `cargo fmt --all --check`
 - `cargo check -p agentdash-application`
+
+2026-06-02 的 Phase 5 Task cancel slice 已关闭 active-assignment cancel lifecycle command gate，但 Phase 5 整体仍因 Task wait/gate cancellation、Task view status vocabulary、Companion 分层和 Permission provenance 保持 partial：
+
+- 新增 `SubjectExecutionControlService` 作为 subject execution control boundary；`CancelSubjectExecutionCommand` 以 `SubjectRef` 为输入，解析 active subject association、LifecycleAgent、AgentAssignment、AgentFrame，并校验 frame 与 assignment 的 `graph_instance_id + activity_key` 一致。
+- Workflow engine 新增 durable `ActivityCancelled` event；cancel 只接受 cancellable attempt status，写入 `ActivityAttemptStatus::Cancelled`、完成时间与 summary，并让 cancelled run 在 graph status 推导中压过 pending successor。
+- Task cancel facade 只负责把 Task 转成 `SubjectRef("task", task_id)` 并委派给 `SubjectExecutionControlService`；runtime cancel 被降为 `RuntimeCancelDeliveryCommand`，由 host dispatcher 投递。
+- cancel command 完成后会释放 active claim、release active assignment，并把 Task view 从 lifecycle attempt status 投影；当前 Task domain 词表仍将 `ActivityAttemptStatus::Cancelled` 映射为 `TaskStatus::Failed`，这暴露出 Task 业务状态与 execution lifecycle 状态还需要继续拆分。
+- `TerminalCancelCoordinator` 复用 `prepare_runtime_cancel_delivery` 解析 delivery target；业务终态触发的 runtime stop 不再手写解析 `runtime_session_refs_json`，也不写入新的 lifecycle cancel truth。
+- API cancel response 返回 Task projection 与 run/graph/agent/frame/assignment/subject execution/runtime delivery refs；frontend 暂时只解包 `task` 保持既有 store 形状，generated contract 进入 Phase 6。
+
+验证记录：
+
+- `cargo test -p agentdash-application workflow::engine --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::dispatch_service --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::subject_execution_control --lib -- --format terse`
+- `cargo test -p agentdash-application task::service --lib -- --format terse`（0 tests；仅证明过滤器无覆盖，不能作为 gate 证据）
+- `cargo check -p agentdash-api`
+- `pnpm --filter app-web run typecheck`
+- `cargo fmt --all --check`
+- `git diff --check`
 
 ## Phase 6: 建立稳定 Read Models
 

@@ -4,6 +4,7 @@ use agentdash_application::session::SessionRuntimeService;
 use agentdash_application::task::execution::TaskExecutionError;
 use agentdash_application::task::gateway::map_connector_error;
 use agentdash_application::task::service::TurnDispatcher;
+use agentdash_application::workflow::RuntimeCancelDeliveryCommand;
 use async_trait::async_trait;
 
 /// API 层取消适配器。
@@ -19,9 +20,12 @@ impl AppStateTurnDispatcher {
 
 #[async_trait]
 impl TurnDispatcher for AppStateTurnDispatcher {
-    async fn cancel_session(&self, session_id: &str) -> Result<(), TaskExecutionError> {
+    async fn deliver_runtime_cancel(
+        &self,
+        command: RuntimeCancelDeliveryCommand,
+    ) -> Result<(), TaskExecutionError> {
         self.session_runtime
-            .cancel(session_id)
+            .cancel(&command.runtime_session_id)
             .await
             .map_err(map_connector_error)
     }

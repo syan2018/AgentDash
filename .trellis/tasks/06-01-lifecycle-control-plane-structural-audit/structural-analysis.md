@@ -641,11 +641,72 @@ Task cancel 通过 current frame 找 runtime session，再调用 `cancel_session
 新增 `CancelSubjectExecutionCommand`：
 
 - input `SubjectRef`
-- resolves active agent assignment / gate / runtime refs
+- resolves active agent assignment / frame / runtime refs
 - writes lifecycle cancellation intent
 - then projects runtime cancellation delivery
 
 RuntimeSession cancel 只能是该 command 的 delivery step。
+
+### 当前落地状态
+
+2026-06-02 的 Task cancel slice 已将控制面落到 subject execution：
+
+- `SubjectExecutionControlService` 以 `SubjectRef` 解析 active `LifecycleSubjectAssociation`、`LifecycleAgent`、`AgentAssignment` 与 current `AgentFrame`。
+- `CancelSubjectExecutionCommand` 先通过 workflow engine 写入 `ActivityCancelled`，再 abandon claim、release assignment，最后产出可选 `RuntimeCancelDeliveryCommand`。
+- `StoryStepActivationService::cancel_task` 不再选择 raw runtime session；host dispatcher 只接收 runtime cancel delivery command。
+- `TerminalCancelCoordinator` 复用同一 target resolver 规划 runtime delivery；业务终态触发的 runtime stop 不制造新的 lifecycle cancel truth。
+
+对应 gate：
+
+- `workflow::dispatch_service` 测试证明 Task start/continue 的 subject execution dispatch 会创建 required assignment / subject execution refs。
+- `workflow::subject_execution_control` 测试证明 Task cancel 只用 `SubjectRef` 输入即可解析 assignment/frame 并选择 explicit runtime delivery ref。
+- `workflow::engine` 测试证明 running attempt cancel 会落到 graph cancelled 状态，terminal attempt 不能再次 cancel。
+
+### P1-19A 后续暴露问题：Task cancel projection vocabulary
+
+### 原始问题
+
+Task cancel command 已能写入 `ActivityAttemptStatus::Cancelled`，但 Task view 仍通过 `Task::apply_projection` 将 `ActivityAttemptStatus::Cancelled` 合并为 `TaskStatus::Failed`。
+
+### 结构性分析
+
+这说明 Task 的用户可见状态词表同时承担了两件事：业务工作项状态与 execution lifecycle outcome。Failed 是失败 outcome，Cancelled 是用户/系统停止 outcome；二者合并会让后续 UI、审计、自动恢复与 terminal reconciliation 都无法知道这是 failure 还是 cancellation。
+
+系统性问题：**Task view projection 直接消费 workflow attempt enum，但没有自己的 TaskExecution projection vocabulary**。
+
+### 解决方案
+
+优先封装 `TaskExecutionProjection`：
+
+- input：`SubjectExecutionRef` / `ActivityAttemptState` / cancellation reason。
+- output：`TaskExecutionStatus::{Pending, Assigned, Running, AwaitingVerification, Completed, Failed, Cancelled}` 与 audit context。
+- `Task::apply_projection` 不直接接收 workflow enum；它接收 Task 自己的 projection value object。
+- `TaskStatus` 若继续作为用户工作项状态，应加入 `Cancelled`；若业务状态与执行状态需要并存，则 Task view 应显式拆为 `task.status` 与 `task.execution.status`，由 read model builder 组合。
+
+最小可验收 gate：cancel 后 Task projection、Story state change、API response 与 frontend status union 都能区分 `cancelled` 与 `failed`，并有测试覆盖 `ActivityAttemptStatus::Cancelled -> Task cancelled projection`。
+
+### P1-19B 后续暴露问题：Task wait/gate cancellation
+
+### 原始问题
+
+当前 `SubjectExecutionControlService` 解析的是 active subject association、agent、assignment 与 frame；它没有注入 `LifecycleGateRepository`，也没有处理 subject execution 当前处于 wait/gate 时的 open gate truth。
+
+### 结构性分析
+
+Task cancel 不能只覆盖 running assignment。Subject execution 的控制状态可能落在 assignment、claim、attempt，也可能落在 durable gate；如果 cancel command 不知道 gate owner，未来任何 wait path 都会把 cancellation 拆成两条事实链：workflow attempt cancelled 与 gate 仍 open。
+
+系统性问题：**SubjectExecution control boundary 尚未把 execution wait/gate 纳入同一个 cancellation transaction**。
+
+### 解决方案
+
+扩展 `SubjectExecutionControlService` 的 target resolver：
+
+- 解析 subject execution 的 active `LifecycleGate`（按 run/agent/frame/correlation 或专门的 subject gate index）。
+- `CancelSubjectExecutionCommand` 在写 `ActivityCancelled` 时同步 close/cancel gate，并记录 cancellation reason / actor。
+- Runtime notification 只作为 `GateCancelDeliveryCommand` 或 `RuntimeCancelDeliveryCommand` 的 delivery adapter。
+- gate wait path 与 companion gate path 共用 `LifecycleGate` truth，但通过 `SubjectExecutionControlTarget` 明确 owner 是 task subject / companion channel / parent interaction。
+
+最小可验收 gate：构造一个 open gate 的 subject execution，cancel 后 graph attempt 为 `Cancelled`、gate 非 open、assignment/claim 不再 active，runtime notification 只从 delivery command 产生。
 
 ## P1-20 Companion gate 未完全成为交互面 owner
 

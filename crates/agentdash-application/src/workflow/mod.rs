@@ -21,6 +21,7 @@ pub mod scheduler;
 mod session_association;
 mod session_run_context_resolver;
 pub(crate) mod step_activation;
+mod subject_execution_control;
 pub mod tools;
 
 pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
@@ -86,4 +87,8 @@ pub(crate) use step_activation::KickoffPromptFragment;
 pub(crate) use step_activation::{
     StepActivation, StepActivationInput, activate_step_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation,
+};
+pub use subject_execution_control::{
+    CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
+    SubjectExecutionControlService,
 };

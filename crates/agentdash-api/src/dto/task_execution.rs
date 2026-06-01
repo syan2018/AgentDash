@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use agentdash_contracts::core::TaskResponse;
 use agentdash_domain::task::TaskStatus;
 
 #[derive(Debug, Deserialize, Default)]
@@ -45,6 +46,20 @@ pub struct ContinueTaskResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_ref: Option<Uuid>,
     pub status: TaskStatus,
+}
+
+/// Task cancel 结果 — Task view 来自 lifecycle projection，runtime delivery 仅为追踪引用。
+#[derive(Debug, Serialize)]
+pub struct CancelTaskResponse {
+    pub task: TaskResponse,
+    pub run_ref: Uuid,
+    pub graph_instance_ref: Uuid,
+    pub agent_ref: Uuid,
+    pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
+    pub subject_execution_ref: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_delivery_ref: Option<String>,
 }
 
 /// Task 执行视图 — 从 lifecycle facts 投影。

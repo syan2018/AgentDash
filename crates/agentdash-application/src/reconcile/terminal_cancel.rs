@@ -15,11 +15,14 @@ use uuid::Uuid;
 use agentdash_domain::story::{StoryRepository, StoryStatus};
 use agentdash_domain::task::TaskStatus;
 use agentdash_domain::workflow::{
-    AgentFrameRepository, LifecycleAgentRepository, LifecycleSubjectAssociationRepository,
-    SubjectRef,
+    ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
+    RuntimeSessionSelectionPolicy, SubjectRef, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository,
 };
 
 use crate::session::SessionRuntimeService;
+use crate::workflow::SubjectExecutionControlService;
 
 /// 业务终态取消协调器 — 在 Task/Story 状态变更路径上被调用。
 ///
@@ -28,25 +31,40 @@ use crate::session::SessionRuntimeService;
 pub struct TerminalCancelCoordinator {
     session_runtime: SessionRuntimeService,
     story_repo: Arc<dyn StoryRepository>,
+    workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+    lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+    workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
+    activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
     association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     agent_repo: Arc<dyn LifecycleAgentRepository>,
     frame_repo: Arc<dyn AgentFrameRepository>,
+    assignment_repo: Arc<dyn AgentAssignmentRepository>,
 }
 
 impl TerminalCancelCoordinator {
     pub fn new(
         session_runtime: SessionRuntimeService,
         story_repo: Arc<dyn StoryRepository>,
+        workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
+        lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
+        workflow_graph_instance_repo: Arc<dyn WorkflowGraphInstanceRepository>,
+        activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
         association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         agent_repo: Arc<dyn LifecycleAgentRepository>,
         frame_repo: Arc<dyn AgentFrameRepository>,
+        assignment_repo: Arc<dyn AgentAssignmentRepository>,
     ) -> Self {
         Self {
             session_runtime,
             story_repo,
+            workflow_graph_repo,
+            lifecycle_run_repo,
+            workflow_graph_instance_repo,
+            activity_execution_claim_repo,
             association_repo,
             agent_repo,
             frame_repo,
+            assignment_repo,
         }
     }
 
@@ -56,22 +74,30 @@ impl TerminalCancelCoordinator {
             return;
         }
 
-        let session_id = match self.resolve_task_runtime_session(task_id).await {
-            Some(sid) => sid,
+        let command = match self.resolve_task_runtime_cancel_delivery(task_id).await {
+            Some(command) => command,
             None => return,
         };
 
-        if let Err(err) = self.session_runtime.cancel(&session_id).await {
+        if let Err(err) = self
+            .session_runtime
+            .cancel(&command.runtime_session_id)
+            .await
+        {
             tracing::warn!(
                 task_id = %task_id,
-                session_id = %session_id,
+                session_id = %command.runtime_session_id,
+                frame_ref = %command.frame_ref,
+                assignment_ref = %command.assignment_ref,
                 error = %err,
                 "终态取消协调器：Task 进入终态后取消关联 session 失败"
             );
         } else {
             tracing::info!(
                 task_id = %task_id,
-                session_id = %session_id,
+                session_id = %command.runtime_session_id,
+                frame_ref = %command.frame_ref,
+                assignment_ref = %command.assignment_ref,
                 new_status = ?new_status,
                 "终态取消协调器：Task 进入终态，已取消关联 session"
             );
@@ -108,14 +134,20 @@ impl TerminalCancelCoordinator {
             if task.status() != &TaskStatus::Running {
                 continue;
             }
-            let session_id = match self.resolve_task_runtime_session(task.id).await {
-                Some(sid) => sid,
+            let command = match self.resolve_task_runtime_cancel_delivery(task.id).await {
+                Some(command) => command,
                 None => continue,
             };
-            if let Err(err) = self.session_runtime.cancel(&session_id).await {
+            if let Err(err) = self
+                .session_runtime
+                .cancel(&command.runtime_session_id)
+                .await
+            {
                 tracing::warn!(
                     task_id = %task.id,
-                    session_id = %session_id,
+                    session_id = %command.runtime_session_id,
+                    frame_ref = %command.frame_ref,
+                    assignment_ref = %command.assignment_ref,
                     error = %err,
                     "终态取消协调器：Story 终态级联取消 session 失败"
                 );
@@ -134,29 +166,40 @@ impl TerminalCancelCoordinator {
         }
     }
 
-    /// 通过 LifecycleSubjectAssociation → agent → frame 路径解析 task 的 runtime session。
-    async fn resolve_task_runtime_session(&self, task_id: Uuid) -> Option<String> {
+    /// 通过 SubjectExecution 控制面解析 runtime cancel delivery。
+    async fn resolve_task_runtime_cancel_delivery(
+        &self,
+        task_id: Uuid,
+    ) -> Option<crate::workflow::RuntimeCancelDeliveryCommand> {
         let subject = SubjectRef::new("task", task_id);
-        let associations = self.association_repo.list_by_subject(&subject).await.ok()?;
-        let assoc = associations.first()?;
-
-        let agents = self
-            .agent_repo
-            .list_by_run(assoc.anchor_run_id)
+        let service = SubjectExecutionControlService::new(
+            self.workflow_graph_repo.as_ref(),
+            self.lifecycle_run_repo.as_ref(),
+            self.workflow_graph_instance_repo.as_ref(),
+            self.activity_execution_claim_repo.as_ref(),
+            self.association_repo.as_ref(),
+            self.agent_repo.as_ref(),
+            self.frame_repo.as_ref(),
+            self.assignment_repo.as_ref(),
+        );
+        match service
+            .prepare_runtime_cancel_delivery(
+                &subject,
+                RuntimeSessionSelectionPolicy::LatestAttached,
+                Some("terminal_status_cancel".to_string()),
+            )
             .await
-            .ok()?;
-        let active_agent = agents.into_iter().find(|a| a.status == "active")?;
-
-        let frame = self
-            .frame_repo
-            .get_current(active_agent.id)
-            .await
-            .ok()
-            .flatten()?;
-
-        let refs_json = frame.runtime_session_refs_json.as_ref()?;
-        let arr = refs_json.as_array()?;
-        arr.first().and_then(|v| v.as_str()).map(|s| s.to_string())
+        {
+            Ok(command) => command,
+            Err(err) => {
+                tracing::debug!(
+                    task_id = %task_id,
+                    error = %err,
+                    "终态取消协调器：未能解析 task runtime cancel delivery"
+                );
+                None
+            }
+        }
     }
 }
 

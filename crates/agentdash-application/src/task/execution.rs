@@ -49,6 +49,22 @@ pub struct TaskExecutionResult {
     pub status: TaskStatus,
 }
 
+/// Task cancel dispatch 结果。
+///
+/// cancel 的命令目标是 SubjectExecution / Assignment；runtime session 只作为
+/// delivery/provenance ref 返回。
+#[derive(Debug, Clone)]
+pub struct TaskExecutionCancelResult {
+    pub task: agentdash_domain::task::Task,
+    pub run_ref: Uuid,
+    pub graph_instance_ref: Uuid,
+    pub agent_ref: Uuid,
+    pub frame_ref: Uuid,
+    pub assignment_ref: Uuid,
+    pub subject_execution_ref: SubjectExecutionRef,
+    pub runtime_delivery_ref: Option<String>,
+}
+
 /// Task 执行视图（替代原 TaskSessionResult）。
 ///
 /// 所有字段从 lifecycle facts 投影得到，附带 source refs。

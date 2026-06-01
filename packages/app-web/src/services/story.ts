@@ -365,7 +365,7 @@ export async function continueTaskExecution(
 
 export async function cancelTaskExecution(taskId: string): Promise<Task> {
   const raw = await api.post<Record<string, unknown>>(`/tasks/${taskId}/cancel`, {});
-  return mapTask(raw);
+  return mapTask(raw.task as Record<string, unknown>);
 }
 
 export async function deleteTask(taskId: string): Promise<void> {

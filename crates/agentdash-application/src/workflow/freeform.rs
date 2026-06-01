@@ -3,8 +3,8 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
-    AgentSessionPolicy, ArtifactAliasPolicy, LifecycleRun, LifecycleRunRepository,
-    WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowGraphRepository,
+    AgentSessionPolicy, ArtifactAliasPolicy, DefinitionSource, LifecycleRun,
+    LifecycleRunRepository, WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
 };
 
 use super::{LifecycleEngine, WorkflowApplicationError};
@@ -84,7 +84,7 @@ pub fn build_freeform_workflow(
         FREEFORM_AGENT_PROCEDURE_KEY,
         "Freeform Agent",
         "普通自由会话的默认 Agent contract。",
-        WorkflowDefinitionSource::BuiltinSeed,
+        DefinitionSource::BuiltinSeed,
         WorkflowContract::default(),
     )
     .map_err(WorkflowApplicationError::BadRequest)
@@ -98,7 +98,7 @@ pub fn build_freeform_lifecycle(
         FREEFORM_LIFECYCLE_KEY,
         "Freeform Session",
         "普通自由会话的无外围约束过程。",
-        WorkflowDefinitionSource::BuiltinSeed,
+        DefinitionSource::BuiltinSeed,
         FREEFORM_ACTIVITY_KEY,
         vec![ActivityDefinition {
             key: FREEFORM_ACTIVITY_KEY.to_string(),

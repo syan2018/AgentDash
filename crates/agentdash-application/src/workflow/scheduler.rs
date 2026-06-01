@@ -322,7 +322,7 @@ mod tests {
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransition, ActivityTransitionKind,
         AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding,
-        InputPortDefinition, OutputPortDefinition, TransitionCondition, WorkflowDefinitionSource,
+        DefinitionSource, InputPortDefinition, OutputPortDefinition, TransitionCondition,
     };
     use serde_json::json;
 
@@ -487,27 +487,6 @@ mod tests {
             }
             Ok(abandoned)
         }
-
-        async fn find_running_by_executor_session(
-            &self,
-            session_id: &str,
-        ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-            Ok(self
-                .claims
-                .lock()
-                .expect("claim repo lock")
-                .iter()
-                .find(|claim| {
-                    claim.status
-                        == agentdash_domain::workflow::ActivityExecutionClaimStatus::Running
-                        && matches!(
-                            &claim.executor_run_ref,
-                            Some(agentdash_domain::workflow::ExecutorRunRef::RuntimeSession { session_id: sid })
-                                if sid == session_id
-                        )
-                })
-                .cloned())
-        }
     }
 
     fn port(key: &str) -> OutputPortDefinition {
@@ -535,7 +514,7 @@ mod tests {
             "claim_flow",
             "Claim flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![
                 ActivityDefinition {

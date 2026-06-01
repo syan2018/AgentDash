@@ -64,16 +64,20 @@ interface TaskEntity {
   };
 }
 
-interface SessionBindingEntity {
-  id: string;
-  sessionId?: string;
-  session_id?: string;
-  label: string;
+interface RuntimeTraceRef {
+  runtime_session_id: string;
 }
 
-interface PromptResult {
-  status: number;
-  body: string;
+interface LifecycleRunView {
+  runtime_trace_refs: RuntimeTraceRef[];
+}
+
+interface SubjectExecutionView {
+  runs: LifecycleRunView[];
+}
+
+interface StartTaskResponse {
+  trace_ref?: string;
 }
 
 async function ensureBackend(request: APIRequestContext, suffix: string): Promise<BackendConfig> {
@@ -186,6 +190,26 @@ async function createStory(
   return (await resp.json()) as StoryEntity;
 }
 
+async function createTask(
+  request: APIRequestContext,
+  storyId: string,
+  suffix: string,
+  sourceRefs: ContextSourceRef[] = [],
+): Promise<TaskEntity> {
+  const resp = await request.post(`${API_ORIGIN}/stories/${storyId}/tasks`, {
+    data: {
+      title: `E2E Context Runtime Task ${suffix}`,
+      description: "用于验证 Story 上下文进入 Task runtime trace",
+      agent_binding: {
+        agent_type: "codex",
+        context_sources: sourceRefs,
+      },
+    },
+  });
+  expect(resp.ok(), await resp.text()).toBeTruthy();
+  return (await resp.json()) as TaskEntity;
+}
+
 async function getStory(request: APIRequestContext, storyId: string): Promise<StoryEntity> {
   const resp = await request.get(`${API_ORIGIN}/stories/${storyId}`);
   expect(resp.ok()).toBeTruthy();
@@ -212,37 +236,41 @@ async function updateStorySourceRefs(
   return (await resp.json()) as StoryEntity;
 }
 
-async function createStorySession(
+async function startTaskTrace(
   request: APIRequestContext,
-  storyId: string,
-  suffix: string,
-): Promise<SessionBindingEntity> {
-  const resp = await request.post(`${API_ORIGIN}/stories/${storyId}/sessions`, {
+  taskId: string,
+  prompt: string,
+): Promise<string> {
+  const resp = await request.post(`${API_ORIGIN}/tasks/${taskId}/start`, {
     data: {
-      title: `E2E Story Session ${suffix}`,
-      label: "companion",
+      override_prompt: prompt,
     },
   });
-  expect(resp.ok()).toBeTruthy();
-  return (await resp.json()) as SessionBindingEntity;
+  expect(resp.ok(), await resp.text()).toBeTruthy();
+  const result = (await resp.json()) as StartTaskResponse;
+  if (result.trace_ref) return result.trace_ref;
+  return pollSubjectTrace(request, "task", taskId);
 }
 
-async function promptSession(request: APIRequestContext, sessionId: string): Promise<PromptResult> {
-  const resp = await request.post(`${API_ORIGIN}/sessions/${sessionId}/prompt`, {
-    data: {
-      prompt: "请先阅读当前 Story 上下文，然后简短确认你已拿到上下文。",
-    },
-  });
-  return {
-    status: resp.status(),
-    body: await resp.text(),
-  };
-}
-
-function getBindingSessionId(binding: SessionBindingEntity): string {
-  const sessionId = binding.sessionId ?? binding.session_id ?? "";
-  expect(sessionId).not.toBe("");
-  return sessionId;
+async function pollSubjectTrace(
+  request: APIRequestContext,
+  subjectKind: "story" | "task",
+  subjectId: string,
+): Promise<string> {
+  let traceId = "";
+  await expect
+    .poll(
+      async () => {
+        const resp = await request.get(`${API_ORIGIN}/subjects/${subjectKind}/${subjectId}/execution`);
+        if (!resp.ok()) return "";
+        const view = (await resp.json()) as SubjectExecutionView;
+        traceId = view.runs.flatMap((run) => run.runtime_trace_refs).at(0)?.runtime_session_id ?? "";
+        return traceId;
+      },
+      { timeout: 20_000 },
+    )
+    .not.toBe("");
+  return traceId;
 }
 
 function unwrapNotification(record: Record<string, unknown>): Record<string, unknown> | null {
@@ -259,7 +287,7 @@ async function collectSessionNotifications(sessionId: string, limit = 24): Promi
   const notifications: Record<string, unknown>[] = [];
 
   try {
-    const response = await fetch(`${API_ORIGIN}/acp/sessions/${sessionId}/stream/ndjson?since_id=0`, {
+    const response = await fetch(`${API_ORIGIN}/sessions/${sessionId}/stream/ndjson?since_id=0`, {
       headers: {
         Accept: "application/x-ndjson",
       },
@@ -364,15 +392,15 @@ test("Story 文件引用可保存到 Story 并分配给 Task Agent", async ({ pa
   ]);
 });
 
-test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", async ({ request }) => {
-  const suffix = `${Date.now()}-session`;
+test("Task dispatch runtime trace 会注入 Story 上下文资源", async ({ request }) => {
+  const suffix = `${Date.now()}-trace`;
   const backend = await ensureBackend(request, suffix);
   const project = await createProject(request, suffix);
   const workspace = await createWorkspace(request, project.id, backend.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
   const story = await createStory(request, project.id, suffix);
 
-  await updateStorySourceRefs(request, story.id, [
+  const sourceRefs: ContextSourceRef[] = [
     {
       kind: "file",
       locator: "frontend/src/pages/StoryPage.tsx",
@@ -383,13 +411,15 @@ test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", as
       max_chars: null,
       delivery: "resource",
     },
-  ]);
+  ];
 
-  const binding = await createStorySession(request, story.id, suffix);
-  const sessionId = getBindingSessionId(binding);
-  const prompt = await promptSession(request, sessionId);
-
-  expect(prompt.status, prompt.body).toBe(200);
+  await updateStorySourceRefs(request, story.id, sourceRefs);
+  const task = await createTask(request, story.id, suffix, sourceRefs);
+  const sessionId = await startTaskTrace(
+    request,
+    task.id,
+    "请先阅读当前 Story 上下文，然后简短确认你已拿到上下文。",
+  );
 
   await expect
     .poll(async () => {
@@ -413,7 +443,7 @@ test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", as
     const update = item.update as Record<string, unknown>;
     if (update.sessionUpdate !== "user_message_chunk") return false;
     const content = update.content as Record<string, unknown> | undefined;
-    return content?.type === "text" && String(content.text ?? "").includes("你是该 Story 的主代理");
+    return content?.type === "text" && String(content.text ?? "").includes("Story");
   });
   expect(instructionBlock).toBeTruthy();
 
@@ -423,34 +453,34 @@ test("Story 伴随会话在 prompt 前会自动注入 Story 上下文资源", as
   expect(String(resource.text ?? "")).toContain("1 |");
 });
 
-test("Story 会话可识别 owner 绑定并返回最新 Story 页面", async ({ page, request }) => {
+test("Task runtime trace 可识别 owner 并返回最新 Task 抽屉", async ({ page, request }) => {
   const suffix = `${Date.now()}-owner`;
   const backend = await ensureBackend(request, suffix);
   const project = await createProject(request, suffix);
   const workspace = await createWorkspace(request, project.id, backend.id, suffix);
   await updateProjectDefaultWorkspace(request, project, workspace.id);
   const story = await createStory(request, project.id, suffix);
-  const binding = await createStorySession(request, story.id, suffix);
-  const sessionId = getBindingSessionId(binding);
-  const updatedTitle = `${story.title}（已更新）`;
+  const task = await createTask(request, story.id, suffix);
+  const sessionId = await startTaskTrace(request, task.id, "请确认 Task owner trace 已启动。");
+  const updatedTitle = `${task.title}（已更新）`;
 
   await page.goto(`/`);
   await page.evaluate((sid) => {
     window.history.pushState({}, "", `/session/${sid}`);
     window.dispatchEvent(new PopStateEvent("popstate"));
   }, sessionId);
-  await expect(page.getByText(`已绑定：${story.title}`)).toBeVisible();
-  await expect(page.getByRole("button", { name: "返回 Story" })).toBeVisible();
+  await expect(page.getByText(`已绑定：${task.title}`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "返回任务" })).toBeVisible();
 
-  const updateResp = await request.put(`${API_ORIGIN}/stories/${story.id}`, {
+  const updateResp = await request.put(`${API_ORIGIN}/tasks/${task.id}`, {
     data: {
       title: updatedTitle,
-      description: "通过外部修改模拟 Story 会话内的更新行为",
+      description: "通过外部修改模拟 Task trace 内的更新行为",
     },
   });
   expect(updateResp.ok()).toBeTruthy();
 
-  await page.getByRole("button", { name: "返回 Story" }).click();
+  await page.getByRole("button", { name: "返回任务" }).click();
   await expect(page).toHaveURL(new RegExp(`/story/${story.id}$`));
-  await expect(page.getByRole("heading", { name: updatedTitle })).toBeVisible();
+  await expect(page.locator("aside.fixed").last().getByText(updatedTitle)).toBeVisible();
 });

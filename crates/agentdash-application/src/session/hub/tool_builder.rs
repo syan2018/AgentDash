@@ -78,49 +78,44 @@ impl SessionRuntimeInner {
         mut state: CapabilityState,
     ) -> Result<Vec<DynAgentTool>, ConnectorError> {
         // === Phase 1: AgentFrame revision 持久化 ===
-        if let Some(ref frame_repo) = self.agent_frame_repo {
-            match frame_repo.find_by_runtime_session(session_id).await {
-                Ok(Some(current_frame)) => {
-                    let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
-                        .with_capability_state(&state)
-                        .with_created_by(
-                            "runtime_context_transition",
-                            Some(session_id.to_string()),
-                        );
-                    if let Some(ctx) = current_frame.context_slice_json {
-                        builder = builder.with_context(ctx);
-                    }
-                    if let Some(profile) = current_frame.execution_profile_json {
-                        builder = builder.with_execution_profile_raw(profile);
-                    }
-                    match builder.build(frame_repo.as_ref()).await {
-                        Ok(new_frame) => {
-                            tracing::debug!(
-                                session_id,
-                                agent_id = %new_frame.agent_id,
-                                revision = new_frame.revision,
-                                "AgentFrame capability revision 已写入"
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                session_id,
-                                "AgentFrame revision 写入失败，仅更新内存缓存: {error}"
-                            );
-                        }
-                    }
-                }
-                Ok(None) => {
-                    tracing::debug!(
-                        session_id,
-                        "Session 尚未关联 AgentFrame，跳过 frame revision 写入"
-                    );
-                }
-                Err(error) => {
-                    tracing::warn!(session_id, "查找 session 关联的 AgentFrame 失败: {error}");
-                }
-            }
+        let frame_repo = self.agent_frame_repo.as_ref().ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 无 AgentFrame repository，无法热更新能力状态"
+            ))
+        })?;
+        let current_frame = frame_repo
+            .find_by_runtime_session(session_id)
+            .await
+            .map_err(|error| {
+                ConnectorError::Runtime(format!(
+                    "查找 session `{session_id}` 关联的 AgentFrame 失败: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                ConnectorError::Runtime(format!(
+                    "session `{session_id}` 未关联 AgentFrame，拒绝热更新能力状态"
+                ))
+            })?;
+        let mut builder = AgentFrameBuilder::new(current_frame.agent_id)
+            .with_capability_state(&state)
+            .with_created_by("runtime_context_transition", Some(session_id.to_string()));
+        if let Some(ctx) = current_frame.context_slice_json {
+            builder = builder.with_context(ctx);
         }
+        if let Some(profile) = current_frame.execution_profile_json {
+            builder = builder.with_execution_profile_raw(profile);
+        }
+        let new_frame = builder.build(frame_repo.as_ref()).await.map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "AgentFrame revision 写入失败，拒绝热更新能力状态: {error}"
+            ))
+        })?;
+        tracing::debug!(
+            session_id,
+            agent_id = %new_frame.agent_id,
+            revision = new_frame.revision,
+            "AgentFrame capability revision 已写入"
+        );
 
         // === Phase 2: 内存 cache 更新 + connector 同步 ===
         let (turn_snapshot, hook_runtime) = self

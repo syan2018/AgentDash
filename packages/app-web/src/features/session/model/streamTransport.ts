@@ -27,7 +27,7 @@ function buildStreamEndpoint(sessionId: string, endpoint?: string): string {
   if (endpoint && endpoint.trim().length > 0) {
     return endpoint;
   }
-  return `/api/acp/sessions/${encodeURIComponent(sessionId)}/stream/ndjson`;
+  return `/api/sessions/${encodeURIComponent(sessionId)}/stream/ndjson`;
 }
 
 function buildNdjsonEndpoint(sessionId: string, endpoint?: string): string {

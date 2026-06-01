@@ -566,8 +566,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         if existing.is_none() {
             use agentdash_domain::workflow::{
                 ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-                AgentActivityExecutorSpec, AgentSessionPolicy, WorkflowDefinitionSource,
-                WorkflowGraph,
+                AgentActivityExecutorSpec, AgentSessionPolicy, DefinitionSource, WorkflowGraph,
             };
             let lifecycle = WorkflowGraph {
                 id: Uuid::new_v4(),
@@ -575,7 +574,7 @@ async fn resolve_lifecycle_key_for_project_agent(
                 key: auto_key.clone(),
                 name: format!("Auto: {wk}"),
                 description: format!("自动创建：包装单个 workflow `{wk}`"),
-                source: WorkflowDefinitionSource::UserAuthored,
+                source: DefinitionSource::UserAuthored,
                 installed_source: None,
                 version: 1,
                 activities: vec![ActivityDefinition {

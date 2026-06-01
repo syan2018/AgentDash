@@ -4,9 +4,9 @@ use agentdash_domain::inline_file::InlineFileRepository;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{
-    ActivityAttemptStatus, ActivityExecutionClaimRepository, AgentProcedureRepository,
-    LifecycleRunRepository, LifecycleSubjectAssociationRepository, WorkflowGraphRepository,
-    build_effective_contract,
+    ActivityAttemptStatus, AgentAssignmentRepository, AgentFrameRepository,
+    AgentProcedureRepository, LifecycleAgentRepository, LifecycleRunRepository,
+    LifecycleSubjectAssociationRepository, WorkflowGraphRepository, build_effective_contract,
 };
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
@@ -47,7 +47,9 @@ impl AppExecutionHookProvider {
         story_repo: Arc<dyn StoryRepository>,
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
         workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-        activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
+        agent_frame_repo: Arc<dyn AgentFrameRepository>,
+        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+        agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
         lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
         inline_file_repo: Arc<dyn InlineFileRepository>,
@@ -68,7 +70,9 @@ impl AppExecutionHookProvider {
             workflow_builder: WorkflowSnapshotBuilder::new(
                 agent_procedure_repo,
                 workflow_graph_repo,
-                activity_execution_claim_repo,
+                agent_frame_repo,
+                lifecycle_agent_repo,
+                agent_assignment_repo,
                 lifecycle_run_repo,
             ),
             script_engine: HookScriptEngine::new(evaluator),
@@ -508,7 +512,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_delegate_before_tool_rewrite_records_trace() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             snapshot.session_id.clone(),
             Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,

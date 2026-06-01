@@ -41,7 +41,7 @@ import type {
   ValidationSeverity,
   WorkflowContextBinding,
   WorkflowContract as GeneratedWorkflowContract,
-  WorkflowDefinitionSource,
+  DefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -86,7 +86,7 @@ export type {
   ValidationIssue,
   ValidationSeverity,
   WorkflowContextBinding,
-  WorkflowDefinitionSource,
+  DefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
   WorkflowInjectionSpec,
@@ -258,7 +258,7 @@ export interface AgentProcedure {
   name: string;
   description: string;
   target_kinds: WorkflowTargetKind[];
-  source: WorkflowDefinitionSource;
+  source: DefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
   contract: WorkflowContract;
@@ -273,7 +273,7 @@ export interface WorkflowGraph {
   name: string;
   description: string;
   target_kinds: WorkflowTargetKind[];
-  source: WorkflowDefinitionSource;
+  source: DefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
   entry_activity_key: string;

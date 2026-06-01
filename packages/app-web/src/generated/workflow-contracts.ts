@@ -55,6 +55,8 @@ export type CapabilityConfig = { tool_directives?: Array<ToolCapabilityDirective
 
 export type ContextStrategy = "full" | "summary" | "metadata_only" | "custom";
 
+export type DefinitionSource = "builtin_seed" | "user_authored" | "cloned";
+
 export type DeleteAgentProcedureResponse = { deleted: boolean, };
 
 export type DeleteHookPresetResponse = { removed: boolean, key: string, };
@@ -124,8 +126,6 @@ export type ValidationSeverity = "error" | "warning";
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string, };
 
 export type WorkflowContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
-
-export type WorkflowDefinitionSource = "builtin_seed" | "user_authored" | "cloned";
 
 export type WorkflowGraphInstanceView = { id: string, run_id: string, graph_id: string, role: string, status: string, activities: Array<ActivityStateView>, };
 

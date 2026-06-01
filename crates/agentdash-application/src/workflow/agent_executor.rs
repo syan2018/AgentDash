@@ -937,9 +937,9 @@ mod tests {
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
         ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
-        ApiRequestExecutorSpec, BashExecExecutorSpec, FunctionActivityExecutorSpec,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
-        TransitionCondition, WorkflowDefinitionSource,
+        ApiRequestExecutorSpec, BashExecExecutorSpec, DefinitionSource,
+        FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
+        OutputPortDefinition, TransitionCondition,
     };
 
     use super::*;
@@ -1083,7 +1083,7 @@ mod tests {
             "agent_flow",
             "Agent flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {
                 key: "plan".to_string(),
@@ -1115,7 +1115,7 @@ mod tests {
             "approval_flow",
             "Approval flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "approval",
             vec![ActivityDefinition {
                 key: "approval".to_string(),
@@ -1148,7 +1148,7 @@ mod tests {
             "function_flow",
             "Function flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "collect",
             vec![ActivityDefinition {
                 key: "collect".to_string(),
@@ -1220,7 +1220,7 @@ mod tests {
             "agent_flow",
             "Agent flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             activity_keys
                 .iter()

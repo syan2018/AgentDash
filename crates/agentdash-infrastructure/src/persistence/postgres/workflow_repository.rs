@@ -516,24 +516,6 @@ impl ActivityExecutionClaimRepository for PostgresWorkflowRepository {
         .map(TryInto::try_into)
         .collect()
     }
-
-    async fn find_running_by_executor_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-        sqlx::query_as::<_, ActivityExecutionClaimRow>(&format!(
-            "SELECT {ACTIVITY_CLAIM_COLS} FROM activity_execution_claims \
-             WHERE status = 'running' \
-             AND executor_run_ref::jsonb @> jsonb_build_object('kind', 'runtime_session', 'session_id', $1::text) \
-             ORDER BY updated_at DESC LIMIT 1"
-        ))
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db_err)?
-        .map(TryInto::try_into)
-        .transpose()
-    }
 }
 
 #[async_trait::async_trait]
@@ -1018,7 +1000,7 @@ mod workflow_claim_tests {
             key,
             format!("Procedure {digest}"),
             "",
-            agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
+            agentdash_domain::workflow::DefinitionSource::UserAuthored,
             WorkflowContract::default(),
         )
         .expect("procedure");
@@ -1042,7 +1024,7 @@ mod workflow_claim_tests {
             key,
             format!("Lifecycle {digest}"),
             "",
-            agentdash_domain::workflow::WorkflowDefinitionSource::UserAuthored,
+            agentdash_domain::workflow::DefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {
                 key: "plan".to_string(),

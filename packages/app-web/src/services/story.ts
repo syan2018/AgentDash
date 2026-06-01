@@ -11,27 +11,12 @@ import type {
   AgentBinding,
   ContextContainerDefinition,
   ContextSourceRef,
-  ExecutionVfs,
   SessionComposition,
   Story,
   StoryContext,
-  StorySessionInfo,
   Task,
 } from "../types";
 import { isThinkingLevel } from "../types";
-
-// ─── 字段读取工具 ────────────────────────────────────────
-
-const readNullableStringField = (raw: Record<string, unknown>, field: string): string | null => {
-  const value = raw[field];
-  if (value == null) {
-    return null;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  throw new Error(`字段 ${field} 必须是字符串或 null`);
-};
 
 // ─── 状态/枚举归一化 ─────────────────────────────────────
 
@@ -223,14 +208,6 @@ const mapTask = (raw: Record<string, unknown>): Task => {
   };
 };
 
-const requireStorySessionField = (raw: Record<string, unknown>, field: string): string => {
-  const value = raw[field];
-  if (typeof value === "string" && value.length > 0) {
-    return value;
-  }
-  throw new Error(`StorySessionInfo 缺少必填字段: ${field}`);
-};
-
 // ─── 事件 payload → 实体的可映射性判定 ──────────────────
 
 export const canMapStoryFromPayload = (payload: Record<string, unknown>): boolean => {
@@ -398,22 +375,4 @@ export async function deleteTask(taskId: string): Promise<void> {
 export async function fetchTasks(storyId: string): Promise<Task[]> {
   const response = await api.get<Record<string, unknown>[]>(`/stories/${storyId}/tasks`);
   return response.map(mapTask);
-}
-
-// ─── Story Session API (runtime trace 查询) ──────────────────────────────
-
-export async function fetchStorySessionInfo(
-  storyId: string,
-  sessionId: string,
-): Promise<StorySessionInfo> {
-  const raw = await api.get<Record<string, unknown>>(`/stories/${storyId}/runtime-traces/${sessionId}`);
-  return {
-    run_ref: requireStorySessionField(raw, "run_ref"),
-    session_id: requireStorySessionField(raw, "session_id"),
-    session_title: readNullableStringField(raw, "session_title"),
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ExecutionVfs) ?? null,
-    runtime_surface: (raw.runtime_surface as StorySessionInfo["runtime_surface"]) ?? null,
-    context_snapshot: (raw.context_snapshot as StorySessionInfo["context_snapshot"]) ?? null,
-  };
 }

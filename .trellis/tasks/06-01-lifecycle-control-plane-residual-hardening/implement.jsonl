@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/refactor-plan.md", "reason": "Implementation order and target phase acceptance criteria."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/module-gap-analysis.md", "reason": "Concrete module risk areas to revisit while implementing hard cutover."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/agent-operation-predicates.md", "reason": "Predicate-level source of truth for validating implementation shape."}
+{"file": ".trellis/tasks/06-01-lifecycle-control-plane-concept-alignment/reference-agent-abstraction-and-naming-review.md", "reason": "Target naming and Agent/Lifecycle vocabulary during cleanup."}

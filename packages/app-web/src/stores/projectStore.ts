@@ -3,7 +3,6 @@ import type {
   ContextContainerDefinition,
   ProjectAgent,
   ProjectAgentLaunchResult,
-  ProjectSessionInfo,
   ProjectRole,
   ProjectSubjectGrant,
   ProjectAgentSummary,
@@ -69,7 +68,6 @@ interface ProjectState {
   cloneProject: (projectId: string, payload?: { name?: string; description?: string }) => Promise<Project | null>;
   fetchProjectAgents: (projectId: string) => Promise<ProjectAgentSummary[]>;
   launchProjectAgent: (projectId: string, agentKey: string) => Promise<ProjectAgentLaunchResult | null>;
-  fetchProjectSessionInfo: (projectId: string, sessionId: string) => Promise<ProjectSessionInfo | null>;
   selectProject: (id: string | null) => void;
   deleteProject: (id: string) => Promise<boolean>;
 }
@@ -378,15 +376,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         error: null,
       }));
       return result;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  fetchProjectSessionInfo: async (projectId, sessionId) => {
-    try {
-      return await projectService.fetchProjectSessionInfo(projectId, sessionId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

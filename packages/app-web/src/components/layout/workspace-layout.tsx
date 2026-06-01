@@ -6,7 +6,6 @@ import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useCoordinatorStore } from "../../stores/coordinatorStore";
 import { useEventStore } from "../../stores/eventStore";
 import { useCurrentUserStore } from "../../stores/currentUserStore";
-import { useProjectSessions } from "../../queries/projectSessions";
 import { ProjectCreateDrawer } from "../../features/project/project-selector";
 import type { Project } from "../../types";
 import { SidebarFooter, type FooterPanelKey } from "./SidebarFooter";
@@ -91,8 +90,6 @@ export function WorkspaceLayout() {
   const { backends } = useCoordinatorStore();
   const { connectionState } = useEventStore();
   const { currentUser } = useCurrentUserStore();
-  // Sidebar 会话列表：30s 轮询保持最近会话不过期（与 agent tab 各自独立刷新）
-  const { sessions } = useProjectSessions(currentProjectId, { refetchInterval: 30_000 });
 
   const [activeFooterPanel, setActiveFooterPanel] = useState<FooterPanelKey | null>(null);
 
@@ -190,8 +187,8 @@ export function WorkspaceLayout() {
           })}
         </div>
 
-        {/* Session 快捷列表：flex-1 填充中段，内部自滚 */}
-        <SessionShortcutList sessions={sessions} />
+        {/* Lifecycle 快捷列表：以 project subject/run/agent 索引作为主导航 */}
+        <SessionShortcutList projectId={currentProjectId} />
 
         {/* 底栏 */}
         <SidebarFooter

@@ -16,6 +16,15 @@ pub struct PermissionGrantCompiler;
 impl PermissionGrantCompiler {
     /// 从 grant 的 requested_paths 生成 Add directives。
     pub fn compile(grant: &PermissionGrant) -> RuntimeCapabilityTransition {
+        Self::compile_with_operation(grant, true)
+    }
+
+    /// 从 grant 的 requested_paths 生成 Remove directives。
+    pub fn compile_revoke(grant: &PermissionGrant) -> RuntimeCapabilityTransition {
+        Self::compile_with_operation(grant, false)
+    }
+
+    fn compile_with_operation(grant: &PermissionGrant, add: bool) -> RuntimeCapabilityTransition {
         let declarations: Vec<CapabilityDeclarationRecord> = grant
             .requested_paths
             .iter()
@@ -23,8 +32,12 @@ impl PermissionGrantCompiler {
                 dimension: CapabilityDimensionKey::new(CAPABILITY_DIMENSION_TOOL),
                 declaration_type: DECLARATION_TYPE_CAPABILITY_DIRECTIVE.to_string(),
                 source: CapabilityArtifactSource::permission_grant(),
-                payload: serde_json::to_value(ToolCapabilityDirective::Add(path.clone()))
-                    .unwrap_or_default(),
+                payload: serde_json::to_value(if add {
+                    ToolCapabilityDirective::Add(path.clone())
+                } else {
+                    ToolCapabilityDirective::Remove(path.clone())
+                })
+                .unwrap_or_default(),
             })
             .collect();
 

@@ -17,7 +17,7 @@ use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
 use crate::extension_runtime::ExtensionRuntimeProjection;
 
-/// Session 的 owner 信息（替代已删除的 SessionBinding 表达）。
+/// RuntimeSession trace 的创建来源信息。
 #[derive(Debug, Clone)]
 pub struct ResolvedSessionOwner {
     pub owner_type: CapabilityScope,

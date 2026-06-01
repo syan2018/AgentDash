@@ -6,7 +6,7 @@
 //!
 //! | 路径 | 实现入口 |
 //! |---|---|
-//! | ACP Story/Project | `api::routes::acp_sessions` → `SessionRequestAssembler::compose_owner_bootstrap` |
+//! | Story/Project | lifecycle dispatch → `SessionRequestAssembler::compose_owner_bootstrap` |
 //! | Story step activation | `task::service::StoryStepActivationService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
@@ -1758,8 +1758,8 @@ mod tests {
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, AgentProcedure, InputPortDefinition, OutputPortDefinition,
-        WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowInjectionSpec,
+        AgentActivityExecutorSpec, AgentProcedure, DefinitionSource, InputPortDefinition,
+        OutputPortDefinition, WorkflowContract, WorkflowGraph, WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
@@ -2025,7 +2025,7 @@ mod tests {
             "dev",
             "Dev",
             "dev lifecycle",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             "implement",
             vec![activity.clone()],
             vec![],
@@ -2057,7 +2057,7 @@ mod tests {
             "wf_impl",
             "Implementation",
             "实现工作流",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             WorkflowContract {
                 injection: WorkflowInjectionSpec {
                     guidance: Some("交付可验证实现。\n\n保持上下文收口。".to_string()),

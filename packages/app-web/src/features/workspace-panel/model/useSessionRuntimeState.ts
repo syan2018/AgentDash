@@ -71,7 +71,7 @@ export function useSessionRuntimeState({
 
     void Promise.all([
       fetchSessionContext(sessionId),
-      fetchSessionHookRuntime(sessionId).catch(() => null),
+      fetchSessionHookRuntime(sessionId),
     ])
       .then(([context, hookRuntime]) => {
         if (cancelled) return;
@@ -157,12 +157,14 @@ export function useSessionRuntimeState({
           error: null,
         };
       });
-    } catch {
+    } catch (error: unknown) {
       setState((current) => {
         if (!stateMatches(current, sessionId, sourceKey)) return current;
         return {
           ...current,
+          status: "error",
           hook_runtime: null,
+          error: errorMessage(error),
         };
       });
     }

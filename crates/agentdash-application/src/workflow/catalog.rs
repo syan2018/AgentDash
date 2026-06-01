@@ -185,8 +185,8 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityTransition,
-        AgentActivityExecutorSpec, AgentSessionPolicy, ContextStrategy, GateStrategy,
-        InputPortDefinition, OutputPortDefinition, WorkflowContract, WorkflowDefinitionSource,
+        AgentActivityExecutorSpec, AgentSessionPolicy, ContextStrategy, DefinitionSource,
+        GateStrategy, InputPortDefinition, OutputPortDefinition, WorkflowContract,
         WorkflowGraphRepository,
     };
 
@@ -395,7 +395,7 @@ mod tests {
             key,
             format!("workflow {key}"),
             "desc",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             contract,
         )
         .expect("workflow definition")
@@ -407,7 +407,7 @@ mod tests {
             "activity_lc",
             "Activity lifecycle",
             "desc",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![ActivityDefinition {
                 key: "plan".to_string(),

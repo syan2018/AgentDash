@@ -1,7 +1,7 @@
 /**
  * 可复用的会话聊天视图
  *
- * 包含完整的 ACP 会话交互能力：流式输出、富文本输入（@ 文件引用）、
+ * 包含完整的会话交互能力：流式输出、富文本输入（@ 文件引用）、
  * 执行器选择、上下文用量指示、发送/取消。
  *
  * SessionPage 等 runtime trace 场景复用此组件，
@@ -220,7 +220,7 @@ export function SessionChatView({
     execConfig.permissionPolicy,
   ]);
 
-  // ─── ACP 会话流 ──────────────────────────────────────
+  // ─── 会话流 ──────────────────────────────────────────
 
   const streamSessionId = sessionId ?? "__placeholder__";
   const hasSession = sessionId !== null;

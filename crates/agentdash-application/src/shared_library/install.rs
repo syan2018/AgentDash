@@ -15,7 +15,7 @@ use agentdash_domain::shared_library::{
 
 use crate::vfs::PROJECT_VFS_MOUNT_CONTAINER_ID;
 use agentdash_domain::skill_asset::{SkillAsset, SkillAssetFile};
-use agentdash_domain::workflow::{WorkflowDefinitionSource, WorkflowTemplateInstallBundle};
+use agentdash_domain::workflow::{DefinitionSource, WorkflowTemplateInstallBundle};
 
 use crate::repository_set::RepositorySet;
 use crate::workflow::BuiltinWorkflowTemplateBundle;
@@ -547,12 +547,12 @@ async fn install_workflow_template(
         .map_err(DomainError::InvalidConfig)?;
     let installed_source = installed_source_from_asset(&asset);
     for procedure in &mut bundle.procedures {
-        procedure.source = WorkflowDefinitionSource::UserAuthored;
+        procedure.source = DefinitionSource::UserAuthored;
         procedure.installed_source = Some(installed_source.clone());
     }
 
     let mut lifecycle = bundle.graph;
-    lifecycle.source = WorkflowDefinitionSource::UserAuthored;
+    lifecycle.source = DefinitionSource::UserAuthored;
     lifecycle.installed_source = Some(installed_source);
     let result = repos
         .workflow_template_install_repo

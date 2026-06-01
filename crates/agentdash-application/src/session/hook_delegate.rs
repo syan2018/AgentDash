@@ -1300,7 +1300,7 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_is_blocked_until_blocking_review_action_is_resolved() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionSatisfiedProvider),
             SessionHookSnapshot {
@@ -1389,7 +1389,7 @@ mod tests {
 
     #[tokio::test]
     async fn before_stop_can_continue_without_fake_steering_when_only_stop_gate_blocks() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionBlockedProvider),
             SessionHookSnapshot {
@@ -1436,7 +1436,7 @@ mod tests {
     #[tokio::test]
     async fn evaluate_compaction_uses_before_compact_hook_decision() {
         let provider = RecordingCompactionProvider::default();
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             provider
@@ -1512,7 +1512,7 @@ mod tests {
     #[tokio::test]
     async fn after_compaction_emits_after_compact_hook_payload() {
         let provider = RecordingCompactionProvider::default();
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             provider
@@ -1577,7 +1577,7 @@ mod tests {
     #[tokio::test]
     async fn repeated_compaction_failures_fuse_future_auto_compaction() {
         let provider = RecordingCompactionProvider::default();
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
             provider
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_deduplicates_static_companion_injection_trace() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             SessionHookSnapshot {
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_consumes_turn_start_notices_once() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             SessionHookSnapshot {
@@ -1789,7 +1789,7 @@ mod tests {
 
     #[tokio::test]
     async fn transform_context_emits_hook_injection_fragments_to_audit_bus() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             SessionHookSnapshot {
@@ -1828,7 +1828,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_does_not_emit_inline_hook_steering_or_trace_injections() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             SessionHookSnapshot {
@@ -1874,7 +1874,7 @@ mod tests {
 
     #[tokio::test]
     async fn after_turn_routes_hook_injections_through_runtime_sink() {
-        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
+        let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             SessionHookSnapshot {
@@ -1925,7 +1925,7 @@ mod tests {
             session_id: "sess-hook".to_string(),
             ..SessionHookSnapshot::default()
         };
-        let runtime = AgentFrameHookRuntime::new_standalone(
+        let runtime = AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             snapshot.clone(),

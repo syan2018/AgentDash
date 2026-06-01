@@ -12,54 +12,55 @@ use axum::{
 };
 use tokio::time::MissedTickBehavior;
 
-use crate::bootstrap::session_construction_provider::decode_construction_runtime_error;
-use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 use agentdash_application::session::{
-    LaunchCommand, SessionExecutionState, SessionForkRequest, SessionMeta,
+    SessionExecutionState, SessionForkRequest, SessionMeta,
     SessionProjectionRollbackRequest as ApplicationProjectionRollbackRequest, TitleSource,
-    UserPromptInput,
 };
 use agentdash_contracts::session::{
     ApproveToolCallResponse, CancelSessionResponse, CompanionRespondResponse,
-    CreateSessionForkRequest, DeleteSessionResponse, PromptSessionResponse, RejectToolCallResponse,
+    CreateSessionForkRequest, DeleteSessionResponse, RejectToolCallResponse,
     RollbackSessionProjectionRequest, SessionCommandStateResponse, SessionEventResponse,
     SessionEventsPageResponse, SessionForkChildSessionResponse, SessionForkResponse,
     SessionLineageViewResponse, SessionNdjsonEnvelope, SessionProjectionRollbackResponse,
     SessionProjectionViewResponse,
 };
-use agentdash_spi::HookSessionRuntimeSnapshot;
 
 use crate::auth::{CurrentUser, ProjectPermission, load_project_with_permission};
 use crate::dto::{
-    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, CreateSessionRequest,
-    ListSessionsQuery, NdjsonStreamQuery, RejectToolApprovalRequest, SessionContextResponse,
-    SessionEventsQuery, SessionExecutionStateResponse, UpdateSessionMetaRequest,
+    CompanionRespondRequest, ContextAuditEventDto, ContextAuditQuery, ListSessionsQuery,
+    NdjsonStreamQuery, RejectToolApprovalRequest, SessionEventsQuery,
+    SessionExecutionStateResponse, UpdateSessionMetaRequest,
 };
 
-/// Session 级权限检查 — 通过 SessionMeta.project_id 确认 session 归属后检查项目权限。
+/// Session trace 权限检查 — 必须先解析到 AgentFrame，再通过 LifecycleAgent 所属项目确认权限。
 pub async fn ensure_session_permission(
     state: &AppState,
     user: &agentdash_plugin_api::AuthIdentity,
     session_id: &str,
     permission: ProjectPermission,
 ) -> Result<(), ApiError> {
-    let meta = state
-        .services
-        .session_core
-        .get_session_meta(session_id)
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .find_by_runtime_session(session_id)
         .await
-        .map_err(|e| ApiError::Internal(format!("读取 session meta 失败: {e}")))?
-        .ok_or_else(|| ApiError::NotFound(format!("session {session_id} 不存在")))?;
-    if let Some(project_id) = &meta.project_id {
-        let pid = uuid::Uuid::parse_str(project_id)
-            .map_err(|_| ApiError::Internal("session project_id 格式无效".into()))?;
-        load_project_with_permission(state, user, pid, permission).await?;
-    }
+        .map_err(ApiError::from)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("runtime_session 未附着到 AgentFrame: {session_id}"))
+        })?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(frame.agent_id)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
+    load_project_with_permission(state, user, agent.project_id, permission).await?;
     Ok(())
 }
 
-const ACP_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
+const RUNTIME_TRACE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
@@ -105,10 +106,7 @@ pub async fn list_sessions(
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
     axum::Router::new()
-        .route(
-            "/sessions",
-            axum::routing::get(list_sessions).post(create_session),
-        )
+        .route("/sessions", axum::routing::get(list_sessions))
         .route(
             "/sessions/{id}",
             axum::routing::get(get_session).delete(delete_session),
@@ -118,24 +116,12 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::get(get_session_meta).patch(update_session_meta),
         )
         .route(
-            "/sessions/{id}/hook-runtime",
-            axum::routing::get(get_session_hook_runtime),
-        )
-        .route(
             "/sessions/{id}/state",
             axum::routing::get(get_session_state),
         )
         .route(
             "/sessions/{id}/events",
             axum::routing::get(list_session_events),
-        )
-        .route(
-            "/sessions/{id}/bindings",
-            axum::routing::get(get_session_bindings),
-        )
-        .route(
-            "/sessions/{id}/context",
-            axum::routing::get(get_session_context),
         )
         .route(
             "/sessions/{id}/context/projection",
@@ -154,7 +140,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             "/sessions/{id}/context/audit",
             axum::routing::get(get_session_context_audit),
         )
-        .route("/sessions/{id}/prompt", axum::routing::post(prompt_session))
         .route("/sessions/{id}/cancel", axum::routing::post(cancel_session))
         .route(
             "/sessions/{id}/tool-approvals/{tool_call_id}/approve",
@@ -169,38 +154,9 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::app_state::AppState>> {
             axum::routing::post(respond_companion_request),
         )
         .route(
-            "/acp/sessions/{id}/stream/ndjson",
-            axum::routing::get(acp_session_stream_ndjson),
+            "/sessions/{id}/stream/ndjson",
+            axum::routing::get(session_stream_ndjson),
         )
-}
-
-pub async fn create_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Json(req): Json<CreateSessionRequest>,
-) -> Result<Json<SessionMeta>, ApiError> {
-    let project = load_project_with_permission(
-        state.as_ref(),
-        &current_user,
-        req.project_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let title = req.title.unwrap_or_else(|| "新会话".to_string());
-    let meta = state.services.session_core.create_session(&title).await?;
-    state
-        .services
-        .session_core
-        .update_session_meta(&meta.id, |meta| {
-            meta.project_id = Some(project.id.to_string());
-        })
-        .await?;
-    state
-        .services
-        .session_core
-        .mark_owner_bootstrap_pending(&meta.id)
-        .await?;
-    Ok(Json(meta))
 }
 
 pub async fn get_session(
@@ -215,26 +171,6 @@ pub async fn get_session(
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("会话 {} 不存在", session_id)))?;
     Ok(Json(meta))
-}
-
-pub async fn get_session_hook_runtime(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<HookSessionRuntimeSnapshot>, ApiError> {
-    let runtime = state
-        .services
-        .session_hooks
-        .ensure_hook_runtime(&session_id, None)
-        .await
-        .map_err(ApiError::from)?
-        .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "session {} 当前没有可用的 hook runtime",
-                session_id
-            ))
-        })?;
-    Ok(Json(runtime.runtime_snapshot()))
 }
 
 fn map_session_event(
@@ -483,21 +419,6 @@ mod tests {
     }
 }
 
-/// GET /sessions/{id}/context — 返回 workspace / agent_binding / vfs / snapshot
-pub async fn get_session_context(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-) -> Result<Json<SessionContextResponse>, ApiError> {
-    let Some(plan) = build_session_context_plan(&state, &current_user, &session_id).await? else {
-        return Ok(Json(SessionContextResponse::empty()));
-    };
-
-    Ok(Json(SessionContextResponse::from_runtime_context_plan(
-        plan,
-    )))
-}
-
 /// GET /sessions/{id}/context/projection — 返回当前模型可见上下文投影。
 pub async fn get_session_context_projection(
     State(state): State<Arc<AppState>>,
@@ -600,14 +521,6 @@ pub async fn rollback_session_projection(
     }))
 }
 
-pub async fn get_session_bindings(
-    State(_state): State<Arc<AppState>>,
-    CurrentUser(_current_user): CurrentUser,
-    Path(_session_id): Path<String>,
-) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
-    Ok(Json(vec![]))
-}
-
 /// GET /sessions/{id}/meta — 返回完整 session meta。
 pub async fn get_session_meta(
     State(state): State<Arc<AppState>>,
@@ -677,42 +590,6 @@ pub async fn delete_session(
     Ok(Json(DeleteSessionResponse {
         deleted: true,
         session_id,
-    }))
-}
-
-pub async fn prompt_session(
-    State(state): State<Arc<AppState>>,
-    CurrentUser(current_user): CurrentUser,
-    Path(session_id): Path<String>,
-    Json(user_input): Json<UserPromptInput>,
-) -> Result<Json<PromptSessionResponse>, ApiError> {
-    ensure_session_permission(
-        state.as_ref(),
-        &current_user,
-        &session_id,
-        ProjectPermission::Edit,
-    )
-    .await?;
-    let turn_id = state
-        .services
-        .session_launch
-        .launch_command(
-            &session_id,
-            LaunchCommand::http_prompt_input(user_input, Some(current_user)),
-        )
-        .await
-        .map_err(|e| match e {
-            agentdash_spi::ConnectorError::InvalidConfig(msg) => ApiError::BadRequest(msg),
-            agentdash_spi::ConnectorError::Runtime(msg) => {
-                decode_construction_runtime_error(&msg).unwrap_or(ApiError::Internal(msg))
-            }
-            other => ApiError::from(other),
-        })?;
-
-    Ok(Json(PromptSessionResponse {
-        started: true,
-        session_id,
-        turn_id,
     }))
 }
 
@@ -828,8 +705,8 @@ pub async fn respond_companion_request(
     }))
 }
 
-/// ACP 会话流（Fetch Streaming / NDJSON）
-pub async fn acp_session_stream_ndjson(
+/// Session trace stream（Fetch Streaming / NDJSON）
+pub async fn session_stream_ndjson(
     State(state): State<Arc<AppState>>,
     CurrentUser(_current_user): CurrentUser,
     Path(session_id): Path<String>,
@@ -842,7 +719,7 @@ pub async fn acp_session_stream_ndjson(
     tracing::info!(
         session_id = %session_id,
         resume_from = resume_from,
-        "ACP 会话流连接建立（NDJSON）"
+        "Session trace stream 连接建立（NDJSON）"
     );
 
     let subscription = state
@@ -856,7 +733,7 @@ pub async fn acp_session_stream_ndjson(
         session_id = %session_id,
         replayed_count = replayed,
         snapshot_seq = subscription.snapshot_seq,
-        "ACP 会话流历史补发完成（NDJSON）"
+        "Session trace stream 历史补发完成（NDJSON）"
     );
 
     let stream = async_stream::stream! {
@@ -872,7 +749,7 @@ pub async fn acp_session_stream_ndjson(
             yield Ok::<Bytes, Infallible>(line);
         }
 
-        let mut heartbeat_tick = tokio::time::interval(ACP_HEARTBEAT_INTERVAL);
+        let mut heartbeat_tick = tokio::time::interval(RUNTIME_TRACE_HEARTBEAT_INTERVAL);
         heartbeat_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut rx = subscription.rx;
 
@@ -893,7 +770,7 @@ pub async fn acp_session_stream_ndjson(
                             tracing::warn!(
                                 session_id = %session_id,
                                 lagged = n,
-                                "ACP 会话流订阅落后，部分消息被跳过（NDJSON）"
+                                "Session trace stream 订阅落后，部分消息被跳过（NDJSON）"
                             );
                             continue;
                         }
@@ -901,7 +778,7 @@ pub async fn acp_session_stream_ndjson(
                             tracing::info!(
                                 session_id = %session_id,
                                 last_seq = seq,
-                                "ACP 会话流连接关闭：广播通道关闭（NDJSON）"
+                                "Session trace stream 连接关闭：广播通道关闭（NDJSON）"
                             );
                             break;
                         }
@@ -956,7 +833,7 @@ fn to_ndjson_line(value: &SessionNdjsonEnvelope) -> Option<Bytes> {
             Some(Bytes::from(bytes))
         }
         Err(err) => {
-            tracing::error!(error = %err, "序列化 ACP NDJSON 消息失败");
+            tracing::error!(error = %err, "序列化 Session NDJSON 消息失败");
             None
         }
     }

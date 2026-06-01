@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowDefinitionSource {
+pub enum DefinitionSource {
     BuiltinSeed,
     UserAuthored,
     Cloned,

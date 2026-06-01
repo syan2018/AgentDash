@@ -20,7 +20,7 @@ import { useCurrentUserStore } from "../../../stores/currentUserStore";
 import type {
   WorkflowGraph,
   LibraryAssetDto,
-  WorkflowDefinitionSource,
+  DefinitionSource,
 } from "../../../types";
 import { formatTargetKinds } from "../../workflow/shared-labels";
 import {
@@ -41,7 +41,7 @@ import { SelectProjectEmpty } from "../_shared/SelectProjectEmpty";
 import { useLibraryPublishedAssets } from "../_shared/useLibraryPublishedAssets";
 import { PublishLibraryAssetDialog } from "../publish/PublishLibraryAssetDialog";
 
-type DeleteTarget = { id: string; name: string; source: WorkflowDefinitionSource };
+type DeleteTarget = { id: string; name: string; source: DefinitionSource };
 
 export function WorkflowCategoryPanel() {
   const navigate = useNavigate();

@@ -18,8 +18,8 @@ use agentdash_contracts::workflow::{
     ValidateHookScriptResponse,
 };
 use agentdash_domain::workflow::{
-    ActivityExecutorSpec, AgentProcedure, LifecycleRun, ValidationIssue, ValidationSeverity,
-    WorkflowDefinitionSource, WorkflowGraph,
+    ActivityExecutorSpec, AgentProcedure, DefinitionSource, LifecycleRun, ValidationIssue,
+    ValidationSeverity, WorkflowGraph,
 };
 
 use crate::app_state::AppState;
@@ -148,7 +148,7 @@ pub async fn create_workflow_graph(
         req.key,
         req.name,
         req.description,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
         req.transitions,
@@ -245,7 +245,7 @@ pub async fn validate_workflow_graph(
         req.key,
         req.name,
         req.description,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.entry_activity_key,
         req.activities,
         req.transitions,
@@ -448,7 +448,7 @@ pub async fn create_agent_procedure(
         req.key,
         req.name,
         req.description,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.contract,
     )
     .map_err(ApiError::BadRequest)?;
@@ -544,7 +544,7 @@ pub async fn validate_agent_procedure(
         req.key,
         req.name,
         req.description,
-        WorkflowDefinitionSource::UserAuthored,
+        DefinitionSource::UserAuthored,
         req.contract,
     ) {
         Ok(definition) => {

@@ -47,8 +47,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_agent_frame_runtime),
         )
         .route(
-            "/runtime-sessions/{id}/trace",
-            axum::routing::get(get_runtime_session_trace),
+            "/sessions/{id}/trace",
+            axum::routing::get(get_session_trace),
         )
 }
 
@@ -111,7 +111,7 @@ pub async fn get_agent_frame_runtime(
     Ok(Json(agent_frame_runtime_to_view(&frame)))
 }
 
-pub async fn get_runtime_session_trace(
+pub async fn get_session_trace(
     State(state): State<Arc<AppState>>,
     CurrentUser(current_user): CurrentUser,
     Path(runtime_session_id): Path<String>,

@@ -15,7 +15,6 @@ import {
   mapStoryFromPayload,
   mapTaskFromPayload,
 } from '../services/story';
-import type { StorySessionInfo } from '../types';
 
 export interface CreateTaskInput {
   title: string;
@@ -99,7 +98,6 @@ interface StoryState {
   ) => Promise<Task | null>;
   cancelTaskExecution: (taskId: string) => Promise<Task | null>;
   refreshTask: (taskId: string) => Promise<Task | null>;
-  fetchStorySessionInfo: (storyId: string, sessionId: string) => Promise<StorySessionInfo | null>;
   deleteTask: (taskId: string, storyId: string) => Promise<void>;
   selectStory: (id: string | null) => void;
   selectTask: (id: string | null) => void;
@@ -387,15 +385,6 @@ export const useStoryStore = create<StoryState>((set) => ({
       const task = await storyService.fetchTask(taskId);
       set((s) => ({ tasksByStoryId: upsertTaskInMap(s.tasksByStoryId, task) }));
       return task;
-    } catch (e) {
-      set({ error: (e as Error).message });
-      return null;
-    }
-  },
-
-  fetchStorySessionInfo: async (storyId, sessionId) => {
-    try {
-      return await storyService.fetchStorySessionInfo(storyId, sessionId);
     } catch (e) {
       set({ error: (e as Error).message });
       return null;

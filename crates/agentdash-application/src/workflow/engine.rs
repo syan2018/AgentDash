@@ -645,8 +645,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransitionKind, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, HumanActivityExecutorSpec,
-        HumanApprovalExecutorSpec, OutputPortDefinition, WorkflowDefinitionSource,
+        AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, DefinitionSource,
+        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
     };
 
     use super::*;
@@ -670,7 +670,7 @@ mod tests {
             "approval_flow",
             "Approval flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![
                 ActivityDefinition {
@@ -802,7 +802,7 @@ mod tests {
             "artifact_condition",
             "Artifact condition",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "plan",
             vec![
                 ActivityDefinition {

@@ -93,13 +93,13 @@ use agentdash_contracts::vfs::{
 use agentdash_contracts::workflow::{
     ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState, ActivityStateView,
     ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto, AgentFrameRuntimeView,
-    DeleteAgentProcedureResponse, DeleteHookPresetResponse, DeleteWorkflowGraphResponse,
-    EffectiveSessionContract, HookPresetResponse, HookPresetsResponse, LifecycleAgentRefDto,
-    LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus,
-    LifecycleRunView, LifecycleSubjectAssociationDto, RegisterHookPresetResponse,
-    RuntimeSessionRefDto, RuntimeSessionTraceView, SubjectExecutionView, SubjectRefDto,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowContract, WorkflowDefinitionSource,
-    WorkflowGraphInstanceView,
+    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
+    DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
+    LifecycleAgentRefDto, LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto,
+    LifecycleRunStatus, LifecycleRunView, LifecycleSubjectAssociationDto,
+    RegisterHookPresetResponse, RuntimeSessionRefDto, RuntimeSessionTraceView,
+    SubjectExecutionView, SubjectRefDto, ValidateHookScriptResponse, ValidationIssue,
+    WorkflowContract, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -274,7 +274,7 @@ fn main() {
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<SubjectExecutionView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
-            export_all::<WorkflowDefinitionSource>(dir);
+            export_all::<DefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);
             export_all::<DeleteAgentProcedureResponse>(dir);
             export_all::<HookPresetResponse>(dir);

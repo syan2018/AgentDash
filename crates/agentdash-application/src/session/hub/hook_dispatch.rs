@@ -6,14 +6,13 @@
 //! - `collect_runtime_context_update_injections`（PhaseNode 等 runtime context 更新）
 //! - `schedule_hook_auto_resume`（hook 级 auto-resume，经 provider 后转 prompt）
 
-use std::sync::Arc;
-
 use super::super::auto_resume_context_frame::build_auto_resume_context_frame;
 use super::super::hook_delegate::{
     RuntimeHookInjectionSink, RuntimeInjectionSource, SessionRuntimeHookInjectionSink,
 };
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
+use super::super::hooks_service::build_frame_hook_runtime;
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
 use super::super::terminal_effects::{
@@ -21,7 +20,6 @@ use super::super::terminal_effects::{
 };
 use super::super::types::UserPromptInput;
 use super::SessionRuntimeInner;
-use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
@@ -210,11 +208,11 @@ impl SessionRuntimeInner {
                 ConnectorError::Runtime(format!("重建会话 Hook snapshot 失败: {error}"))
             })?;
 
-        let rebuilt_runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
-            session_id.to_string(),
-            provider.clone(),
-            snapshot,
-        ));
+        let Some(rebuilt_runtime) =
+            build_frame_hook_runtime(self, session_id, provider.clone(), snapshot).await?
+        else {
+            return Ok(None);
+        };
 
         Ok(self
             .runtime_registry

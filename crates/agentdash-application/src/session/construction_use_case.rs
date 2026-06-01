@@ -1,7 +1,6 @@
 //! Runtime context inspection projection use case.
 //!
-//! 这个模块承接原本挂在 `routes/acp_sessions.rs` 里的 owner/context/capability
-//! 查询逻辑。它只返回 runtime/context inspection projection；
+//! 这个模块承接 owner/context/capability 查询逻辑。它只返回 runtime/context inspection projection；
 //! route 层不承载 runtime launch composition 主分支。
 
 use std::path::PathBuf;

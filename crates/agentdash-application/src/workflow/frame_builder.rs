@@ -11,9 +11,7 @@
 //!   builder 产出带 surface 的 initial frame，取代当前 `new_initial` 裸构造。
 
 use agentdash_domain::DomainError;
-use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, AgentProcedureRef, RUNTIME_SESSION_REF_KIND,
-};
+use agentdash_domain::workflow::{AgentFrame, AgentFrameRepository, AgentProcedureRef};
 use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};
 use uuid::Uuid;
 
@@ -152,29 +150,72 @@ impl AgentFrameBuilder {
     ///
     /// 从 repository 读取当前最新 revision number，递增后创建新 frame。
     pub async fn build(&self, repo: &dyn AgentFrameRepository) -> Result<AgentFrame, DomainError> {
-        let next_revision = match repo.get_current(self.agent_id).await? {
+        let current = repo.get_current(self.agent_id).await?;
+        let next_revision = match current.as_ref() {
             Some(current) => current.revision + 1,
             None => 1,
         };
 
-        let session_refs_json = AgentFrame::runtime_session_refs_json(&self.runtime_session_refs);
+        let mut runtime_session_refs = current
+            .as_ref()
+            .map(AgentFrame::runtime_session_ids)
+            .unwrap_or_default();
+        for session_id in &self.runtime_session_refs {
+            if !runtime_session_refs
+                .iter()
+                .any(|existing| existing == session_id)
+            {
+                runtime_session_refs.push(session_id.clone());
+            }
+        }
+        let session_refs_json = AgentFrame::runtime_session_refs_json(&runtime_session_refs);
 
-        let procedure_id = self.procedure_ref.as_ref().and_then(|r| match r {
-            AgentProcedureRef::ById(id) => Some(*id),
-            AgentProcedureRef::ByKey { .. } => None,
-        });
+        let procedure_id = self
+            .procedure_ref
+            .as_ref()
+            .and_then(|r| match r {
+                AgentProcedureRef::ById(id) => Some(*id),
+                AgentProcedureRef::ByKey { .. } => None,
+            })
+            .or_else(|| current.as_ref().and_then(|frame| frame.procedure_id));
 
         let mut frame =
             AgentFrame::new_revision(self.agent_id, next_revision, &self.created_by_kind);
         frame.procedure_id = procedure_id;
-        frame.graph_instance_id = self.graph_instance_id;
-        frame.activity_key = self.activity_key.clone();
-        frame.effective_capability_json = self.capability_surface.clone();
-        frame.context_slice_json = self.context_slice.clone();
-        frame.vfs_surface_json = self.vfs_surface.clone();
-        frame.mcp_surface_json = self.mcp_surface.clone();
+        frame.graph_instance_id = self
+            .graph_instance_id
+            .or_else(|| current.as_ref().and_then(|frame| frame.graph_instance_id));
+        frame.activity_key = self.activity_key.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.activity_key.clone())
+        });
+        frame.effective_capability_json = self.capability_surface.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.effective_capability_json.clone())
+        });
+        frame.context_slice_json = self.context_slice.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.context_slice_json.clone())
+        });
+        frame.vfs_surface_json = self.vfs_surface.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.vfs_surface_json.clone())
+        });
+        frame.mcp_surface_json = self.mcp_surface.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.mcp_surface_json.clone())
+        });
         frame.runtime_session_refs_json = session_refs_json;
-        frame.execution_profile_json = self.execution_profile.clone();
+        frame.execution_profile_json = self.execution_profile.clone().or_else(|| {
+            current
+                .as_ref()
+                .and_then(|frame| frame.execution_profile_json.clone())
+        });
         frame.created_by_id = self.created_by_id.clone();
 
         repo.create(&frame).await?;
@@ -185,6 +226,7 @@ impl AgentFrameBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agentdash_domain::workflow::RUNTIME_SESSION_REF_KIND;
     use std::sync::Mutex;
 
     #[derive(Default)]
@@ -306,6 +348,36 @@ mod tests {
         assert_eq!(
             arr[0]["session_id"].as_str().unwrap(),
             session_id.to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn build_revision_carries_forward_runtime_refs_and_activity_scope() {
+        let repo = InMemoryFrameRepo::default();
+        let agent_id = Uuid::new_v4();
+        let graph_instance_id = Uuid::new_v4();
+
+        let frame1 = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("session-1")
+            .with_graph_instance(graph_instance_id, "implement")
+            .with_execution_profile_raw(serde_json::json!({"executor": "local"}))
+            .build(&repo)
+            .await
+            .expect("frame1");
+
+        let frame2 = AgentFrameBuilder::new(agent_id)
+            .with_capability(serde_json::json!({"tools": []}))
+            .build(&repo)
+            .await
+            .expect("frame2");
+
+        assert_eq!(frame2.revision, frame1.revision + 1);
+        assert_eq!(frame2.runtime_session_ids(), vec!["session-1".to_string()]);
+        assert_eq!(frame2.graph_instance_id, Some(graph_instance_id));
+        assert_eq!(frame2.activity_key.as_deref(), Some("implement"));
+        assert_eq!(
+            frame2.execution_profile_json,
+            Some(serde_json::json!({"executor": "local"}))
         );
     }
 

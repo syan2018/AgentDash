@@ -24,7 +24,7 @@ pub use contract::{EffectiveSessionContract, WorkflowContract, WorkflowSessionTe
 pub use hook_rule::{WorkflowHookRuleSpec, WorkflowHookTrigger};
 pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
 pub use lifecycle_def::LifecycleNodeType;
-pub use metadata::{ValidationIssue, ValidationSeverity, WorkflowDefinitionSource};
+pub use metadata::{DefinitionSource, ValidationIssue, ValidationSeverity};
 pub use mount_directive::MountDirective;
 pub use ports::{
     ContextStrategy, GateStrategy, InputPortDefinition, OutputPortDefinition, StandaloneFulfillment,

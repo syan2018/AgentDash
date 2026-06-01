@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
-    ActivityExecutionClaimRepository, AgentProcedureRepository, LifecycleRunRepository,
-    WorkflowGraphRepository,
+    AgentAssignmentRepository, AgentFrameRepository, AgentProcedureRepository,
+    LifecycleAgentRepository, LifecycleRunRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::{HookError, hooks::PendingExecutionLogEntry};
 use uuid::Uuid;
@@ -18,7 +18,9 @@ fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
 pub struct WorkflowSnapshotBuilder {
     agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
     workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-    activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
+    agent_frame_repo: Arc<dyn AgentFrameRepository>,
+    lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+    agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
     lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
 }
 
@@ -26,13 +28,17 @@ impl WorkflowSnapshotBuilder {
     pub fn new(
         agent_procedure_repo: Arc<dyn AgentProcedureRepository>,
         workflow_graph_repo: Arc<dyn WorkflowGraphRepository>,
-        activity_execution_claim_repo: Arc<dyn ActivityExecutionClaimRepository>,
+        agent_frame_repo: Arc<dyn AgentFrameRepository>,
+        lifecycle_agent_repo: Arc<dyn LifecycleAgentRepository>,
+        agent_assignment_repo: Arc<dyn AgentAssignmentRepository>,
         lifecycle_run_repo: Arc<dyn LifecycleRunRepository>,
     ) -> Self {
         Self {
             agent_procedure_repo,
             workflow_graph_repo,
-            activity_execution_claim_repo,
+            agent_frame_repo,
+            lifecycle_agent_repo,
+            agent_assignment_repo,
             lifecycle_run_repo,
         }
     }
@@ -56,7 +62,9 @@ impl WorkflowSnapshotBuilder {
             session_id,
             self.agent_procedure_repo.as_ref(),
             self.workflow_graph_repo.as_ref(),
-            self.activity_execution_claim_repo.as_ref(),
+            self.agent_frame_repo.as_ref(),
+            self.lifecycle_agent_repo.as_ref(),
+            self.agent_assignment_repo.as_ref(),
             self.lifecycle_run_repo.as_ref(),
         )
         .await

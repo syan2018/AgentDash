@@ -1,9 +1,9 @@
 /**
  * Project service 层。
  *
- * 收口 project / project-agent / grant / project-session 相关的 api.client 调用，
- * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / ProjectAgentLaunch /
- * ProjectSessionInfo）集中于此。projectStore 只消费此层导出的函数，不直连 api。
+ * 收口 project / project-agent / grant 相关的 api.client 调用，
+ * 并将后端 JSON ↔ 前端类型的 mapper（ProjectAgentSummary / ProjectAgentLaunch）
+ * 集中于此。projectStore 只消费此层导出的函数，不直连 api。
  */
 
 import { api } from "../api/client";
@@ -16,9 +16,7 @@ import type {
   ProjectAgentSummary,
   ProjectConfig,
   ProjectRole,
-  ProjectSessionInfo,
   ProjectSubjectGrant,
-  SessionContextSnapshot,
 } from "../types";
 import { isThinkingLevel } from "../types";
 
@@ -95,23 +93,6 @@ function mapProjectAgentLaunchResult(raw: Record<string, unknown>): ProjectAgent
         }
       : undefined,
     agent: mapProjectAgentSummary(rawAgent),
-  };
-}
-
-function mapProjectSessionInfo(raw: Record<string, unknown>): ProjectSessionInfo {
-  const contextSnapshot =
-    raw.context_snapshot && typeof raw.context_snapshot === "object"
-      ? (raw.context_snapshot as SessionContextSnapshot)
-      : null;
-
-  return {
-    run_ref: requireStringField(raw, "run_ref"),
-    session_id: String(raw.session_id ?? ""),
-    session_title: raw.session_title != null ? String(raw.session_title) : null,
-    last_activity: raw.last_activity == null ? null : Number(raw.last_activity),
-    vfs: (raw.vfs as ProjectSessionInfo["vfs"]) ?? null,
-    runtime_surface: (raw.runtime_surface as ProjectSessionInfo["runtime_surface"]) ?? null,
-    context_snapshot: contextSnapshot,
   };
 }
 
@@ -229,14 +210,6 @@ export async function launchProjectAgent(
     {},
   );
   return mapProjectAgentLaunchResult(response);
-}
-
-export async function fetchProjectSessionInfo(
-  projectId: string,
-  sessionId: string,
-): Promise<ProjectSessionInfo> {
-  const raw = await api.get<Record<string, unknown>>(`/projects/${projectId}/sessions/${sessionId}`);
-  return mapProjectSessionInfo(raw);
 }
 
 // ─── Grant API ───────────────────────────────────────────

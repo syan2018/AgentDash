@@ -64,9 +64,8 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
-        ActivityLifecycleRunState, ActivityRunStatus, BashExecExecutorSpec,
-        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, WorkflowDefinitionSource,
-        WorkflowGraph,
+        ActivityLifecycleRunState, ActivityRunStatus, BashExecExecutorSpec, DefinitionSource,
+        FunctionActivityExecutorSpec, LifecycleRun, OutputPortDefinition, WorkflowGraph,
     };
     use uuid::Uuid;
 
@@ -99,7 +98,7 @@ mod tests {
             "workflow_admin",
             "Workflow Admin",
             "Workflow admin lifecycle",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             "plan",
             vec![activity.clone()],
             vec![],

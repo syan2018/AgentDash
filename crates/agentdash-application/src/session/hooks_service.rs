@@ -70,11 +70,19 @@ impl SessionHookService {
             working_directory,
         );
 
-        let runtime = Arc::new(AgentFrameHookRuntime::new_standalone(
-            session_id.to_string(),
-            provider.clone(),
-            snapshot,
-        ));
+        let runtime =
+            build_frame_hook_runtime(&self.hub, session_id, provider.clone(), snapshot).await?;
+        let Some(runtime) = runtime else {
+            self.hub
+                .runtime_registry
+                .with_runtime_mut(session_id, |session_runtime| {
+                    if let Some(session_runtime) = session_runtime {
+                        session_runtime.hook_runtime = None;
+                    }
+                })
+                .await;
+            return Ok(None);
+        };
 
         self.hub
             .runtime_registry
@@ -149,4 +157,45 @@ fn enrich_hook_snapshot_runtime_metadata(
     metadata.executor = Some(executor.to_string());
     metadata.permission_policy = permission_policy.map(ToString::to_string);
     metadata.working_directory = Some(working_directory.to_string_lossy().replace('\\', "/"));
+}
+
+pub(crate) async fn build_frame_hook_runtime(
+    hub: &SessionRuntimeInner,
+    session_id: &str,
+    provider: Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>,
+    snapshot: SessionHookSnapshot,
+) -> Result<Option<SharedHookRuntime>, ConnectorError> {
+    let Some(frame_repo) = hub.agent_frame_repo.as_ref() else {
+        return Err(ConnectorError::Runtime(
+            "AgentFrameRepository 未注入，拒绝创建 hook runtime".to_string(),
+        ));
+    };
+    let Some(frame) = frame_repo
+        .find_by_runtime_session(session_id)
+        .await
+        .map_err(|error| {
+            ConnectorError::Runtime(format!(
+                "查询 runtime session 对应 AgentFrame 失败: {error}"
+            ))
+        })?
+    else {
+        return Ok(None);
+    };
+    let run_id = snapshot
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.active_workflow.as_ref())
+        .and_then(|workflow| workflow.run_id)
+        .ok_or_else(|| {
+            ConnectorError::Runtime(format!(
+                "session `{session_id}` 的 hook snapshot 缺少 active workflow run_id"
+            ))
+        })?;
+    Ok(Some(Arc::new(AgentFrameHookRuntime::from_frame(
+        run_id,
+        &frame,
+        session_id.to_string(),
+        provider,
+        snapshot,
+    ))))
 }

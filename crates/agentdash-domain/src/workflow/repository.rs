@@ -80,12 +80,6 @@ pub trait ActivityExecutionClaimRepository: Send + Sync {
         &self,
         cutoff: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<ActivityExecutionClaim>, DomainError>;
-    /// 通过 executor_run_ref 中的 session_id 查找当前 running 的 claim。
-    /// 用于 terminal callback 路径：不再依赖 LifecycleRun.session_id。
-    async fn find_running_by_executor_session(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<ActivityExecutionClaim>, DomainError>;
 }
 
 #[async_trait::async_trait]

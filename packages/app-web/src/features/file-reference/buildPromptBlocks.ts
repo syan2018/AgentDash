@@ -2,7 +2,7 @@ import type { ReadFileResult } from "../../services/filePicker";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
 
 /**
- * 从纯文本 prompt + 已读取的文件列表构建 ACP ContentBlock[]。
+ * 从纯文本 prompt + 已读取的文件列表构建 ContentBlock[]。
  * 当前文件引用场景会生成 text/resource/resource_link 三类 block。
  */
 export function buildPromptBlocks(

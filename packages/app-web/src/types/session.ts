@@ -129,7 +129,7 @@ export interface HookSessionRuntimeInfo {
   pending_actions: HookPendingAction[];
 }
 
-export interface ProjectSessionAgentContext {
+export interface RuntimeTraceAgentContext {
   agent_key: string;
   display_name: string;
   executor_hint?: string | null;
@@ -137,7 +137,7 @@ export interface ProjectSessionAgentContext {
 
 export interface SessionNavigationState {
   task_context?: SessionTaskContext;
-  project_agent?: ProjectSessionAgentContext;
+  trace_agent?: RuntimeTraceAgentContext;
   return_to?: SessionReturnTarget;
   open_workspace_panel?: boolean;
 }

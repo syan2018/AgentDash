@@ -113,7 +113,7 @@ impl LifecycleOrchestrator {
 
     /// 当某个 session 进入 terminal 状态时调用。
     ///
-    /// 通过 SessionBinding label 判断该 session 是否归属某个 lifecycle node，
+    /// 通过 RuntimeSession trace 反查 AgentFrame / Assignment，
     /// 若是，则评估后继 node 并启动新 session。
     pub async fn on_session_terminal(
         &self,

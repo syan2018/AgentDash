@@ -18,9 +18,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityTransition, ActivityTransitionKind,
-    AgentProcedure, ArtifactBinding, InputPortDefinition, OutputPortDefinition, ValidationSeverity,
-    WorkflowContract, WorkflowDefinitionSource, WorkflowGraph, WorkflowHookRuleSpec,
-    WorkflowHookTrigger,
+    AgentProcedure, ArtifactBinding, DefinitionSource, InputPortDefinition, OutputPortDefinition,
+    ValidationSeverity, WorkflowContract, WorkflowGraph, WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -542,7 +541,7 @@ impl WorkflowMcpServer {
             params.key,
             params.name,
             params.description,
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             contract,
         )
         .map_err(|e| McpError::invalid_param("key", e))?;
@@ -571,7 +570,7 @@ impl WorkflowMcpServer {
             params.key,
             params.name,
             params.description,
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             params.entry_activity_key,
             activities,
             transitions,

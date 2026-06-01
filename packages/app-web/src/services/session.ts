@@ -15,7 +15,6 @@ import type {
   ContextSourceRef,
   ExecutionVfs,
   HookSessionRuntimeInfo,
-  ProjectSessionEntry,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
   SessionContextSnapshot,
@@ -117,15 +116,9 @@ export interface SessionContextPayload {
   session_capabilities: SessionBaselineCapabilities | null;
 }
 
-/** GET /sessions/{id}/context — 与旧版 task/story/project 分端点行为对齐（由后端按绑定解析） */
+/** 已断开的旧 session context 查询；保留调用点用于暴露残留 UI 路径。 */
 export async function fetchSessionContext(sessionId: string): Promise<SessionContextPayload | null> {
-  let raw: Record<string, unknown>;
-  try {
-    raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(sessionId)}/context`);
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
+  const raw = await api.get<Record<string, unknown>>(`/sessions/${encodeURIComponent(sessionId)}/context`);
   return {
     workspace_id: raw.workspace_id != null ? String(raw.workspace_id) : null,
     agent_binding: mapSessionContextAgentBinding(raw.agent_binding),
@@ -175,12 +168,7 @@ export async function rollbackSessionProjection(
 }
 
 export async function fetchSessionHookRuntime(id: string): Promise<HookSessionRuntimeInfo | null> {
-  try {
-    return await api.get<HookSessionRuntimeInfo>(`/sessions/${encodeURIComponent(id)}/hook-runtime`);
-  } catch (err) {
-    if ((err as ApiHttpError).status === 404) return null;
-    throw err;
-  }
+  return api.get<HookSessionRuntimeInfo>(`/sessions/${encodeURIComponent(id)}/hook-runtime`);
 }
 
 function normalizeSessionExecutionStatus(value: unknown): SessionExecutionStatus {
@@ -247,57 +235,4 @@ export async function loadSessionTabLayout(
 ): Promise<SessionTabLayout | null> {
   const meta = await fetchSessionMeta(sessionId);
   return isSessionTabLayout(meta.tabLayout) ? meta.tabLayout : null;
-}
-
-// ─── 项目会话列表 ─────────────────────────────────────
-// 获取指定项目的所有活跃会话（包含 agent / story / task 层级）
-
-function normalizeProjectSessionEntryStatus(
-  value: unknown,
-): ProjectSessionEntry["execution_status"] {
-  switch (value) {
-    case "idle":
-    case "running":
-    case "completed":
-    case "failed":
-    case "interrupted":
-      return value;
-    default:
-      throw new Error(`未知的项目会话执行状态: ${String(value ?? "")}`);
-  }
-}
-
-
-function normalizeParentRelationKind(value: unknown): ProjectSessionEntry["parent_relation_kind"] {
-  if (value == null) return null;
-  switch (value) {
-    case "fork": return "fork";
-    case "companion": return "companion";
-    case "spawned_agent": return "spawned_agent";
-    case "rollback_branch": return "rollback_branch";
-    default:
-      throw new Error(`未知的项目会话 parent_relation_kind: ${String(value ?? "")}`);
-  }
-}
-
-function mapProjectSessionEntry(raw: Record<string, unknown>): ProjectSessionEntry {
-  return {
-    session_id: requireStringField(raw, "session_id"),
-    session_title: raw.session_title != null ? String(raw.session_title) : null,
-    last_activity: raw.last_activity != null ? Number(raw.last_activity) : null,
-    execution_status: normalizeProjectSessionEntryStatus(raw.execution_status),
-    owner_id: requireStringField(raw, "owner_id"),
-    owner_title: raw.owner_title != null ? String(raw.owner_title) : null,
-    story_id: raw.story_id != null ? String(raw.story_id) : null,
-    story_title: raw.story_title != null ? String(raw.story_title) : null,
-    agent_key: raw.agent_key != null ? String(raw.agent_key) : null,
-    agent_display_name: raw.agent_display_name != null ? String(raw.agent_display_name) : null,
-    parent_session_id: raw.parent_session_id != null ? String(raw.parent_session_id) : null,
-    parent_relation_kind: normalizeParentRelationKind(raw.parent_relation_kind),
-  };
-}
-
-export async function fetchProjectSessions(projectId: string): Promise<ProjectSessionEntry[]> {
-  const raw = await api.get<Record<string, unknown>[]>(`/projects/${encodeURIComponent(projectId)}/sessions`);
-  return raw.map(mapProjectSessionEntry);
 }

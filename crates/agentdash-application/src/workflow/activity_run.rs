@@ -170,7 +170,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutorSpec, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ExecutorRunRef, WorkflowDefinitionSource,
+        AgentSessionPolicy, DefinitionSource, ExecutorRunRef,
     };
 
     use super::*;
@@ -307,13 +307,6 @@ mod tests {
         ) -> Result<Vec<ActivityExecutionClaim>, DomainError> {
             Ok(Vec::new())
         }
-
-        async fn find_running_by_executor_session(
-            &self,
-            _session_id: &str,
-        ) -> Result<Option<ActivityExecutionClaim>, DomainError> {
-            Ok(None)
-        }
     }
 
     fn definition(project_id: Uuid) -> WorkflowGraph {
@@ -322,7 +315,7 @@ mod tests {
             "activity_flow",
             "Activity Flow",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             "main",
             vec![ActivityDefinition {
                 key: "main".to_string(),

@@ -12,7 +12,7 @@ use agentdash_spi::Vfs;
 
 use crate::auth::{CurrentUser, ProjectPermission};
 use crate::dto::{SpawnTerminalBody, TerminalInputBody, TerminalResizeBody};
-use crate::routes::acp_sessions::ensure_session_permission;
+use crate::routes::sessions::ensure_session_permission;
 use crate::session_construction::build_session_context_plan;
 use crate::{app_state::AppState, rpc::ApiError};
 

@@ -7,7 +7,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use agentdash_domain::permission::{GrantStatus, PermissionGrant};
+use agentdash_application::permission::PermissionGrantService;
+use agentdash_domain::permission::PermissionGrant;
 
 use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 
@@ -152,34 +153,14 @@ pub async fn approve_grant(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
 
-    let mut grant = state
-        .repos
-        .permission_grant_repo
-        .find_by_id(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("grant not found: {grant_id}")))?;
+    let result = PermissionGrantService::new(
+        state.repos.permission_grant_repo.clone(),
+        state.repos.agent_frame_repo.clone(),
+    )
+    .approve(id, &current_user.user_id)
+    .await?;
 
-    if grant.status != GrantStatus::PendingUserApproval {
-        return Err(ApiError::BadRequest(format!(
-            "grant is not pending user approval (status={})",
-            grant.status.as_str()
-        )));
-    }
-
-    grant
-        .user_approve(&current_user.user_id)
-        .map_err(|e| ApiError::Internal(format!("state transition failed: {e}")))?;
-
-    grant
-        .mark_applied()
-        .map_err(|e| ApiError::Internal(format!("mark_applied failed: {e}")))?;
-
-    state.repos.permission_grant_repo.update(&grant).await?;
-
-    // TODO(permission-system): trigger capability runtime apply here
-    // The caller (frontend) should also call a session capability refresh endpoint
-
-    Ok(Json(grant_to_dto(&grant)))
+    Ok(Json(grant_to_dto(&result.grant)))
 }
 
 /// POST /permission-grants/:id/reject
@@ -192,25 +173,12 @@ pub async fn reject_grant(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
 
-    let mut grant = state
-        .repos
-        .permission_grant_repo
-        .find_by_id(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("grant not found: {grant_id}")))?;
-
-    if grant.status != GrantStatus::PendingUserApproval {
-        return Err(ApiError::BadRequest(format!(
-            "grant is not pending user approval (status={})",
-            grant.status.as_str()
-        )));
-    }
-
-    grant
-        .user_reject()
-        .map_err(|e| ApiError::Internal(format!("state transition failed: {e}")))?;
-
-    state.repos.permission_grant_repo.update(&grant).await?;
+    let grant = PermissionGrantService::new(
+        state.repos.permission_grant_repo.clone(),
+        state.repos.agent_frame_repo.clone(),
+    )
+    .reject(id)
+    .await?;
 
     Ok(Json(grant_to_dto(&grant)))
 }
@@ -225,27 +193,12 @@ pub async fn revoke_grant(
         .parse()
         .map_err(|_| ApiError::BadRequest(format!("invalid grant_id: {grant_id}")))?;
 
-    let mut grant = state
-        .repos
-        .permission_grant_repo
-        .find_by_id(id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("grant not found: {grant_id}")))?;
+    let result = PermissionGrantService::new(
+        state.repos.permission_grant_repo.clone(),
+        state.repos.agent_frame_repo.clone(),
+    )
+    .revoke(id)
+    .await?;
 
-    if !grant.status.is_active() {
-        return Err(ApiError::BadRequest(format!(
-            "grant is not active (status={})",
-            grant.status.as_str()
-        )));
-    }
-
-    grant
-        .revoke()
-        .map_err(|e| ApiError::Internal(format!("revoke failed: {e}")))?;
-
-    state.repos.permission_grant_repo.update(&grant).await?;
-
-    // TODO(permission-system): trigger capability runtime revocation here
-
-    Ok(Json(grant_to_dto(&grant)))
+    Ok(Json(grant_to_dto(&result.grant)))
 }

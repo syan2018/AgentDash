@@ -1,7 +1,7 @@
 import type {
   ActivityAttemptStatus,
   LifecycleExecutionEventKind,
-  WorkflowDefinitionSource,
+  DefinitionSource,
   WorkflowRunStatus,
   WorkflowTargetKind,
 } from "../../types";
@@ -37,7 +37,7 @@ export const ATTEMPT_STATUS_LABEL: Record<ActivityAttemptStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export const DEFINITION_SOURCE_LABEL: Record<WorkflowDefinitionSource, string> = {
+export const DEFINITION_SOURCE_LABEL: Record<DefinitionSource, string> = {
   builtin_seed: "Built-in",
   user_authored: "User Authored",
   cloned: "Cloned",

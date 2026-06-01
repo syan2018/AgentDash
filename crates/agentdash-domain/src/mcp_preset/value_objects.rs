@@ -72,7 +72,7 @@ impl McpRoutePolicy {
     }
 }
 
-/// MCP Preset 来源——对齐 `WorkflowDefinitionSource::BuiltinSeed` / `UserAuthored` 语义。
+/// MCP Preset 来源——对齐 `DefinitionSource::BuiltinSeed` / `UserAuthored` 语义。
 ///
 /// - `Builtin { key }`：由平台内置 JSON 装载而来，key 对应 `builtins/*.json` 文件名根。
 ///   前端以此标识渲染只读态，并允许「复制为 user」生成可编辑副本。

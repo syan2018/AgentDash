@@ -39,14 +39,14 @@ pub use value_objects::{
     ActivityIterationPolicy, ActivityJoinPolicy, ActivityLifecycleRunState, ActivityOutputArtifact,
     ActivityPortValue, ActivityRunStatus, ActivityTransition, ActivityTransitionKind,
     AgentActivityExecutorSpec, AgentSessionPolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy,
-    ArtifactBinding, BashExecExecutorSpec, CapabilityConfig, ContextStrategy,
+    ArtifactBinding, BashExecExecutorSpec, CapabilityConfig, ContextStrategy, DefinitionSource,
     EffectiveSessionContract, ExecutorRunRef, FunctionActivityExecutorSpec, GateStrategy,
     HumanActivityExecutorSpec, HumanApprovalExecutorSpec, InputPortDefinition,
     LifecycleExecutionEntry, LifecycleExecutionEventKind, LifecycleNodeType, LifecycleRunStatus,
     MountDirective, OutputPortDefinition, StandaloneFulfillment, ToolCapabilityDirective,
     ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState, TransitionCondition,
     ValidationIssue, ValidationSeverity, WorkflowContextBinding, WorkflowContract,
-    WorkflowDefinitionSource, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
-    WorkflowSessionTerminalState, reduce_tool_capability_directives,
+    WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec, WorkflowSessionTerminalState,
+    reduce_tool_capability_directives,
 };
 pub use workflow_graph_instance::WorkflowGraphInstance;

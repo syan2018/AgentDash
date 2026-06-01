@@ -1,4 +1,3 @@
-pub mod acp_sessions;
 pub mod auth_routes;
 pub mod backend_access;
 pub mod backends;
@@ -17,10 +16,10 @@ pub mod me;
 pub mod permission_grants;
 pub mod project_agents;
 pub mod project_extensions;
-pub mod project_sessions;
 pub mod project_vfs_mounts;
 pub mod projects;
 pub mod routines;
+pub mod sessions;
 pub mod settings;
 pub mod shared_library;
 pub mod skill_assets;
@@ -70,7 +69,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(llm_providers::router())
         .merge(project_agents::router())
         .merge(routines::router())
-        .merge(project_sessions::router())
         .merge(canvases::router())
         .merge(mcp_presets::router())
         .merge(skill_assets::router())
@@ -87,7 +85,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .merge(extension_runtime::router())
         .merge(project_extensions::router())
         .merge(extension_package_artifacts::router())
-        .merge(acp_sessions::router())
+        .merge(sessions::router())
         .route("/events/stream/ndjson", get(stream::event_stream_ndjson))
         .merge(vfs::router())
         .merge(vfs_surfaces::router())

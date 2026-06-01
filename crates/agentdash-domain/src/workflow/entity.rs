@@ -7,8 +7,8 @@ use crate::shared_library::InstalledAssetSource;
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
-    ActivityTransition, EffectiveSessionContract, ExecutorRunRef, LifecycleExecutionEntry,
-    LifecycleRunStatus, ValidationIssue, WorkflowContract, WorkflowDefinitionSource,
+    ActivityTransition, DefinitionSource, EffectiveSessionContract, ExecutorRunRef,
+    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, WorkflowContract,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub struct AgentProcedure {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub source: WorkflowDefinitionSource,
+    pub source: DefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
@@ -33,7 +33,7 @@ impl AgentProcedure {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        source: WorkflowDefinitionSource,
+        source: DefinitionSource,
         contract: WorkflowContract,
     ) -> Result<Self, String> {
         let key = key.into();
@@ -75,7 +75,7 @@ pub struct WorkflowGraph {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub source: WorkflowDefinitionSource,
+    pub source: DefinitionSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
@@ -135,7 +135,7 @@ impl WorkflowGraph {
         key: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        source: WorkflowDefinitionSource,
+        source: DefinitionSource,
         entry_activity_key: impl Into<String>,
         activities: Vec<ActivityDefinition>,
         transitions: Vec<ActivityTransition>,
@@ -326,7 +326,7 @@ mod tests {
             "wf_primary",
             "Primary",
             "desc",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             contract(),
         )
         .expect("primary");

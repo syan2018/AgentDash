@@ -163,6 +163,9 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     try {
       const view = await fetchSubjectExecution(subjectKind, subjectId);
       get().setSubjectExecution(view);
+      for (const run of view.runs) {
+        get().ingestRun(run);
+      }
       return view;
     } catch (e) {
       set({ error: (e as Error).message });

@@ -1,226 +1,206 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation, useMatch, useNavigate } from "react-router-dom";
-import { SessionStatusDot } from "../ui/session-status-dot";
-import type { ProjectSessionEntry } from "../../types";
-import {
-  buildSessionShortcutRows,
-  type SessionShortcutRow,
-} from "./session-shortcut-rows";
-import { formatRelativeTime } from "../../lib/format";
+import { StatusDot, type StatusDotTone } from "@agentdash/ui";
+import { useLifecycleStore } from "../../stores/lifecycleStore";
+import type { LifecycleAgentView, LifecycleRunView } from "../../types";
 
-function sessionParentRelationLabel(
-  relationKind: ProjectSessionEntry["parent_relation_kind"] | undefined,
-): string {
-  switch (relationKind ?? "companion") {
-    case "fork": return "fork";
-    case "rollback_branch": return "rollback";
-    case "spawned_agent": return "subagent";
-    case "companion": return "companion";
-  }
-  return "companion";
+const RUN_STATUS_TONE: Record<string, StatusDotTone> = {
+  draft: "muted",
+  ready: "info",
+  running: "success",
+  blocked: "warning",
+  completed: "info",
+  failed: "danger",
+  cancelled: "warning",
+};
+
+const AGENT_STATUS_TONE: Record<string, StatusDotTone> = {
+  active: "success",
+  running: "success",
+  ready: "info",
+  completed: "info",
+  failed: "danger",
+  cancelled: "warning",
+};
+
+function statusTone(status: string, kind: "run" | "agent"): StatusDotTone {
+  const tones = kind === "run" ? RUN_STATUS_TONE : AGENT_STATUS_TONE;
+  return tones[status] ?? "muted";
 }
 
-// ─── Session 快捷列表（容器高度自适应 + 末尾 ...） ──────────
-
-function isUuidLike(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function runSubjectLabel(run: LifecycleRunView): string | null {
+  const subject = run.subject_associations[0]?.subject_ref;
+  if (!subject) return null;
+  return `${subject.kind} · ${subject.id.slice(0, 8)}`;
 }
 
-function getShortcutAgentLabel(session: ProjectSessionEntry): string | null {
-  const displayName = session.agent_display_name?.trim();
-  if (displayName) return displayName;
-
-  const agentKey = session.agent_key?.trim();
-  if (agentKey && !isUuidLike(agentKey)) return agentKey;
-  return null;
+function formatUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
-function getShortcutOwnerLabel(session: ProjectSessionEntry): string | null {
-  if (session.story_id && session.owner_title?.trim()) {
-    const storyTitle = session.story_title?.trim();
-    const ownerTitle = session.owner_title.trim();
-    return storyTitle ? `${storyTitle} / ${ownerTitle}` : ownerTitle;
-  }
-  return session.owner_title?.trim() ?? null;
+interface LifecycleShortcutListProps {
+  projectId: string | null;
 }
 
-function getShortcutIndentClass(depth: number): string {
-  if (depth <= 0) return "pl-2.5";
-  if (depth === 1) return "pl-5";
-  return "pl-8";
-}
-
-function estimateShortcutRowHeight(row: SessionShortcutRow): number {
-  const titleLength = row.session.session_title?.trim().length ?? 0;
-  const hasMeta = Boolean(
-    row.parentRelationKind ||
-      getShortcutAgentLabel(row.session) ||
-      getShortcutOwnerLabel(row.session),
-  );
-  if (titleLength > 34 || hasMeta) return 58;
-  return 42;
-}
-
-export function SessionShortcutList({ sessions }: { sessions: ProjectSessionEntry[] }) {
+export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const listRef = useRef<HTMLDivElement>(null);
-  const rowsRef = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const [rowHeights, setRowHeights] = useState<Map<string, number>>(new Map());
-  const [containerH, setContainerH] = useState(0);
-
+  const agentRouteMatch = useMatch("/agent/:agentId");
+  const runRouteMatch = useMatch("/run/:runId");
   const sessionRouteMatch = useMatch("/session/:sessionId");
-  const activeSessionId = sessionRouteMatch?.params.sessionId ?? null;
+  const runs = useLifecycleStore((s) => s.runs);
+  const agents = useLifecycleStore((s) => s.agents);
+  const fetchSubjectExecution = useLifecycleStore((s) => s.fetchSubjectExecution);
+  const error = useLifecycleStore((s) => s.error);
 
-  const rows = useMemo(() => buildSessionShortcutRows(sessions), [sessions]);
-
-  // 监听容器高度变化
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const update = () => setContainerH(el.clientHeight);
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    if (!projectId) return;
+    void fetchSubjectExecution("project", projectId);
+    const timer = window.setInterval(() => {
+      void fetchSubjectExecution("project", projectId);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [fetchSubjectExecution, projectId]);
 
-  // 测量每行实际高度（记录到 id → height 的 Map）；DOM 变动时重算
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      const map = new Map<string, number>();
-      rowsRef.current.forEach((el, id) => {
-        map.set(id, el.offsetHeight);
-      });
-      setRowHeights((prev) => {
-        // 仅当有差异时才 setState，避免无意义重渲染
-        if (prev.size === map.size) {
-          let same = true;
-          for (const [k, v] of map) {
-            if (prev.get(k) !== v) {
-              same = false;
-              break;
-            }
-          }
-          if (same) return prev;
-        }
-        return map;
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [rows]);
+  const projectRuns = useMemo(() => {
+    if (!projectId) return [];
+    return Array.from(runs.values())
+      .filter((run) => run.project_id === projectId)
+      .sort((left, right) => right.last_activity_at.localeCompare(left.last_activity_at));
+  }, [projectId, runs]);
 
-  // 用已知行高 + 容器高度决定可见数量；未知行用保守估算
-  const { displayed, hasMore } = useMemo(() => {
-    if (rows.length === 0 || containerH <= 0) {
-      return { displayed: rows, hasMore: false };
+  const agentsByRunId = useMemo(() => {
+    const map = new Map<string, LifecycleAgentView[]>();
+    for (const agent of agents.values()) {
+      if (projectId && agent.project_id !== projectId) continue;
+      const items = map.get(agent.agent_ref.run_id) ?? [];
+      items.push(agent);
+      map.set(agent.agent_ref.run_id, items);
     }
-    const estH = (row: SessionShortcutRow) =>
-      rowHeights.get(row.session.session_id) ?? estimateShortcutRowHeight(row);
-    let acc = 0;
-    let count = 0;
-    for (const row of rows) {
-      const h = estH(row);
-      if (acc + h > containerH) break;
-      acc += h;
-      count += 1;
+    for (const items of map.values()) {
+      items.sort((left, right) => right.updated_at.localeCompare(left.updated_at));
     }
-    if (count >= rows.length) {
-      return { displayed: rows, hasMore: false };
-    }
-    return { displayed: rows.slice(0, Math.max(1, count)), hasMore: true };
-  }, [rows, containerH, rowHeights]);
+    return map;
+  }, [agents, projectId]);
+
+  const activeAgentId = agentRouteMatch?.params.agentId ?? null;
+  const activeRunId = runRouteMatch?.params.runId ?? null;
+  const activeTraceId = sessionRouteMatch?.params.sessionId ?? null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col border-b border-border">
-      {/* 标题行：左右各 px-4，与 ProjectDropdown 对齐 */}
       <div className="flex shrink-0 items-center justify-between px-4 pb-1.5 pt-3">
-        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">最近会话</span>
-        {rows.length > 0 && (
+        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          Lifecycle
+        </span>
+        {projectRuns.length > 0 && (
           <span className="text-[10px] text-muted-foreground/70">
-            {hasMore ? `${displayed.length} / ${rows.length}` : rows.length}
+            {projectRuns.length} run
           </span>
         )}
       </div>
-      {rows.length === 0 ? (
-        <p className="px-4 pb-3 text-xs text-muted-foreground">暂无活跃会话</p>
+
+      {!projectId ? (
+        <p className="px-4 pb-3 text-xs text-muted-foreground">未选择项目</p>
+      ) : projectRuns.length === 0 ? (
+        <div className="px-4 pb-3">
+          <p className="text-xs text-muted-foreground">暂无 lifecycle 执行</p>
+          {error && <p className="mt-1 line-clamp-2 text-[11px] text-destructive">{error}</p>}
+        </div>
       ) : (
-        <>
-          <div ref={listRef} className="min-h-0 flex-1 overflow-hidden px-3">
-            {displayed.map((row) => {
-              const { session } = row;
-              const isActive = session.session_id === activeSessionId;
-              const title = session.session_title?.trim() || "无标题会话";
-              const agent = getShortcutAgentLabel(session);
-              const owner = getShortcutOwnerLabel(session);
-              const time = formatRelativeTime(session.last_activity, { longStyle: "compact" });
-              const indentClass = getShortcutIndentClass(row.depth);
-              const metaParts = [
-                row.parentRelationKind
-                  ? sessionParentRelationLabel(row.parentRelationKind)
-                  : null,
-                agent,
-                owner,
-              ].filter((part): part is string => Boolean(part));
-              const meta = metaParts.join(" · ");
-              return (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
+          {projectRuns.map((run) => {
+            const runId = run.run_ref.run_id;
+            const runAgents = agentsByRunId.get(runId) ?? run.agents;
+            const traceActive = activeTraceId
+              ? run.runtime_trace_refs.some((ref) => ref.runtime_session_id === activeTraceId)
+              : false;
+            const runActive = activeRunId === runId || traceActive;
+            const subject = runSubjectLabel(run);
+
+            return (
+              <div key={runId} className="mb-1">
                 <button
-                  key={session.session_id}
-                  ref={(el) => {
-                    if (el) rowsRef.current.set(session.session_id, el);
-                    else rowsRef.current.delete(session.session_id);
-                  }}
                   type="button"
                   onClick={() => {
-                    if (location.pathname === `/session/${session.session_id}`) return;
-                    navigate(`/session/${session.session_id}`);
+                    if (location.pathname !== `/run/${runId}`) navigate(`/run/${runId}`);
                   }}
-                  className={`flex w-full flex-col gap-1 rounded-[8px] py-2 pr-2.5 text-left transition-colors ${indentClass} ${
-                    isActive ? "bg-primary/10" : "hover:bg-secondary/50"
+                  className={`flex w-full flex-col gap-1 rounded-[8px] px-2.5 py-2 text-left transition-colors ${
+                    runActive ? "bg-primary/10" : "hover:bg-secondary/50"
                   }`}
-                  title={meta ? `${title} · ${meta}` : title}
+                  title={subject ? `Run ${runId} · ${subject}` : `Run ${runId}`}
                 >
-                  <div className="flex items-start gap-2">
-                    {row.parentRelationKind && (
-                      <span className="mt-[3px] shrink-0 text-[11px] leading-none text-primary/70">
-                        ↳
-                      </span>
-                    )}
-                    <SessionStatusDot status={session.execution_status} />
-                    <span className="min-w-0 flex-1 whitespace-normal break-words text-[13px] leading-[1.35] text-foreground line-clamp-2">
-                      {title}
+                  <div className="flex items-center gap-2">
+                    <StatusDot
+                      tone={statusTone(run.status, "run")}
+                      size="sm"
+                      pulse={run.status === "running"}
+                      className="shrink-0"
+                      title={run.status}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+                      Run · {runId.slice(0, 8)}
                     </span>
-                    <span className="mt-[1px] shrink-0 text-[10px] tabular-nums text-muted-foreground">{time}</span>
+                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {formatUpdatedAt(run.last_activity_at)}
+                    </span>
                   </div>
-                  {meta && (
-                    <p className="ml-3.5 whitespace-normal break-words text-[11px] leading-[1.35] text-muted-foreground line-clamp-2">
-                      {meta}
+                  {subject && (
+                    <p className="ml-3.5 truncate text-[11px] leading-[1.35] text-muted-foreground">
+                      {subject}
                     </p>
                   )}
                 </button>
-              );
-            })}
-          </div>
-          {/* 固定按钮槽：无论 hasMore 与否都占相同高度，列表容器尺寸稳定 */}
-          <div className="flex h-7 shrink-0 items-center justify-center px-3 pb-1">
-            {hasMore && (
-              <button
-                type="button"
-                onClick={() => navigate("/dashboard/agent")}
-                title={`查看全部会话（还有 ${rows.length - displayed.length} 个）`}
-                className="flex w-full items-center justify-center rounded-[8px] py-1 text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="5" cy="12" r="1.5" />
-                  <circle cx="12" cy="12" r="1.5" />
-                  <circle cx="19" cy="12" r="1.5" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </>
+
+                {runAgents.map((agent) => {
+                  const agentId = agent.agent_ref.agent_id;
+                  const isActive = activeAgentId === agentId;
+                  return (
+                    <button
+                      key={agentId}
+                      type="button"
+                      onClick={() => {
+                        if (location.pathname === `/agent/${agentId}`) return;
+                        navigate(`/agent/${agentId}`, {
+                          state: {
+                            run_id: runId,
+                            frame_id: agent.current_frame_id ?? null,
+                          },
+                        });
+                      }}
+                      className={`ml-3 mt-0.5 flex w-[calc(100%-0.75rem)] items-center gap-2 rounded-[8px] px-2.5 py-1.5 text-left transition-colors ${
+                        isActive ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-secondary/50"
+                      }`}
+                      title={agentId}
+                    >
+                      <StatusDot
+                        tone={statusTone(agent.status, "agent")}
+                        size="sm"
+                        pulse={agent.status === "active" || agent.status === "running"}
+                        className="shrink-0"
+                        title={agent.status}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {agent.agent_role || agent.agent_kind}
+                      </span>
+                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+                        {agentId.slice(0, 6)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
 }
-

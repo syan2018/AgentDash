@@ -257,8 +257,8 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        AgentProcedureRepository, AgentSessionPolicy, ToolCapabilityDirective, WorkflowContract,
-        WorkflowDefinitionSource, WorkflowGraph, WorkflowGraphRepository,
+        AgentProcedureRepository, AgentSessionPolicy, DefinitionSource, ToolCapabilityDirective,
+        WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
     };
 
     use super::*;
@@ -521,7 +521,7 @@ mod tests {
             "builtin_workflow_admin",
             "Workflow Admin",
             "",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             "plan",
             vec![plan],
             vec![],
@@ -542,7 +542,7 @@ mod tests {
             ENTRY_procedure_key,
             "Workflow Admin / Plan",
             "",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             contract,
         )
         .expect("workflow definition")
@@ -973,7 +973,7 @@ mod tests {
             "sample",
             "Sample",
             "",
-            WorkflowDefinitionSource::UserAuthored,
+            DefinitionSource::UserAuthored,
             contract,
         )
         .expect("workflow");

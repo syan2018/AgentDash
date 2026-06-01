@@ -397,7 +397,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        CapabilityConfig, MountDirective, WorkflowContract, WorkflowDefinitionSource,
+        CapabilityConfig, DefinitionSource, MountDirective, WorkflowContract,
     };
 
     fn sample_step(
@@ -431,7 +431,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             contract,
         )
         .expect("workflow")
@@ -629,7 +629,7 @@ mod tests {
             "wf_impl",
             "Workflow Implement",
             "desc",
-            WorkflowDefinitionSource::BuiltinSeed,
+            DefinitionSource::BuiltinSeed,
             contract,
         )
         .expect("workflow");

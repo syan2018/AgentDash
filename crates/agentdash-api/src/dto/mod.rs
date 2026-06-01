@@ -1,4 +1,3 @@
-mod acp_session;
 /// API Response DTO 层
 ///
 /// 隔离 Domain 实体与 HTTP 响应契约。Route handler 通过 DTO 输出，
@@ -17,8 +16,8 @@ mod identity_directory;
 mod llm_provider;
 mod project;
 mod project_agent;
-mod project_session;
 mod routine;
+mod session;
 mod shared_library;
 mod skill_asset;
 mod story;
@@ -28,7 +27,6 @@ mod vfs;
 mod workflow;
 mod workspace;
 
-pub use acp_session::*;
 pub use agentdash_contracts::core::{
     ProjectAccessSummaryResponse, ProjectDetailResponse, ProjectResponse,
     ProjectSubjectGrantResponse, StoryResponse, TaskResponse, WorkspaceBindingResponse,
@@ -48,8 +46,8 @@ pub use identity_directory::*;
 pub use llm_provider::*;
 pub use project::*;
 pub use project_agent::*;
-pub use project_session::*;
 pub use routine::*;
+pub use session::*;
 pub use shared_library::*;
 pub use skill_asset::*;
 pub use story::*;

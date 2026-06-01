@@ -14,7 +14,7 @@ use crate::{
         ProjectPermission, load_project_with_permission, load_story_and_project_with_permission,
         load_task_story_project_with_permission,
     },
-    routes::acp_sessions::ensure_session_permission,
+    routes::sessions::ensure_session_permission,
     rpc::ApiError,
     session_construction::build_session_context_plan,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,

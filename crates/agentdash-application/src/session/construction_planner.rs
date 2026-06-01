@@ -192,7 +192,9 @@ impl RuntimeContextInspectionPlanner {
             &session_id,
             repos.agent_procedure_repo.as_ref(),
             repos.workflow_graph_repo.as_ref(),
-            repos.activity_execution_claim_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
         .await?;
@@ -334,7 +336,9 @@ impl RuntimeContextInspectionPlanner {
             &session_id,
             repos.agent_procedure_repo.as_ref(),
             repos.workflow_graph_repo.as_ref(),
-            repos.activity_execution_claim_repo.as_ref(),
+            repos.agent_frame_repo.as_ref(),
+            repos.lifecycle_agent_repo.as_ref(),
+            repos.agent_assignment_repo.as_ref(),
             repos.lifecycle_run_repo.as_ref(),
         )
         .await?;

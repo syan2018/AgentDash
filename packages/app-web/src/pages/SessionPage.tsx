@@ -17,7 +17,7 @@ import { useSessionHistoryStore } from "../stores/sessionHistoryStore";
 import { findStoryById, useStoryStore } from "../stores/storyStore";
 import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStore";
 import type {
-  ProjectSessionAgentContext,
+  RuntimeTraceAgentContext,
   SessionNavigationState,
   SessionRunContext,
   Story,
@@ -76,7 +76,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     [location.state],
   );
   const taskContextFromRoute = routeState?.task_context ?? null;
-  const projectAgentContext = (routeState?.project_agent ?? null) as ProjectSessionAgentContext | null;
+  const traceAgentContext = (routeState?.trace_agent ?? null) as RuntimeTraceAgentContext | null;
   const returnTarget = routeState?.return_to ?? null;
   const currentSessionId = propSessionId ?? null;
 
@@ -214,7 +214,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   // ─── 页面级回调 ───────────────────────────────────────
 
   const executorHint = taskAgentBinding?.agent_type
-    ?? projectAgentContext?.executor_hint
+    ?? traceAgentContext?.executor_hint
     ?? taskExecutorSummary?.executor
     ?? null;
   const chatWorkspaceId =

@@ -690,7 +690,7 @@ mod tests {
     use agentdash_spi::hooks::{
         ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
         AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookEvaluationQuery, HookResolution,
-        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        SessionHookRefreshQuery, SessionHookSnapshotQuery, AgentFrameHookSnapshot,
         SessionSnapshotMetadata,
     };
     use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
@@ -989,8 +989,8 @@ mod tests {
     }
 
     impl EmptyHookProvider {
-        fn snapshot(&self, session_id: String) -> SessionHookSnapshot {
-            SessionHookSnapshot {
+        fn snapshot(&self, session_id: String) -> AgentFrameHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id,
                 metadata: Some(SessionSnapshotMetadata {
                     active_workflow: Some(ActiveWorkflowMeta {
@@ -999,7 +999,7 @@ mod tests {
                     }),
                     ..SessionSnapshotMetadata::default()
                 }),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             }
         }
     }
@@ -1028,14 +1028,14 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
             Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
             Ok(self.snapshot(query.provenance.runtime_session_id.unwrap_or_default()))
         }
 
@@ -1049,14 +1049,14 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
             Ok(self.snapshot(query.session_id))
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
             Ok(self.snapshot(query.session_id))
         }
 

@@ -20,8 +20,8 @@ use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection, ExecutionHookProvider,
     HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger,
-    HookTrigger, RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SessionSnapshotMetadata,
+    HookTrigger, RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshotQuery,
+    AgentFrameHookSnapshot, SessionSnapshotMetadata,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, CompactionProjectionCommitResult, ConnectorError,
@@ -246,8 +246,8 @@ async fn register_hook_target(
     target
 }
 
-fn test_hook_snapshot(session_id: String) -> SessionHookSnapshot {
-    SessionHookSnapshot {
+fn test_hook_snapshot(session_id: String) -> AgentFrameHookSnapshot {
+    AgentFrameHookSnapshot {
         session_id,
         metadata: Some(SessionSnapshotMetadata {
             active_workflow: Some(ActiveWorkflowMeta {
@@ -256,7 +256,7 @@ fn test_hook_snapshot(session_id: String) -> SessionHookSnapshot {
             }),
             ..SessionSnapshotMetadata::default()
         }),
-        ..SessionHookSnapshot::default()
+        ..AgentFrameHookSnapshot::default()
     }
 }
 
@@ -1608,7 +1608,7 @@ impl ExecutionHookProvider for RecordingHookProvider {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(
             query.provenance.runtime_session_id.unwrap_or_default(),
         ))
@@ -1617,7 +1617,7 @@ impl ExecutionHookProvider for RecordingHookProvider {
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(
             query.provenance.runtime_session_id.unwrap_or_default(),
         ))
@@ -1644,13 +1644,13 @@ impl ExecutionHookProvider for RecordingHookProvider {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(query.session_id))
     }
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(query.session_id))
     }
     async fn evaluate_hook(
@@ -1686,7 +1686,7 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(
             query.provenance.runtime_session_id.unwrap_or_default(),
         ))
@@ -1695,7 +1695,7 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(
             query.provenance.runtime_session_id.unwrap_or_default(),
         ))
@@ -1722,14 +1722,14 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(query.session_id))
     }
 
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(query.session_id))
     }
 
@@ -1766,7 +1766,7 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         let session_id = query
             .provenance
             .runtime_session_id
@@ -1779,7 +1779,7 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         let session_id = query
             .provenance
             .runtime_session_id
@@ -1805,7 +1805,7 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         self.session_snapshot_queries
             .lock()
             .await
@@ -1816,7 +1816,7 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, agentdash_spi::hooks::HookError> {
+    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
         Ok(test_hook_snapshot(query.session_id))
     }
 

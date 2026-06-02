@@ -19,9 +19,7 @@ use super::runtime_commands::{
 use super::terminal_effects::{
     NewTerminalEffectRecord, TerminalEffectRecord, TerminalEffectStatus,
 };
-use super::types::{
-    ExecutionStatus, PendingCapabilityStateTransition, SessionBootstrapState, SessionMeta,
-};
+use super::types::{ExecutionStatus, PendingCapabilityStateTransition, SessionMeta};
 
 #[derive(Clone, Default)]
 pub struct MemorySessionPersistence {
@@ -976,9 +974,6 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_session_id = incoming.executor_session_id.clone();
     current.tab_layout = incoming.tab_layout.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
-    if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
-        current.bootstrap_state = incoming.bootstrap_state;
-    }
 }
 
 pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
@@ -1077,7 +1072,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 
@@ -1121,7 +1115,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)
@@ -1192,7 +1185,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)
@@ -1263,7 +1255,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         persistence
             .create_session(&meta)

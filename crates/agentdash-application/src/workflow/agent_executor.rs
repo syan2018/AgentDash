@@ -125,7 +125,6 @@ pub trait AgentActivitySessionPort: Send + Sync {
         runtime_session_id: &str,
         executor_config: AgentConfig,
     ) -> Result<(), String>;
-    async fn mark_owner_bootstrap_pending(&self, runtime_session_id: &str) -> Result<(), String>;
     async fn launch_workflow_prompt(
         &self,
         runtime_session_id: &str,
@@ -319,13 +318,6 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .await
             .map_err(|error| format!("继承 executor config 失败: {error}"))?;
         Ok(())
-    }
-
-    async fn mark_owner_bootstrap_pending(&self, runtime_session_id: &str) -> Result<(), String> {
-        self.session_core
-            .mark_owner_bootstrap_pending(runtime_session_id)
-            .await
-            .map_err(|error| format!("标记 owner bootstrap pending 失败: {error}"))
     }
 
     async fn launch_workflow_prompt(
@@ -804,10 +796,6 @@ where
         }
 
         self.port
-            .mark_owner_bootstrap_pending(&runtime_session_id)
-            .await
-            .map_err(ActivityExecutorStartError::retryable)?;
-        self.port
             .launch_workflow_prompt(&runtime_session_id, executor_config)
             .await
             .map_err(ActivityExecutorStartError::retryable)?;
@@ -1153,13 +1141,6 @@ mod tests {
             &self,
             _runtime_session_id: &str,
             _executor_config: AgentConfig,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn mark_owner_bootstrap_pending(
-            &self,
-            _runtime_session_id: &str,
         ) -> Result<(), String> {
             Ok(())
         }

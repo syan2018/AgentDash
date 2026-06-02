@@ -14,14 +14,14 @@ use agentdash_domain::backend::{
     BackendExecutionTerminalKind,
 };
 use agentdash_domain::workflow::{
-    AgentFrame, AgentFrameRepository, LifecycleGate, LifecycleGateRepository,
+    AgentFrame, AgentFrameRepository, LifecycleAgent, LifecycleAgentRepository, LifecycleGate,
+    LifecycleGateRepository,
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection, ExecutionHookProvider,
     HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger,
-    HookTrigger, RuntimeEventSource, SessionHookRefreshQuery, SessionHookSnapshotQuery,
-    AgentFrameHookSnapshot, SessionSnapshotMetadata,
+    HookTrigger, RuntimeEventSource, AgentFrameHookSnapshot, SessionSnapshotMetadata,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, CompactionProjectionCommitResult, ConnectorError,
@@ -44,7 +44,7 @@ use super::super::hub_support::{
 use super::super::local_workspace_vfs;
 use super::super::types::{
     EFFECT_TYPE_APPLY_VFS_OVERLAY, PendingCapabilityStateTransition, RuntimeCapabilityTransition,
-    SessionBootstrapState, SessionExecutionState, UserPromptInput,
+    SessionExecutionState, UserPromptInput,
 };
 use super::super::{AgentFrameTransitionRecord, RuntimeCommandStatus, RuntimeDeliveryCommand};
 use super::{
@@ -210,6 +210,48 @@ impl LifecycleGateRepository for MemoryLifecycleGateRepository {
                 id: gate.id.to_string(),
             })?;
         *existing = gate.clone();
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct MemoryLifecycleAgentRepository {
+    agents: TokioMutex<Vec<LifecycleAgent>>,
+}
+
+#[async_trait::async_trait]
+impl LifecycleAgentRepository for MemoryLifecycleAgentRepository {
+    async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+        self.agents.lock().await.push(agent.clone());
+        Ok(())
+    }
+
+    async fn get(&self, id: uuid::Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
+        Ok(self
+            .agents
+            .lock()
+            .await
+            .iter()
+            .find(|a| a.id == id)
+            .cloned())
+    }
+
+    async fn list_by_run(&self, run_id: uuid::Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
+        Ok(self
+            .agents
+            .lock()
+            .await
+            .iter()
+            .filter(|a| a.run_id == run_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
+        let mut agents = self.agents.lock().await;
+        if let Some(existing) = agents.iter_mut().find(|a| a.id == agent.id) {
+            *existing = agent.clone();
+        }
         Ok(())
     }
 }
@@ -1583,7 +1625,6 @@ struct RecordingHookProvider {
     frame_repo: Option<Arc<MemoryAgentFrameRepository>>,
 }
 
-#[allow(deprecated)]
 #[async_trait::async_trait]
 impl ExecutionHookProvider for RecordingHookProvider {
     async fn resolve_runtime_hook_target(
@@ -1641,25 +1682,6 @@ impl ExecutionHookProvider for RecordingHookProvider {
         Ok(HookResolution::default())
     }
 
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(test_hook_snapshot(query.session_id))
-    }
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(test_hook_snapshot(query.session_id))
-    }
-    async fn evaluate_hook(
-        &self,
-        query: HookEvaluationQuery,
-    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-        self.queries.lock().await.push(query);
-        Ok(HookResolution::default())
-    }
 }
 
 struct StaticResolutionHookProvider {
@@ -1668,7 +1690,6 @@ struct StaticResolutionHookProvider {
     resolution: HookResolution,
 }
 
-#[allow(deprecated)]
 #[async_trait::async_trait]
 impl ExecutionHookProvider for StaticResolutionHookProvider {
     async fn resolve_runtime_hook_target(
@@ -1719,36 +1740,13 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
         Ok(self.resolution.clone())
     }
 
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(test_hook_snapshot(query.session_id))
-    }
-
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(test_hook_snapshot(query.session_id))
-    }
-
-    async fn evaluate_hook(
-        &self,
-        query: HookEvaluationQuery,
-    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-        self.queries.lock().await.push(query);
-        Ok(self.resolution.clone())
-    }
 }
 
 struct SnapshotRecordingHookProvider {
     target_by_session: Arc<TokioMutex<HashMap<String, HookControlTarget>>>,
     frame_snapshot_queries: Arc<TokioMutex<Vec<AgentFrameHookSnapshotQuery>>>,
-    session_snapshot_queries: Arc<TokioMutex<Vec<SessionHookSnapshotQuery>>>,
 }
 
-#[allow(deprecated)]
 #[async_trait::async_trait]
 impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     async fn resolve_runtime_hook_target(
@@ -1801,31 +1799,6 @@ impl ExecutionHookProvider for SnapshotRecordingHookProvider {
     ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
         Ok(HookResolution::default())
     }
-
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        self.session_snapshot_queries
-            .lock()
-            .await
-            .push(query.clone());
-        Ok(test_hook_snapshot(query.session_id))
-    }
-
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-        Ok(test_hook_snapshot(query.session_id))
-    }
-
-    async fn evaluate_hook(
-        &self,
-        _query: HookEvaluationQuery,
-    ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-        Ok(HookResolution::default())
-    }
 }
 
 #[tokio::test]
@@ -1833,11 +1806,9 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
     let base = tempfile::tempdir().expect("tempdir");
     let target_by_session = Arc::new(TokioMutex::new(HashMap::new()));
     let frame_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
-    let session_snapshot_queries = Arc::new(TokioMutex::new(Vec::new()));
     let hook_provider = Arc::new(SnapshotRecordingHookProvider {
         target_by_session: target_by_session.clone(),
         frame_snapshot_queries: frame_snapshot_queries.clone(),
-        session_snapshot_queries: session_snapshot_queries.clone(),
     });
     let hub = test_hub(
         base.path().to_path_buf(),
@@ -1869,7 +1840,6 @@ async fn lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target() {
         frame_queries[0].provenance.source,
         "hook_runtime_lazy_rebuild"
     );
-    assert!(session_snapshot_queries.lock().await.is_empty());
 }
 
 #[derive(Default)]
@@ -2205,18 +2175,20 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
         frame_repo: Some(frame_repo.clone()),
     });
     let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
+    let agent_repo = Arc::new(MemoryLifecycleAgentRepository::default());
     let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
         connector.clone(),
         Some(hook_provider),
         Arc::new(MemorySessionPersistence::default()),
     )
     .with_agent_frame_repo(frame_repo)
-    .with_lifecycle_gate_repo(gate_repo);
+    .with_lifecycle_gate_repo(gate_repo)
+    .with_lifecycle_agent_repo(agent_repo.clone());
     let session = hub.create_session("test").await.expect("create session");
-    attach_test_frame(&hub, &session.id).await;
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
+    let frame = attach_test_frame(&hub, &session.id).await;
+    let mut agent = LifecycleAgent::new_root(uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), "test");
+    agent.id = frame.agent_id;
+    agent_repo.create(&agent).await.expect("create agent");
 
     hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
         .await
@@ -2231,34 +2203,6 @@ async fn start_prompt_triggers_session_start_before_connector_prompt() {
             .iter()
             .any(|query| matches!(query.trigger, HookTrigger::SessionStart))
     );
-}
-
-#[tokio::test]
-async fn owner_bootstrap_marks_session_meta_bootstrapped() {
-    let base = tempfile::tempdir().expect("tempdir");
-    let connector = Arc::new(SessionStartAwareConnector::default());
-    let queries = Arc::new(TokioMutex::new(Vec::new()));
-    let hook_provider = Arc::new(RecordingHookProvider {
-        queries: queries.clone(),
-        frame_repo: None,
-    });
-    let hub = test_hub(base.path().to_path_buf(), connector, Some(hook_provider));
-    let session = hub.create_session("test").await.expect("create session");
-    attach_test_frame(&hub, &session.id).await;
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
-
-    hub.start_prompt(&session.id, owner_bootstrap_request("hello", "ctx"))
-        .await
-        .expect("prompt should start");
-
-    let meta = hub
-        .get_session_meta(&session.id)
-        .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Bootstrapped);
 }
 
 #[tokio::test]
@@ -3076,9 +3020,6 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
     let base = tempfile::tempdir().expect("tempdir");
     let hub = test_hub(base.path().to_path_buf(), Arc::new(FailingConnector), None);
     let session = hub.create_session("test").await.expect("create session");
-    hub.mark_owner_bootstrap_pending(&session.id)
-        .await
-        .expect("should mark pending");
     let frame_transition = AgentFrameTransitionRecord::from_pending(
         uuid::Uuid::new_v4(),
         PendingCapabilityStateTransition {
@@ -3102,13 +3043,6 @@ async fn connector_setup_failure_does_not_commit_bootstrap_or_requested_commands
         .await
         .expect_err("prompt should fail");
     assert!(error.to_string().contains("connector setup failed"));
-
-    let meta = hub
-        .get_session_meta(&session.id)
-        .await
-        .expect("meta should load")
-        .expect("session should exist");
-    assert_eq!(meta.bootstrap_state, SessionBootstrapState::Pending);
 
     let requested_commands = hub
         .persistence

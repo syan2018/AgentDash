@@ -25,9 +25,9 @@ const StoryPage = lazy(async () => {
   return { default: module.StoryPage };
 });
 
-const SessionPage = lazy(async () => {
+const RuntimeSessionTracePage = lazy(async () => {
   const module = await import("./pages/SessionPage");
-  return { default: module.SessionPage };
+  return { default: module.RuntimeSessionTracePage };
 });
 
 const LifecycleRunPage = lazy(async () => {
@@ -168,7 +168,7 @@ function BootstrapErrorState({
 
 function SessionRouteWrapper() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  return <SessionPage sessionId={sessionId} />;
+  return <RuntimeSessionTracePage sessionId={sessionId} />;
 }
 
 // ─── 认证守卫 ──────────────────────────────────────────

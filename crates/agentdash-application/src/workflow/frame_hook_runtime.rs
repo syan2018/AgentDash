@@ -551,7 +551,7 @@ mod tests {
     use agentdash_spi::hooks::NoopExecutionHookProvider;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
-        HookEvaluationQuery, RuntimeAdapterProvenance, SessionHookRefreshQuery,
+        RuntimeAdapterProvenance,
     };
 
     #[derive(Default)]
@@ -559,7 +559,6 @@ mod tests {
         refresh_queries: Mutex<Vec<AgentFrameHookRefreshQuery>>,
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RecordingFrameProvider {
         async fn load_frame_snapshot(
@@ -596,33 +595,6 @@ mod tests {
             _query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             Ok(HookResolution::default())
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            _query: agentdash_spi::hooks::SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Err(HookError::Runtime(
-                "session snapshot entry should not be used".to_string(),
-            ))
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            _query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Err(HookError::Runtime(
-                "session refresh entry should not be used".to_string(),
-            ))
-        }
-
-        async fn evaluate_hook(
-            &self,
-            _query: HookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            Err(HookError::Runtime(
-                "session evaluation entry should not be used".to_string(),
-            ))
         }
     }
 

@@ -11,7 +11,7 @@ use super::persistence::{
     SessionLineageRelationKind, SessionLineageStatus, SessionProjectionHeadRecord,
     SessionProjectionSegmentRecord, SessionStoreSet,
 };
-use super::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
+use super::types::{ExecutionStatus, SessionMeta, TitleSource};
 
 #[derive(Debug, Clone)]
 pub struct SessionForkRequest {
@@ -440,7 +440,6 @@ fn child_session_meta(parent: &SessionMeta, title: Option<&str>, now: i64) -> Se
 
         tab_layout: None,
         visible_canvas_mount_ids: Vec::new(),
-        bootstrap_state: SessionBootstrapState::Plain,
     }
 }
 
@@ -801,10 +800,9 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-    
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 

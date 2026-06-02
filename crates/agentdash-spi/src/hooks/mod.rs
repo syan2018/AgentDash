@@ -634,24 +634,6 @@ pub struct HookRuntimeEvaluationQuery {
     pub token_stats: Option<ContextTokenStats>,
 }
 
-#[deprecated(note = "session-indexed query; 使用 AgentFrameHookSnapshotQuery 代替")]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionHookSnapshotQuery {
-    pub session_id: String,
-    #[serde(default)]
-    pub turn_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionHookRefreshQuery {
-    pub session_id: String,
-    #[serde(default)]
-    pub turn_id: Option<String>,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
 
 /// Hook trace 触发点：只用于 Agent 核心生命周期的可见追踪。
 pub use agentdash_agent_protocol::HookTraceTrigger;
@@ -977,31 +959,6 @@ pub trait ExecutionHookProvider: Send + Sync {
         query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, HookError>;
 
-    /// Adapter-only: session-indexed snapshot 加载。
-    ///
-    /// 新代码应使用 [`load_frame_snapshot`] 作为主入口，
-    /// 此方法仅保留给尚未迁移到 frame-first 路径的 adapter 调用点。
-    #[deprecated(note = "adapter-only: 使用 load_frame_snapshot 代替")]
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError>;
-
-    /// Adapter-only: session-indexed snapshot 刷新。
-    ///
-    /// 新代码应使用 [`refresh_frame_snapshot`] 作为主入口。
-    #[deprecated(note = "adapter-only: 使用 refresh_frame_snapshot 代替")]
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError>;
-
-    /// Adapter-only: session-indexed hook 评估。
-    ///
-    /// 新代码应使用 [`evaluate_frame_hook`] 作为主入口。
-    #[deprecated(note = "adapter-only: 使用 evaluate_frame_hook 代替")]
-    async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
-
     /// Execute the actual step advancement. Called by `AgentFrameHookRuntime`
     /// post-evaluate when the resolution carries a `pending_advance` signal.
     async fn advance_workflow_step(
@@ -1027,7 +984,6 @@ pub trait ExecutionHookProvider: Send + Sync {
 #[derive(Debug, Default)]
 pub struct NoopExecutionHookProvider;
 
-#[allow(deprecated)]
 #[async_trait]
 impl ExecutionHookProvider for NoopExecutionHookProvider {
     async fn load_frame_snapshot(
@@ -1054,33 +1010,6 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
     async fn evaluate_frame_hook(
         &self,
         _query: AgentFrameHookEvaluationQuery,
-    ) -> Result<HookResolution, HookError> {
-        Ok(HookResolution::default())
-    }
-
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        Ok(AgentFrameHookSnapshot {
-            session_id: query.session_id,
-            ..AgentFrameHookSnapshot::default()
-        })
-    }
-
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        Ok(AgentFrameHookSnapshot {
-            session_id: query.session_id,
-            ..AgentFrameHookSnapshot::default()
-        })
-    }
-
-    async fn evaluate_hook(
-        &self,
-        _query: HookEvaluationQuery,
     ) -> Result<HookResolution, HookError> {
         Ok(HookResolution::default())
     }

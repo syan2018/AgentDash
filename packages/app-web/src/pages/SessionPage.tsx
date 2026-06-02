@@ -6,7 +6,7 @@ import { useSessionFeed } from "../features/session/model";
 import { fetchRuntimeTrace } from "../services/lifecycle";
 import { fetchSessionMeta, type SessionMeta } from "../services/session";
 
-interface SessionPageProps {
+interface RuntimeSessionTracePageProps {
   sessionId?: string;
 }
 
@@ -53,7 +53,7 @@ function TraceRefButton({
   );
 }
 
-export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
+export function RuntimeSessionTracePage({ sessionId: propSessionId }: RuntimeSessionTracePageProps) {
   const navigate = useNavigate();
   const sessionId = propSessionId ?? null;
   const [meta, setMeta] = useState<SessionMeta | null>(null);
@@ -247,4 +247,5 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   );
 }
 
-export default SessionPage;
+export { RuntimeSessionTracePage as SessionPage };
+export default RuntimeSessionTracePage;

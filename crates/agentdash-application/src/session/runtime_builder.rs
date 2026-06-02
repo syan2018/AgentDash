@@ -136,6 +136,14 @@ impl SessionRuntimeBuilder {
         self
     }
 
+    pub fn with_lifecycle_agent_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
+    ) -> Self {
+        self.inner = self.inner.with_lifecycle_agent_repo(repo);
+        self
+    }
+
     pub async fn set_terminal_callback(
         &self,
         callback: super::post_turn_handler::DynSessionTerminalCallback,

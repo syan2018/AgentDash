@@ -689,9 +689,8 @@ mod tests {
     };
     use agentdash_spi::hooks::{
         ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-        AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookEvaluationQuery, HookResolution,
-        SessionHookRefreshQuery, SessionHookSnapshotQuery, AgentFrameHookSnapshot,
-        SessionSnapshotMetadata,
+        AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
+        AgentFrameHookSnapshot, SessionSnapshotMetadata,
     };
     use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
     use async_trait::async_trait;
@@ -1004,7 +1003,6 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
         async fn resolve_runtime_hook_target(
@@ -1042,27 +1040,6 @@ mod tests {
         async fn evaluate_frame_hook(
             &self,
             _query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
-            Ok(HookResolution::default())
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(self.snapshot(query.session_id))
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, agentdash_spi::hooks::HookError> {
-            Ok(self.snapshot(query.session_id))
-        }
-
-        async fn evaluate_hook(
-            &self,
-            _query: HookEvaluationQuery,
         ) -> Result<HookResolution, agentdash_spi::hooks::HookError> {
             Ok(HookResolution::default())
         }

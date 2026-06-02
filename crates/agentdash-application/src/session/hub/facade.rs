@@ -97,12 +97,6 @@ impl SessionRuntimeInner {
             .await
     }
 
-    #[cfg(test)]
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
-        self.core_service()
-            .mark_owner_bootstrap_pending(session_id)
-            .await
-    }
 
     /// 从持久化事件重建投影 transcript。
     ///

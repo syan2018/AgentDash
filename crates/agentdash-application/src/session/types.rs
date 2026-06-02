@@ -12,7 +12,7 @@ pub use agentdash_spi::session_persistence::{
     EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, PendingCapabilityStateTransition,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionBootstrapState, SessionMeta,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionMeta,
     SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
 };
 
@@ -67,9 +67,7 @@ pub struct AgentFrameRuntimeTarget {
 
 /// 本轮 prompt 是否触发 Hook snapshot 重载 + `SessionStart` hook 触发器。
 ///
-/// 本类型由 E7（`04-30-session-pipeline-architecture-refactor`）从
-/// `SessionBootstrapAction` 重命名而来，语义收敛为"hook 层感知的本轮重载指令"；
-/// `SessionMeta.bootstrap_state` 仍然独立负责 session 生命周期持久化标记。
+/// 语义为 "hook 层感知的本轮重载指令"；bootstrap 状态由 `LifecycleAgent.bootstrap_status` 管理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HookSnapshotReloadTrigger {
@@ -103,19 +101,23 @@ pub enum SessionPromptLifecycle {
     RepositoryRehydrate(SessionRepositoryRehydrateMode),
 }
 
-/// 根据 session 元数据判定当前 prompt 应走哪种生命周期路径。
+/// 根据 session 元数据 + LifecycleAgent bootstrap 状态判定 prompt 应走哪种生命周期路径。
 ///
 /// 判定优先级：
-/// 1. `Pending bootstrap` → **OwnerBootstrap**：session 尚未完成 owner 初始化
+/// 1. Agent bootstrap 未完成 → **OwnerBootstrap**
 /// 2. 冷启动（无 live runtime + 有历史事件 + 无 executor follow-up） → **RepositoryRehydrate**
 /// 3. 其余（首轮 / 同进程续跑 / 有 executor follow-up） → **Plain**
+///
+/// `agent_needs_bootstrap` 来自 `LifecycleAgent.needs_bootstrap()`，取代原
+/// `SessionMeta.bootstrap_state` 的判断。
 pub fn resolve_session_prompt_lifecycle(
     meta: &SessionMeta,
     has_live_executor_session: bool,
     supports_repository_restore: bool,
+    agent_needs_bootstrap: bool,
 ) -> SessionPromptLifecycle {
-    // P1: 未完成 owner bootstrap 的 session 必须走初始化流程
-    if meta.bootstrap_state == SessionBootstrapState::Pending {
+    // P1: Agent 未完成首轮 bootstrap
+    if agent_needs_bootstrap {
         return SessionPromptLifecycle::OwnerBootstrap;
     }
 

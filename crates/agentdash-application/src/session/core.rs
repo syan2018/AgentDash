@@ -5,7 +5,7 @@ use futures::future::join_all;
 use super::hub_support::meta_to_execution_state;
 use super::persistence::{SessionStoreError, SessionStoreResult, SessionStoreSet};
 use super::runtime_registry::SessionRuntimeRegistry;
-use super::types::{ExecutionStatus, SessionBootstrapState, SessionExecutionState, SessionMeta};
+use super::types::{ExecutionStatus, SessionExecutionState, SessionMeta};
 
 #[derive(Clone)]
 pub struct SessionCoreService {
@@ -66,7 +66,6 @@ impl SessionCoreService {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
             project_id: None,
         };
         self.stores.meta.create_session(&meta).await?;
@@ -189,12 +188,4 @@ impl SessionCoreService {
         self.connector.has_live_session(session_id).await
     }
 
-    pub async fn mark_owner_bootstrap_pending(&self, session_id: &str) -> SessionStoreResult<()> {
-        let _ = self
-            .update_session_meta(session_id, |meta| {
-                meta.bootstrap_state = SessionBootstrapState::Pending;
-            })
-            .await?;
-        Ok(())
-    }
 }

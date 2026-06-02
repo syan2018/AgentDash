@@ -272,15 +272,6 @@ pub enum TitleSource {
     User,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionBootstrapState {
-    #[default]
-    Plain,
-    Pending,
-    Bootstrapped,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -309,8 +300,6 @@ pub struct SessionMeta {
     pub tab_layout: Option<serde_json::Value>,
     #[serde(default)]
     pub visible_canvas_mount_ids: Vec<String>,
-    #[serde(default)]
-    pub bootstrap_state: SessionBootstrapState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

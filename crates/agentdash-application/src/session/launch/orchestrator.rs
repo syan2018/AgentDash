@@ -82,6 +82,8 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
+        let agent_needs_bootstrap_early =
+            Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
         let launch_request = match provider
             .build_frame_construction(SessionConstructionProviderInput {
                 session_id: sid.clone(),
@@ -89,6 +91,7 @@ impl SessionLaunchOrchestrator {
                 session_meta: session_meta.clone(),
                 had_existing_runtime,
                 requested_runtime_commands: requested_runtime_commands.clone(),
+                agent_needs_bootstrap: agent_needs_bootstrap_early,
             })
             .await
         {
@@ -261,6 +264,8 @@ impl SessionLaunchOrchestrator {
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
+        let agent_needs_bootstrap =
+            Self::resolve_agent_needs_bootstrap(deps, session_id).await;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,
@@ -270,6 +275,7 @@ impl SessionLaunchOrchestrator {
                 session_meta: &session_meta,
                 requested_runtime_commands,
                 launch_request,
+                agent_needs_bootstrap,
             })
             .await
         {
@@ -356,11 +362,61 @@ impl SessionLaunchOrchestrator {
         let committed = TurnCommitter::new(deps.commit())
             .commit(accepted, &mut session_meta, now)
             .await?;
+
+        if committed.accepted.prepared.is_owner_bootstrap {
+            Self::mark_agent_bootstrapped(deps, session_id).await;
+        }
+
         let attached = StreamIngestionAttacher::new(deps.ingestion())
             .attach(committed)
             .await;
 
         Ok(attached.turn_id)
+    }
+
+    /// 通过 runtime session → AgentFrame → LifecycleAgent 链路解析 bootstrap 状态。
+    /// 若任一环节缺失（repo 未注入或数据不存在），回退为 false（不需要 bootstrap）。
+    async fn resolve_agent_needs_bootstrap(deps: &SessionLaunchDeps, session_id: &str) -> bool {
+        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
+            return false;
+        };
+        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
+            return false;
+        };
+        let frame = match frame_repo.find_by_runtime_session(session_id).await {
+            Ok(Some(f)) => f,
+            _ => return false,
+        };
+        match agent_repo.get(frame.agent_id).await {
+            Ok(Some(agent)) => agent.needs_bootstrap(),
+            _ => false,
+        }
+    }
+
+    /// Bootstrap 完成后标记 LifecycleAgent.bootstrap_status = "bootstrapped"。
+    async fn mark_agent_bootstrapped(deps: &SessionLaunchDeps, session_id: &str) {
+        let Some(frame_repo) = deps.agent_frame_repo.as_ref() else {
+            return;
+        };
+        let Some(agent_repo) = deps.lifecycle_agent_repo.as_ref() else {
+            return;
+        };
+        let frame = match frame_repo.find_by_runtime_session(session_id).await {
+            Ok(Some(f)) => f,
+            _ => return,
+        };
+        let mut agent = match agent_repo.get(frame.agent_id).await {
+            Ok(Some(a)) => a,
+            _ => return,
+        };
+        agent.mark_bootstrapped();
+        if let Err(error) = agent_repo.update(&agent).await {
+            tracing::warn!(
+                session_id,
+                agent_id = %agent.id,
+                "标记 agent bootstrapped 失败: {error}"
+            );
+        }
     }
 }
 

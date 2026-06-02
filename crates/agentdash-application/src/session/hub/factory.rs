@@ -111,6 +111,7 @@ impl SessionRuntimeInner {
             backend_execution_transport: None,
             backend_execution_lease_repo: None,
             agent_frame_repo: None,
+            lifecycle_agent_repo: None,
             lifecycle_gate_repo: None,
         }
     }
@@ -166,6 +167,15 @@ impl SessionRuntimeInner {
         repo: Arc<dyn agentdash_domain::workflow::AgentFrameRepository>,
     ) -> Self {
         self.agent_frame_repo = Some(repo);
+        self
+    }
+
+    /// 注入 LifecycleAgent 仓储（launch path 需要查询 agent bootstrap 状态）
+    pub fn with_lifecycle_agent_repo(
+        mut self,
+        repo: Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>,
+    ) -> Self {
+        self.lifecycle_agent_repo = Some(repo);
         self
     }
 

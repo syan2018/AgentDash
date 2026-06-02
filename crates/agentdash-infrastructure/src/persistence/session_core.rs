@@ -9,11 +9,10 @@ use agentdash_agent_protocol::{
 use agentdash_spi::session_persistence::{
     AgentFrameTransitionRecord, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
-    RuntimeDeliveryCommand, SessionBootstrapState, SessionCompactionRecord,
-    SessionCompactionStatus, SessionLineageRecord, SessionLineageRelationKind,
-    SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord, SessionProjectionSegmentRecord,
-    SessionStoreError, SessionStoreResult, TerminalEffectRecord, TerminalEffectStatus,
-    TerminalEffectType, TitleSource,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
+    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionMeta,
+    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreError,
+    SessionStoreResult, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType, TitleSource,
 };
 use sqlx::Row;
 
@@ -75,10 +74,6 @@ where
         .ok_or_else(|| {
             SessionStoreError::InvalidData("缺少 visible_canvas_mount_ids_json".to_string())
         })?,
-        bootstrap_state: parse_bootstrap_state(
-            row.get::<String, _>("bootstrap_state"),
-            "sessions.bootstrap_state",
-        )?,
     })
 }
 
@@ -531,28 +526,6 @@ pub(crate) fn parse_title_source(value: String, field: &str) -> SessionStoreResu
         "auto" => Ok(TitleSource::Auto),
         "source" => Ok(TitleSource::Source),
         "user" => Ok(TitleSource::User),
-        other => Err(SessionStoreError::InvalidData(format!(
-            "{field} 非法: {other}"
-        ))),
-    }
-}
-
-pub(crate) fn bootstrap_state_to_str(state: SessionBootstrapState) -> &'static str {
-    match state {
-        SessionBootstrapState::Plain => "plain",
-        SessionBootstrapState::Pending => "pending",
-        SessionBootstrapState::Bootstrapped => "bootstrapped",
-    }
-}
-
-pub(crate) fn parse_bootstrap_state(
-    value: String,
-    field: &str,
-) -> SessionStoreResult<SessionBootstrapState> {
-    match value.as_str() {
-        "plain" => Ok(SessionBootstrapState::Plain),
-        "pending" => Ok(SessionBootstrapState::Pending),
-        "bootstrapped" => Ok(SessionBootstrapState::Bootstrapped),
         other => Err(SessionStoreError::InvalidData(format!(
             "{field} 非法: {other}"
         ))),

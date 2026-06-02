@@ -249,120 +249,75 @@ pub async fn list_session_events(
 mod tests {
     use super::*;
     use agentdash_application::session::{
-        ExecutionStatus, SessionBootstrapState, SessionPromptLifecycle,
-        SessionRepositoryRehydrateMode, TitleSource, resolve_session_prompt_lifecycle,
+        ExecutionStatus, SessionPromptLifecycle, SessionRepositoryRehydrateMode, TitleSource,
+        resolve_session_prompt_lifecycle,
     };
 
-    #[test]
-    fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
-        let meta = SessionMeta {
-            id: "sess-1".to_string(),
+    fn test_meta(id: &str, event_seq: u64, executor_session_id: Option<&str>) -> SessionMeta {
+        SessionMeta {
+            id: id.to_string(),
             title: "测试".to_string(),
             title_source: TitleSource::Auto,
             project_id: None,
             created_at: 1,
             updated_at: 1,
-            last_event_seq: 0,
-            last_execution_status: ExecutionStatus::Idle,
-            last_turn_id: None,
+            last_event_seq: event_seq,
+            last_execution_status: if event_seq > 0 {
+                ExecutionStatus::Completed
+            } else {
+                ExecutionStatus::Idle
+            },
+            last_turn_id: if event_seq > 0 {
+                Some("t-last".to_string())
+            } else {
+                None
+            },
             last_terminal_message: None,
             executor_config: None,
-            executor_session_id: None,
-
+            executor_session_id: executor_session_id.map(String::from),
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Pending,
-        };
+        }
+    }
 
+    #[test]
+    fn session_prompt_lifecycle_kind_marks_pending_as_owner_bootstrap() {
+        let meta = test_meta("sess-1", 0, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, false),
+            resolve_session_prompt_lifecycle(&meta, false, false, true),
             SessionPromptLifecycle::OwnerBootstrap
         );
     }
 
     #[test]
     fn session_prompt_lifecycle_kind_requires_repository_rehydrate_after_cold_restart() {
-        let meta = SessionMeta {
-            id: "sess-2".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
-            project_id: None,
-            created_at: 1,
-            updated_at: 1,
-            last_event_seq: 12,
-            last_execution_status: ExecutionStatus::Completed,
-            last_turn_id: Some("t-last".to_string()),
-            last_terminal_message: None,
-            executor_config: None,
-            executor_session_id: None,
-
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Bootstrapped,
-        };
-
+        let meta = test_meta("sess-2", 12, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, false),
+            resolve_session_prompt_lifecycle(&meta, false, false, false),
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::SystemContext,
             )
         );
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, true, false),
+            resolve_session_prompt_lifecycle(&meta, true, false, false),
             SessionPromptLifecycle::Plain
         );
     }
 
     #[test]
     fn session_prompt_lifecycle_prefers_executor_follow_up_when_available() {
-        let meta = SessionMeta {
-            id: "sess-3".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
-            project_id: None,
-            created_at: 1,
-            updated_at: 1,
-            last_event_seq: 5,
-            last_execution_status: ExecutionStatus::Completed,
-            last_turn_id: Some("t-last".to_string()),
-            last_terminal_message: None,
-            executor_config: None,
-            executor_session_id: Some("exec-1".to_string()),
-
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Bootstrapped,
-        };
-
+        let meta = test_meta("sess-3", 5, Some("exec-1"));
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, true),
+            resolve_session_prompt_lifecycle(&meta, false, true, false),
             SessionPromptLifecycle::Plain
         );
     }
 
     #[test]
     fn session_prompt_lifecycle_uses_executor_state_restore_when_supported() {
-        let meta = SessionMeta {
-            id: "sess-4".to_string(),
-            title: "测试".to_string(),
-            title_source: TitleSource::Auto,
-            project_id: None,
-            created_at: 1,
-            updated_at: 1,
-            last_event_seq: 7,
-            last_execution_status: ExecutionStatus::Completed,
-            last_turn_id: Some("t-last".to_string()),
-            last_terminal_message: None,
-            executor_config: None,
-            executor_session_id: None,
-
-            tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Bootstrapped,
-        };
-
+        let meta = test_meta("sess-4", 7, None);
         assert_eq!(
-            resolve_session_prompt_lifecycle(&meta, false, true),
+            resolve_session_prompt_lifecycle(&meta, false, true, false),
             SessionPromptLifecycle::RepositoryRehydrate(
                 SessionRepositoryRehydrateMode::ExecutorState,
             )

@@ -79,8 +79,8 @@ pub use hooks::{
     HookRuntimeRefreshQuery, AgentFrameRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
     HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
     RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionHookRefreshQuery,
-    AgentFrameHookSnapshot, SessionHookSnapshotQuery, SessionRunContext, SessionSnapshotMetadata,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
+    AgentFrameHookSnapshot, SessionRunContext, SessionSnapshotMetadata,
     SharedHookRuntime, action_type,
 };
 
@@ -118,7 +118,7 @@ pub use session_persistence::{
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeCommandRecord,
     RuntimeCommandStatus, RuntimeDeliveryCommand, RuntimeDeliveryCommandKind,
     SESSION_PROJECTION_KIND_AUDIT, SESSION_PROJECTION_KIND_HANDOFF,
-    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SESSION_PROJECTION_KIND_TIMELINE, SessionBootstrapState,
+    SESSION_PROJECTION_KIND_MODEL_CONTEXT, SESSION_PROJECTION_KIND_TIMELINE,
     SessionCompactionRecord, SessionCompactionStatus, SessionCompactionStore, SessionEventBacklog,
     SessionEventPage, SessionEventStore, SessionMeta, SessionMetaStore, SessionPersistence,
     SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionProjectionStore,

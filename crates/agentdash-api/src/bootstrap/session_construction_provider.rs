@@ -219,6 +219,7 @@ impl AppStateSessionConstructionProvider {
             &input.session_meta,
             input.had_existing_runtime,
             supports_repository_restore,
+            input.agent_needs_bootstrap,
         )
     }
 

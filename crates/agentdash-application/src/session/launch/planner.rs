@@ -33,6 +33,8 @@ pub(in crate::session) struct LaunchPlannerInput<'a> {
     pub session_meta: &'a SessionMeta,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub launch_request: RuntimeLaunchRequest,
+    /// 来自 LifecycleAgent.needs_bootstrap() — 取代原 SessionMeta.bootstrap_state 判断。
+    pub agent_needs_bootstrap: bool,
 }
 
 impl<'a> LaunchPlanner<'a> {
@@ -107,6 +109,7 @@ impl<'a> LaunchPlanner<'a> {
             input.session_meta,
             input.had_existing_runtime,
             supports_repository_restore,
+            input.agent_needs_bootstrap,
         );
         let hook_snapshot_reload =
             if matches!(prompt_lifecycle, SessionPromptLifecycle::OwnerBootstrap) {

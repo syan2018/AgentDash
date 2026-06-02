@@ -738,7 +738,7 @@ mod tests {
     use crate::session::{
         MemorySessionPersistence,
         persistence::SessionStoreSet,
-        types::{ExecutionStatus, SessionBootstrapState, SessionMeta},
+        types::{ExecutionStatus, SessionMeta},
     };
 
     fn test_eventing_service(stores: SessionStoreSet) -> SessionEventingService {
@@ -766,7 +766,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 

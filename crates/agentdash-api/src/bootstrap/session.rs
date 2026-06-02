@@ -135,6 +135,7 @@ pub(crate) async fn build_session_runtime(
     .with_mcp_relay_provider(mcp_relay_provider)
     .with_backend_execution_placement(relay_transport, repos.backend_execution_lease_repo.clone())
     .with_agent_frame_repo(repos.agent_frame_repo.clone())
+    .with_lifecycle_agent_repo(repos.lifecycle_agent_repo.clone())
     .with_lifecycle_gate_repo(repos.lifecycle_gate_repo.clone());
     if let Some((base_sp, user_prefs)) = prompt_config {
         session_runtime_builder =

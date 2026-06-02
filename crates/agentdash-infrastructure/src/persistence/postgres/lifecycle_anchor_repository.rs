@@ -186,6 +186,7 @@ struct AgentRow {
     agent_role: String,
     project_agent_id: Option<String>,
     status: String,
+    bootstrap_status: String,
     current_frame_id: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -205,6 +206,7 @@ impl TryFrom<AgentRow> for LifecycleAgent {
                 "lifecycle_agents.project_agent_id",
             )?,
             status: row.status,
+            bootstrap_status: row.bootstrap_status,
             current_frame_id: opt_uuid(
                 row.current_frame_id.as_ref(),
                 "lifecycle_agents.current_frame_id",
@@ -220,8 +222,8 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn create(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
         sqlx::query(
             r#"INSERT INTO lifecycle_agents
-                (id, run_id, project_id, agent_kind, agent_role, project_agent_id, status, current_frame_id, created_at, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+                (id, run_id, project_id, agent_kind, agent_role, project_agent_id, status, bootstrap_status, current_frame_id, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
         )
         .bind(agent.id.to_string())
         .bind(agent.run_id.to_string())
@@ -230,6 +232,7 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
         .bind(&agent.agent_role)
         .bind(agent.project_agent_id.map(|id| id.to_string()))
         .bind(&agent.status)
+        .bind(&agent.bootstrap_status)
         .bind(agent.current_frame_id.map(|id| id.to_string()))
         .bind(agent.created_at)
         .bind(agent.updated_at)
@@ -241,7 +244,7 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
 
     async fn get(&self, id: Uuid) -> Result<Option<LifecycleAgent>, DomainError> {
         sqlx::query_as::<_, AgentRow>(
-            "SELECT id,run_id,project_id,agent_kind,agent_role,project_agent_id,status,current_frame_id,created_at,updated_at FROM lifecycle_agents WHERE id=$1",
+            "SELECT id,run_id,project_id,agent_kind,agent_role,project_agent_id,status,bootstrap_status,current_frame_id,created_at,updated_at FROM lifecycle_agents WHERE id=$1",
         )
         .bind(id.to_string())
         .fetch_optional(&self.pool)
@@ -253,7 +256,7 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
 
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<LifecycleAgent>, DomainError> {
         sqlx::query_as::<_, AgentRow>(
-            "SELECT id,run_id,project_id,agent_kind,agent_role,project_agent_id,status,current_frame_id,created_at,updated_at FROM lifecycle_agents WHERE run_id=$1 ORDER BY created_at",
+            "SELECT id,run_id,project_id,agent_kind,agent_role,project_agent_id,status,bootstrap_status,current_frame_id,created_at,updated_at FROM lifecycle_agents WHERE run_id=$1 ORDER BY created_at",
         )
         .bind(run_id.to_string())
         .fetch_all(&self.pool)
@@ -267,10 +270,11 @@ impl LifecycleAgentRepository for PostgresLifecycleAgentRepository {
     async fn update(&self, agent: &LifecycleAgent) -> Result<(), DomainError> {
         sqlx::query(
             r#"UPDATE lifecycle_agents
-               SET status=$1, current_frame_id=$2, updated_at=$3
-               WHERE id=$4"#,
+               SET status=$1, bootstrap_status=$2, current_frame_id=$3, updated_at=$4
+               WHERE id=$5"#,
         )
         .bind(&agent.status)
+        .bind(&agent.bootstrap_status)
         .bind(agent.current_frame_id.map(|id| id.to_string()))
         .bind(agent.updated_at)
         .bind(agent.id.to_string())

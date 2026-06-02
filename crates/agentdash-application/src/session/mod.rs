@@ -27,7 +27,6 @@ pub mod eventing;
 pub mod hook_delegate;
 pub mod hook_events;
 mod hook_messages;
-pub mod hook_runtime;
 pub mod hooks_service;
 pub(crate) mod hub;
 mod hub_support;
@@ -136,7 +135,7 @@ pub use types::{
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, HookSnapshotReloadTrigger,
     PendingCapabilityStateTransition, ResolvedPromptPayload, RuntimeCapabilityEffectRecord,
-    RuntimeCapabilityTransition, SessionBootstrapState, SessionExecutionState, SessionMeta,
+    RuntimeCapabilityTransition, SessionExecutionState, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, SetCompanionAgentRosterEffect,
     SetMcpServerSetEffect, SetToolAccessEffect, TitleSource, UserPromptInput,
     resolve_session_prompt_lifecycle,

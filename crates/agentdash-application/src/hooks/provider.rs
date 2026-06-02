@@ -14,8 +14,7 @@ use agentdash_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookResolution, HookScriptEvaluator, HookTrigger,
-    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshotQuery,
-    AgentFrameHookSnapshot, SessionSnapshotMetadata,
+    RuntimeAdapterProvenance, AgentFrameHookSnapshot, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 
@@ -250,7 +249,6 @@ impl AppExecutionHookProvider {
     }
 }
 
-#[allow(deprecated)]
 #[async_trait]
 impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn resolve_runtime_hook_target(
@@ -304,49 +302,6 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             }
         };
         let query = HookRuleEvaluationQuery::from_frame_query(query);
-        Ok(self.evaluate_rules(&snapshot, &query))
-    }
-
-    async fn load_session_snapshot(
-        &self,
-        query: SessionHookSnapshotQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        let Some(target) = self.resolve_runtime_hook_target(&query.session_id).await? else {
-            return self
-                .build_snapshot_from_workflow(query.session_id, query.turn_id, None)
-                .await;
-        };
-        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
-            target,
-            provenance: RuntimeAdapterProvenance::runtime_session(
-                query.session_id,
-                query.turn_id,
-                "session_snapshot_adapter",
-            ),
-        })
-        .await
-    }
-
-    async fn refresh_session_snapshot(
-        &self,
-        query: SessionHookRefreshQuery,
-    ) -> Result<AgentFrameHookSnapshot, HookError> {
-        self.load_session_snapshot(SessionHookSnapshotQuery {
-            session_id: query.session_id,
-            turn_id: query.turn_id,
-        })
-        .await
-    }
-
-    async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
-        let snapshot = query
-            .snapshot
-            .clone()
-            .unwrap_or_else(|| AgentFrameHookSnapshot {
-                session_id: query.session_id.clone(),
-                ..AgentFrameHookSnapshot::default()
-            });
-        let query = HookRuleEvaluationQuery::from_session_query(query);
         Ok(self.evaluate_rules(&snapshot, &query))
     }
 
@@ -473,10 +428,7 @@ mod tests {
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
     };
-    use agentdash_spi::{
-        ExecutionHookProvider, HookError, HookTraceTrigger, HookTrigger, SessionHookRefreshQuery,
-        SessionHookSnapshotQuery,
-    };
+    use agentdash_spi::{ExecutionHookProvider, HookError, HookTraceTrigger, HookTrigger};
     use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
@@ -531,7 +483,6 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RuleEngineTestProvider {
         async fn load_frame_snapshot(
@@ -557,41 +508,6 @@ mod tests {
                 .clone()
                 .unwrap_or_else(|| self.snapshot.clone());
             let query = HookRuleEvaluationQuery::from_frame_query(query);
-            let mut resolution = HookResolution::default();
-            apply_hook_rules(
-                HookEvaluationContext {
-                    snapshot: &snapshot,
-                    query: &query,
-                },
-                &mut resolution,
-                &self.engine,
-            );
-            Ok(resolution)
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            _query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(self.snapshot.clone())
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            _query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(self.snapshot.clone())
-        }
-
-        async fn evaluate_hook(
-            &self,
-            query: HookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            let snapshot = query
-                .snapshot
-                .clone()
-                .unwrap_or_else(|| self.snapshot.clone());
-            let query = HookRuleEvaluationQuery::from_session_query(query);
             let mut resolution = HookResolution::default();
             apply_hook_rules(
                 HookEvaluationContext {

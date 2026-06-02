@@ -442,7 +442,7 @@ mod tests {
 
     use crate::session::hub::SessionRuntimeInner;
     use crate::session::post_turn_handler::TerminalHookEffectHandlerRegistry;
-    use crate::session::types::{ExecutionStatus, SessionBootstrapState, SessionMeta, TitleSource};
+    use crate::session::types::{ExecutionStatus, SessionMeta, TitleSource};
     use crate::session::{MemorySessionPersistence, SessionMetaStore};
 
     #[test]
@@ -489,7 +489,6 @@ mod tests {
 
                 tab_layout: None,
                 visible_canvas_mount_ids: Vec::new(),
-                bootstrap_state: SessionBootstrapState::Plain,
             })
             .await
             .expect("session should be created");

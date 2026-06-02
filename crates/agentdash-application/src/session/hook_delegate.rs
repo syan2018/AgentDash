@@ -1021,11 +1021,10 @@ mod tests {
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
         ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
-        HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
-        HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess, HookTraceTrigger,
-        HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
-        SessionHookRefreshQuery, SessionHookSnapshotQuery, AgentFrameHookSnapshot,
-        SessionSnapshotMetadata,
+        HookControlTarget, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection,
+        HookPendingAction, HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess,
+        HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+        RuntimeEventSource, AgentFrameHookSnapshot, SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]
@@ -1066,73 +1065,31 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.refresh_session_snapshot(SessionHookRefreshQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-                reason: query.reason,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn evaluate_frame_hook(
             &self,
             query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn evaluate_hook(
-            &self,
-            query: HookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             Ok(HookResolution {
                 completion: matches!(query.trigger, HookTrigger::BeforeStop).then_some(
@@ -1148,73 +1105,31 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for CompletionBlockedProvider {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.refresh_session_snapshot(SessionHookRefreshQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-                reason: query.reason,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn evaluate_frame_hook(
             &self,
             query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn evaluate_hook(
-            &self,
-            query: HookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             Ok(HookResolution {
                 completion: matches!(query.trigger, HookTrigger::BeforeStop).then_some(
@@ -1230,56 +1145,14 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RecordingCompactionProvider {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-            })
-            .await
-        }
-
-        async fn refresh_frame_snapshot(
-            &self,
-            query: AgentFrameHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.refresh_session_snapshot(SessionHookRefreshQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-                reason: query.reason,
-            })
-            .await
-        }
-
-        async fn evaluate_frame_hook(
-            &self,
-            query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
+                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 metadata: Some(SessionSnapshotMetadata {
                     active_workflow: None,
                     turn_id: None,
@@ -1296,20 +1169,20 @@ mod tests {
             })
         }
 
-        async fn refresh_session_snapshot(
+        async fn refresh_frame_snapshot(
             &self,
-            query: SessionHookRefreshQuery,
+            query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
 
-        async fn evaluate_hook(
+        async fn evaluate_frame_hook(
             &self,
-            query: HookEvaluationQuery,
+            query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             self.triggers
                 .lock()
@@ -1341,28 +1214,25 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for StaticCompanionContextProvider {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.refresh_session_snapshot(SessionHookRefreshQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-                reason: query.reason,
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
@@ -1370,45 +1240,6 @@ mod tests {
         async fn evaluate_frame_hook(
             &self,
             query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
-            })
-            .await
-        }
-
-        async fn evaluate_hook(
-            &self,
-            query: HookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             if !matches!(query.trigger, HookTrigger::UserPromptSubmit) {
                 return Ok(HookResolution::default());
@@ -1419,9 +1250,6 @@ mod tests {
                     code: "active_workflow_resolved".to_string(),
                     message: "命中活跃 workflow".to_string(),
                 }],
-                // PR 4 之后 companion_agents 统一走 Bundle 一条路径，delegate 不再
-                // 维护 HOOK_USER_MESSAGE_SKIP_SLOTS；这里仍用 workflow slot 以保持
-                // 测试断言与 hook markdown 渲染逻辑的对齐。
                 injections: vec![HookInjection {
                     slot: "workflow".to_string(),
                     content: "## Workflow\n- step: implement".to_string(),
@@ -1439,21 +1267,19 @@ mod tests {
             &self,
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
+                ..AgentFrameHookSnapshot::default()
             })
-            .await
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.refresh_session_snapshot(SessionHookRefreshQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                turn_id: query.provenance.turn_id,
-                reason: query.reason,
+            self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: query.target,
+                provenance: query.provenance,
             })
             .await
         }
@@ -1461,45 +1287,6 @@ mod tests {
         async fn evaluate_frame_hook(
             &self,
             query: AgentFrameHookEvaluationQuery,
-        ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
-        }
-
-        async fn load_session_snapshot(
-            &self,
-            query: SessionHookSnapshotQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            Ok(AgentFrameHookSnapshot {
-                session_id: query.session_id,
-                ..AgentFrameHookSnapshot::default()
-            })
-        }
-
-        async fn refresh_session_snapshot(
-            &self,
-            query: SessionHookRefreshQuery,
-        ) -> Result<AgentFrameHookSnapshot, HookError> {
-            self.load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: query.session_id,
-                turn_id: query.turn_id,
-            })
-            .await
-        }
-
-        async fn evaluate_hook(
-            &self,
-            query: HookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
             if !matches!(query.trigger, HookTrigger::AfterTurn) {
                 return Ok(HookResolution::default());
@@ -1653,16 +1440,26 @@ mod tests {
     #[tokio::test]
     async fn evaluate_compaction_uses_before_compact_hook_decision() {
         let provider = RecordingCompactionProvider::default();
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
         hook_runtime.update_token_stats(ContextTokenStats {
             last_input_tokens: 50_000,
@@ -1729,16 +1526,26 @@ mod tests {
     #[tokio::test]
     async fn after_compaction_emits_after_compact_hook_payload() {
         let provider = RecordingCompactionProvider::default();
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
         let delegate = HookRuntimeDelegate::new(hook_runtime);
 
@@ -1794,16 +1601,26 @@ mod tests {
     #[tokio::test]
     async fn repeated_compaction_failures_fuse_future_auto_compaction() {
         let provider = RecordingCompactionProvider::default();
+        let snapshot = provider
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: HookControlTarget {
+                    run_id: uuid::Uuid::nil(),
+                    agent_id: uuid::Uuid::nil(),
+                    frame_id: uuid::Uuid::nil(),
+                    assignment_id: None,
+                },
+                provenance: agentdash_spi::hooks::RuntimeAdapterProvenance::runtime_session(
+                    "sess-hook".to_string(),
+                    None,
+                    "test",
+                ),
+            })
+            .await
+            .expect("snapshot should load");
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(provider.clone()),
-            provider
-                .load_session_snapshot(SessionHookSnapshotQuery {
-                    session_id: "sess-hook".to_string(),
-                    turn_id: None,
-                })
-                .await
-                .expect("snapshot should load"),
+            snapshot,
         ));
         let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
 

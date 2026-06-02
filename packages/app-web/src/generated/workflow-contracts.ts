@@ -41,6 +41,8 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, procedure_id?: string, graph_instance_id?: string, activity_key?: string, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
 
+export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
+
 export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
@@ -130,8 +132,6 @@ export type ValidationIssue = { code: string, message: string, field_path: strin
 export type ValidationSeverity = "error" | "warning";
 
 export type WorkflowContextBinding = { locator: string, reason: string, required: boolean, title?: string, };
-
-export type AgentProcedureContract = { injection: WorkflowInjectionSpec, hook_rules: Array<WorkflowHookRuleSpec>, capability_config?: CapabilityConfig, output_ports?: Array<OutputPortDefinition>, input_ports?: Array<InputPortDefinition>, };
 
 export type WorkflowGraphInstanceView = { id: string, run_id: string, graph_id: string, role: string, status: string, activities: Array<ActivityStateView>, };
 

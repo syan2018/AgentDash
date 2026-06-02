@@ -7,9 +7,7 @@ use crate::session::hub_support::{
     build_user_message_envelopes,
 };
 use crate::session::persistence::SessionRuntimeCommandStore;
-use crate::session::types::{
-    ExecutionStatus, ResolvedPromptPayload, SessionBootstrapState, SessionMeta, TitleSource,
-};
+use crate::session::types::{ExecutionStatus, ResolvedPromptPayload, SessionMeta, TitleSource};
 
 pub(in crate::session) struct CommittedTurn {
     pub accepted: ConnectorAcceptedTurn,
@@ -141,7 +139,7 @@ fn apply_turn_start_meta(
     now: i64,
     turn_id: &str,
     executor_config: &agentdash_domain::common::AgentConfig,
-    is_owner_bootstrap: bool,
+    _is_owner_bootstrap: bool,
     title_hint: &str,
 ) {
     meta.updated_at = now;
@@ -149,9 +147,6 @@ fn apply_turn_start_meta(
     meta.last_turn_id = Some(turn_id.to_string());
     meta.last_terminal_message = None;
     meta.executor_config = Some(executor_config.clone());
-    if is_owner_bootstrap {
-        meta.bootstrap_state = SessionBootstrapState::Bootstrapped;
-    }
     if meta.title.trim().is_empty() {
         meta.title = title_hint.to_string();
     }

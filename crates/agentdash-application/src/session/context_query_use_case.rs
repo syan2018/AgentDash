@@ -118,6 +118,7 @@ pub async fn build_session_context_plan(
         session_meta: input.session_meta,
         had_existing_runtime: input.had_existing_runtime,
         requested_runtime_commands: input.requested_runtime_commands,
+        agent_needs_bootstrap: false,
     };
     plan = finalize_session_construction_projection(deps, plan, Vec::new(), None, &facts).await?;
 

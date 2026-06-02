@@ -23,9 +23,7 @@ use super::LifecycleEngine;
 use super::WorkflowApplicationError;
 use super::frame_builder::AgentFrameBuilder;
 use super::graph_resolver::WorkflowGraphResolver;
-use crate::session::{
-    ExecutionStatus, SessionBootstrapState, SessionMeta, SessionPersistence, TitleSource,
-};
+use crate::session::{ExecutionStatus, SessionMeta, SessionPersistence, TitleSource};
 
 #[derive(Debug, Clone)]
 pub struct RuntimeSessionCreationRequest {
@@ -78,7 +76,6 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Pending,
         };
         self.persistence
             .create_session(&meta)

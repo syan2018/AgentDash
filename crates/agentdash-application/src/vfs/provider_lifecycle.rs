@@ -903,8 +903,8 @@ impl MountProvider for LifecycleMountProvider {
 mod tests {
     use super::*;
     use crate::session::{
-        ExecutionStatus, MemorySessionPersistence, SessionBootstrapState, SessionEventStore,
-        SessionMeta, SessionMetaStore, SessionProjectionStore, TitleSource,
+        ExecutionStatus, MemorySessionPersistence, SessionEventStore, SessionMeta,
+        SessionMetaStore, SessionProjectionStore, TitleSource,
     };
     use agentdash_agent_protocol::codex_app_server_protocol as codex;
     use agentdash_agent_protocol::{
@@ -1275,7 +1275,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 

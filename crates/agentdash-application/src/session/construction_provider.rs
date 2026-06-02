@@ -65,6 +65,7 @@ pub struct SessionConstructionProviderInput {
     pub session_meta: SessionMeta,
     pub had_existing_runtime: bool,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
+    pub agent_needs_bootstrap: bool,
 }
 
 /// Session launch 的 construction provider 契约。

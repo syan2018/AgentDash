@@ -12,12 +12,11 @@ use agentdash_spi::session_persistence::{
 use sqlx::{PgPool, Row};
 
 use crate::persistence::session_core::{
-    backbone_event_type_name, bootstrap_state_to_str, compaction_from_row,
-    encode_optional_u64_as_i64, encode_u64_as_i64, json_string, lineage_from_row, map_meta_row,
-    optional_json_string, parse_non_negative_u64, persisted_event_from_row,
-    projection_from_envelope, projection_head_from_row, projection_segment_from_row,
-    runtime_command_from_row, sqlx_to_session_store_error, terminal_effect_from_row,
-    title_source_to_str, validate_commit_session,
+    backbone_event_type_name, compaction_from_row, encode_optional_u64_as_i64, encode_u64_as_i64,
+    json_string, lineage_from_row, map_meta_row, optional_json_string, parse_non_negative_u64,
+    persisted_event_from_row, projection_from_envelope, projection_head_from_row,
+    projection_segment_from_row, runtime_command_from_row, sqlx_to_session_store_error,
+    terminal_effect_from_row, title_source_to_str, validate_commit_session,
 };
 
 pub struct PostgresSessionRepository {
@@ -171,9 +170,8 @@ impl SessionMetaStore for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             "#,
         )
         .bind(&meta.id)
@@ -190,7 +188,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(&meta.executor_session_id)
         .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
-        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -202,8 +199,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
             FROM sessions
             WHERE id = $1
             "#,
@@ -220,8 +216,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
-                   bootstrap_state
+                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -246,9 +241,8 @@ impl SessionMetaStore for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
-                bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -274,12 +268,7 @@ impl SessionMetaStore for PostgresSessionRepository {
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
                 tab_layout_json = excluded.tab_layout_json,
-                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json,
-                bootstrap_state = CASE
-                    WHEN sessions.bootstrap_state = 'bootstrapped'
-                        THEN sessions.bootstrap_state
-                    ELSE excluded.bootstrap_state
-                END
+                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
             "#,
         )
         .bind(&meta.id)
@@ -296,7 +285,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(&meta.executor_session_id)
         .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
-        .bind(bootstrap_state_to_str(meta.bootstrap_state))
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -1617,7 +1605,7 @@ mod tests {
         BackboneEvent, ItemCompletedNotification, PlatformEvent, SourceInfo, TraceInfo,
     };
     use agentdash_spi::session_persistence::{
-        ExecutionStatus, SessionBootstrapState, SessionCompactionRecord, SessionCompactionStatus,
+        ExecutionStatus, SessionCompactionRecord, SessionCompactionStatus,
         SessionProjectionHeadRecord, SessionProjectionSegmentRecord, TitleSource,
     };
     use chrono::Utc;
@@ -1688,7 +1676,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         }
     }
 
@@ -1840,7 +1827,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1907,7 +1893,6 @@ mod tests {
 
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
-            bootstrap_state: SessionBootstrapState::Plain,
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 

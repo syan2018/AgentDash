@@ -80,6 +80,9 @@ pub struct SessionRuntimeInner {
     /// 当 capability state 变更时通过 AgentFrameBuilder 写入新 revision，
     /// 使 AgentFrame 成为 capability surface 的唯一权威事实源。
     pub(super) agent_frame_repo: Option<Arc<dyn AgentFrameRepository>>,
+    /// LifecycleAgent 仓储 — launch path 需要查询 agent bootstrap 状态。
+    pub(super) lifecycle_agent_repo:
+        Option<Arc<dyn agentdash_domain::workflow::LifecycleAgentRepository>>,
     /// LifecycleGate 仓储，用于 companion_wait durable 等待。
     pub(super) lifecycle_gate_repo:
         Option<Arc<dyn agentdash_domain::workflow::LifecycleGateRepository>>,

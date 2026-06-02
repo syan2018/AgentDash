@@ -25,8 +25,8 @@ const executionStatusLabel: Record<SessionExecutionStatusValue, string> = {
 };
 
 const executionStatusDotColor: Record<SessionExecutionStatusValue, string> = {
-  idle: "bg-emerald-500",
-  running: "bg-sky-500 animate-pulse",
+  idle: "bg-gray-400",
+  running: "bg-emerald-500 animate-pulse",
   completed: "bg-blue-500",
   failed: "bg-red-500",
   interrupted: "bg-amber-500",

@@ -13,7 +13,7 @@ import type { SessionExecutionStatusValue } from "../../services/session";
 
 /** 基于 session 执行状态的视觉映射 */
 const EXECUTION_STATUS_TONE: Record<SessionExecutionStatusValue, StatusDotTone> = {
-  idle: "success",
+  idle: "muted",
   running: "success",
   completed: "info",
   failed: "danger",

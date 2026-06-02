@@ -1362,14 +1362,12 @@ pub(crate) async fn compose_lifecycle_node_with_audit(
 fn activity_node_type(
     activity: &ActivityDefinition,
 ) -> agentdash_domain::workflow::LifecycleNodeType {
-    use agentdash_domain::workflow::{ActivityExecutorSpec, AgentSessionPolicy, LifecycleNodeType};
+    use agentdash_domain::workflow::{ActivityExecutorSpec, LifecycleNodeType};
     match &activity.executor {
-        ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
-            AgentSessionPolicy::ContinueRoot => LifecycleNodeType::PhaseNode,
-            AgentSessionPolicy::SpawnChild | AgentSessionPolicy::AttachExisting => {
-                LifecycleNodeType::AgentNode
-            }
-        },
+        ActivityExecutorSpec::Agent(spec) if spec.continues_current_agent() => {
+            LifecycleNodeType::PhaseNode
+        }
+        ActivityExecutorSpec::Agent(_) => LifecycleNodeType::AgentNode,
         _ => LifecycleNodeType::AgentNode,
     }
 }
@@ -1765,11 +1763,41 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
         AgentActivityExecutorSpec, AgentProcedure, DefinitionSource, InputPortDefinition,
-        OutputPortDefinition, WorkflowContract, WorkflowGraph, WorkflowInjectionSpec,
+        LifecycleNodeType, OutputPortDefinition, WorkflowContract, WorkflowGraph,
+        WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
 
     // ── companion bundle fragment 裁剪回归（PR 5d · E8①） ──
+
+    fn activity_with_agent_executor(executor: AgentActivityExecutorSpec) -> ActivityDefinition {
+        ActivityDefinition {
+            key: "implement".to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Agent(executor),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
+        }
+    }
+
+    #[test]
+    fn activity_node_type_follows_agent_reuse_policy() {
+        assert_eq!(
+            activity_node_type(&activity_with_agent_executor(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl")
+            )),
+            LifecycleNodeType::AgentNode
+        );
+        assert_eq!(
+            activity_node_type(&activity_with_agent_executor(
+                AgentActivityExecutorSpec::continue_current_agent("wf_impl")
+            )),
+            LifecycleNodeType::PhaseNode
+        );
+    }
 
     fn bundle_with_slots(slots: &[&str]) -> agentdash_spi::SessionContextBundle {
         let mut bundle = agentdash_spi::SessionContextBundle::new(
@@ -2009,10 +2037,9 @@ mod tests {
         let activity = ActivityDefinition {
             key: "implement".to_string(),
             description: "实现功能".to_string(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: "wf_impl".to_string(),
-                session_policy: Default::default(),
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl"),
+            ),
             input_ports: vec![InputPortDefinition {
                 key: "design".to_string(),
                 description: "设计方案".to_string(),

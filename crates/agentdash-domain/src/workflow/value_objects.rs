@@ -12,9 +12,9 @@ mod run_state;
 pub use activity_def::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec,
-    AgentSessionPolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
+    AgentReusePolicy, ApiRequestExecutorSpec, ArtifactAliasPolicy, ArtifactBinding,
     BashExecExecutorSpec, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
-    HumanApprovalExecutorSpec, TransitionCondition,
+    HumanApprovalExecutorSpec, RuntimeSessionPolicy, TransitionCondition,
 };
 pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
@@ -90,10 +90,9 @@ mod tests {
         ActivityDefinition {
             key: key.to_string(),
             description: String::new(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: format!("workflow.{key}"),
-                session_policy: AgentSessionPolicy::SpawnChild,
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent(format!("workflow.{key}")),
+            ),
             input_ports,
             output_ports,
             completion_policy: ActivityCompletionPolicy::ExecutorTerminal,
@@ -340,15 +339,15 @@ mod tests {
 
     #[test]
     fn activity_executor_serializes_agent_kind() {
-        let executor = ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-            procedure_key: "workflow.plan".to_string(),
-            session_policy: AgentSessionPolicy::SpawnChild,
-        });
+        let executor = ActivityExecutorSpec::Agent(
+            AgentActivityExecutorSpec::create_activity_agent("workflow.plan"),
+        );
 
         let value = serde_json::to_value(executor).expect("serialize executor");
         assert_eq!(value["kind"], "agent");
         assert_eq!(value["procedure_key"], "workflow.plan");
-        assert_eq!(value["session_policy"], "spawn_child");
+        assert_eq!(value["agent_reuse_policy"], "create_activity_agent");
+        assert_eq!(value["runtime_session_policy"], "create_new");
     }
 
     #[test]

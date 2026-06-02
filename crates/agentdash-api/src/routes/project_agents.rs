@@ -558,7 +558,7 @@ async fn resolve_lifecycle_key_for_project_agent(
         if existing.is_none() {
             use agentdash_domain::workflow::{
                 ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-                AgentActivityExecutorSpec, AgentSessionPolicy, DefinitionSource, WorkflowGraph,
+                AgentActivityExecutorSpec, DefinitionSource, WorkflowGraph,
             };
             let lifecycle = WorkflowGraph {
                 id: Uuid::new_v4(),
@@ -572,10 +572,9 @@ async fn resolve_lifecycle_key_for_project_agent(
                 activities: vec![ActivityDefinition {
                     key: "main".to_string(),
                     description: String::new(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: wk,
-                        session_policy: AgentSessionPolicy::ContinueRoot,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::continue_current_agent(wk),
+                    ),
                     output_ports: vec![],
                     input_ports: vec![],
                     completion_policy: ActivityCompletionPolicy::OpenEnded,

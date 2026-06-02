@@ -83,7 +83,8 @@
         "executor": {
           "kind": "agent",
           "procedure_key": "trellis_dag_task_research",
-          "session_policy": "spawn_child"
+          "agent_reuse_policy": "create_activity_agent",
+          "runtime_session_policy": "create_new"
         },
         "output_ports": [
           {
@@ -103,7 +104,8 @@
         "executor": {
           "kind": "agent",
           "procedure_key": "trellis_dag_task_implement",
-          "session_policy": "spawn_child"
+          "agent_reuse_policy": "create_activity_agent",
+          "runtime_session_policy": "create_new"
         },
         "input_ports": [
           {

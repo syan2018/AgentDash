@@ -3,7 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
-    AgentSessionPolicy, ArtifactAliasPolicy, DefinitionSource, WorkflowContract, WorkflowGraph,
+    ArtifactAliasPolicy, DefinitionSource, WorkflowContract, WorkflowGraph,
     WorkflowGraphRepository,
 };
 
@@ -86,10 +86,9 @@ pub fn build_freeform_lifecycle(
         vec![ActivityDefinition {
             key: FREEFORM_ACTIVITY_KEY.to_string(),
             description: "普通自由会话主对话。".to_string(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: FREEFORM_AGENT_PROCEDURE_KEY.to_string(),
-                session_policy: AgentSessionPolicy::ContinueRoot,
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::continue_current_agent(FREEFORM_AGENT_PROCEDURE_KEY),
+            ),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             completion_policy: ActivityCompletionPolicy::OpenEnded,

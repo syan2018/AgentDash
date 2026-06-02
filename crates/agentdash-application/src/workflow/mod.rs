@@ -27,12 +27,12 @@ pub mod tools;
 pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
 pub use agent_executor::{
     AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
-    AgentActivityRuntimePort, AgentActivitySessionPort, AgentReusePolicy,
-    ContinueRootExecutionPolicy, RuntimeSessionDeliveryPolicy,
+    AgentActivityRuntimePort, AgentActivitySessionPort, ContinueRootExecutionPolicy,
+    RuntimeSessionDeliveryPolicy,
 };
 pub use agentdash_domain::workflow::{
     ActivityInputArtifact, ActivityLifecycleRunState, ActivityOutputArtifact, ActivityPortValue,
-    ActivityRunStatus, WorkflowSessionTerminalState,
+    ActivityRunStatus, AgentReusePolicy, RuntimeSessionPolicy, WorkflowSessionTerminalState,
 };
 pub use catalog::{ActivityLifecycleCatalogService, WorkflowCatalogService};
 pub use completion::{session_terminal_state_tag, session_terminal_summary};

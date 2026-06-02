@@ -70,7 +70,9 @@ function buildActivityTooltip(step: ActivityDefinition, workflowName: string | n
   const lines: string[] = [];
   if (step.description) lines.push(step.description);
   if (step.executor.kind === "agent") {
-    lines.push(`Agent · ${workflowName ?? step.executor.procedure_key} · ${step.executor.session_policy}`);
+    lines.push(
+      `Agent · ${workflowName ?? step.executor.procedure_key} · ${step.executor.agent_reuse_policy} / ${step.executor.runtime_session_policy}`,
+    );
   } else if (step.executor.kind === "human") {
     lines.push(`Human · ${step.executor.title ?? step.executor.form_schema_key}`);
   } else {

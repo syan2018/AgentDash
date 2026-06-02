@@ -257,8 +257,8 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        AgentProcedureRepository, AgentSessionPolicy, DefinitionSource, ToolCapabilityDirective,
-        WorkflowContract, WorkflowGraph, WorkflowGraphRepository,
+        AgentProcedureRepository, DefinitionSource, ToolCapabilityDirective, WorkflowContract,
+        WorkflowGraph, WorkflowGraphRepository,
     };
 
     use super::*;
@@ -506,10 +506,9 @@ mod tests {
         let plan = ActivityDefinition {
             key: "plan".to_string(),
             description: String::new(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: ENTRY_PROCEDURE_KEY.to_string(),
-                session_policy: AgentSessionPolicy::SpawnChild,
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent(ENTRY_PROCEDURE_KEY),
+            ),
             output_ports: vec![],
             input_ports: vec![],
             completion_policy: Default::default(),

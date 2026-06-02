@@ -1,6 +1,6 @@
 use agentdash_domain::workflow::{
     ActivityAttemptStatus, ActivityDefinition, ActivityExecutionClaim, ActivityExecutorSpec,
-    ActivityPortValue, AgentAssignment, AgentFrame, AgentProcedureRef, AgentSessionPolicy,
+    ActivityPortValue, AgentAssignment, AgentFrame, AgentProcedureRef, AgentReusePolicy,
     ExecutionSource, ExecutorRunRef, FunctionActivityExecutorSpec, HumanActivityExecutorSpec,
     LifecycleAgent, RuntimeSessionSelectionPolicy, WorkflowGraph,
 };
@@ -83,12 +83,6 @@ impl ContinueRootExecutionPolicy {
             },
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentReusePolicy {
-    CreateActivityAgent,
-    ContinueCurrentAgent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -698,11 +692,10 @@ where
             )));
         };
         match &activity.executor {
-            ActivityExecutorSpec::Agent(spec) => match spec.session_policy {
-                AgentSessionPolicy::SpawnChild => {
+            ActivityExecutorSpec::Agent(spec) => {
+                if spec.creates_activity_agent() {
                     self.start_spawn_child(definition, activity, claim).await
-                }
-                AgentSessionPolicy::ContinueRoot => {
+                } else if spec.continues_current_agent() {
                     self.start_continue_root(
                         definition,
                         activity,
@@ -711,15 +704,13 @@ where
                         claim,
                     )
                     .await
-                }
-                AgentSessionPolicy::AttachExisting => {
+                } else {
                     Err(ActivityExecutorStartError::terminal(format!(
-                        "Agent session policy `{}` 尚未接入 Activity executor",
-                        serde_json::to_string(&spec.session_policy)
-                            .unwrap_or_else(|_| "unknown".to_string())
+                        "Agent activity policy combination 尚未接入 Activity executor: agent_reuse_policy={:?}, runtime_session_policy={:?}",
+                        spec.agent_reuse_policy, spec.runtime_session_policy
                     )))
                 }
-            },
+            }
             ActivityExecutorSpec::Human(HumanActivityExecutorSpec::Approval(_spec)) => Ok(
                 ActivityExecutorStartResult::started(ExecutorRunRef::HumanDecision {
                     decision_id: human_decision_id(claim),
@@ -825,10 +816,10 @@ where
                     .iter()
                     .find(|activity| activity.key == attempt.activity_key)
                     .and_then(|activity| match &activity.executor {
-                        ActivityExecutorSpec::Agent(spec) => Some(spec.session_policy),
+                        ActivityExecutorSpec::Agent(spec) => Some(spec.continues_current_agent()),
                         _ => None,
                     })
-                    == Some(AgentSessionPolicy::ContinueRoot)
+                    == Some(true)
         });
         if has_running_continue_root {
             return Err(ActivityExecutorStartError::terminal(
@@ -1107,7 +1098,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutionClaimStatus, ActivityExecutorSpec,
-        ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec, AgentSessionPolicy,
+        ActivityTransition, ActivityTransitionKind, AgentActivityExecutorSpec,
         ApiRequestExecutorSpec, BashExecExecutorSpec, DefinitionSource,
         FunctionActivityExecutorSpec, HumanActivityExecutorSpec, HumanApprovalExecutorSpec,
         OutputPortDefinition, TransitionCondition,
@@ -1288,10 +1279,9 @@ mod tests {
             vec![ActivityDefinition {
                 key: "plan".to_string(),
                 description: "plan".to_string(),
-                executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    procedure_key: "wf_plan".to_string(),
-                    session_policy: AgentSessionPolicy::SpawnChild,
-                }),
+                executor: ActivityExecutorSpec::Agent(
+                    AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                ),
                 input_ports: vec![],
                 output_ports: vec![output_port("proposal")],
                 completion_policy: ActivityCompletionPolicy::OutputPorts {
@@ -1427,10 +1417,9 @@ mod tests {
                 .map(|key| ActivityDefinition {
                     key: (*key).to_string(),
                     description: (*key).to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: format!("wf_{key}"),
-                        session_policy: AgentSessionPolicy::ContinueRoot,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::continue_current_agent(format!("wf_{key}")),
+                    ),
                     input_ports: vec![],
                     output_ports: vec![],
                     completion_policy: ActivityCompletionPolicy::ExecutorTerminal,

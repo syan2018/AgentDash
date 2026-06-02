@@ -114,10 +114,10 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade、hub lazy rebuild，以及 workflow definition 层的 ContinueRoot policy vocabulary 迁出 session-shaped enum。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade 与 hub lazy rebuild。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
-- [ ] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
-  - Application executor boundary 已引入 `ContinueRootExecutionPolicy { AgentReusePolicy, RuntimeSessionDeliveryPolicy }`，并用 `AgentActivityAssignmentTarget::ReuseFrame(AgentFrameRuntimeTarget)` 复用 root frame/agent；主项仍未关闭，因为 workflow definition/freeform 仍声明 `AgentSessionPolicy::ContinueRoot`，还没有把 policy composition 提升为 definition-level contract。
+- [x] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
+  - Definition-level `AgentActivityExecutorSpec` 已移除 `AgentSessionPolicy/session_policy`，改为 `agent_reuse_policy + runtime_session_policy`；freeform/auto lifecycle 用 `continue_current_agent + deliver_to_current_trace`，普通 Agent activity 用 `create_activity_agent + create_new`。
 - [x] 明确多 RuntimeSession selection policy。
 
 ### Gate
@@ -134,10 +134,11 @@
   - [x] Parent request initial notification 由 `CompanionGateControlService::open_parent_request` 打开 parent-frame-owned `LifecycleGate` 后交给 delivery adapter；hook evaluation 通过 `ensure_hook_runtime_for_target(AgentFrameRuntimeTarget)` 进入 parent frame target。
 - [x] Delivery gate：保留 mismatched frame/session rejection 与 pending payload 测试，并补充 delivery runtime session 属于另一 frame 时失败。
 - [x] 多 RuntimeSession ref selection 有显式 policy 测试，禁止默认 `first()` 选择。
+- [x] ContinueRoot definition gate：domain / contracts / generated TS / frontend mapper / builtin seeds 不再暴露 `AgentSessionPolicy` 或 `session_policy`；新 policy 字段显式必填且没有缺字段默认兜底；projection 与 session assembler 都从 `AgentActivityExecutorSpec` 的 policy helper 推导 `AgentNode` / `PhaseNode`。
 
 ### 落地记录
 
-2026-06-02 的 AgentFrame surface slice 已关闭同源 frame revision 输出 gate，但 Phase 4 整体仍因 Hook/capability target、`session_id` provenance 与 ContinueRoot policy split 保持 partial：
+2026-06-02 的 AgentFrame surface slice 已关闭同源 frame revision 输出 gate，但 Phase 4 整体仍因 Hook/capability target、`session_id` provenance 与 StepActivation builder-owned surface 保持 partial：
 
 - `AgentFrameBuilder` 新增 `AgentFrameSurfaceInput`，由 frame builder 模块统一吸收 capability state、VFS、MCP servers、execution profile 与 context bundle summary；`SessionAssemblyBuilder::project_assembly_to_frame` 不再逐列拼写 AgentFrame surface。
 - `build_lifecycle_activation_surface` 成为 lifecycle `StepActivation` → frame surface 的封装边界，负责把 base VFS、activation lifecycle VFS、mount directives、MCP servers 与 capability state 归一化成同一份 frame-owned surface。
@@ -157,7 +158,7 @@
 - `expose_canvas_to_session` 只调用 `sync_canvas_mount_capability_state_for_runtime_delivery` adapter；该 adapter 在确认存在 base capability state 与 hook runtime 后，把 delivery runtime session 解析为 `AgentFrameRuntimeTarget`。
 - `sync_canvas_mount_capability_state` 改为接收 `AgentFrameRuntimeTarget`、base capability state 与 hook runtime，再调用 `apply_live_vfs_capability_state`；canvas apply helper 不再知道 `resolve_runtime_session_frame_id`。
 - Static check 中 `resolve_runtime_session_frame_id(` 在 application src 只剩 `SessionCapabilityService` 与 hub adapter 定义/调用。
-- 该 slice 当时不关闭完整 Phase 4 gate，因为 hook SPI/session facade、ContinueRoot policy 与 companion parent request initial notification / hook control 尚未迁成 frame/assignment target；后续 companion caller 已迁到 `AgentFrameRuntimeTarget`，剩余缺口是 hook SPI/session facade 与 ContinueRoot policy。
+- 该 slice 当时不关闭完整 Phase 4 gate，因为 hook SPI/session facade、ContinueRoot policy 与 companion parent request initial notification / hook control 尚未迁成 frame/assignment target；后续 companion caller 已迁到 `AgentFrameRuntimeTarget`，ContinueRoot definition vocabulary 也已关闭，剩余缺口是 hook SPI/session facade 与 hub lazy rebuild。
 
 2026-06-02 的 hook runtime target-aware caller slice 已关闭 workflow/canvas capability caller 直接使用 session-first hook getter 的缺口：
 
@@ -178,7 +179,15 @@
 - `AgentActivityLaunchContext` 不再携带 `root_runtime_session_id`；普通 agent activity 只保留 `source_runtime_session_ref` 作为 executor config / trace provenance，ContinueRoot 入口携带 `ContinueRootExecutionPolicy`。
 - `ContinueRootExecutionPolicy { agent_reuse_policy, runtime_session_policy }` 将 `AgentReusePolicy::ContinueCurrentAgent` 与 `RuntimeSessionDeliveryPolicy::DeliverToRuntimeSession` 分开表达；runtime session 只负责 delivery target，agent/frame 复用由 reuse policy 与 `AgentFrameRuntimeTarget` 承接。
 - `create_agent_activity_assignment` 改为接收 `AgentActivityAssignmentTarget`；`SpawnChild` 使用 `CreateNewAgent` 创建新 agent/frame/runtime session，`ContinueRoot` 使用 `ReuseFrame(AgentFrameRuntimeTarget)` 绑定已有 root frame/agent，并校验 run、project、active agent 与 delivery runtime ref。
-- 该 slice 仍不关闭主项，因为 domain workflow definition/freeform 仍用 `AgentSessionPolicy::ContinueRoot` 声明 executor policy；下一步需要把 definition-level contract 改成 agent reuse policy 与 runtime delivery policy 的组合，而不是在 executor boundary 翻译旧枚举。
+- 该 slice 当时仍不关闭主项，因为 domain workflow definition/freeform 仍用 `AgentSessionPolicy::ContinueRoot` 声明 executor policy；后续 definition vocabulary slice 已把 contract 自身升级为 agent reuse policy 与 runtime session policy 的组合。
+
+2026-06-02 的 ContinueRoot definition vocabulary slice 已关闭 P1-10：
+
+- `AgentActivityExecutorSpec` 在 domain / contracts 中统一表达显式必填的 `AgentReusePolicy` 与 `RuntimeSessionPolicy`，不再有 `AgentSessionPolicy` 或 `session_policy` 字段，也不为缺失 policy 提供默认反序列化。
+- freeform lifecycle、ProjectAgent auto lifecycle seed、shared-library current shape normalizer 与 builtin workflow seeds 都使用 `continue_current_agent + deliver_to_current_trace` 或 `create_activity_agent + create_new` 的显式组合。
+- application executor 只通过 `creates_activity_agent()` / `continues_current_agent()` helper 选择创建新 agent/frame/runtime session 或复用当前 frame；运行态的具体 delivery runtime session 仍由 launch context / `RuntimeSessionDeliveryPolicy` 绑定。
+- contracts generated TS、frontend workflow mapper、store defaults 与 Activity Inspector 均同步到两段 policy；前端 mapper 要求新 policy 字段存在，不保留旧 `session_policy` 或缺字段默认入口。
+- projection 与 session assembler 新增 policy -> `LifecycleNodeType` 的 focused tests，防止继续用 session-shaped enum 推导 `AgentNode` / `PhaseNode`。
 
 验证记录：
 
@@ -190,6 +199,17 @@
 - `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 - `cargo check -p agentdash-application`
 - `cargo check -p agentdash-api`
+- `cargo check -p agentdash-domain`
+- `cargo check -p agentdash-contracts`
+- `pnpm run contracts:check`
+- `pnpm --filter app-web run typecheck`
+- `cargo test -p agentdash-domain activity_executor_serializes_agent_kind`
+- `cargo test -p agentdash-application agent_executor`
+- `cargo test -p agentdash-application derives_node_type_from_agent_reuse_policy`
+- `cargo test -p agentdash-application activity_node_type_follows_agent_reuse_policy`
+- `pnpm --filter app-web exec vitest run src/services/workflow.test.ts src/stores/workflowStore.test.ts src/features/workflow/ui/activity-inspector.test.tsx src/features/workflow/ui/transition-inspector.test.tsx src/features/workflow/model/lifecycle-port-sync.test.ts`
+- `rg -n "AgentSessionPolicy|\\bsession_policy\\b" crates/agentdash-domain/src crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-contracts/src packages/app-web/src` 无命中。
+- `rg -n "agent_reuse_policy: value\\.agent_reuse_policy|runtime_session_policy: value\\.runtime_session_policy|serde\\(default\\).*agent_reuse_policy|serde\\(default\\).*runtime_session_policy" crates/agentdash-domain/src/workflow/value_objects/activity_def.rs crates/agentdash-contracts/src/workflow.rs packages/app-web/src/services/workflow.ts` 无命中。
 - `cargo fmt --all --check`
 - `git diff --check`
 

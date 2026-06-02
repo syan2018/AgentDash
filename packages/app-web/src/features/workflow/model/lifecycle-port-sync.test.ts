@@ -44,7 +44,12 @@ function step(key: string, procedure_key: string): ActivityDefinition {
   return {
     key,
     description: "",
-    executor: { kind: "agent", procedure_key, session_policy: "spawn_child" },
+    executor: {
+      kind: "agent",
+      procedure_key,
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
+    },
     output_ports: [],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },

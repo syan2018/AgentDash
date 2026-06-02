@@ -354,8 +354,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
         ActivityExecutionClaim, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, AgentSessionPolicy, DefinitionSource, ExecutorRunRef,
-        LifecycleRun, WorkflowGraph, WorkflowGraphInstance,
+        AgentActivityExecutorSpec, DefinitionSource, ExecutorRunRef, LifecycleRun, WorkflowGraph,
+        WorkflowGraphInstance,
     };
 
     use super::*;
@@ -835,10 +835,9 @@ mod tests {
             vec![ActivityDefinition {
                 key: "main".to_string(),
                 description: "main".to_string(),
-                executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    procedure_key: "task_agent".to_string(),
-                    session_policy: AgentSessionPolicy::SpawnChild,
-                }),
+                executor: ActivityExecutorSpec::Agent(
+                    AgentActivityExecutorSpec::create_activity_agent("task_agent"),
+                ),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 completion_policy: ActivityCompletionPolicy::ExecutorTerminal,

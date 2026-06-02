@@ -206,8 +206,8 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,
-        ActivityExecutionClaim, ActivityExecutorSpec, AgentActivityExecutorSpec,
-        AgentSessionPolicy, DefinitionSource, ExecutorRunRef,
+        ActivityExecutionClaim, ActivityExecutorSpec, AgentActivityExecutorSpec, DefinitionSource,
+        ExecutorRunRef,
     };
 
     use super::*;
@@ -436,10 +436,9 @@ mod tests {
             vec![ActivityDefinition {
                 key: "main".to_string(),
                 description: "main".to_string(),
-                executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                    procedure_key: "wf_main".to_string(),
-                    session_policy: AgentSessionPolicy::SpawnChild,
-                }),
+                executor: ActivityExecutorSpec::Agent(
+                    AgentActivityExecutorSpec::create_activity_agent("wf_main"),
+                ),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 completion_policy: ActivityCompletionPolicy::ExecutorTerminal,

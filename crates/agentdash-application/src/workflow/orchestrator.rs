@@ -491,7 +491,7 @@ mod tests {
 
     use agentdash_domain::workflow::{
         ActivityExecutorSpec, ActivityIterationPolicy, ActivityJoinPolicy,
-        AgentActivityExecutorSpec, AgentSessionPolicy, OutputPortDefinition,
+        AgentActivityExecutorSpec, OutputPortDefinition,
     };
 
     #[test]
@@ -553,10 +553,9 @@ mod tests {
         ActivityDefinition {
             key: "build".to_string(),
             description: String::new(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: "workflow".to_string(),
-                session_policy: AgentSessionPolicy::SpawnChild,
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent("workflow"),
+            ),
             input_ports: Vec::new(),
             output_ports: keys
                 .iter()

@@ -44,7 +44,8 @@ describe("unified lifecycle editor", () => {
     expect(editor.draft?.activities[0].executor).toEqual({
       kind: "agent",
       procedure_key: "my_wf_start",
-      session_policy: "spawn_child",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
     });
     expect(editor.workflowDraftsByActivityKey["start"]).toBeDefined();
     expect(editor.workflowDraftsByActivityKey["start"].key).toBe("my_wf_start");

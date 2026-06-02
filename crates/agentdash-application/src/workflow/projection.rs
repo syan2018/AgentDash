@@ -1,8 +1,8 @@
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository,
-    AgentFrameRepository, AgentProcedure, AgentProcedureRepository, AgentSessionPolicy,
-    LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
-    WorkflowContract, WorkflowGraph, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentProcedure, AgentProcedureRepository, LifecycleAgentRepository,
+    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract, WorkflowGraph,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::hooks::HookControlTarget;
 
@@ -28,8 +28,8 @@ pub struct ActiveWorkflowProjection {
     pub lifecycle: WorkflowGraph,
     pub active_activity: ActivityDefinition,
     pub active_attempt: ActivityAttemptState,
-    /// 由 activity executor 推导的 node 语义:
-    /// `ContinueRoot` → PhaseNode,`SpawnChild` / `AttachExisting` → AgentNode。
+    /// 由 activity executor policy 推导的 node 语义:
+    /// `continue_current_agent` → PhaseNode,`create_activity_agent` → AgentNode。
     pub active_node_type: LifecycleNodeType,
     /// agent executor 绑定的 procedure_key(若 activity 是 agent executor)。
     pub active_procedure_key: Option<String>,
@@ -58,11 +58,10 @@ impl ActiveWorkflowProjection {
 fn derive_node_facts(activity: &ActivityDefinition) -> (Option<String>, LifecycleNodeType) {
     match &activity.executor {
         ActivityExecutorSpec::Agent(spec) => {
-            let node_type = match spec.session_policy {
-                AgentSessionPolicy::ContinueRoot => LifecycleNodeType::PhaseNode,
-                AgentSessionPolicy::SpawnChild | AgentSessionPolicy::AttachExisting => {
-                    LifecycleNodeType::AgentNode
-                }
+            let node_type = if spec.continues_current_agent() {
+                LifecycleNodeType::PhaseNode
+            } else {
+                LifecycleNodeType::AgentNode
             };
             (Some(spec.procedure_key.clone()), node_type)
         }
@@ -287,10 +286,9 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     let active_activity = ActivityDefinition {
         key: "implement".to_string(),
         description: "实现并记录结果".to_string(),
-        executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-            procedure_key: definition.key.clone(),
-            session_policy: Default::default(),
-        }),
+        executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec::create_activity_agent(
+            definition.key.clone(),
+        )),
         input_ports: vec![],
         output_ports: vec![OutputPortDefinition {
             key: "summary".to_string(),
@@ -349,9 +347,43 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
 
 #[cfg(test)]
 mod tests {
+    use super::derive_node_facts;
     use crate::workflow::session_association::select_assignment_for_runtime_frame;
-    use agentdash_domain::workflow::{AgentAssignment, AgentFrame};
+    use agentdash_domain::workflow::{
+        ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentAssignment,
+        AgentFrame, LifecycleNodeType,
+    };
     use uuid::Uuid;
+
+    fn activity_with_agent_executor(executor: AgentActivityExecutorSpec) -> ActivityDefinition {
+        ActivityDefinition {
+            key: "implement".to_string(),
+            description: String::new(),
+            executor: ActivityExecutorSpec::Agent(executor),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            completion_policy: Default::default(),
+            iteration_policy: Default::default(),
+            join_policy: Default::default(),
+        }
+    }
+
+    #[test]
+    fn derives_node_type_from_agent_reuse_policy() {
+        let (procedure_key, node_type) = derive_node_facts(&activity_with_agent_executor(
+            AgentActivityExecutorSpec::create_activity_agent("wf_impl"),
+        ));
+
+        assert_eq!(procedure_key.as_deref(), Some("wf_impl"));
+        assert_eq!(node_type, LifecycleNodeType::AgentNode);
+
+        let (procedure_key, node_type) = derive_node_facts(&activity_with_agent_executor(
+            AgentActivityExecutorSpec::continue_current_agent("wf_impl"),
+        ));
+
+        assert_eq!(procedure_key.as_deref(), Some("wf_impl"));
+        assert_eq!(node_type, LifecycleNodeType::PhaseNode);
+    }
 
     #[test]
     fn selects_assignment_from_current_frame_activity_scope_after_frame_revision_changes() {

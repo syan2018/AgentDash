@@ -4,12 +4,13 @@ import type {
   ActivityDefinition,
   ActivityExecutorSpec,
   ActivityJoinPolicy,
-  AgentSessionPolicy,
+  AgentReusePolicy,
   ArtifactAliasPolicy,
   CapabilityDirective,
   HookRulePreset,
   InputPortDefinition,
   OutputPortDefinition,
+  RuntimeSessionPolicy,
   WorkflowContextBinding,
   AgentProcedure,
   WorkflowHookRuleSpec,
@@ -264,7 +265,8 @@ export function ExecutorSection({
       onExecutorChange({
         kind: "agent",
         procedure_key: workflowDraft.key,
-        session_policy: "spawn_child",
+        agent_reuse_policy: "create_activity_agent",
+        runtime_session_policy: "create_new",
       });
     } else if (kind === "human") {
       onExecutorChange({
@@ -393,17 +395,33 @@ function AgentExecutorForm({
       )}
 
       <div>
-        <label className="agentdash-form-label">Session Policy</label>
+        <label className="agentdash-form-label">Agent Reuse</label>
         <select
-          value={executor.session_policy}
+          value={executor.agent_reuse_policy}
           onChange={(e) =>
-            onChange({ ...executor, session_policy: e.target.value as AgentSessionPolicy })
+            onChange({ ...executor, agent_reuse_policy: e.target.value as AgentReusePolicy })
           }
           className="agentdash-form-select"
         >
-          <option value="spawn_child">Spawn Child</option>
-          <option value="continue_root">Continue Root</option>
-          <option value="attach_existing">Attach Existing</option>
+          <option value="create_activity_agent">Create Activity Agent</option>
+          <option value="continue_current_agent">Continue Current Agent</option>
+        </select>
+      </div>
+
+      <div>
+        <label className="agentdash-form-label">Runtime Session</label>
+        <select
+          value={executor.runtime_session_policy}
+          onChange={(e) =>
+            onChange({
+              ...executor,
+              runtime_session_policy: e.target.value as RuntimeSessionPolicy,
+            })
+          }
+          className="agentdash-form-select"
+        >
+          <option value="create_new">Create New</option>
+          <option value="deliver_to_current_trace">Deliver To Current Trace</option>
         </select>
       </div>
     </div>
@@ -993,4 +1011,3 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
  * 双层 ports 同步：contract 改后，把改动合并到 activity ports，保留 step-extra
  * （activity 自加的、不在旧 contract 集合里的 port）。
  */
-

@@ -690,8 +690,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransitionKind, AgentActivityExecutorSpec,
-        AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding, DefinitionSource,
-        HumanActivityExecutorSpec, HumanApprovalExecutorSpec, OutputPortDefinition,
+        ArtifactAliasPolicy, ArtifactBinding, DefinitionSource, HumanActivityExecutorSpec,
+        HumanApprovalExecutorSpec, OutputPortDefinition,
     };
 
     use super::*;
@@ -721,10 +721,9 @@ mod tests {
                 ActivityDefinition {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_plan".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "feedback".to_string(),
                         description: "feedback".to_string(),
@@ -771,10 +770,9 @@ mod tests {
                 ActivityDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_implement".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_implement"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "approved_plan".to_string(),
                         description: "approved plan".to_string(),
@@ -853,10 +851,9 @@ mod tests {
                 ActivityDefinition {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_plan".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                    ),
                     input_ports: vec![],
                     output_ports: vec![output_port("proposal")],
                     completion_policy: ActivityCompletionPolicy::OutputPorts {
@@ -868,10 +865,9 @@ mod tests {
                 ActivityDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_implement".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_implement"),
+                    ),
                     input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                         key: "approved_plan".to_string(),
                         description: "approved plan".to_string(),

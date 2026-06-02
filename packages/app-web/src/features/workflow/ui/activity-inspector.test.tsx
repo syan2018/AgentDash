@@ -19,7 +19,12 @@ function makeActivity(
   return {
     key: "implement",
     description: "实现该需求",
-    executor: { kind: "agent", procedure_key: "demo.implement", session_policy: "spawn_child" },
+    executor: {
+      kind: "agent",
+      procedure_key: "demo.implement",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
+    },
     output_ports: [{ key: "done", description: "完成", gate_strategy: "existence" }],
     input_ports: [],
     completion_policy: { kind: "executor_terminal" },
@@ -70,7 +75,8 @@ describe("ActivityInspector", () => {
     expect(markup).toContain("iter:3/per_attempt");
     expect(markup).toContain("n_of_m(2)");
     expect(markup).toContain("Workflow 来源");
-    expect(markup).toContain("Session Policy");
+    expect(markup).toContain("Agent Reuse");
+    expect(markup).toContain("Runtime Session");
   });
 
   it("Function bash_exec executor 渲染 command/args/working_directory 字段", () => {

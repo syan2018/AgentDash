@@ -57,7 +57,8 @@ const WORKFLOW_HOOK_TRIGGERS = new Set<string>([
 ]);
 const GATE_STRATEGIES = new Set<string>(["existence", "schema", "llm_judge"]);
 const CONTEXT_STRATEGIES = new Set<string>(["full", "summary", "metadata_only", "custom"]);
-const AGENT_SESSION_POLICIES = new Set<string>(["spawn_child", "continue_root", "attach_existing"]);
+const AGENT_REUSE_POLICIES = new Set<string>(["create_activity_agent", "continue_current_agent"]);
+const RUNTIME_SESSION_POLICIES = new Set<string>(["create_new", "deliver_to_current_trace"]);
 const ARTIFACT_ALIAS_POLICIES = new Set<string>(["latest", "per_attempt", "latest_and_history"]);
 const ACTIVITY_TRANSITION_KINDS = new Set<string>(["flow", "artifact"]);
 const LIFECYCLE_EXECUTION_EVENT_KINDS = new Set<string>([
@@ -246,9 +247,12 @@ function mapActivityExecutorSpec(raw: unknown): ActivityExecutorSpec {
     return {
       kind: "agent",
       procedure_key: requireStringField(value, "procedure_key"),
-      session_policy: value.session_policy != null
-        ? normalizeEnum(value.session_policy, AGENT_SESSION_POLICIES, "agent session policy")
-        : "spawn_child",
+      agent_reuse_policy: normalizeEnum(value.agent_reuse_policy, AGENT_REUSE_POLICIES, "agent reuse policy"),
+      runtime_session_policy: normalizeEnum(
+        value.runtime_session_policy,
+        RUNTIME_SESSION_POLICIES,
+        "runtime session policy",
+      ),
     };
   }
   if (kind === "function") {

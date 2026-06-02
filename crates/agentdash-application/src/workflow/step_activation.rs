@@ -390,10 +390,9 @@ mod tests {
         ActivityDefinition {
             key: "implement".to_string(),
             description: "实现并记录结果".to_string(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: "wf_impl".to_string(),
-                session_policy: Default::default(),
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl"),
+            ),
             input_ports: vec![],
             output_ports,
             completion_policy: Default::default(),
@@ -767,10 +766,9 @@ mod tests {
         let step = ActivityDefinition {
             key: "b".to_string(),
             description: String::new(),
-            executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                procedure_key: "wf_impl".to_string(),
-                session_policy: Default::default(),
-            }),
+            executor: ActivityExecutorSpec::Agent(
+                AgentActivityExecutorSpec::create_activity_agent("wf_impl"),
+            ),
             input_ports: vec![agentdash_domain::workflow::InputPortDefinition {
                 key: "ctx".to_string(),
                 description: "前驱上下文".to_string(),

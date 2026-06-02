@@ -33,7 +33,7 @@ export type ActivityTransition = { from: string, to: string, kind: ActivityTrans
 
 export type ActivityTransitionKind = "flow" | "artifact";
 
-export type AgentActivityExecutorSpec = { procedure_key: string, session_policy: AgentSessionPolicy, };
+export type AgentActivityExecutorSpec = { procedure_key: string, agent_reuse_policy: AgentReusePolicy, runtime_session_policy: RuntimeSessionPolicy, };
 
 export type AgentAssignmentRefDto = { assignment_id: string, run_id?: string, agent_id?: string, frame_id?: string, };
 
@@ -41,7 +41,7 @@ export type AgentFrameRefDto = { agent_id: string, frame_id: string, revision?: 
 
 export type AgentFrameRuntimeView = { frame_ref: AgentFrameRefDto, procedure_id?: string, graph_instance_id?: string, activity_key?: string, capability_surface: JsonValue, context_slice: JsonValue, vfs_surface: JsonValue, mcp_surface: JsonValue, runtime_session_refs: Array<RuntimeSessionRefDto>, execution_profile?: JsonValue, };
 
-export type AgentSessionPolicy = "spawn_child" | "continue_root" | "attach_existing";
+export type AgentReusePolicy = "create_activity_agent" | "continue_current_agent";
 
 export type ApiRequestExecutorSpec = { method: string, url_template: string, body_template?: JsonValue, };
 
@@ -100,6 +100,8 @@ export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
+
+export type RuntimeSessionPolicy = "create_new" | "deliver_to_current_trace";
 
 export type RuntimeSessionRefDto = { runtime_session_id: string, };
 

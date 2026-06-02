@@ -338,11 +338,21 @@ fn legacy_step_to_activity(step: Value) -> Result<Value, DomainError> {
     );
     activity.insert(
         "executor".to_string(),
-        json!({
-            "kind": "agent",
-            "procedure_key": procedure_key,
-            "session_policy": if node_type == "phase_node" { "continue_root" } else { "spawn_child" },
-        }),
+        if node_type == "phase_node" {
+            json!({
+                "kind": "agent",
+                "procedure_key": procedure_key,
+                "agent_reuse_policy": "continue_current_agent",
+                "runtime_session_policy": "deliver_to_current_trace",
+            })
+        } else {
+            json!({
+                "kind": "agent",
+                "procedure_key": procedure_key,
+                "agent_reuse_policy": "create_activity_agent",
+                "runtime_session_policy": "create_new",
+            })
+        },
     );
     activity.insert("input_ports".to_string(), input_ports);
     activity.insert("output_ports".to_string(), output_ports);
@@ -1920,8 +1930,12 @@ mod tests {
             "output_ports"
         );
         assert_eq!(
-            lifecycle["activities"][1]["executor"]["session_policy"],
-            "continue_root"
+            lifecycle["activities"][1]["executor"]["agent_reuse_policy"],
+            "continue_current_agent"
+        );
+        assert_eq!(
+            lifecycle["activities"][1]["executor"]["runtime_session_policy"],
+            "deliver_to_current_trace"
         );
         assert_eq!(lifecycle["transitions"][0]["kind"], "artifact");
         assert_eq!(

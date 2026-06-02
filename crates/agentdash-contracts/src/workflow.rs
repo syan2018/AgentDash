@@ -231,17 +231,24 @@ pub enum ActivityExecutorSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct AgentActivityExecutorSpec {
     pub procedure_key: String,
-    #[serde(default)]
-    pub session_policy: AgentSessionPolicy,
+    pub agent_reuse_policy: AgentReusePolicy,
+    pub runtime_session_policy: RuntimeSessionPolicy,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentSessionPolicy {
+pub enum AgentReusePolicy {
     #[default]
-    SpawnChild,
-    ContinueRoot,
-    AttachExisting,
+    CreateActivityAgent,
+    ContinueCurrentAgent,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeSessionPolicy {
+    #[default]
+    CreateNew,
+    DeliverToCurrentTrace,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

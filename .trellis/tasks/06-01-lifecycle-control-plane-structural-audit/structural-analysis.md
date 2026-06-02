@@ -456,8 +456,8 @@ ContinueRoot 的本质应该是“复用某个 LifecycleAgent 继续承接 Activ
 
 重命名并重建策略：
 
-- `AgentReusePolicy::{ContinueCurrentAgent, SpawnLifecycleAgent, ReuseBySubject, ReuseByRoutineEntity}`
-- `RuntimeSessionPolicy::{AttachExisting, CreateNew, ResumeLatestTrace}`
+- `AgentReusePolicy::{CreateActivityAgent, ContinueCurrentAgent}` 表达 activity 是否创建独立 lifecycle agent/frame，或复用当前控制面 agent/frame。
+- `RuntimeSessionPolicy::{CreateNew, DeliverToCurrentTrace}` 表达 runtime trace 是创建新 delivery session，还是投递到当前 trace。
 
 `ContinueRoot` 不再直接存在为 executor policy，而是这两组 policy 的组合。
 
@@ -482,6 +482,22 @@ ContinueRoot 的本质应该是“复用某个 LifecycleAgent 继续承接 Activ
 - assignment 创建边界不再用 root runtime session 决定是否创建新 agent/frame；`SpawnChild` 是 `CreateNewAgent`，`ContinueRoot` 是 `ReuseFrame(target)`，并校验 target agent 的 run、project、active 状态与 delivery runtime ref。
 
 该 slice 关闭了 “root runtime session 同时表达 agent reuse 与 delivery target” 的 application executor 缺口，但仍不关闭 P1-10 主 gate：definition/freeform 层仍以 `AgentSessionPolicy::ContinueRoot` 作为 policy vocabulary，下一步要把 workflow definition contract 自身升级为 agent reuse policy + runtime delivery policy，而不是仅在 executor boundary 翻译旧枚举。
+
+2026-06-02 的 ContinueRoot definition vocabulary slice 已关闭 P1-10 主 gate：
+
+- `AgentActivityExecutorSpec` 删除 `AgentSessionPolicy/session_policy`，在 domain / contracts / generated TS 中统一表达显式必填的 `agent_reuse_policy + runtime_session_policy`。
+- `create_activity_agent + create_new` 表达普通 Agent activity 的独立 agent/frame/runtime trace；`continue_current_agent + deliver_to_current_trace` 表达 PhaseNode/freeform 的当前 agent/frame 复用与当前 trace delivery。
+- freeform lifecycle、ProjectAgent auto lifecycle seed、shared-library current-shape normalizer 与 built-in workflow seed 都只写入两段 policy，不再把 session-shaped enum 作为 definition vocabulary。
+- application executor、projection 与 session assembler 只消费 policy helper：`creates_activity_agent()` 进入创建新 agent/frame/runtime session 路径，`continues_current_agent()` 进入 reuse current frame 路径并推导 `PhaseNode`。
+- 前端 mapper/store/editor 与 generated contracts 同步到两段 policy，旧 `session_policy` 不再作为接受字段；缺失新 policy 会被 mapper/serde 直接拒绝。
+
+对应 gate：
+
+- `rg -n "AgentSessionPolicy|\\bsession_policy\\b" crates/agentdash-domain/src crates/agentdash-application/src crates/agentdash-api/src crates/agentdash-contracts/src packages/app-web/src` 无命中。
+- `cargo test -p agentdash-domain activity_executor_serializes_agent_kind` 证明 definition 序列化输出两段 policy。
+- `cargo test -p agentdash-application agent_executor` 覆盖 create-agent 与 continue-current 执行路径。
+- `cargo test -p agentdash-application derives_node_type_from_agent_reuse_policy` 与 `cargo test -p agentdash-application activity_node_type_follows_agent_reuse_policy` 固化 policy 到 `AgentNode/PhaseNode` 的推导边界。
+- `pnpm run contracts:check`、`pnpm --filter app-web run typecheck` 与 workflow 相关 vitest 证明 contracts/generated/frontend editor 没有保留旧字段。
 
 ## P1-11 多 RuntimeSession ref selection 不清
 

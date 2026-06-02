@@ -321,8 +321,8 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
         ActivityIterationPolicy, ActivityTransition, ActivityTransitionKind,
-        AgentActivityExecutorSpec, AgentSessionPolicy, ArtifactAliasPolicy, ArtifactBinding,
-        DefinitionSource, InputPortDefinition, OutputPortDefinition, TransitionCondition,
+        AgentActivityExecutorSpec, ArtifactAliasPolicy, ArtifactBinding, DefinitionSource,
+        InputPortDefinition, OutputPortDefinition, TransitionCondition,
     };
     use serde_json::json;
 
@@ -520,10 +520,9 @@ mod tests {
                 ActivityDefinition {
                     key: "plan".to_string(),
                     description: "plan".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_plan".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_plan"),
+                    ),
                     input_ports: vec![],
                     output_ports: vec![port("proposal")],
                     completion_policy: ActivityCompletionPolicy::OutputPorts {
@@ -538,10 +537,9 @@ mod tests {
                 ActivityDefinition {
                     key: "implement".to_string(),
                     description: "implement".to_string(),
-                    executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
-                        procedure_key: "wf_implement".to_string(),
-                        session_policy: AgentSessionPolicy::SpawnChild,
-                    }),
+                    executor: ActivityExecutorSpec::Agent(
+                        AgentActivityExecutorSpec::create_activity_agent("wf_implement"),
+                    ),
                     input_ports: vec![input("approved_plan")],
                     output_ports: vec![port("summary")],
                     completion_policy: ActivityCompletionPolicy::ExecutorTerminal,

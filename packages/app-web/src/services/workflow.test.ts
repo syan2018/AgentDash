@@ -57,7 +57,8 @@ describe("workflow service mappers", () => {
           executor: {
             kind: "agent",
             procedure_key: "builtin_workflow_admin_plan",
-            session_policy: "spawn_child",
+            agent_reuse_policy: "create_activity_agent",
+            runtime_session_policy: "create_new",
           },
           output_ports: [],
           input_ports: [
@@ -83,7 +84,8 @@ describe("workflow service mappers", () => {
     expect(definition.activities[0].executor).toEqual({
       kind: "agent",
       procedure_key: "builtin_workflow_admin_plan",
-      session_policy: "spawn_child",
+      agent_reuse_policy: "create_activity_agent",
+      runtime_session_policy: "create_new",
     });
     expect(definition.activities[0].input_ports[0].standalone_fulfillment).toEqual({
       optional: { default_value: "复用当前方案" },

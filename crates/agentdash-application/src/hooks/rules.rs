@@ -1,6 +1,7 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
 use agentdash_spi::{
-    HookDiagnosticEntry, HookEvaluationQuery, HookResolution, HookTrigger, SessionHookSnapshot,
+    AgentFrameHookEvaluationQuery, HookControlTarget, HookDiagnosticEntry, HookEvaluationQuery,
+    HookResolution, HookTrigger, RuntimeAdapterProvenance, SessionHookSnapshot,
 };
 
 use super::presets::domain_trigger_to_spi;
@@ -14,7 +15,58 @@ mod owner_defaults;
 
 pub(crate) struct HookEvaluationContext<'a> {
     pub(crate) snapshot: &'a SessionHookSnapshot,
-    pub(crate) query: &'a HookEvaluationQuery,
+    pub(crate) query: &'a HookRuleEvaluationQuery,
+}
+
+pub(crate) struct HookRuleEvaluationQuery {
+    pub(crate) target: Option<HookControlTarget>,
+    pub(crate) provenance: RuntimeAdapterProvenance,
+    pub(crate) trigger: HookTrigger,
+    pub(crate) tool_name: Option<String>,
+    pub(crate) tool_call_id: Option<String>,
+    pub(crate) subagent_type: Option<String>,
+    pub(crate) payload: Option<serde_json::Value>,
+    pub(crate) token_stats: Option<agentdash_spi::ContextTokenStats>,
+}
+
+impl HookRuleEvaluationQuery {
+    pub(crate) fn from_frame_query(query: AgentFrameHookEvaluationQuery) -> Self {
+        Self {
+            target: Some(query.target),
+            provenance: query.provenance,
+            trigger: query.trigger,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        }
+    }
+
+    pub(crate) fn from_session_query(query: HookEvaluationQuery) -> Self {
+        Self {
+            target: None,
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                query.session_id,
+                query.turn_id,
+                "session_hook_evaluation_adapter",
+            ),
+            trigger: query.trigger,
+            tool_name: query.tool_name,
+            tool_call_id: query.tool_call_id,
+            subagent_type: query.subagent_type,
+            payload: query.payload,
+            token_stats: query.token_stats,
+        }
+    }
+
+    pub(crate) fn runtime_session_id(&self) -> Option<&str> {
+        self.provenance.runtime_session_id.as_deref()
+    }
+
+    pub(crate) fn turn_id(&self) -> Option<&str> {
+        self.provenance.turn_id.as_deref()
+    }
 }
 
 pub(super) struct NormalizedHookRule {
@@ -174,6 +226,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -222,6 +275,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -264,6 +318,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -306,6 +361,7 @@ mod tests {
             payload: None,
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -341,6 +397,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -376,6 +433,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -463,6 +521,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(
@@ -522,6 +581,7 @@ mod tests {
             })),
             token_stats: None,
         };
+        let query = HookRuleEvaluationQuery::from_session_query(query);
 
         let engine = test_script_engine();
         apply_hook_rules(

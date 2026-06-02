@@ -32,7 +32,10 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 
 | Key | 说明 |
 | --- | --- |
-| `trigger` / `tool_name` / `tool_call_id` / `turn_id` / `session_id` | 触发信息 |
+| `trigger` / `tool_name` / `tool_call_id` | 触发信息 |
+| `hook_target` | Hook 控制目标；存在 frame query 时携带 run / agent / frame / assignment refs，脚本需要判断业务 owner 时优先使用该对象 |
+| `provenance` | runtime adapter 来源信息，包含可选 runtime session、turn 与 source，用于 trace / audit |
+| `turn_id` / `session_id` | provenance alias，服务已有脚本的 trace 读取；它们不表达 Hook 控制 owner |
 | `snapshot` | Session Snapshot 切片（owners / tags / injections） |
 | `workflow` | Workflow 元数据（lifecycle_key / activity_key / transition_policy 等） |
 | `contract` | Contract 切片（hook_rules / constraints / checks） |
@@ -40,7 +43,7 @@ apply_hook_rules() — Phase 2: contract-driven 规则
 | `params` | `WorkflowHookRuleSpec.params` 透传 |
 | `signals` | Rust 侧预计算的便利信号（避免脚本重复实现 snapshot 查询） |
 
-> 完整字段定义见 `hooks::provider.rs` 的 `build_script_context()`。
+> 完整字段定义见 `hooks::script_engine.rs` 的 `build_ctx_value()`。
 
 关键约定：
 - 不存在的字段值为 `()`（Rhai unit），脚本用 `== ()` 判空

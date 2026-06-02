@@ -388,11 +388,25 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - `HookRuntimeAccess::evaluate/refresh`、runtime delegate、workflow orchestrator refresh 与 companion subagent hook helper 仍保留 session-shaped adapter。
 - Static gate 仍能命中 provider/rules/runtime delegate/orchestrator/companion/test 形状；下一批应先拆 rule-engine evaluation context 与 target-aware refresh/evaluate API，再清理 remaining control-path hits。
 
+2026-06-02 的 provider/rule-engine frame evaluation slice 关闭了 rule-engine 内部把 frame query 降级回 session query 的耦合点：
+
+- `HookRuleEvaluationQuery` 作为 rule engine 内部 evaluation context，直接承载 optional `HookControlTarget` 与 `RuntimeAdapterProvenance`；旧 `HookEvaluationQuery` 只作为 session adapter 输入被转换，并记录 `session_hook_evaluation_adapter` provenance source。
+- `AppExecutionHookProvider::evaluate_frame_hook` 现在只在缺 snapshot 时以 `AgentFrameHookSnapshotQuery { target, provenance }` 加载 frame snapshot，随后通过 `HookRuleEvaluationQuery::from_frame_query` 进入规则评估，不再调用 `evaluate_hook` 或构造 `HookEvaluationQuery { session_id }`。
+- `HookScriptEngine` 的脚本上下文新增 `hook_target` 与 `provenance`，`session_id` / `turn_id` 仅保留为 runtime trace 字段；测试 `context_carries_frame_target_and_runtime_provenance` 证明脚本层可观察 frame/assignment owner。
+
+该 slice 仍不关闭 P1-08 gate，因为：
+
+- `HookRuntimeAccess::evaluate/refresh`、runtime delegate、workflow orchestrator refresh 与 companion subagent hook helper 仍以 session-shaped query 进入 adapter。
+- provider 仍保留 `load_session_snapshot` / `refresh_session_snapshot` / `evaluate_hook` 这些 SPI session adapter；它们需要继续被限定到 runtime adapter/provenance sink，而不是业务 control owner。
+- Static gate 仍会命中 session refresh/evaluate adapter、runtime delegate、orchestrator、companion 与测试形状；下一批应迁移 runtime evaluate/refresh access 或给它们建立 target-aware facade。
+
 验证记录：
 
 - `cargo check -p agentdash-application`
 - `cargo test -p agentdash-application workflow::frame_hook_runtime --lib -- --format terse`
 - `cargo test -p agentdash-application hooks::provider --lib -- --format terse`
+- `cargo test -p agentdash-application hooks::rules --lib -- --format terse`
+- `cargo test -p agentdash-application hooks::script_engine --lib -- --format terse`
 - `cargo test -p agentdash-application session::hook_delegate --lib -- --format terse`
 - `cargo test -p agentdash-application session::hub::tests --lib -- --format terse`
 - `cargo test -p agentdash-application workflow::step_activation --lib -- --format terse`

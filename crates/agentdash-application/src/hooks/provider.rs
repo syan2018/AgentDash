@@ -292,7 +292,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, HookError> {
-        let snapshot = match query.snapshot {
+        let snapshot = match query.snapshot.clone() {
             Some(snapshot) => snapshot,
             None => {
                 self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
@@ -302,18 +302,8 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 .await?
             }
         };
-        self.evaluate_hook(HookEvaluationQuery {
-            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-            trigger: query.trigger,
-            turn_id: query.provenance.turn_id,
-            tool_name: query.tool_name,
-            tool_call_id: query.tool_call_id,
-            subagent_type: query.subagent_type,
-            snapshot: Some(snapshot),
-            payload: query.payload,
-            token_stats: query.token_stats,
-        })
-        .await
+        let query = HookRuleEvaluationQuery::from_frame_query(query);
+        Ok(self.evaluate_rules(&snapshot, &query))
     }
 
     async fn load_session_snapshot(
@@ -355,6 +345,24 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 session_id: query.session_id.clone(),
                 ..SessionHookSnapshot::default()
             });
+        let query = HookRuleEvaluationQuery::from_session_query(query);
+        Ok(self.evaluate_rules(&snapshot, &query))
+    }
+
+    async fn append_execution_log(
+        &self,
+        entries: Vec<PendingExecutionLogEntry>,
+    ) -> Result<(), HookError> {
+        self.workflow_builder.append_execution_log(entries).await
+    }
+}
+
+impl AppExecutionHookProvider {
+    fn evaluate_rules(
+        &self,
+        snapshot: &SessionHookSnapshot,
+        query: &HookRuleEvaluationQuery,
+    ) -> HookResolution {
         let mut resolution = HookResolution {
             diagnostics: snapshot
                 .diagnostics
@@ -365,7 +373,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             ..HookResolution::default()
         };
 
-        seed_snapshot_injections_for_trigger(&query.trigger, &snapshot, &mut resolution);
+        seed_snapshot_injections_for_trigger(&query.trigger, snapshot, &mut resolution);
 
         match query.trigger {
             HookTrigger::SessionStart => {}
@@ -378,30 +386,21 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 // 此分支只应用动态 hook 规则（如 rhai 规则产出的 per-turn
                 // dynamic 注入）。
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
             }
             HookTrigger::BeforeTool | HookTrigger::AfterTool | HookTrigger::AfterTurn => {
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
             }
             HookTrigger::BeforeStop => {
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
@@ -411,10 +410,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
                 // task_session_terminal preset；port 完成门禁由 port_output_gate
                 // preset 在 BeforeStop 阶段驱动。
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
@@ -423,44 +419,28 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
             | HookTrigger::AfterSubagentDispatch
             | HookTrigger::CompanionResult => {
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
             }
             HookTrigger::BeforeCompact | HookTrigger::AfterCompact => {
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
             }
             HookTrigger::BeforeProviderRequest => {
                 apply_hook_rules(
-                    HookEvaluationContext {
-                        snapshot: &snapshot,
-                        query: &query,
-                    },
+                    HookEvaluationContext { snapshot, query },
                     &mut resolution,
                     &self.script_engine,
                 );
             }
         }
 
-        Ok(resolution)
-    }
-
-    async fn append_execution_log(
-        &self,
-        entries: Vec<PendingExecutionLogEntry>,
-    ) -> Result<(), HookError> {
-        self.workflow_builder.append_execution_log(entries).await
+        resolution
     }
 }
 
@@ -502,7 +482,7 @@ mod tests {
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
 
     use super::super::presets::builtin_preset_scripts;
-    use super::super::rules::{HookEvaluationContext, apply_hook_rules};
+    use super::super::rules::{HookEvaluationContext, HookRuleEvaluationQuery, apply_hook_rules};
     use super::super::script_engine::HookScriptEngine;
     use super::super::test_fixtures::snapshot_with_workflow;
 
@@ -570,18 +550,21 @@ mod tests {
             &self,
             query: AgentFrameHookEvaluationQuery,
         ) -> Result<HookResolution, HookError> {
-            self.evaluate_hook(HookEvaluationQuery {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-                trigger: query.trigger,
-                turn_id: query.provenance.turn_id,
-                tool_name: query.tool_name,
-                tool_call_id: query.tool_call_id,
-                subagent_type: query.subagent_type,
-                snapshot: query.snapshot,
-                payload: query.payload,
-                token_stats: query.token_stats,
-            })
-            .await
+            let snapshot = query
+                .snapshot
+                .clone()
+                .unwrap_or_else(|| self.snapshot.clone());
+            let query = HookRuleEvaluationQuery::from_frame_query(query);
+            let mut resolution = HookResolution::default();
+            apply_hook_rules(
+                HookEvaluationContext {
+                    snapshot: &snapshot,
+                    query: &query,
+                },
+                &mut resolution,
+                &self.engine,
+            );
+            Ok(resolution)
         }
 
         async fn load_session_snapshot(
@@ -606,6 +589,7 @@ mod tests {
                 .snapshot
                 .clone()
                 .unwrap_or_else(|| self.snapshot.clone());
+            let query = HookRuleEvaluationQuery::from_session_query(query);
             let mut resolution = HookResolution::default();
             apply_hook_rules(
                 HookEvaluationContext {

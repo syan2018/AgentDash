@@ -38,7 +38,13 @@ Agent Loop 在关键生命周期节点调用的委托接口。方法包括：`ev
 
 ### ExecutionHookProvider（`agentdash-spi::hooks`）
 
-从业务对象解析 Hook 信息的提供者。方法包括：`load_session_snapshot`、`refresh_session_snapshot`、`evaluate_hook`。
+从业务对象解析 Hook 信息的提供者。frame-first 方法包括：
+`load_frame_snapshot`、`refresh_frame_snapshot`、`evaluate_frame_hook` 与
+`resolve_runtime_hook_target`。`load_session_snapshot`、`refresh_session_snapshot`
+与 `evaluate_hook` 保留为 runtime adapter 入口；它们进入 application provider 后必须把
+runtime session / turn 映射为 provenance 或显式 hook target，再交给同一套 frame snapshot /
+rule evaluation 边界。这样 Hook runtime 可以继续保留 runtime trace 价值，同时让策略 owner
+落在 run / agent / frame / assignment refs 上。
 
 ---
 

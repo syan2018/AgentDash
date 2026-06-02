@@ -10,10 +10,10 @@ pub mod capability_service;
 pub mod capability_state;
 mod compaction_checkpoint;
 mod compaction_context_frame;
-pub mod construction;
+#[cfg(test)]
+pub(crate) mod construction;
 pub mod construction_planner;
 pub mod construction_provider;
-pub mod construction_use_case;
 pub mod context;
 mod context_frame;
 mod context_projector;

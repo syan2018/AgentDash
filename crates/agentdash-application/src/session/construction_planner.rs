@@ -2,23 +2,27 @@ use agentdash_domain::{
     agent::ProjectAgent,
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
-    story::Story,
-    task::TaskDispatchPreference,
     workspace::Workspace,
 };
-use agentdash_spi::CapabilityScopeCtx;
-use std::path::PathBuf;
+#[cfg(test)]
 use uuid::Uuid;
 
+use crate::{mcp_preset::resolve_preset_mcp_refs, repository_set::RepositorySet};
+
+#[cfg(test)]
+use agentdash_domain::{story::Story, task::TaskDispatchPreference};
+#[cfg(test)]
+use agentdash_spi::CapabilityScopeCtx;
+#[cfg(test)]
+use std::path::PathBuf;
+#[cfg(test)]
 use crate::{
     canvas::append_visible_canvas_mounts,
     capability::{
         CapabilityResolver, CapabilityResolverInput, ContextContributionSource,
         ContextContributions, McpCandidates, ToolContribution,
     },
-    mcp_preset::resolve_preset_mcp_refs,
     platform_config::PlatformConfig,
-    repository_set::RepositorySet,
     runtime_bridge::session_mcp_servers_to_runtime,
     session::{
         ExecutorResolution, SessionCapabilityProjectionInput, SessionMeta,
@@ -38,11 +42,12 @@ use crate::{
     },
 };
 
+#[cfg(test)]
 use super::construction::{
     ResolvedSessionOwner, RuntimeContextInspectionPlan, SessionConstructionContextProjection,
 };
 
-#[deprecated(note = "helper 方法已提升为独立函数，plan 方法已被 FrameConstructionService 替代")]
+#[cfg(test)]
 pub struct RuntimeContextInspectionPlanner;
 
 pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
@@ -60,8 +65,8 @@ pub struct ResolvedProjectAgentContext {
     pub project_agent: ProjectAgent,
 }
 
+#[cfg(test)]
 impl RuntimeContextInspectionPlanner {
-    #[deprecated(note = "已被 frame-based read model 替代")]
     pub fn parse_project_dispatch_label(label: &str) -> Option<&str> {
         let agent_key = label
             .trim()
@@ -72,7 +77,6 @@ impl RuntimeContextInspectionPlanner {
         Some(agent_key)
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
     pub fn project_dispatch_label(agent_key: &str) -> String {
         format!("{PROJECT_AGENT_BINDING_LABEL_PREFIX}{}", agent_key.trim())
     }
@@ -99,7 +103,6 @@ impl RuntimeContextInspectionPlanner {
         build_project_agent_context(repos, agent).await
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
     pub async fn build_session_capabilities(
         vfs_service: &VfsService,
         vfs: Option<&agentdash_spi::Vfs>,
@@ -115,8 +118,6 @@ impl RuntimeContextInspectionPlanner {
         if caps.is_empty() { None } else { Some(caps) }
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
-    #[allow(deprecated)]
     pub async fn plan_task_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -159,8 +160,6 @@ impl RuntimeContextInspectionPlanner {
         )
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
-    #[allow(deprecated)]
     pub async fn plan_story_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -315,8 +314,6 @@ impl RuntimeContextInspectionPlanner {
         )))
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
-    #[allow(deprecated)]
     pub async fn plan_project_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -490,8 +487,6 @@ impl RuntimeContextInspectionPlanner {
         ))
     }
 
-    #[deprecated(note = "已被 frame-based read model 替代")]
-    #[allow(deprecated)]
     pub fn plan_context(
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,
@@ -515,6 +510,7 @@ pub async fn resolve_project_workspace(
     Ok(None)
 }
 
+#[cfg(test)]
 async fn load_project_presets(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -532,6 +528,7 @@ async fn load_project_presets(
     }
 }
 
+#[cfg(test)]
 async fn load_project_vfs_mounts(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -543,6 +540,7 @@ async fn load_project_vfs_mounts(
         .map_err(|error| format!("读取 Project VFS Mount 失败: {error}"))
 }
 
+#[cfg(test)]
 async fn resolve_project_agent_context(
     repos: &RepositorySet,
     project_id: Uuid,
@@ -610,6 +608,7 @@ pub async fn build_project_agent_context(
 }
 
 /// 从 AgentFrame 中读取 visible_canvas_mount_ids（通过 runtime session ref 反查）。
+#[cfg(test)]
 async fn resolve_visible_canvas_mount_ids_from_frame(
     repos: &RepositorySet,
     runtime_session_id: &str,

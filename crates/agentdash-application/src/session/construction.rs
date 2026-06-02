@@ -17,11 +17,7 @@ use super::post_turn_handler::TerminalHookEffectBinding;
 use super::types::UserPromptInput;
 use crate::extension_runtime::ExtensionRuntimeProjection;
 
-/// RuntimeSession trace 的创建来源信息。
-///
-/// **DEPRECATED**: 将被 `SubjectRef + LifecycleSubjectAssociation` 替代。
-/// 新代码不应引入对此类型的依赖。
-#[deprecated(note = "已被 frame-based control plane 替代，仅用于测试 fixture")]
+/// 测试 fixture：RuntimeSession trace 的创建来源信息。
 #[derive(Debug, Clone)]
 pub struct ResolvedSessionOwner {
     pub owner_type: CapabilityScope,
@@ -67,9 +63,7 @@ impl ResolvedSessionOwner {
 }
 use crate::vfs::ResolvedVfsSurface;
 
-/// **DEPRECATED**: 将被 frame-based read model (AgentFrameRuntimeView + VfsSurfaceProjection) 替代。
-/// 新代码不应引入对此类型的依赖。
-#[deprecated(note = "已被 FrameLaunchEnvelope + AgentFrameRuntimeView 替代，仅用于测试 fixture")]
+/// 测试 fixture：旧 construction plan 的完整投影形态。
 #[derive(Debug, Clone)]
 pub struct RuntimeContextInspectionPlan {
     pub session_id: String,

@@ -59,7 +59,7 @@ interface StoryEntity {
 interface TaskEntity {
   id: string;
   title: string;
-  agent_binding: {
+  dispatch_preference: {
     context_sources: ContextSourceRef[];
   };
 }
@@ -200,7 +200,7 @@ async function createTask(
     data: {
       title: `E2E Context Runtime Task ${suffix}`,
       description: "用于验证 Story 上下文进入 Task runtime trace",
-      agent_binding: {
+      dispatch_preference: {
         agent_type: "codex",
         context_sources: sourceRefs,
       },
@@ -386,7 +386,7 @@ test("Story 文件引用可保存到 Story 并分配给 Task Agent", async ({ pa
   const tasks = await listTasks(request, story.id);
   const createdTask = tasks.find((item) => item.title === taskTitle);
   expect(createdTask).toBeTruthy();
-  expect(createdTask!.agent_binding.context_sources.map((item) => item.locator)).toEqual([
+  expect(createdTask!.dispatch_preference.context_sources.map((item) => item.locator)).toEqual([
     "frontend/src/pages/StoryPage.tsx",
     "crates/agentdash-api/src/routes/stories.rs",
   ]);

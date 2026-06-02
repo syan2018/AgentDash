@@ -12,7 +12,7 @@ use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
-use agentdash_domain::task::{AgentBinding, Task};
+use agentdash_domain::task::{TaskDispatchPreference, Task};
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
@@ -37,11 +37,11 @@ pub struct TaskMutationInput {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<Option<Uuid>>,
-    pub agent_binding: Option<AgentBinding>,
+    pub dispatch_preference: Option<TaskDispatchPreference>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct AgentBindingInput {
+pub struct TaskDispatchPreferenceInput {
     pub agent_type: Option<String>,
     pub agent_pid: Option<String>,
     pub preset_name: Option<String>,
@@ -194,11 +194,11 @@ pub fn build_task(
     title: String,
     description: String,
     workspace_id: Option<Uuid>,
-    agent_binding: AgentBinding,
+    dispatch_preference: TaskDispatchPreference,
 ) -> Task {
     let mut task = Task::new(project_id, story_id, title, description);
     task.workspace_id = workspace_id;
-    task.agent_binding = agent_binding;
+    task.dispatch_preference = dispatch_preference;
     task
 }
 
@@ -212,14 +212,14 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
     if let Some(workspace_id) = input.workspace_id {
         task.workspace_id = workspace_id;
     }
-    if let Some(agent_binding) = input.agent_binding {
-        task.agent_binding = agent_binding;
+    if let Some(dispatch_preference) = input.dispatch_preference {
+        task.dispatch_preference = dispatch_preference;
     }
 }
 
-pub fn build_agent_binding(input: Option<AgentBindingInput>) -> AgentBinding {
+pub fn build_dispatch_preference(input: Option<TaskDispatchPreferenceInput>) -> TaskDispatchPreference {
     if let Some(value) = input {
-        AgentBinding {
+        TaskDispatchPreference {
             agent_type: normalize_option(value.agent_type),
             agent_pid: normalize_option(value.agent_pid),
             preset_name: normalize_option(value.preset_name),
@@ -228,7 +228,7 @@ pub fn build_agent_binding(input: Option<AgentBindingInput>) -> AgentBinding {
             context_sources: value.context_sources.unwrap_or_default(),
         }
     } else {
-        AgentBinding::default()
+        TaskDispatchPreference::default()
     }
 }
 
@@ -296,8 +296,8 @@ mod tests {
     use agentdash_domain::story::StoryStatus;
 
     #[test]
-    fn build_agent_binding_trims_empty_fields() {
-        let binding = build_agent_binding(Some(AgentBindingInput {
+    fn build_dispatch_preference_trims_empty_fields() {
+        let binding = build_dispatch_preference(Some(TaskDispatchPreferenceInput {
             agent_type: Some("  gpt-5  ".to_string()),
             agent_pid: Some("   ".to_string()),
             preset_name: Some(" preset-a ".to_string()),
@@ -353,21 +353,21 @@ mod tests {
             "desc".to_string(),
         );
         let workspace_id = Uuid::new_v4();
-        let binding = build_agent_binding(Some(AgentBindingInput {
+        let binding = build_dispatch_preference(Some(TaskDispatchPreferenceInput {
             agent_type: Some("runner".to_string()),
-            ..AgentBindingInput::default()
+            ..TaskDispatchPreferenceInput::default()
         }));
 
         apply_task_mutation(
             &mut task,
             TaskMutationInput {
                 workspace_id: Some(Some(workspace_id)),
-                agent_binding: Some(binding.clone()),
+                dispatch_preference: Some(binding.clone()),
                 ..TaskMutationInput::default()
             },
         );
 
         assert_eq!(task.workspace_id, Some(workspace_id));
-        assert_eq!(task.agent_binding.agent_type, binding.agent_type);
+        assert_eq!(task.dispatch_preference.agent_type, binding.agent_type);
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 use agentdash_contracts::core::{
-    AgentBinding, AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
+    TaskDispatchPreference, AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
     BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
     BackendRuntimeHealthResponse, BackendShareScopeKind, BackendType, BackendVisibility,
     BackendWithStatusResponse, ContextContainerDefinition, ContextContainerFile,
@@ -104,7 +104,7 @@ use agentdash_contracts::workflow::{
     LifecycleRunStatus, LifecycleRunView, LifecycleSubjectAssociationDto,
     ProjectActiveAgentsView, RegisterHookPresetResponse, RuntimeSessionRefDto,
     RuntimeSessionTraceView, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
-    ValidateHookScriptResponse, ValidationIssue, WorkflowContract, WorkflowGraphInstanceView,
+    ValidateHookScriptResponse, ValidationIssue, AgentProcedureContract, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -171,7 +171,7 @@ fn main() {
             export_all::<TaskStatus>(dir);
             export_all::<ArtifactType>(dir);
             export_all::<Artifact>(dir);
-            export_all::<AgentBinding>(dir);
+            export_all::<TaskDispatchPreference>(dir);
             export_all::<TaskResponse>(dir);
         },
     );
@@ -277,7 +277,7 @@ fn main() {
         &[],
         check,
         |dir| {
-            export_all::<WorkflowContract>(dir);
+            export_all::<AgentProcedureContract>(dir);
             export_all::<ActivityDefinition>(dir);
             export_all::<ActivityTransition>(dir);
             export_all::<ActivityLifecycleRunState>(dir);

@@ -138,10 +138,10 @@ impl TaskMcpServer {
             "description": task.description,
             "status": task.status(),
             "workspace_id": task.workspace_id.map(|w| w.to_string()),
-            "agent_binding": {
-                "agent_type": task.agent_binding.agent_type,
-                "preset_name": task.agent_binding.preset_name,
-                "initial_context": task.agent_binding.initial_context,
+            "dispatch_preference": {
+                "agent_type": task.dispatch_preference.agent_type,
+                "preset_name": task.dispatch_preference.preset_name,
+                "initial_context": task.dispatch_preference.initial_context,
             },
             "artifact_count": task.artifacts().len(),
         });

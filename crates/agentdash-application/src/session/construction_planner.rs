@@ -3,7 +3,7 @@ use agentdash_domain::{
     common::{AgentConfig, AgentPresetConfig},
     project::Project,
     story::Story,
-    task::AgentBinding,
+    task::TaskDispatchPreference,
     workspace::Workspace,
 };
 use agentdash_spi::CapabilityScopeCtx;
@@ -60,7 +60,7 @@ pub struct ResolvedProjectAgentContext {
 }
 
 impl RuntimeContextInspectionPlanner {
-    pub fn parse_project_agent_binding_label(label: &str) -> Option<&str> {
+    pub fn parse_project_dispatch_label(label: &str) -> Option<&str> {
         let agent_key = label
             .trim()
             .strip_prefix(PROJECT_AGENT_BINDING_LABEL_PREFIX)?;
@@ -70,7 +70,7 @@ impl RuntimeContextInspectionPlanner {
         Some(agent_key)
     }
 
-    pub fn project_agent_binding_label(agent_key: &str) -> String {
+    pub fn project_dispatch_label(agent_key: &str) -> String {
         format!("{PROJECT_AGENT_BINDING_LABEL_PREFIX}{}", agent_key.trim())
     }
 
@@ -120,7 +120,7 @@ impl RuntimeContextInspectionPlanner {
         owner: ResolvedSessionOwner,
         task_id: Uuid,
         workspace_id: Option<Uuid>,
-        agent_binding: AgentBinding,
+        dispatch_preference: TaskDispatchPreference,
         session_meta: Option<&SessionMeta>,
     ) -> RuntimeContextInspectionPlan {
         let session_id = session_id.into();
@@ -144,7 +144,7 @@ impl RuntimeContextInspectionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id,
-                agent_binding: Some(agent_binding),
+                dispatch_preference: Some(dispatch_preference),
                 vfs: resolved_vfs,
                 runtime_surface: None,
                 context_snapshot: built_context.and_then(|context| context.context_snapshot),
@@ -296,7 +296,7 @@ impl RuntimeContextInspectionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id: None,
-                agent_binding: None,
+                dispatch_preference: None,
                 vfs: plan.vfs.clone(),
                 runtime_surface: None,
                 context_snapshot: Some(snapshot),
@@ -317,7 +317,7 @@ impl RuntimeContextInspectionPlanner {
         session_meta: &SessionMeta,
     ) -> Result<RuntimeContextInspectionPlan, String> {
         let session_id = session_id.into();
-        let agent_key = Self::parse_project_agent_binding_label(binding_label)
+        let agent_key = Self::parse_project_dispatch_label(binding_label)
             .ok_or_else(|| format!("无效的项目 Agent session label: {binding_label}"))?;
         let project_agent = resolve_project_agent_context(repos, project.id, agent_key)
             .await?
@@ -467,7 +467,7 @@ impl RuntimeContextInspectionPlanner {
             owner,
             SessionConstructionContextProjection {
                 workspace_id: None,
-                agent_binding: None,
+                dispatch_preference: None,
                 vfs: plan.vfs.clone(),
                 runtime_surface: None,
                 context_snapshot: Some(snapshot),

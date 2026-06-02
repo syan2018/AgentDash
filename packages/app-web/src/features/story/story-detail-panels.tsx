@@ -17,7 +17,7 @@ import {
   createDefaultSessionComposition,
 } from "../../components/context-config-defaults";
 import { VfsBrowser } from "../vfs";
-import { resolveDefaultWorkspaceId } from "../task/agent-binding";
+import { resolveDefaultWorkspaceId } from "../task/dispatch-preference";
 import { useVfsPicker, VfsEntryPickerInline } from "../context-source";
 import { useStoryStore } from "../../stores/storyStore";
 import { sourceKindMeta } from "./context-source-utils";

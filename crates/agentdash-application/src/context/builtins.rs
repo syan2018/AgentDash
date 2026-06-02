@@ -142,14 +142,14 @@ fn resolve_instruction_template(
             if let Some(text) = clean_text(override_prompt) {
                 return text.to_string();
             }
-            task.agent_binding
+            task.dispatch_preference
                 .prompt_template
                 .clone()
                 .filter(|v| !v.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_START_TEMPLATE.to_string())
         }
         TaskExecutionPhase::Continue => task
-            .agent_binding
+            .dispatch_preference
             .prompt_template
             .clone()
             .filter(|v| !v.trim().is_empty())
@@ -284,7 +284,7 @@ pub fn contribute_core_context(
 /// Agent 绑定的 initial_context 片段。
 pub fn contribute_binding_initial_context(task: &agentdash_domain::task::Task) -> Contribution {
     let mut fragments = Vec::new();
-    if let Some(initial_context) = clean_text(task.agent_binding.initial_context.as_deref()) {
+    if let Some(initial_context) = clean_text(task.dispatch_preference.initial_context.as_deref()) {
         fragments.push(ContextFragment {
             slot: "initial_context".to_string(),
             label: "binding_initial_context".to_string(),
@@ -304,7 +304,7 @@ pub fn contribute_declared_sources(
     story: &agentdash_domain::story::Story,
 ) -> Contribution {
     let mut sources = story.context.source_refs.clone();
-    sources.extend(task.agent_binding.context_sources.clone());
+    sources.extend(task.dispatch_preference.context_sources.clone());
 
     if sources.is_empty() {
         return Contribution::fragments_only(Vec::new());

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    AgentBindingInput, CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
+    TaskDispatchPreferenceInput, CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
     StoryLifecycleLaunchService, StoryMutationInput, TaskMutationInput, apply_task_mutation,
-    build_agent_binding, build_task, create_story_record, delete_story_record,
+    build_dispatch_preference, build_task, create_story_record, delete_story_record,
     list_project_stories, update_story_record,
 };
 use axum::Json;
@@ -332,7 +332,7 @@ pub async fn create_task(
         _ => None,
     };
 
-    let mut agent_binding = build_agent_binding(req.agent_binding.map(|value| AgentBindingInput {
+    let mut dispatch_preference = build_dispatch_preference(req.dispatch_preference.map(|value| TaskDispatchPreferenceInput {
         agent_type: value.agent_type,
         agent_pid: value.agent_pid,
         preset_name: value.preset_name,
@@ -341,7 +341,7 @@ pub async fn create_task(
         context_sources: value.context_sources,
     }));
 
-    if let Some(preset_name) = agent_binding.preset_name.clone() {
+    if let Some(preset_name) = dispatch_preference.preset_name.clone() {
         let preset = project
             .config
             .agent_presets
@@ -349,16 +349,16 @@ pub async fn create_task(
             .find(|p| p.name == preset_name)
             .ok_or_else(|| ApiError::BadRequest(format!("Project 中不存在预设: {preset_name}")))?;
 
-        if agent_binding.agent_type.is_none() {
-            agent_binding.agent_type = Some(preset.agent_type.clone());
+        if dispatch_preference.agent_type.is_none() {
+            dispatch_preference.agent_type = Some(preset.agent_type.clone());
         }
     }
 
-    if agent_binding.agent_type.is_none() {
-        agent_binding.agent_type = project.config.default_agent_type.clone();
+    if dispatch_preference.agent_type.is_none() {
+        dispatch_preference.agent_type = project.config.default_agent_type.clone();
     }
 
-    if agent_binding.agent_type.is_none() && agent_binding.preset_name.is_none() {
+    if dispatch_preference.agent_type.is_none() && dispatch_preference.preset_name.is_none() {
         return Err(ApiError::UnprocessableEntity(
             "请指定 Agent 类型或预设，或在 Project 配置中设置 default_agent_type".into(),
         ));
@@ -370,7 +370,7 @@ pub async fn create_task(
         title.to_string(),
         req.description.unwrap_or_default(),
         workspace_id,
-        agent_binding,
+        dispatch_preference,
     );
 
     // M1-b：task create 走 Story aggregate 命令路径；Postgres 实现在同一事务内
@@ -455,8 +455,8 @@ pub async fn update_task(
         None
     };
 
-    let agent_binding = req.agent_binding.map(|value| {
-        build_agent_binding(Some(AgentBindingInput {
+    let dispatch_preference = req.dispatch_preference.map(|value| {
+        build_dispatch_preference(Some(TaskDispatchPreferenceInput {
             agent_type: value.agent_type,
             agent_pid: value.agent_pid,
             preset_name: value.preset_name,
@@ -471,7 +471,7 @@ pub async fn update_task(
             title,
             description: req.description,
             workspace_id,
-            agent_binding,
+            dispatch_preference,
         },
     );
 
@@ -485,7 +485,7 @@ pub async fn update_task(
         *view.title = task.title.clone();
         *view.description = task.description.clone();
         *view.workspace_id = task.workspace_id;
-        *view.agent_binding = task.agent_binding.clone();
+        *view.dispatch_preference = task.dispatch_preference.clone();
     });
     if updated_spec.is_none() {
         return Err(ApiError::NotFound(format!(

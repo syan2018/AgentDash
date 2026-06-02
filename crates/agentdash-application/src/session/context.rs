@@ -101,7 +101,7 @@ pub fn build_session_executor_summary(
 #[derive(Debug, Clone)]
 pub enum ExecutorResolution {
     /// 成功解析到 AgentConfig。`source` 描述使用的来源
-    /// （如 `task.agent_binding.preset_name` / `project.config.default_agent_type`）。
+    /// （如 `task.dispatch_preference.preset_name` / `project.config.default_agent_type`）。
     Resolved { source: String },
     /// 解析失败但被上游容忍（`strict_config_resolution=false` 场景）。
     /// `source` 描述尝试过的来源，`error` 记录失败原因。

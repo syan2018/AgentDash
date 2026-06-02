@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type {
   Story,
   Task,
-  AgentBinding,
+  TaskDispatchPreference,
   StateChange,
   ContextSourceRef,
   ContextContainerDefinition,
@@ -20,7 +20,7 @@ export interface CreateTaskInput {
   title: string;
   description?: string;
   workspace_id?: string | null;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 interface StoryState {
@@ -79,7 +79,7 @@ interface StoryState {
       description?: string;
       workspace_id?: string | null;
       status?: Task["status"];
-      agent_binding?: AgentBinding;
+      dispatch_preference?: TaskDispatchPreference;
     },
   ) => Promise<Task | null>;
   startTaskExecution: (

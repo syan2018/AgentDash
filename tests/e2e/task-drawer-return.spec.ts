@@ -162,7 +162,7 @@ async function createTask(request: APIRequestContext, storyId: string, suffix: s
     data: {
       title: `E2E 抽屉返回 Task ${suffix}`,
       description: "用于验证抽屉与会话回跳",
-      agent_binding: {
+      dispatch_preference: {
         agent_type: "codex",
       },
     },

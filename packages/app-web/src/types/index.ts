@@ -1,6 +1,6 @@
 import type { CapabilityDirective } from "./workflow";
 import type {
-  AgentBinding as CoreAgentBinding,
+  TaskDispatchPreference as CoreTaskDispatchPreference,
   AgentPreset as CoreAgentPreset,
   Artifact as CoreArtifact,
   BackendResponse,
@@ -29,7 +29,7 @@ import type {
 
 // ─── Generated Core Contracts ─────────────────────────
 
-export type AgentBinding = CoreAgentBinding & {
+export type TaskDispatchPreference = CoreTaskDispatchPreference & {
   thinking_level: ThinkingLevel | null;
 };
 export type AgentPreset = CoreAgentPreset;
@@ -41,7 +41,7 @@ export type ProjectConfig = CoreProjectConfig;
 export type ProjectSubjectGrant = ProjectSubjectGrantResponse;
 export type Story = StoryResponse;
 export type StoryContext = StoryResponse["context"];
-export type Task = Omit<TaskResponse, "agent_binding"> & { agent_binding: AgentBinding };
+export type Task = Omit<TaskResponse, "dispatch_preference"> & { dispatch_preference: TaskDispatchPreference };
 export type Workspace = WorkspaceResponse;
 export type WorkspaceBinding = WorkspaceBindingResponse;
 export type {

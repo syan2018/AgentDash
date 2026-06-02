@@ -396,7 +396,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{AgentBinding, Task};
+        use agentdash_domain::task::{TaskDispatchPreference, Task};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let workspace_id = params
@@ -415,7 +415,7 @@ impl StoryMcpServer {
             params.description,
         );
         task.workspace_id = workspace_id;
-        task.agent_binding = AgentBinding {
+        task.dispatch_preference = TaskDispatchPreference {
             agent_type: params.agent_type,
             initial_context: params.initial_context,
             context_sources: params
@@ -453,7 +453,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{AgentBinding, Task};
+        use agentdash_domain::task::{TaskDispatchPreference, Task};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let mut created_ids = Vec::new();
@@ -476,7 +476,7 @@ impl StoryMcpServer {
                 input.description.clone(),
             );
             task.workspace_id = workspace_id;
-            task.agent_binding = AgentBinding {
+            task.dispatch_preference = TaskDispatchPreference {
                 agent_type: input.agent_type.clone(),
                 initial_context: input.initial_context.clone(),
                 context_sources: input
@@ -526,7 +526,7 @@ impl StoryMcpServer {
                     "description": t.description,
                     "status": t.status(),
                     "workspace_id": t.workspace_id.map(|w| w.to_string()),
-                    "agent_type": t.agent_binding.agent_type,
+                    "agent_type": t.dispatch_preference.agent_type,
                 })
             })
             .collect();

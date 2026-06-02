@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{AgentBinding, Artifact, TaskExecutionProjection, TaskStatus};
+use super::value_objects::{TaskDispatchPreference, Artifact, TaskExecutionProjection, TaskStatus};
 
 /// Task — 用户工作项状态视图
 ///
@@ -18,7 +18,7 @@ use super::value_objects::{AgentBinding, Artifact, TaskExecutionProjection, Task
 /// - `status` / `artifacts` 是 LifecycleStepState 的**只读投影**；外部代码不可直写。
 /// - 字段设置为 `pub(crate)`（限 domain crate 内部可见），仅通过 [`Task::apply_projection`]
 ///   与聚合层 [`Story::apply_task_projection`] 经由 projector 修改。
-/// - spec 字段（title / description / agent_binding / workspace_id 等）保持公开可写；
+/// - spec 字段（title / description / dispatch_preference / workspace_id 等）保持公开可写；
 ///   但 `Story::update_task` 的 closure 签名通过 [`TaskSpecMut`] 收紧，仅允许改 spec。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -35,7 +35,7 @@ pub struct Task {
     ///
     /// Consumed by `resolve_task_executor_config` at dispatch to build `AgentConfig`;
     /// after dispatch, runtime truth is owned by `LifecycleAgent → AgentFrame`.
-    pub agent_binding: AgentBinding,
+    pub dispatch_preference: TaskDispatchPreference,
     /// 结构化执行产物列表：只读投影字段，外部不可直写（M2）。
     pub(crate) artifacts: Vec<Artifact>,
     pub created_at: DateTime<Utc>,
@@ -53,7 +53,7 @@ impl Task {
             title,
             description,
             status: TaskStatus::Pending,
-            agent_binding: AgentBinding::default(),
+            dispatch_preference: TaskDispatchPreference::default(),
             artifacts: vec![],
             created_at: now,
             updated_at: now,
@@ -129,7 +129,7 @@ pub struct TaskSpecMut<'a> {
     pub title: &'a mut String,
     pub description: &'a mut String,
     pub workspace_id: &'a mut Option<Uuid>,
-    pub agent_binding: &'a mut AgentBinding,
+    pub dispatch_preference: &'a mut TaskDispatchPreference,
     pub updated_at: &'a mut DateTime<Utc>,
 }
 
@@ -143,7 +143,7 @@ impl<'a> TaskSpecMut<'a> {
             title: &mut task.title,
             description: &mut task.description,
             workspace_id: &mut task.workspace_id,
-            agent_binding: &mut task.agent_binding,
+            dispatch_preference: &mut task.dispatch_preference,
             updated_at: &mut task.updated_at,
         }
     }

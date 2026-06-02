@@ -10,14 +10,14 @@ use crate::session::construction_use_case::{
 use crate::session::{LaunchCommand, RuntimeCommandRecord, SessionMeta, UserPromptInput};
 use agentdash_domain::project::Project;
 use agentdash_domain::story::Story;
-use agentdash_domain::task::AgentBinding;
+use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::AuthIdentity;
 
 pub enum SessionContextQueryOwnerFacts {
     Task {
         task_id: Uuid,
         workspace_id: Option<Uuid>,
-        agent_binding: AgentBinding,
+        dispatch_preference: TaskDispatchPreference,
     },
     Story {
         story: Story,
@@ -46,7 +46,7 @@ pub async fn build_session_context_plan(
         SessionContextQueryOwnerFacts::Task {
             task_id,
             workspace_id,
-            agent_binding,
+            dispatch_preference,
         } => {
             RuntimeContextInspectionPlanner::plan_task_context_query(
                 deps.repos,
@@ -57,7 +57,7 @@ pub async fn build_session_context_plan(
                 input.owner,
                 task_id,
                 workspace_id,
-                agent_binding,
+                dispatch_preference,
                 Some(&input.session_meta),
             )
             .await

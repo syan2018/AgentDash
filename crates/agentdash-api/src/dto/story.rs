@@ -57,7 +57,7 @@ pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub agent_binding: Option<CreateTaskAgentBindingRequest>,
+    pub dispatch_preference: Option<CreateTaskAgentBindingRequest>,
 }
 
 #[derive(Deserialize, Default)]
@@ -65,5 +65,5 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub agent_binding: Option<CreateTaskAgentBindingRequest>,
+    pub dispatch_preference: Option<CreateTaskAgentBindingRequest>,
 }

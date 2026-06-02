@@ -1012,7 +1012,7 @@ impl From<agentdash_domain::task::Artifact> for Artifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
-pub struct AgentBinding {
+pub struct TaskDispatchPreference {
     pub agent_type: Option<String>,
     pub agent_pid: Option<String>,
     pub preset_name: Option<String>,
@@ -1021,8 +1021,8 @@ pub struct AgentBinding {
     pub context_sources: Vec<ContextSourceRef>,
 }
 
-impl From<agentdash_domain::task::AgentBinding> for AgentBinding {
-    fn from(value: agentdash_domain::task::AgentBinding) -> Self {
+impl From<agentdash_domain::task::TaskDispatchPreference> for TaskDispatchPreference {
+    fn from(value: agentdash_domain::task::TaskDispatchPreference) -> Self {
         Self {
             agent_type: value.agent_type,
             agent_pid: value.agent_pid,
@@ -1047,7 +1047,7 @@ pub struct TaskResponse {
     pub title: String,
     pub description: String,
     pub status: TaskStatus,
-    pub agent_binding: AgentBinding,
+    pub dispatch_preference: TaskDispatchPreference,
     pub artifacts: Vec<Artifact>,
     pub created_at: String,
     pub updated_at: String,
@@ -1063,7 +1063,7 @@ impl From<agentdash_domain::task::Task> for TaskResponse {
             title: value.title.clone(),
             description: value.description.clone(),
             status: TaskStatus::from(value.status().clone()),
-            agent_binding: AgentBinding::from(value.agent_binding.clone()),
+            dispatch_preference: TaskDispatchPreference::from(value.dispatch_preference.clone()),
             artifacts: value
                 .artifacts()
                 .iter()

@@ -3,5 +3,5 @@ mod value_objects;
 
 pub use entity::{Task, TaskSpecMut};
 pub use value_objects::{
-    AgentBinding, Artifact, ArtifactType, TaskExecutionProjection, TaskStatus,
+    TaskDispatchPreference, Artifact, ArtifactType, TaskExecutionProjection, TaskStatus,
 };

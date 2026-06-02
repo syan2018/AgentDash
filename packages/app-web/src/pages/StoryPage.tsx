@@ -164,7 +164,7 @@ function StoryTaskRows({
             {workspaceName(task.workspace_id)}
           </span>
           <span className="hidden min-w-0 truncate text-xs text-muted-foreground lg:block">
-            {task.agent_binding.agent_type ?? task.agent_binding.preset_name ?? "未指定 Agent"}
+            {task.dispatch_preference.agent_type ?? task.dispatch_preference.preset_name ?? "未指定 Agent"}
           </span>
           <span className={`hidden text-right text-xs font-medium lg:block ${taskReviewLabel(task.status).className}`}>
             {taskReviewLabel(task.status).label}

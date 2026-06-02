@@ -138,7 +138,7 @@ pub async fn build_task_session_context(
     };
     runtime_vfs = ensure_active_workflow_lifecycle_mount(runtime_vfs, workflow.as_ref());
 
-    let preset_name = normalize_optional_string(task.agent_binding.preset_name.clone());
+    let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {
         let visible_canvas_mount_ids = session_meta
             .map(|meta| meta.visible_canvas_mount_ids.as_slice())

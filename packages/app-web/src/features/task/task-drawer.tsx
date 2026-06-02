@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { AgentBinding, Artifact, ProjectConfig, Task, Workspace } from "../../types";
+import type { TaskDispatchPreference, Artifact, ProjectConfig, Task, Workspace } from "../../types";
 import { TaskStatusBadge } from "../../components/ui/status-badge";
 import { useStoryStore } from "../../stores/storyStore";
 import {
@@ -8,12 +8,12 @@ import {
   DetailPanel,
   DetailSection,
 } from "@agentdash/ui";
-import { AgentBindingFields } from "./agent-binding-fields";
+import { DispatchPreferenceFields } from "./dispatch-preference-fields";
 import {
-  createDefaultAgentBinding,
-  hasAgentBindingSelection,
-  normalizeAgentBinding,
-} from "./agent-binding";
+  createDefaultDispatchPreference,
+  hasDispatchPreferenceSelection,
+  normalizeDispatchPreference,
+} from "./dispatch-preference";
 import { TaskSubjectExecutionPanel } from "./task-subject-execution-panel";
 
 interface TaskDrawerProps {
@@ -71,8 +71,8 @@ export function TaskDrawer({
   const [editTitle, setEditTitle] = useState(task?.title ?? "");
   const [editDescription, setEditDescription] = useState(task?.description ?? "");
   const [editWorkspaceId, setEditWorkspaceId] = useState(task?.workspace_id ?? "");
-  const [editAgentBinding, setEditAgentBinding] = useState<AgentBinding>(
-    task?.agent_binding ?? createDefaultAgentBinding(projectConfig),
+  const [editDispatchPref, setEditDispatchPref] = useState<TaskDispatchPreference>(
+    task?.dispatch_preference ?? createDefaultDispatchPreference(projectConfig),
   );
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -90,14 +90,14 @@ export function TaskDrawer({
 
   if (!task) return null;
 
-  const agentLabel = task.agent_binding?.agent_type ?? "未指定 Agent";
+  const agentLabel = task.dispatch_preference?.agent_type ?? "未指定 Agent";
   const hasArtifacts = sortedArtifacts.length > 0;
 
   const applyTaskSnapshot = (nextTask: Task) => {
     setEditTitle(nextTask.title);
     setEditDescription(nextTask.description ?? "");
     setEditWorkspaceId(nextTask.workspace_id ?? "");
-    setEditAgentBinding(nextTask.agent_binding ?? createDefaultAgentBinding(projectConfig));
+    setEditDispatchPref(nextTask.dispatch_preference ?? createDefaultDispatchPreference(projectConfig));
     setFormMessage(null);
   };
 
@@ -107,7 +107,7 @@ export function TaskDrawer({
       setFormMessage("Task 标题不能为空");
       return;
     }
-    if (!hasAgentBindingSelection(editAgentBinding, projectConfig)) {
+    if (!hasDispatchPreferenceSelection(editDispatchPref, projectConfig)) {
       setFormMessage("请指定 Agent 类型或预设，或先在 Project 配置中设置 default_agent_type");
       return;
     }
@@ -116,7 +116,7 @@ export function TaskDrawer({
       title: trimmedTitle,
       description: editDescription,
       workspace_id: editWorkspaceId || null,
-      agent_binding: normalizeAgentBinding(editAgentBinding),
+      dispatch_preference: normalizeDispatchPreference(editDispatchPref),
     });
     if (!updated) return;
 
@@ -197,16 +197,16 @@ export function TaskDrawer({
 
               <div className="rounded-[12px] border border-border bg-background p-3">
                 <p className="mb-2 text-xs text-muted-foreground">Agent 绑定</p>
-                <AgentBindingFields
-                  value={editAgentBinding}
+                <DispatchPreferenceFields
+                  value={editDispatchPref}
                   projectConfig={projectConfig}
-                  onChange={setEditAgentBinding}
+                  onChange={setEditDispatchPref}
                 />
 
-                {editAgentBinding.context_sources.length > 0 && (
+                {editDispatchPref.context_sources.length > 0 && (
                   <div className="mt-3 space-y-2 border-t border-border pt-3">
                     <p className="text-xs text-muted-foreground">已分配 Story 上下文</p>
-                    {editAgentBinding.context_sources.map((context, index) => (
+                    {editDispatchPref.context_sources.map((context, index) => (
                       <div
                         key={`${context.label ?? "task-context"}-${index}`}
                         className="rounded-[8px] border border-border bg-secondary/25 px-3 py-2"

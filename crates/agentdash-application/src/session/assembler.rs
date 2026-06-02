@@ -929,7 +929,7 @@ impl<'a> SessionRequestAssembler<'a> {
         effective_agent_type: Option<&str>,
     ) -> Result<(SessionContextBundle, TaskExecutionPhase), TaskExecutionError> {
         let mut declared_sources = spec.story.context.source_refs.clone();
-        declared_sources.extend(spec.task.agent_binding.context_sources.clone());
+        declared_sources.extend(spec.task.dispatch_preference.context_sources.clone());
         let resolved_workspace_sources = resolve_workspace_declared_sources(
             self.availability,
             self.vfs_service,
@@ -996,16 +996,16 @@ impl<'a> SessionRequestAssembler<'a> {
                 mcp_servers: &task_mcp_servers,
                 session_composition: effective_session_composition.as_ref(),
                 agent_type: effective_agent_type,
-                preset_name: spec.task.agent_binding.preset_name.as_deref(),
+                preset_name: spec.task.dispatch_preference.preset_name.as_deref(),
                 has_custom_prompt_template: spec
                     .task
-                    .agent_binding
+                    .dispatch_preference
                     .prompt_template
                     .as_deref()
                     .is_some_and(|value| !value.trim().is_empty()),
                 has_initial_context: spec
                     .task
-                    .agent_binding
+                    .dispatch_preference
                     .initial_context
                     .as_deref()
                     .is_some_and(|value| !value.trim().is_empty()),
@@ -1759,7 +1759,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
         AgentActivityExecutorSpec, AgentProcedure, DefinitionSource, InputPortDefinition,
-        LifecycleNodeType, OutputPortDefinition, WorkflowContract, WorkflowGraph,
+        LifecycleNodeType, OutputPortDefinition, AgentProcedureContract, WorkflowGraph,
         WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;
@@ -2089,12 +2089,12 @@ mod tests {
             "Implementation",
             "实现工作流",
             DefinitionSource::BuiltinSeed,
-            WorkflowContract {
+            AgentProcedureContract {
                 injection: WorkflowInjectionSpec {
                     guidance: Some("交付可验证实现。\n\n保持上下文收口。".to_string()),
                     context_bindings: vec![],
                 },
-                ..WorkflowContract::default()
+                ..AgentProcedureContract::default()
             },
         )
         .expect("workflow");

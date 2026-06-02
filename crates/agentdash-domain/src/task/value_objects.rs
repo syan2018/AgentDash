@@ -61,21 +61,16 @@ impl TaskExecutionProjection {
 
 /// Task authoring preference for agent execution — a **static declaration**, not runtime truth.
 ///
-/// `AgentBinding` captures the user's intent for which agent type, preset, prompt template,
-/// and initial context to use when executing a Task. It is purely a **configuration preference**
-/// attached to the Task at creation / edit time.
+/// Captures the user's intent for which agent type, preset, prompt template,
+/// and initial context to use when executing a Task.
 ///
-/// At dispatch time, [`resolve_task_executor_config`](agentdash_application) consumes these
-/// preferences and converts them into an `AgentConfig` that feeds into
-/// `SubjectExecutionIntent` dispatch policies. Once dispatch completes, runtime truth lives in
-/// `LifecycleAgent → AgentFrame`; the Task entity does NOT participate in runtime decisions
-/// after dispatch.
+/// At dispatch time, the resolver consumes these preferences to build `AgentConfig`
+/// for `SubjectExecutionIntent`. Once dispatch completes, runtime truth lives in
+/// `LifecycleAgent → AgentFrame`.
 ///
-/// **Boundary**: This struct belongs to the Task *spec* layer (user-editable fields).
-/// It is NOT runtime state — runtime agent identity, capability set, and session bindings
-/// are owned by the `AgentFrame` evidence chain.
+/// **Boundary**: belongs to the Task *spec* layer (user-editable fields), not runtime state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AgentBinding {
+pub struct TaskDispatchPreference {
     /// Preferred agent type identifier (e.g. "claude-code", "codex", "gemini").
     /// Consumed by `resolve_task_agent_config` at dispatch time.
     pub agent_type: Option<String>,

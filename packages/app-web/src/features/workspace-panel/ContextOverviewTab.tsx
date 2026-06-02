@@ -39,8 +39,8 @@ export interface ContextOverviewTabProps {
 // ─── Constants ──────────────────────────────────────────
 
 const EXECUTOR_SOURCE_LABELS: Record<string, string> = {
-  "task.agent_binding.agent_type": "Task 显式 agent_type",
-  "task.agent_binding.preset_name": "Task 预设",
+  "task.dispatch_preference.agent_type": "Task 显式 agent_type",
+  "task.dispatch_preference.preset_name": "Task 预设",
   "project.config.default_agent_type": "Project 默认 Agent",
   "session.meta.executor_config": "当前 Session 实际执行器",
   unresolved: "未解析",

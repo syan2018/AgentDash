@@ -8,7 +8,7 @@
 import { api } from "../api/client";
 import { requireStringField } from "../api/mappers";
 import type {
-  AgentBinding,
+  TaskDispatchPreference,
   ContextContainerDefinition,
   ContextSourceRef,
   SessionComposition,
@@ -132,30 +132,30 @@ const mapStory = (raw: Record<string, unknown>): Story => {
   };
 };
 
-const mapAgentBinding = (raw: unknown): AgentBinding => {
+const mapDispatchPreference = (raw: unknown): TaskDispatchPreference => {
   if (!raw || typeof raw !== "object") {
-    throw new Error("Task 缺少 agent_binding");
+    throw new Error("Task 缺少 dispatch_preference");
   }
 
-  const binding = raw as Record<string, unknown>;
+  const pref = raw as Record<string, unknown>;
   return {
-    agent_type: binding.agent_type ? String(binding.agent_type) : null,
-    agent_pid: binding.agent_pid ? String(binding.agent_pid) : null,
-    preset_name: binding.preset_name ? String(binding.preset_name) : null,
-    prompt_template: binding.prompt_template ? String(binding.prompt_template) : null,
-    initial_context: binding.initial_context ? String(binding.initial_context) : null,
+    agent_type: pref.agent_type ? String(pref.agent_type) : null,
+    agent_pid: pref.agent_pid ? String(pref.agent_pid) : null,
+    preset_name: pref.preset_name ? String(pref.preset_name) : null,
+    prompt_template: pref.prompt_template ? String(pref.prompt_template) : null,
+    initial_context: pref.initial_context ? String(pref.initial_context) : null,
     thinking_level:
-      binding.thinking_level == null
+      pref.thinking_level == null
         ? null
-        : isThinkingLevel(binding.thinking_level)
-          ? binding.thinking_level
+        : isThinkingLevel(pref.thinking_level)
+          ? pref.thinking_level
           : (() => {
-              throw new Error(`未知 thinking_level: ${String(binding.thinking_level)}`);
+              throw new Error(`未知 thinking_level: ${String(pref.thinking_level)}`);
             })(),
-    context_sources: Array.isArray(binding.context_sources)
-      ? (binding.context_sources as ContextSourceRef[])
+    context_sources: Array.isArray(pref.context_sources)
+      ? (pref.context_sources as ContextSourceRef[])
       : (() => {
-          throw new Error("agent_binding.context_sources 必须是数组");
+          throw new Error("dispatch_preference.context_sources 必须是数组");
         })(),
   };
 };
@@ -191,7 +191,7 @@ const mapTask = (raw: Record<string, unknown>): Task => {
     title: requireStringField(raw, "title"),
     description: raw.description ? String(raw.description) : "",
     status: normalizeTaskStatus(requireStringField(raw, "status")),
-    agent_binding: mapAgentBinding(raw.agent_binding),
+    dispatch_preference: mapDispatchPreference(raw.dispatch_preference),
     artifacts:
       raw.artifacts == null
         ? []
@@ -320,7 +320,7 @@ export interface CreateTaskPayload {
   title: string;
   description?: string;
   workspace_id?: string | null;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 export async function createTask(storyId: string, payload: CreateTaskPayload): Promise<Task> {
@@ -332,7 +332,7 @@ export interface UpdateTaskPayload {
   title?: string;
   description?: string;
   workspace_id?: string | null;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 export async function updateTask(taskId: string, payload: UpdateTaskPayload): Promise<Task> {

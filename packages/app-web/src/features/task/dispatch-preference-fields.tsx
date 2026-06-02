@@ -1,12 +1,12 @@
 import { useMemo } from "react";
-import type { AgentBinding, ProjectConfig, ThinkingLevel } from "../../types";
+import type { TaskDispatchPreference, ProjectConfig, ThinkingLevel } from "../../types";
 import { THINKING_LEVEL_OPTIONS } from "../../types";
 import { useExecutorDiscovery } from "../executor-selector";
 
-export interface AgentBindingFieldsProps {
-  value: AgentBinding;
+export interface DispatchPreferenceFieldsProps {
+  value: TaskDispatchPreference;
   projectConfig?: ProjectConfig;
-  onChange: (value: AgentBinding) => void;
+  onChange: (value: TaskDispatchPreference) => void;
 }
 
 interface AgentTypeOption {
@@ -40,7 +40,7 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function AgentBindingFields({ value, projectConfig, onChange }: AgentBindingFieldsProps) {
+export function DispatchPreferenceFields({ value, projectConfig, onChange }: DispatchPreferenceFieldsProps) {
   const { executors, isLoading, error } = useExecutorDiscovery();
 
   const agentTypeOptions = useMemo(
@@ -51,17 +51,17 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
   const projectDefaultAgentType = normalizeOptionalText(projectConfig?.default_agent_type);
   const hasSelectedAgentType = agentTypeOptions.some((option) => option.value === value.agent_type);
 
-  const updateBinding = (patch: Partial<AgentBinding>) => {
+  const updatePref = (patch: Partial<TaskDispatchPreference>) => {
     onChange({ ...value, ...patch });
   };
 
   const handlePresetChange = (presetName: string) => {
     if (!presetName) {
-      updateBinding({ preset_name: null });
+      updatePref({ preset_name: null });
       return;
     }
     const preset = presets.find((item) => item.name === presetName);
-    updateBinding({
+    updatePref({
       preset_name: presetName,
       agent_type: normalizeOptionalText(preset?.agent_type),
     });
@@ -74,7 +74,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
           <label className="agentdash-form-label">Agent 类型</label>
           <select
             value={value.agent_type ?? ""}
-            onChange={(event) => updateBinding({ agent_type: event.target.value || null })}
+            onChange={(event) => updatePref({ agent_type: event.target.value || null })}
             className="agentdash-form-select"
           >
             <option value="">
@@ -121,7 +121,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
         <label className="agentdash-form-label">Prompt 模板</label>
         <textarea
           value={value.prompt_template ?? ""}
-          onChange={(event) => updateBinding({ prompt_template: event.target.value || null })}
+          onChange={(event) => updatePref({ prompt_template: event.target.value || null })}
           rows={3}
           placeholder="留空则使用系统默认模板"
           className="agentdash-form-textarea"
@@ -132,7 +132,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
         <label className="agentdash-form-label">Initial Context</label>
         <textarea
           value={value.initial_context ?? ""}
-          onChange={(event) => updateBinding({ initial_context: event.target.value || null })}
+          onChange={(event) => updatePref({ initial_context: event.target.value || null })}
           rows={3}
           placeholder="可补充执行前置约束、上下文说明"
           className="agentdash-form-textarea"
@@ -144,7 +144,7 @@ export function AgentBindingFields({ value, projectConfig, onChange }: AgentBind
         <select
           value={value.thinking_level ?? ""}
           onChange={(event) =>
-            updateBinding({
+            updatePref({
               thinking_level: (event.target.value as ThinkingLevel) || undefined,
             })
           }

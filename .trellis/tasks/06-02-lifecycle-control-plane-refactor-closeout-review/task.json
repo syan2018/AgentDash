@@ -3,7 +3,7 @@
   "name": "lifecycle-control-plane-refactor-closeout-review",
   "title": "Lifecycle 控制面重构收口复核",
   "description": "Codex review 发现当前 Lifecycle 控制面重构主体已迁移但尚未完成；本任务追踪测试编译、anchor 证据链、旧 construction 类型、前端 session-first 残留、port output scope 与 SessionMeta 过宽职责的收口。",
-  "status": "planning",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,11 +11,11 @@
   "creator": "claude-agent",
   "assignee": "claude-agent",
   "createdAt": "2026-06-02",
-  "completedAt": null,
-  "branch": null,
+  "completedAt": "2026-06-03",
+  "branch": "codex/refactor-lifecycle-control-plane",
   "base_branch": "codex/refactor-lifecycle-control-plane",
   "worktree_path": null,
-  "commit": null,
+  "commit": "de53d8ce,afec675e,653b94ab,e10dd361,5b0b379a",
   "pr_url": null,
   "subtasks": [],
   "children": [],
@@ -25,6 +25,8 @@
   "meta": {
     "created_from_review": "codex_current_state_review_2026_06_02",
     "review_verdict": "main_structure_landed_but_not_complete",
-    "blocking_validation": "cargo test -p agentdash-domain --lib fails due stale dispatch DTO test fields; cargo test -p agentdash-application --lib fails in canvas present frame projection"
+    "blocking_validation": "cargo test -p agentdash-domain --lib fails due stale dispatch DTO test fields; cargo test -p agentdash-application --lib fails in canvas present frame projection",
+    "closeout_verification": "cargo check --workspace; cargo test -p agentdash-domain --lib -- --format terse; cargo test -p agentdash-application --lib -- --format terse; pnpm --filter app-web run typecheck; lifecycle/frontend/artifact residual scans",
+    "closeout_notes": "RuntimeSession anchor、旧 construction production exposure、frontend agent-frame runtime derivation、activity attempt scoped artifacts、runtime trace launch state 已按分阶段提交完成。pnpm dev 使用临时 AGENTDASH_DATA_ROOT 完成 API/frontend/runtime smoke；真实 Project Agent launch 在空临时库缺 builtin.freeform_session 时停止。"
   }
 }

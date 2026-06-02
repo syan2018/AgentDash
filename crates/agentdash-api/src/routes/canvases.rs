@@ -30,7 +30,7 @@ use crate::dto::{
     ListProjectCanvasesPath, PromoteCanvasToExtensionRequest, UpdateCanvasRequest,
 };
 use crate::rpc::ApiError;
-use crate::session_construction::build_session_context_plan;
+use crate::session_construction::resolve_session_frame_vfs;
 
 pub async fn list_project_canvases(
     State(state): State<Arc<AppState>>,
@@ -342,7 +342,7 @@ async fn resolve_canvas_runtime_vfs(
         return Ok(None);
     };
 
-    Ok(build_session_context_plan(state, current_user, session_id)
+    Ok(resolve_session_frame_vfs(state, current_user, session_id)
         .await?
-        .and_then(|plan| plan.context_projection.vfs))
+        .vfs)
 }

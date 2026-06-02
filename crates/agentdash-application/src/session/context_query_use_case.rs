@@ -1,3 +1,8 @@
+//! **DEPRECATED**: Phase 5A 已将所有 API 消费者迁移到 frame-based read model
+//! (`AgentFrameSurfaceExt::typed_vfs()`)。此模块仅保留供 audit trace 路径参考，
+//! 新代码不应引入对此模块的依赖。
+#![allow(deprecated)]
+
 use uuid::Uuid;
 
 use crate::error::ApplicationError;
@@ -13,6 +18,7 @@ use agentdash_domain::story::Story;
 use agentdash_domain::task::TaskDispatchPreference;
 use agentdash_spi::AuthIdentity;
 
+#[deprecated(note = "已被 frame-based read model 替代，参见 session_construction::resolve_session_frame_vfs")]
 pub enum SessionContextQueryOwnerFacts {
     Task {
         task_id: Uuid,
@@ -28,6 +34,7 @@ pub enum SessionContextQueryOwnerFacts {
     },
 }
 
+#[deprecated(note = "已被 frame-based read model 替代")]
 pub struct SessionContextQueryInput {
     pub session_id: String,
     pub owner: ResolvedSessionOwner,
@@ -38,6 +45,7 @@ pub struct SessionContextQueryInput {
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
 }
 
+#[deprecated(note = "已被 frame-based read model 替代，参见 session_construction::resolve_session_frame_vfs")]
 pub async fn build_session_context_plan(
     deps: &SessionConstructionUseCaseDeps<'_>,
     input: SessionContextQueryInput,

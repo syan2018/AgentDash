@@ -16,7 +16,7 @@ use crate::{
     },
     routes::sessions::ensure_session_permission,
     rpc::ApiError,
-    session_construction::build_session_context_plan,
+    session_construction::resolve_session_frame_vfs,
     vfs_surface_runtime::ApiVfsSurfaceRuntimeProjection,
 };
 
@@ -202,9 +202,9 @@ pub(crate) async fn resolve_surface_bundle(
         }
         ResolvedVfsSurfaceSource::SessionRuntime { session_id } => {
             ensure_session_permission(state.as_ref(), current_user, session_id, permission).await?;
-            build_session_context_plan(state, current_user, session_id)
+            resolve_session_frame_vfs(state, current_user, session_id)
                 .await?
-                .and_then(|plan| plan.context_projection.vfs)
+                .vfs
                 .unwrap_or_default()
         }
     };

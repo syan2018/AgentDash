@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::launch::LaunchCommand;
 use super::runtime_commands::RuntimeCommandRecord;
 use super::types::SessionMeta;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
 use agentdash_spi::ConnectorError;
 use async_trait::async_trait;
@@ -71,14 +71,14 @@ pub struct SessionConstructionProviderInput {
 /// Session launch 的 construction provider 契约。
 ///
 /// 实现方负责从 session 元数据推断 owner / workspace / capability / context 等
-/// 运行时字段，产出 `RuntimeLaunchRequest` 驱动 connector 启动。
+/// 运行时字段，产出 `FrameLaunchEnvelope` 驱动 connector 启动。
 #[async_trait]
 pub trait SessionConstructionProvider: Send + Sync {
-    /// 产出 RuntimeLaunchRequest —— session launch 的唯一输入。
+    /// 产出 FrameLaunchEnvelope —— session launch 的唯一输入。
     async fn build_frame_construction(
         &self,
         input: SessionConstructionProviderInput,
-    ) -> Result<RuntimeLaunchRequest, ConnectorError>;
+    ) -> Result<FrameLaunchEnvelope, ConnectorError>;
 }
 
 /// 动态类型别名，便于在 hub 内存储。

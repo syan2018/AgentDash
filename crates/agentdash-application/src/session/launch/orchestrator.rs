@@ -8,6 +8,7 @@ use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
 use crate::workflow::AgentFrameBuilder;
 use crate::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
+// RuntimeLaunchRequest still used in test helpers; will be fully removed when test helpers migrate
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -84,7 +85,7 @@ impl SessionLaunchOrchestrator {
         };
         let agent_needs_bootstrap_early =
             Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
-        let launch_request = match provider
+        let launch_envelope = match provider
             .build_frame_construction(SessionConstructionProviderInput {
                 session_id: sid.clone(),
                 command: command.clone(),
@@ -95,7 +96,7 @@ impl SessionLaunchOrchestrator {
             })
             .await
         {
-            Ok(req) => req,
+            Ok(envelope) => envelope,
             Err(error) => {
                 self.deps
                     .turn_supervisor
@@ -104,7 +105,7 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        let context_sources = launch_request
+        let context_sources = launch_envelope
             .context_bundle
             .as_ref()
             .map(|bundle| {
@@ -123,7 +124,7 @@ impl SessionLaunchOrchestrator {
         };
         let context_sources = facts.context_sources.clone();
         let turn_id = self
-            .launch_with_request(session_id, &command, launch_request, facts)
+            .launch_with_envelope(session_id, &command, launch_envelope, facts)
             .await?;
         Ok(LaunchCommandOutcome {
             turn_id,
@@ -137,6 +138,12 @@ impl SessionLaunchOrchestrator {
         session_id: &str,
         launch_request: RuntimeLaunchRequest,
     ) -> Result<String, ConnectorError> {
+        let launch_envelope =
+            FrameLaunchEnvelope::try_from_launch_request(launch_request.clone()).map_err(|msg| {
+                ConnectorError::InvalidConfig(format!(
+                    "session construction 产出不完整: {msg}"
+                ))
+            })?;
         let user_input = UserPromptInput {
             prompt_blocks: launch_request.prompt_blocks.clone(),
             env: launch_request.environment_variables.clone(),
@@ -171,6 +178,12 @@ impl SessionLaunchOrchestrator {
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
         let launch_request =
             Self::finalize_request_for_test(launch_request, &requested_runtime_commands);
+        let launch_envelope =
+            FrameLaunchEnvelope::try_from_launch_request(launch_request).map_err(|msg| {
+                ConnectorError::InvalidConfig(format!(
+                    "test construction 产出不完整: {msg}"
+                ))
+            })?;
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -178,7 +191,7 @@ impl SessionLaunchOrchestrator {
             requested_runtime_commands,
             context_sources: Vec::new(),
         };
-        self.launch_with_request(session_id, &command, launch_request, facts)
+        self.launch_with_envelope(session_id, &command, launch_envelope, facts)
             .await
     }
 
@@ -247,11 +260,11 @@ impl SessionLaunchOrchestrator {
     }
 
     /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。
-    async fn launch_with_request(
+    async fn launch_with_envelope(
         &self,
         session_id: &str,
         command: &LaunchCommand,
-        launch_request: RuntimeLaunchRequest,
+        launch_envelope: FrameLaunchEnvelope,
         facts: LaunchRuntimeFacts,
     ) -> Result<String, ConnectorError> {
         let LaunchRuntimeFacts {
@@ -265,12 +278,6 @@ impl SessionLaunchOrchestrator {
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let agent_needs_bootstrap = Self::resolve_agent_needs_bootstrap(deps, session_id).await;
-        let launch_envelope =
-            FrameLaunchEnvelope::try_from_launch_request(launch_request).map_err(|msg| {
-                ConnectorError::InvalidConfig(format!(
-                    "session {sid} construction 产出不完整: {msg}"
-                ))
-            })?;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,

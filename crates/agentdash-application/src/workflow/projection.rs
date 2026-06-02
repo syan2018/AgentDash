@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository,
     AgentFrameRepository, AgentProcedure, AgentProcedureRepository, LifecycleAgentRepository,
-    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, WorkflowContract, WorkflowGraph,
+    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, AgentProcedureContract, WorkflowGraph,
     WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::hooks::HookControlTarget;
@@ -18,7 +18,7 @@ use super::session_association::{
 ///
 /// 不持有 `effective_contract` 字段——消费者需要 contract 4 字段时,
 /// 直接通过 [`ActiveWorkflowProjection::active_contract`] 取到关联 workflow
-/// 的 [`WorkflowContract`] 即可。SPI `ActiveWorkflowSnapshot.effective_contract`
+/// 的 [`AgentProcedureContract`] 即可。SPI `ActiveWorkflowSnapshot.effective_contract`
 /// 仍由 provider 在构造 snapshot 时按需用 `build_effective_contract` 派生,
 /// 本结构不重复存一份。
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ impl ActiveWorkflowProjection {
     ///
     /// - `Some(&contract)`:activity 绑定了 workflow,返回其 contract
     /// - `None`:未绑定 workflow,消费者按"空 contract"语义处理
-    pub fn active_contract(&self) -> Option<&WorkflowContract> {
+    pub fn active_contract(&self) -> Option<&AgentProcedureContract> {
         self.primary_workflow.as_ref().map(|w| &w.contract)
     }
 
@@ -261,18 +261,18 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         ActivityLifecycleRunState, ActivityRunStatus, AgentActivityExecutorSpec, AgentProcedure,
-        DefinitionSource, OutputPortDefinition, WorkflowContract, WorkflowGraph,
+        DefinitionSource, OutputPortDefinition, AgentProcedureContract, WorkflowGraph,
         WorkflowInjectionSpec,
     };
     use uuid::Uuid;
 
     let project_id = Uuid::new_v4();
-    let contract = WorkflowContract {
+    let contract = AgentProcedureContract {
         injection: WorkflowInjectionSpec {
             guidance,
             ..WorkflowInjectionSpec::default()
         },
-        ..WorkflowContract::default()
+        ..AgentProcedureContract::default()
     };
     let definition = AgentProcedure::new(
         Uuid::new_v4(),

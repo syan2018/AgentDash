@@ -3,7 +3,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
     ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
-    ArtifactAliasPolicy, DefinitionSource, WorkflowContract, WorkflowGraph,
+    ArtifactAliasPolicy, DefinitionSource, AgentProcedureContract, WorkflowGraph,
     WorkflowGraphRepository,
 };
 
@@ -68,7 +68,7 @@ pub fn build_freeform_workflow(
         "Freeform Agent",
         "普通自由会话的默认 Agent contract。",
         DefinitionSource::BuiltinSeed,
-        WorkflowContract::default(),
+        AgentProcedureContract::default(),
     )
     .map_err(WorkflowApplicationError::BadRequest)
 }

@@ -391,7 +391,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        CapabilityConfig, DefinitionSource, MountDirective, WorkflowContract,
+        CapabilityConfig, DefinitionSource, MountDirective, AgentProcedureContract,
     };
 
     fn sample_step(
@@ -412,12 +412,12 @@ mod tests {
     }
 
     fn sample_workflow(directives: Vec<ToolCapabilityDirective>) -> AgentProcedure {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 tool_directives: directives,
                 ..Default::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         AgentProcedure::new(
             Uuid::new_v4(),
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn step_mount_directives_change_capability_state_vfs() {
         // mount overlay 现统一来自 workflow contract（Activity 无 step 级 capability_config）。
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 tool_directives: vec![ToolCapabilityDirective::add_simple("file_read")],
                 mount_directives: vec![
@@ -619,7 +619,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let workflow = AgentProcedure::new(
             Uuid::new_v4(),

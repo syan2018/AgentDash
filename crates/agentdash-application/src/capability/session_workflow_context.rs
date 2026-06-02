@@ -257,7 +257,7 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        AgentProcedureRepository, DefinitionSource, ToolCapabilityDirective, WorkflowContract,
+        AgentProcedureRepository, DefinitionSource, ToolCapabilityDirective, AgentProcedureContract,
         WorkflowGraph, WorkflowGraphRepository,
     };
 
@@ -529,12 +529,12 @@ mod tests {
     }
 
     fn admin_entry_workflow(project_id: Uuid) -> AgentProcedure {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: agentdash_domain::workflow::CapabilityConfig {
                 tool_directives: admin_plan_directives(),
                 ..Default::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         AgentProcedure::new(
             project_id,
@@ -955,7 +955,7 @@ mod tests {
 
     #[test]
     fn tool_directives_from_active_workflow_preserves_directives() {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: agentdash_domain::workflow::CapabilityConfig {
                 tool_directives: vec![
                     ToolCapabilityDirective::add_simple("workflow_management"),
@@ -965,7 +965,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let workflow = AgentProcedure::new(
             Uuid::new_v4(),

@@ -72,7 +72,7 @@ impl PermissionGrantService {
 
     /// 创建 grant 请求并执行 policy 评估。
     ///
-    /// 调用方需要传入从 ProjectAgent.config 和 WorkflowContract 提取的 policy 数据。
+    /// 调用方需要传入从 ProjectAgent.config 和 AgentProcedureContract 提取的 policy 数据。
     pub async fn request(
         &self,
         req: GrantRequest,

@@ -6,7 +6,7 @@ use super::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct WorkflowContract {
+pub struct AgentProcedureContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]

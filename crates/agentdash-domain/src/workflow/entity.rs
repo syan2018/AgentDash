@@ -8,7 +8,7 @@ use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
     ActivityTransition, DefinitionSource, EffectiveSessionContract, ExecutorRunRef,
-    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, WorkflowContract,
+    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, AgentProcedureContract,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +22,7 @@ pub struct AgentProcedure {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_source: Option<InstalledAssetSource>,
     pub version: i32,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -34,7 +34,7 @@ impl AgentProcedure {
         name: impl Into<String>,
         description: impl Into<String>,
         source: DefinitionSource,
-        contract: WorkflowContract,
+        contract: AgentProcedureContract,
     ) -> Result<Self, String> {
         let key = key.into();
         let name = name.into();
@@ -338,8 +338,8 @@ mod tests {
     use super::*;
     use crate::workflow::value_objects::{WorkflowContextBinding, WorkflowInjectionSpec};
 
-    fn contract() -> WorkflowContract {
-        WorkflowContract {
+    fn contract() -> AgentProcedureContract {
+        AgentProcedureContract {
             injection: WorkflowInjectionSpec {
                 guidance: Some("follow the workflow".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
@@ -350,7 +350,7 @@ mod tests {
                 }],
                 ..WorkflowInjectionSpec::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         }
     }
 

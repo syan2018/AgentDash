@@ -48,7 +48,7 @@ pub use value_objects::{
     MountDirective, OutputPortDefinition, RuntimeSessionPolicy, StandaloneFulfillment,
     ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction, ToolCapabilitySlotState,
     TransitionCondition, ValidationIssue, ValidationSeverity, WorkflowContextBinding,
-    WorkflowContract, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
+    AgentProcedureContract, WorkflowHookRuleSpec, WorkflowHookTrigger, WorkflowInjectionSpec,
     WorkflowSessionTerminalState, reduce_tool_capability_directives,
 };
 pub use workflow_graph_instance::WorkflowGraphInstance;

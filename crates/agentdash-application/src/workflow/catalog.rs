@@ -186,7 +186,7 @@ mod tests {
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityTransition,
         AgentActivityExecutorSpec, ContextStrategy, DefinitionSource, GateStrategy,
-        InputPortDefinition, OutputPortDefinition, WorkflowContract, WorkflowGraphRepository,
+        InputPortDefinition, OutputPortDefinition, AgentProcedureContract, WorkflowGraphRepository,
     };
 
     use super::*;
@@ -367,7 +367,7 @@ mod tests {
         output_ports: &[&str],
         input_ports: &[&str],
     ) -> AgentProcedure {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             output_ports: output_ports
                 .iter()
                 .map(|port_key| OutputPortDefinition {

@@ -3,7 +3,7 @@ use super::value_objects::*;
 pub fn validate_agent_procedure(
     key: &str,
     name: &str,
-    contract: &WorkflowContract,
+    contract: &AgentProcedureContract,
 ) -> Result<(), String> {
     validate_identity("procedure.key", key)?;
     validate_non_empty("procedure.name", name)?;
@@ -371,7 +371,7 @@ fn find_activity<'a>(
         .find(|activity| activity.key == activity_key)
 }
 
-fn validate_contract(contract: &WorkflowContract, field_path: &str) -> Result<(), String> {
+fn validate_contract(contract: &AgentProcedureContract, field_path: &str) -> Result<(), String> {
     validate_capability_config(
         &contract.capability_config,
         &format!("{field_path}.capability_config"),

@@ -39,7 +39,7 @@ import type {
   ValidationIssue,
   ValidationSeverity,
   WorkflowContextBinding,
-  WorkflowContract as GeneratedWorkflowContract,
+  AgentProcedureContract as GeneratedAgentProcedureContract,
   DefinitionSource,
   WorkflowHookRuleSpec,
   WorkflowHookTrigger,
@@ -101,8 +101,8 @@ export interface WorkflowCapabilityConfig extends GeneratedCapabilityConfig {
 
 export type CapabilityConfig = WorkflowCapabilityConfig;
 
-export interface WorkflowContract
-  extends Omit<GeneratedWorkflowContract, "capability_config" | "output_ports" | "input_ports"> {
+export interface AgentProcedureContract
+  extends Omit<GeneratedAgentProcedureContract, "capability_config" | "output_ports" | "input_ports"> {
   capability_config: WorkflowCapabilityConfig;
   output_ports: OutputPortDefinition[];
   input_ports: InputPortDefinition[];
@@ -230,7 +230,7 @@ export interface WorkflowTemplateWorkflow {
   key: string;
   name: string;
   description: string;
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
 }
 
 export interface WorkflowTemplate {
@@ -259,7 +259,7 @@ export interface AgentProcedure {
   source: DefinitionSource;
   installed_source?: InstalledAssetSourceDto | null;
   version: number;
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
   created_at: string;
   updated_at: string;
 }

@@ -20,7 +20,7 @@ pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
     ToolCapabilitySlotState, reduce_tool_capability_directives,
 };
-pub use contract::{EffectiveSessionContract, WorkflowContract, WorkflowSessionTerminalState};
+pub use contract::{EffectiveSessionContract, AgentProcedureContract, WorkflowSessionTerminalState};
 pub use hook_rule::{WorkflowHookRuleSpec, WorkflowHookTrigger};
 pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
 pub use lifecycle_def::LifecycleNodeType;
@@ -44,8 +44,8 @@ mod tests {
     use super::*;
     use crate::common::Mount;
 
-    fn sample_contract() -> WorkflowContract {
-        WorkflowContract {
+    fn sample_contract() -> AgentProcedureContract {
+        AgentProcedureContract {
             injection: WorkflowInjectionSpec {
                 guidance: Some("read spec first".to_string()),
                 context_bindings: vec![WorkflowContextBinding {
@@ -56,7 +56,7 @@ mod tests {
                 }],
                 ..WorkflowInjectionSpec::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         }
     }
 
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn workflow_contract_capability_config_default_empty() {
         let json = r#"{}"#;
-        let contract: WorkflowContract = serde_json::from_str(json).unwrap();
+        let contract: AgentProcedureContract = serde_json::from_str(json).unwrap();
         assert!(contract.capability_config.is_empty());
 
         let back = serde_json::to_string(&contract).unwrap();
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn workflow_contract_tool_directives_roundtrip() {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 tool_directives: vec![
                     ToolCapabilityDirective::add_simple("workflow_management"),
@@ -582,19 +582,19 @@ mod tests {
                 ],
                 ..CapabilityConfig::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("capability_config"));
         assert!(json.contains("tool_directives"));
         assert!(!json.contains("capability_directives"));
-        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        let back: AgentProcedureContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capability_config, contract.capability_config);
     }
 
     #[test]
     fn capability_config_mount_directives_roundtrip() {
-        let contract = WorkflowContract {
+        let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
                 mount_directives: vec![MountDirective::AddMount {
                     mount: Mount {
@@ -610,13 +610,13 @@ mod tests {
                 }],
                 ..CapabilityConfig::default()
             },
-            ..WorkflowContract::default()
+            ..AgentProcedureContract::default()
         };
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("capability_config"));
         assert!(json.contains("mount_directives"));
 
-        let back: WorkflowContract = serde_json::from_str(&json).unwrap();
+        let back: AgentProcedureContract = serde_json::from_str(&json).unwrap();
         assert_eq!(back.capability_config, contract.capability_config);
     }
 
@@ -625,7 +625,7 @@ mod tests {
         // 旧数据可能残留 constraints / completion / capabilities 字段，
         // 移除 deny_unknown_fields 后应静默忽略
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: WorkflowContract = serde_json::from_str(json).expect("旧数据应当可反序列化");
+        let contract: AgentProcedureContract = serde_json::from_str(json).expect("旧数据应当可反序列化");
         assert!(contract.output_ports.is_empty());
     }
 }

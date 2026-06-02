@@ -9,7 +9,7 @@ import type {
   ActivityTransition,
   ArtifactBinding,
   HookRulePreset,
-  WorkflowContract,
+  AgentProcedureContract,
   AgentProcedure,
   WorkflowTargetKind,
   WorkflowValidationResult,
@@ -39,7 +39,7 @@ export interface WorkflowEditorDraft {
   name: string;
   description: string;
   target_kinds: WorkflowTargetKind[];
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
 }
 
 export interface LifecycleEditorDraft {

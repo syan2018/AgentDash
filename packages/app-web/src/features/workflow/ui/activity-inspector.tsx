@@ -40,7 +40,7 @@ import {
   IdentitySection,
   PortsAndPolicySection,
   TabButton,
-  WorkflowContractTabContent,
+  AgentProcedureContractTabContent,
 } from "./activity-inspector-sections";
 
 // ─── Props ──────────────────────────────────────────────
@@ -290,7 +290,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
           </div>
         ) : (
           <div className="p-4">
-            <WorkflowContractTabContent
+            <AgentProcedureContractTabContent
               workflowDraft={workflowDraft}
               hookPresets={hookPresets}
               targetKinds={targetKinds}

@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, ValidationIssue, WorkflowContract,
+    ActivityDefinition, ActivityTransition, ValidationIssue, AgentProcedureContract,
 };
 use serde::{Deserialize, Serialize};
 
@@ -35,14 +35,14 @@ pub struct CreateAgentProcedureRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateAgentProcedureRequest {
     pub name: Option<String>,
     pub description: Option<String>,
-    pub contract: Option<WorkflowContract>,
+    pub contract: Option<AgentProcedureContract>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,7 +52,7 @@ pub struct ValidateAgentProcedureRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Deserialize)]

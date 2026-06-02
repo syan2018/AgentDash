@@ -24,7 +24,7 @@ import type {
   ToolDescriptor,
   TransitionCondition,
   WorkflowContextBinding,
-  WorkflowContract,
+  AgentProcedureContract,
   AgentProcedure,
   DefinitionSource,
   WorkflowCapabilityConfig,
@@ -221,7 +221,7 @@ function mapWorkflowCapabilityConfig(raw: unknown): WorkflowCapabilityConfig {
   };
 }
 
-function mapWorkflowContract(raw: unknown): WorkflowContract {
+function mapAgentProcedureContract(raw: unknown): AgentProcedureContract {
   const value = asRecord(raw);
   if (!value) {
     throw new Error("workflow contract 缺失或不是对象");
@@ -425,7 +425,7 @@ export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure 
     source: normalizeEnum<DefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
-    contract: mapWorkflowContract(raw.contract),
+    contract: mapAgentProcedureContract(raw.contract),
     created_at: requireStringField(raw, "created_at"),
     updated_at: requireStringField(raw, "updated_at"),
   };
@@ -598,7 +598,7 @@ export async function createAgentProcedure(input: {
   name: string;
   description?: string;
   target_kinds: WorkflowTargetKind[];
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
 }): Promise<AgentProcedure> {
   const raw = await api.post<Record<string, unknown>>("/agent-procedures", {
     project_id: input.project_id,
@@ -621,7 +621,7 @@ export async function updateAgentProcedure(
   input: {
     name?: string;
     description?: string;
-    contract?: WorkflowContract;
+    contract?: AgentProcedureContract;
   },
 ): Promise<AgentProcedure> {
   const raw = await api.put<Record<string, unknown>>(`/agent-procedures/${id}`, {
@@ -638,7 +638,7 @@ export async function validateAgentProcedure(input: {
   name: string;
   description?: string;
   target_kinds: WorkflowTargetKind[];
-  contract: WorkflowContract;
+  contract: AgentProcedureContract;
 }): Promise<WorkflowValidationResult> {
   const raw = await api.post<Record<string, unknown>>("/agent-procedures/validate", {
     project_id: input.project_id,

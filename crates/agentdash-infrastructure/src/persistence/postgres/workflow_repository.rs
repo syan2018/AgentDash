@@ -918,7 +918,7 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentReusePolicy, RuntimeSessionPolicy, WorkflowContract,
+        AgentActivityExecutorSpec, AgentReusePolicy, RuntimeSessionPolicy, AgentProcedureContract,
         WorkflowTemplateInstallBundle,
     };
 
@@ -971,7 +971,7 @@ mod workflow_claim_tests {
             format!("Procedure {digest}"),
             "",
             agentdash_domain::workflow::DefinitionSource::UserAuthored,
-            WorkflowContract::default(),
+            AgentProcedureContract::default(),
         )
         .expect("procedure");
         procedure.installed_source = Some(InstalledAssetSource::new(

@@ -161,7 +161,7 @@ pub struct InputPortDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
-pub struct WorkflowContract {
+pub struct AgentProcedureContract {
     #[serde(default)]
     pub injection: WorkflowInjectionSpec,
     #[serde(default)]

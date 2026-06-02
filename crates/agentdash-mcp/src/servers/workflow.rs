@@ -19,7 +19,7 @@ use uuid::Uuid;
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityTransition, ActivityTransitionKind,
     AgentProcedure, ArtifactBinding, DefinitionSource, InputPortDefinition, OutputPortDefinition,
-    ValidationSeverity, WorkflowContract, WorkflowGraph, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    ValidationSeverity, AgentProcedureContract, WorkflowGraph, WorkflowHookRuleSpec, WorkflowHookTrigger,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 
@@ -50,11 +50,11 @@ pub struct UpsertWorkflowParams {
     #[schemars(description = "描述")]
     pub description: String,
     #[schemars(description = "行为契约")]
-    pub contract: WorkflowContractInput,
+    pub contract: AgentProcedureContractInput,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct WorkflowContractInput {
+pub struct AgentProcedureContractInput {
     #[schemars(description = "上下文注入配置（guidance、context_bindings）")]
     pub injection: Option<Value>,
     #[schemars(description = "Hook 规则列表")]
@@ -335,8 +335,8 @@ fn parse_domain_input<T: DeserializeOwned>(
         .map_err(|error| McpError::invalid_param(field, format!("参数结构无效: {error}")))
 }
 
-fn build_contract(input: &WorkflowContractInput) -> Result<WorkflowContract, McpError> {
-    Ok(WorkflowContract {
+fn build_contract(input: &AgentProcedureContractInput) -> Result<AgentProcedureContract, McpError> {
+    Ok(AgentProcedureContract {
         injection: match &input.injection {
             Some(value) => parse_domain_input("injection", value)?,
             None => Default::default(),

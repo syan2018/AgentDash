@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, AgentProcedure, DefinitionSource, WorkflowContract,
+    ActivityDefinition, ActivityTransition, AgentProcedure, DefinitionSource, AgentProcedureContract,
     WorkflowGraph,
 };
 
@@ -25,7 +25,7 @@ pub struct BuiltinWorkflowTemplate {
     pub key: String,
     pub name: String,
     pub description: String,
-    pub contract: WorkflowContract,
+    pub contract: AgentProcedureContract,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

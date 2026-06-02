@@ -924,7 +924,7 @@ function ActivityInputPortsList({
 
 // ─── Contract tab 内容 ─────────────────────────────────
 
-export function WorkflowContractTabContent({
+export function AgentProcedureContractTabContent({
   workflowDraft,
   hookPresets,
   targetKinds,

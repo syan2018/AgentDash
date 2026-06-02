@@ -806,12 +806,14 @@ fn association_role_from_source(source: &ExecutionSource) -> &'static str {
 }
 
 fn runtime_session_title(request: &RuntimeSessionCreationRequest) -> String {
-    format!(
-        "{} run {} agent {}",
-        agent_kind_from_source(&request.source),
-        request.run_id,
-        request.agent_id
-    )
+    let kind_label = match &request.source {
+        ExecutionSource::User | ExecutionSource::ProjectAgent | ExecutionSource::Api => "新会话",
+        ExecutionSource::Routine => "定时任务",
+        ExecutionSource::ParentAgent => "子任务",
+        ExecutionSource::Migration => "迁移",
+    };
+    let now = chrono::Local::now().format("%m/%d %H:%M");
+    format!("{kind_label} · {now}")
 }
 
 fn agent_kind_from_source(source: &ExecutionSource) -> &'static str {

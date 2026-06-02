@@ -24,8 +24,8 @@ use agentdash_application::session::{
     TerminalHookEffectBinding,
 };
 use agentdash_application::task::gateway::resolve_effective_task_workspace;
-use agentdash_application::workflow::AgentFrameBuilder;
-use agentdash_application::workflow::runtime_launch::RuntimeLaunchRequest;
+use agentdash_application::workflow::{AgentFrameBuilder, AgentFrameSurfaceExt};
+use agentdash_application::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
 use agentdash_domain::workflow::{
     AgentFrame, AgentProcedureRef, LifecycleAgent, LifecycleRun, RuntimeSessionSelectionPolicy,
 };
@@ -78,6 +78,19 @@ pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiErro
 #[async_trait]
 impl SessionConstructionProvider for AppStateSessionConstructionProvider {
     async fn build_frame_construction(
+        &self,
+        input: SessionConstructionProviderInput,
+    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
+        let request = self.build_launch_request(input).await?;
+        FrameLaunchEnvelope::try_from_launch_request(request).map_err(|msg| {
+            ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope 构造失败: {msg}"))
+        })
+    }
+}
+
+impl AppStateSessionConstructionProvider {
+    /// 内部仍然产出 RuntimeLaunchRequest，由 build_frame_construction 包装为 envelope。
+    async fn build_launch_request(
         &self,
         input: SessionConstructionProviderInput,
     ) -> Result<RuntimeLaunchRequest, ConnectorError> {
@@ -190,9 +203,7 @@ impl SessionConstructionProvider for AppStateSessionConstructionProvider {
             frame.id
         )))
     }
-}
 
-impl AppStateSessionConstructionProvider {
     fn assembler(&self) -> SessionRequestAssembler<'_> {
         SessionRequestAssembler::new(
             self.state.services.vfs_service.as_ref(),
@@ -322,11 +333,7 @@ impl AppStateSessionConstructionProvider {
                         .clone()
                         .unwrap_or_default(),
                     request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
-                    existing_vfs: RuntimeLaunchRequest::from_frame(
-                        frame,
-                        runtime_session_policy(input.session_id.as_str()),
-                    )
-                    .typed_vfs,
+                    existing_vfs: frame.typed_vfs(),
                     visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                     active_workflow: None,
                     lifecycle,
@@ -440,11 +447,7 @@ impl AppStateSessionConstructionProvider {
                         .clone()
                         .unwrap_or_default(),
                     request_mcp_servers: input.command.local_relay_mcp_declarations().to_vec(),
-                    existing_vfs: RuntimeLaunchRequest::from_frame(
-                        frame,
-                        runtime_session_policy(input.session_id.as_str()),
-                    )
-                    .typed_vfs,
+                    existing_vfs: frame.typed_vfs(),
                     visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                     active_workflow: None,
                     lifecycle,
@@ -526,14 +529,11 @@ impl AppStateSessionConstructionProvider {
                 .map_err(connector_internal)?,
             _ => None,
         };
-        let inherited_executor_config =
-            command.user_input().executor_config.clone().or_else(|| {
-                RuntimeLaunchRequest::from_frame(
-                    frame,
-                    runtime_session_policy(input.session_id.as_str()),
-                )
-                .executor_config
-            });
+        let inherited_executor_config = command
+            .user_input()
+            .executor_config
+            .clone()
+            .or_else(|| frame.typed_execution_profile());
         let builder =
             frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
         let (builder, extras) =

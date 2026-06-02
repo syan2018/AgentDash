@@ -10,6 +10,7 @@ mod error;
 pub mod execution_log;
 pub mod frame_builder;
 pub mod frame_hook_runtime;
+pub mod frame_surface;
 pub mod freeform;
 pub mod graph_resolver;
 pub mod lifecycle;
@@ -57,6 +58,7 @@ pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, load_scoped_port_output_map, materialize_activity_summary};
 pub use frame_builder::AgentFrameBuilder;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
+pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
 pub use freeform::{
     FREEFORM_ACTIVITY_KEY, FREEFORM_AGENT_PROCEDURE_KEY, FREEFORM_LIFECYCLE_KEY,
     FREEFORM_SESSION_LABEL, FreeformLifecycleService, build_freeform_lifecycle,
@@ -92,7 +94,7 @@ pub use session_association::{
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,
     resolve_activity_session_association,
 };
-pub use session_run_context_resolver::{SessionRunContextResolver, build_session_run_context};
+pub use session_run_context_resolver::{SubjectRunContextResolver, build_subject_run_context};
 pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,

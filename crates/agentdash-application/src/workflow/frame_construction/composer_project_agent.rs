@@ -7,7 +7,7 @@ use crate::session::construction_planner::RuntimeContextInspectionPlanner;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{
     FrameConstructionService, connector_internal, frame_builder_from_existing,
@@ -20,7 +20,7 @@ pub(super) async fn compose(
     mut agent: LifecycleAgent,
     run: LifecycleRun,
     input: &SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let project_agent_id = agent.project_agent_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!(
             "LifecycleAgent {} 缺少 project_agent_id",

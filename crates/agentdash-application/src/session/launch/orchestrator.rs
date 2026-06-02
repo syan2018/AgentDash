@@ -7,8 +7,7 @@ use crate::session::launch::{
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
 use crate::workflow::AgentFrameBuilder;
-use crate::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
-// RuntimeLaunchRequest still used in test helpers; will be fully removed when test helpers migrate
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -133,21 +132,15 @@ impl SessionLaunchOrchestrator {
     }
 
     #[cfg(test)]
-    pub(crate) async fn launch_with_request_for_test(
+    pub(crate) async fn launch_with_envelope_for_test(
         &self,
         session_id: &str,
-        launch_request: RuntimeLaunchRequest,
+        envelope: FrameLaunchEnvelope,
     ) -> Result<String, ConnectorError> {
-        let launch_envelope =
-            FrameLaunchEnvelope::try_from_launch_request(launch_request.clone()).map_err(|msg| {
-                ConnectorError::InvalidConfig(format!(
-                    "session construction 产出不完整: {msg}"
-                ))
-            })?;
         let user_input = UserPromptInput {
-            prompt_blocks: launch_request.prompt_blocks.clone(),
-            env: launch_request.environment_variables.clone(),
-            executor_config: launch_request.executor_config.clone(),
+            prompt_blocks: envelope.intent.prompt_blocks.clone(),
+            env: envelope.intent.environment_variables.clone(),
+            executor_config: Some(envelope.executor_config.clone()),
             backend_selection: None,
         };
         let command = LaunchCommand::http_prompt_input(user_input, None);
@@ -176,14 +169,8 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let launch_request =
-            Self::finalize_request_for_test(launch_request, &requested_runtime_commands);
-        let launch_envelope =
-            FrameLaunchEnvelope::try_from_launch_request(launch_request).map_err(|msg| {
-                ConnectorError::InvalidConfig(format!(
-                    "test construction 产出不完整: {msg}"
-                ))
-            })?;
+        let envelope =
+            Self::finalize_envelope_for_test(envelope, &requested_runtime_commands);
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -191,22 +178,20 @@ impl SessionLaunchOrchestrator {
             requested_runtime_commands,
             context_sources: Vec::new(),
         };
-        self.launch_with_envelope(session_id, &command, launch_envelope, facts)
+        self.launch_with_envelope(session_id, &command, envelope, facts)
             .await
     }
 
     #[cfg(test)]
-    fn finalize_request_for_test(
-        mut req: RuntimeLaunchRequest,
+    fn finalize_envelope_for_test(
+        mut envelope: FrameLaunchEnvelope,
         requested_runtime_commands: &[crate::session::runtime_commands::RuntimeCommandRecord],
-    ) -> RuntimeLaunchRequest {
+    ) -> FrameLaunchEnvelope {
         use crate::workflow::runtime_launch::LaunchResolutionTrace;
 
-        let mut base_capability_state = req.typed_capability_state.clone().unwrap_or_default();
-        if let Some(ref vfs) = req.typed_vfs {
-            base_capability_state.vfs.active = Some(vfs.clone());
-        }
-        base_capability_state.tool.mcp_servers = req.typed_mcp_servers.clone();
+        let mut base_capability_state = envelope.capability_state.clone();
+        base_capability_state.vfs.active = Some(envelope.vfs.clone());
+        base_capability_state.tool.mcp_servers = envelope.mcp_servers.clone();
 
         let requested_transitions = requested_runtime_commands
             .iter()
@@ -225,38 +210,38 @@ impl SessionLaunchOrchestrator {
             .as_ref()
             .map(|replay| replay.capability_state.clone())
             .unwrap_or_else(|| base_capability_state.clone());
-        if let Some(base_vfs) = req.typed_vfs.clone() {
-            let effective_vfs = replay
-                .as_ref()
-                .and_then(|replay| replay.effective_vfs.clone())
-                .unwrap_or(base_vfs);
-            req.working_directory = effective_vfs
-                .default_mount()
-                .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
-                .filter(|path| !path.as_os_str().is_empty())
-                .or(req.working_directory);
-            final_capability_state.vfs.active = Some(effective_vfs.clone());
-            req.typed_vfs = Some(effective_vfs);
+        let effective_vfs = replay
+            .as_ref()
+            .and_then(|replay| replay.effective_vfs.clone())
+            .unwrap_or_else(|| envelope.vfs.clone());
+        if let Some(mount) = effective_vfs.default_mount() {
+            let wd = std::path::PathBuf::from(mount.root_ref.trim());
+            if !wd.as_os_str().is_empty() {
+                envelope.working_directory = wd;
+            }
         }
+        final_capability_state.vfs.active = Some(effective_vfs.clone());
+        envelope.vfs = effective_vfs;
+
         let effective_mcp_servers = replay
             .as_ref()
             .and_then(|replay| replay.effective_mcp_servers.clone())
-            .unwrap_or_else(|| req.typed_mcp_servers.clone());
-        req.typed_mcp_servers = effective_mcp_servers.clone();
+            .unwrap_or_else(|| envelope.mcp_servers.clone());
+        envelope.mcp_servers = effective_mcp_servers.clone();
         final_capability_state.tool.mcp_servers = effective_mcp_servers;
-        req.typed_capability_state = Some(final_capability_state);
-        req.base_capability_state = Some(base_capability_state);
+        envelope.capability_state = final_capability_state;
+        envelope.base_capability_state = Some(base_capability_state);
         if requested_runtime_commands.is_empty() {
-            req.resolution_trace.pending_overlay_applied = false;
+            envelope.resolution_trace.pending_overlay_applied = false;
         } else {
-            req.resolution_trace = LaunchResolutionTrace {
+            envelope.resolution_trace = LaunchResolutionTrace {
                 vfs_source: Some("test.pending_runtime_command".to_string()),
                 mcp_source: Some("test.pending_runtime_command".to_string()),
                 capability_source: Some("test.pending_runtime_command".to_string()),
                 pending_overlay_applied: true,
             };
         }
-        req
+        envelope
     }
 
     /// 已完成 frame construction 后的内部 stage runner。生产入口只能从 `launch` 进入。

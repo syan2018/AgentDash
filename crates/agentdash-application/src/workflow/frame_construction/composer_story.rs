@@ -11,7 +11,7 @@ use crate::session::construction_planner::RuntimeContextInspectionPlanner;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{
     FrameConstructionService, connector_internal, frame_builder_from_existing,
@@ -25,7 +25,7 @@ pub(super) async fn compose(
     run: LifecycleRun,
     story_id: uuid::Uuid,
     input: &SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let story = load_story_for_run(svc, story_id, &run).await?;
     let project = load_project_for_story(svc, &story).await?;
     let workspace = resolve_story_owner_workspace(svc, &story, &project).await?;

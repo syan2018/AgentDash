@@ -11,6 +11,7 @@ use crate::capability::CapabilityResolver;
 use crate::companion::tools::CompanionSliceMode;
 use crate::session::capability_state::compose_vfs_with_overlay_and_directives;
 #[cfg(test)]
+#[allow(deprecated)]
 use crate::session::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use crate::session::context::apply_workspace_defaults;
@@ -33,6 +34,7 @@ use crate::vfs::build_lifecycle_mount_with_ports;
 /// **注**：`mcp_servers` 已迁移为 `Vec<SessionMcpServer>` 内部类型，relay 标记
 /// 内嵌于每个 server 实例，不再作为独立字段传递。
 #[cfg(test)]
+#[allow(deprecated)]
 pub(crate) fn apply_session_assembly(
     mut plan: RuntimeContextInspectionPlan,
     prepared: SessionAssemblyBuilder,
@@ -408,7 +410,7 @@ pub(super) fn project_assembly_to_frame(
 
 /// `project_assembly_to_frame` 的 launch-only 输出。
 ///
-/// 这些数据不写入 AgentFrame，而是传递给 RuntimeLaunchRequest 或 launch pipeline。
+/// 这些数据不写入 AgentFrame，而是传递给 FrameLaunchEnvelope 或 launch pipeline。
 pub struct AssemblyLaunchExtras {
     pub context_bundle: Option<SessionContextBundle>,
     pub prompt_blocks: Option<Vec<serde_json::Value>>,

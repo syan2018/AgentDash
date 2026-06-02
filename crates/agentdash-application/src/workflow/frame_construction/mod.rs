@@ -1,5 +1,5 @@
-//! FrameConstructionService — 将 compose 路由 + 持久化 + launch request 投影统一为
-//! 一次 `construct_launch_envelope` 调用。
+//! FrameConstructionService — 将 compose 路由 + 持久化统一为
+//! 一次 `construct_launch_envelope` 调用，直接产出 `FrameLaunchEnvelope`。
 //!
 //! 各 composer 子模块负责具体路径的 bootstrap spec 组装，
 //! 本模块负责路径分类 (classify) 和最终 frame 持久化。
@@ -11,6 +11,7 @@ mod composer_project_agent;
 mod composer_story;
 mod composer_task;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agentdash_domain::workflow::{
@@ -27,22 +28,23 @@ use crate::session::types::{
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, UserPromptInput,
 };
 use crate::session::{
-    AssemblyLaunchExtras, LaunchCommand, OwnerPromptLifecycle,
-    SessionRequestAssembler, TerminalHookEffectBinding,
+    AssemblyLaunchExtras, LaunchCommand, OwnerPromptLifecycle, SessionRequestAssembler,
+    TerminalHookEffectBinding,
 };
 use crate::vfs::VfsService;
 use crate::workflow::frame_builder::AgentFrameBuilder;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::frame_surface::AgentFrameSurfaceExt;
+use crate::workflow::runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+};
 use crate::workspace::resolution::BackendAvailability;
-
-pub use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 // ─── FrameConstructionService ───
 
 /// Session frame compose 的唯一入口。
 ///
 /// 替代此前散落在 API 层 `AppStateSessionConstructionProvider` 中的 5 个 compose 方法，
-/// 将"路径分类 → compose → 持久化 → RuntimeLaunchRequest 投影"收束为一次调用。
+/// 将"路径分类 → compose → 持久化 → FrameLaunchEnvelope"收束为一次调用。
 pub struct FrameConstructionService {
     pub(crate) repos: RepositorySet,
     pub(crate) vfs_service: Arc<VfsService>,
@@ -79,17 +81,6 @@ impl FrameConstructionService {
         &self,
         input: SessionConstructionProviderInput,
     ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-        let request = self.build_launch_request(input).await?;
-        FrameLaunchEnvelope::try_from_launch_request(request).map_err(|msg| {
-            ConnectorError::InvalidConfig(format!("FrameLaunchEnvelope 构造失败: {msg}"))
-        })
-    }
-
-    /// 内部路由：直接命中 → 分类 → compose。
-    async fn build_launch_request(
-        &self,
-        input: SessionConstructionProviderInput,
-    ) -> Result<RuntimeLaunchRequest, ConnectorError> {
         let session_id = input.session_id.clone();
         let frame = self
             .repos
@@ -103,21 +94,18 @@ impl FrameConstructionService {
                 ))
             })?;
 
-        let direct_request = RuntimeLaunchRequest::from_frame(
-            &frame,
-            runtime_session_policy(input.session_id.as_str()),
-        );
-        let direct_lifecycle =
-            self.prompt_lifecycle(direct_request.executor_config.as_ref(), &input);
+        let executor_config = frame.typed_execution_profile();
+        let direct_lifecycle = self.prompt_lifecycle(executor_config.as_ref(), &input);
         if matches!(direct_lifecycle, SessionPromptLifecycle::Plain)
-            && launch_request_ready(&direct_request)
+            && frame_surface_ready(&frame)
         {
-            return Ok(apply_command_and_extras(
-                direct_request,
+            return build_envelope_from_frame(
+                &frame,
                 None,
                 &input.command,
                 None,
-            ));
+                &input.session_id,
+            );
         }
 
         let agent = self
@@ -181,6 +169,8 @@ impl FrameConstructionService {
         )
     }
 
+    /// 持久化 compose 后的 frame revision，更新 agent current_frame_id，
+    /// 然后从持久化后的 frame 直接构造 FrameLaunchEnvelope。
     pub(crate) async fn persist_composed_frame(
         &self,
         builder: AgentFrameBuilder,
@@ -189,7 +179,7 @@ impl FrameConstructionService {
         command: &LaunchCommand,
         runtime_session_id: &str,
         hook_binding: Option<TerminalHookEffectBinding>,
-    ) -> Result<RuntimeLaunchRequest, ConnectorError> {
+    ) -> Result<FrameLaunchEnvelope, ConnectorError> {
         let frame = builder
             .build(self.repos.agent_frame_repo.as_ref())
             .await
@@ -200,14 +190,13 @@ impl FrameConstructionService {
             .update(agent)
             .await
             .map_err(connector_internal)?;
-        let request =
-            RuntimeLaunchRequest::from_frame(&frame, runtime_session_policy(runtime_session_id));
-        Ok(apply_command_and_extras(
-            request,
+        build_envelope_from_frame(
+            &frame,
             Some(extras),
             command,
             hook_binding,
-        ))
+            runtime_session_id,
+        )
     }
 }
 
@@ -217,10 +206,14 @@ pub(crate) fn connector_internal(error: impl std::fmt::Display) -> ConnectorErro
     ConnectorError::Runtime(error.to_string())
 }
 
-pub(crate) fn launch_request_ready(request: &RuntimeLaunchRequest) -> bool {
-    request.executor_config.is_some()
-        && request.working_directory.is_some()
-        && request.typed_capability_state.is_some()
+/// 检查 frame surface 是否已就绪（executor_config + capability_state + working_directory 齐全）。
+pub(crate) fn frame_surface_ready(frame: &AgentFrame) -> bool {
+    frame.typed_execution_profile().is_some()
+        && frame.typed_capability_state().is_some()
+        && frame
+            .typed_vfs()
+            .and_then(|v| v.default_mount().map(|m| !m.root_ref.trim().is_empty()))
+            .unwrap_or(false)
 }
 
 pub(crate) fn owner_prompt_lifecycle(lifecycle: SessionPromptLifecycle) -> OwnerPromptLifecycle {
@@ -305,17 +298,32 @@ pub(crate) fn runtime_session_policy(runtime_session_id: &str) -> RuntimeSession
     }
 }
 
-pub(crate) fn apply_command_and_extras(
-    mut request: RuntimeLaunchRequest,
+/// 从已持久化的 AgentFrame 直接构造 FrameLaunchEnvelope，合并 extras 和 command 覆盖。
+///
+/// 替代此前 `RuntimeLaunchRequest::from_frame()` + `apply_command_and_extras()` +
+/// `FrameLaunchEnvelope::try_from_launch_request()` 的三步链路。
+pub(crate) fn build_envelope_from_frame(
+    frame: &AgentFrame,
     extras: Option<AssemblyLaunchExtras>,
     command: &LaunchCommand,
     hook_binding: Option<TerminalHookEffectBinding>,
-) -> RuntimeLaunchRequest {
+    runtime_session_id: &str,
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
+    let surface = FrameRuntimeSurface::from_frame(frame, runtime_session_policy(runtime_session_id));
+
+    let mut vfs = frame.typed_vfs().unwrap_or_default();
+    let mut executor_config = frame.typed_execution_profile();
+    let mut capability_state = frame.typed_capability_state();
+    let mut mcp_servers = frame.typed_mcp_servers();
+    let mut context_bundle = None;
+
+    if let Some(config) = command.user_input().executor_config.clone() {
+        executor_config = Some(config);
+    }
+
     let mut prompt_blocks = command.user_input().prompt_blocks.clone();
     let mut environment_variables = command.user_input().env.clone();
-    if let Some(config) = command.user_input().executor_config.clone() {
-        request.executor_config = Some(config);
-    }
+
     if let Some(extras) = extras {
         if extras.prompt_blocks.is_some() {
             prompt_blocks = extras.prompt_blocks;
@@ -324,31 +332,66 @@ pub(crate) fn apply_command_and_extras(
             environment_variables = extras.environment_variables;
         }
         if let Some(config) = extras.executor_config {
-            request.executor_config = Some(config);
+            executor_config = Some(config);
         }
         if let Some(bundle) = extras.context_bundle {
-            request.context_bundle = Some(bundle);
+            context_bundle = Some(bundle);
         }
-        if let Some(capability_state) = extras.capability_state {
-            request.typed_capability_state = Some(capability_state);
+        if let Some(cs) = extras.capability_state {
+            capability_state = Some(cs);
         }
-        if let Some(vfs) = extras.vfs {
-            request.working_directory = vfs
+        if let Some(v) = extras.vfs {
+            let override_wd = v
                 .default_mount()
-                .map(|mount| std::path::PathBuf::from(mount.root_ref.trim()))
-                .filter(|path| !path.as_os_str().is_empty())
-                .or(request.working_directory);
-            request.typed_vfs = Some(vfs);
+                .map(|m| PathBuf::from(m.root_ref.trim()))
+                .filter(|p| !p.as_os_str().is_empty());
+            if override_wd.is_some() {
+                vfs = v;
+            }
         }
         if !extras.mcp_servers.is_empty() {
-            request.typed_mcp_servers = extras.mcp_servers;
+            mcp_servers = extras.mcp_servers;
         }
     }
-    request.prompt_blocks = prompt_blocks;
-    request.environment_variables = environment_variables;
-    request.identity = command.identity();
-    if let Some(binding) = hook_binding {
-        request.terminal_hook_effect_binding = Some(binding);
-    }
-    request
+
+    let executor_config = executor_config.ok_or_else(|| {
+        ConnectorError::InvalidConfig(
+            "FrameLaunchEnvelope: executor_config 未在 construction 阶段解析".into(),
+        )
+    })?;
+    let capability_state = capability_state.ok_or_else(|| {
+        ConnectorError::InvalidConfig(
+            "FrameLaunchEnvelope: capability_state 未在 construction 阶段解析".into(),
+        )
+    })?;
+    let working_directory = vfs
+        .default_mount()
+        .map(|m| PathBuf::from(m.root_ref.trim()))
+        .filter(|p| !p.as_os_str().is_empty())
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(
+                "FrameLaunchEnvelope: working_directory 未在 construction 阶段解析".into(),
+            )
+        })?;
+
+    Ok(FrameLaunchEnvelope {
+        surface,
+        intent: FrameLaunchIntent {
+            prompt_blocks,
+            environment_variables,
+            identity: command.identity(),
+            terminal_hook_effect_binding: hook_binding,
+            discovered_guidelines: Vec::new(),
+            extension_runtime: None,
+        },
+        working_directory,
+        executor_config,
+        capability_state,
+        vfs,
+        mcp_servers,
+        context_bundle,
+        continuation_context_frame: None,
+        base_capability_state: None,
+        resolution_trace: LaunchResolutionTrace::default(),
+    })
 }

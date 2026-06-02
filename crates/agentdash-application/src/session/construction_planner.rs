@@ -60,6 +60,7 @@ pub struct ResolvedProjectAgentContext {
 }
 
 impl RuntimeContextInspectionPlanner {
+    #[deprecated(note = "已被 frame-based read model 替代")]
     pub fn parse_project_dispatch_label(label: &str) -> Option<&str> {
         let agent_key = label
             .trim()
@@ -70,6 +71,7 @@ impl RuntimeContextInspectionPlanner {
         Some(agent_key)
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
     pub fn project_dispatch_label(agent_key: &str) -> String {
         format!("{PROJECT_AGENT_BINDING_LABEL_PREFIX}{}", agent_key.trim())
     }
@@ -96,6 +98,7 @@ impl RuntimeContextInspectionPlanner {
         build_project_agent_context(repos, agent).await
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
     pub async fn build_session_capabilities(
         vfs_service: &VfsService,
         vfs: Option<&agentdash_spi::Vfs>,
@@ -111,6 +114,8 @@ impl RuntimeContextInspectionPlanner {
         if caps.is_empty() { None } else { Some(caps) }
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
+    #[allow(deprecated)]
     pub async fn plan_task_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -153,6 +158,8 @@ impl RuntimeContextInspectionPlanner {
         )
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
+    #[allow(deprecated)]
     pub async fn plan_story_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -307,6 +314,8 @@ impl RuntimeContextInspectionPlanner {
         )))
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
+    #[allow(deprecated)]
     pub async fn plan_project_context_query(
         repos: &RepositorySet,
         vfs_service: &VfsService,
@@ -480,6 +489,8 @@ impl RuntimeContextInspectionPlanner {
         ))
     }
 
+    #[deprecated(note = "已被 frame-based read model 替代")]
+    #[allow(deprecated)]
     pub fn plan_context(
         session_id: impl Into<String>,
         owner: ResolvedSessionOwner,

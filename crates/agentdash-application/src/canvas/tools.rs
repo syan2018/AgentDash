@@ -677,6 +677,7 @@ fn build_canvas_presented_notification(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;

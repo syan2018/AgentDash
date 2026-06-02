@@ -83,9 +83,7 @@ pub use projection::{
     resolve_active_workflow_projection_for_target,
 };
 pub use run::select_active_run;
-pub use runtime_launch::{
-    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, RuntimeLaunchRequest,
-};
+pub use runtime_launch::{FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface};
 pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,

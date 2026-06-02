@@ -6,9 +6,9 @@ use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
 
 use crate::session::construction_provider::SessionConstructionProviderInput;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
-use super::{FrameConstructionService, apply_command_and_extras, connector_internal, launch_request_ready, runtime_session_policy};
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use super::{FrameConstructionService, build_envelope_from_frame, connector_internal, frame_surface_ready};
 
 /// 根据 frame/agent/run 状态分类后路由到对应的 composer。
 pub(super) async fn route_and_compose(
@@ -17,7 +17,7 @@ pub(super) async fn route_and_compose(
     agent: LifecycleAgent,
     run: LifecycleRun,
     input: SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     // 1. companion hint 优先
     if let Some(companion) = input.command.companion_hint() {
         return super::composer_companion::compose(svc, &frame, agent, companion, &input).await;
@@ -46,17 +46,14 @@ pub(super) async fn route_and_compose(
     }
 
     // 6. 尝试直接使用已有 frame surface
-    let direct_request = RuntimeLaunchRequest::from_frame(
-        &frame,
-        runtime_session_policy(input.session_id.as_str()),
-    );
-    if launch_request_ready(&direct_request) {
-        return Ok(apply_command_and_extras(
-            direct_request,
+    if frame_surface_ready(&frame) {
+        return build_envelope_from_frame(
+            &frame,
             None,
             &input.command,
             None,
-        ));
+            &input.session_id,
+        );
     }
 
     Err(ConnectorError::InvalidConfig(format!(

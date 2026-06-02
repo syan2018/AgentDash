@@ -308,6 +308,7 @@ fn execution_backend_placement_from_plan(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_spi::Vfs;
@@ -321,8 +322,10 @@ mod tests {
     use crate::session::types::{
         RuntimeCapabilityTransition, SessionRepositoryRehydrateMode, UserPromptInput,
     };
-    use crate::workflow::runtime_launch::LaunchResolutionTrace;
-    use std::path::Path;
+    use crate::workflow::runtime_launch::{
+        FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+    };
+    use std::path::{Path, PathBuf};
 
     fn input_for(lifecycle: SessionPromptLifecycle) -> LaunchPlanInput {
         let owner = ResolvedSessionOwner {
@@ -371,10 +374,10 @@ mod tests {
         let resolved_payload = UserPromptInput::from_text("hello")
             .resolve_prompt_payload()
             .expect("resolved payload");
-        let launch_request = launch_request_from_construction(construction);
+        let launch_envelope = envelope_from_construction(construction);
         LaunchPlanInput {
             resolved_payload,
-            launch_request,
+            launch_envelope,
             session_id: "sess-launch".to_string(),
             turn_id: "t1".to_string(),
             lifecycle,
@@ -417,33 +420,50 @@ mod tests {
         }
     }
 
-    fn launch_request_from_construction(
+    fn envelope_from_construction(
         construction: RuntimeContextInspectionPlan,
-    ) -> RuntimeLaunchRequest {
-        RuntimeLaunchRequest {
-            agent_id: uuid::Uuid::new_v4(),
-            frame_id: uuid::Uuid::new_v4(),
-            frame_revision: 1,
-            procedure_ref: None,
-            capability_surface: serde_json::Value::Null,
-            context_slice: serde_json::Value::Null,
-            vfs_surface: serde_json::Value::Null,
-            mcp_surface: serde_json::Value::Null,
-            runtime_session_id: Some("sess-launch".to_string()),
-            graph_instance_id: None,
-            activity_key: None,
-            executor_config: construction.execution_profile.executor_config,
-            working_directory: construction.workspace.working_directory,
-            prompt_blocks: None,
-            environment_variables: HashMap::new(),
-            identity: None,
-            terminal_hook_effect_binding: None,
-            discovered_guidelines: construction.projections.discovered_guidelines,
-            extension_runtime: construction.projections.extension_runtime,
+    ) -> FrameLaunchEnvelope {
+        let executor_config = construction
+            .execution_profile
+            .executor_config
+            .unwrap_or_else(|| AgentConfig::new("test"));
+        let capability_state = construction
+            .projections
+            .capability_state
+            .unwrap_or_default();
+        let vfs = construction.surface.vfs.unwrap_or_default();
+        let working_directory = construction
+            .workspace
+            .working_directory
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        FrameLaunchEnvelope {
+            surface: FrameRuntimeSurface {
+                agent_id: uuid::Uuid::new_v4(),
+                frame_id: uuid::Uuid::new_v4(),
+                frame_revision: 1,
+                procedure_ref: None,
+                capability_surface: serde_json::Value::Null,
+                context_slice: serde_json::Value::Null,
+                vfs_surface: serde_json::Value::Null,
+                mcp_surface: serde_json::Value::Null,
+                runtime_session_id: Some("sess-launch".to_string()),
+                graph_instance_id: None,
+                activity_key: None,
+            },
+            intent: FrameLaunchIntent {
+                prompt_blocks: None,
+                environment_variables: HashMap::new(),
+                identity: None,
+                terminal_hook_effect_binding: None,
+                discovered_guidelines: construction.projections.discovered_guidelines,
+                extension_runtime: construction.projections.extension_runtime,
+            },
+            working_directory,
+            executor_config,
+            capability_state,
+            vfs,
+            mcp_servers: construction.projections.mcp_servers,
             context_bundle: construction.context.bundle,
-            typed_capability_state: construction.projections.capability_state,
-            typed_vfs: construction.surface.vfs,
-            typed_mcp_servers: construction.projections.mcp_servers,
             continuation_context_frame: None,
             base_capability_state: construction.resolution.runtime_base_capability_state,
             resolution_trace: LaunchResolutionTrace {
@@ -556,15 +576,15 @@ mod tests {
             created_at: 3,
             source_turn_id: None,
         }];
-        input.launch_request.resolution_trace.vfs_source =
+        input.launch_envelope.resolution_trace.vfs_source =
             Some("runtime_command.pending_vfs_overlay".to_string());
         input
-            .launch_request
+            .launch_envelope
             .resolution_trace
             .pending_overlay_applied = true;
-        input.launch_request.resolution_trace.mcp_source =
+        input.launch_envelope.resolution_trace.mcp_source =
             Some("runtime_command.pending_transition".to_string());
-        input.launch_request.resolution_trace.capability_source =
+        input.launch_envelope.resolution_trace.capability_source =
             Some("runtime_command.pending_transition".to_string());
 
         let execution = LaunchPlan::build(input);

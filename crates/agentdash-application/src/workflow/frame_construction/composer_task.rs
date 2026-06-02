@@ -6,7 +6,7 @@ use agentdash_spi::ConnectorError;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{StoryStepPhase, StoryStepSpec, TaskLaunchPhase};
 use crate::task::gateway::resolve_effective_task_workspace;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
 
@@ -16,7 +16,7 @@ pub(super) async fn compose(
     mut agent: LifecycleAgent,
     run: LifecycleRun,
     input: &SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let mut associations = svc
         .repos
         .lifecycle_subject_association_repo

@@ -6,6 +6,7 @@
 use std::io;
 
 #[cfg(test)]
+#[allow(deprecated)]
 use super::super::construction::RuntimeContextInspectionPlan;
 #[cfg(test)]
 use super::super::launch::{SessionLaunchDeps, SessionLaunchOrchestrator};
@@ -14,7 +15,9 @@ use super::super::types::{SessionExecutionState, SessionMeta};
 use super::super::{AgentFrameTransitionRecord, RuntimeDeliveryCommand};
 use super::SessionRuntimeInner;
 #[cfg(test)]
-use crate::workflow::runtime_launch::{LaunchResolutionTrace, RuntimeLaunchRequest};
+use crate::workflow::runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, LaunchResolutionTrace,
+};
 use agentdash_agent_protocol::BackboneEnvelope;
 #[cfg(test)]
 use agentdash_spi::ConnectorError;
@@ -116,14 +119,15 @@ impl SessionRuntimeInner {
     ///
     /// 生产入口必须走 [`LaunchCommand`]，不能重新引入已组装 prompt 的旁路。
     #[cfg(test)]
+    #[allow(deprecated)]
     pub(crate) async fn start_prompt(
         &self,
         session_id: &str,
         construction: RuntimeContextInspectionPlan,
     ) -> Result<String, ConnectorError> {
-        let launch_request = runtime_launch_request_from_construction(construction);
+        let envelope = envelope_from_construction(construction);
         SessionLaunchOrchestrator::new(SessionLaunchDeps::from_inner(self))
-            .launch_with_request_for_test(session_id, launch_request)
+            .launch_with_envelope_for_test(session_id, envelope)
             .await
     }
 
@@ -152,33 +156,52 @@ impl SessionRuntimeInner {
 }
 
 #[cfg(test)]
-fn runtime_launch_request_from_construction(
-    construction: RuntimeContextInspectionPlan,
-) -> RuntimeLaunchRequest {
-    RuntimeLaunchRequest {
-        agent_id: uuid::Uuid::new_v4(),
-        frame_id: uuid::Uuid::new_v4(),
-        frame_revision: 1,
-        procedure_ref: None,
-        capability_surface: serde_json::Value::Null,
-        context_slice: serde_json::Value::Null,
-        vfs_surface: serde_json::Value::Null,
-        mcp_surface: serde_json::Value::Null,
-        runtime_session_id: Some(construction.session_id.clone()),
-        graph_instance_id: None,
-        activity_key: None,
-        executor_config: construction.execution_profile.executor_config,
-        working_directory: construction.workspace.working_directory,
-        prompt_blocks: construction.prompt.prompt_blocks,
-        environment_variables: construction.prompt.environment_variables,
-        identity: None,
-        terminal_hook_effect_binding: None,
-        discovered_guidelines: construction.projections.discovered_guidelines,
-        extension_runtime: construction.projections.extension_runtime,
+#[allow(deprecated)]
+fn envelope_from_construction(construction: RuntimeContextInspectionPlan) -> FrameLaunchEnvelope {
+    use agentdash_domain::workflow::RuntimeSessionSelectionPolicy;
+
+    let executor_config = construction
+        .execution_profile
+        .executor_config
+        .unwrap_or_else(|| agentdash_spi::AgentConfig::new("test"));
+    let capability_state = construction
+        .projections
+        .capability_state
+        .unwrap_or_default();
+    let vfs = construction.surface.vfs.unwrap_or_default();
+    let working_directory = construction
+        .workspace
+        .working_directory
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+
+    FrameLaunchEnvelope {
+        surface: FrameRuntimeSurface {
+            agent_id: uuid::Uuid::new_v4(),
+            frame_id: uuid::Uuid::new_v4(),
+            frame_revision: 1,
+            procedure_ref: None,
+            capability_surface: serde_json::Value::Null,
+            context_slice: serde_json::Value::Null,
+            vfs_surface: serde_json::Value::Null,
+            mcp_surface: serde_json::Value::Null,
+            runtime_session_id: Some(construction.session_id.clone()),
+            graph_instance_id: None,
+            activity_key: None,
+        },
+        intent: FrameLaunchIntent {
+            prompt_blocks: construction.prompt.prompt_blocks,
+            environment_variables: construction.prompt.environment_variables,
+            identity: None,
+            terminal_hook_effect_binding: None,
+            discovered_guidelines: construction.projections.discovered_guidelines,
+            extension_runtime: construction.projections.extension_runtime,
+        },
+        working_directory,
+        executor_config,
+        capability_state,
+        vfs,
+        mcp_servers: construction.projections.mcp_servers,
         context_bundle: construction.context.bundle,
-        typed_capability_state: construction.projections.capability_state,
-        typed_vfs: construction.surface.vfs,
-        typed_mcp_servers: construction.projections.mcp_servers,
         continuation_context_frame: None,
         base_capability_state: construction.resolution.runtime_base_capability_state,
         resolution_trace: LaunchResolutionTrace {

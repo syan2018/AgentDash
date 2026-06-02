@@ -164,7 +164,7 @@ impl AgentFrameBuilder {
     /// 从结构化 `AgentConfig` 填充 execution_profile surface。
     ///
     /// execution profile 记录每个 frame revision 使用的执行器配置，
-    /// RuntimeLaunchRequest.from_frame() 会投影此字段用于 connector 启动。
+    /// FrameConstructionService 会通过 AgentFrameSurfaceExt 投影此字段用于 connector 启动。
     pub fn with_execution_profile(mut self, config: &AgentConfig) -> Self {
         self.execution_profile = serde_json::to_value(config).ok();
         self

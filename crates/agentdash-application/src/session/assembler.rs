@@ -1756,6 +1756,7 @@ async fn resolve_owner_workflow_tool_directives(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::vfs::build_lifecycle_mount_with_ports;

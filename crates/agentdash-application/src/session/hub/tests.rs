@@ -1,4 +1,5 @@
 //! `SessionRuntimeInner` 行为测试（从原 `hub.rs` 迁移；PR 6 拆分）。
+#![allow(deprecated)]
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -3342,7 +3343,7 @@ async fn schedule_hook_auto_resume_strict_mode_requires_provider() {
 #[tokio::test]
 async fn schedule_hook_auto_resume_routes_through_provider() {
     use crate::session::{SessionConstructionProvider, SessionConstructionProviderInput};
-    use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+    use crate::workflow::runtime_launch::FrameLaunchEnvelope;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct SpyConstructionProvider {
@@ -3356,7 +3357,7 @@ async fn schedule_hook_auto_resume_routes_through_provider() {
         async fn build_frame_construction(
             &self,
             input: SessionConstructionProviderInput,
-        ) -> Result<RuntimeLaunchRequest, ConnectorError> {
+        ) -> Result<FrameLaunchEnvelope, ConnectorError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let text = input
                 .command

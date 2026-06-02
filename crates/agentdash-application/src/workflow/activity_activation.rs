@@ -284,7 +284,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 //   B. PhaseNode / advance tool 热更新 —— apply_to_frame_runtime_target
 //
 // 新 RuntimeSession launch 必须先写入 AgentFrame revision，再由 frame 投影
-// RuntimeLaunchRequest；running session 只消费已生效的 runtime capability transition。
+// FrameLaunchEnvelope；running session 只消费已生效的 runtime capability transition。
 
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、

@@ -6,7 +6,7 @@ use agentdash_spi::ConnectorError;
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
 
@@ -16,7 +16,7 @@ pub(super) async fn compose(
     mut agent: LifecycleAgent,
     run: LifecycleRun,
     input: &SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let graph_instance_id = frame.graph_instance_id.ok_or_else(|| {
         ConnectorError::InvalidConfig(format!("AgentFrame {} 缺少 graph_instance_id", frame.id))

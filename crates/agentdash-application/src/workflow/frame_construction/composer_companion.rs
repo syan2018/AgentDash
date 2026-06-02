@@ -5,7 +5,7 @@ use agentdash_spi::ConnectorError;
 
 use crate::session::construction_provider::{CompanionLaunchSource, SessionConstructionProviderInput};
 use crate::session::{CompanionParentSpec, CompanionParentWorkflowSpec};
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
 use super::{FrameConstructionService, frame_builder_from_existing};
 
@@ -15,7 +15,7 @@ pub(super) async fn compose(
     mut agent: LifecycleAgent,
     companion: CompanionLaunchSource,
     input: &SessionConstructionProviderInput,
-) -> Result<RuntimeLaunchRequest, ConnectorError> {
+) -> Result<FrameLaunchEnvelope, ConnectorError> {
     let command = &input.command;
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;

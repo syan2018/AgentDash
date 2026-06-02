@@ -15,6 +15,7 @@ use crate::rpc::ApiError;
 /// 替代此前 `RuntimeContextInspectionPlanner::plan_project_context_query` 重建完整 plan 的路径。
 pub(crate) struct SessionFrameVfsResult {
     pub vfs: Option<Vfs>,
+    #[allow(dead_code)]
     pub frame: AgentFrame,
 }
 

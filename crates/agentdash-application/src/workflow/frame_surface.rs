@@ -2,8 +2,7 @@
 //!
 //! AgentFrame 上的 JSON 字段 (effective_capability_json, vfs_surface_json 等)
 //! 通过 `AgentFrameSurfaceExt` trait 提供类型安全的反序列化读取，
-//! 避免每个消费者各自 parse，取代 `RuntimeLaunchRequest::from_frame()` 作为
-//! "万能反序列化入口"的角色。
+//! 避免每个消费者各自 parse，替代此前散落在各处的 JSON 反序列化逻辑。
 
 use agentdash_domain::workflow::AgentFrame;
 use agentdash_spi::{AgentConfig, CapabilityState, SessionMcpServer, Vfs};

@@ -1,7 +1,8 @@
 //! Runtime context inspection projection use case.
 //!
-//! 这个模块承接 owner/context/capability 查询逻辑。它只返回 runtime/context inspection projection；
-//! route 层不承载 runtime launch composition 主分支。
+//! **DEPRECATED**: 这个模块承接 owner/context/capability 查询逻辑的旧路径，
+//! 已被 frame-based read model 替代。仅保留供 audit trace 参考。
+#![allow(deprecated)]
 
 use std::path::PathBuf;
 use std::sync::Arc;

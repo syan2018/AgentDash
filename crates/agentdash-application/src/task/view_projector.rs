@@ -515,16 +515,16 @@ mod tests {
                 .cloned()
                 .collect())
         }
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            lifecycle_id: Uuid,
+            root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(self
                 .runs
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|r| r.lifecycle_id == lifecycle_id)
+                .filter(|r| r.root_graph_id == root_graph_id)
                 .cloned()
                 .collect())
         }
@@ -646,14 +646,14 @@ mod tests {
 
     fn make_run_with_activity_status(
         project_id: Uuid,
-        lifecycle_id: Uuid,
+        root_graph_id: Uuid,
         _session_id: &str,
         activity_key: &str,
         target: ActivityAttemptStatus,
     ) -> (LifecycleRun, WorkflowGraphInstance) {
-        let mut run = LifecycleRun::new_control(project_id, lifecycle_id);
+        let mut run = LifecycleRun::new_control(project_id, root_graph_id);
         run.status = LifecycleRunStatus::Running;
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, lifecycle_id);
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, root_graph_id);
         let state = ActivityLifecycleRunState {
             graph_instance_id: graph_instance.id,
             status: ActivityRunStatus::Running,

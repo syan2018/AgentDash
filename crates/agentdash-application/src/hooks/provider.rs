@@ -209,9 +209,16 @@ impl AppExecutionHookProvider {
                         }
                     },
                     fulfilled_port_keys: {
-                        let map = crate::workflow::load_port_output_map(
+                        let artifact_ref =
+                            crate::workflow::execution_log::ActivityPortArtifactRef {
+                                graph_instance_id: workflow.graph_instance_id,
+                                activity_key: workflow.active_activity.key.clone(),
+                                attempt: workflow.active_attempt.attempt,
+                            };
+                        let map = crate::workflow::load_scoped_port_output_map(
                             self.inline_file_repo.as_ref(),
                             workflow.run.id,
+                            &artifact_ref,
                         )
                         .await;
                         if map.is_empty() {

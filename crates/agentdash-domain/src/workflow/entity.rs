@@ -181,14 +181,24 @@ impl WorkflowGraph {
     }
 }
 
+/// 结构化的活跃 Activity 引用。替代旧的 `"graph_instance_id:activity_key"` 字符串拼接。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveActivityRef {
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: i32,
+    pub status: super::value_objects::ActivityAttemptStatus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LifecycleRun {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub lifecycle_id: Uuid,
+    /// 此 run 关联的 root WorkflowGraph ID。
+    pub root_graph_id: Uuid,
     pub status: LifecycleRunStatus,
-    /// 当前所有可执行（Ready/Running）的 graph-scoped node key 集合。
-    /// 这是从 `WorkflowGraphInstance.activity_state` 派生出的 run-level control projection。
+    /// Read-model-only：从 `WorkflowGraphInstance.activity_state` 派生的活跃 activity 集合。
+    /// 业务逻辑应使用 `active_activity_refs()` 而非直接读取此字段。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_node_keys: Vec<String>,
     #[serde(default)]
@@ -199,18 +209,34 @@ pub struct LifecycleRun {
 }
 
 impl LifecycleRun {
-    /// 返回「当前活跃」的首个 activity key。线性推进时即唯一活跃 activity；
-    /// DAG 下返回 `active_node_keys.first()`。
-    pub fn current_activity_key(&self) -> Option<&str> {
-        self.active_node_keys.first().map(String::as_str)
+    /// 从 `active_node_keys` 解析出结构化 `ActiveActivityRef` 列表。
+    pub fn active_activity_refs(&self) -> Vec<ActiveActivityRef> {
+        self.active_node_keys
+            .iter()
+            .filter_map(|key| {
+                let (gi_str, activity_key) = key.split_once(':')?;
+                let graph_instance_id = Uuid::parse_str(gi_str).ok()?;
+                Some(ActiveActivityRef {
+                    graph_instance_id,
+                    activity_key: activity_key.to_string(),
+                    attempt: 0,
+                    status: super::value_objects::ActivityAttemptStatus::Running,
+                })
+            })
+            .collect()
     }
 
-    pub fn new_control(project_id: Uuid, lifecycle_id: Uuid) -> Self {
+    /// 返回是否存在活跃 activity。业务代码应使用此方法代替 `current_activity_key`。
+    pub fn has_active_activity(&self) -> bool {
+        !self.active_node_keys.is_empty()
+    }
+
+    pub fn new_control(project_id: Uuid, root_graph_id: Uuid) -> Self {
         let now = Utc::now();
         Self {
             id: Uuid::new_v4(),
             project_id,
-            lifecycle_id,
+            root_graph_id,
             status: LifecycleRunStatus::Ready,
             active_node_keys: Vec::new(),
             execution_log: Vec::new(),

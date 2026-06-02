@@ -18,7 +18,7 @@ use crate::session::types::{
     BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, SessionMeta,
     SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
 };
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
 
 pub(in crate::session) struct LaunchPlanner<'a> {
     deps: LaunchPlanningDeps,
@@ -32,7 +32,7 @@ pub(in crate::session) struct LaunchPlannerInput<'a> {
     pub had_existing_runtime: bool,
     pub session_meta: &'a SessionMeta,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
-    pub launch_request: RuntimeLaunchRequest,
+    pub launch_envelope: FrameLaunchEnvelope,
     /// 来自 LifecycleAgent.needs_bootstrap() — 取代原 SessionMeta.bootstrap_state 判断。
     pub agent_needs_bootstrap: bool,
 }
@@ -48,23 +48,13 @@ impl<'a> LaunchPlanner<'a> {
     pub async fn plan(&self, input: LaunchPlannerInput<'_>) -> Result<LaunchPlan, ConnectorError> {
         let sid = input.session_id.to_string();
         let command = input.command;
-        let mut req = input.launch_request;
 
-        let working_directory = req.working_directory.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "RuntimeLaunchRequest.working_directory 必须在 launch 前解析".to_string(),
-            )
-        })?;
-        let executor_config = req.executor_config.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "RuntimeLaunchRequest.executor_config 必须在 launch 前解析".to_string(),
-            )
-        })?;
-        let capability_state = req.typed_capability_state.clone().ok_or_else(|| {
-            ConnectorError::InvalidConfig(
-                "RuntimeLaunchRequest.typed_capability_state 必须在 launch 前解析".to_string(),
-            )
-        })?;
+        // envelope 的三个核心字段已在边界验证为 non-optional
+        let working_directory = input.launch_envelope.working_directory.clone();
+        let executor_config = input.launch_envelope.executor_config.clone();
+        let capability_state = input.launch_envelope.capability_state.clone();
+
+        let mut req = input.launch_envelope.into_launch_request();
 
         let mut context_bundle = req.context_bundle.clone();
         let terminal_hook_effect_binding = req.terminal_hook_effect_binding.clone();

@@ -624,6 +624,23 @@ impl AgentAssignmentRepository for PostgresAgentAssignmentRepository {
         .transpose()
     }
 
+    async fn find_active_for_agent(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Vec<AgentAssignment>, DomainError> {
+        sqlx::query_as::<_, AssignmentRow>(
+            r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at
+               FROM agent_assignments WHERE agent_id=$1 AND lease_status='active' ORDER BY assigned_at DESC"#,
+        )
+        .bind(agent_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(TryInto::try_into)
+        .collect()
+    }
+
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
         sqlx::query_as::<_, AssignmentRow>(
             r#"SELECT id,run_id,graph_instance_id,activity_key,attempt,agent_id,frame_id,lease_status,assigned_at,released_at

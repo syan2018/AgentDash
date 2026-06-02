@@ -94,8 +94,24 @@ fn parse_graph_instance_id_from_metadata(mount: &Mount) -> Result<Uuid, MountErr
         .map_err(|error| MountError::OperationFailed(format!("graph_instance_id 无效: {error}")))
 }
 
+/// 从 mount metadata 解析 activity scope（graph_instance_id / activity_key / attempt），
+/// 构建 scoped port output 的 inline file path。有 scope 返回
+/// `{graph_instance_id}/{activity_key}/{attempt}/{port_key}`，无 scope 返回 `{port_key}`。
+fn scoped_port_output_path(mount: &Mount, port_key: &str) -> Result<String, MountError> {
+    let graph_instance_id = mount.metadata.get("graph_instance_id").and_then(|v| v.as_str());
+    let activity_key = mount.metadata.get("activity_key").and_then(|v| v.as_str());
+    let attempt = mount.metadata.get("attempt").and_then(|v| v.as_u64());
+
+    match (graph_instance_id, activity_key, attempt) {
+        (Some(gi), Some(ak), Some(att)) => {
+            Ok(format!("{gi}/{ak}/{att}/{port_key}"))
+        }
+        _ => Ok(port_key.to_string()),
+    }
+}
+
 fn resolve_lifecycle_id_for_runs(active_run: &LifecycleRun) -> Uuid {
-    active_run.lifecycle_id
+    active_run.root_graph_id
 }
 
 struct LifecycleMountContext {
@@ -242,10 +258,19 @@ impl MountProvider for LifecycleMountProvider {
             }
             ["artifacts", port_key] | ["active", "artifacts", port_key] => {
                 let run_id = parse_run_id_from_metadata(mount)?;
-                self.journey
-                    .read_port_output(run_id, port_key)
+                let scoped_path = scoped_port_output_path(mount, port_key)?;
+                match self
+                    .journey
+                    .read_scoped_port_output(run_id, &scoped_path)
                     .await
-                    .map_err(map_journey_err)?
+                {
+                    Ok(content) => content,
+                    Err(_) => self
+                        .journey
+                        .read_port_output(run_id, port_key)
+                        .await
+                        .map_err(map_journey_err)?,
+                }
             }
             _ => {
                 let active = load_active_context(
@@ -317,7 +342,7 @@ impl MountProvider for LifecycleMountProvider {
                         let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run);
                         let runs = self
                             .lifecycle_run_repo
-                            .list_by_lifecycle(lifecycle_id)
+                            .list_by_root_graph(lifecycle_id)
                             .await
                             .map_err(map_domain_err)?;
                         let mut summaries = Vec::new();
@@ -436,15 +461,17 @@ impl MountProvider for LifecycleMountProvider {
                 }
 
                 let run_id = parse_run_id_from_metadata(mount)?;
+                let scoped_path = scoped_port_output_path(mount, port_key)?;
                 self.journey
-                    .write_port_output(run_id, port_key, content)
+                    .write_scoped_port_output(run_id, &scoped_path, content)
                     .await
                     .map_err(map_journey_err)?;
                 info!(
                     run_id = %run_id,
                     port_key = %port_key,
+                    scoped_path = %scoped_path,
                     content_len = content.len(),
-                    "lifecycle VFS: wrote port output"
+                    "lifecycle VFS: wrote scoped port output"
                 );
                 Ok(())
             }
@@ -847,7 +874,7 @@ impl MountProvider for LifecycleMountProvider {
                 let lifecycle_id = resolve_lifecycle_id_for_runs(&active.run);
                 let runs = self
                     .lifecycle_run_repo
-                    .list_by_lifecycle(lifecycle_id)
+                    .list_by_root_graph(lifecycle_id)
                     .await
                     .map_err(map_domain_err)?;
                 runs.iter()
@@ -973,16 +1000,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            lifecycle_id: Uuid,
+            root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(self
                 .runs
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.lifecycle_id == lifecycle_id)
+                .filter(|run| run.root_graph_id == root_graph_id)
                 .cloned()
                 .collect())
         }
@@ -1341,7 +1368,7 @@ mod tests {
         let session_id = "sess-node";
 
         let mut run = LifecycleRun::new_control(Uuid::new_v4(), Uuid::new_v4());
-        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, run.lifecycle_id);
+        let mut graph_instance = WorkflowGraphInstance::new_root(run.id, run.root_graph_id);
         let activity_state = ActivityLifecycleRunState {
             graph_instance_id: graph_instance.id,
             status: ActivityRunStatus::Running,

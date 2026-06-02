@@ -433,16 +433,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            lifecycle_id: Uuid,
+            root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(self
                 .items
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.lifecycle_id == lifecycle_id)
+                .filter(|run| run.root_graph_id == root_graph_id)
                 .cloned()
                 .collect())
         }
@@ -614,6 +614,20 @@ mod tests {
                         && assignment.attempt == attempt
                 })
                 .cloned())
+        }
+
+        async fn find_active_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<AgentAssignment>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.agent_id == agent_id && a.lease_status == "active")
+                .cloned()
+                .collect())
         }
 
         async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
@@ -804,7 +818,7 @@ mod tests {
         LifecycleRun {
             id: Uuid::new_v4(),
             project_id,
-            lifecycle_id: Uuid::new_v4(),
+            root_graph_id: Uuid::new_v4(),
             status: LifecycleRunStatus::Ready,
             active_node_keys: Vec::new(),
             execution_log: Vec::new(),

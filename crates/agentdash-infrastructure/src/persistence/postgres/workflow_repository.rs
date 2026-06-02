@@ -34,8 +34,8 @@ impl PostgresWorkflowRepository {
 
 const WF_COLS: &str = "id,project_id,key,name,description,source,version,contract,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
 const WG_COLS: &str = "id,project_id,key,name,description,source,version,entry_activity_key,activities,transitions,library_asset_id,source_ref,source_version,source_digest,installed_at,created_at,updated_at";
-const RUN_COLS: &str = "id,project_id,lifecycle_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
-const RUN_INSERT_COLS: &str = "id,project_id,lifecycle_id,status,active_node_keys,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
+const RUN_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,execution_log,created_at,updated_at,last_activity_at";
+const RUN_INSERT_COLS: &str = "id,project_id,root_graph_id,status,active_node_keys,record_artifacts,execution_log,created_at,updated_at,last_activity_at";
 const ACTIVITY_CLAIM_COLS: &str = "claim_id,run_id,graph_instance_id,activity_key,attempt,executor_kind,status,idempotency_key,executor_run_ref,created_at,updated_at";
 
 #[async_trait::async_trait]
@@ -526,7 +526,7 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         ))
         .bind(run.id.to_string())
         .bind(run.project_id.to_string())
-        .bind(run.lifecycle_id.to_string())
+        .bind(run.root_graph_id.to_string())
         .bind(serde_json::to_string(&run.status)?)
         .bind(serde_json::to_string(&run.active_node_keys)?)
         .bind("{}")
@@ -594,14 +594,14 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
         .collect()
     }
 
-    async fn list_by_lifecycle(
+    async fn list_by_root_graph(
         &self,
-        lifecycle_id: uuid::Uuid,
+        root_graph_id: uuid::Uuid,
     ) -> Result<Vec<LifecycleRun>, DomainError> {
         sqlx::query_as::<_, LifecycleRunRow>(&format!(
-            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE lifecycle_id = $1 ORDER BY created_at DESC"
+            "SELECT {RUN_COLS} FROM lifecycle_runs WHERE root_graph_id = $1 ORDER BY created_at DESC"
         ))
-        .bind(lifecycle_id.to_string())
+        .bind(root_graph_id.to_string())
         .fetch_all(&self.pool)
         .await
         .map_err(db_err)?
@@ -611,8 +611,8 @@ impl LifecycleRunRepository for PostgresWorkflowRepository {
     }
 
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError> {
-        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,lifecycle_id=$2,status=$3,active_node_keys=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
-            .bind(run.project_id.to_string()).bind(run.lifecycle_id.to_string())
+        let result = sqlx::query("UPDATE lifecycle_runs SET project_id=$1,root_graph_id=$2,status=$3,active_node_keys=$4,execution_log=$5,updated_at=$6,last_activity_at=$7 WHERE id=$8")
+            .bind(run.project_id.to_string()).bind(run.root_graph_id.to_string())
             .bind(serde_json::to_string(&run.status)?)
             .bind(serde_json::to_string(&run.active_node_keys)?)
             .bind(serde_json::to_string(&run.execution_log)?)
@@ -751,7 +751,7 @@ impl TryFrom<WorkflowGraphRow> for WorkflowGraph {
 struct LifecycleRunRow {
     id: String,
     project_id: String,
-    lifecycle_id: String,
+    root_graph_id: String,
     status: String,
     active_node_keys: String,
     execution_log: String,
@@ -766,7 +766,7 @@ impl TryFrom<LifecycleRunRow> for LifecycleRun {
         Ok(LifecycleRun {
             id: parse_uuid(&row.id, "lifecycle_run")?,
             project_id: parse_uuid(&row.project_id, "project")?,
-            lifecycle_id: parse_uuid(&row.lifecycle_id, "lifecycle_definition")?,
+            root_graph_id: parse_uuid(&row.root_graph_id, "root_graph")?,
             status: serde_json::from_str(&row.status)?,
             active_node_keys: parse_json_column(
                 &row.active_node_keys,

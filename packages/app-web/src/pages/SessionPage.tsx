@@ -145,9 +145,9 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
     : null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
   const sessionRuntimeSurface = activeSessionContext?.runtime_surface ?? null;
-  const sessionContextSnapshot = activeSessionContext?.context_snapshot ?? null;
-  const sessionCapabilities = activeSessionContext?.session_capabilities ?? null;
-  const taskExecutorSummary = sessionContextSnapshot?.executor ?? null;
+  const sessionContextSnapshot = null;
+  const sessionCapabilities = null;
+  const taskExecutorSummary = null;
 
   const runContext: SessionRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
 
@@ -209,9 +209,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
 
   // ─── 页面级回调 ───────────────────────────────────────
 
-  const executorHint = traceAgentContext?.executor_hint
-    ?? taskExecutorSummary?.executor
-    ?? null;
+  const executorHint = traceAgentContext?.executor_hint ?? null;
   const chatWorkspaceId =
     sessionWorkspaceId
     ?? ownerStory?.default_workspace_id

@@ -3,7 +3,7 @@ use agentdash_domain::workflow::{LifecycleRun, LifecycleRunStatus};
 pub fn select_active_run(runs: Vec<LifecycleRun>) -> Option<LifecycleRun> {
     runs.into_iter()
         .filter(|run| {
-            run.current_activity_key().is_some()
+            run.has_active_activity()
                 && matches!(
                     run.status,
                     LifecycleRunStatus::Ready

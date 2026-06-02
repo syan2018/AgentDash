@@ -6,9 +6,8 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::hooks::HookControlTarget;
 
-use super::session_association::{
-    ActivityRuntimeAssociationResolver, select_assignment_for_runtime_frame,
-};
+use super::session_association::ActivityRuntimeAssociationResolver;
+use super::session_association::select_assignment_for_frame;
 
 /// 运行时聚合视图:单 activity 激活所需的全部定义域上下文。
 ///
@@ -78,13 +77,13 @@ pub async fn resolve_active_workflow_projection_for_session(
     definition_repo: &dyn AgentProcedureRepository,
     activity_lifecycle_repo: &dyn WorkflowGraphRepository,
     frame_repo: &dyn AgentFrameRepository,
-    agent_repo: &dyn LifecycleAgentRepository,
+    _agent_repo: &dyn LifecycleAgentRepository,
     assignment_repo: &dyn AgentAssignmentRepository,
     run_repo: &dyn LifecycleRunRepository,
     graph_instance_repo: &dyn WorkflowGraphInstanceRepository,
 ) -> Result<Option<ActiveWorkflowProjection>, String> {
     let resolver =
-        ActivityRuntimeAssociationResolver::new(frame_repo, agent_repo, assignment_repo, run_repo);
+        ActivityRuntimeAssociationResolver::new(frame_repo, assignment_repo, run_repo);
     let Some(association) = resolver
         .resolve_by_runtime_session(session_id)
         .await
@@ -167,7 +166,8 @@ pub async fn resolve_active_workflow_projection_for_target(
         if frame.agent_id != target.agent_id {
             return Ok(None);
         }
-        select_assignment_for_runtime_frame(&assignments, &frame)
+        select_assignment_for_frame(assignment_repo, &frame)
+            .await
             .map_err(|error| error.to_string())?
     };
     let Some(assignment) = assignment else {
@@ -348,6 +348,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
 #[cfg(test)]
 mod tests {
     use super::derive_node_facts;
+    #[allow(deprecated)]
     use crate::workflow::session_association::select_assignment_for_runtime_frame;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentAssignment,

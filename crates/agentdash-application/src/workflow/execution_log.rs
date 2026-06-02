@@ -163,7 +163,55 @@ pub async fn materialize_activity_summary(
     let _ = repo.upsert_file(&file).await;
 }
 
+/// Activity attempt 级别的 port output artifact 引用。
+#[derive(Debug, Clone)]
+pub struct ActivityPortArtifactRef {
+    pub graph_instance_id: Uuid,
+    pub activity_key: String,
+    pub attempt: u32,
+}
+
+impl ActivityPortArtifactRef {
+    pub fn inline_path(&self, port_key: &str) -> String {
+        format!(
+            "{}/{}/{}/{}",
+            self.graph_instance_id, self.activity_key, self.attempt, port_key
+        )
+    }
+
+    fn path_prefix(&self) -> String {
+        format!(
+            "{}/{}/{}/",
+            self.graph_instance_id, self.activity_key, self.attempt
+        )
+    }
+}
+
+/// 加载 activity attempt 级别的 port output map（仅含非空内容）。
+pub async fn load_scoped_port_output_map(
+    repo: &dyn InlineFileRepository,
+    run_id: Uuid,
+    artifact_ref: &ActivityPortArtifactRef,
+) -> BTreeMap<String, String> {
+    let prefix = artifact_ref.path_prefix();
+    repo.list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|f| {
+            let port_key = f.path.strip_prefix(&prefix)?.to_string();
+            if port_key.is_empty() || port_key.contains('/') {
+                return None;
+            }
+            let content = f.into_text_content()?;
+            (!content.trim().is_empty()).then_some((port_key, content))
+        })
+        .collect()
+}
+
 /// 加载 lifecycle run 的 port output map（仅含非空内容）。
+/// 兼容旧路径 `{port_key}` 和新路径 `{gi}/{ak}/{att}/{port_key}`，
+/// 返回值 key 为 port_key（如有路径层级则取末段）。
 pub async fn load_port_output_map(
     repo: &dyn InlineFileRepository,
     run_id: Uuid,
@@ -174,8 +222,9 @@ pub async fn load_port_output_map(
         .into_iter()
         .filter_map(|f| {
             let path = f.path.clone();
+            let port_key = path.rsplit('/').next().unwrap_or(&path).to_string();
             let content = f.into_text_content()?;
-            (!content.trim().is_empty()).then_some((path, content))
+            (!content.trim().is_empty()).then_some((port_key, content))
         })
         .collect()
 }

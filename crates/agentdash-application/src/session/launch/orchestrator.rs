@@ -7,7 +7,7 @@ use crate::session::launch::{
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::*;
 use crate::workflow::AgentFrameBuilder;
-use crate::workflow::runtime_launch::RuntimeLaunchRequest;
+use crate::workflow::runtime_launch::{FrameLaunchEnvelope, RuntimeLaunchRequest};
 use agentdash_spi::ConnectorError;
 
 pub(in crate::session) struct SessionLaunchOrchestrator {
@@ -265,6 +265,12 @@ impl SessionLaunchOrchestrator {
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
         let agent_needs_bootstrap = Self::resolve_agent_needs_bootstrap(deps, session_id).await;
+        let launch_envelope =
+            FrameLaunchEnvelope::try_from_launch_request(launch_request).map_err(|msg| {
+                ConnectorError::InvalidConfig(format!(
+                    "session {sid} construction 产出不完整: {msg}"
+                ))
+            })?;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,
@@ -273,7 +279,7 @@ impl SessionLaunchOrchestrator {
                 had_existing_runtime,
                 session_meta: &session_meta,
                 requested_runtime_commands,
-                launch_request,
+                launch_envelope,
                 agent_needs_bootstrap,
             })
             .await
@@ -284,7 +290,7 @@ impl SessionLaunchOrchestrator {
                 return Err(error);
             }
         };
-        // === 初始 capability state 写入 AgentFrame revision ===
+        // === 初始 capability state 写入 AgentFrame revision + current_frame_id 同步 ===
         if let Some(ref frame_repo) = deps.agent_frame_repo {
             let initial_cap_state = &launch_plan.context.turn.capability_state;
             match frame_repo.find_by_runtime_session(session_id).await {
@@ -306,6 +312,21 @@ impl SessionLaunchOrchestrator {
                                 revision = frame.revision,
                                 "初始 capability state 已写入 AgentFrame"
                             );
+                            // enforce current_frame_id invariant:
+                            // build() 成功后同步 LifecycleAgent.current_frame_id
+                            if let Some(ref agent_repo) = deps.lifecycle_agent_repo {
+                                if let Ok(Some(mut agent)) =
+                                    agent_repo.get(frame.agent_id).await
+                                {
+                                    agent.set_current_frame(frame.id);
+                                    if let Err(e) = agent_repo.update(&agent).await {
+                                        tracing::warn!(
+                                            session_id,
+                                            "同步 current_frame_id 失败: {e}"
+                                        );
+                                    }
+                                }
+                            }
                         }
                         Err(error) => {
                             tracing::warn!(

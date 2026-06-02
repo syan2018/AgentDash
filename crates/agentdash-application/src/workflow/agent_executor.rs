@@ -30,8 +30,10 @@ use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetT
 use crate::workflow::activity_activation::apply_to_frame_runtime_target;
 use crate::workflow::{
     AgentFrameBuilder, RuntimeSessionCreationRequest, activate_activity_with_platform,
-    agent_mcp_entries_from_servers, build_capability_state_for_activation, load_port_output_map,
+    agent_mcp_entries_from_servers, build_capability_state_for_activation,
+    load_scoped_port_output_map,
 };
+use crate::workflow::execution_log::ActivityPortArtifactRef;
 
 #[derive(Debug, Clone)]
 pub struct AgentActivityLaunchContext {
@@ -487,12 +489,20 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
 
         let available_presets =
             crate::session::load_available_presets(&self.repos, definition.project_id).await;
-        let ready_port_keys =
-            load_port_output_map(self.repos.inline_file_repo.as_ref(), claim.run_id)
-                .await
-                .keys()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>();
+        let artifact_ref = ActivityPortArtifactRef {
+            graph_instance_id: claim.graph_instance_id,
+            activity_key: claim.activity_key.clone(),
+            attempt: claim.attempt,
+        };
+        let ready_port_keys = load_scoped_port_output_map(
+            self.repos.inline_file_repo.as_ref(),
+            claim.run_id,
+            &artifact_ref,
+        )
+        .await
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
 
         let current_frame = self
             .repos

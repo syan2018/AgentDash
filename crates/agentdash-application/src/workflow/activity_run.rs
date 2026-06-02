@@ -302,16 +302,16 @@ mod tests {
                 .collect())
         }
 
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            lifecycle_id: Uuid,
+            root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(self
                 .runs
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|run| run.lifecycle_id == lifecycle_id)
+                .filter(|run| run.root_graph_id == root_graph_id)
                 .cloned()
                 .collect())
         }

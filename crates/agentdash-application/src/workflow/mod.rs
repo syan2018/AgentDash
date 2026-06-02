@@ -54,7 +54,7 @@ pub use dispatch_service::{
 };
 pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
-pub use execution_log::{load_port_output_map, materialize_activity_summary};
+pub use execution_log::{load_port_output_map, load_scoped_port_output_map, materialize_activity_summary};
 pub use frame_builder::AgentFrameBuilder;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use freeform::{
@@ -79,12 +79,14 @@ pub use projection::{
     resolve_active_workflow_projection_for_target,
 };
 pub use run::select_active_run;
-pub use runtime_launch::RuntimeLaunchRequest;
+pub use runtime_launch::{
+    FrameLaunchEnvelope, FrameLaunchIntent, FrameRuntimeSurface, RuntimeLaunchRequest,
+};
 pub use scheduler::{
     ActivityExecutorLaunchOutcome, ActivityExecutorLauncher, ActivityExecutorScheduler,
     ActivityExecutorStartError,
 };
-pub(crate) use session_association::select_assignment_for_runtime_frame;
+pub(crate) use session_association::select_assignment_for_frame;
 pub use session_association::{
     LIFECYCLE_ACTIVITY_LABEL_PREFIX, LIFECYCLE_NODE_LABEL_PREFIX, build_lifecycle_activity_label,
     build_lifecycle_node_label, lifecycle_activity_parts_from_label,

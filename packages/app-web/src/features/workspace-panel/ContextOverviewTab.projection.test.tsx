@@ -110,7 +110,7 @@ const workflowRuns: LifecycleRunView[] = [];
 const lifecycleRunView: LifecycleRunView = {
   run_ref: { run_id: "run-projection-123456" },
   project_id: "project-projection",
-  lifecycle_id: "lifecycle-projection",
+  root_graph_id: "lifecycle-projection",
   status: "running",
   workflow_graph_instances: [
     {

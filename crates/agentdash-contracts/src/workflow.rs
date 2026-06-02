@@ -722,7 +722,7 @@ pub struct LifecycleAgentView {
 pub struct LifecycleRunView {
     pub run_ref: LifecycleRunRefDto,
     pub project_id: String,
-    pub lifecycle_id: String,
+    pub root_graph_id: String,
     pub status: LifecycleRunStatus,
     #[serde(default)]
     pub workflow_graph_instances: Vec<WorkflowGraphInstanceView>,

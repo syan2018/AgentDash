@@ -835,12 +835,44 @@ pub fn build_lifecycle_mount_with_ports(
     lifecycle_key: &str,
     writable_port_keys: &[String],
 ) -> Mount {
+    build_lifecycle_mount_with_activity_scope(
+        run_id,
+        graph_instance_id,
+        lifecycle_key,
+        writable_port_keys,
+        None,
+        None,
+    )
+}
+
+pub fn build_lifecycle_mount_with_activity_scope(
+    run_id: Uuid,
+    graph_instance_id: Uuid,
+    lifecycle_key: &str,
+    writable_port_keys: &[String],
+    activity_key: Option<&str>,
+    attempt: Option<u32>,
+) -> Mount {
     let capabilities = vec![
         MountCapability::Read,
         MountCapability::Write,
         MountCapability::List,
         MountCapability::Search,
     ];
+
+    let mut metadata = serde_json::json!({
+        "run_id": run_id.to_string(),
+        "graph_instance_id": graph_instance_id.to_string(),
+        "lifecycle_key": lifecycle_key,
+        "writable_port_keys": writable_port_keys,
+        "directory_hint": lifecycle_directory_hint()
+    });
+    if let Some(activity_key) = activity_key {
+        metadata["activity_key"] = serde_json::json!(activity_key);
+    }
+    if let Some(attempt) = attempt {
+        metadata["attempt"] = serde_json::json!(attempt);
+    }
 
     Mount {
         id: "lifecycle".to_string(),
@@ -850,13 +882,7 @@ pub fn build_lifecycle_mount_with_ports(
         capabilities,
         default_write: false,
         display_name: "Lifecycle 执行记录".to_string(),
-        metadata: serde_json::json!({
-            "run_id": run_id.to_string(),
-            "graph_instance_id": graph_instance_id.to_string(),
-            "lifecycle_key": lifecycle_key,
-            "writable_port_keys": writable_port_keys,
-            "directory_hint": lifecycle_directory_hint()
-        }),
+        metadata,
     }
 }
 

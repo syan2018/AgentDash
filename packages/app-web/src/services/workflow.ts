@@ -468,7 +468,7 @@ export function mapWorkflowRun(raw: Record<string, unknown>): WorkflowRun {
   return {
     id: requireStringField(raw, "id"),
     project_id: requireStringField(raw, "project_id"),
-    lifecycle_id: requireStringField(raw, "lifecycle_id"),
+    root_graph_id: requireStringField(raw, "root_graph_id"),
     status: normalizeEnum<WorkflowRunStatus>(raw.status, WORKFLOW_RUN_STATUSES, "workflow run status"),
     execution_log: asRecordArray(raw.execution_log).map(mapLifecycleExecutionEntry),
     created_at: requireStringField(raw, "created_at"),

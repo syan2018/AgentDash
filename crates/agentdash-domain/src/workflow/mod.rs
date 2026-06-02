@@ -22,7 +22,8 @@ pub use dispatch::{
     SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, WorkflowGraphRef,
 };
 pub use entity::{
-    ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph, build_effective_contract,
+    ActiveActivityRef, ActivityExecutionClaim, AgentProcedure, LifecycleRun, WorkflowGraph,
+    build_effective_contract,
 };
 pub use lifecycle_agent::{LifecycleAgent, bootstrap_status};
 pub use lifecycle_gate::LifecycleGate;

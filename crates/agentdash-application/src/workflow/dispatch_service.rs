@@ -774,12 +774,12 @@ impl<'a> LifecycleDispatchService<'a> {
 
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
-fn create_lifecycle_run(project_id: Uuid, lifecycle_id: Uuid) -> LifecycleRun {
+fn create_lifecycle_run(project_id: Uuid, root_graph_id: Uuid) -> LifecycleRun {
     let now = chrono::Utc::now();
     LifecycleRun {
         id: Uuid::new_v4(),
         project_id,
-        lifecycle_id,
+        root_graph_id,
         status: agentdash_domain::workflow::LifecycleRunStatus::Ready,
         active_node_keys: Vec::new(),
         execution_log: Vec::new(),
@@ -883,9 +883,9 @@ mod tests {
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(vec![])
         }
-        async fn list_by_lifecycle(
+        async fn list_by_root_graph(
             &self,
-            _lifecycle_id: Uuid,
+            _root_graph_id: Uuid,
         ) -> Result<Vec<LifecycleRun>, DomainError> {
             Ok(vec![])
         }
@@ -1144,6 +1144,19 @@ mod tests {
                         && assignment.attempt == attempt
                 })
                 .cloned())
+        }
+        async fn find_active_for_agent(
+            &self,
+            agent_id: Uuid,
+        ) -> Result<Vec<AgentAssignment>, DomainError> {
+            Ok(self
+                .items
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.agent_id == agent_id && a.lease_status == "active")
+                .cloned()
+                .collect())
         }
         async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError> {
             Ok(self
@@ -1443,7 +1456,7 @@ mod tests {
 
         let runs = run_repo.items.lock().unwrap().clone();
         assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].lifecycle_id, workflow_graph.id);
+        assert_eq!(runs[0].root_graph_id, workflow_graph.id);
         let instances = gi_repo.items.lock().unwrap().clone();
         assert_eq!(instances.len(), 1);
         assert!(instances[0].is_root());
@@ -1615,7 +1628,7 @@ mod tests {
 
         let runs = run_repo.items.lock().unwrap().clone();
         let instances = gi_repo.items.lock().unwrap().clone();
-        assert_eq!(runs[0].lifecycle_id, workflow_graph.id);
+        assert_eq!(runs[0].root_graph_id, workflow_graph.id);
         assert_eq!(instances[0].graph_id, workflow_graph.id);
         assert_eq!(
             instances[0]

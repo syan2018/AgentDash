@@ -278,7 +278,7 @@ fn assemble_lifecycle_run_view(
             run_id: run.id.to_string(),
         },
         project_id: run.project_id.to_string(),
-        lifecycle_id: run.lifecycle_id.to_string(),
+        root_graph_id: run.root_graph_id.to_string(),
         status: status_to_dto(run.status),
         workflow_graph_instances,
         agents,

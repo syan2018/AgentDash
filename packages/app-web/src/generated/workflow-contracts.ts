@@ -95,7 +95,7 @@ export type LifecycleRunRefDto = { run_id: string, };
 
 export type LifecycleRunStatus = "draft" | "ready" | "running" | "blocked" | "completed" | "failed" | "cancelled";
 
-export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, lifecycle_id: string, status: LifecycleRunStatus, workflow_graph_instances: Array<WorkflowGraphInstanceView>, agents: Array<LifecycleAgentView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
+export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string, root_graph_id: string, status: LifecycleRunStatus, workflow_graph_instances: Array<WorkflowGraphInstanceView>, agents: Array<LifecycleAgentView>, subject_associations: Array<LifecycleSubjectAssociationDto>, runtime_trace_refs: Array<RuntimeSessionRefDto>, execution_log: Array<LifecycleExecutionEntry>, created_at: string, updated_at: string, last_activity_at: string, };
 
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 

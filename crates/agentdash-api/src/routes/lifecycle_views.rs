@@ -42,6 +42,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
             axum::routing::get(get_session_trace),
         )
         .route(
+            "/sessions/{id}/frame-runtime",
+            axum::routing::get(get_session_frame_runtime),
+        )
+        .route(
             "/projects/{id}/active-agents",
             axum::routing::get(get_project_active_agents),
         )
@@ -91,6 +95,41 @@ pub async fn get_agent_frame_runtime(
         .get(frame_id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("agent_frame 不存在: {frame_id}")))?;
+    let agent = state
+        .repos
+        .lifecycle_agent_repo
+        .get(frame.agent_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("lifecycle_agent 不存在: {}", frame.agent_id)))?;
+    let run = load_lifecycle_run(state.as_ref(), agent.run_id).await?;
+    load_project_with_permission(
+        state.as_ref(),
+        &current_user,
+        run.project_id,
+        ProjectPermission::View,
+    )
+    .await?;
+
+    Ok(Json(agent_frame_runtime_to_view(&frame)))
+}
+
+/// `GET /sessions/{id}/frame-runtime` — 通过 runtime session id 直接查 frame runtime。
+/// 替代前端从 lifecycleStore 遍历 frames 的 findFrameIdForSession。
+pub async fn get_session_frame_runtime(
+    State(state): State<Arc<AppState>>,
+    CurrentUser(current_user): CurrentUser,
+    Path(runtime_session_id): Path<String>,
+) -> Result<Json<AgentFrameRuntimeView>, ApiError> {
+    let frame = state
+        .repos
+        .agent_frame_repo
+        .find_by_runtime_session(&runtime_session_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "runtime_session 未附着到 AgentFrame: {runtime_session_id}"
+            ))
+        })?;
     let agent = state
         .repos
         .lifecycle_agent_repo

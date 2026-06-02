@@ -30,9 +30,10 @@ use crate::session::{
 };
 use crate::workflow::{
     ActivityEvent, ActivityLifecycleRunService, AgentActivityExecutorLauncher,
-    AgentActivityLaunchContext, AgentActivityRuntimePort, load_port_output_map,
+    AgentActivityLaunchContext, AgentActivityRuntimePort, load_scoped_port_output_map,
     session_terminal_summary,
 };
+use crate::workflow::execution_log::ActivityPortArtifactRef;
 
 #[derive(Debug)]
 pub struct OrchestrationResult {
@@ -240,9 +241,17 @@ impl LifecycleOrchestrator {
                     .unwrap_or_else(|| "agent 主动标记 activity failed".to_string()),
             }
         } else {
-            let port_output_map =
-                load_port_output_map(self.repos.inline_file_repo.as_ref(), association.run.id)
-                    .await;
+            let artifact_ref = ActivityPortArtifactRef {
+                graph_instance_id: association.graph_instance_id,
+                activity_key: association.activity_key.clone(),
+                attempt: association.attempt,
+            };
+            let port_output_map = load_scoped_port_output_map(
+                self.repos.inline_file_repo.as_ref(),
+                association.run.id,
+                &artifact_ref,
+            )
+            .await;
             let required_output_keys = match &activity.completion_policy {
                 ActivityCompletionPolicy::OutputPorts { required_ports } => required_ports.clone(),
                 _ => Vec::new(),

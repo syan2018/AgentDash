@@ -41,3 +41,11 @@ export async function fetchRuntimeTrace(runtimeSessionId: string): Promise<Runti
     `/sessions/${encodeURIComponent(runtimeSessionId)}/trace`,
   );
 }
+
+export async function fetchSessionFrameRuntime(
+  runtimeSessionId: string,
+): Promise<AgentFrameRuntimeView> {
+  return api.get<AgentFrameRuntimeView>(
+    `/sessions/${encodeURIComponent(runtimeSessionId)}/frame-runtime`,
+  );
+}

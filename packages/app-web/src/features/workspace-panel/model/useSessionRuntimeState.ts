@@ -1,11 +1,8 @@
 /**
- * Session Runtime State — 通过 lifecycle frame 投影驱动。
+ * Session Runtime State — 通过后端 `/sessions/{id}/frame-runtime` 直接查询。
  *
- * 旧版直接调用 `GET /sessions/{id}/context` 和 `GET /sessions/{id}/hook-runtime`，
- * 这两个端点已在 lifecycle 迁移中移除。
- *
- * 新版通过 `lifecycleStore` 查找 session 关联的 AgentFrame，再从 frame runtime
- * 投影中组装 `SessionContextPayload` 和 `HookSessionRuntimeInfo`。
+ * 不再遍历 lifecycleStore 的 frame cache 做本地反查，
+ * 而是让后端通过 `find_by_runtime_session` 精确锚定 frame 并返回 runtime view。
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -13,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { HookSessionRuntimeInfo } from "../../../types";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
-import { fetchAgentFrameRuntime } from "../../../services/lifecycle";
+import { fetchSessionFrameRuntime } from "../../../services/lifecycle";
 import type { AgentFrameRuntimeView } from "../../../types";
 
 export type { SessionRuntimeStateStatus };
@@ -66,52 +63,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Session runtime state 加载失败";
 }
 
-/**
- * 从 lifecycleStore 中反查 session 对应的 frame_id。
- * 遍历所有 frame，找到 runtime_session_refs 包含目标 sessionId 的 frame。
- */
-function findFrameIdForSession(
-  frames: Map<string, AgentFrameRuntimeView>,
-  agents: Map<string, { current_frame_id?: string }>,
-  sessionId: string,
-): string | null {
-  for (const frame of frames.values()) {
-    if (frame.runtime_session_refs.some((ref) => ref.runtime_session_id === sessionId)) {
-      return frame.frame_ref.frame_id;
-    }
-  }
-  for (const agent of agents.values()) {
-    if (agent.current_frame_id) return agent.current_frame_id;
-  }
-  return null;
-}
-
 export function useSessionRuntimeState({
   sessionId,
   sourceKey,
 }: UseSessionRuntimeStateInput) {
   const [state, setState] = useState<SessionRuntimeProjectionState>(() => emptySessionRuntimeState());
-  const frames = useLifecycleStore((s) => s.frames);
-  const agents = useLifecycleStore((s) => s.agents);
   const setFrame = useLifecycleStore((s) => s.setFrame);
 
   const loadFrameContext = useCallback(async (sid: string, skey: string) => {
-    const frameId = findFrameIdForSession(frames, agents, sid);
-    if (!frameId) {
-      setState({
-        session_id: sid,
-        source_key: skey,
-        status: "ready",
-        context: null,
-        hook_runtime: null,
-        frame: null,
-        error: null,
-      });
-      return;
-    }
-
     try {
-      const frameView = await fetchAgentFrameRuntime(frameId);
+      const frameView = await fetchSessionFrameRuntime(sid);
       setFrame(frameView);
       setState({
         session_id: sid,
@@ -123,17 +84,19 @@ export function useSessionRuntimeState({
         error: null,
       });
     } catch (error: unknown) {
+      // 404 表示 session 没有关联 AgentFrame（freeform session），视为正常空状态
+      const is404 = error instanceof Error && error.message.includes("404");
       setState({
         session_id: sid,
         source_key: skey,
-        status: "error",
+        status: is404 ? "ready" : "error",
         context: null,
         hook_runtime: null,
         frame: null,
-        error: errorMessage(error),
+        error: is404 ? null : errorMessage(error),
       });
     }
-  }, [frames, agents, setFrame]);
+  }, [setFrame]);
 
   useEffect(() => {
     if (!sessionId || !sourceKey) {

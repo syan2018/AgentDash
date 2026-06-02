@@ -5,7 +5,7 @@
 
 use agentdash_spi::Vfs;
 
-use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::vfs::build_lifecycle_mount_with_activity_scope;
 use crate::workflow::projection::ActiveWorkflowProjection;
 
 fn empty_vfs() -> Vfs {
@@ -28,11 +28,13 @@ pub fn writable_port_keys_for_active_workflow(workflow: &ActiveWorkflowProjectio
 }
 
 pub fn append_active_workflow_lifecycle_mount(vfs: &mut Vfs, workflow: &ActiveWorkflowProjection) {
-    let mount = build_lifecycle_mount_with_ports(
+    let mount = build_lifecycle_mount_with_activity_scope(
         workflow.run.id,
         workflow.graph_instance_id,
         &workflow.lifecycle.key,
         &writable_port_keys_for_active_workflow(workflow),
+        Some(&workflow.active_activity.key),
+        Some(workflow.active_attempt.attempt),
     );
 
     if let Some(existing) = vfs
@@ -62,6 +64,7 @@ pub fn ensure_active_workflow_lifecycle_mount(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,

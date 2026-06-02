@@ -88,7 +88,7 @@ pub trait LifecycleRunRepository: Send + Sync {
     async fn get_by_id(&self, id: Uuid) -> Result<Option<LifecycleRun>, DomainError>;
     async fn list_by_ids(&self, ids: &[Uuid]) -> Result<Vec<LifecycleRun>, DomainError>;
     async fn list_by_project(&self, project_id: Uuid) -> Result<Vec<LifecycleRun>, DomainError>;
-    async fn list_by_lifecycle(&self, lifecycle_id: Uuid)
+    async fn list_by_root_graph(&self, root_graph_id: Uuid)
     -> Result<Vec<LifecycleRun>, DomainError>;
     async fn update(&self, run: &LifecycleRun) -> Result<(), DomainError>;
     async fn delete(&self, id: Uuid) -> Result<(), DomainError>;
@@ -150,6 +150,12 @@ pub trait AgentAssignmentRepository: Send + Sync {
         activity_key: &str,
         attempt: i32,
     ) -> Result<Option<AgentAssignment>, DomainError>;
+    /// 查询指定 agent 当前 active 的 assignments（lease_status = 'active'）。
+    /// 替代 `list_by_run` + 全量扫描的启发式选择模式。
+    async fn find_active_for_agent(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<Vec<AgentAssignment>, DomainError>;
     async fn list_by_run(&self, run_id: Uuid) -> Result<Vec<AgentAssignment>, DomainError>;
     async fn update(&self, assignment: &AgentAssignment) -> Result<(), DomainError>;
 }

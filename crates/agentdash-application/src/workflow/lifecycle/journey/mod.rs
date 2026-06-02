@@ -293,6 +293,27 @@ impl LifecycleJourneyProjection {
             })
     }
 
+    /// 读取 activity attempt 级别的 scoped port output。
+    pub async fn read_scoped_port_output(
+        &self,
+        run_id: Uuid,
+        scoped_path: &str,
+    ) -> JourneyResult<String> {
+        self.inline_file_repo
+            .get_file(
+                InlineFileOwnerKind::LifecycleRun,
+                run_id,
+                PORT_OUTPUTS_CONTAINER,
+                scoped_path,
+            )
+            .await
+            .map_err(map_domain_err)?
+            .and_then(|file| file.into_text_content())
+            .ok_or_else(|| {
+                LifecycleJourneyError::NotFound(format!("port output 不存在: {scoped_path}"))
+            })
+    }
+
     pub async fn write_port_output(
         &self,
         run_id: Uuid,
@@ -304,6 +325,26 @@ impl LifecycleJourneyProjection {
             run_id,
             PORT_OUTPUTS_CONTAINER,
             port_key.to_string(),
+            content.to_string(),
+        );
+        self.inline_file_repo
+            .upsert_file(&file)
+            .await
+            .map_err(map_domain_err)
+    }
+
+    /// 写入 activity attempt 级别的 scoped port output。
+    pub async fn write_scoped_port_output(
+        &self,
+        run_id: Uuid,
+        scoped_path: &str,
+        content: &str,
+    ) -> JourneyResult<()> {
+        let file = InlineFile::new(
+            InlineFileOwnerKind::LifecycleRun,
+            run_id,
+            PORT_OUTPUTS_CONTAINER,
+            scoped_path.to_string(),
             content.to_string(),
         );
         self.inline_file_repo
@@ -440,7 +481,7 @@ impl LifecycleJourneyProjection {
 pub struct LifecycleRunOverview<'a> {
     id: Uuid,
     project_id: Uuid,
-    lifecycle_id: Uuid,
+    root_graph_id: Uuid,
     status: &'a LifecycleRunStatus,
     current_activity_key: Option<String>,
     step_count: usize,
@@ -457,9 +498,9 @@ pub fn run_overview<'a>(
     LifecycleRunOverview {
         id: run.id,
         project_id: run.project_id,
-        lifecycle_id: run.lifecycle_id,
+        root_graph_id: run.root_graph_id,
         status: &run.status,
-        current_activity_key: run.current_activity_key().map(str::to_string),
+        current_activity_key: run.active_node_keys.first().cloned(),
         step_count: graph_instances
             .iter()
             .filter_map(|instance| instance.activity_state.as_ref())

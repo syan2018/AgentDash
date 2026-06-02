@@ -1,21 +1,17 @@
-//! RuntimeLaunchRequest — 从 AgentFrame 投影出的 runtime adapter 请求。
+//! RuntimeLaunchRequest 及 FrameLaunchEnvelope — Session 启动的类型体系。
 //!
-//! ## 设计定位
-//!
-//! `RuntimeLaunchRequest` 是 connector launch 的唯一输入来源：
+//! ## 类型层次
 //!
 //! ```text
-//! AgentFrame revision
-//!   → RuntimeLaunchRequest::from_frame(..., RuntimeSessionSelectionPolicy)
-//!   → connector ExecutionContext
-//!   → RuntimeSession events
+//! FrameRuntimeSurface  ← 只来自 AgentFrame 持久化 surface
+//! FrameLaunchIntent    ← 只来自 command/prompt intent
+//! FrameLaunchEnvelope  ← Frame construction 输出，字段 non-optional
+//!   ↓ .into_launch_request()
+//! RuntimeLaunchRequest ← 向下兼容的 mutable bag（渐进 deprecate）
 //! ```
 //!
-//! ### Session 创建 + Connector 启动
-//!
-//! `RuntimeLaunchRequest` 同时承载 surface 投影和 connector 启动所需的执行器配置。
-//! compose 函数先通过 `AgentFrameBuilder.build()` 持久化 frame revision，
-//! 随后由 `RuntimeLaunchRequest::from_frame(...)` 投影 connector 输入。
+//! `FrameLaunchEnvelope` 是 session construction 到 planner 的唯一传递形式，
+//! 让"缺字段"在构造边界暴露而不是到 planner 才兜底检查。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,6 +26,174 @@ use uuid::Uuid;
 
 use crate::extension_runtime::ExtensionRuntimeProjection;
 use crate::session::post_turn_handler::TerminalHookEffectBinding;
+
+// ─── FrameRuntimeSurface: 只来自 AgentFrame 持久化 surface ───
+
+/// 从 `AgentFrame` 投影的纯 surface 数据，不可被 command/extras 修改。
+#[derive(Debug, Clone)]
+pub struct FrameRuntimeSurface {
+    pub agent_id: Uuid,
+    pub frame_id: Uuid,
+    pub frame_revision: i32,
+    pub procedure_ref: Option<AgentProcedureRef>,
+    pub capability_surface: serde_json::Value,
+    pub context_slice: serde_json::Value,
+    pub vfs_surface: serde_json::Value,
+    pub mcp_surface: serde_json::Value,
+    pub runtime_session_id: Option<String>,
+    pub graph_instance_id: Option<Uuid>,
+    pub activity_key: Option<String>,
+}
+
+impl FrameRuntimeSurface {
+    pub fn from_frame(frame: &AgentFrame, runtime_policy: RuntimeSessionSelectionPolicy) -> Self {
+        Self {
+            agent_id: frame.agent_id,
+            frame_id: frame.id,
+            frame_revision: frame.revision,
+            procedure_ref: frame.procedure_id.map(AgentProcedureRef::ById),
+            capability_surface: frame
+                .effective_capability_json
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+            context_slice: frame
+                .context_slice_json
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+            vfs_surface: frame
+                .vfs_surface_json
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+            mcp_surface: frame
+                .mcp_surface_json
+                .clone()
+                .unwrap_or(serde_json::Value::Null),
+            runtime_session_id: frame.select_runtime_session_id(runtime_policy),
+            graph_instance_id: frame.graph_instance_id,
+            activity_key: frame.activity_key.clone(),
+        }
+    }
+}
+
+// ─── FrameLaunchIntent: 只来自 command/prompt intent ───
+
+/// 来自 `LaunchCommand` / `AssemblyLaunchExtras` 的请求意图，
+/// 不含任何 frame surface 数据。
+#[derive(Debug, Clone, Default)]
+pub struct FrameLaunchIntent {
+    pub prompt_blocks: Option<Vec<serde_json::Value>>,
+    pub environment_variables: HashMap<String, String>,
+    pub identity: Option<AuthIdentity>,
+    pub terminal_hook_effect_binding: Option<TerminalHookEffectBinding>,
+    pub discovered_guidelines: Vec<DiscoveredGuideline>,
+    pub extension_runtime: Option<ExtensionRuntimeProjection>,
+}
+
+// ─── FrameLaunchEnvelope: construction 输出，字段 non-optional ───
+
+/// Frame construction 到 planner 的传递物。
+/// `working_directory`、`executor_config`、`capability_state` 在此保证 non-optional,
+/// planner 不需要做"半成品是否 ready"的兜底检查。
+#[derive(Debug, Clone)]
+pub struct FrameLaunchEnvelope {
+    pub surface: FrameRuntimeSurface,
+    pub intent: FrameLaunchIntent,
+    pub working_directory: PathBuf,
+    pub executor_config: AgentConfig,
+    pub capability_state: CapabilityState,
+    pub vfs: Vfs,
+    pub mcp_servers: Vec<SessionMcpServer>,
+    pub context_bundle: Option<SessionContextBundle>,
+    pub continuation_context_frame: Option<ContextFrame>,
+    pub base_capability_state: Option<CapabilityState>,
+    pub resolution_trace: LaunchResolutionTrace,
+}
+
+impl FrameLaunchEnvelope {
+    /// 从已完成 construction 的 `RuntimeLaunchRequest` 验证并提取 envelope。
+    ///
+    /// 三个 non-optional 字段（`working_directory`、`executor_config`、`capability_state`）
+    /// 必须已被 construction provider 填充，否则返回 Err。
+    pub fn try_from_launch_request(
+        req: RuntimeLaunchRequest,
+    ) -> Result<Self, String> {
+        let working_directory = req.working_directory.ok_or(
+            "FrameLaunchEnvelope: working_directory 未在 construction 阶段解析",
+        )?;
+        let executor_config = req.executor_config.ok_or(
+            "FrameLaunchEnvelope: executor_config 未在 construction 阶段解析",
+        )?;
+        let capability_state = req.typed_capability_state.ok_or(
+            "FrameLaunchEnvelope: typed_capability_state 未在 construction 阶段解析",
+        )?;
+        let vfs = req.typed_vfs.unwrap_or_default();
+        Ok(Self {
+            surface: FrameRuntimeSurface {
+                agent_id: req.agent_id,
+                frame_id: req.frame_id,
+                frame_revision: req.frame_revision,
+                procedure_ref: req.procedure_ref,
+                capability_surface: req.capability_surface,
+                context_slice: req.context_slice,
+                vfs_surface: req.vfs_surface,
+                mcp_surface: req.mcp_surface,
+                runtime_session_id: req.runtime_session_id,
+                graph_instance_id: req.graph_instance_id,
+                activity_key: req.activity_key,
+            },
+            intent: FrameLaunchIntent {
+                prompt_blocks: req.prompt_blocks,
+                environment_variables: req.environment_variables,
+                identity: req.identity,
+                terminal_hook_effect_binding: req.terminal_hook_effect_binding,
+                discovered_guidelines: req.discovered_guidelines,
+                extension_runtime: req.extension_runtime,
+            },
+            working_directory,
+            executor_config,
+            capability_state,
+            vfs,
+            mcp_servers: req.typed_mcp_servers,
+            context_bundle: req.context_bundle,
+            continuation_context_frame: req.continuation_context_frame,
+            base_capability_state: req.base_capability_state,
+            resolution_trace: req.resolution_trace,
+        })
+    }
+
+    /// 向下兼容：把 envelope 转换为 RuntimeLaunchRequest，
+    /// 供尚未迁移到 envelope 消费的代码路径使用。
+    pub fn into_launch_request(self) -> RuntimeLaunchRequest {
+        RuntimeLaunchRequest {
+            agent_id: self.surface.agent_id,
+            frame_id: self.surface.frame_id,
+            frame_revision: self.surface.frame_revision,
+            procedure_ref: self.surface.procedure_ref,
+            capability_surface: self.surface.capability_surface,
+            context_slice: self.surface.context_slice,
+            vfs_surface: self.surface.vfs_surface,
+            mcp_surface: self.surface.mcp_surface,
+            runtime_session_id: self.surface.runtime_session_id,
+            graph_instance_id: self.surface.graph_instance_id,
+            activity_key: self.surface.activity_key,
+            executor_config: Some(self.executor_config),
+            working_directory: Some(self.working_directory),
+            prompt_blocks: self.intent.prompt_blocks,
+            environment_variables: self.intent.environment_variables,
+            identity: self.intent.identity,
+            terminal_hook_effect_binding: self.intent.terminal_hook_effect_binding,
+            discovered_guidelines: self.intent.discovered_guidelines,
+            extension_runtime: self.intent.extension_runtime,
+            context_bundle: self.context_bundle,
+            typed_capability_state: Some(self.capability_state),
+            typed_vfs: Some(self.vfs),
+            typed_mcp_servers: self.mcp_servers,
+            continuation_context_frame: self.continuation_context_frame,
+            base_capability_state: self.base_capability_state,
+            resolution_trace: self.resolution_trace,
+        }
+    }
+}
 
 /// Launch 过程中 resolution 来源的 trace 数据（仅用于诊断/可观测性）。
 #[derive(Debug, Clone, Default)]

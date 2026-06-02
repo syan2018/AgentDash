@@ -23,7 +23,7 @@ const AGENT_STATUS_TONE: Record<string, StatusDotTone> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  active: "运行中",
+  active: "就绪",
   running: "运行中",
   completed: "已完成",
   failed: "失败",

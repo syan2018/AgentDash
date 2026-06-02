@@ -15,7 +15,7 @@ import { groupSessionsBySubject, type SessionEntry, type SessionGroup } from "./
 // ─── Status helpers ──────────────────────────────────────
 
 const statusLabel: Record<string, string> = {
-  active: "运行中",
+  active: "就绪",
   completed: "已完成",
   failed: "失败",
   paused: "已暂停",
@@ -255,7 +255,8 @@ type StatusFilterGroup = "all" | "running" | "idle" | "ended";
 
 function statusGroupOf(status: string): Exclude<StatusFilterGroup, "all"> {
   switch (status) {
-    case "active": return "running";
+    case "running": return "running";
+    case "active":
     case "paused":
     case "pending": return "idle";
     case "completed":
@@ -266,8 +267,8 @@ function statusGroupOf(status: string): Exclude<StatusFilterGroup, "all"> {
 
 const STATUS_TAB_OPTIONS: Array<{ value: StatusFilterGroup; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "running", label: "运行中" },
-  { value: "idle", label: "空闲" },
+  { value: "running", label: "执行中" },
+  { value: "idle", label: "就绪" },
   { value: "ended", label: "已结束" },
 ];
 

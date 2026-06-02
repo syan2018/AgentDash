@@ -375,6 +375,19 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - `SessionHookService::ensure_hook_runtime`、hub lazy rebuild、provider session snapshot entry 与 rule-engine `HookEvaluationQuery` 仍是 session-shaped adapter。
 - companion parent request hook evaluation 仍以 parent session 为入口，尚未迁到 parent frame/assignment target。
 
+2026-06-02 的 hook runtime target resolver / lazy rebuild slice 继续收束 snapshot load 与 runtime rebuild owner：
+
+- `ExecutionHookProvider::resolve_runtime_hook_target` 成为唯一 runtime-session adapter 入口，application provider 在这里解析 `RuntimeSession -> AgentFrame -> LifecycleAgent -> AgentAssignment`，并输出 `HookControlTarget`。
+- `SessionHookService::reload_hook_runtime` 与 hub lazy rebuild 不再调用 `load_session_snapshot(SessionHookSnapshotQuery { session_id })` 构建 runtime；它们先解析 `HookControlTarget`，再用 `AgentFrameHookSnapshotQuery { target, provenance }` 加载 snapshot。
+- `build_frame_hook_runtime` 以 `HookControlTarget.run_id` 构建 runtime，并校验 target frame 仍绑定 delivery RuntimeSession；它不再从 snapshot metadata 反推 run owner。
+- 新增 hub gate 测试证明 lazy rebuild 调用 `load_frame_snapshot` 且没有调用 `load_session_snapshot`，reload 相关测试显式注册 frame target。
+
+该 slice 仍不关闭 P1-08 gate，因为：
+
+- `AppExecutionHookProvider::evaluate_frame_hook` 仍把 frame query 转成 rule-engine `HookEvaluationQuery`；hook 规则上下文还没有自己的 frame-first evaluation query。
+- `HookRuntimeAccess::evaluate/refresh`、runtime delegate、workflow orchestrator refresh 与 companion subagent hook helper 仍保留 session-shaped adapter。
+- Static gate 仍能命中 provider/rules/runtime delegate/orchestrator/companion/test 形状；下一批应先拆 rule-engine evaluation context 与 target-aware refresh/evaluate API，再清理 remaining control-path hits。
+
 验证记录：
 
 - `cargo check -p agentdash-application`
@@ -386,6 +399,10 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - `cargo test -p agentdash-application workflow::agent_executor --lib -- --format terse`
 - `cargo test -p agentdash-application canvas::tools::tests::present_canvas_updates_meta_capability_skill_and_events --lib -- --format terse`
 - `rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \{|ensure_hook_runtime\(|get_hook_runtime\(|resolve_runtime_session_frame_id\(" crates/agentdash-application/src` 仍命中 session service / hub dispatch / provider/rule-engine / companion / adapter tests 等入口，因此 static gate 保持未通过。
+- `cargo test -p agentdash-application session::hub::tests::lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::live_runtime_context_transition_derives_skill_dimension_from_active_vfs --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::runtime_context_update_injections_are_recorded_without_direct_notification --lib -- --format terse`
+- `cargo check -p agentdash-application`
 
 ## P1-09 `StepActivation` 没收束进 AgentFrameBuilder
 

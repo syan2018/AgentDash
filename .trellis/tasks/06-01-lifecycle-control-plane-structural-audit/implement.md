@@ -114,7 +114,7 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller。完整 gate 仍取决于 hook SPI/session facade 与 hub lazy rebuild。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller；hook runtime reload / hub lazy rebuild 已先解析 `HookControlTarget`，再以 frame snapshot 构建 runtime。完整 gate 仍取决于 provider/rule-engine/session delegate 内部 session-shaped facade、orchestrator refresh 与 companion helper。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [x] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
   - Definition-level `AgentActivityExecutorSpec` 已移除 `AgentSessionPolicy/session_policy`，改为 `agent_reuse_policy + runtime_session_policy`；freeform/auto lifecycle 用 `continue_current_agent + deliver_to_current_trace`，普通 Agent activity 用 `create_activity_agent + create_new`。
@@ -167,6 +167,14 @@
 - canvas capability sync 先解析 target，再通过 `get_hook_runtime_for_target` 获取 hook runtime；不再裸调 `get_hook_runtime(session_id)`。
 - companion parent request 已在后续 slice 迁到 `AgentFrameRuntimeTarget` caller；该 slice 仍不关闭 Hook gate，因为 snapshot load / refresh / evaluate 的 SPI/session facade 与 hub lazy rebuild 仍存在 session-shaped 入口。
 
+2026-06-02 的 hook runtime target resolver / lazy rebuild slice 已关闭初始 snapshot load 与 hub lazy rebuild 把 session 当 owner 的缺口，但 Phase 4 Hook gate 仍保持 partial：
+
+- `ExecutionHookProvider::resolve_runtime_hook_target` 成为 runtime-session adapter 到 `HookControlTarget { run_id, agent_id, frame_id, assignment_id }` 的显式入口；application provider 复用 `select_assignment_for_runtime_frame`，避免 hook target 另起一套 assignment/frame 证据规则。
+- `SessionHookService::reload_hook_runtime` 与 hub lazy rebuild 先解析 target，再调用 `load_frame_snapshot(AgentFrameHookSnapshotQuery { target, provenance })`；`runtime_session_id` 只进入 `RuntimeAdapterProvenance`。
+- `build_frame_hook_runtime` 不再从 snapshot metadata 反推 run_id，而是以 `HookControlTarget` 构建 `AgentFrameHookRuntime`，并校验 target frame 与 delivery RuntimeSession 的绑定关系。
+- 新增 `lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target`，证明懒重建不会调用 `load_session_snapshot`；reload 相关 hub 测试也显式注册 target。
+- 该 slice 不关闭完整 Static / Hook gate，因为 provider `evaluate_frame_hook` 仍转入 rule-engine 的 `HookEvaluationQuery`，runtime delegate / orchestrator refresh / companion hook helper 仍存在 session-shaped refresh/evaluate adapter。
+
 2026-06-02 的 ContinueRoot target resolution slice 已关闭 start/apply 内部反复分发 root runtime session 的缺口，但不关闭 `AgentReusePolicy + RuntimeSessionPolicy` 主项：
 
 - `AgentActivitySessionPort::resolve_continue_root_runtime_target` 成为 ContinueRoot 从 root runtime session adapter 到 `AgentFrameRuntimeTarget` 的封装边界。
@@ -198,6 +206,9 @@
 - `cargo test -p agentdash-application companion::gate_control --lib -- --format terse`
 - `cargo test -p agentdash-application companion::tools --lib -- --format terse`
 - `cargo check -p agentdash-application`
+- `cargo test -p agentdash-application session::hub::tests::lazy_hook_runtime_rebuild_loads_snapshot_from_frame_target --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::live_runtime_context_transition_derives_skill_dimension_from_active_vfs --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::runtime_context_update_injections_are_recorded_without_direct_notification --lib -- --format terse`
 - `cargo check -p agentdash-api`
 - `cargo check -p agentdash-domain`
 - `cargo check -p agentdash-contracts`

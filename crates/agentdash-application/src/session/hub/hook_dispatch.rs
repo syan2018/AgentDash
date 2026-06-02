@@ -12,7 +12,7 @@ use super::super::hook_delegate::{
 };
 use super::super::hook_events::build_hook_trace_envelope;
 use super::super::hook_messages as msg;
-use super::super::hooks_service::build_frame_hook_runtime;
+use super::super::hooks_service::{build_frame_hook_runtime, resolve_runtime_hook_target};
 use super::super::hub_support::session_hook_trace_decision;
 use super::super::launch::LaunchCommand;
 use super::super::terminal_effects::{
@@ -23,8 +23,9 @@ use super::SessionRuntimeInner;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    HookEffect, HookEvaluationQuery, HookInjection, HookRuntimeAccess, HookTraceEntry, HookTrigger,
-    SessionHookRefreshQuery, SessionHookSnapshotQuery, SharedHookRuntime,
+    AgentFrameHookSnapshotQuery, HookEffect, HookEvaluationQuery, HookInjection, HookRuntimeAccess,
+    HookTraceEntry, HookTrigger, RuntimeAdapterProvenance, SessionHookRefreshQuery,
+    SharedHookRuntime,
 };
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
@@ -175,7 +176,7 @@ impl SessionRuntimeInner {
         injections
     }
 
-    pub async fn ensure_hook_runtime(
+    pub async fn ensure_hook_runtime_for_runtime_session(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
@@ -198,10 +199,17 @@ impl SessionRuntimeInner {
             return Ok(None);
         };
 
+        let Some(target) = resolve_runtime_hook_target(provider.as_ref(), session_id).await? else {
+            return Ok(None);
+        };
         let snapshot = provider
-            .load_session_snapshot(SessionHookSnapshotQuery {
-                session_id: session_id.to_string(),
-                turn_id: turn_id.map(ToString::to_string),
+            .load_frame_snapshot(AgentFrameHookSnapshotQuery {
+                target: target.clone(),
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    session_id.to_string(),
+                    turn_id.map(ToString::to_string),
+                    "hook_runtime_lazy_rebuild",
+                ),
             })
             .await
             .map_err(|error| {
@@ -209,7 +217,7 @@ impl SessionRuntimeInner {
             })?;
 
         let Some(rebuilt_runtime) =
-            build_frame_hook_runtime(self, session_id, provider.clone(), snapshot).await?
+            build_frame_hook_runtime(self, session_id, target, provider.clone(), snapshot).await?
         else {
             return Ok(None);
         };

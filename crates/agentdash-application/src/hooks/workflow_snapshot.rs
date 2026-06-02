@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::workflow::execution_log as workflow_recording;
 use crate::workflow::{
     ActiveWorkflowProjection, resolve_active_workflow_projection_for_session,
-    resolve_active_workflow_projection_for_target,
+    resolve_active_workflow_projection_for_target, select_assignment_for_runtime_frame,
 };
 
 fn map_hook_error(error: agentdash_domain::DomainError) -> HookError {
@@ -77,6 +77,42 @@ impl WorkflowSnapshotBuilder {
         )
         .await
         .map_err(HookError::Runtime)
+    }
+
+    pub async fn resolve_hook_control_target_for_runtime_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<HookControlTarget>, HookError> {
+        let Some(frame) = self
+            .agent_frame_repo
+            .find_by_runtime_session(session_id)
+            .await
+            .map_err(map_hook_error)?
+        else {
+            return Ok(None);
+        };
+        let Some(agent) = self
+            .lifecycle_agent_repo
+            .get(frame.agent_id)
+            .await
+            .map_err(map_hook_error)?
+        else {
+            return Ok(None);
+        };
+        let assignments = self
+            .agent_assignment_repo
+            .list_by_run(agent.run_id)
+            .await
+            .map_err(map_hook_error)?;
+        let assignment_id = select_assignment_for_runtime_frame(&assignments, &frame)
+            .map_err(|error| HookError::Runtime(error.to_string()))?
+            .map(|assignment| assignment.id);
+        Ok(Some(HookControlTarget {
+            run_id: agent.run_id,
+            agent_id: agent.id,
+            frame_id: frame.id,
+            assignment_id,
+        }))
     }
 
     pub async fn resolve_active_workflow_for_target(

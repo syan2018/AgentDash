@@ -12,8 +12,9 @@ use agentdash_domain::workflow::{
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshotQuery, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookResolution, HookScriptEvaluator, HookTrigger, SessionHookRefreshQuery, SessionHookSnapshot,
+    AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry, HookError,
+    HookEvaluationQuery, HookResolution, HookScriptEvaluator, HookTrigger,
+    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshot,
     SessionHookSnapshotQuery, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
@@ -251,6 +252,15 @@ impl AppExecutionHookProvider {
 
 #[async_trait]
 impl ExecutionHookProvider for AppExecutionHookProvider {
+    async fn resolve_runtime_hook_target(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<HookControlTarget>, HookError> {
+        self.workflow_builder
+            .resolve_hook_control_target_for_runtime_session(runtime_session_id)
+            .await
+    }
+
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
@@ -310,12 +320,20 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         &self,
         query: SessionHookSnapshotQuery,
     ) -> Result<SessionHookSnapshot, HookError> {
-        let workflow = self
-            .workflow_builder
-            .resolve_active_workflow(&query.session_id)
-            .await?;
-        self.build_snapshot_from_workflow(query.session_id, query.turn_id, workflow)
-            .await
+        let Some(target) = self.resolve_runtime_hook_target(&query.session_id).await? else {
+            return self
+                .build_snapshot_from_workflow(query.session_id, query.turn_id, None)
+                .await;
+        };
+        self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
+            target,
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                query.session_id,
+                query.turn_id,
+                "session_snapshot_adapter",
+            ),
+        })
+        .await
     }
 
     async fn refresh_session_snapshot(

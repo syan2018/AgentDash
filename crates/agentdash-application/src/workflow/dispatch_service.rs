@@ -75,7 +75,6 @@ impl RuntimeSessionCreator for SessionPersistenceRuntimeSessionCreator {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         self.persistence
             .create_session(&meta)

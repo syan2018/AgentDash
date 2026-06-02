@@ -161,17 +161,13 @@ impl SessionMetaStore for PostgresSessionRepository {
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
         let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
-        let visible_canvas_mount_ids_json = json_string(
-            &meta.visible_canvas_mount_ids,
-            "visible_canvas_mount_ids_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                executor_session_id, tab_layout_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             "#,
         )
         .bind(&meta.id)
@@ -187,7 +183,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
         .bind(tab_layout_json)
-        .bind(visible_canvas_mount_ids_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -199,7 +194,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
+                   executor_session_id, tab_layout_json
             FROM sessions
             WHERE id = $1
             "#,
@@ -216,7 +211,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
+                   executor_session_id, tab_layout_json
             FROM sessions
             ORDER BY updated_at DESC
             "#,
@@ -232,17 +227,13 @@ impl SessionMetaStore for PostgresSessionRepository {
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
         let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
-        let visible_canvas_mount_ids_json = json_string(
-            &meta.visible_canvas_mount_ids,
-            "visible_canvas_mount_ids_json",
-        )?;
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                executor_session_id, tab_layout_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -267,8 +258,7 @@ impl SessionMetaStore for PostgresSessionRepository {
                 END,
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
-                tab_layout_json = excluded.tab_layout_json,
-                visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json
+                tab_layout_json = excluded.tab_layout_json
             "#,
         )
         .bind(&meta.id)
@@ -284,7 +274,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
         .bind(tab_layout_json)
-        .bind(visible_canvas_mount_ids_json)
         .execute(&self.pool)
         .await
         .map_err(sqlx_to_session_store_error)?;
@@ -1675,7 +1664,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         }
     }
 
@@ -1826,7 +1814,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1892,7 +1879,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         repo.create_session(&meta).await.expect("应能创建 session");
 
@@ -1909,7 +1895,6 @@ mod tests {
             "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
             "active_tab_uri": "session://main"
         }));
-        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         let terminal = turn_terminal_envelope(&session_id, "t-new", "turn_completed", "done");
         repo.append_event(&session_id, &terminal)
@@ -1939,7 +1924,6 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("session://main")
         );
-        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 
     #[tokio::test]

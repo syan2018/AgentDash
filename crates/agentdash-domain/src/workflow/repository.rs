@@ -134,6 +134,11 @@ pub trait AgentFrameRepository: Send + Sync {
         &self,
         runtime_session_id: &str,
     ) -> Result<Option<AgentFrame>, DomainError>;
+    async fn append_visible_canvas_mount(
+        &self,
+        frame_id: Uuid,
+        mount_id: &str,
+    ) -> Result<(), DomainError>;
 }
 
 #[async_trait::async_trait]

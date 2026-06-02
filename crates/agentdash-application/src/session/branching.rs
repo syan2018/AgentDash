@@ -439,7 +439,6 @@ fn child_session_meta(parent: &SessionMeta, title: Option<&str>, now: i64) -> Se
         executor_session_id: None,
 
         tab_layout: None,
-        visible_canvas_mount_ids: Vec::new(),
     }
 }
 
@@ -802,7 +801,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         }
     }
 

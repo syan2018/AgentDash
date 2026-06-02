@@ -558,19 +558,18 @@ async fn expose_canvas_to_session(
         && let Some(session_id) = current_session_id
     {
         let mount_id = canvas.mount_id.clone();
-        session_services
-            .core
-            .update_session_meta(session_id, move |meta| {
-                if !meta
-                    .visible_canvas_mount_ids
-                    .iter()
-                    .any(|item| item == &mount_id)
-                {
-                    meta.visible_canvas_mount_ids.push(mount_id);
-                }
-            })
+        if let Err(error) = session_services
+            .capability
+            .append_visible_canvas_mount_to_frame(session_id, &mount_id)
             .await
-            .map_err(|error| AgentToolError::ExecutionFailed(error.to_string()))?;
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                mount_id = %mount_id,
+                %error,
+                "Canvas mount 写入 AgentFrame 失败，降级为仅 VFS 可见"
+            );
+        }
         sync_canvas_mount_capability_state_for_runtime_delivery(
             vfs,
             &session_services,
@@ -868,6 +867,23 @@ mod tests {
                 })
                 .max_by_key(|frame| frame.revision)
                 .cloned())
+        }
+
+        async fn append_visible_canvas_mount(
+            &self,
+            frame_id: Uuid,
+            mount_id: &str,
+        ) -> Result<(), DomainError> {
+            let mut frames = self.frames.write().await;
+            let frame = frames
+                .iter_mut()
+                .find(|frame| frame.id == frame_id)
+                .ok_or_else(|| DomainError::NotFound {
+                    entity: "agent_frame",
+                    id: frame_id.to_string(),
+                })?;
+            frame.append_visible_canvas_mount(mount_id);
+            Ok(())
         }
     }
 
@@ -1324,12 +1340,12 @@ mod tests {
             .await
             .expect("present_canvas 应成功");
 
-        let meta = hub
-            .get_session_meta(&session.id)
+        let updated_frame = frame_repo
+            .find_by_runtime_session(&session.id)
             .await
-            .expect("meta 查询应成功")
-            .expect("meta 应存在");
-        assert_eq!(meta.visible_canvas_mount_ids, vec!["demo".to_string()]);
+            .expect("frame 查询应成功")
+            .expect("frame 应存在");
+        assert_eq!(updated_frame.visible_canvas_mount_ids(), vec!["demo".to_string()]);
 
         let state = hub
             .get_current_capability_state(&session.id)

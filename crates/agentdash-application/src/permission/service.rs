@@ -646,7 +646,7 @@ mod tests {
             "runtime-session-1",
             vec![ToolCapabilityPath::parse(path).expect("path")],
             "需要临时能力",
-            GrantScope::Session,
+            GrantScope::AgentFrame,
             None,
         )
         .with_effect_frame(frame_id);
@@ -726,7 +726,7 @@ mod tests {
                 session,
                 vec![ToolCapabilityPath::parse("file_write").expect("path")],
                 "test grant",
-                GrantScope::Session,
+                GrantScope::AgentFrame,
                 None,
             )
             .with_effect_frame(shared_frame_id);

@@ -276,7 +276,6 @@ mod tests {
             executor_config: None,
             executor_session_id: executor_session_id.map(String::from),
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         }
     }
 

@@ -67,13 +67,6 @@ where
             row.get::<Option<String>, _>("tab_layout_json"),
             "tab_layout_json",
         )?,
-        visible_canvas_mount_ids: parse_optional_json_column(
-            row.get::<Option<String>, _>("visible_canvas_mount_ids_json"),
-            "visible_canvas_mount_ids_json",
-        )?
-        .ok_or_else(|| {
-            SessionStoreError::InvalidData("缺少 visible_canvas_mount_ids_json".to_string())
-        })?,
     })
 }
 

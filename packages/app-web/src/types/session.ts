@@ -18,21 +18,6 @@ export interface SessionTaskContext {
   dispatch_preference?: TaskDispatchPreference;
 }
 
-export type SessionReturnTarget =
-  | {
-      owner_type: "project";
-      project_id: string;
-    }
-  | {
-      owner_type: "story";
-      story_id: string;
-    }
-  | {
-      owner_type: "task";
-      story_id: string;
-      task_id: string;
-    };
-
 export interface HookInjection {
   slot: string;
   content: string;
@@ -138,7 +123,6 @@ export interface RuntimeTraceAgentContext {
 export interface SessionNavigationState {
   task_context?: SessionTaskContext;
   trace_agent?: RuntimeTraceAgentContext;
-  return_to?: SessionReturnTarget;
   open_workspace_panel?: boolean;
 }
 

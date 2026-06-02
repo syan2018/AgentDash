@@ -241,6 +241,9 @@ pub fn normalize_workflow_template_value(value: &mut Value) -> Result<(), Domain
     normalize_workflow_lifecycle_value(lifecycle)
 }
 
+/// Legacy normalization：将旧格式 `entry_step_key` / `steps` 转为
+/// `entry_activity_key` / `activities`。Shared Library template 由外部上传，
+/// 存量数据可能仍使用旧字段名。当所有存量模板完成迁移后可移除此兼容层。
 pub fn normalize_workflow_lifecycle_value(lifecycle: &mut Value) -> Result<(), DomainError> {
     let Some(object) = lifecycle.as_object_mut() else {
         return Err(DomainError::InvalidConfig(

@@ -65,7 +65,7 @@ mod tests {
                 ToolCapabilityPath::parse("task_management::start_task").unwrap(),
             ],
             "test",
-            GrantScope::Session,
+            GrantScope::AgentFrame,
             None,
         );
 

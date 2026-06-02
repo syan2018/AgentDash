@@ -781,6 +781,17 @@ mod tests {
                 })
                 .cloned())
         }
+
+        async fn append_visible_canvas_mount(
+            &self,
+            frame_id: Uuid,
+            mount_id: &str,
+        ) -> Result<(), DomainError> {
+            if let Some(frame) = self.frames.lock().unwrap().get_mut(&frame_id) {
+                frame.append_visible_canvas_mount(mount_id);
+            }
+            Ok(())
+        }
     }
 
     #[derive(Default)]

@@ -973,7 +973,6 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
     current.executor_config = incoming.executor_config.clone();
     current.executor_session_id = incoming.executor_session_id.clone();
     current.tab_layout = incoming.tab_layout.clone();
-    current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
 }
 
 pub(super) fn apply_envelope_projection(meta: &mut SessionMeta, envelope: &BackboneEnvelope) {
@@ -1071,7 +1070,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         }
     }
 
@@ -1114,7 +1112,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         persistence
             .create_session(&meta)
@@ -1134,7 +1131,6 @@ mod tests {
             "tabs": [{"type_id": "session", "uri": "session://main", "title": "Session", "pinned": true}],
             "active_tab_uri": "session://main"
         }));
-        stale.visible_canvas_mount_ids = vec!["canvas-a".to_string()];
 
         persistence
             .append_event(
@@ -1163,7 +1159,6 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("session://main")
         );
-        assert_eq!(merged.visible_canvas_mount_ids, vec!["canvas-a"]);
     }
 
     #[tokio::test]
@@ -1184,7 +1179,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         persistence
             .create_session(&meta)
@@ -1254,7 +1248,6 @@ mod tests {
             executor_session_id: None,
 
             tab_layout: None,
-            visible_canvas_mount_ids: Vec::new(),
         };
         persistence
             .create_session(&meta)

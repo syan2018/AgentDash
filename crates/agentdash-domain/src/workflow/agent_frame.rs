@@ -46,6 +46,9 @@ pub struct AgentFrame {
     pub runtime_session_refs_json: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_profile_json: Option<serde_json::Value>,
+    /// 当前可见的 Canvas mount ids（运行时追加，不随 revision 复制）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_canvas_mount_ids_json: Option<serde_json::Value>,
     pub created_by_kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_by_id: Option<String>,
@@ -67,6 +70,7 @@ impl AgentFrame {
             mcp_surface_json: None,
             runtime_session_refs_json: runtime_session_refs,
             execution_profile_json: None,
+            visible_canvas_mount_ids_json: None,
             created_by_kind: "backfill".to_string(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -87,6 +91,7 @@ impl AgentFrame {
             mcp_surface_json: None,
             runtime_session_refs_json: None,
             execution_profile_json: None,
+            visible_canvas_mount_ids_json: None,
             created_by_kind: created_by_kind.into(),
             created_by_id: None,
             created_at: Utc::now(),
@@ -143,6 +148,33 @@ impl AgentFrame {
             }
             RuntimeSessionSelectionPolicy::LaunchPrimary => ids.into_iter().next(),
             RuntimeSessionSelectionPolicy::LatestAttached => ids.into_iter().next_back(),
+        }
+    }
+
+    pub fn visible_canvas_mount_ids(&self) -> Vec<String> {
+        let Some(Value::Array(ids)) = &self.visible_canvas_mount_ids_json else {
+            return Vec::new();
+        };
+        ids.iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    }
+
+    pub fn append_visible_canvas_mount(&mut self, mount_id: &str) {
+        if mount_id.trim().is_empty() {
+            return;
+        }
+        let already = self
+            .visible_canvas_mount_ids()
+            .iter()
+            .any(|existing| existing == mount_id);
+        if already {
+            return;
+        }
+        let next = Value::String(mount_id.to_string());
+        match &mut self.visible_canvas_mount_ids_json {
+            Some(Value::Array(ids)) => ids.push(next),
+            _ => self.visible_canvas_mount_ids_json = Some(Value::Array(vec![next])),
         }
     }
 

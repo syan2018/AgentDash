@@ -129,7 +129,7 @@ impl RuntimeContextInspectionPlanner {
             vfs_service,
             platform_config,
             task_id,
-            session_meta,
+            Some(session_id.as_str()),
         )
         .await;
         let resolved_vfs = built_context
@@ -217,12 +217,15 @@ impl RuntimeContextInspectionPlanner {
             None
         };
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
+        let canvas_mount_ids = resolve_visible_canvas_mount_ids_from_frame(
+            repos, &session_id,
+        ).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),
                 project.id,
                 vfs,
-                &session_meta.visible_canvas_mount_ids,
+                &canvas_mount_ids,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -372,12 +375,15 @@ impl RuntimeContextInspectionPlanner {
 
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
 
+        let canvas_mount_ids = resolve_visible_canvas_mount_ids_from_frame(
+            repos, &session_id,
+        ).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),
                 project.id,
                 vfs,
-                &session_meta.visible_canvas_mount_ids,
+                &canvas_mount_ids,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -591,4 +597,19 @@ async fn build_project_agent_context(
         preset_mcp_servers,
         project_agent: agent.clone(),
     })
+}
+
+/// 从 AgentFrame 中读取 visible_canvas_mount_ids（通过 runtime session ref 反查）。
+async fn resolve_visible_canvas_mount_ids_from_frame(
+    repos: &RepositorySet,
+    runtime_session_id: &str,
+) -> Vec<String> {
+    match repos
+        .agent_frame_repo
+        .find_by_runtime_session(runtime_session_id)
+        .await
+    {
+        Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+        _ => Vec::new(),
+    }
 }

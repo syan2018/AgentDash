@@ -7,6 +7,6 @@ export type ListPermissionGrantsQuery = { effect_frame_id?: string, run_id?: str
 
 export type PermissionGrantResponse = { id: string, run_id: string, effect_frame_id?: string, source_runtime_session_id: string, requested_paths: Array<string>, reason: string, grant_scope: PermissionGrantScopeDto, expires_at?: string, scope_escalation_intent?: JsonValue, status: PermissionGrantStatusDto, policy_decision?: JsonValue, approved_by?: string, created_at: string, updated_at: string, };
 
-export type PermissionGrantScopeDto = "turn" | "session" | "workflow_step";
+export type PermissionGrantScopeDto = "turn" | "agent_frame" | "activity";
 
 export type PermissionGrantStatusDto = "created" | "pending_policy" | "pending_user_approval" | "approved" | "rejected" | "applied" | "failed" | "expired" | "revoked" | "scope_escalated";

@@ -313,6 +313,7 @@ struct FrameRow {
     mcp_surface_json: Option<String>,
     runtime_session_refs_json: Option<String>,
     execution_profile_json: Option<String>,
+    visible_canvas_mount_ids_json: Option<String>,
     created_by_kind: String,
     created_by_id: Option<String>,
     created_at: DateTime<Utc>,
@@ -355,6 +356,10 @@ impl TryFrom<FrameRow> for AgentFrame {
                 row.execution_profile_json,
                 "execution_profile_json",
             )?,
+            visible_canvas_mount_ids_json: parse_opt_json(
+                row.visible_canvas_mount_ids_json,
+                "visible_canvas_mount_ids_json",
+            )?,
             created_by_kind: row.created_by_kind,
             created_by_id: row.created_by_id,
             created_at: row.created_at,
@@ -379,8 +384,9 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
                 (id, agent_id, revision, procedure_id, graph_instance_id, activity_key,
                  effective_capability_json, context_slice_json, vfs_surface_json, mcp_surface_json,
                  runtime_session_refs_json, execution_profile_json,
+                 visible_canvas_mount_ids_json,
                  created_by_kind, created_by_id, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)"#,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)"#,
         )
         .bind(frame.id.to_string())
         .bind(frame.agent_id.to_string())
@@ -394,6 +400,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         .bind(opt_json_str(&frame.mcp_surface_json)?)
         .bind(opt_json_str(&frame.runtime_session_refs_json)?)
         .bind(opt_json_str(&frame.execution_profile_json)?)
+        .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
         .bind(&frame.created_by_kind)
         .bind(&frame.created_by_id)
         .bind(frame.created_at)
@@ -408,6 +415,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
+                      visible_canvas_mount_ids_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE id=$1"#,
         )
@@ -424,6 +432,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
+                      visible_canvas_mount_ids_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision DESC LIMIT 1"#,
         )
@@ -440,6 +449,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
+                      visible_canvas_mount_ids_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames WHERE agent_id=$1 ORDER BY revision ASC"#,
         )
@@ -474,6 +484,28 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
         Ok(())
     }
 
+    async fn append_visible_canvas_mount(
+        &self,
+        frame_id: Uuid,
+        mount_id: &str,
+    ) -> Result<(), DomainError> {
+        let mut frame = self
+            .get(frame_id)
+            .await?
+            .ok_or_else(|| DomainError::NotFound {
+                entity: "agent_frame",
+                id: frame_id.to_string(),
+            })?;
+        frame.append_visible_canvas_mount(mount_id);
+        sqlx::query("UPDATE agent_frames SET visible_canvas_mount_ids_json=$1 WHERE id=$2")
+            .bind(opt_json_str(&frame.visible_canvas_mount_ids_json)?)
+            .bind(frame_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     async fn find_by_runtime_session(
         &self,
         runtime_session_id: &str,
@@ -482,6 +514,7 @@ impl AgentFrameRepository for PostgresAgentFrameRepository {
             r#"SELECT id,agent_id,revision,procedure_id,graph_instance_id,activity_key,
                       effective_capability_json,context_slice_json,vfs_surface_json,mcp_surface_json,
                       runtime_session_refs_json,execution_profile_json,
+                      visible_canvas_mount_ids_json,
                       created_by_kind,created_by_id,created_at
                FROM agent_frames
                WHERE runtime_session_refs_json::jsonb @> jsonb_build_array(

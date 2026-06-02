@@ -8,26 +8,29 @@ use crate::workflow::ToolCapabilityPath;
 pub enum GrantScope {
     /// 仅当前 turn 有效（turn 结束后自动撤销）
     Turn,
-    /// 整个 session 生命周期有效
-    Session,
-    /// 绑定到 workflow step（step 完成后自动撤销）
-    WorkflowStep,
+    /// AgentFrame 生命周期有效（frame revision 更替前持续生效）
+    AgentFrame,
+    /// 绑定到 Activity（activity 完成后自动撤销）
+    Activity,
 }
 
 impl GrantScope {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Turn => "turn",
-            Self::Session => "session",
-            Self::WorkflowStep => "workflow_step",
+            Self::AgentFrame => "agent_frame",
+            Self::Activity => "activity",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             "turn" => Some(Self::Turn),
-            "session" => Some(Self::Session),
-            "workflow_step" => Some(Self::WorkflowStep),
+            "agent_frame" => Some(Self::AgentFrame),
+            "activity" => Some(Self::Activity),
+            // DB migration 过渡期兼容旧值
+            "session" => Some(Self::AgentFrame),
+            "workflow_step" => Some(Self::Activity),
             _ => None,
         }
     }
@@ -129,11 +132,17 @@ mod tests {
     fn grant_scope_roundtrip() {
         for scope in [
             GrantScope::Turn,
-            GrantScope::Session,
-            GrantScope::WorkflowStep,
+            GrantScope::AgentFrame,
+            GrantScope::Activity,
         ] {
             assert_eq!(GrantScope::parse(scope.as_str()), Some(scope));
         }
+    }
+
+    #[test]
+    fn grant_scope_legacy_compat() {
+        assert_eq!(GrantScope::parse("session"), Some(GrantScope::AgentFrame));
+        assert_eq!(GrantScope::parse("workflow_step"), Some(GrantScope::Activity));
     }
 
     #[test]

@@ -324,7 +324,7 @@ impl AppStateSessionConstructionProvider {
                         runtime_session_policy(input.session_id.as_str()),
                     )
                     .typed_vfs,
-                    visible_canvas_mount_ids: input.session_meta.visible_canvas_mount_ids.clone(),
+                    visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                     active_workflow: None,
                     lifecycle,
                     audit_session_key: Some(input.session_id.clone()),
@@ -442,7 +442,7 @@ impl AppStateSessionConstructionProvider {
                         runtime_session_policy(input.session_id.as_str()),
                     )
                     .typed_vfs,
-                    visible_canvas_mount_ids: input.session_meta.visible_canvas_mount_ids.clone(),
+                    visible_canvas_mount_ids: frame.visible_canvas_mount_ids(),
                     active_workflow: None,
                     lifecycle,
                     audit_session_key: Some(input.session_id.clone()),

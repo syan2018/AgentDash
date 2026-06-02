@@ -6,8 +6,8 @@ use ts_rs::TS;
 #[serde(rename_all = "snake_case")]
 pub enum PermissionGrantScopeDto {
     Turn,
-    Session,
-    WorkflowStep,
+    AgentFrame,
+    Activity,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

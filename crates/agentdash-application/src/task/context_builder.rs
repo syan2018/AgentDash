@@ -48,7 +48,7 @@ pub async fn build_task_session_context(
     vfs_service: &VfsService,
     platform_config: &PlatformConfig,
     task_id: Uuid,
-    session_meta: Option<&crate::session::SessionMeta>,
+    runtime_session_id: Option<&str>,
 ) -> Option<BuiltTaskSessionContext> {
     let task = crate::task::load_task(repos.story_repo.as_ref(), task_id)
         .await
@@ -140,14 +140,12 @@ pub async fn build_task_session_context(
 
     let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {
-        let visible_canvas_mount_ids = session_meta
-            .map(|meta| meta.visible_canvas_mount_ids.as_slice())
-            .unwrap_or(&[]);
+        let visible_canvas_mount_ids = resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
         if append_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
             task.project_id,
             space,
-            visible_canvas_mount_ids,
+            &visible_canvas_mount_ids,
         )
         .await
         .is_err()
@@ -250,4 +248,21 @@ async fn find_active_workflow_via_task_sessions(
         }
     }
     None
+}
+
+async fn resolve_visible_canvas_mount_ids(
+    repos: &RepositorySet,
+    runtime_session_id: Option<&str>,
+) -> Vec<String> {
+    let Some(session_id) = runtime_session_id else {
+        return Vec::new();
+    };
+    match repos
+        .agent_frame_repo
+        .find_by_runtime_session(session_id)
+        .await
+    {
+        Ok(Some(frame)) => frame.visible_canvas_mount_ids(),
+        _ => Vec::new(),
+    }
 }

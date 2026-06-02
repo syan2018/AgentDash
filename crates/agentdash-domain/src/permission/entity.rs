@@ -203,7 +203,7 @@ mod tests {
             "session-1",
             vec![ToolCapabilityPath::parse("story_management").unwrap()],
             "需要创建 Story",
-            GrantScope::Session,
+            GrantScope::AgentFrame,
             Some(3600),
         )
     }

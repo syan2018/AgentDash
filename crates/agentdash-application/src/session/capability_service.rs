@@ -71,6 +71,23 @@ impl SessionCapabilityService {
         })
     }
 
+    /// Canvas mount 写入 AgentFrame（通过 AgentFrameRepository 追加）。
+    pub(crate) async fn append_visible_canvas_mount_to_frame(
+        &self,
+        session_id: &str,
+        mount_id: &str,
+    ) -> Result<(), String> {
+        let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
+        let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
+            format!(
+                "session `{session_id}` 无 AgentFrame repository，无法写入 canvas mount"
+            )
+        })?;
+        repo.append_visible_canvas_mount(frame_id, mount_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     pub async fn list_requested_runtime_commands(
         &self,
         session_id: &str,

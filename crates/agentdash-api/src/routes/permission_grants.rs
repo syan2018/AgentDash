@@ -20,10 +20,10 @@ use crate::{app_state::AppState, auth::CurrentUser, rpc::ApiError};
 fn grant_scope_to_dto(scope: agentdash_domain::permission::GrantScope) -> PermissionGrantScopeDto {
     match scope {
         agentdash_domain::permission::GrantScope::Turn => PermissionGrantScopeDto::Turn,
-        agentdash_domain::permission::GrantScope::Session => PermissionGrantScopeDto::Session,
-        agentdash_domain::permission::GrantScope::WorkflowStep => {
-            PermissionGrantScopeDto::WorkflowStep
+        agentdash_domain::permission::GrantScope::AgentFrame => {
+            PermissionGrantScopeDto::AgentFrame
         }
+        agentdash_domain::permission::GrantScope::Activity => PermissionGrantScopeDto::Activity,
     }
 }
 

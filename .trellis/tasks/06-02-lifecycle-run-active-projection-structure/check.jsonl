@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check active projection is not runtime fact source"}
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Check frontend consumes structured DTOs"}

@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/architecture.md", "reason": "Check frontend does not infer backend facts from cache"}
+{"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check runtime trace boundary"}

@@ -89,8 +89,14 @@ function mapOptionalJsonValue(value: unknown, field: string): JsonValue | undefi
   return value === undefined ? undefined : mapJsonValue(value, field);
 }
 
-function normalizeTargetKinds(raw: unknown, field: string): WorkflowTargetKind[] {
-  const values = asStringArray(raw).map((value) =>
+const DEFAULT_WORKFLOW_TARGET_KINDS: WorkflowTargetKind[] = ["story"];
+
+function normalizeTargetKinds(
+  raw: unknown,
+  field: string,
+  fallback: WorkflowTargetKind[] = [],
+): WorkflowTargetKind[] {
+  const values = (raw === undefined || raw === null ? fallback : asStringArray(raw)).map((value) =>
     normalizeEnum<WorkflowTargetKind>(value, WORKFLOW_TARGET_KINDS, field),
   );
   const normalized = Array.from(new Set(values));
@@ -421,7 +427,11 @@ export function mapAgentProcedure(raw: Record<string, unknown>): AgentProcedure 
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.target_kinds, "workflow target kinds"),
+    target_kinds: normalizeTargetKinds(
+      raw.target_kinds,
+      "workflow target kinds",
+      DEFAULT_WORKFLOW_TARGET_KINDS,
+    ),
     source: normalizeEnum<DefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,
@@ -438,7 +448,11 @@ export function mapWorkflowGraph(raw: Record<string, unknown>): WorkflowGraph {
     key: requireStringField(raw, "key"),
     name: requireStringField(raw, "name"),
     description: optStringField(raw, "description"),
-    target_kinds: normalizeTargetKinds(raw.target_kinds, "workflow graph target kinds"),
+    target_kinds: normalizeTargetKinds(
+      raw.target_kinds,
+      "workflow graph target kinds",
+      DEFAULT_WORKFLOW_TARGET_KINDS,
+    ),
     source: normalizeEnum<DefinitionSource>(raw.source, WORKFLOW_DEF_SOURCES, "definition source"),
     installed_source: mapInstalledAssetSource(raw.installed_source),
     version: Number.isFinite(Number(raw.version)) ? Number(raw.version) : 1,

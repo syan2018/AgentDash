@@ -21,7 +21,7 @@ pub mod runtime_launch;
 pub mod scheduler;
 mod session_association;
 mod session_run_context_resolver;
-pub(crate) mod step_activation;
+pub(crate) mod activity_activation;
 mod subject_execution_control;
 pub mod tools;
 
@@ -48,7 +48,7 @@ pub use dispatch_service::{
 };
 pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
-pub use execution_log::{load_port_output_map, materialize_step_summary};
+pub use execution_log::{load_port_output_map, materialize_activity_summary};
 pub use frame_builder::AgentFrameBuilder;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use freeform::{
@@ -86,9 +86,9 @@ pub use session_association::{
 };
 pub use session_run_context_resolver::{SessionRunContextResolver, build_session_run_context};
 #[cfg(test)]
-pub(crate) use step_activation::KickoffPromptFragment;
-pub(crate) use step_activation::{
-    StepActivation, StepActivationInput, activate_step_with_platform,
+pub(crate) use activity_activation::KickoffPromptFragment;
+pub(crate) use activity_activation::{
+    ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation,
 };
 pub use subject_execution_control::{

@@ -7,7 +7,7 @@
 //! | 路径 | 实现入口 |
 //! |---|---|
 //! | Story/Project | lifecycle dispatch → `SessionRequestAssembler::compose_owner_bootstrap` |
-//! | Story step activation | `task::service::StoryStepActivationService::activate_story_step` → `SessionRequestAssembler::compose_story_step` |
+//! | Story activity activation | `task::service::StoryActivityActivationService::activate_story_activity` → `SessionRequestAssembler::compose_story_step` |
 //! | Routine | `routine::executor::build_project_agent_prompt_request` → `SessionRequestAssembler::compose_owner_bootstrap`(带 trigger tag) |
 //! | Workflow AgentNode | `workflow::orchestrator::start_agent_node_prompt` → `compose_lifecycle_node` |
 //! | Companion | `companion::tools` → `compose_companion` |
@@ -23,7 +23,7 @@
 //! ```
 //!
 //! compose 函数内部共享 building blocks(`load_available_presets` /
-//! `build_owner_context` / `activate_step_with_platform` 等),不再重复散落。
+//! `build_owner_context` / `activate_activity_with_platform` 等),不再重复散落。
 //! 后续必须继续把 task effect / hook 迁移字段拆入 `LaunchPlan` / outbox。
 
 use std::collections::BTreeSet;
@@ -78,7 +78,7 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, StepActivationInput, activate_step_with_platform,
+    ActiveWorkflowProjection, ActivityActivationInput, activate_activity_with_platform,
     ensure_active_workflow_lifecycle_mount, load_port_output_map,
 };
 use crate::workspace::BackendAvailability;
@@ -1287,8 +1287,8 @@ pub(crate) async fn compose_lifecycle_node_with_audit(
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let mut activation = activate_step_with_platform(
-        &StepActivationInput {
+    let mut activation =     activate_activity_with_platform(
+        &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
             workflow: spec.workflow,
@@ -1374,7 +1374,7 @@ fn activity_node_type(
 
 fn contribute_lifecycle_context(
     spec: &LifecycleNodeSpec<'_>,
-    activation: &crate::workflow::StepActivation,
+    activation: &crate::workflow::ActivityActivation,
     ready_port_keys: &BTreeSet<String>,
 ) -> Contribution {
     let mut fragments = Vec::new();
@@ -1510,7 +1510,7 @@ pub enum StoryStepPhase {
 
 /// Task execution session 场景下 compose 所需的完整上下文。
 ///
-/// 用于 `StoryStepActivationService` 的 task 启动 / 续跑路径
+/// 用于 `StoryActivityActivationService` 的 task 启动 / 续跑路径
 /// （`start_task` / `continue_task` 直接以 task 为入口调 compose）。
 ///
 /// 与 `LifecycleNodeSpec`（orchestrator 的 phase node 使用）不同：
@@ -1614,8 +1614,8 @@ pub(crate) async fn compose_companion_with_workflow(
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation = activate_step_with_platform(
-        &StepActivationInput {
+    let activation =     activate_activity_with_platform(
+        &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
             workflow: spec.workflow,
@@ -1952,14 +1952,14 @@ mod tests {
         }
     }
 
-    fn test_step_activation(run_id: Uuid) -> crate::workflow::StepActivation {
+    fn test_activity_activation(run_id: Uuid) -> crate::workflow::ActivityActivation {
         let lifecycle_mount = build_lifecycle_mount_with_ports(
             run_id,
             Uuid::new_v4(),
             "test-lifecycle",
             &["report".to_string()],
         );
-        crate::workflow::StepActivation {
+        crate::workflow::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: Vec::new(),
             tool_directives: Vec::new(),
@@ -2002,7 +2002,7 @@ mod tests {
 
     #[test]
     fn apply_lifecycle_activation_merges_existing_vfs() {
-        let activation = test_step_activation(Uuid::new_v4());
+        let activation = test_activity_activation(Uuid::new_v4());
         let base_vfs = Vfs {
             mounts: vec![test_workspace_mount()],
             default_mount_id: Some("workspace".to_string()),
@@ -2104,7 +2104,7 @@ mod tests {
             &lifecycle.key,
             &["summary".into()],
         );
-        let activation = crate::workflow::StepActivation {
+        let activation = crate::workflow::ActivityActivation {
             capability_state: Default::default(),
             mcp_servers: vec![],
             tool_directives: Vec::new(),

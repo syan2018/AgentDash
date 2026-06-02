@@ -634,6 +634,13 @@ mod tests {
                 .max_by_key(|frame| frame.revision)
                 .cloned())
         }
+        async fn append_visible_canvas_mount(
+            &self,
+            _frame_id: Uuid,
+            _mount_id: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     async fn pending_grant(

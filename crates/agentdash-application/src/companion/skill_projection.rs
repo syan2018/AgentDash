@@ -6,7 +6,7 @@ use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
 use crate::skill_asset::SkillAssetService;
 use crate::vfs::{PROVIDER_LIFECYCLE_VFS, append_skill_asset_projection};
-use crate::workflow::StepActivation;
+use crate::workflow::ActivityActivation;
 
 pub(crate) async fn ensure_companion_system_skill_asset(
     repos: &RepositorySet,
@@ -50,7 +50,7 @@ pub(crate) fn append_lifecycle_companion_system_projection(
 pub(crate) async fn project_companion_system_skill_to_activation(
     repos: &RepositorySet,
     project_id: Uuid,
-    activation: &mut StepActivation,
+    activation: &mut ActivityActivation,
 ) -> Result<(), ApplicationError> {
     ensure_companion_system_skill_asset(repos, project_id).await?;
     let mut skill_asset_keys = Vec::new();

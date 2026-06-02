@@ -27,9 +27,9 @@ use crate::session::{
     SessionHookService, SessionLaunchService, UserPromptInput,
 };
 use crate::session::{CapabilityArtifactSource, RuntimeCapabilityTransition, SetToolAccessEffect};
-use crate::workflow::step_activation::apply_to_frame_runtime_target;
+use crate::workflow::activity_activation::apply_to_frame_runtime_target;
 use crate::workflow::{
-    AgentFrameBuilder, RuntimeSessionCreationRequest, activate_step_with_platform,
+    AgentFrameBuilder, RuntimeSessionCreationRequest, activate_activity_with_platform,
     agent_mcp_entries_from_servers, build_capability_state_for_activation, load_port_output_map,
 };
 
@@ -516,8 +516,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             let runtime_mcp_servers = session_capability
                 .get_runtime_mcp_servers(&target.delivery_runtime_session_id)
                 .await;
-            let mut activation = activate_step_with_platform(
-                &crate::workflow::StepActivationInput {
+            let mut activation = activate_activity_with_platform(
+                &crate::workflow::ActivityActivationInput {
                     owner_ctx,
                     active_activity: activity,
                     workflow: Some(&workflow),
@@ -570,8 +570,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .as_ref()
                 .map(|surface| agent_mcp_entries_from_servers(&surface.tool.mcp_servers))
                 .unwrap_or_default();
-            let mut activation = activate_step_with_platform(
-                &crate::workflow::StepActivationInput {
+            let mut activation = activate_activity_with_platform(
+                &crate::workflow::ActivityActivationInput {
                     owner_ctx,
                     active_activity: activity,
                     workflow: Some(&workflow),

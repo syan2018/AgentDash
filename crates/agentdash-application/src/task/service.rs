@@ -34,17 +34,17 @@ pub trait TurnDispatcher: Send + Sync {
     ) -> Result<(), TaskExecutionError>;
 }
 
-/// Story step activation service — 通过 ExecutionIntent dispatch 编排 Task execution。
+/// Story activity activation service — 通过 ExecutionIntent dispatch 编排 Task execution。
 ///
 /// start/continue 构造 `ExecutionIntent(subject_ref=Task)` 提交给
 /// `LifecycleDispatchService`，不再自行创建 session 或 binding。
-pub struct StoryStepActivationService {
+pub struct StoryActivityActivationService {
     pub repos: RepositorySet,
     pub dispatcher: Arc<dyn TurnDispatcher>,
     pub lock_map: Arc<TaskLockMap>,
 }
 
-impl StoryStepActivationService {
+impl StoryActivityActivationService {
     pub async fn start_task(
         &self,
         cmd: TaskExecutionCommand,

@@ -28,9 +28,6 @@ impl GrantScope {
             "turn" => Some(Self::Turn),
             "agent_frame" => Some(Self::AgentFrame),
             "activity" => Some(Self::Activity),
-            // DB migration 过渡期兼容旧值
-            "session" => Some(Self::AgentFrame),
-            "workflow_step" => Some(Self::Activity),
             _ => None,
         }
     }
@@ -140,9 +137,9 @@ mod tests {
     }
 
     #[test]
-    fn grant_scope_legacy_compat() {
-        assert_eq!(GrantScope::parse("session"), Some(GrantScope::AgentFrame));
-        assert_eq!(GrantScope::parse("workflow_step"), Some(GrantScope::Activity));
+    fn grant_scope_rejects_legacy_values() {
+        assert_eq!(GrantScope::parse("session"), None);
+        assert_eq!(GrantScope::parse("workflow_step"), None);
     }
 
     #[test]

@@ -147,7 +147,7 @@ pub fn artifact_appended_entry(
 }
 
 /// 将 activity summary 物化到 inline_fs（`session_records/{activity_key}/summary`）。
-pub async fn materialize_step_summary(
+pub async fn materialize_activity_summary(
     repo: &dyn InlineFileRepository,
     run_id: Uuid,
     activity_key: &str,

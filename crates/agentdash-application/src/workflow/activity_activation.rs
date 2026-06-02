@@ -1,4 +1,4 @@
-//! `activate_step` — 单 step 激活的唯一计算入口。
+//! `activate_activity` — 单 activity 激活的唯一计算入口。
 //!
 //! 把分散在 `plan_builder` / `session_runtime_inputs` / `turn_context` /
 //! `orchestrator` / `advance_node` 五处的"查 workflow → 算 capabilities →
@@ -8,7 +8,7 @@
 //!
 //! ## 设计原则
 //!
-//! - **纯计算**:`activate_step` 本身不做 IO;所有外部状态(workflow 定义 /
+//! - **纯计算**:`activate_activity` 本身不做 IO;所有外部状态(workflow 定义 /
 //!   agent MCP servers / available presets / baseline caps)都通过 input 传入。
 //! - **port 前驱状态剥离**:kickoff prompt 构造需要知道 "前驱 output port 是否就绪",
 //!   这部分 IO 由调用方先查好,以 `BTreeSet<String>` 形式塞进 `kickoff_context`。
@@ -39,18 +39,18 @@ use crate::session::SessionCapabilityService;
 use crate::vfs::build_lifecycle_mount_with_ports;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 
-/// 激活一个 lifecycle step 所需的全部纯计算输入。
+/// 激活一个 lifecycle activity 所需的全部纯计算输入。
 ///
 /// 构造方不应在这里做 IO;`workflow` 等来自 `ActiveWorkflowProjection` 或
 /// `LifecycleDefinitionRepository::get_by_project_and_key` 的 cached 结果。
 #[derive(Debug, Clone)]
-pub struct StepActivationInput<'a> {
+pub struct ActivityActivationInput<'a> {
     /// Session 的能力作用域（包含 entity ID，用于 MCP scope 注入）。
     pub owner_ctx: CapabilityScopeCtx,
     /// 当前激活的 activity 定义;提供 output/input ports、key、description。
     /// node_type / procedure_key 由 executor 推导,激活计算本身不需要。
     pub active_activity: &'a ActivityDefinition,
-    /// step 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
+    /// activity 绑定的 workflow 定义(若有);提供 `contract.capability_config.tool_directives` baseline 与
     /// injection/hook_rules/constraints/completion。
     pub workflow: Option<&'a AgentProcedure>,
     /// lifecycle 的 run_id,用于构建 `lifecycle://<run_id>/artifacts/...` mount。
@@ -89,33 +89,33 @@ pub struct KickoffPromptFragment {
     pub input_section: String,
 }
 
-/// activate_step 的完整产出 — 各 applier 从中摘取所需字段。
+/// activate_activity 的完整产出 — 各 applier 从中摘取所需字段。
 #[derive(Debug, Clone)]
-pub struct StepActivation {
+pub struct ActivityActivation {
     /// 内置工具簇(PiAgent 内部使用)。
     pub capability_state: CapabilityState,
     /// 合并并去重后的 MCP server 列表(platform + custom)。
     pub mcp_servers: Vec<agentdash_spi::SessionMcpServer>,
-    /// workflow contract + step 级工具能力指令，作为 runtime command 的 source intent。
+    /// workflow contract + activity 级工具能力指令，作为 runtime command 的 source intent。
     pub tool_directives: Vec<ToolCapabilityDirective>,
     /// 已解析通过的 capability key 集合(供 hook runtime 初始化、日志、delta 对比)。
     pub capability_keys: BTreeSet<String>,
-    /// kickoff prompt 结构化片段;若 step 没有 port/workflow,字段可能全为空。
+    /// kickoff prompt 结构化片段;若 activity 没有 port/workflow,字段可能全为空。
     pub kickoff_prompt: KickoffPromptFragment,
     /// 带 output port 写入权限的 lifecycle mount。
     pub lifecycle_mount: agentdash_domain::common::Mount,
     /// 完整 Vfs(仅 lifecycle mount;applier 若需要更多 mount,自行扩展)。
     pub lifecycle_vfs: Vfs,
-    /// workflow contract + step 级 mount overlay 指令。
+    /// workflow contract + activity 级 mount overlay 指令。
     pub mount_directives: Vec<MountDirective>,
 }
 
-/// 单 step 激活的计算核心。纯函数,不做 IO。
-/// 单 step 激活 — 显式接收 `&PlatformConfig`(resolver 需要)。
-pub fn activate_step_with_platform(
-    input: &StepActivationInput<'_>,
+/// 单 activity 激活的计算核心。纯函数,不做 IO。
+/// 单 activity 激活 — 显式接收 `&PlatformConfig`(resolver 需要)。
+pub fn activate_activity_with_platform(
+    input: &ActivityActivationInput<'_>,
     platform: &PlatformConfig,
-) -> StepActivation {
+) -> ActivityActivation {
     // ── 1. baseline + override + directive → 合并 directive 序列 ──
     //
     // 合并策略：baseline (workflow contract 或 override) 在前，运行时 delta 在后；
@@ -198,7 +198,7 @@ pub fn activate_step_with_platform(
     // ── 5. kickoff prompt fragment ──
     let kickoff_prompt = build_kickoff_prompt_fragment(input);
 
-    StepActivation {
+    ActivityActivation {
         capability_state: cap_output,
         mcp_servers,
         tool_directives: combined_directives,
@@ -210,7 +210,7 @@ pub fn activate_step_with_platform(
     }
 }
 
-fn build_kickoff_prompt_fragment(input: &StepActivationInput<'_>) -> KickoffPromptFragment {
+fn build_kickoff_prompt_fragment(input: &ActivityActivationInput<'_>) -> KickoffPromptFragment {
     let node_key = &input.active_activity.key;
     let desc = input.active_activity.description.trim();
     let node_title = if desc.is_empty() {
@@ -293,7 +293,7 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// 热更新路径先通过 `AgentFrameBuilder` 写入新 frame revision，再基于该 revision
 /// 投影 runtime delivery；保证 frame audit trail 与实际 runtime surface 一致。
 pub(crate) async fn apply_to_frame_runtime_target(
-    activation: &StepActivation,
+    activation: &ActivityActivation,
     hook_runtime: &SharedHookRuntime,
     session_capability: &SessionCapabilityService,
     target: AgentFrameRuntimeTarget,
@@ -347,7 +347,7 @@ pub(crate) async fn apply_to_frame_runtime_target(
 }
 
 pub(crate) fn build_capability_state_for_activation(
-    activation: &StepActivation,
+    activation: &ActivityActivation,
     base_surface: Option<&CapabilityState>,
 ) -> CapabilityState {
     use crate::workflow::frame_builder::{
@@ -361,7 +361,7 @@ pub(crate) fn build_capability_state_for_activation(
     surface.capability_state
 }
 
-/// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 step activation
+/// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 activity activation
 /// 在 phase 热更新路径里解析自定义 `mcp:<name>` 能力。
 pub(crate) fn agent_mcp_entries_from_servers(
     servers: &[agentdash_spi::SessionMcpServer],
@@ -394,7 +394,7 @@ mod tests {
         CapabilityConfig, DefinitionSource, MountDirective, AgentProcedureContract,
     };
 
-    fn sample_step(
+    fn sample_activity(
         output_ports: Vec<agentdash_domain::workflow::OutputPortDefinition>,
     ) -> ActivityDefinition {
         ActivityDefinition {
@@ -450,12 +450,12 @@ mod tests {
     }
 
     #[test]
-    fn activate_step_no_workflow_uses_default_visibility() {
-        let step = sample_step(vec![]);
+    fn activate_activity_no_workflow_uses_default_visibility() {
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Task {
                 project_id,
                 story_id,
@@ -475,7 +475,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
         // 无 workflow,走默认 visibility —— task scope 至少能拿到 Read/Write/Execute
         assert!(
             !out.capability_keys.is_empty(),
@@ -484,17 +484,17 @@ mod tests {
     }
 
     #[test]
-    fn activate_step_with_workflow_uses_contract_capabilities_as_baseline() {
+    fn activate_activity_with_workflow_uses_contract_capabilities_as_baseline() {
         let workflow = sample_workflow(vec![
             ToolCapabilityDirective::add_simple("file_read"),
             ToolCapabilityDirective::add_simple("file_write"),
             ToolCapabilityDirective::add_simple("shell_execute"),
             ToolCapabilityDirective::add_simple("workflow_management"),
         ]);
-        let step = sample_step(vec![]);
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
 
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
@@ -510,7 +510,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
         assert!(out.capability_keys.contains("workflow_management"));
         // file_read/write/shell_execute 现在是独立 directive
         assert!(out.capability_keys.contains("file_read"));
@@ -523,10 +523,10 @@ mod tests {
         let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple(
             "workflow_management",
         )]);
-        let step = sample_step(vec![]);
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
 
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
@@ -542,7 +542,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
 
         assert!(out.capability_keys.contains("workflow_management"));
         assert!(out.capability_keys.contains("file_read"));
@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn same_capability_key_tool_directive_changes_tool_state() {
-        let step = sample_step(vec![]);
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
         let run_id = Uuid::new_v4();
         let full_read_workflow =
@@ -564,7 +564,7 @@ mod tests {
             ToolCapabilityDirective::remove_tool("file_read", "fs_grep"),
         ]);
 
-        let base_input = StepActivationInput {
+        let base_input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&full_read_workflow),
@@ -579,13 +579,13 @@ mod tests {
             ready_port_keys: BTreeSet::new(),
             available_companions: Vec::new(),
         };
-        let restricted_input = StepActivationInput {
+        let restricted_input = ActivityActivationInput {
             workflow: Some(&restricted_read_workflow),
             ..base_input.clone()
         };
 
-        let base = activate_step_with_platform(&base_input, &test_platform());
-        let restricted = activate_step_with_platform(&restricted_input, &test_platform());
+        let base = activate_activity_with_platform(&base_input, &test_platform());
+        let restricted = activate_activity_with_platform(&restricted_input, &test_platform());
 
         assert_eq!(base.capability_keys, restricted.capability_keys);
         assert!(
@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn step_mount_directives_change_capability_state_vfs() {
+    fn activity_mount_directives_change_capability_state_vfs() {
         // mount overlay 现统一来自 workflow contract（Activity 无 step 级 capability_config）。
         let contract = AgentProcedureContract {
             capability_config: CapabilityConfig {
@@ -630,9 +630,9 @@ mod tests {
             contract,
         )
         .expect("workflow");
-        let step = sample_step(vec![]);
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
@@ -647,7 +647,7 @@ mod tests {
             ready_port_keys: BTreeSet::new(),
             available_companions: Vec::new(),
         };
-        let activation = activate_step_with_platform(&input, &test_platform());
+        let activation = activate_activity_with_platform(&input, &test_platform());
         let base_surface = {
             let mut state = activation.capability_state.clone();
             state.tool.mcp_servers = activation.mcp_servers.clone();
@@ -687,13 +687,13 @@ mod tests {
     }
 
     #[test]
-    fn activate_step_baseline_override_takes_precedence_over_contract() {
+    fn activate_activity_baseline_override_takes_precedence_over_contract() {
         let workflow = sample_workflow(vec![ToolCapabilityDirective::add_simple("file_read")]);
-        let step = sample_step(vec![]);
+        let step = sample_activity(vec![]);
         let project_id = Uuid::new_v4();
 
         // PhaseNode 热更新场景:baseline 来自 hook_runtime.current_capabilities()
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: Some(&workflow),
@@ -714,7 +714,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
         // baseline_override = canvas + collaboration + Remove(file_read),
         // directive = +workflow_management
         // workflow.contract.capability_config.tool_directives = file_read 被 override 替代
@@ -734,10 +734,10 @@ mod tests {
             gate_strategy: Default::default(),
             gate_params: None,
         }];
-        let step = sample_step(ports);
+        let step = sample_activity(ports);
         let project_id = Uuid::new_v4();
 
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: None,
@@ -753,7 +753,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
         assert!(
             out.kickoff_prompt
                 .output_section
@@ -794,7 +794,7 @@ mod tests {
         let project_id = Uuid::new_v4();
         let ready: BTreeSet<String> = ["out".to_string()].into_iter().collect();
 
-        let input = StepActivationInput {
+        let input = ActivityActivationInput {
             owner_ctx: CapabilityScopeCtx::Project { project_id },
             active_activity: &step,
             workflow: None,
@@ -810,7 +810,7 @@ mod tests {
             available_companions: Vec::new(),
         };
 
-        let out = activate_step_with_platform(&input, &test_platform());
+        let out = activate_activity_with_platform(&input, &test_platform());
         assert!(out.kickoff_prompt.input_section.contains("ctx"));
     }
 }

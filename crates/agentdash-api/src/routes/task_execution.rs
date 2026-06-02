@@ -33,7 +33,7 @@ pub async fn start_task(
     .await?;
     let result = state
         .services
-        .story_step_activation_service
+        .story_activity_activation_service
         .start_task(TaskExecutionCommand {
             task_id,
             phase: ExecutionPhase::Start,
@@ -83,7 +83,7 @@ pub async fn continue_task(
     .await?;
     let result = state
         .services
-        .story_step_activation_service
+        .story_activity_activation_service
         .continue_task(TaskExecutionCommand {
             task_id,
             phase: ExecutionPhase::Continue,
@@ -121,7 +121,7 @@ pub async fn cancel_task(
     .await?;
     let result = state
         .services
-        .story_step_activation_service
+        .story_activity_activation_service
         .cancel_task(task_id)
         .await
         .map_err(ApiError::from)?;
@@ -152,7 +152,7 @@ pub async fn get_task_execution_view(
     .await?;
     let view = state
         .services
-        .story_step_activation_service
+        .story_activity_activation_service
         .get_task_execution_view(task_id)
         .await
         .map_err(ApiError::from)?;

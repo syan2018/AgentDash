@@ -310,7 +310,7 @@ impl SessionAssemblyBuilder {
     /// 一步完成 lifecycle node 装配（VFS + 能力 + MCP + prompt）。
     pub(super) fn apply_lifecycle_activation(
         mut self,
-        activation: &crate::workflow::StepActivation,
+        activation: &crate::workflow::ActivityActivation,
         inherited_executor_config: Option<AgentConfig>,
     ) -> Self {
         let surface = crate::workflow::frame_builder::build_lifecycle_activation_surface(

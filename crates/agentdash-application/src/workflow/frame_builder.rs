@@ -1,4 +1,4 @@
-//! AgentFrameBuilder — 从 StepActivation / CapabilityResolver / Context
+//! AgentFrameBuilder — 从 ActivityActivation / CapabilityResolver / Context
 //! projection 等输入收束 AgentFrame revision 的唯一构造路径。
 //!
 //! ## 设计定位
@@ -19,7 +19,7 @@ use crate::session::capability_state::{
     capability_state_to_frame_surfaces, compose_vfs_with_overlay_and_directives,
 };
 
-use super::step_activation::StepActivation;
+use super::activity_activation::ActivityActivation;
 
 pub(crate) struct AgentFrameSurfaceInput<'a> {
     pub capability_state: Option<&'a CapabilityState>,
@@ -30,7 +30,7 @@ pub(crate) struct AgentFrameSurfaceInput<'a> {
 }
 
 pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
-    pub activation: &'a StepActivation,
+    pub activation: &'a ActivityActivation,
     pub base_vfs: Option<&'a Vfs>,
     /// 热更新路径需要从已有 CapabilityState 继承 skill 层（当 activation 自身未产出
     /// skill 时）。冷启动路径传 None。
@@ -384,6 +384,13 @@ mod tests {
         ) -> Result<Option<AgentFrame>, DomainError> {
             Ok(None)
         }
+        async fn append_visible_canvas_mount(
+            &self,
+            _frame_id: Uuid,
+            _mount_id: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]
@@ -515,7 +522,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let proc_id = Uuid::new_v4();
         let graph_instance_id = Uuid::new_v4();
-        let activation = StepActivation {
+        let activation = ActivityActivation {
             capability_state: CapabilityState::from_clusters([ToolCluster::Read]),
             mcp_servers: vec![SessionMcpServer {
                 name: "workflow-tools".to_string(),

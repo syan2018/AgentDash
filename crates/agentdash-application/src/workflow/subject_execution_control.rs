@@ -768,6 +768,13 @@ mod tests {
                 })
                 .cloned())
         }
+        async fn append_visible_canvas_mount(
+            &self,
+            _frame_id: Uuid,
+            _mount_id: &str,
+        ) -> Result<(), DomainError> {
+            Ok(())
+        }
     }
 
     #[derive(Default)]

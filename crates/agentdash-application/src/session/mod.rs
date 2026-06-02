@@ -134,8 +134,8 @@ pub use types::{
     EFFECT_TYPE_APPLY_VFS_OVERLAY, EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER,
     EFFECT_TYPE_SET_MCP_SERVER_SET, EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus,
     HookSnapshotReloadTrigger, PendingCapabilityStateTransition, ResolvedPromptPayload,
-    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionExecutionState, SessionMeta,
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, SetCompanionAgentRosterEffect,
-    SetMcpServerSetEffect, SetToolAccessEffect, TitleSource, UserPromptInput,
-    resolve_session_prompt_lifecycle,
+    RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, RuntimeTraceLaunchState,
+    SessionExecutionState, SessionMeta, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
+    UserPromptInput, resolve_session_prompt_lifecycle,
 };

@@ -78,8 +78,9 @@ use crate::vfs::{
     resolve_context_bindings,
 };
 use crate::workflow::{
-    ActiveWorkflowProjection, ActivityActivationInput, activate_activity_with_platform,
-    ensure_active_workflow_lifecycle_mount, load_port_output_map,
+    ActiveWorkflowProjection, ActivityActivationInput, ActivityPortArtifactRef,
+    activate_activity_with_platform, ensure_active_workflow_lifecycle_mount,
+    load_scoped_port_output_map,
 };
 use crate::workspace::BackendAvailability;
 
@@ -1209,6 +1210,7 @@ impl<'a> SessionRequestAssembler<'a> {
                 },
                 run: spec.run,
                 graph_instance_id: spec.graph_instance_id,
+                attempt: spec.attempt,
                 lifecycle: spec.lifecycle,
                 activity: spec.activity,
                 workflow: spec.workflow,
@@ -1284,9 +1286,14 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
-    // TODO(phase-6e): compose 阶段 attempt 尚未确定，暂用 run 级 load_port_output_map；
-    // 待 assignment creation 前移后可改为 load_scoped_port_output_map。
-    let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let artifact_ref = ActivityPortArtifactRef {
+        graph_instance_id: spec.graph_instance_id,
+        activity_key: spec.activity.key.clone(),
+        attempt: spec.attempt,
+    };
+    let port_output_map =
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id, &artifact_ref)
+            .await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let mut activation = activate_activity_with_platform(
@@ -1543,6 +1550,7 @@ pub struct StoryStepSpec<'a> {
 pub struct LifecycleNodeSpec<'a> {
     pub run: &'a LifecycleRun,
     pub graph_instance_id: Uuid,
+    pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1571,6 +1579,7 @@ pub struct CompanionParentWorkflowSpec<'a> {
     pub companion: CompanionParentSpec<'a>,
     pub run: &'a LifecycleRun,
     pub graph_instance_id: Uuid,
+    pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1588,6 +1597,7 @@ pub struct CompanionWorkflowSpec<'a> {
     /// 已创建的 lifecycle run。
     pub run: &'a LifecycleRun,
     pub graph_instance_id: Uuid,
+    pub attempt: u32,
     pub lifecycle: &'a WorkflowGraph,
     pub activity: &'a ActivityDefinition,
     pub workflow: Option<&'a agentdash_domain::workflow::AgentProcedure>,
@@ -1611,10 +1621,16 @@ pub(in crate::session) async fn compose_companion_with_workflow(
     let slice =
         build_companion_execution_slice(comp.parent_vfs, comp.parent_mcp_servers, comp.slice_mode);
 
-    // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
+    // ── 2. Workflow activity activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
-    // TODO(phase-6e): 同上，compose 阶段缺 attempt；暂用 run 级全量查询。
-    let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
+    let artifact_ref = ActivityPortArtifactRef {
+        graph_instance_id: spec.graph_instance_id,
+        activity_key: spec.activity.key.clone(),
+        attempt: spec.attempt,
+    };
+    let port_output_map =
+        load_scoped_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id, &artifact_ref)
+            .await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
     let activation = activate_activity_with_platform(
@@ -2132,6 +2148,7 @@ mod tests {
         let spec = LifecycleNodeSpec {
             run: &run,
             graph_instance_id,
+            attempt: 1,
             lifecycle: &lifecycle,
             activity: &activity,
             workflow: Some(&workflow),

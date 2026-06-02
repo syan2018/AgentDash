@@ -15,8 +15,9 @@ use crate::session::hook_delegate::{
 use crate::session::post_turn_handler::{DynPostTurnHandler, TerminalHookEffectBinding};
 use crate::session::runtime_commands::RuntimeCommandRecord;
 use crate::session::types::{
-    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger, SessionMeta,
-    SessionPromptLifecycle, SessionRepositoryRehydrateMode, resolve_session_prompt_lifecycle,
+    BackendSelectionInput, BackendSelectionInputMode, HookSnapshotReloadTrigger,
+    RuntimeTraceLaunchState, SessionPromptLifecycle, SessionRepositoryRehydrateMode,
+    resolve_session_prompt_lifecycle,
 };
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 
@@ -30,7 +31,7 @@ pub(in crate::session) struct LaunchPlannerInput<'a> {
     pub turn_id: &'a str,
     pub command: &'a LaunchCommand,
     pub had_existing_runtime: bool,
-    pub session_meta: &'a SessionMeta,
+    pub runtime_trace_state: RuntimeTraceLaunchState,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub launch_envelope: FrameLaunchEnvelope,
     /// 来自 LifecycleAgent.needs_bootstrap() — 取代原 SessionMeta.bootstrap_state 判断。
@@ -54,8 +55,11 @@ impl<'a> LaunchPlanner<'a> {
         let capability_state = input.launch_envelope.capability_state.clone();
 
         let mut context_bundle = input.launch_envelope.context_bundle.clone();
-        let terminal_hook_effect_binding =
-            input.launch_envelope.intent.terminal_hook_effect_binding.clone();
+        let terminal_hook_effect_binding = input
+            .launch_envelope
+            .intent
+            .terminal_hook_effect_binding
+            .clone();
         let typed_vfs = input.launch_envelope.vfs.clone();
         let _mcp_servers = input.launch_envelope.mcp_servers.clone();
         let environment_variables = input.launch_envelope.intent.environment_variables.clone();
@@ -96,7 +100,7 @@ impl<'a> LaunchPlanner<'a> {
             .connector
             .supports_repository_restore(executor_config.executor.as_str());
         let prompt_lifecycle = resolve_session_prompt_lifecycle(
-            input.session_meta,
+            &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,
             input.agent_needs_bootstrap,
@@ -196,7 +200,7 @@ impl<'a> LaunchPlanner<'a> {
             .map(|value| (Some(value.to_string()), LaunchFollowUpSource::Explicit))
             .or_else(|| {
                 input
-                    .session_meta
+                    .runtime_trace_state
                     .executor_session_id
                     .as_deref()
                     .map(str::trim)

@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::launch::LaunchCommand;
 use super::runtime_commands::RuntimeCommandRecord;
-use super::types::SessionMeta;
+use super::types::RuntimeTraceLaunchState;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
 use agentdash_domain::workflow::{ActivityDefinition, AgentProcedure, LifecycleRun, WorkflowGraph};
 use agentdash_spi::ConnectorError;
@@ -62,7 +62,7 @@ pub struct CompanionLaunchSource {
 pub struct SessionConstructionProviderInput {
     pub session_id: String,
     pub command: LaunchCommand,
-    pub session_meta: SessionMeta,
+    pub runtime_trace_state: RuntimeTraceLaunchState,
     pub had_existing_runtime: bool,
     pub requested_runtime_commands: Vec<RuntimeCommandRecord>,
     pub agent_needs_bootstrap: bool,

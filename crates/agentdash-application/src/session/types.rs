@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub use agentdash_spi::CapabilityState;
-use agentdash_spi::PromptPayload;
 pub use agentdash_spi::session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
     CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
@@ -15,6 +14,7 @@ pub use agentdash_spi::session_persistence::{
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionMeta,
     SetCompanionAgentRosterEffect, SetMcpServerSetEffect, SetToolAccessEffect, TitleSource,
 };
+use agentdash_spi::{AgentConfig, PromptPayload};
 
 /// 纯用户输入 — HTTP 反序列化的目标。
 /// 不包含任何后端注入字段。
@@ -101,7 +101,34 @@ pub enum SessionPromptLifecycle {
     RepositoryRehydrate(SessionRepositoryRehydrateMode),
 }
 
-/// 根据 session 元数据 + LifecycleAgent bootstrap 状态判定 prompt 应走哪种生命周期路径。
+/// Session launch 阶段只消费 runtime trace 所需的持久化事实。
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeTraceLaunchState {
+    pub executor_config: Option<AgentConfig>,
+    pub executor_session_id: Option<String>,
+    pub last_event_seq: u64,
+}
+
+impl RuntimeTraceLaunchState {
+    pub fn has_executor_follow_up(&self) -> bool {
+        self.executor_session_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    }
+}
+
+impl From<&SessionMeta> for RuntimeTraceLaunchState {
+    fn from(meta: &SessionMeta) -> Self {
+        Self {
+            executor_config: meta.executor_config.clone(),
+            executor_session_id: meta.executor_session_id.clone(),
+            last_event_seq: meta.last_event_seq,
+        }
+    }
+}
+
+/// 根据 runtime trace launch state + LifecycleAgent bootstrap 状态判定 prompt 应走哪种生命周期路径。
 ///
 /// 判定优先级：
 /// 1. Agent bootstrap 未完成 → **OwnerBootstrap**
@@ -111,7 +138,7 @@ pub enum SessionPromptLifecycle {
 /// `agent_needs_bootstrap` 来自 `LifecycleAgent.needs_bootstrap()`，取代原
 /// `SessionMeta.bootstrap_state` 的判断。
 pub fn resolve_session_prompt_lifecycle(
-    meta: &SessionMeta,
+    runtime_trace_state: &RuntimeTraceLaunchState,
     has_live_executor_session: bool,
     supports_repository_restore: bool,
     agent_needs_bootstrap: bool,
@@ -121,17 +148,14 @@ pub fn resolve_session_prompt_lifecycle(
         return SessionPromptLifecycle::OwnerBootstrap;
     }
 
-    let has_executor_follow_up = meta
-        .executor_session_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty());
-
     // P2: 冷启动恢复（三个条件同时满足）：
     //   - 进程内没有该 session 的 live connector runtime
     //   - session 有历史事件（last_event_seq > 0 表示曾经执行过）
     //   - 执行器侧没有可复用的 follow-up session（否则直接 Plain 续跑）
-    if !has_live_executor_session && meta.last_event_seq > 0 && !has_executor_follow_up {
+    if !has_live_executor_session
+        && runtime_trace_state.last_event_seq > 0
+        && !runtime_trace_state.has_executor_follow_up()
+    {
         return SessionPromptLifecycle::RepositoryRehydrate(if supports_repository_restore {
             SessionRepositoryRehydrateMode::ExecutorState
         } else {

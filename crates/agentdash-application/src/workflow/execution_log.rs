@@ -208,23 +208,3 @@ pub async fn load_scoped_port_output_map(
         })
         .collect()
 }
-
-/// 加载 lifecycle run 的 port output map（仅含非空内容）。
-/// 兼容旧路径 `{port_key}` 和新路径 `{gi}/{ak}/{att}/{port_key}`，
-/// 返回值 key 为 port_key（如有路径层级则取末段）。
-pub async fn load_port_output_map(
-    repo: &dyn InlineFileRepository,
-    run_id: Uuid,
-) -> BTreeMap<String, String> {
-    repo.list_files(InlineFileOwnerKind::LifecycleRun, run_id, "port_outputs")
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|f| {
-            let path = f.path.clone();
-            let port_key = path.rsplit('/').next().unwrap_or(&path).to_string();
-            let content = f.into_text_content()?;
-            (!content.trim().is_empty()).then_some((port_key, content))
-        })
-        .collect()
-}

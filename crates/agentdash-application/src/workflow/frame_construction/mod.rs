@@ -96,8 +96,7 @@ impl FrameConstructionService {
 
         let executor_config = frame.typed_execution_profile();
         let direct_lifecycle = self.prompt_lifecycle(executor_config.as_ref(), &input);
-        if matches!(direct_lifecycle, SessionPromptLifecycle::Plain)
-            && frame_surface_ready(&frame)
+        if matches!(direct_lifecycle, SessionPromptLifecycle::Plain) && frame_surface_ready(&frame)
         {
             return build_envelope_from_frame(
                 &frame,
@@ -162,7 +161,7 @@ impl FrameConstructionService {
             })
             .unwrap_or(false);
         crate::session::types::resolve_session_prompt_lifecycle(
-            &input.session_meta,
+            &input.runtime_trace_state,
             input.had_existing_runtime,
             supports_repository_restore,
             input.agent_needs_bootstrap,
@@ -309,7 +308,8 @@ pub(crate) fn build_envelope_from_frame(
     hook_binding: Option<TerminalHookEffectBinding>,
     runtime_session_id: &str,
 ) -> Result<FrameLaunchEnvelope, ConnectorError> {
-    let surface = FrameRuntimeSurface::from_frame(frame, runtime_session_policy(runtime_session_id));
+    let surface =
+        FrameRuntimeSurface::from_frame(frame, runtime_session_policy(runtime_session_id));
 
     let mut vfs = frame.typed_vfs().unwrap_or_default();
     let mut executor_config = frame.typed_execution_profile();

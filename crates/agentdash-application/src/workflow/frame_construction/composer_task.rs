@@ -73,12 +73,9 @@ pub(super) async fn compose(
         .user_input()
         .executor_config
         .clone()
-        .or_else(|| input.session_meta.executor_config.clone());
-    let builder = frame_builder_from_existing(
-        frame,
-        input.session_id.as_str(),
-        input.session_id.as_str(),
-    )?;
+        .or_else(|| input.runtime_trace_state.executor_config.clone());
+    let builder =
+        frame_builder_from_existing(frame, input.session_id.as_str(), input.session_id.as_str())?;
     let (builder, extras, hook_binding) = svc
         .assembler()
         .compose_story_step_to_frame(

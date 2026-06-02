@@ -7,6 +7,7 @@ use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{LifecycleNodeSpec, compose_lifecycle_node_to_frame_with_audit};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
 use crate::workflow::runtime_launch::FrameLaunchEnvelope;
+use crate::workflow::select_assignment_for_frame;
 
 use super::{FrameConstructionService, connector_internal, frame_builder_from_existing};
 
@@ -72,6 +73,21 @@ pub(super) async fn compose(
         .executor_config
         .clone()
         .or_else(|| frame.typed_execution_profile());
+    let assignment = select_assignment_for_frame(svc.repos.agent_assignment_repo.as_ref(), frame)
+        .await
+        .map_err(|error| ConnectorError::InvalidConfig(error.to_string()))?
+        .ok_or_else(|| {
+            ConnectorError::InvalidConfig(format!(
+                "AgentFrame {} 缺少 activity assignment，无法 scoped compose lifecycle activity",
+                frame.id
+            ))
+        })?;
+    let attempt = u32::try_from(assignment.attempt).map_err(|_| {
+        ConnectorError::InvalidConfig(format!(
+            "AgentAssignment {} attempt 无效: {}",
+            assignment.id, assignment.attempt
+        ))
+    })?;
     let builder =
         frame_builder_from_existing(frame, input.session_id.as_str(), command.reason_tag())?;
     let (builder, extras) = compose_lifecycle_node_to_frame_with_audit(
@@ -81,6 +97,7 @@ pub(super) async fn compose(
         LifecycleNodeSpec {
             run: &run,
             graph_instance_id,
+            attempt,
             lifecycle: &lifecycle,
             activity,
             workflow: workflow.as_ref(),

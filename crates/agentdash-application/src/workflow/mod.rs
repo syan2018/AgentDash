@@ -56,7 +56,9 @@ pub use dispatch_service::{
 };
 pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
-pub use execution_log::{load_port_output_map, load_scoped_port_output_map, materialize_activity_summary};
+pub use execution_log::{
+    ActivityPortArtifactRef, load_scoped_port_output_map, materialize_activity_summary,
+};
 pub use frame_builder::AgentFrameBuilder;
 pub use frame_construction::FrameConstructionService;
 pub use frame_hook_runtime::AgentFrameHookRuntime;

@@ -84,11 +84,12 @@ impl SessionLaunchOrchestrator {
         };
         let agent_needs_bootstrap_early =
             Self::resolve_agent_needs_bootstrap(&self.deps, &sid).await;
+        let runtime_trace_state = RuntimeTraceLaunchState::from(&session_meta);
         let launch_envelope = match provider
             .build_frame_construction(SessionConstructionProviderInput {
                 session_id: sid.clone(),
                 command: command.clone(),
-                session_meta: session_meta.clone(),
+                runtime_trace_state: runtime_trace_state.clone(),
                 had_existing_runtime,
                 requested_runtime_commands: requested_runtime_commands.clone(),
                 agent_needs_bootstrap: agent_needs_bootstrap_early,
@@ -169,8 +170,7 @@ impl SessionLaunchOrchestrator {
             .list_requested_runtime_commands(&sid)
             .await
             .map_err(|error| ConnectorError::Runtime(error.to_string()))?;
-        let envelope =
-            Self::finalize_envelope_for_test(envelope, &requested_runtime_commands);
+        let envelope = Self::finalize_envelope_for_test(envelope, &requested_runtime_commands);
         let facts = LaunchRuntimeFacts {
             turn_id,
             had_existing_runtime,
@@ -269,7 +269,7 @@ impl SessionLaunchOrchestrator {
                 turn_id: &turn_id,
                 command,
                 had_existing_runtime,
-                session_meta: &session_meta,
+                runtime_trace_state: RuntimeTraceLaunchState::from(&session_meta),
                 requested_runtime_commands,
                 launch_envelope,
                 agent_needs_bootstrap,
@@ -307,9 +307,7 @@ impl SessionLaunchOrchestrator {
                             // enforce current_frame_id invariant:
                             // build() 成功后同步 LifecycleAgent.current_frame_id
                             if let Some(ref agent_repo) = deps.lifecycle_agent_repo {
-                                if let Ok(Some(mut agent)) =
-                                    agent_repo.get(frame.agent_id).await
-                                {
+                                if let Ok(Some(mut agent)) = agent_repo.get(frame.agent_id).await {
                                     agent.set_current_frame(frame.id);
                                     if let Err(e) = agent_repo.update(&agent).await {
                                         tracing::warn!(

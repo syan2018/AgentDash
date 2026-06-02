@@ -1,2 +1,7 @@
 {"file": ".trellis/spec/frontend/architecture.md", "reason": "Check frontend does not infer backend facts from cache"}
 {"file": ".trellis/spec/backend/session/runtime-execution-state.md", "reason": "Check runtime trace boundary"}
+{"file": ".trellis/tasks/06-02-lifecycle-run-active-projection-structure/prd.md", "reason": "Check prompt entry obeys Agent/Lifecycle public exposure convergence"}
+{"file": "packages/app-web/src/pages/SessionPage.tsx", "reason": "Check SessionPage provides usable prompt customSend through resolved runtime target"}
+{"file": "packages/app-web/src/features/session/ui/SessionChatView.tsx", "reason": "Check chat view remains generic and uses customSend for SessionPage prompt dispatch"}
+{"file": "packages/app-web/src/services/lifecycle.ts", "reason": "Check session id only resolves frame runtime adapter"}
+{"file": "packages/app-web/src/services/story.ts", "reason": "Check subject continue prompt path is reused when run context is task-bound"}

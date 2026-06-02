@@ -1,2 +1,13 @@
 {"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "Check active projection is not runtime fact source"}
 {"file": ".trellis/spec/frontend/architecture.md", "reason": "Check frontend consumes structured DTOs"}
+{"file": ".trellis/tasks/06-02-lifecycle-run-active-projection-structure/research/audit-context-index.md", "reason": "Check all required audit contexts were revisited before implementation"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/implement.md", "reason": "Check parent start order and final integration gates remain aligned"}
+{"file": "crates/agentdash-application/src/workflow/run.rs", "reason": "Check select_active_run no longer depends on string active key business facts"}
+{"file": "crates/agentdash-application/src/workflow/tools/advance_node.rs", "reason": "Check tool output uses structured active refs or attempt refs"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle_run_view_builder.rs", "reason": "Check read model derives active refs from graph instance activity_state"}
+{"file": "crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs", "reason": "Check persistence and migrations match target projection ownership"}
+{"file": "crates/agentdash-contracts/src/workflow.rs", "reason": "Check generated contract exposes the target structured fields"}
+{"file": "crates/agentdash-api/src/routes/lifecycle_views.rs", "reason": "Check session-indexed routes remain adapters to Agent/Lifecycle anchored views"}
+{"file": "packages/app-web/src/services/lifecycle.ts", "reason": "Check frontend services do not keep session-first runtime business types"}
+{"file": "packages/app-web/src/types/session.ts", "reason": "Check session types remain trace and transport metadata only"}
+{"file": "packages/app-web/src/features/workspace-panel/ContextOverviewTab.projection.test.tsx", "reason": "Check frontend active projection behavior with structured graph/activity/attempt identity"}

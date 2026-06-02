@@ -1,3 +1,22 @@
 {"file": ".trellis/spec/backend/workflow/architecture.md", "reason": "WorkflowGraphInstance activity namespace invariant"}
 {"file": ".trellis/spec/backend/workflow/activity-lifecycle.md", "reason": "Activity runtime identity and run-level projection"}
 {"file": ".trellis/spec/frontend/workflow-activity-lifecycle.md", "reason": "Frontend runtime observation contract"}
+{"file": ".trellis/tasks/06-02-lifecycle-run-active-projection-structure/research/audit-context-index.md", "reason": "Compression recovery index and required audit manifest"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/prd.md", "reason": "Parent task fact ownership and start order"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/design.md", "reason": "Parent task target architecture and data flow"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/research/frontend-runtime-query.md", "reason": "Frontend active_node_keys usage audit and backend run-level projection findings"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/research/runtime-session-assignment-anchor.md", "reason": "Runtime session to assignment/attempt anchor dependency"}
+{"file": ".trellis/tasks/06-02-lifecycle-control-plane-frame-convergence/research/scoped-lifecycle-artifacts.md", "reason": "Artifact scope dependency for graph/activity/attempt identity"}
+{"file": "crates/agentdash-domain/src/workflow/entity.rs", "reason": "LifecycleRun lifecycle_id active_node_keys and projection sync source"}
+{"file": "crates/agentdash-domain/src/workflow/workflow_graph_instance.rs", "reason": "WorkflowGraphInstance activity_state authority and graph instance id invariant"}
+{"file": "crates/agentdash-domain/src/workflow/value_objects/run_state.rs", "reason": "ActivityLifecycleRunState attempts outputs and status source"}
+{"file": "crates/agentdash-application/src/workflow/run.rs", "reason": "select_active_run current_activity_key business use"}
+{"file": "crates/agentdash-application/src/workflow/tools/advance_node.rs", "reason": "advance_node active_node_keys output and control path"}
+{"file": "crates/agentdash-application/src/workflow/lifecycle_run_view_builder.rs", "reason": "LifecycleRunView and graph instance attempt read model builder"}
+{"file": "crates/agentdash-contracts/src/workflow.rs", "reason": "Generated DTO source for LifecycleRunView and structured active refs"}
+{"file": "crates/agentdash-api/src/routes/lifecycle_views.rs", "reason": "Session-indexed adapters must return Agent/Lifecycle anchored runtime views"}
+{"file": "crates/agentdash-infrastructure/src/persistence/postgres/workflow_repository.rs", "reason": "active_node_keys persistence and lifecycle_id load/update"}
+{"file": "packages/app-web/src/stores/lifecycleStore.ts", "reason": "Frontend lifecycle store consumers of generated run views"}
+{"file": "packages/app-web/src/services/lifecycle.ts", "reason": "Frontend lifecycle services should consume Agent/Lifecycle anchored generated contracts"}
+{"file": "packages/app-web/src/types/session.ts", "reason": "Session types should stay trace and transport metadata rather than business runtime view ownership"}
+{"file": "packages/app-web/src/features/workspace-panel/ContextOverviewTab.tsx", "reason": "Frontend active workflow display from graph instance attempts"}

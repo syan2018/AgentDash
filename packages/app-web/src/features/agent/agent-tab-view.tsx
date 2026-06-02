@@ -85,7 +85,7 @@ export function AgentTabView() {
       const agent = store.agents.get(agentId);
       const sessionId =
         agent?.delivery_runtime_ref?.runtime_session_id
-        ?? store.primarySessionId(runId);
+        ?? store.deliveryRuntimeSessionId(runId);
       if (sessionId) {
         navigate(`/session/${sessionId}`);
       }

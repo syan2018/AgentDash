@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { HookSessionRuntimeInfo } from "../../../types";
+import type { AgentFrameHookRuntimeInfo } from "../../../types";
 import type { SessionRuntimeStateStatus } from "../../workspace-runtime";
 import { useLifecycleStore } from "../../../stores/lifecycleStore";
 import { fetchSessionFrameRuntime } from "../../../services/lifecycle";
@@ -29,7 +29,7 @@ export interface SessionRuntimeProjectionState {
   source_key: string | null;
   status: SessionRuntimeStateStatus;
   context: SessionContextPayload | null;
-  hook_runtime: HookSessionRuntimeInfo | null;
+  hook_runtime: AgentFrameHookRuntimeInfo | null;
   frame: AgentFrameRuntimeView | null;
   error: string | null;
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import type {
   ActiveWorkflowHookMetadata,
   HookInjection,
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
   HookTraceEntry,
 } from "../../types";
 import { SurfaceCard } from "./surface-card";
@@ -12,7 +12,7 @@ import { SurfaceCard } from "./surface-card";
 export function HookRuntimeSurfaceCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   const { snapshot } = hookRuntime;
   const activeWorkflow = snapshot.metadata?.active_workflow ?? null;
@@ -163,7 +163,7 @@ function HookInjectionRow({ injection }: { injection: HookInjection }) {
 export function HookRuntimeDiagnosticsCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook 诊断" title="运行时命中记录">
@@ -195,7 +195,7 @@ export function HookRuntimeDiagnosticsCard({
 export function HookRuntimeTraceCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook Trace" title="最近触发记录">
@@ -220,7 +220,7 @@ export function HookRuntimeTraceCard({
 export function HookRuntimePendingActionsCard({
   hookRuntime,
 }: {
-  hookRuntime: HookSessionRuntimeInfo;
+  hookRuntime: AgentFrameHookRuntimeInfo;
 }) {
   return (
     <SurfaceCard eyebrow="Hook Actions" title="干预项状态">

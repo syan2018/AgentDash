@@ -14,7 +14,7 @@ export interface SessionEntry {
   run: LifecycleRunView;
   agent: LifecycleAgentView;
   sessionTitle: string | null;
-  primarySessionId: string | null;
+  deliveryRuntimeSessionId: string | null;
   executionStatus: SessionExecutionStatusValue;
 }
 

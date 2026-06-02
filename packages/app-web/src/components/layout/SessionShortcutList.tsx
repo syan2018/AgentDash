@@ -88,15 +88,14 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
       );
 
       const primaryAgent = runAgents[0];
-      const primarySessionId =
-        primaryAgent?.delivery_runtime_ref?.runtime_session_id
-        ?? run.runtime_trace_refs[0]?.runtime_session_id;
-      if (!primarySessionId) continue;
+      const deliveryRuntimeSessionId =
+        primaryAgent?.delivery_runtime_ref?.runtime_session_id ?? null;
+      if (!deliveryRuntimeSessionId) continue;
 
-      const meta = sessionMetas.get(primarySessionId);
+      const meta = sessionMetas.get(deliveryRuntimeSessionId);
 
       entries.push({
-        runtimeSessionId: primarySessionId,
+        runtimeSessionId: deliveryRuntimeSessionId,
         sessionTitle: meta?.title?.trim() || primaryAgent?.agent_role || primaryAgent?.agent_kind || "会话",
         executionStatus: meta?.lastExecutionStatus ?? "idle",
         agentRole: primaryAgent?.agent_role || primaryAgent?.agent_kind || "",

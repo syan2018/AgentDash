@@ -12,7 +12,7 @@ import type {
   ActiveWorkflowHookMetadata,
   ActivityAttemptView,
   HookInjection,
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
   LifecycleRunView,
   ResolvedMountSummary,
   ResolvedVfsSurface,
@@ -31,7 +31,7 @@ export interface ContextOverviewTabProps {
   ownerProjectName: string;
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
-  hookRuntime: HookSessionRuntimeInfo | null;
+  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: LifecycleRunView[];
 }
@@ -220,7 +220,7 @@ function WorkflowContextCard({
   runtimeSurface,
   composition,
 }: {
-  hookRuntime: HookSessionRuntimeInfo | null;
+  hookRuntime: AgentFrameHookRuntimeInfo | null;
   workflowRuns: LifecycleRunView[];
   runtimeSurface: ResolvedVfsSurface | null;
   composition: SessionComposition | null;

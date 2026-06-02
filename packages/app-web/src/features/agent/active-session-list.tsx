@@ -305,7 +305,7 @@ export function ActiveSessionList({
     primaryAgent: LifecycleAgentView;
     subAgents: LifecycleAgentView[];
     sessionTitle: string | null;
-    primarySessionId: string | null;
+    deliveryRuntimeSessionId: string | null;
     executionStatus: SessionExecutionStatusValue;
   }
 
@@ -320,18 +320,18 @@ export function ActiveSessionList({
       if (runAgents.length === 0) continue;
 
       const [primary, ...subs] = runAgents;
-      const primarySessionId =
-        primary?.delivery_runtime_ref?.runtime_session_id
-        ?? run.runtime_trace_refs[0]?.runtime_session_id
-        ?? null;
-      const meta = primarySessionId ? sessionMetas.get(primarySessionId) ?? null : null;
+      const deliveryRuntimeSessionId =
+        primary?.delivery_runtime_ref?.runtime_session_id ?? null;
+      const meta = deliveryRuntimeSessionId
+        ? sessionMetas.get(deliveryRuntimeSessionId) ?? null
+        : null;
 
       entries.push({
         run,
         primaryAgent: primary,
         subAgents: subs,
         sessionTitle: meta?.title ?? null,
-        primarySessionId,
+        deliveryRuntimeSessionId,
         executionStatus: primary?.last_execution_status as SessionExecutionStatusValue ?? meta?.lastExecutionStatus ?? "idle",
       });
     }
@@ -345,7 +345,7 @@ export function ActiveSessionList({
       run: re.run,
       agent: re.primaryAgent,
       sessionTitle: re.sessionTitle,
-      primarySessionId: re.primarySessionId,
+      deliveryRuntimeSessionId: re.deliveryRuntimeSessionId,
       executionStatus: re.executionStatus,
     }));
   }, [runEntries]);

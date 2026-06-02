@@ -7,9 +7,9 @@ import {
   HookRuntimeSurfaceCard,
   HookRuntimeTraceCard,
 } from "../features/session-context";
-import type { HookSessionRuntimeInfo } from "../types";
+import type { AgentFrameHookRuntimeInfo } from "../types";
 
-const hookRuntime: HookSessionRuntimeInfo = {
+const hookRuntime: AgentFrameHookRuntimeInfo = {
   runtime_adapter_session_id: "sess-hook-test",
   revision: 7,
   snapshot: {

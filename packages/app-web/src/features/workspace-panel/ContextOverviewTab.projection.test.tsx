@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type {
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
   LifecycleRunView,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -150,7 +150,7 @@ const lifecycleRunView: LifecycleRunView = {
   last_activity_at: "2026-06-02T00:00:00Z",
 };
 
-const hookRuntime: HookSessionRuntimeInfo = {
+const hookRuntime: AgentFrameHookRuntimeInfo = {
   runtime_adapter_session_id: "sess-projection",
   revision: 1,
   snapshot: {

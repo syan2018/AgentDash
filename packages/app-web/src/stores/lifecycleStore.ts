@@ -70,8 +70,8 @@ interface LifecycleState {
   runsBySubject: (subjectKind: string, subjectId: string) => LifecycleRunView[];
   /** 返回指定 run 下的所有 agent */
   agentsByRun: (runId: string) => LifecycleAgentView[];
-  /** 返回指定 run 的主 session id（第一个 runtime_trace_ref） */
-  primarySessionId: (runId: string) => string | null;
+  /** 返回指定 run 当前 agent/frame delivery runtime session id */
+  deliveryRuntimeSessionId: (runId: string) => string | null;
 }
 
 // ─── Store ───────────────────────────────────────────────
@@ -186,8 +186,10 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
       }
       set({ isLoading: false });
 
-      const sessionIds = view.runs.flatMap(
-        (r) => r.runtime_trace_refs.map((ref) => ref.runtime_session_id),
+      const sessionIds = view.runs.flatMap((r) =>
+        r.agents.flatMap((agent) =>
+          agent.delivery_runtime_ref ? [agent.delivery_runtime_ref.runtime_session_id] : [],
+        ),
       );
       if (sessionIds.length > 0) {
         void get().hydrateSessionMetas(sessionIds);
@@ -271,8 +273,12 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     return result;
   },
 
-  primarySessionId: (runId) => {
-    const run = get().runs.get(runId);
-    return run?.runtime_trace_refs[0]?.runtime_session_id ?? null;
+  deliveryRuntimeSessionId: (runId) => {
+    for (const agent of get().agents.values()) {
+      if (agent.agent_ref.run_id === runId && agent.delivery_runtime_ref) {
+        return agent.delivery_runtime_ref.runtime_session_id;
+      }
+    }
+    return null;
   },
 }));

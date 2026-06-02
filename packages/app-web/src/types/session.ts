@@ -105,7 +105,7 @@ export interface AgentFrameHookSnapshot {
   metadata?: HookRuntimeMetadata | null;
 }
 
-export interface HookSessionRuntimeInfo {
+export interface AgentFrameHookRuntimeInfo {
   runtime_adapter_session_id: string;
   revision: number;
   snapshot: AgentFrameHookSnapshot;

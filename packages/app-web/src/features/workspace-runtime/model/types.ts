@@ -1,6 +1,6 @@
 import type {
   ExtensionRuntimeProjectionResponse,
-  HookSessionRuntimeInfo,
+  AgentFrameHookRuntimeInfo,
   LifecycleRunView,
   ResolvedVfsSurface,
   SessionBaselineCapabilities,
@@ -38,7 +38,7 @@ export interface WorkspaceRuntimeData {
   executorSummary: TaskSessionExecutorSummary | null;
   runtimeSurface: ResolvedVfsSurface | null;
   workspaceBackend: WorkspaceBackendTarget | null;
-  hookRuntime: HookSessionRuntimeInfo | null;
+  hookRuntime: AgentFrameHookRuntimeInfo | null;
   sessionCapabilities: SessionBaselineCapabilities | null;
   workflowRuns: LifecycleRunView[];
   activeCanvasId: string | null;

@@ -392,6 +392,7 @@ impl CompanionRequestTool {
                 self.repos.lifecycle_gate_repo.as_ref(),
                 self.repos.agent_lineage_repo.as_ref(),
             )
+            .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
             .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
             if wait {
                 let result = dispatch_svc
@@ -2090,8 +2091,8 @@ mod companion_tests {
         let task_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
         let snapshot = agentdash_spi::AgentFrameHookSnapshot {
-            session_id: "sess-test".to_string(),
-            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+            runtime_adapter_session_id: "sess-test".to_string(),
+            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
                 project_id,
                 story_id: Some(story_id),
                 task_id: Some(task_id),
@@ -2144,8 +2145,8 @@ mod companion_tests {
     #[test]
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
         let snapshot = agentdash_spi::AgentFrameHookSnapshot {
-            session_id: "sess-parent".to_string(),
-            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+            runtime_adapter_session_id: "sess-parent".to_string(),
+            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
                 project_id: Uuid::new_v4(),
                 story_id: None,
                 task_id: Some(Uuid::new_v4()),

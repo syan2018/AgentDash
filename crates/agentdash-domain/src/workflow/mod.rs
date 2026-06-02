@@ -7,6 +7,7 @@ mod lifecycle_agent;
 mod lifecycle_gate;
 mod lifecycle_subject_association;
 mod repository;
+mod runtime_session_anchor;
 mod validation;
 mod value_objects;
 mod workflow_graph_instance;
@@ -32,9 +33,11 @@ pub use repository::{
     ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
     AgentLineageRepository, AgentProcedureRepository, LifecycleAgentRepository,
     LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository, WorkflowTemplateInstallBundle,
-    WorkflowTemplateInstallRepository, WorkflowTemplateInstallResult,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallBundle, WorkflowTemplateInstallRepository,
+    WorkflowTemplateInstallResult,
 };
+pub use runtime_session_anchor::RuntimeSessionExecutionAnchor;
 pub use validation::{validate_agent_procedure, validate_workflow_graph};
 pub use value_objects::{
     ActivityAttemptState, ActivityAttemptStatus, ActivityCompletionPolicy, ActivityDefinition,

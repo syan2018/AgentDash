@@ -322,6 +322,7 @@ pub async fn start_lifecycle_run(
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
     )
+    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
     .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
     let dispatch_result = dispatch_service
         .start_lifecycle_run(&LifecycleRunStartIntent {

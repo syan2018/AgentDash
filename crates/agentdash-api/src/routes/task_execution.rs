@@ -51,7 +51,7 @@ pub async fn start_task(
         frame_ref: result.frame_ref,
         assignment_ref: result.assignment_ref,
         subject_execution_ref: result.subject_execution_ref.association_id,
-        trace_ref: result.trace_ref,
+        delivery_runtime_ref: result.delivery_runtime_ref,
         status: result.status,
     }))
 }
@@ -101,7 +101,7 @@ pub async fn continue_task(
         frame_ref: result.frame_ref,
         assignment_ref: result.assignment_ref,
         subject_execution_ref: result.subject_execution_ref.association_id,
-        trace_ref: result.trace_ref,
+        delivery_runtime_ref: result.delivery_runtime_ref,
         status: result.status,
     }))
 }
@@ -163,7 +163,7 @@ pub async fn get_task_execution_view(
         agent_ref: view.agent_ref,
         run_ref: view.run_ref,
         frame_ref: view.frame_ref,
-        trace_ref: view.trace_ref,
+        delivery_runtime_ref: view.delivery_runtime_ref,
         task_status: view.task_status,
     }))
 }

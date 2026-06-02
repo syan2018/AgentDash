@@ -188,10 +188,9 @@ pub struct AgentLaunchDispatchResult {
     pub graph_instance_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
+    /// 投递目标 runtime session（合并原 runtime_session_ref + trace_ref）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_ref: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,9 +202,7 @@ pub struct SubjectExecutionDispatchResult {
     pub assignment_ref: Uuid,
     pub subject_execution_ref: SubjectExecutionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_ref: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,9 +220,7 @@ pub struct InteractionGateOpenedDispatchResult {
     pub assignment_ref: Uuid,
     pub gate_ref: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_session_ref: Option<Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
 }
 
 /// Dispatch 调度结果按 intent family 分类，避免全 optional DTO 掩盖必需锚点。

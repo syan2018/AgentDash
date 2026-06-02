@@ -22,7 +22,7 @@ pub struct StartTaskResponse {
     pub assignment_ref: Uuid,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
 }
 
@@ -44,7 +44,7 @@ pub struct ContinueTaskResponse {
     pub assignment_ref: Uuid,
     pub subject_execution_ref: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
 }
 
@@ -75,6 +75,6 @@ pub struct TaskExecutionViewResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_ref: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub task_status: TaskStatus,
 }

@@ -178,6 +178,7 @@ pub async fn launch_project_agent(
         state.repos.lifecycle_gate_repo.as_ref(),
         state.repos.agent_lineage_repo.as_ref(),
     )
+    .with_anchor_repo(state.repos.execution_anchor_repo.as_ref())
     .with_runtime_session_creator(state.repos.runtime_session_creator.as_ref());
 
     let dispatch_result = dispatch_service
@@ -217,8 +218,8 @@ pub async fn launch_project_agent(
             frame_id: dispatch_result.frame_ref.to_string(),
             revision: None,
         },
-        runtime_session_ref: dispatch_result
-            .runtime_session_ref
+        delivery_runtime_ref: dispatch_result
+            .delivery_runtime_ref
             .map(|runtime_session_id| RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }),

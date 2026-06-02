@@ -7,6 +7,7 @@ use super::entity::{ActivityExecutionClaim, AgentProcedure, LifecycleRun, Workfl
 use super::lifecycle_agent::LifecycleAgent;
 use super::lifecycle_gate::LifecycleGate;
 use super::lifecycle_subject_association::{LifecycleSubjectAssociation, SubjectRef};
+use super::runtime_session_anchor::RuntimeSessionExecutionAnchor;
 use super::workflow_graph_instance::WorkflowGraphInstance;
 use crate::common::error::DomainError;
 
@@ -188,4 +189,23 @@ pub trait AgentLineageRepository: Send + Sync {
     async fn create(&self, lineage: &AgentLineage) -> Result<(), DomainError>;
     async fn list_children(&self, agent_id: Uuid) -> Result<Vec<AgentLineage>, DomainError>;
     async fn find_parent(&self, child_agent_id: Uuid) -> Result<Option<AgentLineage>, DomainError>;
+}
+
+/// RuntimeSession → 控制面锚点的 repository。
+#[async_trait::async_trait]
+pub trait RuntimeSessionExecutionAnchorRepository: Send + Sync {
+    /// 第一段写入或更新（runtime_session + frame 创建后，assignment 可能尚未创建）。
+    async fn upsert(&self, anchor: &RuntimeSessionExecutionAnchor) -> Result<(), DomainError>;
+    /// 第二段补写：assignment 创建后回填 assignment_id + attempt。
+    async fn update_assignment(
+        &self,
+        runtime_session_id: &str,
+        assignment_id: Uuid,
+        attempt: i32,
+    ) -> Result<(), DomainError>;
+    /// 按 runtime_session_id 查找锚点。
+    async fn find_by_session(
+        &self,
+        runtime_session_id: &str,
+    ) -> Result<Option<RuntimeSessionExecutionAnchor>, DomainError>;
 }

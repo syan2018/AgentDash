@@ -26,7 +26,8 @@ use agentdash_domain::workflow::{
     ActivityExecutionClaimRepository, AgentAssignmentRepository, AgentFrameRepository,
     AgentLineageRepository, AgentProcedureRepository, LifecycleAgentRepository,
     LifecycleGateRepository, LifecycleRunRepository, LifecycleSubjectAssociationRepository,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository, WorkflowTemplateInstallRepository,
+    RuntimeSessionExecutionAnchorRepository, WorkflowGraphInstanceRepository,
+    WorkflowGraphRepository, WorkflowTemplateInstallRepository,
 };
 use agentdash_domain::workspace::WorkspaceRepository;
 
@@ -75,6 +76,7 @@ pub struct RepositorySet {
     pub lifecycle_subject_association_repo: Arc<dyn LifecycleSubjectAssociationRepository>,
     pub lifecycle_gate_repo: Arc<dyn LifecycleGateRepository>,
     pub agent_lineage_repo: Arc<dyn AgentLineageRepository>,
+    pub execution_anchor_repo: Arc<dyn RuntimeSessionExecutionAnchorRepository>,
     pub runtime_session_creator: Arc<dyn RuntimeSessionCreator>,
     pub routine_repo: Arc<dyn RoutineRepository>,
     pub routine_execution_repo: Arc<dyn RoutineExecutionRepository>,

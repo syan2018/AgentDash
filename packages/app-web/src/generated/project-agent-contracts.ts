@@ -17,7 +17,7 @@ export type ProjectAgent = { id: string, project_id: string, name: string, agent
 
 export type ProjectAgentExecutor = { executor: string, provider_id?: string, model_id?: string, agent_id?: string, thinking_level?: ThinkingLevel, permission_policy?: string, };
 
-export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, assignment_ref?: AgentAssignmentRefDto, subject_ref?: SubjectRefDto, };
+export type ProjectAgentLaunchResult = { created: boolean, agent: ProjectAgentSummary, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, assignment_ref?: AgentAssignmentRefDto, subject_ref?: SubjectRefDto, };
 
 export type ProjectAgentSummary = { key: string, display_name: string, description: string, executor: ProjectAgentExecutor, preset_name?: string, source: string, };
 

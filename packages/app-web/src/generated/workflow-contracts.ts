@@ -85,7 +85,15 @@ export type InputPortDefinition = { key: string, description: string, context_st
 
 export type LifecycleAgentRefDto = { run_id: string, agent_id: string, };
 
-export type LifecycleAgentView = { agent_ref: LifecycleAgentRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string, created_at: string, updated_at: string, };
+export type LifecycleAgentView = { agent_ref: LifecycleAgentRefDto, project_id: string, agent_kind: string, agent_role: string, project_agent_id?: string, status: string, current_frame_id?: string,
+/**
+ * 投递用的 runtime session（由 execution anchor 提供）。
+ */
+delivery_runtime_ref?: RuntimeSessionRefDto,
+/**
+ * agent 最新 execution status（如 running / completed / idle）。
+ */
+last_execution_status?: string, created_at: string, updated_at: string, };
 
 export type LifecycleExecutionEntry = { timestamp: string, activity_key: string, event_kind: LifecycleExecutionEventKind, summary: string, detail?: JsonValue, };
 
@@ -113,7 +121,7 @@ export type RuntimeSessionTraceView = { runtime_session_ref: RuntimeSessionRefDt
 
 export type StandaloneFulfillment = "required" | { "optional": { default_value?: string, } };
 
-export type StoryLaunchResult = { created: boolean, story_id: string, project_agent_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, runtime_session_ref?: RuntimeSessionRefDto, trace_ref?: RuntimeSessionRefDto, subject_ref: SubjectRefDto, };
+export type StoryLaunchResult = { created: boolean, story_id: string, project_agent_id: string, run_ref: LifecycleRunRefDto, agent_ref: LifecycleAgentRefDto, frame_ref: AgentFrameRefDto, delivery_runtime_ref?: RuntimeSessionRefDto, subject_ref: SubjectRefDto, };
 
 export type SubjectExecutionView = { subject_ref: SubjectRefDto, associations: Array<LifecycleSubjectAssociationDto>, runs: Array<LifecycleRunView>, current_agent?: LifecycleAgentView, latest_attempt?: ActivityAttemptView, artifacts: JsonValue, };
 

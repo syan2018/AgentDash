@@ -84,18 +84,18 @@ impl StoryActivityActivationService {
         let task = gw_get_task(&self.repos, task_id).await?;
         let refs = self.resolve_task_execution_refs(task_id).await?;
 
-        let (execution_status, agent_ref, run_ref, frame_ref, trace_ref) = if let Some(refs) = refs
-        {
-            (
-                Some("active".to_string()),
-                Some(refs.agent_id),
-                Some(refs.run_id),
-                refs.frame_id,
-                None,
-            )
-        } else {
-            (None, None, None, None, None)
-        };
+        let (execution_status, agent_ref, run_ref, frame_ref, delivery_runtime_ref) =
+            if let Some(refs) = refs {
+                (
+                    Some("active".to_string()),
+                    Some(refs.agent_id),
+                    Some(refs.run_id),
+                    refs.frame_id,
+                    None,
+                )
+            } else {
+                (None, None, None, None, None)
+            };
 
         Ok(TaskExecutionView {
             task_id: task.id,
@@ -103,7 +103,7 @@ impl StoryActivityActivationService {
             agent_ref,
             run_ref,
             frame_ref,
-            trace_ref,
+            delivery_runtime_ref,
             task_status: task.status().clone(),
         })
     }
@@ -150,7 +150,7 @@ impl StoryActivityActivationService {
             frame_ref: result.frame_ref,
             assignment_ref: result.assignment_ref,
             subject_execution_ref: result.subject_execution_ref,
-            trace_ref: result.trace_ref,
+            delivery_runtime_ref: result.delivery_runtime_ref,
             status: task.status().clone(),
         })
     }
@@ -195,7 +195,7 @@ impl StoryActivityActivationService {
             frame_ref: result.frame_ref,
             assignment_ref: result.assignment_ref,
             subject_execution_ref: result.subject_execution_ref,
-            trace_ref: result.trace_ref,
+            delivery_runtime_ref: result.delivery_runtime_ref,
             status: task.status().clone(),
         })
     }
@@ -328,6 +328,7 @@ impl StoryActivityActivationService {
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
         )
+        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
         dispatch_service

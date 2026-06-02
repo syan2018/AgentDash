@@ -44,8 +44,7 @@ pub struct TaskExecutionResult {
     pub frame_ref: Uuid,
     pub assignment_ref: Uuid,
     pub subject_execution_ref: SubjectExecutionRef,
-    /// 运行时 session trace 引用（optional，仅用于调试/追踪）
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub status: TaskStatus,
 }
 
@@ -75,6 +74,6 @@ pub struct TaskExecutionView {
     pub agent_ref: Option<Uuid>,
     pub run_ref: Option<Uuid>,
     pub frame_ref: Option<Uuid>,
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub task_status: TaskStatus,
 }

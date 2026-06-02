@@ -25,8 +25,7 @@ pub struct StoryLifecycleLaunchResult {
     pub graph_instance_ref: Uuid,
     pub agent_ref: Uuid,
     pub frame_ref: Uuid,
-    pub runtime_session_ref: Option<Uuid>,
-    pub trace_ref: Option<Uuid>,
+    pub delivery_runtime_ref: Option<Uuid>,
     pub subject_ref: SubjectRef,
 }
 
@@ -61,6 +60,7 @@ impl StoryLifecycleLaunchService {
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
         )
+        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
         let dispatch_result = dispatch_service
@@ -88,8 +88,7 @@ impl StoryLifecycleLaunchService {
             graph_instance_ref: dispatch_result.graph_instance_ref,
             agent_ref: dispatch_result.agent_ref,
             frame_ref: dispatch_result.frame_ref,
-            runtime_session_ref: dispatch_result.runtime_session_ref,
-            trace_ref: dispatch_result.trace_ref,
+            delivery_runtime_ref: dispatch_result.delivery_runtime_ref,
             subject_ref: intent
                 .subject_ref
                 .expect("story launch always carries subject_ref"),

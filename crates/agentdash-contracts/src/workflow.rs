@@ -639,10 +639,7 @@ pub struct StoryLaunchResult {
     pub frame_ref: AgentFrameRefDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub trace_ref: Option<RuntimeSessionRefDto>,
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     pub subject_ref: SubjectRefDto,
 }
 
@@ -713,6 +710,14 @@ pub struct LifecycleAgentView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub current_frame_id: Option<String>,
+    /// 投递用的 runtime session（由 execution anchor 提供）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
+    /// agent 最新 execution status（如 running / completed / idle）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_execution_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -59,7 +59,7 @@ pub struct ProjectAgentLaunchResult {
     pub frame_ref: AgentFrameRefDto,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub runtime_session_ref: Option<RuntimeSessionRefDto>,
+    pub delivery_runtime_ref: Option<RuntimeSessionRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub assignment_ref: Option<AgentAssignmentRefDto>,

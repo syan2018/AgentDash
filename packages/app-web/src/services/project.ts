@@ -59,7 +59,7 @@ function mapProjectAgentLaunchResult(raw: Record<string, unknown>): ProjectAgent
   const runRef = requireRecordField(raw, "run_ref");
   const agentRef = requireRecordField(raw, "agent_ref");
   const frameRef = requireRecordField(raw, "frame_ref");
-  const runtimeRef = raw.runtime_session_ref == null ? null : requireRecordField(raw, "runtime_session_ref");
+  const runtimeRef = raw.delivery_runtime_ref == null ? null : requireRecordField(raw, "delivery_runtime_ref");
   const assignmentRef = raw.assignment_ref == null ? null : requireRecordField(raw, "assignment_ref");
   const subjectRef = raw.subject_ref == null ? null : requireRecordField(raw, "subject_ref");
 
@@ -75,7 +75,7 @@ function mapProjectAgentLaunchResult(raw: Record<string, unknown>): ProjectAgent
       frame_id: requireStringField(frameRef, "frame_id"),
       revision: typeof frameRef.revision === "number" ? frameRef.revision : undefined,
     },
-    runtime_session_ref: runtimeRef
+    delivery_runtime_ref: runtimeRef
       ? { runtime_session_id: requireStringField(runtimeRef, "runtime_session_id") }
       : undefined,
     assignment_ref: assignmentRef

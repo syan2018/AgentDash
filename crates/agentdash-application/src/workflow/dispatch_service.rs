@@ -8,15 +8,15 @@ use agentdash_domain::workflow::{
     AgentPolicy, ExecutionDispatchResult, ExecutionIntent, ExecutionSource, GatePolicy,
     InteractionDispatchIntent, InteractionGateOpenedDispatchResult, LifecycleAgent, LifecycleGate,
     LifecycleRun, LifecycleRunStartDispatchResult, LifecycleRunStartIntent,
-    LifecycleSubjectAssociation, RunPolicy, RuntimePolicy, SubjectExecutionDispatchResult,
-    SubjectExecutionIntent, SubjectExecutionRef, SubjectRef, WorkflowGraph, WorkflowGraphInstance,
-    WorkflowGraphRef,
+    LifecycleSubjectAssociation, RunPolicy, RuntimePolicy, RuntimeSessionExecutionAnchor,
+    SubjectExecutionDispatchResult, SubjectExecutionIntent, SubjectExecutionRef, SubjectRef,
+    WorkflowGraph, WorkflowGraphInstance, WorkflowGraphRef,
 };
 use agentdash_domain::workflow::{
     AgentAssignmentRepository, AgentFrameRepository, AgentLineageRepository,
     LifecycleAgentRepository, LifecycleGateRepository, LifecycleRunRepository,
-    LifecycleSubjectAssociationRepository, WorkflowGraphInstanceRepository,
-    WorkflowGraphRepository,
+    LifecycleSubjectAssociationRepository, RuntimeSessionExecutionAnchorRepository,
+    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 
 use super::LifecycleEngine;
@@ -108,6 +108,7 @@ pub struct LifecycleDispatchService<'a> {
     association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     gate_repo: &'a dyn LifecycleGateRepository,
     lineage_repo: &'a dyn AgentLineageRepository,
+    anchor_repo: Option<&'a dyn RuntimeSessionExecutionAnchorRepository>,
     runtime_session_creator: Option<&'a dyn RuntimeSessionCreator>,
 }
 
@@ -213,8 +214,17 @@ impl<'a> LifecycleDispatchService<'a> {
             association_repo,
             gate_repo,
             lineage_repo,
+            anchor_repo: None,
             runtime_session_creator: None,
         }
+    }
+
+    pub fn with_anchor_repo(
+        mut self,
+        repo: &'a dyn RuntimeSessionExecutionAnchorRepository,
+    ) -> Self {
+        self.anchor_repo = Some(repo);
+        self
     }
 
     pub fn with_runtime_session_creator(mut self, creator: &'a dyn RuntimeSessionCreator) -> Self {
@@ -257,8 +267,7 @@ impl<'a> LifecycleDispatchService<'a> {
             graph_instance_ref: facts.graph_instance.id,
             agent_ref: facts.agent.id,
             frame_ref: facts.frame.id,
-            runtime_session_ref: facts.runtime_session_ref,
-            trace_ref: facts.runtime_session_ref,
+            delivery_runtime_ref: facts.runtime_session_ref,
         })
     }
 
@@ -284,8 +293,7 @@ impl<'a> LifecycleDispatchService<'a> {
             frame_ref: facts.frame.id,
             assignment_ref: assignment.id,
             subject_execution_ref,
-            runtime_session_ref: facts.runtime_session_ref,
-            trace_ref: facts.runtime_session_ref,
+            delivery_runtime_ref: facts.runtime_session_ref,
         })
     }
 
@@ -311,8 +319,7 @@ impl<'a> LifecycleDispatchService<'a> {
             frame_ref: facts.frame.id,
             assignment_ref: assignment.id,
             gate_ref,
-            runtime_session_ref: facts.runtime_session_ref,
-            trace_ref: facts.runtime_session_ref,
+            delivery_runtime_ref: facts.runtime_session_ref,
         })
     }
 
@@ -409,6 +416,21 @@ impl<'a> LifecycleDispatchService<'a> {
         } else {
             None
         };
+        // ── 第一段 anchor 写入：frame 已创建，assignment 尚未创建 ──
+        if let (Some(anchor_repo), Some(session_id)) =
+            (self.anchor_repo, runtime_session_ref)
+        {
+            let anchor = RuntimeSessionExecutionAnchor::new_dispatch(
+                session_id.to_string(),
+                run.id,
+                frame.id,
+                agent.id,
+                Some(graph_instance.id),
+                Some("entry".to_string()),
+            );
+            anchor_repo.upsert(&anchor).await?;
+        }
+
         let assignment = if plan.bind_entry_assignment {
             Some(
                 self.resolve_or_create_entry_assignment(
@@ -423,6 +445,20 @@ impl<'a> LifecycleDispatchService<'a> {
         } else {
             None
         };
+
+        // ── 第二段 anchor 补写：assignment 创建后回填 ──
+        if let (Some(anchor_repo), Some(session_id), Some(assignment)) =
+            (self.anchor_repo, runtime_session_ref, &assignment)
+        {
+            anchor_repo
+                .update_assignment(
+                    &session_id.to_string(),
+                    assignment.id,
+                    assignment.attempt,
+                )
+                .await?;
+        }
+
         let subject_execution_ref = association.as_ref().map(|assoc| SubjectExecutionRef {
             subject_ref: plan
                 .subject_ref
@@ -1478,7 +1514,7 @@ mod tests {
         assert!(assignments.is_empty());
         assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
         assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
-        assert!(result.runtime_session_ref.is_some());
+        assert!(result.delivery_runtime_ref.is_some());
     }
 
     #[tokio::test]
@@ -1522,7 +1558,7 @@ mod tests {
         assert_eq!(associations[0].anchor_agent_id, Some(result.agent_ref));
         assert!(associations[0].is_agent_scoped());
         assert!(assignment_repo.items.lock().unwrap().is_empty());
-        assert!(result.runtime_session_ref.is_some());
+        assert!(result.delivery_runtime_ref.is_some());
     }
 
     #[tokio::test]
@@ -1588,7 +1624,7 @@ mod tests {
         assert_eq!(result.subject_execution_ref.subject_ref.id, task_id);
         assert_eq!(runtime_session_creator.items.lock().unwrap().len(), 1);
         assert_eq!(assoc_repo.items.lock().unwrap().len(), 1);
-        assert!(result.runtime_session_ref.is_some());
+        assert!(result.delivery_runtime_ref.is_some());
     }
 
     #[tokio::test]

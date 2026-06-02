@@ -555,16 +555,11 @@ fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunch
             frame_id: result.frame_ref.to_string(),
             revision: None,
         },
-        runtime_session_ref: result.runtime_session_ref.map(|runtime_session_id| {
+        delivery_runtime_ref: result.delivery_runtime_ref.map(|runtime_session_id| {
             RuntimeSessionRefDto {
                 runtime_session_id: runtime_session_id.to_string(),
             }
         }),
-        trace_ref: result
-            .trace_ref
-            .map(|runtime_session_id| RuntimeSessionRefDto {
-                runtime_session_id: runtime_session_id.to_string(),
-            }),
         subject_ref: SubjectRefDto {
             kind: result.subject_ref.kind,
             id: result.subject_ref.id.to_string(),

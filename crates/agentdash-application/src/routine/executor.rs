@@ -244,6 +244,7 @@ impl RoutineExecutor {
             self.repos.lifecycle_gate_repo.as_ref(),
             self.repos.agent_lineage_repo.as_ref(),
         )
+        .with_anchor_repo(self.repos.execution_anchor_repo.as_ref())
         .with_runtime_session_creator(self.repos.runtime_session_creator.as_ref());
 
         let result: SubjectExecutionDispatchResult = dispatch_service

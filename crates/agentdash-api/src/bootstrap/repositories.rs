@@ -117,6 +117,11 @@ pub(crate) async fn build_repositories(
     );
     let lifecycle_gate_repo = Arc::new(PostgresLifecycleGateRepository::new(pool.clone()));
     let agent_lineage_repo = Arc::new(PostgresAgentLineageRepository::new(pool.clone()));
+    let execution_anchor_repo = Arc::new(
+        agentdash_infrastructure::PostgresRuntimeSessionExecutionAnchorRepository::new(
+            pool.clone(),
+        ),
+    );
 
     let permission_grant_repo =
         Arc::new(agentdash_infrastructure::PostgresPermissionGrantRepository::new(pool));
@@ -156,6 +161,7 @@ pub(crate) async fn build_repositories(
         lifecycle_subject_association_repo: lifecycle_subject_association_repo.clone(),
         lifecycle_gate_repo: lifecycle_gate_repo.clone(),
         agent_lineage_repo: agent_lineage_repo.clone(),
+        execution_anchor_repo: execution_anchor_repo.clone(),
         runtime_session_creator: runtime_session_creator.clone(),
         routine_repo: routine_repo.clone(),
         routine_execution_repo: routine_execution_repo.clone(),

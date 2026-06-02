@@ -150,7 +150,7 @@ pub use lifecycle_anchor_repository::{
     PostgresAgentAssignmentRepository, PostgresAgentFrameRepository,
     PostgresAgentLineageRepository, PostgresLifecycleAgentRepository,
     PostgresLifecycleGateRepository, PostgresLifecycleSubjectAssociationRepository,
-    PostgresWorkflowGraphInstanceRepository,
+    PostgresRuntimeSessionExecutionAnchorRepository, PostgresWorkflowGraphInstanceRepository,
 };
 pub use llm_provider_repository::{
     PostgresLlmProviderCredentialRepository, PostgresLlmProviderRepository,

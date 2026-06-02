@@ -85,7 +85,7 @@ where
             let ActivityExecutorSpec::Agent(agent) = &activity.executor else {
                 continue;
             };
-            let Some(workflow) = self
+            let Some(_) = self
                 .definition_repo
                 .get_by_project_and_key(lifecycle.project_id, &agent.procedure_key)
                 .await?
@@ -185,8 +185,8 @@ mod tests {
     use agentdash_domain::DomainError;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityTransition,
-        AgentActivityExecutorSpec, ContextStrategy, DefinitionSource, GateStrategy,
-        InputPortDefinition, OutputPortDefinition, AgentProcedureContract, WorkflowGraphRepository,
+        AgentActivityExecutorSpec, AgentProcedureContract, ContextStrategy, DefinitionSource,
+        GateStrategy, InputPortDefinition, OutputPortDefinition, WorkflowGraphRepository,
     };
 
     use super::*;

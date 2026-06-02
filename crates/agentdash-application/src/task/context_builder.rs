@@ -140,7 +140,8 @@ pub async fn build_task_session_context(
 
     let preset_name = normalize_optional_string(task.dispatch_preference.preset_name.clone());
     if let Some(space) = runtime_vfs.as_mut() {
-        let visible_canvas_mount_ids = resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
+        let visible_canvas_mount_ids =
+            resolve_visible_canvas_mount_ids(repos, runtime_session_id).await;
         if append_visible_canvas_mounts(
             repos.canvas_repo.as_ref(),
             task.project_id,

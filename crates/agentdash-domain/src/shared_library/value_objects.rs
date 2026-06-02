@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use uuid::Uuid;
 
 use crate::DomainError;
@@ -1741,7 +1741,10 @@ mod tests {
         });
 
         let normalized = normalize_workflow_template_payload_value(payload).expect("normalize");
-        assert_eq!(normalized["template"]["lifecycle"]["entry_activity_key"], "plan");
+        assert_eq!(
+            normalized["template"]["lifecycle"]["entry_activity_key"],
+            "plan"
+        );
     }
 
     #[test]

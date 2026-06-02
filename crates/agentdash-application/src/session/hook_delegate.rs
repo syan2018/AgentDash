@@ -19,8 +19,8 @@ use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, HookDiagnosticEntry, HookInjection, HookRuntimeEvaluationQuery,
-    HookRuntimeRefreshQuery, AgentFrameRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
+    AgentFrameRuntimeSnapshot, ContextTokenStats, HookDiagnosticEntry, HookInjection,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTraceTrigger,
     HookTrigger, HookTurnStartNotice, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
@@ -1019,12 +1019,13 @@ mod tests {
     use crate::context::{AuditFilter, InMemoryContextAuditBus, SharedContextAuditBus};
     use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::{
-        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
-        ContextTokenStats, ExecutionHookProvider, HookCompactionDecision, HookCompletionStatus,
-        HookControlTarget, HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection,
-        HookPendingAction, HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess,
-        HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
-        RuntimeEventSource, AgentFrameHookSnapshot, SessionSnapshotMetadata,
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
+        AgentFrameHookSnapshotQuery, ContextTokenStats, ExecutionHookProvider,
+        HookCompactionDecision, HookCompletionStatus, HookControlTarget, HookDiagnosticEntry,
+        HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
+        HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess, HookTraceTrigger,
+        HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
+        SessionSnapshotMetadata,
     };
 
     #[derive(Clone)]

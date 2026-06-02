@@ -33,9 +33,9 @@ use crate::capability::{
     McpCandidates, ToolContribution,
 };
 use crate::platform_config::PlatformConfig;
+use crate::session::SessionCapabilityService;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::session::SessionCapabilityService;
 use crate::vfs::build_lifecycle_mount_with_ports;
 use crate::workflow::frame_builder::AgentFrameBuilder;
 
@@ -391,7 +391,7 @@ mod tests {
     use agentdash_domain::common::{Mount, MountCapability};
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        CapabilityConfig, DefinitionSource, MountDirective, AgentProcedureContract,
+        AgentProcedureContract, CapabilityConfig, DefinitionSource, MountDirective,
     };
 
     fn sample_activity(

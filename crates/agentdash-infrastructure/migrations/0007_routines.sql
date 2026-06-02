@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS routines (
     prompt_template TEXT NOT NULL,
     agent_id TEXT NOT NULL,
     trigger_config TEXT NOT NULL,       -- JSON: RoutineTriggerConfig tagged enum
-    dispatch_strategy TEXT NOT NULL,    -- JSON: DispatchStrategy
+    session_strategy TEXT NOT NULL,     -- JSON: SessionStrategy
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

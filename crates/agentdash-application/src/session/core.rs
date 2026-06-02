@@ -186,5 +186,4 @@ impl SessionCoreService {
     pub async fn has_live_executor_session(&self, session_id: &str) -> bool {
         self.connector.has_live_session(session_id).await
     }
-
 }

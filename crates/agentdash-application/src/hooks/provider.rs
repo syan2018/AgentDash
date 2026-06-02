@@ -12,9 +12,8 @@ use agentdash_domain::workflow::{
 use agentdash_spi::hooks::PendingExecutionLogEntry;
 use agentdash_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry, HookError,
-    HookEvaluationQuery, HookResolution, HookScriptEvaluator, HookTrigger,
-    RuntimeAdapterProvenance, AgentFrameHookSnapshot, SessionSnapshotMetadata,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry,
+    HookError, HookResolution, HookScriptEvaluator, HookTrigger, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 
@@ -422,8 +421,8 @@ mod tests {
     use crate::workflow::frame_hook_runtime::AgentFrameHookRuntime;
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
-        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
-        HookEvaluationQuery, HookResolution, AgentFrameHookSnapshot,
+        AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshot,
+        AgentFrameHookSnapshotQuery, HookEvaluationQuery, HookResolution,
     };
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,

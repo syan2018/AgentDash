@@ -918,7 +918,7 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentReusePolicy, RuntimeSessionPolicy, AgentProcedureContract,
+        AgentActivityExecutorSpec, AgentProcedureContract, AgentReusePolicy, RuntimeSessionPolicy,
         WorkflowTemplateInstallBundle,
     };
 

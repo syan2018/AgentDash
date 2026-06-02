@@ -33,6 +33,7 @@ use agentdash_domain::{agent::ProjectAgent, project::Project, story::Story, work
 use agentdash_spi::ConnectorError;
 
 use crate::app_state::AppState;
+#[cfg(test)]
 use crate::rpc::ApiError;
 
 /// 使用 `Arc<AppState>` 的主通道 construction provider。在 AppState 初始化完成后注入
@@ -47,6 +48,7 @@ impl AppStateSessionConstructionProvider {
     }
 }
 
+#[cfg(test)]
 const CONSTRUCTION_API_ERROR_PREFIX: &str = "__construction_api_error__:";
 
 #[cfg(test)]
@@ -54,6 +56,7 @@ fn encode_api_error(kind: &str, message: String) -> String {
     format!("{CONSTRUCTION_API_ERROR_PREFIX}{kind}:{message}")
 }
 
+#[cfg(test)]
 pub(crate) fn decode_construction_runtime_error(message: &str) -> Option<ApiError> {
     let payload = message.strip_prefix(CONSTRUCTION_API_ERROR_PREFIX)?;
     let (kind, detail) = payload.split_once(':')?;

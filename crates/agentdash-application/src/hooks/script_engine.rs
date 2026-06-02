@@ -324,8 +324,8 @@ mod tests {
     use crate::hooks::rules::HookRuleEvaluationQuery;
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
     use agentdash_spi::{
-        HookControlTarget, HookEvaluationQuery, HookTrigger, RuntimeAdapterProvenance,
-        AgentFrameHookSnapshot,
+        AgentFrameHookSnapshot, HookControlTarget, HookEvaluationQuery, HookTrigger,
+        RuntimeAdapterProvenance,
     };
     use uuid::Uuid;
 

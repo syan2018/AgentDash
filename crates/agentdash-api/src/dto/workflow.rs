@@ -1,5 +1,5 @@
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, ValidationIssue, AgentProcedureContract,
+    ActivityDefinition, ActivityTransition, AgentProcedureContract, ValidationIssue,
 };
 use serde::{Deserialize, Serialize};
 

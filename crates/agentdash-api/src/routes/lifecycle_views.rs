@@ -72,11 +72,9 @@ pub async fn get_subject_execution(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<SubjectExecutionView>, ApiError> {
     let subject = SubjectRef::new(kind, parse_uuid(&id, "subject_id")?);
-    let view = lifecycle_run_view_builder::build_subject_execution_view(
-        &state.repos,
-        subject.clone(),
-    )
-    .await?;
+    let view =
+        lifecycle_run_view_builder::build_subject_execution_view(&state.repos, subject.clone())
+            .await?;
     authorize_subject_execution_view(&state, &current_user, &subject, &view).await?;
     Ok(Json(view))
 }

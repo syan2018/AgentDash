@@ -264,8 +264,7 @@ impl SessionLaunchOrchestrator {
         let deps = &self.deps;
         let sid = session_id.to_string();
         let now = chrono::Utc::now().timestamp_millis();
-        let agent_needs_bootstrap =
-            Self::resolve_agent_needs_bootstrap(deps, session_id).await;
+        let agent_needs_bootstrap = Self::resolve_agent_needs_bootstrap(deps, session_id).await;
         let launch_plan = match LaunchPlanner::new(deps.planning())
             .plan(LaunchPlannerInput {
                 session_id,

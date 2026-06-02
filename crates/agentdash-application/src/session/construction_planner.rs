@@ -121,7 +121,7 @@ impl RuntimeContextInspectionPlanner {
         task_id: Uuid,
         workspace_id: Option<Uuid>,
         dispatch_preference: TaskDispatchPreference,
-        session_meta: Option<&SessionMeta>,
+        _session_meta: Option<&SessionMeta>,
     ) -> RuntimeContextInspectionPlan {
         let session_id = session_id.into();
         let built_context = crate::task::context_builder::build_task_session_context(
@@ -217,9 +217,8 @@ impl RuntimeContextInspectionPlanner {
             None
         };
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
-        let canvas_mount_ids = resolve_visible_canvas_mount_ids_from_frame(
-            repos, &session_id,
-        ).await;
+        let canvas_mount_ids =
+            resolve_visible_canvas_mount_ids_from_frame(repos, &session_id).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),
@@ -375,9 +374,8 @@ impl RuntimeContextInspectionPlanner {
 
         vfs = ensure_active_workflow_lifecycle_mount(vfs, active_workflow.as_ref());
 
-        let canvas_mount_ids = resolve_visible_canvas_mount_ids_from_frame(
-            repos, &session_id,
-        ).await;
+        let canvas_mount_ids =
+            resolve_visible_canvas_mount_ids_from_frame(repos, &session_id).await;
         if let Some(vfs) = vfs.as_mut() {
             append_visible_canvas_mounts(
                 repos.canvas_repo.as_ref(),

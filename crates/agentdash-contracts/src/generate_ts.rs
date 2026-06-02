@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use agentdash_contracts::companion::{CompanionGateRespondRequest, CompanionGateRespondResponse};
 use agentdash_contracts::core::{
-    TaskDispatchPreference, AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
+    AgentPreset, Artifact, ArtifactType, BackendCapabilitiesResponse,
     BackendExecutorCapabilityResponse, BackendMcpServerCapabilityResponse, BackendResponse,
     BackendRuntimeHealthResponse, BackendShareScopeKind, BackendType, BackendVisibility,
     BackendWithStatusResponse, ContextContainerDefinition, ContextContainerFile,
@@ -12,9 +12,9 @@ use agentdash_contracts::core::{
     ProjectResponse, ProjectRole, ProjectSubjectGrantResponse, ProjectSubjectType,
     ProjectVisibility, RevokeProjectGrantResponse, RevokedIdResponse, RuntimeHealthStatus,
     SchedulingConfig, SessionComposition, SessionRequiredContextBlock, StoryContext, StoryPriority,
-    StoryResponse, StoryStatus, StoryType, TaskResponse, TaskStatus, UpdatedIdResponse,
-    VfsCapabilityDto, WorkspaceBindingResponse, WorkspaceBindingStatus, WorkspaceIdentityKind,
-    WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
+    StoryResponse, StoryStatus, StoryType, TaskDispatchPreference, TaskResponse, TaskStatus,
+    UpdatedIdResponse, VfsCapabilityDto, WorkspaceBindingResponse, WorkspaceBindingStatus,
+    WorkspaceIdentityKind, WorkspaceResolutionPolicy, WorkspaceResponse, WorkspaceStatus,
 };
 use agentdash_contracts::extension_management::{
     ProjectExtensionCapabilitySummaryResponse, ProjectExtensionInstalledSourceResponse,
@@ -98,13 +98,13 @@ use agentdash_contracts::vfs::{
 use agentdash_contracts::workflow::{
     ActivityAttemptView, ActivityDefinition, ActivityLifecycleRunState, ActivityStateView,
     ActivityTransition, AgentAssignmentRefDto, AgentFrameRefDto, AgentFrameRuntimeView,
-    DefinitionSource, DeleteAgentProcedureResponse, DeleteHookPresetResponse,
-    DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
-    LifecycleAgentRefDto, LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto,
-    LifecycleRunStatus, LifecycleRunView, LifecycleSubjectAssociationDto,
-    ProjectActiveAgentsView, RegisterHookPresetResponse, RuntimeSessionRefDto,
-    RuntimeSessionTraceView, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
-    ValidateHookScriptResponse, ValidationIssue, AgentProcedureContract, WorkflowGraphInstanceView,
+    AgentProcedureContract, DefinitionSource, DeleteAgentProcedureResponse,
+    DeleteHookPresetResponse, DeleteWorkflowGraphResponse, EffectiveSessionContract,
+    HookPresetResponse, HookPresetsResponse, LifecycleAgentRefDto, LifecycleAgentView,
+    LifecycleExecutionEntry, LifecycleRunRefDto, LifecycleRunStatus, LifecycleRunView,
+    LifecycleSubjectAssociationDto, ProjectActiveAgentsView, RegisterHookPresetResponse,
+    RuntimeSessionRefDto, RuntimeSessionTraceView, StoryLaunchResult, SubjectExecutionView,
+    SubjectRefDto, ValidateHookScriptResponse, ValidationIssue, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 

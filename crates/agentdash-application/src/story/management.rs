@@ -12,7 +12,7 @@ use agentdash_domain::story::{
     ChangeKind, StateChangeRepository, Story, StoryPriority, StoryRepository, StoryStatus,
     StoryType,
 };
-use agentdash_domain::task::{TaskDispatchPreference, Task};
+use agentdash_domain::task::{Task, TaskDispatchPreference};
 
 use crate::ApplicationError;
 use crate::repository_set::RepositorySet;
@@ -217,7 +217,9 @@ pub fn apply_task_mutation(task: &mut Task, input: TaskMutationInput) {
     }
 }
 
-pub fn build_dispatch_preference(input: Option<TaskDispatchPreferenceInput>) -> TaskDispatchPreference {
+pub fn build_dispatch_preference(
+    input: Option<TaskDispatchPreferenceInput>,
+) -> TaskDispatchPreference {
     if let Some(value) = input {
         TaskDispatchPreference {
             agent_type: normalize_option(value.agent_type),

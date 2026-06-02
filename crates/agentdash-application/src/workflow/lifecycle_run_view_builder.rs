@@ -18,13 +18,13 @@ use agentdash_contracts::workflow::{
     LifecycleSubjectAssociationDto, ProjectActiveAgentsView, RuntimeSessionRefDto,
     SubjectExecutionView, SubjectRefDto, WorkflowGraphInstanceView,
 };
+use agentdash_domain::DomainError;
 use agentdash_domain::workflow::{
     ActivityLifecycleRunState, AgentAssignment, ExecutorRunRef as DomainExecutorRunRef,
     LifecycleAgent, LifecycleExecutionEventKind as DomainLifecycleExecutionEventKind, LifecycleRun,
     LifecycleRunStatus as DomainLifecycleRunStatus, LifecycleSubjectAssociation, SubjectRef,
     WorkflowGraphInstance,
 };
-use agentdash_domain::DomainError;
 
 use crate::repository_set::RepositorySet;
 
@@ -115,9 +115,8 @@ pub async fn build_subject_execution_view(
             artifacts = graph_instances_outputs_json(&graph_instances);
         }
 
-        run_views.push(
-            build_lifecycle_run_view_with_preloaded(repos, run, agents, assignments).await?,
-        );
+        run_views
+            .push(build_lifecycle_run_view_with_preloaded(repos, run, agents, assignments).await?);
     }
 
     run_views.sort_by(|a, b| b.last_activity_at.cmp(&a.last_activity_at));

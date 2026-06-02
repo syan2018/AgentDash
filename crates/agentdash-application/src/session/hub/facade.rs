@@ -97,7 +97,6 @@ impl SessionRuntimeInner {
             .await
     }
 
-
     /// 从持久化事件重建投影 transcript。
     ///
     /// 消费者自选渲染方式：

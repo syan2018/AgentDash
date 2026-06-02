@@ -1,8 +1,8 @@
 use agentdash_domain::workflow::{
     ActivityAttemptState, ActivityDefinition, ActivityExecutorSpec, AgentAssignmentRepository,
-    AgentFrameRepository, AgentProcedure, AgentProcedureRepository, LifecycleAgentRepository,
-    LifecycleNodeType, LifecycleRun, LifecycleRunRepository, AgentProcedureContract, WorkflowGraph,
-    WorkflowGraphInstanceRepository, WorkflowGraphRepository,
+    AgentFrameRepository, AgentProcedure, AgentProcedureContract, AgentProcedureRepository,
+    LifecycleAgentRepository, LifecycleNodeType, LifecycleRun, LifecycleRunRepository,
+    WorkflowGraph, WorkflowGraphInstanceRepository, WorkflowGraphRepository,
 };
 use agentdash_spi::hooks::HookControlTarget;
 
@@ -261,7 +261,7 @@ pub(crate) fn activity_projection(guidance: Option<String>) -> ActiveWorkflowPro
     use agentdash_domain::workflow::{
         ActivityAttemptState, ActivityAttemptStatus, ActivityDefinition, ActivityExecutorSpec,
         ActivityLifecycleRunState, ActivityRunStatus, AgentActivityExecutorSpec, AgentProcedure,
-        DefinitionSource, OutputPortDefinition, AgentProcedureContract, WorkflowGraph,
+        AgentProcedureContract, DefinitionSource, OutputPortDefinition, WorkflowGraph,
         WorkflowInjectionSpec,
     };
     use uuid::Uuid;

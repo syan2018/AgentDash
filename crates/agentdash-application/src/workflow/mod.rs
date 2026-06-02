@@ -1,3 +1,4 @@
+pub(crate) mod activity_activation;
 mod activity_run;
 pub mod agent_executor;
 mod catalog;
@@ -21,10 +22,15 @@ pub mod runtime_launch;
 pub mod scheduler;
 mod session_association;
 mod session_run_context_resolver;
-pub(crate) mod activity_activation;
 mod subject_execution_control;
 pub mod tools;
 
+#[cfg(test)]
+pub(crate) use activity_activation::KickoffPromptFragment;
+pub(crate) use activity_activation::{
+    ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
+    agent_mcp_entries_from_servers, build_capability_state_for_activation,
+};
 pub use activity_run::{ActivityGraphInstanceExecutionResult, ActivityLifecycleRunService};
 pub use agent_executor::{
     AgentActivityAssignmentTarget, AgentActivityExecutorLauncher, AgentActivityLaunchContext,
@@ -85,12 +91,6 @@ pub use session_association::{
     resolve_activity_session_association,
 };
 pub use session_run_context_resolver::{SessionRunContextResolver, build_session_run_context};
-#[cfg(test)]
-pub(crate) use activity_activation::KickoffPromptFragment;
-pub(crate) use activity_activation::{
-    ActivityActivation, ActivityActivationInput, activate_activity_with_platform,
-    agent_mcp_entries_from_servers, build_capability_state_for_activation,
-};
 pub use subject_execution_control::{
     CancelSubjectExecutionCommand, RuntimeCancelDeliveryCommand, SubjectExecutionCancelResult,
     SubjectExecutionControlService,

@@ -688,8 +688,8 @@ mod tests {
     };
     use agentdash_spi::hooks::{
         ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-        AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
-        AgentFrameHookSnapshot, SessionSnapshotMetadata,
+        AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookResolution,
+        SessionSnapshotMetadata,
     };
     use agentdash_spi::{AgentConnector, CapabilityState, ConnectorError, PromptPayload, Vfs};
     use async_trait::async_trait;
@@ -1345,7 +1345,10 @@ mod tests {
             .await
             .expect("frame 查询应成功")
             .expect("frame 应存在");
-        assert_eq!(updated_frame.visible_canvas_mount_ids(), vec!["demo".to_string()]);
+        assert_eq!(
+            updated_frame.visible_canvas_mount_ids(),
+            vec!["demo".to_string()]
+        );
 
         let state = hub
             .get_current_capability_state(&session.id)

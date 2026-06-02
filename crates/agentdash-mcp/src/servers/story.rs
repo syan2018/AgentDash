@@ -218,17 +218,6 @@ impl StoryMcpServer {
     }
 }
 
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-
 fn parse_domain_input<T: DeserializeOwned>(
     field: &'static str,
     value: Value,
@@ -396,7 +385,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<CreateTaskParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{TaskDispatchPreference, Task};
+        use agentdash_domain::task::{Task, TaskDispatchPreference};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let workspace_id = params
@@ -453,7 +442,7 @@ impl StoryMcpServer {
         &self,
         Parameters(params): Parameters<BatchCreateTasksParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        use agentdash_domain::task::{TaskDispatchPreference, Task};
+        use agentdash_domain::task::{Task, TaskDispatchPreference};
 
         self.require_project(McpProjectPermission::Edit).await?;
         let mut created_ids = Vec::new();

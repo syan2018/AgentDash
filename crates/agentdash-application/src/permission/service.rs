@@ -763,11 +763,7 @@ mod tests {
             .list_active_by_run(shared_run_id)
             .await
             .expect("list_active_by_run");
-        assert_eq!(
-            by_run.len(),
-            3,
-            "run_id is the other primary query entry"
-        );
+        assert_eq!(by_run.len(), 3, "run_id is the other primary query entry");
 
         let sessions: Vec<&str> = by_frame
             .iter()

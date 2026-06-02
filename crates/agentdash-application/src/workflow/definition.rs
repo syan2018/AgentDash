@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, ActivityTransition, AgentProcedure, DefinitionSource, AgentProcedureContract,
-    WorkflowGraph,
+    ActivityDefinition, ActivityTransition, AgentProcedure, AgentProcedureContract,
+    DefinitionSource, WorkflowGraph,
 };
 
 pub const TRELLIS_DAG_TASK_TEMPLATE_KEY: &str = "trellis_dag_task";

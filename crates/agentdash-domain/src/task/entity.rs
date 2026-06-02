@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::value_objects::{TaskDispatchPreference, Artifact, TaskExecutionProjection, TaskStatus};
+use super::value_objects::{Artifact, TaskDispatchPreference, TaskExecutionProjection, TaskStatus};
 
 /// Task — 用户工作项状态视图
 ///

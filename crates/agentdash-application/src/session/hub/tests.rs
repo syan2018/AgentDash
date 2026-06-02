@@ -19,9 +19,9 @@ use agentdash_domain::workflow::{
 };
 use agentdash_spi::hooks::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
-    AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection, ExecutionHookProvider,
-    HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution, HookTraceTrigger,
-    HookTrigger, RuntimeEventSource, AgentFrameHookSnapshot, SessionSnapshotMetadata,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ContextFrame, ContextFrameSection,
+    ExecutionHookProvider, HookControlTarget, HookEvaluationQuery, HookInjection, HookResolution,
+    HookTraceTrigger, HookTrigger, RuntimeEventSource, SessionSnapshotMetadata,
 };
 use agentdash_spi::{
     AgentConfig, AgentConnector, CapabilityState, CompactionProjectionCommitResult, ConnectorError,
@@ -1698,7 +1698,6 @@ impl ExecutionHookProvider for RecordingHookProvider {
         });
         Ok(HookResolution::default())
     }
-
 }
 
 struct StaticResolutionHookProvider {
@@ -1756,7 +1755,6 @@ impl ExecutionHookProvider for StaticResolutionHookProvider {
         });
         Ok(self.resolution.clone())
     }
-
 }
 
 struct SnapshotRecordingHookProvider {

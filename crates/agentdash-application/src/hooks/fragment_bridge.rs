@@ -4,7 +4,7 @@
 //! `ContextFragment` / `Contribution`，让 Hook 数据可以与其他 contribution 一视同仁
 //! 地进入 `build_session_context_bundle`。Bundle 的 `upsert_by_slot` 承担去重语义。
 
-use agentdash_spi::{ContextFragment, HookInjection, MergeStrategy, AgentFrameHookSnapshot};
+use agentdash_spi::{AgentFrameHookSnapshot, ContextFragment, HookInjection, MergeStrategy};
 
 use crate::context::Contribution;
 use crate::context::slot_orders;

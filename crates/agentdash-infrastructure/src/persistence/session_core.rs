@@ -9,10 +9,10 @@ use agentdash_agent_protocol::{
 use agentdash_spi::session_persistence::{
     AgentFrameTransitionRecord, ExecutionStatus, NewCompactionProjectionCommit,
     PersistedSessionEvent, RuntimeCapabilityTransition, RuntimeCommandRecord, RuntimeCommandStatus,
-    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus,
-    SessionLineageRecord, SessionLineageRelationKind, SessionLineageStatus, SessionMeta,
-    SessionProjectionHeadRecord, SessionProjectionSegmentRecord, SessionStoreError,
-    SessionStoreResult, TerminalEffectRecord, TerminalEffectStatus, TerminalEffectType, TitleSource,
+    RuntimeDeliveryCommand, SessionCompactionRecord, SessionCompactionStatus, SessionLineageRecord,
+    SessionLineageRelationKind, SessionLineageStatus, SessionMeta, SessionProjectionHeadRecord,
+    SessionProjectionSegmentRecord, SessionStoreError, SessionStoreResult, TerminalEffectRecord,
+    TerminalEffectStatus, TerminalEffectType, TitleSource,
 };
 use sqlx::Row;
 

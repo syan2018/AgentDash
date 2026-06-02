@@ -20,7 +20,9 @@ pub use capability::{
     CapabilityConfig, ToolCapabilityDirective, ToolCapabilityPath, ToolCapabilityReduction,
     ToolCapabilitySlotState, reduce_tool_capability_directives,
 };
-pub use contract::{EffectiveSessionContract, AgentProcedureContract, WorkflowSessionTerminalState};
+pub use contract::{
+    AgentProcedureContract, EffectiveSessionContract, WorkflowSessionTerminalState,
+};
 pub use hook_rule::{WorkflowHookRuleSpec, WorkflowHookTrigger};
 pub use injection::{WorkflowContextBinding, WorkflowInjectionSpec};
 pub use lifecycle_def::LifecycleNodeType;
@@ -625,7 +627,8 @@ mod tests {
         // 旧数据可能残留 constraints / completion / capabilities 字段，
         // 移除 deny_unknown_fields 后应静默忽略
         let json = r#"{"constraints":[],"completion":{"checks":[]},"capabilities":["workflow_management"]}"#;
-        let contract: AgentProcedureContract = serde_json::from_str(json).expect("旧数据应当可反序列化");
+        let contract: AgentProcedureContract =
+            serde_json::from_str(json).expect("旧数据应当可反序列化");
         assert!(contract.output_ports.is_empty());
     }
 }

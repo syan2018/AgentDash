@@ -83,7 +83,8 @@ pub fn resolve_task_agent_config(
         return Ok(Some(AgentConfig::new(agent_type)));
     }
 
-    if let Some(preset_name) = normalize_option_string(task.dispatch_preference.preset_name.clone()) {
+    if let Some(preset_name) = normalize_option_string(task.dispatch_preference.preset_name.clone())
+    {
         let preset = project
             .config
             .agent_presets

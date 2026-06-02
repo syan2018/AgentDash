@@ -232,8 +232,8 @@ async fn try_reuse_running(
 
 /// 清理残留的 postgres 进程和过期的 postmaster.pid。
 ///
-/// 不依赖 postmaster.pid 是否存在 — 无条件杀 embedded postgres 进程并清理锁文件，
-/// 避免 pid 文件被外部脚本提前删除后漏清共享内存。
+/// 优先使用 postmaster.pid 精准停止；当 pid 文件丢失时，按当前 data_dir 定位
+/// postgres 主进程并停止其进程树，避免影响其它 embedded PostgreSQL 实例。
 fn cleanup_stale_instance(data_dir: &Path) {
     // 如果有 pid 文件，精准杀对应进程
     if let Some(info) = read_postmaster_pid(data_dir) {
@@ -244,13 +244,12 @@ fn cleanup_stale_instance(data_dir: &Path) {
         kill_process(info.pid);
     }
 
-    // 无条件：杀所有 .theseus 路径下的 postgres 进程（兜底子进程如 io_worker）
-    kill_all_embedded_postgres();
+    kill_embedded_postgres_for_data_dir(data_dir);
 
     std::thread::sleep(Duration::from_secs(2));
 
     // 二次兜底：Windows 上子进程可能在第一轮存活
-    kill_all_embedded_postgres();
+    kill_embedded_postgres_for_data_dir(data_dir);
 
     let _ = std::fs::remove_file(data_dir.join("postmaster.pid"));
 }
@@ -270,23 +269,25 @@ fn kill_process(pid: u32) {
     }
 }
 
-/// 杀掉所有 embedded PostgreSQL 进程（路径包含 .theseus 的 postgres 进程）。
-fn kill_all_embedded_postgres() {
+fn kill_embedded_postgres_for_data_dir(data_dir: &Path) {
     #[cfg(windows)]
     {
-        // 用 -match 正则同时匹配正斜杠和反斜杠路径（子进程 CommandLine 可能用 /）
+        let Ok(canonical_data_dir) = data_dir.canonicalize() else {
+            return;
+        };
         let _ = std::process::Command::new("powershell")
+            .env("AGENTDASH_PG_DATA_DIR_TO_KILL", canonical_data_dir)
             .args([
                 "-NoProfile",
                 "-Command",
-                "$procs = Get-CimInstance Win32_Process -Filter \"Name = 'postgres.exe'\" | Where-Object { $cl = $_.CommandLine + ' ' + $_.ExecutablePath; ($cl -match '\\.theseus[/\\\\]') -or ($cl -match '\\.agentdash[/\\\\]') }; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId | Out-Null }",
+                "$target = [System.IO.Path]::GetFullPath($env:AGENTDASH_PG_DATA_DIR_TO_KILL).TrimEnd('\\','/').Replace('/','\\').ToLowerInvariant(); $procs = Get-CimInstance Win32_Process -Filter \"Name = 'postgres.exe'\" | Where-Object { $cl = ($_.CommandLine + ' ' + $_.ExecutablePath); if (-not $cl) { $false } else { $cl.Replace('/','\\').ToLowerInvariant().Contains($target) } }; foreach ($p in $procs) { taskkill /F /T /PID $p.ProcessId | Out-Null }",
             ])
             .output();
     }
     #[cfg(not(windows))]
     {
         let _ = std::process::Command::new("pkill")
-            .args(["-f", ".theseus.*postgres"])
+            .args(["-f", &format!("postgres.*{}", data_dir.display())])
             .output();
     }
 }

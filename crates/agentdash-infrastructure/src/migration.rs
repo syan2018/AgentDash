@@ -58,6 +58,7 @@ const REQUIRED_POSTGRES_TABLES: &[&str] = &[
 ];
 
 pub async fn run_postgres_migrations(pool: &PgPool) -> Result<(), DomainError> {
+    // sqlx::migrate! 在编译期收集 migration 元数据；迁移文件变更时同步触发本模块刷新。
     sqlx::migrate!("./migrations")
         .run(pool)
         .await

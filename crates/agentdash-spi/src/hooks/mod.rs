@@ -634,7 +634,6 @@ pub struct HookRuntimeEvaluationQuery {
     pub token_stats: Option<ContextTokenStats>,
 }
 
-
 /// Hook trace 触发点：只用于 Agent 核心生命周期的可见追踪。
 pub use agentdash_agent_protocol::HookTraceTrigger;
 

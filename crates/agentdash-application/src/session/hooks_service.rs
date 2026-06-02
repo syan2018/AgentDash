@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookControlTarget, HookRuntimeAccess,
-    HookRuntimeRefreshQuery, RuntimeAdapterProvenance, AgentFrameHookSnapshot, SharedHookRuntime,
+    AgentFrameHookSnapshot, AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookControlTarget,
+    HookRuntimeAccess, HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
@@ -19,20 +19,6 @@ pub struct SessionHookService {
 impl SessionHookService {
     pub(super) fn new(hub: SessionRuntimeInner) -> Self {
         Self { hub }
-    }
-
-    /// Delivery adapter: 根据 RuntimeSession id 按需确保 hook runtime 就绪。
-    ///
-    /// 业务控制路径应使用 [`ensure_hook_runtime_for_target`]，此方法仅供
-    /// 已知 delivery session 但尚未解析出 `AgentFrameRuntimeTarget` 的 adapter 场景。
-    pub(crate) async fn ensure_hook_runtime_for_delivery_session(
-        &self,
-        session_id: &str,
-        turn_id: Option<&str>,
-    ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
-        self.hub
-            .ensure_hook_runtime_for_delivery_session(session_id, turn_id)
-            .await
     }
 
     /// 基于 `AgentFrameRuntimeTarget` 确保 hook runtime 就绪并校验 target 一致性。
@@ -50,19 +36,6 @@ impl SessionHookService {
         };
         validate_hook_runtime_target(runtime.as_ref(), target)?;
         Ok(Some(runtime))
-    }
-
-    /// Delivery adapter: 根据 RuntimeSession id 查找已缓存的 hook runtime。
-    ///
-    /// 业务控制路径应使用 [`get_hook_runtime_for_target`]，此方法仅供
-    /// hub 内部从 delivery session 查找 runtime 的 adapter 场景。
-    pub(crate) async fn get_hook_runtime_by_delivery_session(
-        &self,
-        session_id: &str,
-    ) -> Option<SharedHookRuntime> {
-        self.hub
-            .get_hook_runtime_by_delivery_session(session_id)
-            .await
     }
 
     /// 基于 `AgentFrameRuntimeTarget` 查找已缓存的 hook runtime 并校验 target 一致性。

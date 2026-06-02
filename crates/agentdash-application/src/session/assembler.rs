@@ -706,7 +706,7 @@ impl<'a> SessionRequestAssembler<'a> {
     }
 
     /// Owner 级 session bootstrap(Story / Project / Routine)。
-    pub(crate) async fn compose_owner_bootstrap(
+    pub(in crate::session) async fn compose_owner_bootstrap(
         &self,
         spec: OwnerBootstrapSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, String> {
@@ -1042,7 +1042,7 @@ impl<'a> SessionRequestAssembler<'a> {
     ///
     /// 输出统一为 `SessionAssemblyBuilder`；调用方投影到 `AgentFrameBuilder`，
     /// 再由 frame 生成 runtime launch request。
-    pub(crate) async fn compose_story_step(
+    pub(in crate::session) async fn compose_story_step(
         &self,
         spec: StoryStepSpec<'_>,
     ) -> Result<SessionAssemblyBuilder, TaskExecutionError> {
@@ -1273,7 +1273,7 @@ pub async fn compose_lifecycle_node_to_frame_with_audit(
     ))
 }
 
-pub(crate) async fn compose_lifecycle_node_with_audit(
+pub(in crate::session) async fn compose_lifecycle_node_with_audit(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: LifecycleNodeSpec<'_>,
@@ -1287,7 +1287,7 @@ pub(crate) async fn compose_lifecycle_node_with_audit(
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let mut activation =     activate_activity_with_platform(
+    let mut activation = activate_activity_with_platform(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
@@ -1473,7 +1473,7 @@ fn contribute_lifecycle_context(
 /// 在父 session 作用域内即可完成,不需要 assembler 的完整服务依赖)。
 ///
 /// 内部委托给 `SessionAssemblyBuilder::apply_companion_slice`。
-pub(crate) fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
+pub(in crate::session) fn compose_companion(spec: CompanionSpec<'_>) -> SessionAssemblyBuilder {
     SessionAssemblyBuilder::new()
         .apply_companion_slice(
             spec.parent_vfs,
@@ -1595,7 +1595,7 @@ pub struct CompanionWorkflowSpec<'a> {
 ///
 /// 基于 companion VFS slice 叠加 lifecycle mount 和 workflow 能力/MCP，
 /// 通过 `SessionAssemblyBuilder` 声明式组合两个关注点。
-pub(crate) async fn compose_companion_with_workflow(
+pub(in crate::session) async fn compose_companion_with_workflow(
     repos: &RepositorySet,
     platform_config: &PlatformConfig,
     spec: CompanionWorkflowSpec<'_>,
@@ -1614,7 +1614,7 @@ pub(crate) async fn compose_companion_with_workflow(
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
-    let activation =     activate_activity_with_platform(
+    let activation = activate_activity_with_platform(
         &ActivityActivationInput {
             owner_ctx,
             active_activity: spec.activity,
@@ -1758,8 +1758,8 @@ mod tests {
     use crate::vfs::build_lifecycle_mount_with_ports;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, ActivityLifecycleRunState,
-        AgentActivityExecutorSpec, AgentProcedure, DefinitionSource, InputPortDefinition,
-        LifecycleNodeType, OutputPortDefinition, AgentProcedureContract, WorkflowGraph,
+        AgentActivityExecutorSpec, AgentProcedure, AgentProcedureContract, DefinitionSource,
+        InputPortDefinition, LifecycleNodeType, OutputPortDefinition, WorkflowGraph,
         WorkflowInjectionSpec,
     };
     use std::collections::BTreeSet;

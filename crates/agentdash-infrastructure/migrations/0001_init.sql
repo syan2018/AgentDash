@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
+    session_id TEXT,
+    executor_session_id TEXT,
     execution_mode TEXT NOT NULL DEFAULT 'standard',
     agent_binding TEXT NOT NULL DEFAULT '{}',
     artifacts TEXT NOT NULL DEFAULT '[]',
@@ -90,9 +92,18 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS session_bindings (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT NOT NULL,
+    owner_type TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
-    project_id TEXT,
     title TEXT NOT NULL,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
@@ -210,202 +221,62 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     updated_at BIGINT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS agent_procedures (
+CREATE TABLE IF NOT EXISTS workflow_definitions (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    key TEXT NOT NULL,
+    key TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    binding_kind TEXT NOT NULL,
+    recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
     source TEXT NOT NULL,
+    status TEXT NOT NULL,
     version INTEGER NOT NULL,
     contract TEXT NOT NULL,
-    library_asset_id TEXT,
-    source_ref TEXT,
-    source_version TEXT,
-    source_digest TEXT,
-    installed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(project_id, key)
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_procedures_library_asset_id
-    ON agent_procedures(library_asset_id);
-
-CREATE TABLE IF NOT EXISTS workflow_graphs (
+CREATE TABLE IF NOT EXISTS lifecycle_definitions (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    key TEXT NOT NULL,
+    key TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
+    binding_kind TEXT NOT NULL,
+    recommended_binding_roles TEXT NOT NULL DEFAULT '[]',
     source TEXT NOT NULL,
+    status TEXT NOT NULL,
     version INTEGER NOT NULL,
-    entry_activity_key TEXT NOT NULL,
-    activities TEXT NOT NULL DEFAULT '[]',
-    transitions TEXT NOT NULL DEFAULT '[]',
-    library_asset_id TEXT,
-    source_ref TEXT,
-    source_version TEXT,
-    source_digest TEXT,
-    installed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(project_id, key)
+    entry_step_key TEXT NOT NULL,
+    steps TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_workflow_graphs_library_asset_id
-    ON workflow_graphs(library_asset_id);
+CREATE TABLE IF NOT EXISTS workflow_assignments (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    lifecycle_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL,
+    is_default BOOLEAN NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS lifecycle_runs (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     lifecycle_id TEXT NOT NULL,
+    binding_kind TEXT NOT NULL,
+    binding_id TEXT NOT NULL,
     status TEXT NOT NULL,
-    active_node_keys TEXT NOT NULL DEFAULT '[]',
-    record_artifacts TEXT NOT NULL DEFAULT '[]',
+    current_step_key TEXT,
+    step_states TEXT NOT NULL,
+    record_artifacts TEXT NOT NULL,
     execution_log TEXT NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS lifecycle_workflow_instances (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    graph_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    activity_state_json TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_lwi_run_id
-    ON lifecycle_workflow_instances(run_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_lwi_run_root
-    ON lifecycle_workflow_instances(run_id, role)
-    WHERE role = 'root';
-
-CREATE TABLE IF NOT EXISTS lifecycle_agents (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    project_id TEXT NOT NULL,
-    agent_kind TEXT NOT NULL,
-    agent_role TEXT NOT NULL DEFAULT 'primary',
-    project_agent_id TEXT,
-    status TEXT NOT NULL DEFAULT 'active',
-    current_frame_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_lifecycle_agents_run_id
-    ON lifecycle_agents(run_id);
-
-CREATE INDEX IF NOT EXISTS idx_lifecycle_agents_project_id
-    ON lifecycle_agents(project_id);
-
-CREATE TABLE IF NOT EXISTS agent_frames (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL REFERENCES lifecycle_agents(id) ON DELETE CASCADE,
-    revision INTEGER NOT NULL DEFAULT 1,
-    procedure_id TEXT,
-    graph_instance_id TEXT,
-    activity_key TEXT,
-    effective_capability_json TEXT,
-    context_slice_json TEXT,
-    vfs_surface_json TEXT,
-    mcp_surface_json TEXT,
-    runtime_session_refs_json TEXT,
-    execution_profile_json TEXT,
-    created_by_kind TEXT NOT NULL DEFAULT 'system',
-    created_by_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_frames_agent_revision
-    ON agent_frames(agent_id, revision);
-
-CREATE INDEX IF NOT EXISTS idx_agent_frames_agent_id
-    ON agent_frames(agent_id);
-
-CREATE TABLE IF NOT EXISTS agent_assignments (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    graph_instance_id TEXT NOT NULL,
-    activity_key TEXT NOT NULL,
-    attempt INTEGER NOT NULL,
-    agent_id TEXT NOT NULL REFERENCES lifecycle_agents(id) ON DELETE CASCADE,
-    frame_id TEXT NOT NULL REFERENCES agent_frames(id) ON DELETE CASCADE,
-    lease_status TEXT NOT NULL DEFAULT 'active',
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    released_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_assignments_run_id
-    ON agent_assignments(run_id);
-
-CREATE INDEX IF NOT EXISTS idx_agent_assignments_graph_activity
-    ON agent_assignments(graph_instance_id, activity_key, attempt);
-
-CREATE INDEX IF NOT EXISTS idx_agent_assignments_agent_id
-    ON agent_assignments(agent_id);
-
-CREATE TABLE IF NOT EXISTS lifecycle_subject_associations (
-    id TEXT PRIMARY KEY,
-    anchor_run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    anchor_agent_id TEXT,
-    subject_kind TEXT NOT NULL,
-    subject_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    metadata_json TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_lsa_anchor_run
-    ON lifecycle_subject_associations(anchor_run_id);
-
-CREATE INDEX IF NOT EXISTS idx_lsa_anchor_agent
-    ON lifecycle_subject_associations(anchor_agent_id)
-    WHERE anchor_agent_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_lsa_subject
-    ON lifecycle_subject_associations(subject_kind, subject_id);
-
-CREATE TABLE IF NOT EXISTS lifecycle_gates (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    agent_id TEXT,
-    frame_id TEXT,
-    gate_kind TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',
-    payload_json TEXT,
-    resolved_by TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMPTZ
-);
-
-CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_run_id
-    ON lifecycle_gates(run_id);
-
-CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_agent_status
-    ON lifecycle_gates(agent_id, status)
-    WHERE agent_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_lifecycle_gates_correlation
-    ON lifecycle_gates(correlation_id);
-
-CREATE TABLE IF NOT EXISTS agent_lineages (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL REFERENCES lifecycle_runs(id) ON DELETE CASCADE,
-    parent_agent_id TEXT,
-    child_agent_id TEXT NOT NULL REFERENCES lifecycle_agents(id) ON DELETE CASCADE,
-    relation_kind TEXT NOT NULL,
-    source_frame_id TEXT,
-    metadata_json TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS canvases (

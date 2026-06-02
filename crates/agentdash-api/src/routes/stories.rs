@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use agentdash_application::story::{
-    TaskDispatchPreferenceInput, CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
-    StoryLifecycleLaunchService, StoryMutationInput, TaskMutationInput, apply_task_mutation,
-    build_dispatch_preference, build_task, create_story_record, delete_story_record,
-    list_project_stories, update_story_record,
+    CreateStoryInput, StoryLifecycleLaunchCommand, StoryLifecycleLaunchResult,
+    StoryLifecycleLaunchService, StoryMutationInput, TaskDispatchPreferenceInput,
+    TaskMutationInput, apply_task_mutation, build_dispatch_preference, build_task,
+    create_story_record, delete_story_record, list_project_stories, update_story_record,
 };
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -332,13 +332,15 @@ pub async fn create_task(
         _ => None,
     };
 
-    let mut dispatch_preference = build_dispatch_preference(req.dispatch_preference.map(|value| TaskDispatchPreferenceInput {
-        agent_type: value.agent_type,
-        agent_pid: value.agent_pid,
-        preset_name: value.preset_name,
-        prompt_template: value.prompt_template,
-        initial_context: value.initial_context,
-        context_sources: value.context_sources,
+    let mut dispatch_preference = build_dispatch_preference(req.dispatch_preference.map(|value| {
+        TaskDispatchPreferenceInput {
+            agent_type: value.agent_type,
+            agent_pid: value.agent_pid,
+            preset_name: value.preset_name,
+            prompt_template: value.prompt_template,
+            initial_context: value.initial_context,
+            context_sources: value.context_sources,
+        }
     }));
 
     if let Some(preset_name) = dispatch_preference.preset_name.clone() {
@@ -568,17 +570,6 @@ fn story_launch_result_to_dto(result: StoryLifecycleLaunchResult) -> StoryLaunch
             id: result.subject_ref.id.to_string(),
         },
     }
-}
-
-fn normalize_optional_string(value: Option<String>) -> Option<String> {
-    value.and_then(|raw| {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
 }
 
 async fn append_required_story_change(

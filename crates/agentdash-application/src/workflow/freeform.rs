@@ -2,8 +2,8 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec, ActivityIterationPolicy,
-    ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureRepository,
-    ArtifactAliasPolicy, DefinitionSource, AgentProcedureContract, WorkflowGraph,
+    ActivityJoinPolicy, AgentActivityExecutorSpec, AgentProcedure, AgentProcedureContract,
+    AgentProcedureRepository, ArtifactAliasPolicy, DefinitionSource, WorkflowGraph,
     WorkflowGraphRepository,
 };
 

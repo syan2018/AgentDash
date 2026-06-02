@@ -257,8 +257,8 @@ mod tests {
     use agentdash_domain::common::error::DomainError;
     use agentdash_domain::workflow::{
         ActivityDefinition, ActivityExecutorSpec, AgentActivityExecutorSpec, AgentProcedure,
-        AgentProcedureRepository, DefinitionSource, ToolCapabilityDirective, AgentProcedureContract,
-        WorkflowGraph, WorkflowGraphRepository,
+        AgentProcedureContract, AgentProcedureRepository, DefinitionSource,
+        ToolCapabilityDirective, WorkflowGraph, WorkflowGraphRepository,
     };
 
     use super::*;

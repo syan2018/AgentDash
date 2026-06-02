@@ -18,8 +18,9 @@ use uuid::Uuid;
 
 use agentdash_domain::workflow::{
     ActivityDefinition, ActivityExecutorSpec, ActivityTransition, ActivityTransitionKind,
-    AgentProcedure, ArtifactBinding, DefinitionSource, InputPortDefinition, OutputPortDefinition,
-    ValidationSeverity, AgentProcedureContract, WorkflowGraph, WorkflowHookRuleSpec, WorkflowHookTrigger,
+    AgentProcedure, AgentProcedureContract, ArtifactBinding, DefinitionSource, InputPortDefinition,
+    OutputPortDefinition, ValidationSeverity, WorkflowGraph, WorkflowHookRuleSpec,
+    WorkflowHookTrigger,
 };
 use agentdash_spi::platform::auth::AuthIdentity;
 

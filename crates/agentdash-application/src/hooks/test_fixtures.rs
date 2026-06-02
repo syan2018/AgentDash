@@ -1,4 +1,6 @@
-use agentdash_domain::workflow::{AgentProcedureContract, WorkflowHookRuleSpec, WorkflowHookTrigger};
+use agentdash_domain::workflow::{
+    AgentProcedureContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
+};
 use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, SessionSnapshotMetadata};
 
 pub fn snapshot_with_workflow(activity_key: &str, completion_mode: &str) -> AgentFrameHookSnapshot {

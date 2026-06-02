@@ -96,7 +96,6 @@ pub struct CompanionRequestTool {
     current_session_id: Option<String>,
     current_turn_id: String,
     current_executor_config: AgentConfig,
-    vfs: Option<Vfs>,
     hook_runtime: Option<agentdash_spi::hooks::SharedHookRuntime>,
     /// Lifecycle anchor: agent_id of the parent (current) agent.
     current_agent_id: Option<Uuid>,
@@ -126,7 +125,6 @@ impl CompanionRequestTool {
                 .map(|session| session.session_id().to_string()),
             current_turn_id: context.session.turn_id.clone(),
             current_executor_config: context.session.executor_config.clone(),
-            vfs: context.session.vfs.clone(),
             hook_runtime: context.turn.hook_runtime.clone(),
             current_agent_id: None,
             current_frame_id: None,
@@ -153,19 +151,6 @@ impl CompanionRequestTool {
                 self.project_id = Some(agent.project_id);
             }
         }
-    }
-
-    /// 从 session runtime 获取当前 session 的活跃 MCP server 列表。
-    async fn active_mcp_servers(&self) -> Vec<agentdash_spi::SessionMcpServer> {
-        let sid = match &self.current_session_id {
-            Some(sid) => sid.clone(),
-            None => return Vec::new(),
-        };
-        let services = match self.session_services_handle.get().await {
-            Some(hub) => hub,
-            None => return Vec::new(),
-        };
-        services.capability.get_runtime_mcp_servers(&sid).await
     }
 }
 
@@ -2012,7 +1997,9 @@ fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vf
     }
 }
 
-fn build_companion_owner_summary(snapshot: &agentdash_spi::AgentFrameHookSnapshot) -> Option<String> {
+fn build_companion_owner_summary(
+    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
+) -> Option<String> {
     let ctx = snapshot.run_context.as_ref()?;
     let mut lines = Vec::new();
     lines.push(format!("- Project: {}", ctx.project_id));

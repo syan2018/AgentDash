@@ -7,8 +7,8 @@ use crate::shared_library::InstalledAssetSource;
 use super::validation::{validate_agent_procedure, validate_workflow_graph};
 use super::value_objects::{
     ActivityDefinition, ActivityExecutionClaimStatus, ActivityLifecycleRunState, ActivityRunStatus,
-    ActivityTransition, DefinitionSource, EffectiveSessionContract, ExecutorRunRef,
-    LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue, AgentProcedureContract,
+    ActivityTransition, AgentProcedureContract, DefinitionSource, EffectiveSessionContract,
+    ExecutorRunRef, LifecycleExecutionEntry, LifecycleRunStatus, ValidationIssue,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

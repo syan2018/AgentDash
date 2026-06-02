@@ -1,4 +1,4 @@
-﻿use agentdash_spi::hooks::SharedHookRuntime;
+use agentdash_spi::hooks::SharedHookRuntime;
 use agentdash_spi::{SessionMcpServer, Vfs};
 use async_trait::async_trait;
 use std::io;
@@ -79,9 +79,7 @@ impl SessionCapabilityService {
     ) -> Result<(), String> {
         let frame_id = self.resolve_runtime_session_frame_id(session_id).await?;
         let repo = self.hub.agent_frame_repo.as_ref().ok_or_else(|| {
-            format!(
-                "session `{session_id}` 无 AgentFrame repository，无法写入 canvas mount"
-            )
+            format!("session `{session_id}` 无 AgentFrame repository，无法写入 canvas mount")
         })?;
         repo.append_visible_canvas_mount(frame_id, mount_id)
             .await

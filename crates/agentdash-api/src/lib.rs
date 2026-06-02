@@ -27,6 +27,8 @@ use agentdash_plugin_api::AgentDashPlugin;
 use app_state::AppState;
 pub use plugins::builtin_plugins;
 
+const DEFAULT_POSTGRES_MAX_CONNECTIONS: u32 = 20;
+
 #[derive(Debug, Clone)]
 pub struct ApiServerOptions {
     pub service_name: String,
@@ -46,7 +48,7 @@ impl ApiServerOptions {
             service_name: "agentdash_api".to_string(),
             host,
             port,
-            max_connections: 5,
+            max_connections: DEFAULT_POSTGRES_MAX_CONNECTIONS,
         })
     }
 
@@ -55,7 +57,7 @@ impl ApiServerOptions {
             service_name: "agentdash_desktop_api".to_string(),
             host: "127.0.0.1".to_string(),
             port,
-            max_connections: 5,
+            max_connections: DEFAULT_POSTGRES_MAX_CONNECTIONS,
         }
     }
 }

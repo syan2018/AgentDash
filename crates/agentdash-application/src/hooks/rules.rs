@@ -1,7 +1,9 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
+#[cfg(test)]
+use agentdash_spi::HookEvaluationQuery;
 use agentdash_spi::{
-    AgentFrameHookEvaluationQuery, HookControlTarget, HookDiagnosticEntry, HookEvaluationQuery,
-    HookResolution, HookTrigger, RuntimeAdapterProvenance, AgentFrameHookSnapshot,
+    AgentFrameHookEvaluationQuery, AgentFrameHookSnapshot, HookControlTarget, HookDiagnosticEntry,
+    HookResolution, HookTrigger, RuntimeAdapterProvenance,
 };
 
 use super::presets::domain_trigger_to_spi;
@@ -43,6 +45,7 @@ impl HookRuleEvaluationQuery {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn from_session_query(query: HookEvaluationQuery) -> Self {
         Self {
             target: None,
@@ -195,7 +198,7 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
-    use agentdash_spi::{HookInjection, HookTrigger, AgentFrameHookSnapshot};
+    use agentdash_spi::{AgentFrameHookSnapshot, HookInjection, HookTrigger};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;

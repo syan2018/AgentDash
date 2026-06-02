@@ -1,4 +1,4 @@
-﻿//! LifecycleOrchestrator — Activity runtime event bridge
+//! LifecycleOrchestrator — Activity runtime event bridge
 //!
 //! 职责：把 Activity executor 子 session 的 terminal 事件与
 //! `complete_lifecycle_node` 工具提交转换成 ActivityEvent，再交给
@@ -16,7 +16,7 @@ use agentdash_domain::workflow::{
     WorkflowGraphInstance, WorkflowSessionTerminalState,
 };
 use agentdash_spi::FunctionRunner;
-use agentdash_spi::hooks::{SessionHookRefreshQuery, SharedHookRuntime};
+use agentdash_spi::hooks::{HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SharedHookRuntime};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -387,9 +387,12 @@ impl LifecycleOrchestrator {
         reason: &'static str,
     ) -> Result<(), String> {
         hook_runtime
-            .refresh(SessionHookRefreshQuery {
-                session_id: hook_runtime.session_id().to_string(),
-                turn_id: turn_id.map(ToString::to_string),
+            .refresh_from_provenance(HookRuntimeRefreshQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    hook_runtime.session_id().to_string(),
+                    turn_id.map(ToString::to_string),
+                    "workflow_orchestrator_hook_refresh",
+                ),
                 reason: Some(reason.to_string()),
             })
             .await

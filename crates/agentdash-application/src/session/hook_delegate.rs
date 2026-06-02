@@ -19,9 +19,9 @@ use crate::context::{AuditTrigger, SharedContextAuditBus, emit_fragment};
 use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
-    ContextTokenStats, HookDiagnosticEntry, HookEvaluationQuery, HookInjection,
-    HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-    SessionHookRefreshQuery, SharedHookRuntime,
+    ContextTokenStats, HookDiagnosticEntry, HookInjection, HookRuntimeEvaluationQuery,
+    HookRuntimeRefreshQuery, HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
+    HookTrigger, HookTurnStartNotice, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 const COMPACTION_FAILURE_FUSE_LIMIT: u32 = 3;
@@ -183,10 +183,13 @@ impl HookRuntimeDelegate {
         let snapshot = self.hook_runtime.snapshot();
         let resolution = self
             .hook_runtime
-            .evaluate(HookEvaluationQuery {
-                session_id: self.hook_runtime.session_id().to_string(),
+            .evaluate_from_provenance(HookRuntimeEvaluationQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    self.hook_runtime.session_id().to_string(),
+                    None,
+                    "runtime_delegate_hook_evaluate",
+                ),
                 trigger,
-                turn_id: None,
                 tool_name,
                 tool_call_id,
                 subagent_type,
@@ -199,9 +202,12 @@ impl HookRuntimeDelegate {
 
         if resolution.refresh_snapshot {
             self.hook_runtime
-                .refresh(SessionHookRefreshQuery {
-                    session_id: self.hook_runtime.session_id().to_string(),
-                    turn_id: None,
+                .refresh_from_provenance(HookRuntimeRefreshQuery {
+                    provenance: RuntimeAdapterProvenance::runtime_session(
+                        self.hook_runtime.session_id().to_string(),
+                        None,
+                        "runtime_delegate_hook_refresh",
+                    ),
                     reason: Some(format!("trigger:{:?}", trigger)),
                 })
                 .await

@@ -12,10 +12,12 @@ use agentdash_domain::workflow::{
 use agentdash_spi::CapabilityScope;
 use agentdash_spi::action_type as at;
 use agentdash_spi::context::tool_schema_sanitizer::schema_value;
+use agentdash_spi::hooks::{
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, RuntimeAdapterProvenance,
+};
 use agentdash_spi::{
-    AgentConfig, ExecutionContext, HookEvaluationQuery, HookPendingAction,
-    HookPendingActionResolutionKind, HookPendingActionStatus, HookTraceEntry, HookTrigger,
-    MountCapability, RuntimeEventSource, SessionHookRefreshQuery, Vfs,
+    AgentConfig, ExecutionContext, HookPendingAction, HookPendingActionResolutionKind,
+    HookPendingActionStatus, HookTraceEntry, HookTrigger, MountCapability, RuntimeEventSource, Vfs,
 };
 use agentdash_spi::{AgentTool, AgentToolError, AgentToolResult, ContentPart, ToolUpdateCallback};
 use async_trait::async_trait;
@@ -1548,10 +1550,13 @@ async fn evaluate_subagent_hook(
     payload: Option<serde_json::Value>,
 ) -> Result<agentdash_spi::HookResolution, AgentToolError> {
     let resolution = hook_runtime
-        .evaluate(HookEvaluationQuery {
-            session_id: hook_runtime.session_id().to_string(),
+        .evaluate_from_provenance(HookRuntimeEvaluationQuery {
+            provenance: RuntimeAdapterProvenance::runtime_session(
+                hook_runtime.session_id().to_string(),
+                turn_id.clone(),
+                "companion_subagent_hook_evaluate",
+            ),
             trigger,
-            turn_id: turn_id.clone(),
             tool_name: None,
             tool_call_id: None,
             subagent_type: Some(subagent_type.to_string()),
@@ -1564,9 +1569,12 @@ async fn evaluate_subagent_hook(
 
     if resolution.refresh_snapshot {
         hook_runtime
-            .refresh(SessionHookRefreshQuery {
-                session_id: hook_runtime.session_id().to_string(),
-                turn_id,
+            .refresh_from_provenance(HookRuntimeRefreshQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    hook_runtime.session_id().to_string(),
+                    turn_id,
+                    "companion_subagent_hook_refresh",
+                ),
                 reason: Some(format!("trigger:{trigger:?}:{subagent_type}")),
             })
             .await

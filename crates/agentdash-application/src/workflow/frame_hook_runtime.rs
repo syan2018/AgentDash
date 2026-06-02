@@ -17,11 +17,10 @@ use std::sync::{
 
 use agentdash_spi::hooks::{
     AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, ContextTokenStats,
-    ExecutionHookProvider, HookControlTarget, HookDiagnosticEntry, HookError, HookEvaluationQuery,
-    HookPendingAction, HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution,
-    HookRuntimeAccess, HookSessionRuntimeSnapshot, HookTraceEntry, HookTurnStartNotice,
-    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionSnapshotMetadata, SetDelta,
+    ExecutionHookProvider, HookControlTarget, HookDiagnosticEntry, HookError, HookPendingAction,
+    HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution, HookRuntimeAccess,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookSessionRuntimeSnapshot,
+    HookTraceEntry, HookTurnStartNotice, SessionHookSnapshot, SessionSnapshotMetadata, SetDelta,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -161,14 +160,6 @@ impl AgentFrameHookRuntime {
         }
     }
 
-    fn runtime_provenance(
-        &self,
-        turn_id: Option<String>,
-        source: &str,
-    ) -> RuntimeAdapterProvenance {
-        RuntimeAdapterProvenance::runtime_session(self.runtime_session_id.clone(), turn_id, source)
-    }
-
     fn append_diagnostics_inner<I>(&self, entries: I)
     where
         I: IntoIterator<Item = HookDiagnosticEntry>,
@@ -269,16 +260,16 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         }
     }
 
-    async fn refresh(
+    async fn refresh_from_provenance(
         &self,
-        query: SessionHookRefreshQuery,
+        query: HookRuntimeRefreshQuery,
     ) -> Result<SessionHookSnapshot, HookError> {
         let previous_metadata = self.snapshot().metadata.clone();
         let mut snapshot = self
             .provider
             .refresh_frame_snapshot(AgentFrameHookRefreshQuery {
                 target: self.hook_control_target(),
-                provenance: self.runtime_provenance(query.turn_id, "hook_runtime_refresh"),
+                provenance: query.provenance,
                 reason: query.reason,
             })
             .await?;
@@ -313,12 +304,15 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         self.compaction_failure_count.load(Ordering::SeqCst)
     }
 
-    async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError> {
+    async fn evaluate_from_provenance(
+        &self,
+        query: HookRuntimeEvaluationQuery,
+    ) -> Result<HookResolution, HookError> {
         let mut query = query;
         query.token_stats = Some(self.token_stats());
         let frame_query = AgentFrameHookEvaluationQuery {
             target: self.hook_control_target(),
-            provenance: self.runtime_provenance(query.turn_id.clone(), "hook_runtime_evaluate"),
+            provenance: query.provenance,
             trigger: query.trigger,
             tool_name: query.tool_name,
             tool_call_id: query.tool_call_id,
@@ -557,6 +551,7 @@ mod tests {
     use agentdash_spi::hooks::NoopExecutionHookProvider;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
+        HookEvaluationQuery, RuntimeAdapterProvenance, SessionHookRefreshQuery,
     };
 
     #[derive(Default)]
@@ -712,9 +707,12 @@ mod tests {
             AgentFrameHookRuntime::new_test_runtime("sess-1".into(), provider, initial_snapshot);
 
         let refreshed = runtime
-            .refresh(SessionHookRefreshQuery {
-                session_id: "sess-1".into(),
-                turn_id: Some("turn-2".into()),
+            .refresh_from_provenance(HookRuntimeRefreshQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    "sess-1",
+                    Some("turn-2".into()),
+                    "test_refresh",
+                ),
                 reason: Some("test".into()),
             })
             .await
@@ -745,9 +743,12 @@ mod tests {
         );
 
         runtime
-            .refresh(SessionHookRefreshQuery {
-                session_id: "ignored-session-owner".into(),
-                turn_id: Some("turn-2".into()),
+            .refresh_from_provenance(HookRuntimeRefreshQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    "sess-1",
+                    Some("turn-2".into()),
+                    "test_refresh",
+                ),
                 reason: Some("test_refresh".into()),
             })
             .await

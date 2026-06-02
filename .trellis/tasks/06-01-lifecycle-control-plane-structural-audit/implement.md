@@ -4,6 +4,8 @@
 
 本文不是机械修改列表。它规定后续修复顺序：先修事实源与封装边界，再删旧路径和补测试。任何实现任务都应从这里拆分子任务。
 
+阶段性收尾后的后续批次索引见 [follow-up-roadmap.md](./follow-up-roadmap.md)。
+
 ## Phase 1: 固化运行闭环不变量
 
 - [x] 设计 `ActivityRuntimeAssociationResolver`。
@@ -114,7 +116,7 @@
 - [ ] 将 `StepActivation` 纳入 `AgentFrameBuilder` 内部阶段。
 - [x] 拆分 `AgentFrameTransition` 与 `RuntimeDeliveryCommand`。
 - [ ] Hook/capability command primary target 改为 agent/frame/assignment。
-  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller；hook runtime reload / hub lazy rebuild 已先解析 `HookControlTarget`，再以 frame snapshot 构建 runtime。rule-engine 评估上下文已拆为 `HookRuleEvaluationQuery`，frame evaluate 不再伪装成 session query。完整 gate 仍取决于 provider/session delegate 的 session adapter、runtime evaluate/refresh adapter、orchestrator refresh 与 companion helper。
+  - Hook runtime/provider entry 已引入 `HookControlTarget` 与 `RuntimeAdapterProvenance`，并要求 provider 显式处理 frame query；`StepActivation` live apply、canvas capability sync 与 companion parent request hook caller 已改为接收 `AgentFrameRuntimeTarget`。`SessionHookService` 已提供 target-aware hook runtime getter/ensure，并迁移 workflow/canvas/companion caller；hook runtime reload / hub lazy rebuild 已先解析 `HookControlTarget`，再以 frame snapshot 构建 runtime。rule-engine 评估上下文已拆为 `HookRuleEvaluationQuery`，frame evaluate 不再伪装成 session query。`HookRuntimeAccess` 的 runtime evaluate / refresh caller 已改为 provenance-first query。完整 gate 仍取决于 provider session adapter、session facade getter、capability runtime adapter 与测试 mock 的命中是否都被限定在 provenance/trace sink。
 - [ ] `session_id` 仅作为 runtime adapter provenance。
 - [x] `ContinueRoot` 改为 AgentReusePolicy + RuntimeSessionPolicy 的组合。
   - Definition-level `AgentActivityExecutorSpec` 已移除 `AgentSessionPolicy/session_policy`，改为 `agent_reuse_policy + runtime_session_policy`；freeform/auto lifecycle 用 `continue_current_agent + deliver_to_current_trace`，普通 Agent activity 用 `create_activity_agent + create_new`。
@@ -126,6 +128,7 @@
 - [x] Runtime command 表或接口只表达 delivery；frame transition 有独立事实源或明确 repository。
 - [ ] Hook/capability control command 的 primary target 是 agent/frame/assignment，只有 runtime adapter 接收 raw session id。
 - [ ] Static gate：`rg -n "SessionHookSnapshotQuery|SessionHookRefreshQuery|HookEvaluationQuery \\{|ensure_hook_runtime\\(|get_hook_runtime\\(|resolve_runtime_session_frame_id\\(" crates/agentdash-application/src` 只允许命中 runtime adapter、tests 或显式 provenance/trace sink。
+  - 2026-06-02：runtime caller 层已不再直接构造 `.evaluate(HookEvaluationQuery { ... })` 或 `.refresh(SessionHookRefreshQuery { ... })`；完整 static gate 仍命中 provider session adapter、session hook facade、capability runtime adapter 与测试 mock，因此保持未关闭。
 - [ ] Hook gate：测试证明 hook snapshot load / refresh / evaluate 可从 `frame_id + assignment_id` 执行，不需要 raw runtime session id 作为 owner。
 - [ ] Capability gate：PhaseNode 与 canvas live update 测试直接传入 `AgentFrameRuntimeTarget`，workflow/canvas control logic 不调用 `resolve_runtime_session_frame_id`。
   - 2026-06-02：PhaseNode live apply 已改为 `apply_to_frame_runtime_target`；canvas capability sync 已拆出 runtime-delivery adapter 与 target-first apply helper，不再直接调用 `resolve_runtime_session_frame_id`；workflow/canvas 获取 hook runtime 时会校验 hook runtime target 与 `AgentFrameRuntimeTarget` 一致。gate 仍未关闭，因为 hook SPI/session facade 与 hub lazy rebuild 仍存在 session-shaped owner 入口。
@@ -181,6 +184,23 @@
 - `AppExecutionHookProvider::evaluate_frame_hook` 在需要时用 `AgentFrameHookSnapshotQuery { target, provenance }` 加载 frame snapshot，然后直接通过 `HookRuleEvaluationQuery::from_frame_query` 进入 rule engine，不再构造 `HookEvaluationQuery { session_id }`。
 - `HookScriptEngine` 的脚本上下文新增 `hook_target` 与 `provenance`，并保留 `session_id` / `turn_id` 为 runtime trace 字段；新增测试证明 frame target 与 assignment id 会进入脚本上下文。
 - 该 slice 不关闭完整 Static / Hook gate，因为 `HookRuntimeAccess::evaluate/refresh`、runtime delegate、workflow orchestrator refresh、companion subagent hook helper 与 provider session adapter 仍保留 session-shaped refresh/evaluate entry。
+
+2026-06-02 的 HookRuntimeAccess provenance query slice 已关闭 runtime evaluate/refresh caller 手写 session query 的缺口，但 Phase 4 Hook gate 仍保持 partial：
+
+- `HookRuntimeAccess` 暴露 `evaluate_from_provenance` / `refresh_from_provenance`，输入是 `HookRuntimeEvaluationQuery` / `HookRuntimeRefreshQuery`；runtime caller 只提交 `RuntimeAdapterProvenance`、trigger 与 payload。
+- `AgentFrameHookRuntime` 继续以内聚的 `HookControlTarget` 作为 provider target；调用方不再能通过 refresh/evaluate query 改写 hook owner。
+- hub trigger、runtime delegate、session hook service subsequent refresh、workflow orchestrator refresh 与 companion subagent hook helper 已迁入 provenance-first runtime query。
+- 该 slice 不关闭完整 Static / Hook gate，因为 provider session adapters、`get_hook_runtime` / `ensure_hook_runtime` session facade、capability runtime adapter 与测试 mock 仍需要继续限定到 provenance/trace sink。
+
+验证记录：
+
+- `rg -n "\\.evaluate\\(HookEvaluationQuery|\\.refresh\\(SessionHookRefreshQuery|HookEvaluationQuery \\{|SessionHookRefreshQuery \\{|async fn refresh\\(|async fn evaluate\\(&self, query: HookEvaluationQuery|refresh_from_provenance|evaluate_from_provenance" crates\agentdash-application\src crates\agentdash-spi\src`
+- `cargo check -p agentdash-spi -p agentdash-application`
+- `cargo test -p agentdash-application workflow::frame_hook_runtime --lib -- --format terse`
+- `cargo test -p agentdash-application session::hook_delegate --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::live_runtime_context_transition_derives_skill_dimension_from_active_vfs --lib -- --format terse`
+- `cargo test -p agentdash-application companion::tools --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::orchestrator --lib -- --format terse`
 
 2026-06-02 的 ContinueRoot target resolution slice 已关闭 start/apply 内部反复分发 root runtime session 的缺口，但不关闭 `AgentReusePolicy + RuntimeSessionPolicy` 主项：
 

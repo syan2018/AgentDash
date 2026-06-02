@@ -474,11 +474,14 @@ pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn pending_actions(&self) -> Vec<HookPendingAction>;
     fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot;
 
-    async fn refresh(
+    async fn refresh_from_provenance(
         &self,
-        query: SessionHookRefreshQuery,
+        query: HookRuntimeRefreshQuery,
     ) -> Result<SessionHookSnapshot, HookError>;
-    async fn evaluate(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
+    async fn evaluate_from_provenance(
+        &self,
+        query: HookRuntimeEvaluationQuery,
+    ) -> Result<HookResolution, HookError>;
 
     fn replace_snapshot(&self, snapshot: SessionHookSnapshot);
     fn append_diagnostics_vec(&self, entries: Vec<HookDiagnosticEntry>);
@@ -591,6 +594,33 @@ pub struct AgentFrameHookRefreshQuery {
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameHookEvaluationQuery {
     pub target: HookControlTarget,
+    pub provenance: RuntimeAdapterProvenance,
+    pub trigger: HookTrigger,
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub subagent_type: Option<String>,
+    #[serde(default)]
+    pub snapshot: Option<SessionHookSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_stats: Option<ContextTokenStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookRuntimeRefreshQuery {
+    pub provenance: RuntimeAdapterProvenance,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct HookRuntimeEvaluationQuery {
     pub provenance: RuntimeAdapterProvenance,
     pub trigger: HookTrigger,
     #[serde(default)]

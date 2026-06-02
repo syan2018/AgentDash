@@ -23,9 +23,9 @@ use super::SessionRuntimeInner;
 use agentdash_agent_protocol::SourceInfo;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
-    AgentFrameHookSnapshotQuery, HookEffect, HookEvaluationQuery, HookInjection, HookRuntimeAccess,
-    HookTraceEntry, HookTrigger, RuntimeAdapterProvenance, SessionHookRefreshQuery,
-    SharedHookRuntime,
+    AgentFrameHookSnapshotQuery, HookEffect, HookInjection, HookRuntimeAccess,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookTraceEntry, HookTrigger,
+    RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
 /// `emit_session_hook_trigger` 的入参（在 hub 内部多处构造，故暴露给 super）。
@@ -66,11 +66,15 @@ impl SessionRuntimeInner {
             refresh_reason,
             ref source,
         } = *input;
+        let turn_id_value = turn_id.map(ToString::to_string);
         match hook_runtime
-            .evaluate(HookEvaluationQuery {
-                session_id: session_id.to_string(),
+            .evaluate_from_provenance(HookRuntimeEvaluationQuery {
+                provenance: RuntimeAdapterProvenance::runtime_session(
+                    hook_runtime.session_id().to_string(),
+                    turn_id_value.clone(),
+                    "hub_hook_trigger",
+                ),
                 trigger: *trigger,
-                turn_id: turn_id.map(ToString::to_string),
                 tool_name: None,
                 tool_call_id: None,
                 subagent_type: None,
@@ -83,9 +87,12 @@ impl SessionRuntimeInner {
             Ok(resolution) => {
                 if resolution.refresh_snapshot {
                     let _ = hook_runtime
-                        .refresh(SessionHookRefreshQuery {
-                            session_id: session_id.to_string(),
-                            turn_id: turn_id.map(ToString::to_string),
+                        .refresh_from_provenance(HookRuntimeRefreshQuery {
+                            provenance: RuntimeAdapterProvenance::runtime_session(
+                                hook_runtime.session_id().to_string(),
+                                turn_id_value.clone(),
+                                "hub_hook_refresh",
+                            ),
                             reason: Some(refresh_reason.to_string()),
                         })
                         .await;

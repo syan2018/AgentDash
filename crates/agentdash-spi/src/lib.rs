@@ -75,12 +75,13 @@ pub use hooks::{
     ExecutionHookProvider, HookApprovalRequest, HookCompactionDecision, HookCompletionStatus,
     HookControlTarget, HookDiagnosticEntry, HookEffect, HookError, HookEvaluationQuery,
     HookEvaluationTrigger, HookInjection, HookPendingAction, HookPendingActionResolutionKind,
-    HookPendingActionStatus, HookResolution, HookRuntimeAccess, HookSessionRuntimeSnapshot,
-    HookStepAdvanceRequest, HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice,
-    NoopExecutionHookProvider, RuntimeAdapterProvenance, RuntimeContextFragmentEntry,
-    RuntimeEventSource, RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry,
-    SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery, SessionRunContext,
-    SessionSnapshotMetadata, SharedHookRuntime, action_type,
+    HookPendingActionStatus, HookResolution, HookRuntimeAccess, HookRuntimeEvaluationQuery,
+    HookRuntimeRefreshQuery, HookSessionRuntimeSnapshot, HookStepAdvanceRequest, HookTraceEntry,
+    HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
+    RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionHookRefreshQuery,
+    SessionHookSnapshot, SessionHookSnapshotQuery, SessionRunContext, SessionSnapshotMetadata,
+    SharedHookRuntime, action_type,
 };
 
 // ─── platform ───────────────────────────────────────────────

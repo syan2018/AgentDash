@@ -46,6 +46,14 @@ runtime session / turn 映射为 provenance 或显式 hook target，再交给同
 rule evaluation 边界。这样 Hook runtime 可以继续保留 runtime trace 价值，同时让策略 owner
 落在 run / agent / frame / assignment refs 上。
 
+### HookRuntimeAccess（`agentdash-spi::hooks`）
+
+`HookRuntimeAccess` 是 executor / hub / delegate 消费 hook runtime 的边界。具体 runtime
+实例 owns `HookControlTarget`，调用方只通过 `HookRuntimeEvaluationQuery` /
+`HookRuntimeRefreshQuery` 传入 `RuntimeAdapterProvenance`、trigger、payload 与已有
+snapshot。这个拆分让 refresh/evaluate 的业务 owner 固定在 AgentFrameHookRuntime 内部，
+runtime session / turn 只表达 delivery trace、audit source 与 adapter provenance。
+
 ---
 
 ## 关键设计约束

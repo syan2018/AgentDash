@@ -400,8 +400,28 @@ Phase 4 hook/capability follow-up 调研进一步确认：
 - provider 仍保留 `load_session_snapshot` / `refresh_session_snapshot` / `evaluate_hook` 这些 SPI session adapter；它们需要继续被限定到 runtime adapter/provenance sink，而不是业务 control owner。
 - Static gate 仍会命中 session refresh/evaluate adapter、runtime delegate、orchestrator、companion 与测试形状；下一批应迁移 runtime evaluate/refresh access 或给它们建立 target-aware facade。
 
+2026-06-02 的 HookRuntimeAccess provenance query slice 关闭了 runtime caller 把 refresh/evaluate query 当作 session owner 的耦合点：
+
+- SPI 新增 `HookRuntimeEvaluationQuery` / `HookRuntimeRefreshQuery`，`HookRuntimeAccess` 方法改为 `evaluate_from_provenance` / `refresh_from_provenance`；caller 只能传 runtime provenance、trigger 与 payload。
+- `AgentFrameHookRuntime` 自身持有 `HookControlTarget` 并在 refresh/evaluate 时交给 provider；runtime session 只通过 `RuntimeAdapterProvenance` 进入 trace/audit。
+- hub hook trigger、runtime delegate、workflow orchestrator refresh、session subsequent-turn refresh 与 companion subagent hook helper 都已迁移，生产路径不再构造 `.evaluate(HookEvaluationQuery { ... })` 或 `.refresh(SessionHookRefreshQuery { ... })`。
+
+该 slice 仍不关闭 P1-08 gate，因为：
+
+- provider session adapters 仍保留 `SessionHookSnapshotQuery` / `SessionHookRefreshQuery` / `HookEvaluationQuery` 作为 runtime adapter 输入，需要继续约束到 provenance sink。
+- `SessionHookService::get_hook_runtime` / `ensure_hook_runtime` 与 hub facade 仍是 session-shaped getter，虽然 target-aware caller 已覆盖 workflow/canvas/companion 关键路径。
+- capability runtime adapter 仍保留 `resolve_runtime_session_frame_id`，它应继续作为 delivery/provenance adapter 被收束，而不是 business command owner。
+- Static gate 仍命中 provider adapter、session facade、capability adapter 与测试 mock；下一批应把 session facade 改名/封装成明确 runtime delivery adapter，或进一步拆出 target-first public service。
+
 验证记录：
 
+- `rg -n "\.evaluate\(HookEvaluationQuery|\.refresh\(SessionHookRefreshQuery|HookEvaluationQuery \{|SessionHookRefreshQuery \{|async fn refresh\(|async fn evaluate\(&self, query: HookEvaluationQuery|refresh_from_provenance|evaluate_from_provenance" crates\agentdash-application\src crates\agentdash-spi\src`
+- `cargo check -p agentdash-spi -p agentdash-application`
+- `cargo test -p agentdash-application workflow::frame_hook_runtime --lib -- --format terse`
+- `cargo test -p agentdash-application session::hook_delegate --lib -- --format terse`
+- `cargo test -p agentdash-application session::hub::tests::live_runtime_context_transition_derives_skill_dimension_from_active_vfs --lib -- --format terse`
+- `cargo test -p agentdash-application companion::tools --lib -- --format terse`
+- `cargo test -p agentdash-application workflow::orchestrator --lib -- --format terse`
 - `cargo check -p agentdash-application`
 - `cargo test -p agentdash-application workflow::frame_hook_runtime --lib -- --format terse`
 - `cargo test -p agentdash-application hooks::provider --lib -- --format terse`

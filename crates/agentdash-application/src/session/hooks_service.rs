@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookControlTarget, HookRuntimeAccess,
-    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshot, SharedHookRuntime,
+    HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SessionHookSnapshot, SharedHookRuntime,
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
@@ -170,9 +170,12 @@ impl SessionHookService {
 
         if let Some(ref hs) = existing {
             let _ = hs
-                .refresh(SessionHookRefreshQuery {
-                    session_id: session_id.to_string(),
-                    turn_id: Some(turn_id.to_string()),
+                .refresh_from_provenance(HookRuntimeRefreshQuery {
+                    provenance: RuntimeAdapterProvenance::runtime_session(
+                        session_id.to_string(),
+                        Some(turn_id.to_string()),
+                        "subsequent_turn_refresh",
+                    ),
                     reason: Some("subsequent_turn_refresh".to_string()),
                 })
                 .await;

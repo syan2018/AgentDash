@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agentdash_application::session::construction_planner::{
-    ResolvedProjectAgentContext, RuntimeContextInspectionPlanner,
+    ResolvedProjectAgentContext, build_project_agent_context,
 };
 use agentdash_domain::{agent::ProjectAgent, inline_file::InlineFileOwnerKind, project::Project};
 use axum::{
@@ -99,7 +99,7 @@ pub async fn list_project_agents(
     let mut response = Vec::with_capacity(agents.len());
     for agent in &agents {
         let bridge =
-            RuntimeContextInspectionPlanner::build_project_agent_context(&state.repos, agent)
+            build_project_agent_context(&state.repos, agent)
                 .await
                 .map_err(ApiError::Internal)?;
         response.push(build_project_agent_summary(&project, &bridge));
@@ -138,7 +138,7 @@ pub async fn launch_project_agent(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::NotFound(format!("Project Agent `{agent_key}` 不存在")))?;
     let agent_context =
-        RuntimeContextInspectionPlanner::build_project_agent_context(&state.repos, &project_agent)
+        build_project_agent_context(&state.repos, &project_agent)
             .await
             .map_err(ApiError::Internal)?;
 

@@ -42,6 +42,7 @@ use super::construction::{
     ResolvedSessionOwner, RuntimeContextInspectionPlan, SessionConstructionContextProjection,
 };
 
+#[deprecated(note = "helper 方法已提升为独立函数，plan 方法已被 FrameConstructionService 替代")]
 pub struct RuntimeContextInspectionPlanner;
 
 pub const PROJECT_AGENT_BINDING_LABEL_PREFIX: &str = "project_agent:";
@@ -500,7 +501,7 @@ impl RuntimeContextInspectionPlanner {
     }
 }
 
-async fn resolve_project_workspace(
+pub async fn resolve_project_workspace(
     repos: &RepositorySet,
     project: &Project,
 ) -> Result<Option<Workspace>, String> {
@@ -562,7 +563,7 @@ async fn resolve_project_agent_context(
     build_project_agent_context(repos, &agent).await.map(Some)
 }
 
-async fn build_project_agent_context(
+pub async fn build_project_agent_context(
     repos: &RepositorySet,
     agent: &ProjectAgent,
 ) -> Result<ResolvedProjectAgentContext, String> {

@@ -3,7 +3,7 @@
 use agentdash_domain::workflow::{AgentFrame, LifecycleAgent, LifecycleRun};
 use agentdash_spi::ConnectorError;
 
-use crate::session::construction_planner::RuntimeContextInspectionPlanner;
+use crate::session::construction_planner::{build_project_agent_context, resolve_project_workspace};
 use crate::session::construction_provider::SessionConstructionProviderInput;
 use crate::session::{AgentLevelMcp, OwnerBootstrapSpec, OwnerScope};
 use crate::workflow::frame_surface::AgentFrameSurfaceExt;
@@ -46,11 +46,11 @@ pub(super) async fn compose(
             ConnectorError::InvalidConfig(format!("ProjectAgent {} 不存在", project_agent_id))
         })?;
     let agent_context =
-        RuntimeContextInspectionPlanner::build_project_agent_context(&svc.repos, &project_agent)
+        build_project_agent_context(&svc.repos, &project_agent)
             .await
             .map_err(connector_internal)?;
     let workspace =
-        RuntimeContextInspectionPlanner::resolve_project_workspace(&svc.repos, &project)
+        resolve_project_workspace(&svc.repos, &project)
             .await
             .map_err(connector_internal)?;
     let executor_config = merge_user_executor_config(

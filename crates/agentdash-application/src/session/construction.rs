@@ -21,6 +21,7 @@ use crate::extension_runtime::ExtensionRuntimeProjection;
 ///
 /// **DEPRECATED**: 将被 `SubjectRef + LifecycleSubjectAssociation` 替代。
 /// 新代码不应引入对此类型的依赖。
+#[deprecated(note = "已被 frame-based control plane 替代，仅用于测试 fixture")]
 #[derive(Debug, Clone)]
 pub struct ResolvedSessionOwner {
     pub owner_type: CapabilityScope,
@@ -68,6 +69,7 @@ use crate::vfs::ResolvedVfsSurface;
 
 /// **DEPRECATED**: 将被 frame-based read model (AgentFrameRuntimeView + VfsSurfaceProjection) 替代。
 /// 新代码不应引入对此类型的依赖。
+#[deprecated(note = "已被 FrameLaunchEnvelope + AgentFrameRuntimeView 替代，仅用于测试 fixture")]
 #[derive(Debug, Clone)]
 pub struct RuntimeContextInspectionPlan {
     pub session_id: String,

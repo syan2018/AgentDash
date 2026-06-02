@@ -17,7 +17,7 @@ pub mod construction_use_case;
 pub mod context;
 mod context_frame;
 mod context_projector;
-pub mod context_query_use_case;
+// context_query_use_case 已删除：所有 API 消费者已迁移至 frame-based read model
 pub mod continuation;
 pub mod control;
 pub mod core;

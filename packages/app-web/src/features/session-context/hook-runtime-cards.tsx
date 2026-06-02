@@ -117,7 +117,7 @@ function HookRuntimeWorkflowMetaCard({
       </div>
       <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
-          lifecycle_id: {metadata.lifecycle_id}
+          workflow_graph_id: {metadata.workflow_graph_id}
         </span>
         <span className="rounded-[8px] border border-border bg-background px-2 py-1">
           run_id: {metadata.run_id}

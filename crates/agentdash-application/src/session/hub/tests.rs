@@ -307,7 +307,7 @@ async fn register_hook_target(
 
 fn test_hook_snapshot(session_id: String) -> AgentFrameHookSnapshot {
     AgentFrameHookSnapshot {
-        session_id,
+        runtime_adapter_session_id: session_id,
         metadata: Some(SessionSnapshotMetadata {
             active_workflow: Some(ActiveWorkflowMeta {
                 run_id: Some(uuid::Uuid::new_v4()),

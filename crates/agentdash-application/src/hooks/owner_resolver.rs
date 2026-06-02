@@ -3,12 +3,12 @@ use std::sync::Arc;
 use agentdash_domain::project::ProjectRepository;
 use agentdash_domain::story::StoryRepository;
 use agentdash_domain::workflow::{LifecycleRun, LifecycleSubjectAssociationRepository};
-use agentdash_spi::hooks::SessionRunContext;
+use agentdash_spi::hooks::SubjectRunContext;
 
 use crate::ApplicationError;
-use crate::workflow::build_session_run_context;
+use crate::workflow::build_subject_run_context;
 
-/// 从 LifecycleSubjectAssociation 反查 project/story/task 实体，构建 SessionRunContext。
+/// 从 LifecycleSubjectAssociation 反查 project/story/task 实体，构建 SubjectRunContext。
 pub struct SessionOwnerResolver {
     project_repo: Arc<dyn ProjectRepository>,
     story_repo: Arc<dyn StoryRepository>,
@@ -39,12 +39,12 @@ impl SessionOwnerResolver {
     pub async fn resolve_run_context(
         &self,
         run: &LifecycleRun,
-    ) -> Result<SessionRunContext, ApplicationError> {
+    ) -> Result<SubjectRunContext, ApplicationError> {
         let associations = self
             .lifecycle_subject_association_repo
             .list_by_anchor(run.id, None)
             .await
             .map_err(ApplicationError::from)?;
-        build_session_run_context(run.project_id, &associations, self.story_repo.as_ref()).await
+        build_subject_run_context(run.project_id, &associations, self.story_repo.as_ref()).await
     }
 }

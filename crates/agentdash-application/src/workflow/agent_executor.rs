@@ -1085,7 +1085,7 @@ fn human_decision_id(claim: &ActivityExecutionClaim) -> String {
 }
 
 fn scope_from_run_context_or_project(
-    run_context: Option<&agentdash_spi::hooks::SessionRunContext>,
+    run_context: Option<&agentdash_spi::hooks::SubjectRunContext>,
     fallback_project_id: uuid::Uuid,
 ) -> agentdash_spi::CapabilityScopeCtx {
     match run_context {

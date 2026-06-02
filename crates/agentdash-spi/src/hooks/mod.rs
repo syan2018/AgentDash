@@ -36,7 +36,7 @@ pub use crate::connector::SetDelta;
 /// AgentFrame 投影出的业务上下文，RuntimeSession id 仅作为 trace key。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionRunContext {
+pub struct SubjectRunContext {
     pub project_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub story_id: Option<Uuid>,
@@ -81,9 +81,10 @@ pub struct HookDiagnosticEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameHookSnapshot {
-    pub session_id: String,
+    #[serde(alias = "session_id")]
+    pub runtime_adapter_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_context: Option<SessionRunContext>,
+    pub run_context: Option<SubjectRunContext>,
     /// 溯源标签集（如 `["builtin:runtime_trace", "workflow:trellis_dev_task:implement"]`）
     #[serde(default)]
     pub sources: Vec<String>,
@@ -121,8 +122,8 @@ pub struct SessionSnapshotMetadata {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ActiveWorkflowMeta {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lifecycle_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "lifecycle_id")]
+    pub workflow_graph_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -164,7 +165,8 @@ pub struct ActiveWorkflowMeta {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentFrameRuntimeSnapshot {
-    pub session_id: String,
+    #[serde(alias = "session_id")]
+    pub runtime_adapter_session_id: String,
     pub revision: u64,
     pub snapshot: AgentFrameHookSnapshot,
     #[serde(default)]
@@ -990,7 +992,7 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
         query: AgentFrameHookSnapshotQuery,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         Ok(AgentFrameHookSnapshot {
-            session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+            runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
             ..AgentFrameHookSnapshot::default()
         })
     }
@@ -1020,7 +1022,7 @@ mod run_context_tests {
 
     #[test]
     fn session_run_context_serde_roundtrip() {
-        let ctx = SessionRunContext {
+        let ctx = SubjectRunContext {
             project_id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
             story_id: Some(Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap()),
             task_id: Some(Uuid::parse_str("44444444-4444-4444-4444-444444444444").unwrap()),
@@ -1029,13 +1031,13 @@ mod run_context_tests {
             scope: CapabilityScope::Task,
         };
         let json = serde_json::to_string(&ctx).unwrap();
-        let decoded: SessionRunContext = serde_json::from_str(&json).unwrap();
+        let decoded: SubjectRunContext = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, ctx);
     }
 
     #[test]
     fn session_run_context_scope_serializes_as_snake_case() {
-        let ctx = SessionRunContext {
+        let ctx = SubjectRunContext {
             project_id: Uuid::nil(),
             scope: CapabilityScope::Story,
             ..Default::default()

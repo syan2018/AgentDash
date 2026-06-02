@@ -79,7 +79,7 @@ pub use hooks::{
     HookRuntimeAccess, HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookStepAdvanceRequest,
     HookTraceEntry, HookTraceTrigger, HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider,
     RuntimeAdapterProvenance, RuntimeContextFragmentEntry, RuntimeEventSource,
-    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SessionRunContext,
+    RuntimeHookInjectionEntry, RuntimeSkillEntry, RuntimeToolSchemaEntry, SubjectRunContext,
     SessionSnapshotMetadata, SharedHookRuntime, action_type,
 };
 

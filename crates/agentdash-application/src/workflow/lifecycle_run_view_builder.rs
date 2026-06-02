@@ -229,6 +229,8 @@ pub fn lifecycle_agent_to_view(agent: &LifecycleAgent) -> LifecycleAgentView {
         project_agent_id: agent.project_agent_id.map(|id| id.to_string()),
         status: agent.status.clone(),
         current_frame_id: agent.current_frame_id.map(|id| id.to_string()),
+        delivery_runtime_ref: None,
+        last_execution_status: None,
         created_at: agent.created_at.to_rfc3339(),
         updated_at: agent.updated_at.to_rfc3339(),
     }

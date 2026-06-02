@@ -4,7 +4,7 @@ import type { TaskDispatchPreference } from "./index";
 
 export type CapabilityScope = "project" | "story" | "task";
 
-export interface SessionRunContext {
+export interface SubjectRunContext {
   project_id: string;
   story_id?: string | null;
   task_id?: string | null;
@@ -79,7 +79,7 @@ export interface SessionExecutionState {
 }
 
 export interface ActiveWorkflowHookMetadata {
-  lifecycle_id: string;
+  workflow_graph_id: string;
   lifecycle_key: string;
   lifecycle_name: string;
   run_id: string;
@@ -96,8 +96,8 @@ export interface HookRuntimeMetadata {
 }
 
 export interface AgentFrameHookSnapshot {
-  session_id: string;
-  run_context?: SessionRunContext | null;
+  runtime_adapter_session_id: string;
+  run_context?: SubjectRunContext | null;
   sources: string[];
   tags: string[];
   injections: HookInjection[];
@@ -106,7 +106,7 @@ export interface AgentFrameHookSnapshot {
 }
 
 export interface HookSessionRuntimeInfo {
-  session_id: string;
+  runtime_adapter_session_id: string;
   revision: number;
   snapshot: AgentFrameHookSnapshot;
   diagnostics: HookDiagnosticEntry[];

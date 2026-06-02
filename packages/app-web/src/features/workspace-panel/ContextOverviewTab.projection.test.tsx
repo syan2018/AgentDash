@@ -151,17 +151,17 @@ const lifecycleRunView: LifecycleRunView = {
 };
 
 const hookRuntime: HookSessionRuntimeInfo = {
-  session_id: "sess-projection",
+  runtime_adapter_session_id: "sess-projection",
   revision: 1,
   snapshot: {
-    session_id: "sess-projection",
+    runtime_adapter_session_id: "sess-projection",
     sources: [],
     tags: [],
     injections: [],
     diagnostics: [],
     metadata: {
       active_workflow: {
-        lifecycle_id: "lifecycle-projection",
+        workflow_graph_id: "lifecycle-projection",
         lifecycle_key: "projection-lifecycle",
         lifecycle_name: "Projection Lifecycle",
         run_id: "run-projection-123456",

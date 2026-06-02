@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn snapshot_injections_map_to_contribution() {
         let snapshot = AgentFrameHookSnapshot {
-            session_id: "sess-1".to_string(),
+            runtime_adapter_session_id: "sess-1".to_string(),
             injections: vec![
                 HookInjection {
                     slot: "companion_agents".to_string(),

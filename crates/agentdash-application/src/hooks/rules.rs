@@ -213,7 +213,7 @@ mod tests {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeTool,
             turn_id: None,
             tool_name: Some("shell_exec".to_string()),
@@ -268,7 +268,7 @@ mod tests {
             snapshot_with_workflow_ports("check", "checklist_passed", &["report", "summary"], &[]);
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -311,7 +311,7 @@ mod tests {
         );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -354,7 +354,7 @@ mod tests {
         );
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeStop,
             turn_id: None,
             tool_name: None,
@@ -384,7 +384,7 @@ mod tests {
         let snapshot = snapshot_with_workflow("check", "checklist_passed");
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::AfterTurn,
             turn_id: None,
             tool_name: None,
@@ -421,7 +421,7 @@ mod tests {
         let snapshot = snapshot_with_supervised_policy();
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeTool,
             turn_id: Some("turn-approval-1".to_string()),
             tool_name: Some("shell_exec".to_string()),
@@ -468,9 +468,9 @@ mod tests {
             EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
         };
         let snapshot = AgentFrameHookSnapshot {
-            session_id: "sess-test".to_string(),
+            runtime_adapter_session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
-            run_context: Some(agentdash_spi::hooks::SessionRunContext {
+            run_context: Some(agentdash_spi::hooks::SubjectRunContext {
                 scope: agentdash_spi::CapabilityScope::Story,
                 project_id: uuid::Uuid::new_v4(),
                 story_id: Some(uuid::Uuid::new_v4()),
@@ -512,7 +512,7 @@ mod tests {
         };
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::BeforeSubagentDispatch,
             turn_id: None,
             tool_name: None,
@@ -568,7 +568,7 @@ mod tests {
         }
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {
-            session_id: snapshot.session_id.clone(),
+            session_id: snapshot.runtime_adapter_session_id.clone(),
             trigger: HookTrigger::CompanionResult,
             turn_id: Some("turn-parent-1".to_string()),
             tool_name: None,

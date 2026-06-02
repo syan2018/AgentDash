@@ -1073,7 +1073,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1083,7 +1083,7 @@ mod tests {
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1113,7 +1113,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1123,7 +1123,7 @@ mod tests {
             query: AgentFrameHookRefreshQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1153,7 +1153,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 metadata: Some(SessionSnapshotMetadata {
                     active_workflow: None,
                     turn_id: None,
@@ -1222,7 +1222,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1269,7 +1269,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 ..AgentFrameHookSnapshot::default()
             })
         }
@@ -1309,7 +1309,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(CompletionSatisfiedProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1398,7 +1398,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(CompletionBlockedProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1709,7 +1709,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1757,7 +1757,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1828,7 +1828,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1867,7 +1867,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1913,7 +1913,7 @@ mod tests {
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-hook".to_string(),
+                runtime_adapter_session_id: "sess-hook".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         ));
@@ -1957,7 +1957,7 @@ mod tests {
     #[test]
     fn pending_action_message_does_not_reference_specific_tools() {
         let snapshot = AgentFrameHookSnapshot {
-            session_id: "sess-hook".to_string(),
+            runtime_adapter_session_id: "sess-hook".to_string(),
             ..AgentFrameHookSnapshot::default()
         };
         let runtime = AgentFrameHookRuntime::new_test_runtime(

@@ -252,7 +252,7 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
 
     fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot {
         AgentFrameRuntimeSnapshot {
-            session_id: self.runtime_session_id.clone(),
+            runtime_adapter_session_id: self.runtime_session_id.clone(),
             revision: self.revision(),
             snapshot: self.snapshot(),
             diagnostics: self.diagnostics(),
@@ -567,7 +567,7 @@ mod tests {
             query: AgentFrameHookSnapshotQuery,
         ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(AgentFrameHookSnapshot {
-                session_id: query.provenance.runtime_session_id.unwrap_or_default(),
+                runtime_adapter_session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 metadata: Some(SessionSnapshotMetadata {
                     turn_id: query.provenance.turn_id,
                     ..Default::default()
@@ -611,7 +611,7 @@ mod tests {
             "sess-1".to_string(),
             Arc::new(NoopExecutionHookProvider),
             AgentFrameHookSnapshot {
-                session_id: "sess-1".to_string(),
+                runtime_adapter_session_id: "sess-1".to_string(),
                 ..AgentFrameHookSnapshot::default()
             },
         );
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn preserve_session_level_metadata_merges_missing_keys() {
         let mut snapshot = AgentFrameHookSnapshot {
-            session_id: "s1".into(),
+            runtime_adapter_session_id: "s1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 turn_id: Some("turn-2".into()),
                 ..Default::default()
@@ -666,7 +666,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_preserves_session_level_metadata() {
         let initial_snapshot = AgentFrameHookSnapshot {
-            session_id: "sess-1".into(),
+            runtime_adapter_session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 permission_policy: Some("SUPERVISED".into()),
                 working_directory: Some(".".into()),
@@ -711,7 +711,7 @@ mod tests {
             "sess-1".into(),
             provider.clone(),
             AgentFrameHookSnapshot {
-                session_id: "sess-1".into(),
+                runtime_adapter_session_id: "sess-1".into(),
                 ..Default::default()
             },
         );

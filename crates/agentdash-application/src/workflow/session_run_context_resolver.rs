@@ -4,12 +4,12 @@ use agentdash_domain::workflow::{
     LifecycleSubjectAssociation, LifecycleSubjectAssociationRepository,
 };
 use agentdash_spi::CapabilityScope;
-use agentdash_spi::hooks::SessionRunContext;
+use agentdash_spi::hooks::SubjectRunContext;
 use uuid::Uuid;
 
 use crate::ApplicationError;
 
-pub struct SessionRunContextResolver<'a> {
+pub struct SubjectRunContextResolver<'a> {
     lifecycle_run_repo: &'a dyn LifecycleRunRepository,
     lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
     agent_frame_repo: &'a dyn AgentFrameRepository,
@@ -17,7 +17,7 @@ pub struct SessionRunContextResolver<'a> {
     story_repo: &'a dyn StoryRepository,
 }
 
-impl<'a> SessionRunContextResolver<'a> {
+impl<'a> SubjectRunContextResolver<'a> {
     pub fn new(
         lifecycle_run_repo: &'a dyn LifecycleRunRepository,
         lifecycle_subject_association_repo: &'a dyn LifecycleSubjectAssociationRepository,
@@ -38,7 +38,7 @@ impl<'a> SessionRunContextResolver<'a> {
     pub async fn resolve_for_session(
         &self,
         session_id: &str,
-    ) -> Result<Option<SessionRunContext>, ApplicationError> {
+    ) -> Result<Option<SubjectRunContext>, ApplicationError> {
         let Some(frame) = self
             .agent_frame_repo
             .find_by_runtime_session(session_id)
@@ -75,7 +75,7 @@ impl<'a> SessionRunContextResolver<'a> {
                 .await
                 .map_err(ApplicationError::from)?;
         }
-        build_session_run_context(run.project_id, &associations, self.story_repo)
+        build_subject_run_context(run.project_id, &associations, self.story_repo)
             .await
             .map(Some)
     }
@@ -83,21 +83,21 @@ impl<'a> SessionRunContextResolver<'a> {
     pub async fn resolve_for_run(
         &self,
         run: &LifecycleRun,
-    ) -> Result<SessionRunContext, ApplicationError> {
+    ) -> Result<SubjectRunContext, ApplicationError> {
         let associations = self
             .lifecycle_subject_association_repo
             .list_by_anchor(run.id, None)
             .await
             .map_err(ApplicationError::from)?;
-        build_session_run_context(run.project_id, &associations, self.story_repo).await
+        build_subject_run_context(run.project_id, &associations, self.story_repo).await
     }
 }
 
-pub async fn build_session_run_context(
+pub async fn build_subject_run_context(
     project_id: Uuid,
     associations: &[LifecycleSubjectAssociation],
     story_repo: &dyn StoryRepository,
-) -> Result<SessionRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, ApplicationError> {
     if let Some(assoc) = select_association(associations, "task") {
         return task_context(project_id, assoc.subject_id, story_repo).await;
     }
@@ -106,7 +106,7 @@ pub async fn build_session_run_context(
         return story_context(project_id, assoc.subject_id, story_repo).await;
     }
 
-    Ok(SessionRunContext {
+    Ok(SubjectRunContext {
         project_id,
         story_id: None,
         task_id: None,
@@ -141,7 +141,7 @@ async fn task_context(
     project_id: Uuid,
     task_id: Uuid,
     story_repo: &dyn StoryRepository,
-) -> Result<SessionRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, ApplicationError> {
     let story = story_repo
         .find_by_task_id(task_id)
         .await
@@ -157,7 +157,7 @@ async fn task_context(
         })
         .unwrap_or((None, None, None));
 
-    Ok(SessionRunContext {
+    Ok(SubjectRunContext {
         project_id,
         story_id,
         task_id: Some(task_id),
@@ -171,12 +171,12 @@ async fn story_context(
     project_id: Uuid,
     story_id: Uuid,
     story_repo: &dyn StoryRepository,
-) -> Result<SessionRunContext, ApplicationError> {
+) -> Result<SubjectRunContext, ApplicationError> {
     let story = story_repo
         .get_by_id(story_id)
         .await
         .map_err(ApplicationError::from)?;
-    Ok(SessionRunContext {
+    Ok(SubjectRunContext {
         project_id,
         story_id: Some(story_id),
         task_id: None,

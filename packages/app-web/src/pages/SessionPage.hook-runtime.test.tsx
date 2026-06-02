@@ -10,10 +10,10 @@ import {
 import type { HookSessionRuntimeInfo } from "../types";
 
 const hookRuntime: HookSessionRuntimeInfo = {
-  session_id: "sess-hook-test",
+  runtime_adapter_session_id: "sess-hook-test",
   revision: 7,
   snapshot: {
-    session_id: "sess-hook-test",
+    runtime_adapter_session_id: "sess-hook-test",
     sources: [
       "builtin:global",
       "workflow:demo_lifecycle:check",
@@ -45,7 +45,7 @@ const hookRuntime: HookSessionRuntimeInfo = {
     diagnostics: [],
     metadata: {
       active_workflow: {
-        lifecycle_id: "lc-1",
+        workflow_graph_id: "lc-1",
         lifecycle_key: "demo_lifecycle",
         lifecycle_name: "Demo Lifecycle / Task",
         run_id: "run-1",

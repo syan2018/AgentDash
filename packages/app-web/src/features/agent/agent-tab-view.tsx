@@ -68,7 +68,7 @@ export function AgentTabView() {
         agentId: result.agent_ref.agent_id,
       });
 
-      const runtimeSessionId = result.runtime_session_ref?.runtime_session_id;
+      const runtimeSessionId = result.delivery_runtime_ref?.runtime_session_id;
       if (runtimeSessionId) {
         navigate(`/session/${runtimeSessionId}`);
       }
@@ -81,9 +81,13 @@ export function AgentTabView() {
       if (!currentProjectId) return;
       setSelectedAgent({ projectId: currentProjectId, agentId });
 
-      const primarySessionId = useLifecycleStore.getState().primarySessionId(runId);
-      if (primarySessionId) {
-        navigate(`/session/${primarySessionId}`);
+      const store = useLifecycleStore.getState();
+      const agent = store.agents.get(agentId);
+      const sessionId =
+        agent?.delivery_runtime_ref?.runtime_session_id
+        ?? store.primarySessionId(runId);
+      if (sessionId) {
+        navigate(`/session/${sessionId}`);
       }
     },
     [currentProjectId, navigate],

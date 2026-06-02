@@ -28,7 +28,7 @@ import { findWorkspaceBinding, useWorkspaceStore } from "../stores/workspaceStor
 import type {
   RuntimeTraceAgentContext,
   SessionNavigationState,
-  SessionRunContext,
+  SubjectRunContext,
   Story,
   StoryNavigationState,
 } from "../types";
@@ -140,7 +140,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   }, [currentSessionId, refreshSessionRuntimeHook]);
 
   const activeSessionContext = sessionRuntimeState.context;
-  const activeHookRuntime = sessionRuntimeState.hook_runtime?.session_id === currentSessionId
+  const activeHookRuntime = sessionRuntimeState.hook_runtime?.runtime_adapter_session_id === currentSessionId
     ? sessionRuntimeState.hook_runtime
     : null;
   const sessionWorkspaceId = activeSessionContext?.workspace_id ?? null;
@@ -149,7 +149,7 @@ export function SessionPage({ sessionId: propSessionId }: SessionPageProps) {
   const sessionCapabilities = null;
   const taskExecutorSummary = null;
 
-  const runContext: SessionRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
+  const runContext: SubjectRunContext | null = activeHookRuntime?.snapshot?.run_context ?? null;
 
   const fetchStoryById = useStoryStore((s) => s.fetchStoryById);
   const storiesByProjectId = useStoryStore((s) => s.storiesByProjectId);

@@ -104,7 +104,7 @@ impl AppExecutionHookProvider {
         workflow: Option<crate::workflow::ActiveWorkflowProjection>,
     ) -> Result<AgentFrameHookSnapshot, HookError> {
         let mut snapshot = AgentFrameHookSnapshot {
-            session_id: runtime_session_id,
+            runtime_adapter_session_id: runtime_session_id,
             run_context: None,
             sources: Vec::new(),
             tags: Vec::new(),
@@ -174,7 +174,7 @@ impl AppExecutionHookProvider {
                     }
                 });
                 meta.active_workflow = Some(ActiveWorkflowMeta {
-                    lifecycle_id: Some(workflow.lifecycle.id),
+                    workflow_graph_id: Some(workflow.lifecycle.id),
                     lifecycle_key: Some(workflow.lifecycle.key.clone()),
                     lifecycle_name: Some(workflow.lifecycle.name.clone()),
                     run_id: Some(workflow.run.id),
@@ -453,7 +453,7 @@ mod tests {
             source: "workflow:builtin_workflow_admin_apply:apply".to_string(),
         };
         let snapshot = AgentFrameHookSnapshot {
-            session_id: "session-1".to_string(),
+            runtime_adapter_session_id: "session-1".to_string(),
             injections: vec![injection.clone()],
             ..AgentFrameHookSnapshot::default()
         };
@@ -531,7 +531,7 @@ mod tests {
     async fn runtime_delegate_before_tool_rewrite_records_trace() {
         let snapshot = snapshot_with_workflow("implement", "session_ended");
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
-            snapshot.session_id.clone(),
+            snapshot.runtime_adapter_session_id.clone(),
             Arc::new(RuleEngineTestProvider::new(snapshot.clone())),
             snapshot,
         ));

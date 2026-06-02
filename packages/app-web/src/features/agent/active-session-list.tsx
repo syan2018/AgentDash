@@ -319,17 +319,20 @@ export function ActiveSessionList({
       );
       if (runAgents.length === 0) continue;
 
-      const primarySessionId = run.runtime_trace_refs[0]?.runtime_session_id ?? null;
+      const [primary, ...subs] = runAgents;
+      const primarySessionId =
+        primary?.delivery_runtime_ref?.runtime_session_id
+        ?? run.runtime_trace_refs[0]?.runtime_session_id
+        ?? null;
       const meta = primarySessionId ? sessionMetas.get(primarySessionId) ?? null : null;
 
-      const [primary, ...subs] = runAgents;
       entries.push({
         run,
         primaryAgent: primary,
         subAgents: subs,
         sessionTitle: meta?.title ?? null,
         primarySessionId,
-        executionStatus: meta?.lastExecutionStatus ?? "idle",
+        executionStatus: primary?.last_execution_status as SessionExecutionStatusValue ?? meta?.lastExecutionStatus ?? "idle",
       });
     }
 

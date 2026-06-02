@@ -43,7 +43,7 @@ pub struct UpdateStoryRequest {
 }
 
 #[derive(Deserialize, Default)]
-pub struct CreateTaskAgentBindingRequest {
+pub struct TaskDispatchPreferenceInput {
     pub agent_type: Option<String>,
     pub agent_pid: Option<String>,
     pub preset_name: Option<String>,
@@ -57,7 +57,7 @@ pub struct CreateTaskRequest {
     pub title: String,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub dispatch_preference: Option<CreateTaskAgentBindingRequest>,
+    pub dispatch_preference: Option<TaskDispatchPreferenceInput>,
 }
 
 #[derive(Deserialize, Default)]
@@ -65,5 +65,5 @@ pub struct UpdateTaskRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub workspace_id: Option<String>,
-    pub dispatch_preference: Option<CreateTaskAgentBindingRequest>,
+    pub dispatch_preference: Option<TaskDispatchPreferenceInput>,
 }

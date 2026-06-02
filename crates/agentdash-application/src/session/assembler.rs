@@ -1284,6 +1284,8 @@ pub(in crate::session) async fn compose_lifecycle_node_with_audit(
         project_id: spec.run.project_id,
     };
 
+    // TODO(phase-6e): compose 阶段 attempt 尚未确定，暂用 run 级 load_port_output_map；
+    // 待 assignment creation 前移后可改为 load_scoped_port_output_map。
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 
@@ -1611,6 +1613,7 @@ pub(in crate::session) async fn compose_companion_with_workflow(
 
     // ── 2. Workflow step activation（产出 lifecycle mount + 能力 + MCP） ──
     let owner_ctx = CapabilityScopeCtx::Project { project_id };
+    // TODO(phase-6e): 同上，compose 阶段缺 attempt；暂用 run 级全量查询。
     let port_output_map = load_port_output_map(repos.inline_file_repo.as_ref(), spec.run.id).await;
     let ready_port_keys: BTreeSet<String> = port_output_map.keys().cloned().collect();
 

@@ -87,11 +87,13 @@ export function SessionShortcutList({ projectId }: LifecycleShortcutListProps) {
         (a) => a.agent_ref.run_id === run.run_ref.run_id,
       );
 
-      const primarySessionId = run.runtime_trace_refs[0]?.runtime_session_id;
+      const primaryAgent = runAgents[0];
+      const primarySessionId =
+        primaryAgent?.delivery_runtime_ref?.runtime_session_id
+        ?? run.runtime_trace_refs[0]?.runtime_session_id;
       if (!primarySessionId) continue;
 
       const meta = sessionMetas.get(primarySessionId);
-      const primaryAgent = runAgents[0];
 
       entries.push({
         runtimeSessionId: primarySessionId,

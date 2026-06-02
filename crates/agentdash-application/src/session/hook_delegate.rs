@@ -20,7 +20,7 @@ use crate::hooks::hook_injection_to_fragment;
 
 use agentdash_spi::hooks::{
     ContextTokenStats, HookDiagnosticEntry, HookInjection, HookRuntimeEvaluationQuery,
-    HookRuntimeRefreshQuery, HookSessionRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
+    HookRuntimeRefreshQuery, AgentFrameRuntimeSnapshot, HookTraceEntry, HookTraceTrigger,
     HookTrigger, HookTurnStartNotice, RuntimeAdapterProvenance, SharedHookRuntime,
 };
 
@@ -864,9 +864,9 @@ impl AgentRuntimeDelegate for HookRuntimeDelegate {
 }
 
 struct EvaluatedResolution {
-    snapshot: agentdash_spi::hooks::SessionHookSnapshot,
+    snapshot: agentdash_spi::hooks::AgentFrameHookSnapshot,
     resolution: agentdash_spi::hooks::HookResolution,
-    runtime: HookSessionRuntimeSnapshot,
+    runtime: AgentFrameRuntimeSnapshot,
 }
 
 #[derive(Default)]
@@ -884,7 +884,7 @@ fn should_include_trace_injections(trigger: &HookTrigger, decision: &str) -> boo
 }
 
 fn should_trace_user_prompt_context_injection(
-    runtime: &HookSessionRuntimeSnapshot,
+    runtime: &AgentFrameRuntimeSnapshot,
     injections: &[HookInjection],
     pending_consumed: usize,
 ) -> bool {
@@ -909,8 +909,8 @@ fn should_trace_user_prompt_context_injection(
 
 fn collect_turn_start_injection_messages(
     hook_runtime: &dyn agentdash_spi::hooks::HookRuntimeAccess,
-    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
-    runtime: &HookSessionRuntimeSnapshot,
+    snapshot: &agentdash_spi::hooks::AgentFrameHookSnapshot,
+    runtime: &AgentFrameRuntimeSnapshot,
 ) -> TurnStartInjectionMessages {
     let mut messages = TurnStartInjectionMessages::default();
     let turn_start_notices = collect_turn_start_notice_messages(hook_runtime);
@@ -1024,7 +1024,7 @@ mod tests {
         HookDiagnosticEntry, HookError, HookEvaluationQuery, HookInjection, HookPendingAction,
         HookPendingActionResolutionKind, HookResolution, HookRuntimeAccess, HookTraceTrigger,
         HookTrigger, HookTurnStartNotice, NoopExecutionHookProvider, RuntimeEventSource,
-        SessionHookRefreshQuery, SessionHookSnapshot, SessionHookSnapshotQuery,
+        SessionHookRefreshQuery, SessionHookSnapshotQuery, AgentFrameHookSnapshot,
         SessionSnapshotMetadata,
     };
 
@@ -1072,7 +1072,7 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1083,7 +1083,7 @@ mod tests {
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_session_snapshot(SessionHookRefreshQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1113,20 +1113,20 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
@@ -1154,7 +1154,7 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1165,7 +1165,7 @@ mod tests {
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_session_snapshot(SessionHookRefreshQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1195,20 +1195,20 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
@@ -1236,7 +1236,7 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1247,7 +1247,7 @@ mod tests {
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_session_snapshot(SessionHookRefreshQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1277,8 +1277,8 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
                 metadata: Some(SessionSnapshotMetadata {
                     active_workflow: None,
@@ -1292,14 +1292,14 @@ mod tests {
                         serde_json::json!(64_000_u64),
                     )]),
                 }),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.session_id,
                 turn_id: query.turn_id,
@@ -1347,7 +1347,7 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1358,7 +1358,7 @@ mod tests {
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_session_snapshot(SessionHookRefreshQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1388,17 +1388,17 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.session_id,
                 turn_id: query.turn_id,
@@ -1438,7 +1438,7 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1449,7 +1449,7 @@ mod tests {
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_session_snapshot(SessionHookRefreshQuery {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 turn_id: query.provenance.turn_id,
@@ -1479,17 +1479,17 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.session_id,
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_session_snapshot(
             &self,
             query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.load_session_snapshot(SessionHookSnapshotQuery {
                 session_id: query.session_id,
                 turn_id: query.turn_id,
@@ -1520,9 +1520,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionSatisfiedProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         hook_runtime.enqueue_pending_action(HookPendingAction {
@@ -1609,9 +1609,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(CompletionBlockedProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let delegate = HookRuntimeDelegate::new(hook_runtime);
@@ -1890,9 +1890,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
@@ -1938,9 +1938,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(NoopExecutionHookProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         hook_runtime.enqueue_turn_start_notice(HookTurnStartNotice {
@@ -2009,9 +2009,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(StaticCompanionContextProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let audit_bus: SharedContextAuditBus = Arc::new(InMemoryContextAuditBus::new(100));
@@ -2048,9 +2048,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let delegate = HookRuntimeDelegate::new(hook_runtime.clone());
@@ -2094,9 +2094,9 @@ mod tests {
         let hook_runtime = Arc::new(AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),
             Arc::new(AfterTurnInjectionProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-hook".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         ));
         let sink = Arc::new(RecordingInjectionSink::default());
@@ -2138,9 +2138,9 @@ mod tests {
 
     #[test]
     fn pending_action_message_does_not_reference_specific_tools() {
-        let snapshot = SessionHookSnapshot {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "sess-hook".to_string(),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let runtime = AgentFrameHookRuntime::new_test_runtime(
             "sess-hook".to_string(),

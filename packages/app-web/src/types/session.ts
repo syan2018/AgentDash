@@ -1,4 +1,4 @@
-import type { AgentBinding } from "./index";
+import type { TaskDispatchPreference } from "./index";
 
 // ─── Session Types ─────────────────────────────────
 
@@ -15,7 +15,7 @@ export interface SessionRunContext {
 
 export interface SessionTaskContext {
   task_id: string;
-  agent_binding?: AgentBinding;
+  dispatch_preference?: TaskDispatchPreference;
 }
 
 export type SessionReturnTarget =
@@ -110,7 +110,7 @@ export interface HookRuntimeMetadata {
   active_workflow?: ActiveWorkflowHookMetadata | null;
 }
 
-export interface SessionHookSnapshot {
+export interface AgentFrameHookSnapshot {
   session_id: string;
   run_context?: SessionRunContext | null;
   sources: string[];
@@ -123,7 +123,7 @@ export interface SessionHookSnapshot {
 export interface HookSessionRuntimeInfo {
   session_id: string;
   revision: number;
-  snapshot: SessionHookSnapshot;
+  snapshot: AgentFrameHookSnapshot;
   diagnostics: HookDiagnosticEntry[];
   trace: HookTraceEntry[];
   pending_actions: HookPendingAction[];

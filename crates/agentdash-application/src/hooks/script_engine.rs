@@ -325,7 +325,7 @@ mod tests {
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
     use agentdash_spi::{
         HookControlTarget, HookEvaluationQuery, HookTrigger, RuntimeAdapterProvenance,
-        SessionHookSnapshot,
+        AgentFrameHookSnapshot,
     };
     use uuid::Uuid;
 
@@ -333,10 +333,10 @@ mod tests {
         HookScriptEngine::new(Arc::new(RhaiHookScriptEvaluator::new(&[])))
     }
 
-    fn base_ctx() -> (SessionHookSnapshot, HookRuleEvaluationQuery) {
-        let snapshot = SessionHookSnapshot {
+    fn base_ctx() -> (AgentFrameHookSnapshot, HookRuleEvaluationQuery) {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "sess-test".to_string(),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let query = HookRuleEvaluationQuery::from_session_query(HookEvaluationQuery {
             session_id: "sess-test".to_string(),
@@ -366,9 +366,9 @@ mod tests {
 
     #[test]
     fn context_carries_frame_target_and_runtime_provenance() {
-        let snapshot = SessionHookSnapshot {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "sess-frame".to_string(),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let target = HookControlTarget {
             run_id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),

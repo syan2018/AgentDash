@@ -2,7 +2,7 @@
 //!
 //! ## 设计定位
 //!
-//! 替代 `HookSessionRuntime` 的 session-indexed hook runtime。
+//! 以 `run_id + agent_id + frame_id` 为主键的 hook runtime。
 //! hook query/resolution 以 `run_id + agent_id + frame_id` 为主语：
 //!
 //! - 读取 context/capability/VFS/MCP surface：从 `AgentFrame` 读取
@@ -19,8 +19,8 @@ use agentdash_spi::hooks::{
     AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, ContextTokenStats,
     ExecutionHookProvider, HookControlTarget, HookDiagnosticEntry, HookError, HookPendingAction,
     HookPendingActionResolutionKind, HookPendingActionStatus, HookResolution, HookRuntimeAccess,
-    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, HookSessionRuntimeSnapshot,
-    HookTraceEntry, HookTurnStartNotice, SessionHookSnapshot, SessionSnapshotMetadata, SetDelta,
+    HookRuntimeEvaluationQuery, HookRuntimeRefreshQuery, AgentFrameRuntimeSnapshot,
+    HookTraceEntry, HookTurnStartNotice, AgentFrameHookSnapshot, SessionSnapshotMetadata, SetDelta,
 };
 use async_trait::async_trait;
 use tokio::sync::broadcast;
@@ -40,7 +40,7 @@ pub struct AgentFrameHookRuntime {
     /// provider query / trace 兼容用 session_id
     runtime_session_id: String,
     provider: Arc<dyn ExecutionHookProvider>,
-    snapshot: RwLock<SessionHookSnapshot>,
+    snapshot: RwLock<AgentFrameHookSnapshot>,
     diagnostics: RwLock<Vec<HookDiagnosticEntry>>,
     trace: RwLock<Vec<HookTraceEntry>>,
     pending_actions: RwLock<Vec<HookPendingAction>>,
@@ -65,7 +65,7 @@ impl std::fmt::Debug for AgentFrameHookRuntime {
     }
 }
 
-/// Hook query scope — 替代 session-indexed `SessionHookSnapshotQuery`。
+/// Hook query scope — 替代 session-indexed `AgentFrameHookSnapshotQuery`。
 #[derive(Debug, Clone)]
 pub struct FrameHookQuery {
     pub run_id: Uuid,
@@ -82,7 +82,7 @@ impl AgentFrameHookRuntime {
         frame_revision: i32,
         runtime_session_id: String,
         provider: Arc<dyn ExecutionHookProvider>,
-        snapshot: SessionHookSnapshot,
+        snapshot: AgentFrameHookSnapshot,
     ) -> Self {
         let diagnostics = snapshot.diagnostics.clone();
         let (trace_broadcast, _) = broadcast::channel(TRACE_BROADCAST_CAPACITY);
@@ -114,7 +114,7 @@ impl AgentFrameHookRuntime {
     pub fn new_test_runtime(
         runtime_session_id: String,
         provider: Arc<dyn ExecutionHookProvider>,
-        snapshot: SessionHookSnapshot,
+        snapshot: AgentFrameHookSnapshot,
     ) -> Self {
         let trace_run_id = Uuid::new_v4();
         Self::new(
@@ -134,7 +134,7 @@ impl AgentFrameHookRuntime {
         frame: &agentdash_domain::workflow::AgentFrame,
         runtime_session_id: String,
         provider: Arc<dyn ExecutionHookProvider>,
-        snapshot: SessionHookSnapshot,
+        snapshot: AgentFrameHookSnapshot,
     ) -> Self {
         Self::new(
             run_id,
@@ -184,7 +184,7 @@ impl AgentFrameHookRuntime {
 /// freshly-loaded snapshot. These fields are set once at session start and must
 /// survive snapshot refreshes triggered by runtime hooks.
 fn preserve_session_level_metadata(
-    snapshot: &mut SessionHookSnapshot,
+    snapshot: &mut AgentFrameHookSnapshot,
     previous_metadata: Option<&SessionSnapshotMetadata>,
 ) {
     let Some(previous) = previous_metadata else {
@@ -217,7 +217,7 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         self.hook_control_target()
     }
 
-    fn snapshot(&self) -> SessionHookSnapshot {
+    fn snapshot(&self) -> AgentFrameHookSnapshot {
         self.snapshot
             .read()
             .expect("hook snapshot read lock poisoned")
@@ -249,8 +249,8 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
             .clone()
     }
 
-    fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot {
-        HookSessionRuntimeSnapshot {
+    fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot {
+        AgentFrameRuntimeSnapshot {
             session_id: self.runtime_session_id.clone(),
             revision: self.revision(),
             snapshot: self.snapshot(),
@@ -263,7 +263,7 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
     async fn refresh_from_provenance(
         &self,
         query: HookRuntimeRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         let previous_metadata = self.snapshot().metadata.clone();
         let mut snapshot = self
             .provider
@@ -360,7 +360,7 @@ impl HookRuntimeAccess for AgentFrameHookRuntime {
         Ok(resolution)
     }
 
-    fn replace_snapshot(&self, snapshot: SessionHookSnapshot) {
+    fn replace_snapshot(&self, snapshot: AgentFrameHookSnapshot) {
         {
             let mut guard = self
                 .snapshot
@@ -565,21 +565,21 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
-            Ok(SessionHookSnapshot {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
+            Ok(AgentFrameHookSnapshot {
                 session_id: query.provenance.runtime_session_id.unwrap_or_default(),
                 metadata: Some(SessionSnapshotMetadata {
                     turn_id: query.provenance.turn_id,
                     ..Default::default()
                 }),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             })
         }
 
         async fn refresh_frame_snapshot(
             &self,
             query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             self.refresh_queries
                 .lock()
                 .expect("refresh query lock poisoned")
@@ -601,7 +601,7 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             _query: agentdash_spi::hooks::SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Err(HookError::Runtime(
                 "session snapshot entry should not be used".to_string(),
             ))
@@ -610,7 +610,7 @@ mod tests {
         async fn refresh_session_snapshot(
             &self,
             _query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Err(HookError::Runtime(
                 "session refresh entry should not be used".to_string(),
             ))
@@ -637,9 +637,9 @@ mod tests {
             &frame,
             "sess-1".to_string(),
             Arc::new(NoopExecutionHookProvider),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-1".to_string(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             },
         );
 
@@ -655,7 +655,7 @@ mod tests {
         let runtime = AgentFrameHookRuntime::new_test_runtime(
             "sess-standalone".to_string(),
             Arc::new(NoopExecutionHookProvider),
-            SessionHookSnapshot::default(),
+            AgentFrameHookSnapshot::default(),
         );
         assert_ne!(runtime.run_id, Uuid::from_u128(0));
         assert_eq!(runtime.session_id(), "sess-standalone");
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn preserve_session_level_metadata_merges_missing_keys() {
-        let mut snapshot = SessionHookSnapshot {
+        let mut snapshot = AgentFrameHookSnapshot {
             session_id: "s1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 turn_id: Some("turn-2".into()),
@@ -692,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_preserves_session_level_metadata() {
-        let initial_snapshot = SessionHookSnapshot {
+        let initial_snapshot = AgentFrameHookSnapshot {
             session_id: "sess-1".into(),
             metadata: Some(SessionSnapshotMetadata {
                 permission_policy: Some("SUPERVISED".into()),
@@ -737,7 +737,7 @@ mod tests {
             &frame,
             "sess-1".into(),
             provider.clone(),
-            SessionHookSnapshot {
+            AgentFrameHookSnapshot {
                 session_id: "sess-1".into(),
                 ..Default::default()
             },

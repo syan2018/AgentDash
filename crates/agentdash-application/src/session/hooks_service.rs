@@ -4,7 +4,7 @@ use std::sync::Arc;
 use agentdash_spi::ConnectorError;
 use agentdash_spi::hooks::{
     AgentFrameHookSnapshotQuery, ExecutionHookProvider, HookControlTarget, HookRuntimeAccess,
-    HookRuntimeRefreshQuery, RuntimeAdapterProvenance, SessionHookSnapshot, SharedHookRuntime,
+    HookRuntimeRefreshQuery, RuntimeAdapterProvenance, AgentFrameHookSnapshot, SharedHookRuntime,
 };
 
 use super::hub::{HookTriggerDispatchResult, HookTriggerInput, SessionRuntimeInner};
@@ -230,7 +230,7 @@ fn validate_hook_runtime_target(
 }
 
 fn enrich_hook_snapshot_runtime_metadata(
-    snapshot: &mut SessionHookSnapshot,
+    snapshot: &mut AgentFrameHookSnapshot,
     turn_id: &str,
     connector_id: &str,
     executor: &str,
@@ -252,7 +252,7 @@ pub(crate) async fn build_frame_hook_runtime(
     session_id: &str,
     target: HookControlTarget,
     provider: Arc<dyn agentdash_spi::hooks::ExecutionHookProvider>,
-    snapshot: SessionHookSnapshot,
+    snapshot: AgentFrameHookSnapshot,
 ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
     let Some(frame_repo) = hub.agent_frame_repo.as_ref() else {
         return Err(ConnectorError::Runtime(

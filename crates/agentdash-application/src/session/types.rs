@@ -9,7 +9,7 @@ use agentdash_spi::PromptPayload;
 pub use agentdash_spi::session_persistence::{
     ApplyMountOperationsEffect, ApplyVfsOverlayEffect, CapabilityArtifactSource,
     CapabilityContributionRecord, CapabilityDeclarationRecord, CapabilityDimensionKey,
-    CompanionSessionContext, EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
+    EFFECT_TYPE_APPLY_MOUNT_OPERATIONS, EFFECT_TYPE_APPLY_VFS_OVERLAY,
     EFFECT_TYPE_SET_COMPANION_AGENT_ROSTER, EFFECT_TYPE_SET_MCP_SERVER_SET,
     EFFECT_TYPE_SET_TOOL_ACCESS, ExecutionStatus, PendingCapabilityStateTransition,
     RuntimeCapabilityEffectRecord, RuntimeCapabilityTransition, SessionBootstrapState, SessionMeta,

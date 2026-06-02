@@ -437,7 +437,7 @@ fn child_session_meta(parent: &SessionMeta, title: Option<&str>, now: i64) -> Se
         last_terminal_message: None,
         executor_config: parent.executor_config.clone(),
         executor_session_id: None,
-        companion_context: None,
+
         tab_layout: None,
         visible_canvas_mount_ids: Vec::new(),
         bootstrap_state: SessionBootstrapState::Plain,
@@ -801,7 +801,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+    
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,

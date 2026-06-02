@@ -281,28 +281,6 @@ pub enum SessionBootstrapState {
     Bootstrapped,
 }
 
-#[deprecated(
-    note = "companion 控制面已迁移到 LifecycleGate + AgentLineage；此类型仅保留向后反序列化兼容"
-)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompanionSessionContext {
-    pub dispatch_id: String,
-    pub parent_session_id: String,
-    pub parent_turn_id: String,
-    pub companion_label: String,
-    pub slice_mode: String,
-    pub adoption_mode: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request_type: Option<String>,
-    #[serde(default)]
-    pub inherited_fragment_labels: Vec<String>,
-    #[serde(default)]
-    pub inherited_constraint_keys: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_name: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -327,8 +305,6 @@ pub struct SessionMeta {
     pub executor_config: Option<AgentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_session_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub companion_context: Option<CompanionSessionContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_layout: Option<serde_json::Value>,
     #[serde(default)]

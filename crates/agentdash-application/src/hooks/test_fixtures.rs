@@ -1,7 +1,7 @@
-use agentdash_domain::workflow::{WorkflowContract, WorkflowHookRuleSpec, WorkflowHookTrigger};
-use agentdash_spi::{ActiveWorkflowMeta, SessionHookSnapshot, SessionSnapshotMetadata};
+use agentdash_domain::workflow::{AgentProcedureContract, WorkflowHookRuleSpec, WorkflowHookTrigger};
+use agentdash_spi::{ActiveWorkflowMeta, AgentFrameHookSnapshot, SessionSnapshotMetadata};
 
-pub fn snapshot_with_workflow(activity_key: &str, completion_mode: &str) -> SessionHookSnapshot {
+pub fn snapshot_with_workflow(activity_key: &str, completion_mode: &str) -> AgentFrameHookSnapshot {
     snapshot_with_workflow_ports(activity_key, completion_mode, &[], &[])
 }
 
@@ -11,12 +11,12 @@ pub fn snapshot_with_workflow_ports(
     completion_mode: &str,
     output_port_keys: &[&str],
     fulfilled_port_keys: &[&str],
-) -> SessionHookSnapshot {
+) -> AgentFrameHookSnapshot {
     let (transition_policy, procedure_key, contract) = match completion_mode {
         "checklist_passed" => (
             "auto",
             Some("trellis_dev_task_check"),
-            WorkflowContract {
+            AgentProcedureContract {
                 hook_rules: vec![WorkflowHookRuleSpec {
                     key: "port_output_gate".to_string(),
                     trigger: WorkflowHookTrigger::BeforeStop,
@@ -26,13 +26,13 @@ pub fn snapshot_with_workflow_ports(
                     script: None,
                     enabled: true,
                 }],
-                ..WorkflowContract::default()
+                ..AgentProcedureContract::default()
             },
         ),
         "session_ended" => (
             "auto",
             Some("trellis_dev_task_implement"),
-            WorkflowContract {
+            AgentProcedureContract {
                 hook_rules: vec![WorkflowHookRuleSpec {
                     key: "terminal_advance".to_string(),
                     trigger: WorkflowHookTrigger::BeforeStop,
@@ -42,10 +42,10 @@ pub fn snapshot_with_workflow_ports(
                     script: None,
                     enabled: true,
                 }],
-                ..WorkflowContract::default()
+                ..AgentProcedureContract::default()
             },
         ),
-        _ => ("manual", None, WorkflowContract::default()),
+        _ => ("manual", None, AgentProcedureContract::default()),
     };
     let effective_contract = agentdash_domain::workflow::EffectiveSessionContract {
         injection: contract.injection,
@@ -63,7 +63,7 @@ pub fn snapshot_with_workflow_ports(
     } else {
         Some(fulfilled_port_keys.iter().map(|k| k.to_string()).collect())
     };
-    SessionHookSnapshot {
+    AgentFrameHookSnapshot {
         session_id: "sess-test".to_string(),
         sources: vec![workflow_source],
         metadata: Some(SessionSnapshotMetadata {
@@ -83,17 +83,17 @@ pub fn snapshot_with_workflow_ports(
             }),
             ..Default::default()
         }),
-        ..SessionHookSnapshot::default()
+        ..AgentFrameHookSnapshot::default()
     }
 }
 
-pub fn snapshot_with_supervised_policy() -> SessionHookSnapshot {
-    SessionHookSnapshot {
+pub fn snapshot_with_supervised_policy() -> AgentFrameHookSnapshot {
+    AgentFrameHookSnapshot {
         session_id: "sess-supervised".to_string(),
         metadata: Some(SessionSnapshotMetadata {
             permission_policy: Some("SUPERVISED".to_string()),
             ..Default::default()
         }),
-        ..SessionHookSnapshot::default()
+        ..AgentFrameHookSnapshot::default()
     }
 }

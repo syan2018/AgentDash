@@ -1,10 +1,10 @@
 //! Hook 注入 → ContextFragment / Contribution 转换桥。
 //!
-//! 把 Hook 链路产出的 `HookInjection` / `SessionHookSnapshot` 转换为统一的
+//! 把 Hook 链路产出的 `HookInjection` / `AgentFrameHookSnapshot` 转换为统一的
 //! `ContextFragment` / `Contribution`，让 Hook 数据可以与其他 contribution 一视同仁
 //! 地进入 `build_session_context_bundle`。Bundle 的 `upsert_by_slot` 承担去重语义。
 
-use agentdash_spi::{ContextFragment, HookInjection, MergeStrategy, SessionHookSnapshot};
+use agentdash_spi::{ContextFragment, HookInjection, MergeStrategy, AgentFrameHookSnapshot};
 
 use crate::context::Contribution;
 use crate::context::slot_orders;
@@ -33,7 +33,7 @@ fn default_hook_order(slot: &str) -> i32 {
 ///
 /// 因 orphan rule，Rust 不允许在此 crate 对 `HookInjection → ContextFragment`
 /// 直接 `impl From`（两端都在 `agentdash-spi`）。故以自由函数 + 本地 `Contribution`
-/// 的 `From<&SessionHookSnapshot>` 形式完成桥接。
+/// 的 `From<&AgentFrameHookSnapshot>` 形式完成桥接。
 pub fn hook_injection_to_fragment(injection: HookInjection) -> ContextFragment {
     let order = default_hook_order(&injection.slot);
     ContextFragment {
@@ -47,8 +47,8 @@ pub fn hook_injection_to_fragment(injection: HookInjection) -> ContextFragment {
     }
 }
 
-impl From<&SessionHookSnapshot> for Contribution {
-    fn from(snapshot: &SessionHookSnapshot) -> Self {
+impl From<&AgentFrameHookSnapshot> for Contribution {
+    fn from(snapshot: &AgentFrameHookSnapshot) -> Self {
         Contribution::fragments_only(
             snapshot
                 .injections
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn snapshot_injections_map_to_contribution() {
-        let snapshot = SessionHookSnapshot {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "sess-1".to_string(),
             injections: vec![
                 HookInjection {

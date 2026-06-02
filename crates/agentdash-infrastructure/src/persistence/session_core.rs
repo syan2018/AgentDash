@@ -64,10 +64,6 @@ where
             "executor_config_json",
         )?,
         executor_session_id: row.get::<Option<String>, _>("executor_session_id"),
-        companion_context: parse_optional_json_column(
-            row.get::<Option<String>, _>("companion_context_json"),
-            "companion_context_json",
-        )?,
         tab_layout: parse_optional_json_column(
             row.get::<Option<String>, _>("tab_layout_json"),
             "tab_layout_json",

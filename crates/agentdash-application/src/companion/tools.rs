@@ -233,8 +233,6 @@ impl AgentTool for CompanionRequestTool {
 
 impl CompanionRequestTool {
     /// target=sub: 构造 ExecutionIntent 通过 LifecycleDispatchService 派发 companion child agent。
-    ///
-    /// 不再创建 companion session 或管理 CompanionSessionContext；
     /// wait 语义通过 durable LifecycleGate 实现。
     async fn execute_sub_request(
         &self,
@@ -1835,7 +1833,7 @@ fn build_companion_dispatch_plan(
 }
 
 pub fn build_companion_dispatch_slice(
-    snapshot: &agentdash_spi::SessionHookSnapshot,
+    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
     resolution: &agentdash_spi::HookResolution,
     mode: CompanionSliceMode,
     max_fragments: usize,
@@ -2014,7 +2012,7 @@ fn filter_vfs_capabilities(vfs: Option<&Vfs>, allowed: &[MountCapability]) -> Vf
     }
 }
 
-fn build_companion_owner_summary(snapshot: &agentdash_spi::SessionHookSnapshot) -> Option<String> {
+fn build_companion_owner_summary(snapshot: &agentdash_spi::AgentFrameHookSnapshot) -> Option<String> {
     let ctx = snapshot.run_context.as_ref()?;
     let mut lines = Vec::new();
     lines.push(format!("- Project: {}", ctx.project_id));
@@ -2038,7 +2036,7 @@ fn companion_adoption_mode_key(mode: CompanionAdoptionMode) -> &'static str {
 }
 
 pub fn companion_owner_candidates(
-    snapshot: &agentdash_spi::SessionHookSnapshot,
+    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
 ) -> Result<Vec<(CapabilityScope, Uuid, Option<String>)>, AgentToolError> {
     let mut owners = Vec::new();
     if let Some(ctx) = &snapshot.run_context {
@@ -2069,7 +2067,7 @@ pub fn companion_owner_candidates(
 
 #[allow(dead_code)]
 fn companion_project_id_for_owner(
-    snapshot: &agentdash_spi::SessionHookSnapshot,
+    snapshot: &agentdash_spi::AgentFrameHookSnapshot,
     _owner_type: CapabilityScope,
     _owner_id: Uuid,
 ) -> Result<Uuid, AgentToolError> {
@@ -2104,7 +2102,7 @@ mod companion_tests {
         let story_id = Uuid::new_v4();
         let task_id = Uuid::new_v4();
         let project_id = Uuid::new_v4();
-        let snapshot = agentdash_spi::SessionHookSnapshot {
+        let snapshot = agentdash_spi::AgentFrameHookSnapshot {
             session_id: "sess-test".to_string(),
             run_context: Some(agentdash_spi::hooks::SessionRunContext {
                 project_id,
@@ -2114,7 +2112,7 @@ mod companion_tests {
                 task_title: Some("Task A".to_string()),
                 scope: CapabilityScope::Task,
             }),
-            ..agentdash_spi::SessionHookSnapshot::default()
+            ..agentdash_spi::AgentFrameHookSnapshot::default()
         };
 
         let candidates = companion_owner_candidates(&snapshot).expect("candidates");
@@ -2158,7 +2156,7 @@ mod companion_tests {
 
     #[test]
     fn compact_companion_slice_keeps_owner_summary_and_limits_payload() {
-        let snapshot = agentdash_spi::SessionHookSnapshot {
+        let snapshot = agentdash_spi::AgentFrameHookSnapshot {
             session_id: "sess-parent".to_string(),
             run_context: Some(agentdash_spi::hooks::SessionRunContext {
                 project_id: Uuid::new_v4(),
@@ -2168,7 +2166,7 @@ mod companion_tests {
                 task_title: Some("Task A".to_string()),
                 scope: CapabilityScope::Task,
             }),
-            ..agentdash_spi::SessionHookSnapshot::default()
+            ..agentdash_spi::AgentFrameHookSnapshot::default()
         };
         let resolution = agentdash_spi::HookResolution {
             injections: vec![

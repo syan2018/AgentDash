@@ -78,12 +78,9 @@ pub struct HookDiagnosticEntry {
     pub message: String,
 }
 
-#[deprecated(
-    note = "迁移到 AgentFrameHookRuntime；session-indexed snapshot 仅保留 trace adapter 语义"
-)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct SessionHookSnapshot {
+pub struct AgentFrameHookSnapshot {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_context: Option<SessionRunContext>,
@@ -153,7 +150,7 @@ pub struct ActiveWorkflowMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_type: Option<String>,
 
-    /// 当前 node 的 output port key 列表（来自 WorkflowContract）
+    /// 当前 node 的 output port key 列表（来自 AgentProcedureContract）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_port_keys: Option<Vec<String>>,
     /// 当前 lifecycle run 中已写入的 port output key 列表
@@ -166,10 +163,10 @@ pub struct ActiveWorkflowMeta {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub struct HookSessionRuntimeSnapshot {
+pub struct AgentFrameRuntimeSnapshot {
     pub session_id: String,
     pub revision: u64,
-    pub snapshot: SessionHookSnapshot,
+    pub snapshot: AgentFrameHookSnapshot,
     #[serde(default)]
     pub diagnostics: Vec<HookDiagnosticEntry>,
     #[serde(default)]
@@ -467,23 +464,23 @@ impl HookPendingAction {
 pub trait HookRuntimeAccess: Send + Sync + std::fmt::Debug {
     fn session_id(&self) -> &str;
     fn control_target(&self) -> HookControlTarget;
-    fn snapshot(&self) -> SessionHookSnapshot;
+    fn snapshot(&self) -> AgentFrameHookSnapshot;
     fn diagnostics(&self) -> Vec<HookDiagnosticEntry>;
     fn revision(&self) -> u64;
     fn trace(&self) -> Vec<HookTraceEntry>;
     fn pending_actions(&self) -> Vec<HookPendingAction>;
-    fn runtime_snapshot(&self) -> HookSessionRuntimeSnapshot;
+    fn runtime_snapshot(&self) -> AgentFrameRuntimeSnapshot;
 
     async fn refresh_from_provenance(
         &self,
         query: HookRuntimeRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
     async fn evaluate_from_provenance(
         &self,
         query: HookRuntimeEvaluationQuery,
     ) -> Result<HookResolution, HookError>;
 
-    fn replace_snapshot(&self, snapshot: SessionHookSnapshot);
+    fn replace_snapshot(&self, snapshot: AgentFrameHookSnapshot);
     fn append_diagnostics_vec(&self, entries: Vec<HookDiagnosticEntry>);
     fn append_trace(&self, trace: HookTraceEntry);
     fn next_trace_sequence(&self) -> u64;
@@ -603,7 +600,7 @@ pub struct AgentFrameHookEvaluationQuery {
     #[serde(default)]
     pub subagent_type: Option<String>,
     #[serde(default)]
-    pub snapshot: Option<SessionHookSnapshot>,
+    pub snapshot: Option<AgentFrameHookSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -630,13 +627,14 @@ pub struct HookRuntimeEvaluationQuery {
     #[serde(default)]
     pub subagent_type: Option<String>,
     #[serde(default)]
-    pub snapshot: Option<SessionHookSnapshot>,
+    pub snapshot: Option<AgentFrameHookSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_stats: Option<ContextTokenStats>,
 }
 
+#[deprecated(note = "session-indexed query; 使用 AgentFrameHookSnapshotQuery 代替")]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct SessionHookSnapshotQuery {
@@ -757,7 +755,7 @@ pub struct HookEvaluationQuery {
     #[serde(default)]
     pub subagent_type: Option<String>,
     #[serde(default)]
-    pub snapshot: Option<SessionHookSnapshot>,
+    pub snapshot: Option<AgentFrameHookSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
     /// 实时 token 统计（由 runtime 自动注入）
@@ -967,12 +965,12 @@ pub trait ExecutionHookProvider: Send + Sync {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
     async fn evaluate_frame_hook(
         &self,
@@ -987,7 +985,7 @@ pub trait ExecutionHookProvider: Send + Sync {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
     /// Adapter-only: session-indexed snapshot 刷新。
     ///
@@ -996,7 +994,7 @@ pub trait ExecutionHookProvider: Send + Sync {
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError>;
+    ) -> Result<AgentFrameHookSnapshot, HookError>;
 
     /// Adapter-only: session-indexed hook 评估。
     ///
@@ -1035,17 +1033,17 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        Ok(SessionHookSnapshot {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        Ok(AgentFrameHookSnapshot {
             session_id: query.provenance.runtime_session_id.unwrap_or_default(),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         })
     }
 
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
             target: query.target,
             provenance: query.provenance,
@@ -1063,20 +1061,20 @@ impl ExecutionHookProvider for NoopExecutionHookProvider {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        Ok(SessionHookSnapshot {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        Ok(AgentFrameHookSnapshot {
             session_id: query.session_id,
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         })
     }
 
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        Ok(SessionHookSnapshot {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        Ok(AgentFrameHookSnapshot {
             session_id: query.session_id,
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         })
     }
 
@@ -1120,7 +1118,7 @@ mod run_context_tests {
 
     #[test]
     fn session_hook_snapshot_default_has_no_run_context() {
-        let snapshot = SessionHookSnapshot::default();
+        let snapshot = AgentFrameHookSnapshot::default();
         assert!(snapshot.run_context.is_none());
     }
 }

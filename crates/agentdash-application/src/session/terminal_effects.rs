@@ -486,7 +486,7 @@ mod tests {
                 last_terminal_message: None,
                 executor_config: None,
                 executor_session_id: None,
-                companion_context: None,
+
                 tab_layout: None,
                 visible_canvas_mount_ids: Vec::new(),
                 bootstrap_state: SessionBootstrapState::Plain,

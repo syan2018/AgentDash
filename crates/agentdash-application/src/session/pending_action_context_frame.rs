@@ -1,6 +1,6 @@
 use agentdash_spi::hooks::{
     ContextFrame, ContextFrameSection, HookPendingAction, HookPendingActionStatus,
-    HookSessionRuntimeSnapshot, RuntimeContextFragmentEntry, RuntimeEventSource,
+    AgentFrameRuntimeSnapshot, RuntimeContextFragmentEntry, RuntimeEventSource,
     RuntimeHookInjectionEntry,
 };
 
@@ -16,9 +16,9 @@ struct PendingActionFrame {
 
 impl PendingActionFrame {
     fn from_parts(
-        snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
+        snapshot: &agentdash_spi::hooks::AgentFrameHookSnapshot,
         action: &HookPendingAction,
-        runtime: &HookSessionRuntimeSnapshot,
+        runtime: &AgentFrameRuntimeSnapshot,
     ) -> Option<Self> {
         if action.summary.trim().is_empty() && action.injections.is_empty() {
             return None;
@@ -122,9 +122,9 @@ impl ContextFramePayload for PendingActionFrame {
 }
 
 pub(crate) fn build_pending_action_context_frame(
-    snapshot: &agentdash_spi::hooks::SessionHookSnapshot,
+    snapshot: &agentdash_spi::hooks::AgentFrameHookSnapshot,
     action: &HookPendingAction,
-    runtime: &HookSessionRuntimeSnapshot,
+    runtime: &AgentFrameRuntimeSnapshot,
 ) -> Option<ContextFrame> {
     let frame = PendingActionFrame::from_parts(snapshot, action, runtime)?;
     Some(context_frame::build_context_frame(&frame))

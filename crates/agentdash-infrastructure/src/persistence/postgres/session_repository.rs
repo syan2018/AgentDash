@@ -161,8 +161,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let companion_context_json =
-            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
         let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         let visible_canvas_mount_ids_json = json_string(
             &meta.visible_canvas_mount_ids,
@@ -173,9 +171,9 @@ impl SessionMetaStore for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
+                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             "#,
         )
         .bind(&meta.id)
@@ -190,7 +188,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(companion_context_json)
         .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
@@ -205,7 +202,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
+                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
             FROM sessions
             WHERE id = $1
@@ -223,7 +220,7 @@ impl SessionMetaStore for PostgresSessionRepository {
             r#"
             SELECT id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                    last_turn_id, last_terminal_message, executor_config_json,
-                   executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
+                   executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
                    bootstrap_state
             FROM sessions
             ORDER BY updated_at DESC
@@ -239,8 +236,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         let last_event_seq = encode_u64_as_i64(meta.last_event_seq, "sessions.last_event_seq")?;
         let executor_config_json =
             optional_json_string(meta.executor_config.as_ref(), "executor_config_json")?;
-        let companion_context_json =
-            optional_json_string(meta.companion_context.as_ref(), "companion_context_json")?;
         let tab_layout_json = optional_json_string(meta.tab_layout.as_ref(), "tab_layout_json")?;
         let visible_canvas_mount_ids_json = json_string(
             &meta.visible_canvas_mount_ids,
@@ -251,9 +246,9 @@ impl SessionMetaStore for PostgresSessionRepository {
             INSERT INTO sessions (
                 id, title, title_source, project_id, created_at, updated_at, last_event_seq, last_execution_status,
                 last_turn_id, last_terminal_message, executor_config_json,
-                executor_session_id, companion_context_json, tab_layout_json, visible_canvas_mount_ids_json,
+                executor_session_id, tab_layout_json, visible_canvas_mount_ids_json,
                 bootstrap_state
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 title_source = excluded.title_source,
@@ -278,7 +273,6 @@ impl SessionMetaStore for PostgresSessionRepository {
                 END,
                 executor_config_json = excluded.executor_config_json,
                 executor_session_id = excluded.executor_session_id,
-                companion_context_json = excluded.companion_context_json,
                 tab_layout_json = excluded.tab_layout_json,
                 visible_canvas_mount_ids_json = excluded.visible_canvas_mount_ids_json,
                 bootstrap_state = CASE
@@ -300,7 +294,6 @@ impl SessionMetaStore for PostgresSessionRepository {
         .bind(&meta.last_terminal_message)
         .bind(executor_config_json)
         .bind(&meta.executor_session_id)
-        .bind(companion_context_json)
         .bind(tab_layout_json)
         .bind(visible_canvas_mount_ids_json)
         .bind(bootstrap_state_to_str(meta.bootstrap_state))
@@ -1692,7 +1685,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
@@ -1844,7 +1837,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
@@ -1911,7 +1904,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,

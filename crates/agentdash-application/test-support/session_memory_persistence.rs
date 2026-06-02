@@ -974,7 +974,6 @@ fn merge_session_meta(current: &mut SessionMeta, incoming: &SessionMeta) {
 
     current.executor_config = incoming.executor_config.clone();
     current.executor_session_id = incoming.executor_session_id.clone();
-    current.companion_context = incoming.companion_context.clone();
     current.tab_layout = incoming.tab_layout.clone();
     current.visible_canvas_mount_ids = incoming.visible_canvas_mount_ids.clone();
     if current.bootstrap_state != SessionBootstrapState::Bootstrapped {
@@ -1075,7 +1074,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
@@ -1119,7 +1118,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
@@ -1190,7 +1189,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,
@@ -1261,7 +1260,7 @@ mod tests {
             last_terminal_message: None,
             executor_config: None,
             executor_session_id: None,
-            companion_context: None,
+
             tab_layout: None,
             visible_canvas_mount_ids: Vec::new(),
             bootstrap_state: SessionBootstrapState::Plain,

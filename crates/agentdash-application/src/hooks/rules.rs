@@ -1,7 +1,7 @@
 use agentdash_domain::workflow::WorkflowHookRuleSpec;
 use agentdash_spi::{
     AgentFrameHookEvaluationQuery, HookControlTarget, HookDiagnosticEntry, HookEvaluationQuery,
-    HookResolution, HookTrigger, RuntimeAdapterProvenance, SessionHookSnapshot,
+    HookResolution, HookTrigger, RuntimeAdapterProvenance, AgentFrameHookSnapshot,
 };
 
 use super::presets::domain_trigger_to_spi;
@@ -14,7 +14,7 @@ mod global_rules;
 mod owner_defaults;
 
 pub(crate) struct HookEvaluationContext<'a> {
-    pub(crate) snapshot: &'a SessionHookSnapshot,
+    pub(crate) snapshot: &'a AgentFrameHookSnapshot,
     pub(crate) query: &'a HookRuleEvaluationQuery,
 }
 
@@ -195,7 +195,7 @@ mod tests {
     use std::sync::Arc;
 
     use agentdash_infrastructure::RhaiHookScriptEvaluator;
-    use agentdash_spi::{HookInjection, HookTrigger, SessionHookSnapshot};
+    use agentdash_spi::{HookInjection, HookTrigger, AgentFrameHookSnapshot};
 
     use super::super::presets::builtin_preset_scripts;
     use super::super::test_fixtures::*;
@@ -464,7 +464,7 @@ mod tests {
         use agentdash_domain::workflow::{
             EffectiveSessionContract, WorkflowHookRuleSpec, WorkflowHookTrigger,
         };
-        let snapshot = SessionHookSnapshot {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "sess-test".to_string(),
             sources: vec!["workflow:trellis_dev_task:check".to_string()],
             run_context: Some(agentdash_spi::hooks::SessionRunContext {
@@ -505,7 +505,7 @@ mod tests {
                 }),
                 ..Default::default()
             }),
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let mut resolution = HookResolution::default();
         let query = HookEvaluationQuery {

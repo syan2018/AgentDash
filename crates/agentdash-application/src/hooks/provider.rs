@@ -14,8 +14,8 @@ use agentdash_spi::{
     ActiveWorkflowMeta, AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery,
     AgentFrameHookSnapshotQuery, HookControlTarget, HookDiagnosticEntry, HookError,
     HookEvaluationQuery, HookResolution, HookScriptEvaluator, HookTrigger,
-    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshot,
-    SessionHookSnapshotQuery, SessionSnapshotMetadata,
+    RuntimeAdapterProvenance, SessionHookRefreshQuery, SessionHookSnapshotQuery,
+    AgentFrameHookSnapshot, SessionSnapshotMetadata,
 };
 use async_trait::async_trait;
 
@@ -104,8 +104,8 @@ impl AppExecutionHookProvider {
         runtime_session_id: String,
         turn_id: Option<String>,
         workflow: Option<crate::workflow::ActiveWorkflowProjection>,
-    ) -> Result<SessionHookSnapshot, HookError> {
-        let mut snapshot = SessionHookSnapshot {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
+        let mut snapshot = AgentFrameHookSnapshot {
             session_id: runtime_session_id,
             run_context: None,
             sources: Vec::new(),
@@ -265,7 +265,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn load_frame_snapshot(
         &self,
         query: AgentFrameHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         let workflow = self
             .workflow_builder
             .resolve_active_workflow_for_target(&query.target)
@@ -281,7 +281,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn refresh_frame_snapshot(
         &self,
         query: AgentFrameHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         self.load_frame_snapshot(AgentFrameHookSnapshotQuery {
             target: query.target,
             provenance: query.provenance,
@@ -310,7 +310,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         let Some(target) = self.resolve_runtime_hook_target(&query.session_id).await? else {
             return self
                 .build_snapshot_from_workflow(query.session_id, query.turn_id, None)
@@ -330,7 +330,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
-    ) -> Result<SessionHookSnapshot, HookError> {
+    ) -> Result<AgentFrameHookSnapshot, HookError> {
         self.load_session_snapshot(SessionHookSnapshotQuery {
             session_id: query.session_id,
             turn_id: query.turn_id,
@@ -342,9 +342,9 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
         let snapshot = query
             .snapshot
             .clone()
-            .unwrap_or_else(|| SessionHookSnapshot {
+            .unwrap_or_else(|| AgentFrameHookSnapshot {
                 session_id: query.session_id.clone(),
-                ..SessionHookSnapshot::default()
+                ..AgentFrameHookSnapshot::default()
             });
         let query = HookRuleEvaluationQuery::from_session_query(query);
         Ok(self.evaluate_rules(&snapshot, &query))
@@ -361,7 +361,7 @@ impl ExecutionHookProvider for AppExecutionHookProvider {
 impl AppExecutionHookProvider {
     fn evaluate_rules(
         &self,
-        snapshot: &SessionHookSnapshot,
+        snapshot: &AgentFrameHookSnapshot,
         query: &HookRuleEvaluationQuery,
     ) -> HookResolution {
         let mut resolution = HookResolution {
@@ -451,7 +451,7 @@ fn trigger_includes_snapshot_injections(trigger: &HookTrigger) -> bool {
 
 fn seed_snapshot_injections_for_trigger(
     trigger: &HookTrigger,
-    snapshot: &SessionHookSnapshot,
+    snapshot: &AgentFrameHookSnapshot,
     resolution: &mut HookResolution,
 ) {
     if trigger_includes_snapshot_injections(trigger) {
@@ -468,7 +468,7 @@ mod tests {
     use agentdash_spi::hooks::HookRuntimeAccess;
     use agentdash_spi::hooks::{
         AgentFrameHookEvaluationQuery, AgentFrameHookRefreshQuery, AgentFrameHookSnapshotQuery,
-        HookEvaluationQuery, HookResolution, SessionHookSnapshot,
+        HookEvaluationQuery, HookResolution, AgentFrameHookSnapshot,
     };
     use agentdash_spi::{
         AgentContext, AgentMessage, BeforeToolCallInput, ToolCallDecision, ToolCallInfo,
@@ -494,10 +494,10 @@ mod tests {
             content: "## Workflow Guidance\n进入 Apply 阶段".to_string(),
             source: "workflow:builtin_workflow_admin_apply:apply".to_string(),
         };
-        let snapshot = SessionHookSnapshot {
+        let snapshot = AgentFrameHookSnapshot {
             session_id: "session-1".to_string(),
             injections: vec![injection.clone()],
-            ..SessionHookSnapshot::default()
+            ..AgentFrameHookSnapshot::default()
         };
         let mut resolution = HookResolution::default();
 
@@ -517,12 +517,12 @@ mod tests {
     }
 
     struct RuleEngineTestProvider {
-        snapshot: SessionHookSnapshot,
+        snapshot: AgentFrameHookSnapshot,
         engine: HookScriptEngine,
     }
 
     impl RuleEngineTestProvider {
-        fn new(snapshot: SessionHookSnapshot) -> Self {
+        fn new(snapshot: AgentFrameHookSnapshot) -> Self {
             let scripts = builtin_preset_scripts();
             Self {
                 snapshot,
@@ -537,14 +537,14 @@ mod tests {
         async fn load_frame_snapshot(
             &self,
             _query: AgentFrameHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(self.snapshot.clone())
         }
 
         async fn refresh_frame_snapshot(
             &self,
             _query: AgentFrameHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(self.snapshot.clone())
         }
 
@@ -572,14 +572,14 @@ mod tests {
         async fn load_session_snapshot(
             &self,
             _query: SessionHookSnapshotQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(self.snapshot.clone())
         }
 
         async fn refresh_session_snapshot(
             &self,
             _query: SessionHookRefreshQuery,
-        ) -> Result<SessionHookSnapshot, HookError> {
+        ) -> Result<AgentFrameHookSnapshot, HookError> {
             Ok(self.snapshot.clone())
         }
 
@@ -658,7 +658,7 @@ mod tests {
             other => panic!("期望 Rewrite，实际得到 {other:?}"),
         }
 
-        let runtime: agentdash_spi::hooks::HookSessionRuntimeSnapshot =
+        let runtime: agentdash_spi::hooks::AgentFrameRuntimeSnapshot =
             hook_runtime.runtime_snapshot();
         assert_eq!(runtime.trace.len(), 1);
         assert_eq!(runtime.trace[0].trigger, HookTraceTrigger::BeforeTool);

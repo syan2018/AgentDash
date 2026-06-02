@@ -1,14 +1,11 @@
 //! LifecycleGateService — durable wait/resume 机制。
 //!
-//! 替代 in-memory `CompanionWaitRegistry`，提供可跨进程重启的 gate 等待。
 //! companion_request(wait=true) 创建 gate 并 poll 等待 resolve；
 //! companion_respond 通过 gate_id resolve gate。
 
-use std::sync::Arc;
-
 use uuid::Uuid;
 
-use agentdash_domain::workflow::{LifecycleGate, LifecycleGateRepository};
+use agentdash_domain::workflow::LifecycleGate;
 
 use crate::repository_set::RepositorySet;
 

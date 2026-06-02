@@ -9,6 +9,7 @@ pub mod engine;
 mod error;
 pub mod execution_log;
 pub mod frame_builder;
+pub mod frame_construction;
 pub mod frame_hook_runtime;
 pub mod frame_surface;
 pub mod freeform;
@@ -57,6 +58,7 @@ pub use engine::{ActivityEvent, LifecycleEngine, LifecycleEngineError};
 pub use error::WorkflowApplicationError;
 pub use execution_log::{load_port_output_map, load_scoped_port_output_map, materialize_activity_summary};
 pub use frame_builder::AgentFrameBuilder;
+pub use frame_construction::FrameConstructionService;
 pub use frame_hook_runtime::AgentFrameHookRuntime;
 pub use frame_surface::{AgentFrameSurfaceExt, FrameContextBundleSummary};
 pub use freeform::{

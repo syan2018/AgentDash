@@ -337,7 +337,7 @@ impl SessionRuntimeInner {
                 )
                 .await;
             if let Some(hook_runtime) = self
-                .get_hook_runtime(&input.delivery_runtime_session_id)
+                .get_hook_runtime_by_delivery_session(&input.delivery_runtime_session_id)
                 .await
             {
                 let _ = context_frame::enqueue_context_frame(&hook_runtime, &notice);

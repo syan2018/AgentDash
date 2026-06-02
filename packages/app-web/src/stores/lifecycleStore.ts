@@ -21,6 +21,7 @@ import { subjectExecutionKey } from "../types";
 import {
   fetchLifecycleRun,
   fetchSubjectExecution,
+  fetchProjectActiveAgents,
   fetchAgentFrameRuntime,
   fetchRuntimeTrace,
 } from "../services/lifecycle";
@@ -53,6 +54,7 @@ interface LifecycleState {
 
   // ── API actions ──
   fetchAndIngestRun: (runId: string) => Promise<LifecycleRunView | null>;
+  fetchProjectActiveAgents: (projectId: string) => Promise<void>;
   fetchSubjectExecution: (subjectKind: string, subjectId: string) => Promise<SubjectExecutionView | null>;
   fetchFrame: (frameId: string) => Promise<AgentFrameRuntimeView | null>;
   fetchRuntimeTrace: (runtimeSessionId: string) => Promise<RuntimeSessionTraceView | null>;
@@ -156,6 +158,19 @@ export const useLifecycleStore = create<LifecycleState>((set, get) => ({
     } catch (e) {
       set({ error: (e as Error).message, isLoading: false });
       return null;
+    }
+  },
+
+  fetchProjectActiveAgents: async (projectId) => {
+    set({ isLoading: true, error: null });
+    try {
+      const view = await fetchProjectActiveAgents(projectId);
+      for (const run of view.runs) {
+        get().ingestRun(run);
+      }
+      set({ isLoading: false });
+    } catch (e) {
+      set({ isLoading: false, error: (e as Error).message });
     }
   },
 

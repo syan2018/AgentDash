@@ -1066,6 +1066,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for CompletionSatisfiedProvider {
         async fn load_frame_snapshot(
@@ -1147,6 +1148,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for CompletionBlockedProvider {
         async fn load_frame_snapshot(
@@ -1228,6 +1230,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RecordingCompactionProvider {
         async fn load_frame_snapshot(
@@ -1338,6 +1341,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for StaticCompanionContextProvider {
         async fn load_frame_snapshot(
@@ -1428,6 +1432,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for AfterTurnInjectionProvider {
         async fn load_frame_snapshot(

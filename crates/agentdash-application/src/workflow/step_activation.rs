@@ -19,7 +19,8 @@
 use std::collections::BTreeSet;
 
 use agentdash_domain::workflow::{
-    ActivityDefinition, AgentProcedure, MountDirective, ToolCapabilityDirective,
+    ActivityDefinition, AgentFrameRepository, AgentProcedure, MountDirective,
+    ToolCapabilityDirective,
 };
 use agentdash_spi::CapabilityScopeCtx;
 use agentdash_spi::hooks::SharedHookRuntime;
@@ -34,8 +35,9 @@ use crate::capability::{
 use crate::platform_config::PlatformConfig;
 use crate::session::hub::{LiveRuntimeContextTransitionInput, RuntimeContextTransitionOutcome};
 use crate::session::types::AgentFrameRuntimeTarget;
-use crate::session::{SessionCapabilityService, compose_vfs_with_overlay_and_directives};
+use crate::session::SessionCapabilityService;
 use crate::vfs::build_lifecycle_mount_with_ports;
+use crate::workflow::frame_builder::AgentFrameBuilder;
 
 /// 激活一个 lifecycle step 所需的全部纯计算输入。
 ///
@@ -287,6 +289,9 @@ fn dedupe_session_mcp_servers(servers: &mut Vec<agentdash_spi::SessionMcpServer>
 /// 返回 capability key delta；若仅工具级裁剪 / MCP 表面变化，`capability_delta`
 /// 仍可能是 `None`，但 `emitted_capability_change=true` 表示已经触发工具重建、
 /// runtime context update 事件。
+///
+/// 热更新路径先通过 `AgentFrameBuilder` 写入新 frame revision，再基于该 revision
+/// 投影 runtime delivery；保证 frame audit trail 与实际 runtime surface 一致。
 pub(crate) async fn apply_to_frame_runtime_target(
     activation: &StepActivation,
     hook_runtime: &SharedHookRuntime,
@@ -297,6 +302,8 @@ pub(crate) async fn apply_to_frame_runtime_target(
     phase_node_key: &str,
     run_id: Option<Uuid>,
     lifecycle_key: Option<&str>,
+    agent_id: Uuid,
+    frame_repo: &dyn AgentFrameRepository,
 ) -> Result<RuntimeContextTransitionOutcome, String> {
     if hook_runtime.session_id() != target.delivery_runtime_session_id {
         return Err(format!(
@@ -311,11 +318,19 @@ pub(crate) async fn apply_to_frame_runtime_target(
         &activation.capability_keys,
     );
 
+    let frame = AgentFrameBuilder::new(agent_id)
+        .with_capability_state(&target_surface)
+        .with_runtime_session(&target.delivery_runtime_session_id)
+        .with_created_by("hot_update", Some(phase_node_key.to_string()))
+        .build(frame_repo)
+        .await
+        .map_err(|e| format!("热更新写入 frame revision 失败: {e}"))?;
+
     session_capability
         .apply_live_runtime_context_transition(
             hook_runtime,
             LiveRuntimeContextTransitionInput {
-                target_frame_id: target.frame_id,
+                target_frame_id: frame.id,
                 delivery_runtime_session_id: target.delivery_runtime_session_id,
                 turn_id: turn_id.map(ToString::to_string),
                 phase_node: phase_node_key.to_string(),
@@ -335,20 +350,15 @@ pub(crate) fn build_capability_state_for_activation(
     activation: &StepActivation,
     base_surface: Option<&CapabilityState>,
 ) -> CapabilityState {
-    let vfs = compose_vfs_with_overlay_and_directives(
-        base_surface.and_then(|surface| surface.vfs.active.as_ref()),
-        &activation.lifecycle_vfs,
-        &activation.mount_directives,
-    );
-    let mut state = activation.capability_state.clone();
-    state.tool.mcp_servers = activation.mcp_servers.clone();
-    state.vfs.active = Some(vfs);
-    if state.skill.skills.is_empty() {
-        state.skill = base_surface
-            .map(|surface| surface.skill.clone())
-            .unwrap_or_default();
-    }
-    state
+    use crate::workflow::frame_builder::{
+        AgentFrameActivationSurfaceInput, build_lifecycle_activation_surface,
+    };
+    let surface = build_lifecycle_activation_surface(AgentFrameActivationSurfaceInput {
+        activation,
+        base_vfs: base_surface.and_then(|s| s.vfs.active.as_ref()),
+        inherit_skills_from: base_surface,
+    });
+    surface.capability_state
 }
 
 /// 从当前 runtime MCP server 列表构造 `AgentMcpServerEntry`，供 step activation

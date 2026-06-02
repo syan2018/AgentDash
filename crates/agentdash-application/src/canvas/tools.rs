@@ -985,6 +985,7 @@ mod tests {
 
     struct EmptyHookProvider {
         active_run_id: Uuid,
+        frame_repo: Arc<MemoryAgentFrameRepository>,
     }
 
     impl EmptyHookProvider {
@@ -1003,8 +1004,27 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for EmptyHookProvider {
+        async fn resolve_runtime_hook_target(
+            &self,
+            runtime_session_id: &str,
+        ) -> Result<Option<agentdash_spi::hooks::HookControlTarget>, agentdash_spi::hooks::HookError>
+        {
+            let frame = self
+                .frame_repo
+                .find_by_runtime_session(runtime_session_id)
+                .await
+                .map_err(|e| agentdash_spi::hooks::HookError::Runtime(e.to_string()))?;
+            Ok(frame.map(|f| agentdash_spi::hooks::HookControlTarget {
+                run_id: self.active_run_id,
+                agent_id: f.agent_id,
+                frame_id: f.id,
+                assignment_id: None,
+            }))
+        }
+
         async fn load_frame_snapshot(
             &self,
             query: AgentFrameHookSnapshotQuery,
@@ -1264,7 +1284,10 @@ mod tests {
         let gate_repo = Arc::new(MemoryLifecycleGateRepository::default());
         let hub = SessionRuntimeInner::new_with_hooks_and_persistence(
             Arc::new(PendingConnector),
-            Some(Arc::new(EmptyHookProvider { active_run_id })),
+            Some(Arc::new(EmptyHookProvider {
+                active_run_id,
+                frame_repo: frame_repo.clone(),
+            })),
             Arc::new(MemorySessionPersistence::default()),
         )
         .with_vfs_service(vfs_service)

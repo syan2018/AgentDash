@@ -676,7 +676,7 @@ pub struct ActivityAttemptView {
     pub assignment_ref: Option<AgentAssignmentRefDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub executor_run_ref: Option<Value>,
+    pub executor_run_ref: Option<ExecutorRunRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -796,6 +796,14 @@ pub struct RuntimeSessionTraceView {
     pub events: Vec<Value>,
     #[serde(default)]
     pub turns: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub struct ProjectActiveAgentsView {
+    pub project_id: String,
+    pub runs: Vec<LifecycleRunView>,
+    pub agents: Vec<LifecycleAgentView>,
 }
 
 fn bool_true() -> bool {

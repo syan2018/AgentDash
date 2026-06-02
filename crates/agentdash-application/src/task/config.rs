@@ -1,3 +1,20 @@
+//! Task executor configuration resolution — static config → dispatch-time policy bridge.
+//!
+//! This module resolves the `AgentConfig` that will be used when dispatching a Task.
+//! It bridges the gap between **Task static config** (the `AgentBinding` preference the
+//! user sets at authoring time) and **dispatch-time policy** (the `AgentConfig` that
+//! `SubjectExecutionIntent` consumes to create `LifecycleAgent` / `AgentFrame`).
+//!
+//! **Resolution priority** (first match wins):
+//! 1. Explicit `AgentConfig` passed by the caller (e.g. API override)
+//! 2. `Task.agent_binding.agent_type` — direct agent type preference
+//! 3. `Task.agent_binding.preset_name` → resolved against `ProjectConfig.agent_presets`
+//! 4. `Project.config.default_agent_type` — project-level fallback
+//!
+//! Once resolved, the result feeds into dispatch and is **consumed** — the Task entity
+//! does not participate in runtime decisions after this point. Runtime truth lives in
+//! `LifecycleAgent → AgentFrame`.
+
 use agentdash_domain::{
     common::AgentPresetConfig,
     project::{AgentPreset, Project},

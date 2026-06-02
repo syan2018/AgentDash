@@ -59,20 +59,36 @@ impl TaskExecutionProjection {
     }
 }
 
-/// 结构化 Agent 绑定信息
+/// Task authoring preference for agent execution — a **static declaration**, not runtime truth.
+///
+/// `AgentBinding` captures the user's intent for which agent type, preset, prompt template,
+/// and initial context to use when executing a Task. It is purely a **configuration preference**
+/// attached to the Task at creation / edit time.
+///
+/// At dispatch time, [`resolve_task_executor_config`](agentdash_application) consumes these
+/// preferences and converts them into an `AgentConfig` that feeds into
+/// `SubjectExecutionIntent` dispatch policies. Once dispatch completes, runtime truth lives in
+/// `LifecycleAgent → AgentFrame`; the Task entity does NOT participate in runtime decisions
+/// after dispatch.
+///
+/// **Boundary**: This struct belongs to the Task *spec* layer (user-editable fields).
+/// It is NOT runtime state — runtime agent identity, capability set, and session bindings
+/// are owned by the `AgentFrame` evidence chain.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentBinding {
-    /// Agent 类型（如 "claude-code", "codex", "gemini"）
+    /// Preferred agent type identifier (e.g. "claude-code", "codex", "gemini").
+    /// Consumed by `resolve_task_agent_config` at dispatch time.
     pub agent_type: Option<String>,
-    /// Agent 进程标识
+    /// Agent process identifier (informational / external tracking).
     pub agent_pid: Option<String>,
-    /// 使用的预设名称（对应 ProjectConfig.agent_presets）
+    /// Named preset reference (resolved against `ProjectConfig.agent_presets`).
+    /// When set, the preset's `agent_type` and extended config override the bare `agent_type` field.
     pub preset_name: Option<String>,
-    /// 提示词模板（支持占位符渲染）
+    /// Prompt template with placeholder support (rendered before agent launch).
     pub prompt_template: Option<String>,
-    /// 初始上下文（拼接在提示词前）
+    /// Initial context prepended to the prompt.
     pub initial_context: Option<String>,
-    /// 声明式 Task 特定上下文来源
+    /// Declarative context source references specific to this Task.
     #[serde(default)]
     pub context_sources: Vec<ContextSourceRef>,
 }

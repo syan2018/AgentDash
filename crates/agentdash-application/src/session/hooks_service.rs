@@ -21,24 +21,29 @@ impl SessionHookService {
         Self { hub }
     }
 
-    pub async fn ensure_hook_runtime_for_runtime_session(
+    /// Delivery adapter: 根据 RuntimeSession id 按需确保 hook runtime 就绪。
+    ///
+    /// 业务控制路径应使用 [`ensure_hook_runtime_for_target`]，此方法仅供
+    /// 已知 delivery session 但尚未解析出 `AgentFrameRuntimeTarget` 的 adapter 场景。
+    pub(crate) async fn ensure_hook_runtime_for_delivery_session(
         &self,
         session_id: &str,
         turn_id: Option<&str>,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         self.hub
-            .ensure_hook_runtime_for_runtime_session(session_id, turn_id)
+            .ensure_hook_runtime_for_delivery_session(session_id, turn_id)
             .await
     }
 
-    pub(crate) async fn ensure_hook_runtime_for_target(
+    /// 基于 `AgentFrameRuntimeTarget` 确保 hook runtime 就绪并校验 target 一致性。
+    pub async fn ensure_hook_runtime_for_target(
         &self,
         target: &AgentFrameRuntimeTarget,
         turn_id: Option<&str>,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         let Some(runtime) = self
             .hub
-            .ensure_hook_runtime_for_runtime_session(&target.delivery_runtime_session_id, turn_id)
+            .ensure_hook_runtime_for_delivery_session(&target.delivery_runtime_session_id, turn_id)
             .await?
         else {
             return Ok(None);
@@ -47,17 +52,27 @@ impl SessionHookService {
         Ok(Some(runtime))
     }
 
-    pub async fn get_hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
-        self.hub.get_hook_runtime(session_id).await
+    /// Delivery adapter: 根据 RuntimeSession id 查找已缓存的 hook runtime。
+    ///
+    /// 业务控制路径应使用 [`get_hook_runtime_for_target`]，此方法仅供
+    /// hub 内部从 delivery session 查找 runtime 的 adapter 场景。
+    pub(crate) async fn get_hook_runtime_by_delivery_session(
+        &self,
+        session_id: &str,
+    ) -> Option<SharedHookRuntime> {
+        self.hub
+            .get_hook_runtime_by_delivery_session(session_id)
+            .await
     }
 
-    pub(crate) async fn get_hook_runtime_for_target(
+    /// 基于 `AgentFrameRuntimeTarget` 查找已缓存的 hook runtime 并校验 target 一致性。
+    pub async fn get_hook_runtime_for_target(
         &self,
         target: &AgentFrameRuntimeTarget,
     ) -> Result<Option<SharedHookRuntime>, ConnectorError> {
         let Some(runtime) = self
             .hub
-            .get_hook_runtime(&target.delivery_runtime_session_id)
+            .get_hook_runtime_by_delivery_session(&target.delivery_runtime_session_id)
             .await
         else {
             return Ok(None);

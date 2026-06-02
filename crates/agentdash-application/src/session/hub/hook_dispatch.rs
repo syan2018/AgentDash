@@ -183,7 +183,11 @@ impl SessionRuntimeInner {
         injections
     }
 
-    pub async fn ensure_hook_runtime_for_runtime_session(
+    /// Delivery adapter: 根据 RuntimeSession id 按需懒重建 hook runtime。
+    ///
+    /// 业务控制路径应使用 `SessionHookService::ensure_hook_runtime_for_target`，
+    /// 此方法仅供 hub 内部从 delivery session 反查 frame target 的 adapter 场景。
+    pub(crate) async fn ensure_hook_runtime_for_delivery_session(
         &self,
         session_id: &str,
         turn_id: Option<&str>,

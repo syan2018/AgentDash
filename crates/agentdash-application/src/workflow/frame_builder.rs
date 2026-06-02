@@ -32,6 +32,9 @@ pub(crate) struct AgentFrameSurfaceInput<'a> {
 pub(crate) struct AgentFrameActivationSurfaceInput<'a> {
     pub activation: &'a StepActivation,
     pub base_vfs: Option<&'a Vfs>,
+    /// 热更新路径需要从已有 CapabilityState 继承 skill 层（当 activation 自身未产出
+    /// skill 时）。冷启动路径传 None。
+    pub inherit_skills_from: Option<&'a CapabilityState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +55,11 @@ pub(crate) fn build_lifecycle_activation_surface(
     let mut capability_state = input.activation.capability_state.clone();
     capability_state.tool.mcp_servers = input.activation.mcp_servers.clone();
     capability_state.vfs.active = Some(vfs.clone());
+    if capability_state.skill.skills.is_empty() {
+        if let Some(base) = input.inherit_skills_from {
+            capability_state.skill = base.skill.clone();
+        }
+    }
 
     AgentFrameActivationSurface {
         capability_state,
@@ -542,6 +550,7 @@ mod tests {
         let surface = build_lifecycle_activation_surface(AgentFrameActivationSurfaceInput {
             activation: &activation,
             base_vfs: Some(&base_vfs),
+            inherit_skills_from: None,
         });
 
         let frame = AgentFrameBuilder::new(agent_id)

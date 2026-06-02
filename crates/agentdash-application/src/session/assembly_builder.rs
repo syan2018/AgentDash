@@ -317,6 +317,7 @@ impl SessionAssemblyBuilder {
             crate::workflow::frame_builder::AgentFrameActivationSurfaceInput {
                 activation,
                 base_vfs: self.vfs.as_ref(),
+                inherit_skills_from: None,
             },
         );
         self.vfs = Some(surface.vfs);

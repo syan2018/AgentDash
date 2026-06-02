@@ -41,6 +41,11 @@ impl SessionCapabilityService {
         self.hub.get_latest_capability_state(session_id).await
     }
 
+    /// Delivery adapter: 把 RuntimeSession id 解析为对应的 AgentFrame id。
+    ///
+    /// 仅用于已知 delivery session 但尚未拥有 `AgentFrameRuntimeTarget` 的
+    /// adapter 边界（如 canvas tool、workflow executor 入口）。业务控制路径应
+    /// 直接传递 `AgentFrameRuntimeTarget`，不应依赖此方法做反查。
     pub(crate) async fn resolve_runtime_session_frame_id(
         &self,
         session_id: &str,
@@ -51,6 +56,10 @@ impl SessionCapabilityService {
             .map_err(|error| error.to_string())
     }
 
+    /// Delivery adapter: 把 RuntimeSession id 解析为完整的 `AgentFrameRuntimeTarget`。
+    ///
+    /// 仅用于 adapter 边界将 session 维度入口转换为 frame-first 控制目标。
+    /// 内部业务路径应直接持有并传递 `AgentFrameRuntimeTarget`。
     pub(crate) async fn resolve_runtime_session_target(
         &self,
         session_id: &str,

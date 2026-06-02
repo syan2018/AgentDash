@@ -52,7 +52,14 @@ impl SessionRuntimeInner {
         let _ = self.eventing_service().ensure_session(session_id).await;
     }
 
-    pub async fn get_hook_runtime(&self, session_id: &str) -> Option<SharedHookRuntime> {
+    /// Delivery adapter: 根据 RuntimeSession id 查找已缓存的 hook runtime。
+    ///
+    /// 业务控制路径应使用 `SessionHookService::get_hook_runtime_for_target`，
+    /// 此方法仅供 hub 内部 adapter 场景使用。
+    pub(crate) async fn get_hook_runtime_by_delivery_session(
+        &self,
+        session_id: &str,
+    ) -> Option<SharedHookRuntime> {
         self.runtime_registry.hook_runtime(session_id).await
     }
 

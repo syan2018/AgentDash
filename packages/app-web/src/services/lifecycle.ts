@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import type {
   AgentFrameRuntimeView,
   LifecycleRunView,
+  ProjectActiveAgentsView,
   RuntimeSessionTraceView,
   SubjectExecutionView,
 } from "../types";
@@ -22,6 +23,12 @@ export async function fetchSubjectExecution(
 ): Promise<SubjectExecutionView> {
   return api.get<SubjectExecutionView>(
     `/subjects/${encodeURIComponent(subjectKind)}/${encodeURIComponent(subjectId)}/execution`,
+  );
+}
+
+export async function fetchProjectActiveAgents(projectId: string): Promise<ProjectActiveAgentsView> {
+  return api.get<ProjectActiveAgentsView>(
+    `/projects/${encodeURIComponent(projectId)}/active-agents`,
   );
 }
 

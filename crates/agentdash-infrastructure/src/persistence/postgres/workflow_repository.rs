@@ -918,7 +918,7 @@ mod workflow_claim_tests {
     use crate::persistence::postgres::test_pg_pool;
     use agentdash_domain::workflow::{
         ActivityCompletionPolicy, ActivityDefinition, ActivityExecutorSpec,
-        AgentActivityExecutorSpec, AgentSessionPolicy, WorkflowContract,
+        AgentActivityExecutorSpec, AgentReusePolicy, RuntimeSessionPolicy, WorkflowContract,
         WorkflowTemplateInstallBundle,
     };
 
@@ -1001,7 +1001,8 @@ mod workflow_claim_tests {
                 description: String::new(),
                 executor: ActivityExecutorSpec::Agent(AgentActivityExecutorSpec {
                     procedure_key: procedure_key.to_string(),
-                    session_policy: AgentSessionPolicy::SpawnChild,
+                    agent_reuse_policy: AgentReusePolicy::CreateActivityAgent,
+                    runtime_session_policy: RuntimeSessionPolicy::CreateNew,
                 }),
                 input_ports: vec![],
                 output_ports: vec![],

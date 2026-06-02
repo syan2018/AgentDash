@@ -250,6 +250,7 @@ impl AppExecutionHookProvider {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl ExecutionHookProvider for AppExecutionHookProvider {
     async fn resolve_runtime_hook_target(
@@ -530,6 +531,7 @@ mod tests {
         }
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RuleEngineTestProvider {
         async fn load_frame_snapshot(

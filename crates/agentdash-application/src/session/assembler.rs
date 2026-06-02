@@ -1634,9 +1634,7 @@ pub(crate) async fn compose_companion_with_workflow(
     );
 
     // ── 3. 用 builder 组合 companion + workflow 两个层 ──
-    let mut vfs = slice.vfs.unwrap_or_default();
-    vfs.mounts.push(activation.lifecycle_mount.clone());
-
+    //
     // 继承父 bundle 并叠加 workflow injection 片段。workflow injection 作为独立
     // fragment 注入 Bundle，替代旧的字符串拼接路径。
     // 渲染文本由共享 `render_workflow_injection` 产出（SummaryOnly 模式 —— companion
@@ -1677,13 +1675,11 @@ pub(crate) async fn compose_companion_with_workflow(
     })];
 
     Ok(SessionAssemblyBuilder::new()
-        .with_vfs(vfs)
-        .with_resolved_capabilities(activation.capability_state.clone())
-        .with_mcp_servers(slice.mcp_servers)
-        .append_mcp_servers(activation.mcp_servers.iter().cloned())
+        .with_vfs(slice.vfs.unwrap_or_default())
+        .apply_lifecycle_activation(&activation, Some(comp.companion_executor_config.clone()))
+        .append_mcp_servers(slice.mcp_servers.into_iter())
         .with_optional_context_bundle(merged_bundle)
         .with_prompt_blocks(prompt_blocks)
-        .with_executor_config(comp.companion_executor_config.clone())
         .build())
 }
 

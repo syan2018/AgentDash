@@ -9,6 +9,7 @@ export type {
   LifecycleRunRefDto,
   LifecycleRunView,
   LifecycleSubjectAssociationDto,
+  ProjectActiveAgentsView,
   RuntimeSessionRefDto,
   RuntimeSessionTraceView,
   SubjectExecutionView,

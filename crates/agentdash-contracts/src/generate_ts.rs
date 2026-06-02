@@ -102,9 +102,9 @@ use agentdash_contracts::workflow::{
     DeleteWorkflowGraphResponse, EffectiveSessionContract, HookPresetResponse, HookPresetsResponse,
     LifecycleAgentRefDto, LifecycleAgentView, LifecycleExecutionEntry, LifecycleRunRefDto,
     LifecycleRunStatus, LifecycleRunView, LifecycleSubjectAssociationDto,
-    RegisterHookPresetResponse, RuntimeSessionRefDto, RuntimeSessionTraceView, StoryLaunchResult,
-    SubjectExecutionView, SubjectRefDto, ValidateHookScriptResponse, ValidationIssue,
-    WorkflowContract, WorkflowGraphInstanceView,
+    ProjectActiveAgentsView, RegisterHookPresetResponse, RuntimeSessionRefDto,
+    RuntimeSessionTraceView, StoryLaunchResult, SubjectExecutionView, SubjectRefDto,
+    ValidateHookScriptResponse, ValidationIssue, WorkflowContract, WorkflowGraphInstanceView,
 };
 use ts_rs::TS;
 
@@ -300,6 +300,7 @@ fn main() {
             export_all::<LifecycleAgentView>(dir);
             export_all::<AgentFrameRuntimeView>(dir);
             export_all::<SubjectExecutionView>(dir);
+            export_all::<ProjectActiveAgentsView>(dir);
             export_all::<RuntimeSessionTraceView>(dir);
             export_all::<DefinitionSource>(dir);
             export_all::<DeleteWorkflowGraphResponse>(dir);

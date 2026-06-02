@@ -502,6 +502,15 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
 
+        let current_frame = self
+            .repos
+            .agent_frame_repo
+            .get(target.frame_id)
+            .await
+            .map_err(|e| format!("加载 ContinueRoot target frame 失败: {e}"))?
+            .ok_or_else(|| format!("ContinueRoot target frame 不存在: {}", target.frame_id))?;
+        let agent_id = current_frame.agent_id;
+
         if let Some(hook_runtime) = session_hooks
             .ensure_hook_runtime_for_target(target, None)
             .await
@@ -553,6 +562,8 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
                 &activity.key,
                 Some(claim.run_id),
                 Some(&definition.key),
+                agent_id,
+                self.repos.agent_frame_repo.as_ref(),
             )
             .await
             .map(|_| ())
@@ -593,6 +604,15 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             .await
             .map_err(|error| error.to_string())?;
             let surface = build_capability_state_for_activation(&activation, base_surface.as_ref());
+
+            let frame = AgentFrameBuilder::new(agent_id)
+                .with_capability_state(&surface)
+                .with_runtime_session(&target.delivery_runtime_session_id)
+                .with_created_by("continue_root_no_hook", Some(activity.key.clone()))
+                .build(self.repos.agent_frame_repo.as_ref())
+                .await
+                .map_err(|e| format!("ContinueRoot no-hook 写入 frame revision 失败: {e}"))?;
+
             let mut declarations =
                 ToolCapabilityDimensionModule::capability_directive_declarations(
                     CapabilityArtifactSource::workflow(),
@@ -627,7 +647,7 @@ impl AgentActivitySessionPort for AgentActivityRuntimePort {
             CapabilityDimensionRegistry::built_in().validate_transition(&transition)?;
             session_capability
                 .enqueue_pending_runtime_context_transition(PendingRuntimeContextTransitionInput {
-                    target_frame_id: target.frame_id,
+                    target_frame_id: frame.id,
                     delivery_runtime_session_id: target.delivery_runtime_session_id.clone(),
                     turn_id: None,
                     frame_transition_id: format!(

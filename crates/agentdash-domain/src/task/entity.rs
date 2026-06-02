@@ -31,7 +31,10 @@ pub struct Task {
     pub description: String,
     /// 执行状态：只读投影字段，外部不可直写（M2）。
     pub(crate) status: TaskStatus,
-    /// 结构化 Agent 绑定信息
+    /// Authoring-time agent execution preference (static config, NOT runtime truth).
+    ///
+    /// Consumed by `resolve_task_executor_config` at dispatch to build `AgentConfig`;
+    /// after dispatch, runtime truth is owned by `LifecycleAgent → AgentFrame`.
     pub agent_binding: AgentBinding,
     /// 结构化执行产物列表：只读投影字段，外部不可直写（M2）。
     pub(crate) artifacts: Vec<Artifact>,

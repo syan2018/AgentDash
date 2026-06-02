@@ -559,6 +559,7 @@ mod tests {
         refresh_queries: Mutex<Vec<AgentFrameHookRefreshQuery>>,
     }
 
+    #[allow(deprecated)]
     #[async_trait]
     impl ExecutionHookProvider for RecordingFrameProvider {
         async fn load_frame_snapshot(

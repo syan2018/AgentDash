@@ -7,7 +7,7 @@ export type ActivityAttemptState = { activity_key: string, attempt: number, stat
 
 export type ActivityAttemptStatus = "pending" | "ready" | "claiming" | "running" | "completed" | "failed" | "cancelled";
 
-export type ActivityAttemptView = { graph_instance_id?: string, activity_key: string, attempt: number, status: string, assignment_ref?: AgentAssignmentRefDto, executor_run_ref?: JsonValue, };
+export type ActivityAttemptView = { graph_instance_id?: string, activity_key: string, attempt: number, status: string, assignment_ref?: AgentAssignmentRefDto, executor_run_ref?: ExecutorRunRef, };
 
 export type ActivityCompletionPolicy = { "kind": "output_ports", required_ports: Array<string>, } | { "kind": "executor_terminal" } | { "kind": "human_decision", decision_port: string, } | { "kind": "hook_gate", hook_key: string, } | { "kind": "open_ended" };
 
@@ -98,6 +98,8 @@ export type LifecycleRunView = { run_ref: LifecycleRunRefDto, project_id: string
 export type LifecycleSubjectAssociationDto = { id: string, anchor_run_id: string, anchor_agent_id?: string, subject_ref: SubjectRefDto, role: string, metadata?: JsonValue, created_at: string, };
 
 export type OutputPortDefinition = { key: string, description: string, gate_strategy: GateStrategy, gate_params?: JsonValue, };
+
+export type ProjectActiveAgentsView = { project_id: string, runs: Array<LifecycleRunView>, agents: Array<LifecycleAgentView>, };
 
 export type RegisterHookPresetResponse = { registered: boolean, key: string, };
 

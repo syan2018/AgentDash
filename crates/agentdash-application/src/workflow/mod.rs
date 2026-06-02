@@ -13,6 +13,7 @@ pub mod freeform;
 pub mod graph_resolver;
 pub mod lifecycle;
 pub mod lifecycle_gate_service;
+pub mod lifecycle_run_view_builder;
 pub mod orchestrator;
 pub mod projection;
 pub(crate) mod run;

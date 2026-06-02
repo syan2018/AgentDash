@@ -704,6 +704,73 @@ mod tests {
         );
     }
 
+    /// Grants from different runtime sessions targeting the same `effect_frame_id`
+    /// are all returned by `list_active_by_frame` — proving `effect_frame_id` is the
+    /// primary query anchor, while `source_runtime_session_id` is audit-only provenance.
+    #[tokio::test]
+    async fn list_active_by_frame_groups_by_effect_frame_not_session() {
+        let grant_repo = Arc::new(InMemoryGrantRepo::default());
+        let frame_repo = Arc::new(InMemoryFrameRepo::default());
+        let agent_id = Uuid::new_v4();
+        let initial_frame = AgentFrameBuilder::new(agent_id)
+            .with_runtime_session("session-a")
+            .build(frame_repo.as_ref())
+            .await
+            .expect("initial frame");
+        let shared_frame_id = initial_frame.id;
+        let shared_run_id = Uuid::new_v4();
+
+        for session in ["session-a", "session-b", "session-c"] {
+            let mut grant = PermissionGrant::new(
+                shared_run_id,
+                session,
+                vec![ToolCapabilityPath::parse("file_write").expect("path")],
+                "test grant",
+                GrantScope::Session,
+                None,
+            )
+            .with_effect_frame(shared_frame_id);
+            grant.submit_for_policy().expect("submit");
+            grant
+                .apply_policy_decision(PolicyDecision {
+                    outcome: PolicyOutcome::AutoApproved,
+                    matched_rules: vec![],
+                    reason: "auto".into(),
+                })
+                .expect("policy");
+            grant.mark_applied().expect("apply");
+            grant_repo.create(&grant).await.expect("persist");
+        }
+
+        let by_frame = grant_repo
+            .list_active_by_frame(shared_frame_id)
+            .await
+            .expect("list_active_by_frame");
+        assert_eq!(
+            by_frame.len(),
+            3,
+            "all three grants share the same effect_frame_id regardless of source session"
+        );
+
+        let by_run = grant_repo
+            .list_active_by_run(shared_run_id)
+            .await
+            .expect("list_active_by_run");
+        assert_eq!(
+            by_run.len(),
+            3,
+            "run_id is the other primary query entry"
+        );
+
+        let sessions: Vec<&str> = by_frame
+            .iter()
+            .map(|g| g.source_runtime_session_id.as_str())
+            .collect();
+        assert!(sessions.contains(&"session-a"));
+        assert!(sessions.contains(&"session-b"));
+        assert!(sessions.contains(&"session-c"));
+    }
+
     #[tokio::test]
     async fn revoke_writes_agent_frame_capability_revision() {
         let grant_repo = Arc::new(InMemoryGrantRepo::default());

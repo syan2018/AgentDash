@@ -979,16 +979,29 @@ pub trait ExecutionHookProvider: Send + Sync {
         query: AgentFrameHookEvaluationQuery,
     ) -> Result<HookResolution, HookError>;
 
+    /// Adapter-only: session-indexed snapshot 加载。
+    ///
+    /// 新代码应使用 [`load_frame_snapshot`] 作为主入口，
+    /// 此方法仅保留给尚未迁移到 frame-first 路径的 adapter 调用点。
+    #[deprecated(note = "adapter-only: 使用 load_frame_snapshot 代替")]
     async fn load_session_snapshot(
         &self,
         query: SessionHookSnapshotQuery,
     ) -> Result<SessionHookSnapshot, HookError>;
 
+    /// Adapter-only: session-indexed snapshot 刷新。
+    ///
+    /// 新代码应使用 [`refresh_frame_snapshot`] 作为主入口。
+    #[deprecated(note = "adapter-only: 使用 refresh_frame_snapshot 代替")]
     async fn refresh_session_snapshot(
         &self,
         query: SessionHookRefreshQuery,
     ) -> Result<SessionHookSnapshot, HookError>;
 
+    /// Adapter-only: session-indexed hook 评估。
+    ///
+    /// 新代码应使用 [`evaluate_frame_hook`] 作为主入口。
+    #[deprecated(note = "adapter-only: 使用 evaluate_frame_hook 代替")]
     async fn evaluate_hook(&self, query: HookEvaluationQuery) -> Result<HookResolution, HookError>;
 
     /// Execute the actual step advancement. Called by `AgentFrameHookRuntime`
@@ -1016,6 +1029,7 @@ pub trait ExecutionHookProvider: Send + Sync {
 #[derive(Debug, Default)]
 pub struct NoopExecutionHookProvider;
 
+#[allow(deprecated)]
 #[async_trait]
 impl ExecutionHookProvider for NoopExecutionHookProvider {
     async fn load_frame_snapshot(

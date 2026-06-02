@@ -5,7 +5,7 @@
  * session 仅作为 agent 下的 runtime trace tab 保留。
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLifecycleStore } from "../../stores/lifecycleStore";
 import type { LifecycleRunView, LifecycleAgentView } from "../../types";
 
@@ -178,15 +178,24 @@ interface ActiveLifecycleListProps {
 }
 
 export function ActiveLifecycleList({
+  projectId,
   isLoading,
   selectedAgentId,
   onSelectAgent,
 }: ActiveLifecycleListProps) {
   const runs = useLifecycleStore((s) => s.runs);
   const agents = useLifecycleStore((s) => s.agents);
+  const fetchProjectActiveAgents = useLifecycleStore((s) => s.fetchProjectActiveAgents);
   const [keyword, setKeyword] = useState("");
 
-  const runList = useMemo(() => Array.from(runs.values()), [runs]);
+  useEffect(() => {
+    fetchProjectActiveAgents(projectId);
+  }, [projectId, fetchProjectActiveAgents]);
+
+  const runList = useMemo(
+    () => Array.from(runs.values()).filter((r) => r.project_id === projectId),
+    [runs, projectId],
+  );
 
   const filteredRuns = useMemo(() => {
     if (!keyword.trim()) return runList;

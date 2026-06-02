@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-02-lifecycle-control-plane-refactor-closeout-review"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "Successor to residual-hardening and structural-audit. Reference concept-alignment for target model.",
